@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { macProcessIdentity } from "../../../src/daemon/lifecycle";
+import { createHash } from "node:crypto";
+import { macProcessIdentity } from "../../../src/daemon/lifecycle/daemon-lifecycle";
 import type {
   CreateResult,
   SessionSpec,
-} from "../../../src/daemon/session-host/contract";
+} from "../../../src/daemon/session-host/session-host-contract";
 import {
   HiveTerminalHostAdapter,
   requireSessiondRootLocator,
@@ -22,7 +22,7 @@ import type {
   SessionRef,
   TerminationResult,
 } from "../../../src/daemon/session-host/terminal-host-contract";
-import type { ProviderRun } from "../../../src/schemas";
+import type { ProviderRun } from "../../../src/schemas/provider-run";
 import { required } from "../../required";
 
 async function processGroupStates(
@@ -303,13 +303,13 @@ describe("HiveTerminalHostAdapter", () => {
     const directRequests: unknown[] = [];
     const renewalRequests: unknown[] = [];
     const host = {
+      waitForHostExit: async () => ({ kind: "inherited" as const }),
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
 
-      create: async (spec: SessionSpec, input: Uint8Array) => {
+      create: async (spec: SessionSpec) => {
         expect(spec).toEqual(sessionSpec);
-        expect(input).toEqual(new Uint8Array());
         return createResult;
       },
       claimInput: async (request: unknown) => {
@@ -351,7 +351,7 @@ describe("HiveTerminalHostAdapter", () => {
     );
 
     await expect(
-      adapter.create(sessionSpec, new Uint8Array(), { locator, visibility }),
+      adapter.create(sessionSpec, { locator, visibility }),
     ).resolves.toEqual(createResult);
     // Create binds the terminal to a workspace session and nothing more. It
     // does not renew, because there is no lease to keep alive: the host
@@ -415,7 +415,8 @@ describe("HiveTerminalHostAdapter", () => {
       idempotencyKey: "claim-idempotency",
     });
     await adapter.submitInput(locator, {
-      claimToken: "claim-fixture",
+      provenance: "automation",
+      action: "keys",
       transactionId: "transaction-fixture",
       idempotencyKey: "input-idempotency",
       operation: { kind: "canonical-end-of-file" },
@@ -435,7 +436,8 @@ describe("HiveTerminalHostAdapter", () => {
       },
       {
         session,
-        claimToken: "claim-fixture",
+        provenance: "automation",
+        action: "keys",
         transactionId: "transaction-fixture",
         idempotencyKey: "input-idempotency",
         operation: { kind: "canonical-end-of-file" },
@@ -496,6 +498,7 @@ describe("HiveTerminalHostAdapter", () => {
     });
     const inspectedSessions: SessionRef[] = [];
     const host = {
+      waitForHostExit: async () => ({ kind: "inherited" as const }),
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
@@ -551,7 +554,7 @@ describe("HiveTerminalHostAdapter", () => {
     );
   });
 
-  test("does not manage a recycled foreground PID with a different start token", async () => {
+  test("projects terminal foreground without treating it as provider identity", async () => {
     const bindings = new MemoryBindings();
     bindings.bindTerminalHostSession({ locator, visibility });
     bindings.completeTerminalHostSession(locator, {
@@ -569,9 +572,13 @@ describe("HiveTerminalHostAdapter", () => {
       model: "gpt-fixture",
       effort: null,
       conversationId: null,
-      pid: 4_100,
-      startToken: "4100:original",
-      foregroundProcessGroupId: 4_100,
+      adapterChild: {
+        pid: 4_100,
+        startToken: "4100:original",
+        processGroupId: 4_100,
+        observedAt: "2026-07-18T01:00:00.000Z",
+      },
+      protocolReceipt: null,
       capabilityEpoch: 0,
       launchGrantId: "launch-grant-fixture",
       startedAt: "2026-07-18T01:00:00.000Z",
@@ -583,11 +590,12 @@ describe("HiveTerminalHostAdapter", () => {
       ...inspection,
       jobControl: {
         ...required(inspection.jobControl),
-        foregroundProcessGroupId: run.foregroundProcessGroupId,
+        foregroundProcessGroupId: required(run.adapterChild).processGroupId,
       },
     };
     const adapter = new HiveTerminalHostAdapter(
       {
+        waitForHostExit: async () => ({ kind: "inherited" as const }),
         issueAttach: async () => {
           throw new Error("issueAttach not under test");
         },
@@ -657,6 +665,7 @@ describe("HiveTerminalHostAdapter", () => {
       },
     };
     const host = {
+      waitForHostExit: async () => ({ kind: "inherited" as const }),
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
@@ -749,6 +758,7 @@ describe("HiveTerminalHostAdapter", () => {
       visibility: createResult.inspection.visibility,
     });
     const host = {
+      waitForHostExit: async () => ({ kind: "inherited" as const }),
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
@@ -827,9 +837,13 @@ describe("HiveTerminalHostAdapter", () => {
       model: "gpt-fixture",
       effort: null,
       conversationId: null,
-      pid: 4_100,
-      startToken: "4100:123400",
-      foregroundProcessGroupId: 4_100,
+      adapterChild: {
+        pid: 4_100,
+        startToken: "4100:123400",
+        processGroupId: 4_100,
+        observedAt: "2026-07-18T01:00:00.000Z",
+      },
+      protocolReceipt: null,
       capabilityEpoch: 0,
       launchGrantId: "launch-grant-fixture",
       startedAt: "2026-07-18T01:00:00.000Z",
@@ -839,9 +853,10 @@ describe("HiveTerminalHostAdapter", () => {
     };
     let active: ProviderRun | null = run;
     let state: "running" | "stopped" | "gone" = "running";
-    let foregroundProcessGroupId = run.foregroundProcessGroupId;
+    let foregroundProcessGroupId = required(run.adapterChild).processGroupId;
     const signals: Array<[number, string]> = [];
     const host = {
+      waitForHostExit: async () => ({ kind: "inherited" as const }),
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
@@ -890,11 +905,12 @@ describe("HiveTerminalHostAdapter", () => {
         now: () => new Date("2026-07-18T01:00:01.000Z"),
         processIdentity: (pid) => ({
           startToken:
-            pid === run.pid
-              ? run.startToken
+            pid === required(run.adapterChild).pid
+              ? required(run.adapterChild).startToken
               : required(inspection.child).startToken,
         }),
         processState: async () => state,
+        processGroupState: () => (state === "gone" ? "gone" : "running"),
         signalProcessGroup: (processGroupId, signal) => {
           signals.push([processGroupId, signal]);
           if (signal === "SIGSTOP") state = "stopped";
@@ -941,7 +957,7 @@ describe("HiveTerminalHostAdapter", () => {
     expect(after.foreground).toEqual({ state: "shell-idle", runId: null });
   });
 
-  test("does not signal a recycled provider group after the immediate token re-read drifts", async () => {
+  test("does not signal a stale reported identity", async () => {
     const bindings = new MemoryBindings();
     bindings.bindTerminalHostSession({ locator, visibility });
     bindings.completeTerminalHostSession(locator, {
@@ -959,9 +975,13 @@ describe("HiveTerminalHostAdapter", () => {
       model: "gpt-fixture",
       effort: null,
       conversationId: null,
-      pid: 4_100,
-      startToken: "4100:123400",
-      foregroundProcessGroupId: 4_100,
+      adapterChild: {
+        pid: 4_100,
+        startToken: "4100:123400",
+        processGroupId: 4_100,
+        observedAt: "2026-07-18T01:00:00.000Z",
+      },
+      protocolReceipt: null,
       capabilityEpoch: 0,
       launchGrantId: "launch-grant-fixture",
       startedAt: "2026-07-18T01:00:00.000Z",
@@ -969,10 +989,10 @@ describe("HiveTerminalHostAdapter", () => {
       state: "running",
       exitReason: null,
     };
-    let providerReads = 0;
     const signals: string[] = [];
     const adapter = new HiveTerminalHostAdapter(
       {
+        waitForHostExit: async () => ({ kind: "inherited" as const }),
         issueAttach: async () => {
           throw new Error("issueAttach not under test");
         },
@@ -1000,7 +1020,8 @@ describe("HiveTerminalHostAdapter", () => {
             ...inspection,
             jobControl: {
               ...required(inspection.jobControl),
-              foregroundProcessGroupId: run.foregroundProcessGroupId,
+              foregroundProcessGroupId: required(run.adapterChild)
+                .processGroupId,
             },
           },
         ],
@@ -1008,7 +1029,7 @@ describe("HiveTerminalHostAdapter", () => {
           ...inspection,
           jobControl: {
             ...required(inspection.jobControl),
-            foregroundProcessGroupId: run.foregroundProcessGroupId,
+            foregroundProcessGroupId: required(run.adapterChild).processGroupId,
           },
         }),
         terminate: async () => termination,
@@ -1017,13 +1038,12 @@ describe("HiveTerminalHostAdapter", () => {
       locator.instanceId,
       {
         processIdentity: (pid) => {
-          if (pid !== run.pid) return { startToken: "4000:123400" };
-          providerReads += 1;
-          return {
-            startToken: providerReads === 1 ? run.startToken : "4100:recycled",
-          };
+          if (pid !== required(run.adapterChild).pid)
+            return { startToken: "4000:123400" };
+          return { startToken: "4100:recycled" };
         },
         processState: async () => "running",
+        processGroupState: () => "running",
         signalProcessGroup: (_processGroupId, signal) => signals.push(signal),
         sleep: async () => undefined,
         providerRuns: {
@@ -1063,9 +1083,13 @@ describe("HiveTerminalHostAdapter", () => {
         model: "gpt-fixture",
         effort: null,
         conversationId: null,
-        pid,
-        startToken: identity.startToken,
-        foregroundProcessGroupId: pid,
+        adapterChild: {
+          pid,
+          startToken: identity.startToken,
+          processGroupId: pid,
+          observedAt: "2026-07-18T01:00:00.000Z",
+        },
+        protocolReceipt: null,
         capabilityEpoch: 0,
         launchGrantId: "launch-grant-fixture",
         startedAt: "2026-07-18T01:00:00.000Z",
@@ -1082,6 +1106,7 @@ describe("HiveTerminalHostAdapter", () => {
       });
       const adapter = new HiveTerminalHostAdapter(
         {
+          waitForHostExit: async () => ({ kind: "inherited" as const }),
           issueAttach: async () => {
             throw new Error("issueAttach not under test");
           },
@@ -1153,6 +1178,7 @@ describe("HiveTerminalHostAdapter", () => {
   test("fails closed for missing, foreign, or mismatched bindings", async () => {
     const bindings = new MemoryBindings();
     const host = {
+      waitForHostExit: async () => ({ kind: "inherited" as const }),
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
@@ -1196,7 +1222,7 @@ describe("HiveTerminalHostAdapter", () => {
     );
 
     await expect(
-      adapter.create(sessionSpec, new Uint8Array(), { locator, visibility }),
+      adapter.create(sessionSpec, { locator, visibility }),
     ).rejects.toBeInstanceOf(TerminalHostBindingMismatchError);
     bindings.values.length = 0;
     await expect(adapter.inspect(locator)).rejects.toBeInstanceOf(
@@ -1248,6 +1274,7 @@ describe("closing a session whose host is already gone", () => {
     });
     const adapter = new HiveTerminalHostAdapter(
       {
+        waitForHostExit: async () => ({ kind: "inherited" as const }),
         issueAttach: async () => {
           throw new Error("issueAttach not under test");
         },
@@ -1324,9 +1351,13 @@ describe("closing a session whose host is already gone", () => {
       model: "gpt-fixture",
       effort: null,
       conversationId: null,
-      pid: 4_100,
-      startToken: "4100:original",
-      foregroundProcessGroupId: 4_100,
+      adapterChild: {
+        pid: 4_100,
+        startToken: "4100:original",
+        processGroupId: 4_100,
+        observedAt: "2026-07-18T01:00:00.000Z",
+      },
+      protocolReceipt: null,
       capabilityEpoch: 0,
       launchGrantId: "launch-grant-fixture",
       startedAt: "2026-07-18T01:00:00.000Z",

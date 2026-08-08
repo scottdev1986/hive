@@ -1,12 +1,6 @@
 import AppKit
 import WorkspaceCore
 
-/// The workspace app for one project: a master terminal running the
-/// selected orchestrator, satellite terminals attached to each agent's
-/// daemon-owned session, and the feed subprocess that drives the pane
-/// set. Launched by the CLI as
-/// `open -a HiveWorkspace --args --project <dir> --port <n> --hive <bin>
-/// --orchestrator <claude|codex|grok>`.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
 
     static let terminationStopArguments = ["stop", "--force"]
@@ -17,37 +11,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private let attentionCenter = AttentionCenter()
     private let projectSwitcher = ProjectSwitcherController()
     private var placeholderWindow: NSWindow?
-    private var smokeRunner: SmokeRunner?
-    private var composerLeases: ComposerLeaseStore?
-    /// The daemon's live agent-autonomy dial as last reported by the feed or
-    /// confirmed by a `hive autonomy` set. nil means unknown (no feed yet, or
-    /// the daemon does not expose the dial) — the menu items disable rather than
-    /// guess.
+    /// Where a QA build attaches. Empty in the shipped app, whose binary holds no harness to attach.
+    private let qa: WorkspaceQAHooks
+    /// The daemon's live agent-autonomy dial as last reported by the feed or confirmed by a `hive autonomy` set. nil means unknown (no feed yet, or the daemon does not expose the dial) — the menu items disable rather than guess.
     private(set) var currentAutonomy: String?
-    /// How long to wait before restarting a feed that exited. One second in the
-    /// common case (a killed or crashed feed), doubling to a ceiling so a feed
-    /// that cannot run at all — missing binary, dead daemon — is retried
-    /// without a spawn storm. A snapshot resets it: that is the feed proving it
-    /// works.
+    /// How long to wait before restarting a feed that exited. One second in the common case (a killed or crashed feed), doubling to a ceiling so a feed that cannot run at all — missing binary, dead daemon — is retried without a spawn storm. A snapshot resets it: that is the feed proving it works.
     private var feedRestartDelay: TimeInterval = 1
     private static let feedRestartCeiling: TimeInterval = 15
-    /// Restarts are capped so a feed that can never run — a missing binary, a
-    /// daemon that is gone for good — stops thrashing.
-    private static let feedRestartLimit = 5
-    private var feedRestartsLeft = AppDelegate.feedRestartLimit
-    /// Set once the app has decided the feed should stay dead (window closing,
-    /// app quitting), so a restart already in flight cannot resurrect it.
+    /// Set once the app has decided the feed should stay dead (window closing, app quitting), so a restart already in flight cannot resurrect it.
     private var feedRetired = false
-    /// Whichever menu is tracking right now, if any. An open NSMenu runs a
-    /// nested tracking loop and belongs to no window, so closing the windows
-    /// cannot dismiss it — the instance has to cancel it by hand on the way
-    /// out. Weak, and per-instance: nothing here outlives this process.
+    /// Whichever menu is tracking right now, if any. An open NSMenu runs a nested tracking loop and belongs to no window, so closing the windows cannot dismiss it — the instance has to cancel it by hand on the way out. Weak, and per-instance: nothing here outlives this process.
     private weak var trackingMenu: NSMenu?
     private let workspaceSessionID = UUID().uuidString
-    /// Why this process is ending, recorded by the first path that decides it.
-    /// First writer wins: a self-quit closes its own windows on the way out, so
-    /// the last-window-closed callback would otherwise overwrite the real
-    /// reason with its own consequence.
     private(set) var terminationReason: TerminationLog.Reason?
     private var terminationStopStarted = false
     private var terminationProcess: Process?
@@ -56,8 +31,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         [weak self] completion in self?.runStopSession(completion: completion)
     }
 
-    init(config: LaunchConfig) {
+    var enqueueFeedRestart: (TimeInterval, @escaping () -> Void) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    init(config: LaunchConfig, qa: WorkspaceQAHooks = WorkspaceQAHooks()) {
         self.config = config
+        self.qa = qa
         super.init()
         NotificationCenter.default.addObserver(
             self, selector: #selector(menuDidBeginTracking(_:)),
@@ -71,18 +51,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard config.isComplete,
-              let projectDirectory = config.projectDirectory,
+              config.projectDirectory != nil,
+              let projectID = config.projectID,
+              let projectName = config.projectName,
               let hivePath = config.hivePath,
               let daemonPort = config.port,
-              let instanceID = config.instanceID,
+              config.instanceID != nil,
               let instanceHome = config.instanceHome else {
             NSApp.mainMenu = MainMenuBuilder.build()
             if config.smoke {
                 // Smoke must never hang on a bad invocation.
-                print("SMOKE FAIL:\n  --smoke requires --project, --port, and --hive")
+                print("SMOKE FAIL:\n  --smoke requires project identity, --port, and --hive")
                 TerminationLog.record(
                     .exiting, reason: .smokeInvalidInvocation,
-                    detail: "code=1 --smoke requires --project, --port, and --hive")
+                    detail: "code=1 --smoke requires project identity, --port, and --hive")
                 exit(1)
             }
             // Dock click / bare CLI launch: project-neutral home, never cwd data.
@@ -91,19 +73,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             return
         }
 
-        let displayName = (projectDirectory as NSString).lastPathComponent
-        let state = ProjectState(projectID: ProjectID(projectDirectory), displayName: displayName)
+        let state = ProjectState(projectID: ProjectID(projectID), displayName: projectName)
         let controller = ProjectWindowController(
             state: state, attentionCenter: attentionCenter,
-            projectDirectory: projectDirectory, hivePath: hivePath,
-            daemonPort: daemonPort, orchestrator: config.orchestrator,
-            instanceID: instanceID, instanceHome: instanceHome)
+            hivePath: hivePath, daemonPort: daemonPort,
+            instanceHome: instanceHome)
         self.controller = controller
-        let composerLeases = ComposerLeaseStore(instanceHome: instanceHome)
-        self.composerLeases = composerLeases
-        controller.onComposerInput = { [weak composerLeases] recipient, action in
-            composerLeases?.handle(recipient: recipient, action: action)
-        }
         NSApp.mainMenu = MainMenuBuilder.build(paneTarget: controller)
 
         projectSwitcher.register(state: state) { [weak controller] in
@@ -119,31 +94,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
 
         controller.onWindowWillClose = { [weak self, weak controller] in
-            self?.composerLeases?.clear()
             self?.retireFeed()
-            // The project window is this instance's reason to exist: when it
-            // goes, so does everything else the instance put on screen. Without
-            // this, an open Settings window or panel keeps the process alive
-            // (the app quits only after its *last* window closes), and an open
-            // menu keeps tracking — the workspace disappears and its leftovers
-            // stay up.
+            // The project window is this instance's reason to exist: when it goes, so does everything else the instance put on screen. Without this, an open Settings window or panel keeps the process alive (the app quits only after its *last* window closes), and an open menu keeps tracking — the workspace disappears and its leftovers stay up.
             self?.closeOwnedSurfaces(except: controller?.window)
         }
         startFeed()
-        // Publish an empty initial inventory before starting queen. Terminal
-        // creation uses this live Workspace identity, then publishes only the
-        // completed root locator back through the normal feed.
+        // Publish the initially empty terminal inventory before the root surface attaches. The backend owns Queen's process lifecycle; this app only reports the terminal it can actually display.
         publishVisibility()
-        controller.bootstrapOrchestrator()
+        controller.prepareInitialLayout()
 
         if config.smoke {
-            let runner = SmokeRunner(controller: controller, config: config)
-            smokeRunner = runner
-            // Focus is only real in a key window: macOS routes the first click
-            // into an inactive window to activation, not to a control. The
-            // click-to-focus checks therefore need a shown, activated window,
-            // which HIVE_SMOKE_VISIBLE=1 asks for (and which is also how the
-            // indicator gets looked at). Default smoke stays offscreen.
+            guard let smoke = qa.smoke else {
+                // Smoke must never hang on a build that cannot run it.
+                print("SMOKE FAIL:\n  --smoke needs the QA build (HiveWorkspaceQA)")
+                TerminationLog.record(
+                    .exiting, reason: .smokeInvalidInvocation,
+                    detail: "code=1 --smoke needs the QA build")
+                exit(1)
+            }
             if ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1" {
                 controller.showWindow(nil)
                 NSApp.activate(ignoringOtherApps: true)
@@ -154,36 +122,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 }
             }
             controller.window?.layoutIfNeeded()
-            runner.run() // exits the process 0/1
+            smoke(controller, config) // exits the process 0/1
         } else {
             controller.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
             controller.window?.makeKeyAndOrderFront(nil)
-            // A second Workspace process with the same bundle id does not get
-            // usable content bounds until it is active/key. Committing before
-            // this point leaves its orchestrator pane at 0×0 forever.
             controller.commitInitialGeometry()
-            // The first separate process for one bundle can receive its final
-            // content bounds one run-loop turn after becoming key. This retry
-            // is idempotent: a terminal whose pending launch was consumed is
-            // never spawned twice.
+            // The first separate process for one bundle can receive its final content bounds one run-loop turn after becoming key. This retry is idempotent: a terminal whose pending launch was consumed is never spawned twice.
             DispatchQueue.main.async { [weak controller] in
                 controller?.commitInitialGeometry()
             }
-            let environment = ProcessInfo.processInfo.environment
-            if environment["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] == "1"
-                || SmokeRunner.productionPaneAgent(environment: environment) != nil
-                || SmokeRunner.a4Proof(environment: environment) != nil {
-                let runner = SmokeRunner(controller: controller, config: config)
-                smokeRunner = runner
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { runner.run() }
-            }
+            // The harness reads its own environment to decide whether this
+            // interactive launch is one it drives.
+            qa.smoke?(controller, config)
             if config.settings { showSettings(nil) }
         }
     }
 
-    /// The feed is a long-lived subprocess printing status snapshots. It dies
-    /// with the app (`retireFeed()` below).
     private func startFeed() {
         guard let invocation = config.feedInvocation(
             workspaceSessionID: workspaceSessionID
@@ -192,10 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                               arguments: invocation.arguments,
                               environment: invocation.environment)
         feed.onSnapshot = { [weak self] agents, orchestrator in
-            // A snapshot is the feed proving it works: the budget is for a feed
-            // that cannot run, not for one that was killed five times.
+            // A snapshot is the feed proving it works: the backoff is for a feed that cannot run, not for one that was killed.
             self?.feedRestartDelay = 1
-            self?.feedRestartsLeft = AppDelegate.feedRestartLimit
             self?.controller?.applyFeed(agents, orchestrator: orchestrator)
             self?.publishVisibility()
         }
@@ -233,47 +186,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// A live workspace must not retain stale status after a transient feed
-    /// exit. Retries are bounded so a persistent failure becomes visible.
-    private func scheduleFeedRestart() {
+    /// A live workspace must not retain stale status after a transient feed exit, so the feed is retried with the backoff held at its ceiling — indefinitely. A status-poll timeout is an absent heartbeat, never positive evidence of a dead fleet: the workspace stays up in its visible disconnected state (every pane is already marked disconnected by `feedLost()`) and only a user-initiated quit stops the fleet.
+    func scheduleFeedRestart() {
         guard !feedRetired,
               config.feedInvocation(workspaceSessionID: workspaceSessionID) != nil else { return }
-        guard feedRestartsLeft > 0 else {
-            terminateAfterFeedFailure()
-            return
-        }
-        feedRestartsLeft -= 1
         let delay = feedRestartDelay
         feedRestartDelay = min(feedRestartDelay * 2, Self.feedRestartCeiling)
         NSLog("restarting workspace-feed in %.0fs", delay)
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+        enqueueFeedRestart(delay) { [weak self] in
             guard let self, !self.feedRetired else { return }
             self.startFeed()
         }
     }
 
-    /// A permanently lost feed makes this instance unable to own its agent UI
-    /// honestly. End its nested UI sessions and windows before terminating.
-    func terminateAfterFeedFailure(terminate: () -> Void = { NSApp.terminate(nil) }) {
-        // Before closing surfaces: closing the last window is what triggers
-        // the last-window-closed path, and this is the reason that path is
-        // reached at all.
-        noteTerminationReason(
-            .feedFailure,
-            detail: "workspace-feed exhausted \(Self.feedRestartLimit) restarts")
-        NSLog("workspace-feed could not be restarted; terminating the workspace")
-        closeOwnedSurfaces()
-        retireFeed()
-        terminate()
-    }
-
-    /// Stop the feed and suppress restart callbacks once its workspace closes.
     private func retireFeed() {
         feedRetired = true
         feedClient?.stop()
     }
-
-    // MARK: Agent autonomy (Agents menu)
 
     @objc func selectSandboxedAutonomy(_ sender: Any?) {
         setAutonomy("sandboxed")
@@ -283,11 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         setAutonomy("dangerous")
     }
 
-    /// Sets the dial through `hive autonomy <mode>` — the same daemon
-    /// endpoint the CLI uses, which persists to `~/.hive/config.toml` before
-    /// applying. The checkmark updates only from the daemon's own answer
-    /// (stdout names the confirmed mode); the feed reconciles it afterwards
-    /// regardless, so the menu never claims a state the daemon doesn't hold.
+    /// Sets the dial through `hive autonomy <mode>` — the same daemon endpoint the CLI uses, which persists to `~/.hive/config.toml` before applying. The checkmark updates only from the daemon's own answer (stdout names the confirmed mode); the feed reconciles it afterwards regardless, so the menu never claims a state the daemon doesn't hold.
     private func setAutonomy(_ mode: String) {
         guard let hivePath = config.hivePath, let port = config.port,
               let instanceHome = config.instanceHome else { return }
@@ -303,8 +228,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         process.terminationHandler = { finished in
             let data = stdout.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8) ?? ""
-            // "autonomy is now <mode> — ..." — trust the named mode, not the
-            // exit code alone.
             let confirmed = ["sandboxed", "dangerous"].first { output.contains("now \($0)") }
             DispatchQueue.main.async { [weak self] in
                 if finished.terminationStatus == 0, let confirmed {
@@ -335,17 +258,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    // MARK: Settings (Model Control Center)
-
     private var settingsController: SettingsWindowController?
 
     @objc func showSettings(_ sender: Any?) {
         if settingsController == nil {
-            // Works in both launch modes: with `--hive` the screen reads live
-            // data; a bare Dock launch has no binary path and the screen says
-            // so instead of guessing.
             settingsController = SettingsWindowController(
                 hivePath: config.hivePath, daemonPort: config.port,
+                instanceHome: config.instanceHome,
                 initialWidth: config.settingsWidth)
         }
         if let page = config.settingsPage {
@@ -363,15 +282,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        // One launch invocation owns one project window. Once it closes, no UI
-        // surface remains to own this Hive instance.
         noteTerminationReason(.lastWindowClosed, detail: "last window closed")
         return true
     }
 
-    /// First writer wins, so a self-quit keeps its own reason even though it
-    /// closes windows — and reaches the last-window-closed path — on the way
-    /// out.
     private func noteTerminationReason(
         _ reason: TerminationLog.Reason, detail: String
     ) {
@@ -380,8 +294,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         TerminationLog.record(.requested, reason: reason, detail: detail)
     }
 
-    /// A quit no in-app path claimed came from outside this code: an Apple
-    /// Event (Dock Quit, `osascript`, logout) or the user's own Cmd-Q.
     private func unclaimedTerminationReason() -> TerminationLog.Reason {
         NSAppleEventManager.shared().currentAppleEvent?.eventID == kAEQuitApplication
             ? .appleEventQuit
@@ -424,19 +336,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationWillTerminate(_ notification: Notification) {
         TerminationLog.record(
             .willTerminate, reason: terminationReason, detail: "teardown starting")
-        composerLeases?.clear()
         closeOwnedSurfaces()
         retireFeed()
         controller?.terminateAllTerminals()
     }
 
-    /// Quitting the workspace ends the Hive session: `hive stop` is the daemon's
-    /// own shutdown — it stops every live agent and then the daemon itself — so
-    /// no agent, and no daemon, outlives the window that was showing them.
-    ///
-    /// The subprocess is best effort and never controls whether AppKit exits.
-    /// Once the Workspace process disappears, the daemon's verified owner
-    /// watch independently drives the same cleanup path.
+    /// Quitting the workspace ends the Hive session: `hive stop` is the daemon's own shutdown — it stops every live agent and then the daemon itself — so no agent, and no daemon, outlives the window that was showing them. The subprocess is best effort and never controls whether AppKit exits. Once the Workspace process disappears, the daemon's verified owner watch independently drives the same cleanup path.
     private func runStopSession(completion: @escaping (Result<Void, Error>) -> Void) {
         guard let hivePath = config.hivePath, let instanceHome = config.instanceHome,
               !config.smoke else {
@@ -445,10 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: hivePath)
-        // Agent teardown already preserves unlanded commits and worktrees.
-        // Quit is not an interactive terminal, so do not turn that preserved
-        // work into a confirmation prompt that can only cancel application
-        // termination.
+        // Agent teardown already preserves unlanded commits and worktrees. Quit is not an interactive terminal, so do not turn that preserved work into a confirmation prompt that can only cancel application termination.
         process.arguments = Self.terminationStopArguments
         var environment = ProcessInfo.processInfo.environment
         environment["HIVE_HOME"] = instanceHome
@@ -486,11 +388,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         trackingMenu = notification.object as? NSMenu
     }
 
-    /// Take down every surface this instance owns. Menus and app-modal alerts
-    /// run nested event loops that closing their windows does not end; cancel
-    /// those loops first, then end sheets before closing their parents.
-    /// `NSApp.windows` is process-local, so a sibling Hive instance is outside
-    /// this set.
     func closeOwnedSurfaces(except keep: NSWindow? = nil) {
         trackingMenu?.cancelTrackingWithoutAnimation()
         NSApp.mainMenu?.cancelTrackingWithoutAnimation()
@@ -525,13 +422,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// The placeholder window is the no-project instance's only window; closing
-    /// it ends that instance the same way closing the project window does.
     func windowWillClose(_ notification: Notification) {
         closeOwnedSurfaces(except: notification.object as? NSWindow)
     }
-
-    // MARK: No-args launch
 
     private func showPlaceholderWindow() {
         let window = NSWindow(

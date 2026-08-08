@@ -1,0 +1,38 @@
+{
+  "jsonrpc": "2.0",
+  "id": 0,
+  "method": "session/request_permission",
+  "params": {
+    "sessionId": "session_00000000-0000-4000-8000-000000000001",
+    "options": [
+      {
+        "optionId": "approve_once",
+        "name": "Approve once",
+        "kind": "allow_once"
+      },
+      {
+        "optionId": "approve_always",
+        "name": "Approve for this session",
+        "kind": "allow_always"
+      },
+      {
+        "optionId": "reject",
+        "name": "Reject",
+        "kind": "reject_once"
+      }
+    ],
+    "toolCall": {
+      "toolCallId": "0:tool_00000000000000000000000000",
+      "title": "Bash",
+      "content": [
+        {
+          "type": "content",
+          "content": {
+            "type": "text",
+            "text": "Requesting approval to Running: echo hive-fixture-capture"
+          }
+        }
+      ]
+    }
+  }
+}

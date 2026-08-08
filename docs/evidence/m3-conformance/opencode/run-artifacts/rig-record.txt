@@ -1,0 +1,8 @@
+=== up 2026-08-02T13:00:18Z
+src=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-nina-opencode/source sha=d2e95e386c4e6c9a744b131d5d4b2126ee9cbe8a (dirty)
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-run.RG7Udr/project sha=43bc33446bcaf0f9e9c0f4c7d3a25776f18b285d
+sessiond=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-nina-opencode/hive-sessiond bytes=3601088 mtime=Aug  2 08:58:55 2026
+port=50309 daemon_pid=60167 owner_pid=60390
+Hive daemon ready: {"engineBuildId":"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1","binaryPath":"/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-nina-opencode/hive","sourceHash":"8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712"}
+source_hash announced=8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712 computed=8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712
+daemon runs the sources under test

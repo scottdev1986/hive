@@ -1,0 +1,13 @@
+{
+  "transactionId": "qa-grok-user-edit-1785634039609",
+  "stage": "written-to-terminal",
+  "byteRange": {
+    "start": "0",
+    "endExclusive": "33"
+  },
+  "orderedAt": "1",
+  "availableCreditBytes": 131072,
+  "consumedByProcess": "not-claimed",
+  "completeness": "complete",
+  "diagnostic": null
+}

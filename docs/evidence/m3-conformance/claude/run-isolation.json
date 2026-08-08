@@ -1,0 +1,173 @@
+{
+  "vendor": "claude",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.local/share/claude/versions/2.1.220",
+  "binaryBefore": {
+    "version": "2.1.220 (Claude Code)",
+    "device": 16777234,
+    "inode": 221405480,
+    "size": 256908272,
+    "mtimeMs": 1784943532952.554
+  },
+  "claudeCredentialDigest": "eaca34d923b4270452fd9b2ffb3817c634d7ec0924e169e02a1201a4a74144a8",
+  "operatorBefore": {
+    ".claude": "fa5fbff76860b496965517d078bab5504540c0655535deaf0eea6107add18ed8",
+    ".claude.json": "4657196e2e32f21e88a8cf3ff1435d26faf73150ba7dcc60e6dfa42fea96e072"
+  },
+  "borrowed": [],
+  "artifacts": [],
+  "binaryAfter": {
+    "version": "2.1.220 (Claude Code)",
+    "device": 16777234,
+    "inode": 221405480,
+    "size": 256908272,
+    "mtimeMs": 1784943532952.554
+  },
+  "claudeCredentialDigestAfter": "eaca34d923b4270452fd9b2ffb3817c634d7ec0924e169e02a1201a4a74144a8",
+  "operatorAfter": {
+    ".claude": "e366169729f3c47a0e8f6474f77aec87a16ceadf536abf62aaddc034f3bc4cea",
+    ".claude.json": "0ba9bfb2fc85424705c953954ec3c2ff63464ec8fd02752bbcf7297650516523"
+  },
+  "changedOperatorPaths": [
+    ".claude",
+    ".claude.json"
+  ],
+  "changedOperatorNodes": {
+    ".claude": [
+      {
+        "relativePath": "backups",
+        "before": {
+          "relativePath": "backups",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119348944,
+          "mode": 493,
+          "size": 224,
+          "mtimeMs": 1785676284795.7468
+        },
+        "after": {
+          "relativePath": "backups",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119348944,
+          "mode": 493,
+          "size": 224,
+          "mtimeMs": 1785676355579.4495
+        }
+      },
+      {
+        "relativePath": "backups/.claude.json.backup.1785675519229",
+        "before": {
+          "relativePath": "backups/.claude.json.backup.1785675519229",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284587924,
+          "mode": 420,
+          "size": 239883,
+          "mtimeMs": 1785675513213.8154
+        },
+        "after": null
+      },
+      {
+        "relativePath": "backups/.claude.json.backup.1785676355579",
+        "before": null,
+        "after": {
+          "relativePath": "backups/.claude.json.backup.1785676355579",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284856391,
+          "mode": 420,
+          "size": 239885,
+          "mtimeMs": 1785676329160.2952
+        }
+      },
+      {
+        "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-anna/4eea86d3-39b7-4004-a021-55dad5b4433a.jsonl",
+        "before": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-anna/4eea86d3-39b7-4004-a021-55dad5b4433a.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284817541,
+          "mode": 384,
+          "size": 182024,
+          "mtimeMs": 1785676343096.5977
+        },
+        "after": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-anna/4eea86d3-39b7-4004-a021-55dad5b4433a.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284817541,
+          "mode": 384,
+          "size": 344410,
+          "mtimeMs": 1785676425546.183
+        }
+      },
+      {
+        "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-david/ec30a00e-91c9-44e8-8956-d053c5582e70.jsonl",
+        "before": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-david/ec30a00e-91c9-44e8-8956-d053c5582e70.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284523240,
+          "mode": 384,
+          "size": 737397,
+          "mtimeMs": 1785676343867.8606
+        },
+        "after": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-david/ec30a00e-91c9-44e8-8956-d053c5582e70.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284523240,
+          "mode": 384,
+          "size": 751898,
+          "mtimeMs": 1785676369560.0784
+        }
+      },
+      {
+        "relativePath": "projects/-Users-scottkellar-Projects-hive/abd5fdc1-a120-4319-92a7-997263641e61.jsonl",
+        "before": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive/abd5fdc1-a120-4319-92a7-997263641e61.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284486147,
+          "mode": 384,
+          "size": 925629,
+          "mtimeMs": 1785676338080.208
+        },
+        "after": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive/abd5fdc1-a120-4319-92a7-997263641e61.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284486147,
+          "mode": 384,
+          "size": 1000702,
+          "mtimeMs": 1785676421625.4375
+        }
+      }
+    ],
+    ".claude.json": [
+      {
+        "relativePath": ".",
+        "before": {
+          "relativePath": ".",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284845268,
+          "mode": 420,
+          "size": 239885,
+          "mtimeMs": 1785676329160.2952
+        },
+        "after": {
+          "relativePath": ".",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284856392,
+          "mode": 420,
+          "size": 239885,
+          "mtimeMs": 1785676355582.2095
+        }
+      }
+    ]
+  },
+  "artifactsAfter": []
+}

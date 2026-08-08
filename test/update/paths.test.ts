@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { detectInstallMethod, updateCommand } from "../../src/update/paths";
+import {
+  detectInstallMethod,
+  updateCommand,
+} from "../../src/update-service/paths";
 
 const ROOT = "/Users/scott/.local/share/hive";
 const method = (path: string) => detectInstallMethod(path, ROOT, true);

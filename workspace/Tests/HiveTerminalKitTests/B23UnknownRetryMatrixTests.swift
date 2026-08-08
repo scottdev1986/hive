@@ -2,15 +2,8 @@ import AppKit
 import XCTest
 @testable import HiveTerminalKit
 
-/// B2.3/A3 acceptance matrix — retry / unknown semantics.
-///
-/// Retry repeats the same domain transaction and idempotency key; it never
-/// invents a new act after an unknown result. `AttachReplayClient` derives
-/// `idempotencyKey` from `transactionId`, which embeds a monotonic sequence —
-/// so any resend after an unknown result would mint a NEW key and thus a new
-/// act. The client therefore does not replay an uncertain transaction, but it
-/// also does not freeze the terminal: the next user input is a new act and
-/// remains writable.
+/// Interactive input follows the same contract as a conventional terminal:
+/// encoder bytes are sent immediately, without waiting for a claim or receipt.
 final class B23UnknownRetryMatrixTests: XCTestCase {
     private let geometry = TerminalGeometry(
         columns: 80,
@@ -21,12 +14,7 @@ final class B23UnknownRetryMatrixTests: XCTestCase {
         cellHeightPx: 20
     )
 
-    /// Drives one input submission to a terminal receipt with `stage`, then
-    /// types again and reports how many `INPUT_SUBMIT` frames existed before
-    /// and after that second attempt. Rows and control share this reader.
-    private func submissionsAfterSecondType(
-        stage: String
-    ) throws -> (before: Int, after: Int, state: InputSubmissionState) {
+    private func userInputAfterSecondType(interveningFrame: WireFrame?) throws -> [WireFrame] {
         let host = FakeHost(connectionId: "input-unknown")
         let engine = FakeManualSurface()
         let view = try attachView(host: host, engine: engine)
@@ -40,53 +28,9 @@ final class B23UnknownRetryMatrixTests: XCTestCase {
         drainMainQueue()
         try host.harvestViewerFrames()
 
-        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: claim.requestId,
-                payload: try FrameCodec.jsonPayload([
-                    "schemaVersion": 1,
-                    "result": [
-                        "state": "granted",
-                        "claim": [
-                            "token": "claim-unknown-row",
-                            "writer": "input-viewer",
-                            "kind": "human",
-                            "leaseExpiresAt": "2099-01-01T00:00:00.000Z",
-                        ],
-                    ],
-                ])
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-
-        let submit = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .inputSubmit })
-        let submitObject = try FrameCodec.parseJSONObject(submit.payload)
-        let transactionId = try XCTUnwrap(submitObject["transactionId"] as? String)
-
-        // Answer the submission with the requested terminal stage.
-        view.pumpHostFrame(
-            WireFrame(
-                type: .applied,
-                flags: [.response, .final],
-                requestId: submit.requestId,
-                payload: try FrameCodec.jsonPayload([
-                    "schemaVersion": 1,
-                    "resultKind": "input",
-                    "receipt": [
-                        "transactionId": transactionId,
-                        "stage": stage,
-                    ],
-                ])
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-
-        let before = host.receivedFromViewer.filter { $0.type == .inputSubmit }.count
+        if let interveningFrame {
+            view.pumpHostFrame(interveningFrame, frameBinding: binding)
+        }
 
         view.insertText(
             "second\n",
@@ -96,30 +40,30 @@ final class B23UnknownRetryMatrixTests: XCTestCase {
         drainMainQueue()
         try host.harvestViewerFrames()
 
-        let after = host.receivedFromViewer.filter { $0.type == .inputSubmit }.count
-        return (before, after, view.inputSubmissionState)
+        return host.receivedFromViewer.filter { $0.type == .userInput }
     }
 
-    func testUnknownResultDoesNotReplayPastInputOrFreezeFutureInput() throws {
-        let result = try submissionsAfterSecondType(stage: "unknown")
-
-        XCTAssertGreaterThan(
-            result.after, result.before,
-            "an uncertain past transaction permanently froze later terminal input")
-    }
-
-    /// Positive control through the same reader: a written-to-terminal receipt
-    /// leaves the client unfenced, so the SAME code path does submit again.
-    /// Without this, the zero above would be indistinguishable from a reader
-    /// that simply never observes a second submission.
-    func testPositiveControlWrittenReceiptAllowsASecondSubmission() throws {
-        let result = try submissionsAfterSecondType(stage: "written-to-terminal")
-
-        XCTAssertGreaterThan(
-            result.after, result.before,
-            "the reader saw no second INPUT_SUBMIT even on a healthy receipt; "
-                + "the unknown retry row above is unattributable until this passes"
+    func testLegacyUnknownReceiptCannotFreezeFutureInput() throws {
+        let staleReceipt = WireFrame(
+            type: .applied,
+            flags: [.response, .final],
+            requestId: 999,
+            payload: try FrameCodec.jsonPayload([
+                "schemaVersion": 1,
+                "resultKind": "input",
+                "receipt": ["transactionId": "retired-input-transaction", "stage": "unknown"],
+            ])
         )
+        let frames = try userInputAfterSecondType(interveningFrame: staleReceipt)
+
+        XCTAssertEqual(frames.map(\.payload), [Data("first\n".utf8), Data("second\n".utf8)])
+    }
+
+    func testBackToBackInputDoesNotWaitForAReceipt() throws {
+        let frames = try userInputAfterSecondType(interveningFrame: nil)
+
+        XCTAssertEqual(frames.map(\.payload), [Data("first\n".utf8), Data("second\n".utf8)])
+        XCTAssertTrue(frames.allSatisfy { $0.requestId == 0 })
     }
 
     private func attachView(

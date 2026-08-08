@@ -66,24 +66,12 @@ pub fn observeExactProcess(
     if (pid <= 0 or expected_start_token.len == 0) return .unknown;
     var reaped_by_earlier_observation = false;
     if (ownership == .child) {
-        // Child ownership is recorded only after exact launch identity
-        // readback. Until this broker reaps it, that PID cannot be reused.
+        // Child ownership is recorded only after exact launch identity readback. Until this broker reaps it, that PID cannot be reused.
         var status: c_int = 0;
         const waited = c.waitpid(pid, &status, c.WNOHANG);
         if (waited == pid) return .absent;
         if (waited != 0) {
-            // ECHILD is not "I cannot tell": it means this PID is not a child
-            // of ours to wait for, and the ordinary way that happens is that an
-            // earlier observation on this same path already reaped it. Treat
-            // that as "look harder", never as `unknown`: `unknown` occupies a
-            // registry slot forever, so a host killed through a TERMINATE
-            // whose readback did not verify would take its slot with it and
-            // starve capacity until restart.
-            // Falling through to the ordinary identity evidence is strictly
-            // more evidence, never less: a gone PID answers absent through the
-            // kill probe, a REUSED PID answers absent on the start token, and a
-            // live process whose recorded identity still matches answers
-            // present. Absence is never asserted from ECHILD alone.
+            // ECHILD is not "I cannot tell": it means this PID is not a child of ours to wait for, and the ordinary way that happens is that an earlier observation on this same path already reaped it. Treat that as "look harder", never as `unknown`: `unknown` occupies a registry slot forever, so a host killed through a TERMINATE whose readback did not verify would take its slot with it and starve capacity until restart. Falling through to the ordinary identity evidence is strictly more evidence, never less: a gone PID answers absent through the kill probe, a REUSED PID answers absent on the start token, and a live process whose recorded identity still matches answers present. Absence is never asserted from ECHILD alone.
             if (std.posix.errno(waited) != .CHILD) return .unknown;
             reaped_by_earlier_observation = true;
         }
@@ -130,8 +118,7 @@ pub const ObservedPeer = struct {
     }
 };
 
-/// Captures kernel-owned identity before HELLO. JSON claims are never used to
-/// populate any field returned here.
+/// Captures kernel-owned identity before HELLO. JSON claims are never used to populate any field returned here.
 pub fn inspectPeer(socket_fd: std.posix.fd_t) !ObservedPeer {
     var uid: c.uid_t = 0;
     var gid: c.gid_t = 0;
@@ -222,28 +209,6 @@ pub fn equalOptionalString(left: ?[]const u8, right: ?[]const u8) bool {
     return std.mem.eql(u8, left.?, right.?);
 }
 
-pub fn verifyDaemonHello(hello: DaemonHello, expected: DaemonHandshake) ?protocol.Failure {
-    if (!std.mem.eql(u8, hello.clientRole, "daemon"))
-        return .{ .code = .forbidden, .close_connection = true };
-    if (!std.mem.eql(u8, hello.instanceId, expected.instanceId) or
-        !std.mem.eql(u8, hello.daemonControl.instanceId, expected.instanceId))
-        return .{ .code = .instance_mismatch, .close_connection = true };
-    if (selectProtocolMinor(hello.protocol) == null or
-        hello.daemonControl.wireProtocol.min != expected.wireProtocol.min or
-        hello.daemonControl.wireProtocol.max != expected.wireProtocol.max)
-        return .{ .code = .protocol_mismatch, .close_connection = true };
-    if (!std.mem.eql(u8, hello.buildId, expected.buildHash) or
-        !std.mem.eql(u8, hello.daemonControl.buildHash, expected.buildHash) or
-        hello.daemonControl.schemaEpoch != expected.schemaEpoch)
-        return .{ .code = .protocol_mismatch, .close_connection = true };
-    if (!std.mem.eql(u8, hello.daemonControl.productVersion, expected.productVersion) or
-        !std.mem.eql(u8, hello.daemonControl.hiveUuid, expected.hiveUuid) or
-        !std.mem.eql(u8, hello.daemonControl.identityKey, expected.identityKey) or
-        !equalOptionalString(hello.daemonControl.repoFamilyKey, expected.repoFamilyKey))
-        return .{ .code = .forbidden, .close_connection = true };
-    return null;
-}
-
 pub fn selectProtocolMinor(client: SessionProtocolRange) ?u8 {
     if (client.major != generated.protocol_major or client.minMinor > client.maxMinor)
         return null;
@@ -252,44 +217,8 @@ pub fn selectProtocolMinor(client: SessionProtocolRange) ?u8 {
     return selected;
 }
 
-pub fn parseDaemonHello(allocator: std.mem.Allocator, payload: []const u8) !std.json.Parsed(DaemonHello) {
-    if (!protocol.validateControlPayload(allocator, generated.wire_schema.hello_payload, payload))
-        return error.MalformedDaemonHello;
-    const parsed = try std.json.parseFromSlice(DaemonHello, allocator, payload, .{
-        .allocate = .alloc_always,
-    });
-    if (parsed.value.schemaVersion != 1 or !std.mem.eql(u8, parsed.value.clientRole, "daemon")) {
-        var owned = parsed;
-        owned.deinit();
-        return error.MalformedDaemonHello;
-    }
-    return parsed;
-}
-pub fn verifyDaemonPeer(
-    observed: *const ObservedPeer,
-    expected: ExpectedPeer,
-    claims: DaemonClaimChecks,
-) ?protocol.Failure {
-    var token_buffer: [64]u8 = undefined;
-    const observed_token = formatStartToken(observed.start_token, &token_buffer) catch
-        return .{ .code = .unauthenticated, .close_connection = true };
-    if (observed.uid != expected.uid or observed.gid != expected.gid or observed.pid != expected.pid or
-        !std.mem.eql(u8, observed_token, expected.start_token) or
-        !std.mem.eql(u8, observed.executablePath(), expected.executable))
-        return .{ .code = .unauthenticated, .close_connection = true };
-    if (!claims.instance) return .{ .code = .instance_mismatch, .close_connection = true };
-    if (!claims.product or !claims.build or !claims.protocol or !claims.schema or !claims.project)
-        return .{ .code = .forbidden, .close_connection = true };
-    return null;
-}
-
-// A killed child host must stay reclaimable after the first observation has
-// already reaped it. `waitForExactProcessAbsence` runs inside TERMINATE and
-// consumes the exit status; the broker's later `reapExitedHosts` pass is what
-// actually returns the registry slot, and it must not be told `unknown` merely
-// because there is no exit status left to collect. Real fork/exec/kill: a
-// simulated PID cannot exercise waitpid's ECHILD at all.
-test "an already-reaped child host is still observed absent" {
+// Forks a real `/bin/sleep` child and polls until its start token is observable. The token borrows `token_storage`, which the caller owns.
+fn forkSleepingChild(token_storage: *[64]u8) !struct { pid: i32, start_token: []const u8 } {
     const pid = try std.posix.fork();
     if (pid == 0) {
         const argv = [_:null]?[*:0]const u8{ "sleep", "30", null };
@@ -298,14 +227,31 @@ test "an already-reaped child host is still observed absent" {
         std.posix.exit(127);
     }
 
-    var token_storage: [64]u8 = undefined;
     var observed = inspectProcess(pid);
     var attempts: usize = 0;
     while (std.meta.isError(observed) and attempts < 200) : (attempts += 1) {
         std.Thread.sleep(std.time.ns_per_ms);
         observed = inspectProcess(pid);
     }
-    const start_token = try formatStartToken((try observed).start_token, &token_storage);
+    // The caller's cleanup defer is not registered yet, so a failure after the fork must reap the child here rather than orphan it.
+    const present = observed catch |err| {
+        _ = c.kill(pid, c.SIGKILL);
+        var status: c_int = 0;
+        _ = c.waitpid(pid, &status, 0);
+        return err;
+    };
+    return .{
+        .pid = pid,
+        .start_token = try formatStartToken(present.start_token, token_storage),
+    };
+}
+
+// A killed child host must stay reclaimable after the first observation has already reaped it. `waitForExactProcessAbsence` runs inside TERMINATE and consumes the exit status; the broker's later `reapExitedHosts` pass is what actually returns the registry slot, and it must not be told `unknown` merely because there is no exit status left to collect. Real fork/exec/kill: a simulated PID cannot exercise waitpid's ECHILD at all.
+test "an already-reaped child host is still observed absent" {
+    var token_storage: [64]u8 = undefined;
+    const child = try forkSleepingChild(&token_storage);
+    const pid = child.pid;
+    const start_token = child.start_token;
 
     try std.testing.expectEqual(
         ExactProcessPresence.present,
@@ -313,7 +259,6 @@ test "an already-reaped child host is still observed absent" {
     );
 
     _ = c.kill(pid, c.SIGKILL);
-    // The first observation reaps: this is TERMINATE's absence poll.
     try std.testing.expect(waitForExactProcessAbsence(pid, start_token, .child));
     // Every observation after it is the broker's reap pass, and must agree.
     try std.testing.expectEqual(
@@ -326,30 +271,17 @@ test "an already-reaped child host is still observed absent" {
     );
 }
 
-// The fall-through must never manufacture absence. A live child whose recorded
-// identity still matches is present, however its exit status was accounted for.
+// The fall-through must never manufacture absence. A live child whose recorded identity still matches is present, however its exit status was accounted for.
 test "a live child host is never reported absent" {
-    const pid = try std.posix.fork();
-    if (pid == 0) {
-        const argv = [_:null]?[*:0]const u8{ "sleep", "30", null };
-        const envp = [_:null]?[*:0]const u8{null};
-        std.posix.execveZ("/bin/sleep", &argv, &envp) catch {};
-        std.posix.exit(127);
-    }
+    var token_storage: [64]u8 = undefined;
+    const child = try forkSleepingChild(&token_storage);
+    const pid = child.pid;
+    const start_token = child.start_token;
     defer {
         _ = c.kill(pid, c.SIGKILL);
         var status: c_int = 0;
         _ = c.waitpid(pid, &status, 0);
     }
-
-    var token_storage: [64]u8 = undefined;
-    var observed = inspectProcess(pid);
-    var attempts: usize = 0;
-    while (std.meta.isError(observed) and attempts < 200) : (attempts += 1) {
-        std.Thread.sleep(std.time.ns_per_ms);
-        observed = inspectProcess(pid);
-    }
-    const start_token = try formatStartToken((try observed).start_token, &token_storage);
 
     var index: usize = 0;
     while (index < 5) : (index += 1) {

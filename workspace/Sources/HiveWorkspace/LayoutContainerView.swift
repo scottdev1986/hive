@@ -1,8 +1,6 @@
 import AppKit
 import WorkspaceCore
 
-/// Hosts pane views and animates them between solver frames.
-/// Flipped so solver coordinates (y-down) map directly to view frames.
 final class LayoutContainerView: NSView {
     override var isFlipped: Bool { true }
 
@@ -18,10 +16,7 @@ final class LayoutContainerView: NSView {
     }
 }
 
-/// The ~180 ms interruptible layout transition. Frames are driven explicitly
-/// from a timer so a retarget mid-flight starts from the true presentation
-/// geometry, and the terminal-cell commit fires exactly once, only when a
-/// transition fully settles. Reduce Motion snaps immediately (still one commit).
+/// The ~180 ms interruptible layout transition. Frames are driven explicitly from a timer so a retarget mid-flight starts from the true presentation geometry, and the terminal-cell commit fires exactly once, only when a transition fully settles. Reduce Motion snaps immediately (still one commit).
 final class LayoutAnimator {
 
     private struct Transition {
@@ -35,10 +30,7 @@ final class LayoutAnimator {
     private var startTime: CFTimeInterval = 0
     private var completion: (() -> Void)?
 
-    var isAnimating: Bool { timer != nil }
-
     func animate(views: [(NSView, CGRect)], reduceMotion: Bool, completion: @escaping () -> Void) {
-        // Interrupt: drop the pending commit; the new transition owns it.
         cancel()
 
         let moving = views.filter { $0.0.frame != $0.1 }
@@ -53,8 +45,6 @@ final class LayoutAnimator {
             return
         }
 
-        // `view.frame` is the presentation value because this animator is the
-        // only thing mutating it — retargets are seamless by construction.
         transitions = moving.map { Transition(view: $0.0, from: $0.0.frame, to: $0.1) }
         self.completion = completion
         startTime = CACurrentMediaTime()

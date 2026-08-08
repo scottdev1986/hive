@@ -6,7 +6,7 @@ import HiveGhosttyC
 /// Gate 10 AppKit / B2.6 accessibility surface controls against a REAL manual
 /// surface. Semantic rows/ranges/cursor/selection come from a pinned snapshot
 /// generation; selection-change AX posting is exercised via the Gate 9 carrier
-/// + notification probe. Live VoiceOver listening remains a human checklist
+/// + notification probe. Live VoiceOver listening remains a user checklist
 /// slot (see raw/qualification/hive-b26-gate10-accessibility/).
 @MainActor
 final class Gate10AccessibilityTests: XCTestCase {

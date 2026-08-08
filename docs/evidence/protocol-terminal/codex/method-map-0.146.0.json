@@ -1,0 +1,48 @@
+{
+  "runtime": "codex-cli 0.146.0",
+  "schemaSource": "src/adapters/providers/codex-app-server/generated/0.146.0/ClientRequest.ts",
+  "commands": {
+    "/review": {
+      "requestMethods": ["review/start"]
+    },
+    "/compact": {
+      "requestMethods": ["thread/compact/start"]
+    },
+    "/model": {
+      "requestMethods": ["model/list", "thread/settings/update"],
+      "turnOverrideField": "turn/start.params.model"
+    },
+    "/permissions": {
+      "requestMethods": [
+        "permissionProfile/list",
+        "thread/settings/update",
+        "thread/read"
+      ],
+      "turnOverrideFields": [
+        "turn/start.params.approvalPolicy",
+        "turn/start.params.sandboxPolicy",
+        "turn/start.params.permissions"
+      ]
+    },
+    "/status": {
+      "requestMethods": ["thread/read", "config/read"],
+      "runtimeHandshakeMethod": "initialize"
+    },
+    "skills": {
+      "requestMethods": ["skills/list"],
+      "invalidationNotification": "skills/changed"
+    }
+  },
+  "approvals": {
+    "serverRequestMethods": [
+      "item/commandExecution/requestApproval",
+      "item/fileChange/requestApproval",
+      "item/permissions/requestApproval"
+    ]
+  },
+  "nativeTuiOnly": {
+    "advertised": false,
+    "forwardedAsModelText": false,
+    "reason": "Codex App Server 0.146.0 exposes no native slash-command catalog. Hive omits every native-TUI-only command and exposes only the mappings listed above."
+  }
+}

@@ -1,0 +1,723 @@
+import AppKit
+import HiveTerminalKit
+import HiveWorkspace
+import WorkspaceCore
+
+/// Headless end-to-end checks against real sessiond terminals and a real feed subprocess (or the harness's process-boundary stub). Windows stay offscreen (activation policy .accessory, never shown). The harness communicates expectations through environment variables: HIVE_SMOKE_AGENTS comma list of name=marker for live agents whose pane buffers must eventually show `marker` HIVE_SMOKE_CLOSED comma list of agent names that must NOT get panes HIVE_SMOKE_ORCH_MARKER marker expected in the orchestrator buffer HIVE_SMOKE_TYPE_INTO agent name running an interactive shell for the keystroke round trip HIVE_SMOKE_RT_MARKER the round-trip marker; typed split ("S''MK…") so the shell's *output* is the only place the full marker can appear HIVE_SMOKE_CLOSE agent name whose pane is closed mid-test
+public final class SmokeRunner {
+
+    private static let productionPaneMinimumHighWater: UInt64 = 1_024
+
+    public struct A4Proof: Equatable {
+        enum Action: String, Equatable {
+            case close
+        }
+
+        let agent: String
+        let action: Action
+    }
+
+    public static func sessiondLiveResizeInputAgent(environment: [String: String]) -> String {
+        environment["HIVE_B22_REAL_SHELL"] == "1" ? "terminal" : "aria"
+    }
+
+    public static func productionPaneAgent(environment: [String: String]) -> String? {
+        guard let agent = environment["HIVE_B25_PRODUCTION_PANE_AGENT"],
+              !agent.isEmpty else { return nil }
+        return agent
+    }
+
+    public static func a4Proof(environment: [String: String]) -> A4Proof? {
+        guard let agent = environment["HIVE_B25_A4_AGENT"], !agent.isEmpty,
+              let rawAction = environment["HIVE_B25_A4_ACTION"],
+              let action = A4Proof.Action(rawValue: rawAction)
+        else { return nil }
+        return A4Proof(agent: agent, action: action)
+    }
+
+    private let controller: any SmokeSurface
+    private let config: LaunchConfig
+    private var failures: [String] = []
+    private var productionPaneSummary: String?
+
+    public init(controller: any SmokeSurface, config: LaunchConfig) {
+        self.controller = controller
+        self.config = config
+    }
+
+    private func check(_ condition: Bool, _ label: String) {
+        if !condition { failures.append(label) }
+    }
+
+    /// Pumps the main run loop until the condition holds or the timeout hits. Real subprocesses and ptys need real time; this is the only clock. It pumps AppKit's event queue too, not just the run loop: window key status, clicks, and the first-responder changes they cause arrive as NSEvents, and nothing delivers those but `NSApp.sendEvent`. Draining the run loop alone leaves them sitting in the queue — which is why a shown, activated window still reported itself as not key.
+    @discardableResult
+    private func waitUntil(_ timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            if let event = NSApp.nextEvent(
+                matching: .any,
+                until: Date().addingTimeInterval(0.05),
+                inMode: .default,
+                dequeue: true) {
+                NSApp.sendEvent(event)
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        return condition()
+    }
+
+    private func sendInProcessKeys(_ text: String, to window: NSWindow) -> Bool {
+        for character in text {
+            let isReturn = character == "\n"
+            let characters = isReturn ? "\r" : String(character)
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: isReturn ? 36 : 0
+            ) else { return false }
+            window.sendEvent(event)
+        }
+        return true
+    }
+
+    private func runSessiondLiveResizeInputProof(agent: String) {
+        let paneID = ProjectState.paneID(forAgent: agent)
+        let paneArrived = waitUntil(20) {
+            self.controller.state.panes[paneID] != nil
+                && self.controller.sessiondTerminalView(pane: paneID) != nil
+        }
+        check(paneArrived, "sessiond pane \(agent) appeared in the actual app")
+        guard let window = controller.window,
+              let terminal = controller.sessiondTerminalView(pane: paneID) else {
+            finishSessiondLiveResizeInputProof()
+            return
+        }
+
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
+        NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
+        window.makeKey()
+        if !window.isKeyWindow {
+            let cocoaPoint = NSPoint(x: window.frame.midX, y: window.frame.maxY - 12)
+            let mainDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
+            let quartzPoint = CGPoint(x: cocoaPoint.x, y: mainDisplayHeight - cocoaPoint.y)
+            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                if let event = CGEvent(
+                    mouseEventSource: nil,
+                    mouseType: type,
+                    mouseCursorPosition: quartzPoint,
+                    mouseButton: .left
+                ) {
+                    event.post(tap: .cghidEventTap)
+                }
+            }
+        }
+        check(waitUntil(10) { window.isKeyWindow }, "actual app window became key")
+        check(waitUntil(10) { terminal.surfaceState == .live },
+              "sessiond terminal reached live before resize (\(terminal.surfaceState))")
+        controller.dispatch(.focusPane(paneID))
+        check(waitUntil(3) { window.firstResponder === terminal },
+              "sessiond terminal owns the actual app keyboard")
+
+        let preResizeHighWater = terminal.highWater
+        let preResizeMarker = "HIVE_BEFORE_RESIZE_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        check(sendInProcessKeys("echo \(preResizeMarker)\n", to: window),
+              "constructed pre-resize in-process key events")
+        check(waitUntil(10) {
+            if case .applied(_, let stage) = terminal.inputSubmissionState {
+                return stage == "written-to-terminal"
+            }
+            return false
+        }, "pre-resize in-process keys were written to the terminal")
+        check(waitUntil(10) { terminal.highWater > preResizeHighWater },
+              "pre-resize command produced new PTY output")
+        let preResizeTransaction: String?
+        if case .applied(let transactionId, _) = terminal.inputSubmissionState {
+            preResizeTransaction = transactionId
+        } else {
+            preResizeTransaction = nil
+        }
+
+        let geometryBefore = terminal.reportedGeometry
+        let resizeFramesBefore = terminal.resizeFramesSent
+        let frameBefore = window.frame
+        var sawLiveResizeStart = false
+        var sawLiveResizeEnd = false
+        var sawInLiveResize = false
+        let center = NotificationCenter.default
+        let startObserver = center.addObserver(
+            forName: NSWindow.willStartLiveResizeNotification,
+            object: window,
+            queue: .main
+        ) { _ in
+            sawLiveResizeStart = true
+            sawInLiveResize = window.inLiveResize
+        }
+        let endObserver = center.addObserver(
+            forName: NSWindow.didEndLiveResizeNotification,
+            object: window,
+            queue: .main
+        ) { _ in
+            sawLiveResizeEnd = true
+        }
+
+        let start = NSPoint(x: window.contentLayoutRect.maxX - 1, y: 1)
+        let end = NSPoint(x: start.x + 160, y: start.y - 90)
+        func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint, number: Int) -> NSEvent? {
+            NSEvent.mouseEvent(
+                with: type,
+                location: point,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: number,
+                clickCount: 1,
+                pressure: type == .leftMouseDown ? 1 : 0
+            )
+        }
+        if let down = mouseEvent(.leftMouseDown, at: start, number: 1),
+           let dragged = mouseEvent(.leftMouseDragged, at: end, number: 2),
+           let up = mouseEvent(.leftMouseUp, at: end, number: 3) {
+            NSApp.postEvent(dragged, atStart: false)
+            NSApp.postEvent(up, atStart: false)
+            window.sendEvent(down)
+        } else {
+            failures.append("constructed in-process live-resize mouse events")
+        }
+        center.removeObserver(startObserver)
+        center.removeObserver(endObserver)
+
+        check(sawLiveResizeStart && sawInLiveResize,
+              "mouse drag entered NSWindow live resize with inLiveResize=true")
+        check(sawLiveResizeEnd, "mouse drag completed NSWindow live resize")
+        check(window.frame != frameBefore, "mouse drag changed the actual app window frame")
+        check(waitUntil(5) {
+            terminal.reportedGeometry != geometryBefore
+                && terminal.resizeFramesSent > resizeFramesBefore
+        }, "live resize changed Ghostty geometry and sent RESIZE")
+        check(terminal.surfaceState == .live,
+              "terminal remained live after resize (\(terminal.surfaceState))")
+        check(window.firstResponder === terminal,
+              "live resize preserved the sessiond terminal first responder")
+
+        let highWaterBefore = terminal.highWater
+        let marker = "HIVE_LIVE_RESIZE_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        check(sendInProcessKeys("echo \(marker)\n", to: window),
+              "constructed post-resize in-process key events")
+        check(waitUntil(10) {
+            if case .applied(let transactionId, let stage) = terminal.inputSubmissionState {
+                return transactionId != preResizeTransaction && stage == "written-to-terminal"
+            }
+            return false
+        }, "post-resize in-process keys were written to the terminal")
+        check(waitUntil(10) { terminal.highWater > highWaterBefore },
+              "post-resize command produced new PTY output")
+
+        print(
+            "LIVE RESIZE INPUT PROOF: frame \(frameBefore) -> \(window.frame), "
+                + "geometry \(String(describing: geometryBefore)) -> "
+                + "\(String(describing: terminal.reportedGeometry)), marker \(marker), "
+                + "input \(terminal.inputSubmissionState), highWater "
+                + "\(highWaterBefore) -> \(terminal.highWater)"
+        )
+        finishSessiondLiveResizeInputProof()
+    }
+
+    private func exitSmoke(_ code: Int32, proof: String) -> Never {
+        TerminationLog.record(
+            .exiting, reason: .smokeFinished, detail: "code=\(code) proof=\(proof)")
+        exit(code)
+    }
+
+    private func finishSessiondLiveResizeInputProof() {
+        if failures.isEmpty {
+            print("LIVE RESIZE INPUT PROOF OK")
+            exitSmoke(0, proof: "sessiond-live-resize-input")
+        } else {
+            print("LIVE RESIZE INPUT PROOF FAIL:\n  " + failures.joined(separator: "\n  "))
+            exitSmoke(1, proof: "sessiond-live-resize-input")
+        }
+    }
+
+    private func runProductionPaneProof(agent: String) {
+        if let window = controller.window {
+            NSRunningApplication.current.activate(options: [.activateAllWindows])
+            NSApp.activate(ignoringOtherApps: true)
+            window.center()
+            window.orderFrontRegardless()
+            window.makeKey()
+        }
+        let paneID = ProjectState.paneID(forAgent: agent)
+        waitForProductionPane(agent: agent, paneID: paneID,
+                              deadline: Date().addingTimeInterval(45))
+    }
+
+    private func waitForProductionPane(agent: String, paneID: PaneID, deadline: Date) {
+        guard let window = controller.window,
+              let pane = controller.state.panes[paneID],
+              let locator = pane.sessionLocator,
+              let terminal = controller.sessiondTerminalView(pane: paneID) else {
+            guard Date() < deadline else {
+                check(false, "production pane \(agent) appeared in the real Workspace")
+                finishProductionPaneProof()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForProductionPane(agent: agent, paneID: paneID, deadline: deadline)
+            }
+            return
+        }
+
+        check(locator.hostKind == "sessiond",
+              "production feed supplied a sessiond locator")
+        let expectedLocator = SessionLocator(
+            schemaVersion: locator.schemaVersion,
+            instanceId: locator.instanceId,
+            subjectKind: locator.subject.kind,
+            agentId: locator.subject.agentId,
+            generation: locator.generation,
+            sessionId: locator.sessionId,
+            hostKind: locator.hostKind,
+            engineBuildId: locator.engineBuildId)
+        waitForProductionSurface(
+            agent: agent, paneID: paneID, locator: locator,
+            expectedLocator: expectedLocator, terminal: terminal, window: window,
+            deadline: Date().addingTimeInterval(60))
+    }
+
+    private func waitForProductionSurface(
+        agent: String, paneID: PaneID, locator: AgentSessionLocator,
+        expectedLocator: SessionLocator, terminal: HiveTerminalView,
+        window: NSWindow, deadline: Date
+    ) {
+        let renderEvidence = terminal.renderEvidence
+        let feedStatus = controller.state.panes[paneID]?.feedStatus
+        guard terminal.surfaceState == .live,
+              terminal.sessionLocator == expectedLocator,
+              terminal.highWater >= Self.productionPaneMinimumHighWater,
+              renderEvidence.drawCount > 0,
+              renderEvidence.hasPresentedContents,
+              feedStatus != nil,
+              feedStatus != "spawning" else {
+            guard Date() < deadline else {
+                check(false, "HiveTerminalView reached its first correct frame on the exact locator")
+                finishProductionPaneChecks(
+                    agent: agent, paneID: paneID, locator: locator,
+                    terminal: terminal, window: window)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForProductionSurface(
+                    agent: agent, paneID: paneID, locator: locator,
+                    expectedLocator: expectedLocator, terminal: terminal,
+                    window: window, deadline: deadline)
+            }
+            return
+        }
+        finishProductionPaneChecks(
+            agent: agent, paneID: paneID, locator: locator,
+            terminal: terminal, window: window)
+    }
+
+    private func finishProductionPaneChecks(
+        agent: String, paneID: PaneID, locator: AgentSessionLocator,
+        terminal: HiveTerminalView, window: NSWindow
+    ) {
+        check(terminal.highWater > 0,
+              "the production vendor TUI presented non-empty ordered output")
+        check(terminal.highWater >= Self.productionPaneMinimumHighWater,
+              "the production vendor TUI settled on substantive ordered output")
+        check(terminal.renderEvidence.drawCount > 0
+                && terminal.renderEvidence.hasPresentedContents,
+              "the production renderer presented nonblank layer content")
+        let feedStatus = controller.state.panes[paneID]?.feedStatus
+        check(feedStatus != nil && feedStatus != "spawning",
+              "the production pane header settled beyond spawning")
+        check(terminal.window === controller.window && terminal.superview != nil,
+              "HiveTerminalView is installed in the real Workspace window")
+        check(terminal.bounds.width > 0 && terminal.bounds.height > 0,
+              "the production pane has committed non-zero geometry")
+        check(window.isVisible,
+              "the real Workspace window is visible for evidence capture")
+        check(!controller.terminalChildRunning(pane: paneID),
+              "the renderer owns no hidden child PTY")
+        let screenFrame = (window.screen ?? NSScreen.main)?.frame ?? .zero
+        let captureFrame = window.frame.intersection(screenFrame)
+        check(!captureFrame.isNull && captureFrame.width > 0 && captureFrame.height > 0,
+              "the visible Workspace window intersects its real screen")
+        let captureX = captureFrame.minX - screenFrame.minX
+        let captureY = screenFrame.maxY - captureFrame.maxY
+
+        productionPaneSummary =
+            "PRODUCTION PANE PROOF: agent=\(agent) instance=\(locator.instanceId) "
+                + "session=\(locator.sessionId) "
+                + "generation=\(locator.generation) engine=\(locator.engineBuildId ?? "missing") "
+                + "highWater=\(terminal.highWater) frame=\(terminal.frame) "
+                + "drawCount=\(terminal.renderEvidence.drawCount) "
+                + "presented=\(terminal.renderEvidence.hasPresentedContents) "
+                + "feedStatus=\(feedStatus ?? "missing") "
+                + "window=\(window.windowNumber) visible=\(window.isVisible) "
+                + "captureRect=\(Int(captureX.rounded())),\(Int(captureY.rounded())),"
+                + "\(Int(captureFrame.width.rounded())),\(Int(captureFrame.height.rounded())) "
+                + "screenSize=\(Int(screenFrame.width.rounded())),"
+                + "\(Int(screenFrame.height.rounded()))"
+        finishProductionPaneProof()
+    }
+
+    private func finishProductionPaneProof() {
+        let result = failures.isEmpty
+            ? "PRODUCTION PANE PROOF OK"
+            : "PRODUCTION PANE PROOF FAIL:\n  " + failures.joined(separator: "\n  ")
+        let report = [productionPaneSummary, result].compactMap { $0 }.joined(separator: "\n") + "\n"
+        if let path = ProcessInfo.processInfo.environment["HIVE_B25_PRODUCTION_PANE_RESULT"] {
+            do {
+                try report.write(toFile: path, atomically: true, encoding: .utf8)
+            } catch {
+                print("PRODUCTION PANE PROOF FAIL: could not write result: \(error)")
+                return
+            }
+        }
+        print(report, terminator: "")
+    }
+
+    private func runA4Proof(_ proof: A4Proof) {
+        let paneID = ProjectState.paneID(forAgent: proof.agent)
+        waitForA4Pane(proof, paneID: paneID, deadline: Date().addingTimeInterval(45))
+    }
+
+    private func waitForA4Pane(_ proof: A4Proof, paneID: PaneID, deadline: Date) {
+        guard let pane = controller.state.panes[paneID],
+              let locator = pane.sessionLocator,
+              locator.hostKind == "sessiond",
+              pane.feedStatus != "spawning" else {
+            guard Date() < deadline else {
+                check(false, "A4 pane reached a settled feed state on a sessiond locator")
+                finishA4Proof("A4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Pane(proof, paneID: paneID, deadline: deadline)
+            }
+            return
+        }
+
+        let terminal = controller.sessiondTerminalView(pane: paneID)
+        let ready = "A4 \(proof.action.rawValue.uppercased()) READY: agent=\(proof.agent) "
+            + "instance=\(locator.instanceId) session=\(locator.sessionId) "
+            + "generation=\(locator.generation) feedStatus=\(pane.feedStatus) "
+            + "rendererHighWater=\(terminal?.highWater.description ?? "unavailable")"
+        finishA4Proof(ready)
+        waitForA4Trigger(
+            proof, paneID: paneID, ready: ready,
+            deadline: Date().addingTimeInterval(60))
+    }
+
+    private func waitForA4Trigger(
+        _ proof: A4Proof, paneID: PaneID, ready: String, deadline: Date
+    ) {
+        guard let trigger = ProcessInfo.processInfo.environment["HIVE_B25_A4_TRIGGER"],
+              !trigger.isEmpty else {
+            check(false, "HIVE_B25_A4_TRIGGER names the explicit qualification trigger")
+            finishA4Proof("\(ready)\nA4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+            return
+        }
+        guard FileManager.default.fileExists(atPath: trigger) else {
+            guard Date() < deadline else {
+                check(false, "A4 qualification trigger arrived before timeout")
+                finishA4Proof("\(ready)\nA4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Trigger(
+                    proof, paneID: paneID, ready: ready, deadline: deadline)
+            }
+            return
+        }
+
+        controller.dispatch(.closePane(paneID))
+        waitForA4Close(
+            proof, paneID: paneID, ready: ready,
+            deadline: Date().addingTimeInterval(30))
+    }
+
+    private func waitForA4Close(
+        _ proof: A4Proof, paneID: PaneID, ready: String, deadline: Date
+    ) {
+        guard controller.state.panes[paneID] == nil else {
+            guard Date() < deadline else {
+                check(false, "closed A4 pane disappeared")
+                finishA4Proof("\(ready)\nA4 CLOSE PROOF FAIL")
+                exitSmoke(1, proof: "a4-close")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Close(
+                    proof, paneID: paneID, ready: ready, deadline: deadline)
+            }
+            return
+        }
+        finishA4Proof("\(ready)\nA4 CLOSE PROOF OK: exact pane removed; the agent was not killed (#64)")
+        exitSmoke(failures.isEmpty ? 0 : 1, proof: "a4-close")
+    }
+
+    private func finishA4Proof(_ body: String) {
+        let report = body + (failures.isEmpty
+            ? "\n"
+            : "\n  " + failures.joined(separator: "\n  ") + "\n")
+        if let path = ProcessInfo.processInfo.environment["HIVE_B25_A4_RESULT"] {
+            do {
+                try report.write(toFile: path, atomically: true, encoding: .utf8)
+            } catch {
+                print("A4 PROOF FAIL: could not write result: \(error)")
+                return
+            }
+        }
+        print(report, terminator: "")
+    }
+
+    public func run() {
+        let env = ProcessInfo.processInfo.environment
+        if let proof = Self.a4Proof(environment: env) {
+            runA4Proof(proof)
+            return
+        }
+        if let agent = Self.productionPaneAgent(environment: env) {
+            runProductionPaneProof(agent: agent)
+            return
+        }
+        if env["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] == "1" {
+            runSessiondLiveResizeInputProof(
+                agent: Self.sessiondLiveResizeInputAgent(environment: env))
+            return
+        }
+        let expectedAgents: [(name: String, marker: String)] = (env["HIVE_SMOKE_AGENTS"] ?? "")
+            .split(separator: ",")
+            .compactMap { entry in
+                let parts = entry.split(separator: "=", maxSplits: 1)
+                guard parts.count == 2 else { return nil }
+                return (String(parts[0]), String(parts[1]))
+            }
+        let closedAgents = (env["HIVE_SMOKE_CLOSED"] ?? "").split(separator: ",").map(String.init)
+        let orchMarker = env["HIVE_SMOKE_ORCH_MARKER"]
+        let typeInto = env["HIVE_SMOKE_TYPE_INTO"]
+        let rtMarker = env["HIVE_SMOKE_RT_MARKER"]
+        let closeTarget = env["HIVE_SMOKE_CLOSE"]
+
+        let projectName = config.projectName ?? ""
+        check(controller.window != nil, "project window exists")
+        check(controller.window?.title == "Hive Workspace - \(projectName)",
+              "window titled after the project directory")
+        controller.window?.layoutIfNeeded()
+
+        let expectedPaneCount = 1 + expectedAgents.count
+        check(waitUntil(15) { self.controller.state.panes.count == expectedPaneCount
+                              && self.controller.paneViewCount == expectedPaneCount },
+              "pane per live agent + master (want \(expectedPaneCount), have \(controller.paneViewCount))")
+        check(controller.state.layout.master == ProjectState.orchestratorPaneID,
+              "orchestrator is master")
+        for name in closedAgents {
+            check(controller.state.panes[ProjectState.paneID(forAgent: name)] == nil,
+                  "closed agent \(name) has no pane")
+        }
+
+        for (name, marker) in expectedAgents {
+            let paneID = ProjectState.paneID(forAgent: name)
+            check(waitUntil(20) { self.controller.terminalText(pane: paneID).contains(marker) },
+                  "agent \(name) terminal shows real output '\(marker)'")
+            check(controller.sessiondTerminalHasStarted(pane: paneID),
+                  "agent \(name) sessiond renderer is running")
+        }
+        if let orchMarker {
+            check(waitUntil(20) { self.controller.terminalText(pane: ProjectState.orchestratorPaneID).contains(orchMarker) },
+                  "orchestrator terminal shows '\(orchMarker)'")
+        }
+
+        if let agent = expectedAgents.first {
+            check(controller.postScrollWheel(
+                deltaY: 10,
+                pane: ProjectState.paneID(forAgent: agent.name)),
+                "agent wheel reaches the terminal")
+        }
+        if controller.sessiondTerminalView(pane: ProjectState.orchestratorPaneID) != nil {
+            check(controller.postScrollWheel(
+                deltaY: 10,
+                pane: ProjectState.orchestratorPaneID),
+                "orchestrator wheel reaches the terminal")
+        } else {
+            failures.append("smoke launch provides an orchestrator terminal")
+        }
+
+        let frames = controller.currentPaneFrames()
+        check(frames.count == controller.state.panes.count, "solved frame per pane")
+        if let masterFrame = frames[ProjectState.orchestratorPaneID], frames.count > 1 {
+            let minX = frames.values.map(\.minX).min() ?? 0
+            let maxX = frames.values.map(\.maxX).max() ?? 1
+            let ratio = masterFrame.width / max(maxX - minX, 1)
+            check((0.50...0.65).contains(ratio), "master width in band (ratio \(ratio))")
+            for (paneID, frame) in frames where paneID != ProjectState.orchestratorPaneID {
+                check(frame.minX >= masterFrame.maxX, "satellite \(paneID) right of master")
+                check(frame.width > 0 && frame.height > 0, "satellite \(paneID) has geometry")
+            }
+        }
+
+        if let agent = expectedAgents.last {
+            let paneID = ProjectState.paneID(forAgent: agent.name)
+            let framesBefore = controller.currentPaneFrames()
+            let paneMenu = NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Pane" }
+            if let paneMenu,
+               let promoteIndex = paneMenu.items.firstIndex(where: { $0.title == "Promote to Master" }),
+               let returnIndex = paneMenu.items.firstIndex(where: { $0.title == "Return Queen to Master" }) {
+                let promoteItem = paneMenu.items[promoteIndex]
+                let returnItem = paneMenu.items[returnIndex]
+                check(paneMenu.autoenablesItems, "Pane menu uses automatic item validation")
+                check(promoteItem.target === controller && returnItem.target === controller,
+                      "Pane layout actions explicitly target the project controller")
+                check((NSApp.target(forAction: promoteItem.action!,
+                                    to: promoteItem.target as AnyObject?,
+                                    from: promoteItem) as AnyObject?) === controller,
+                      "AppKit resolves the Promote target")
+                check((NSApp.target(forAction: returnItem.action!,
+                                    to: returnItem.target as AnyObject?,
+                                    from: returnItem) as AnyObject?) === controller,
+                      "AppKit resolves the Return target")
+                check(promoteItem.keyEquivalent == "\r"
+                      && promoteItem.keyEquivalentModifierMask == [.command],
+                      "Promote shortcut is Command-Return")
+                check(returnItem.keyEquivalent == "\r"
+                      && returnItem.keyEquivalentModifierMask == [.command, .shift],
+                      "Return shortcut is Shift-Command-Return")
+
+                controller.dispatch(.focusPane(paneID))
+                paneMenu.update()
+                check(promoteItem.isEnabled, "Promote is enabled for a focused satellite")
+                check(!returnItem.isEnabled, "Return is disabled while orchestrator is master")
+                paneMenu.performActionForItem(at: promoteIndex)
+                check(waitUntil(2) { self.controller.state.layout.master == paneID },
+                      "Pane > Promote to Master swaps the focused agent")
+                check((controller.currentPaneFrames()[paneID]?.width ?? 0)
+                      > (framesBefore[paneID]?.width ?? 0),
+                      "promoted agent pane becomes wider")
+                waitUntil(LayoutTransition.duration + 0.1) { false }
+                check(controller.sessiondTerminalHasStarted(pane: paneID),
+                      "promoted agent terminal remains live after PTY resize")
+
+                paneMenu.update()
+                check(!promoteItem.isEnabled, "Promote is disabled for the current master")
+                check(returnItem.isEnabled, "Return is enabled after promoting an agent")
+                paneMenu.performActionForItem(at: returnIndex)
+                check(waitUntil(2) {
+                    self.controller.state.layout.master == ProjectState.orchestratorPaneID
+                        && self.controller.currentPaneFrames() == framesBefore
+                }, "Pane > Return Queen to Master restores the grid")
+                waitUntil(LayoutTransition.duration + 0.1) { false }
+                check(controller.sessiondTerminalHasStarted(
+                    pane: ProjectState.orchestratorPaneID),
+                    "orchestrator terminal remains live after PTY resize")
+                paneMenu.update()
+                check(promoteItem.isEnabled, "Promote re-enables after returning orchestrator")
+                check(!returnItem.isEnabled, "Return disables after restoring orchestrator")
+            } else {
+                failures.append("Pane menu exposes promote and return actions")
+            }
+        }
+
+        if let typeInto, let rtMarker, rtMarker.count > 2 {
+            let paneID = ProjectState.paneID(forAgent: typeInto)
+            let split = "\(rtMarker.prefix(1))''\(rtMarker.dropFirst())"
+            controller.sendText("echo \(split)\r", pane: paneID)
+            check(waitUntil(20) { self.controller.terminalText(pane: paneID).contains(rtMarker) },
+                  "keystroke round trip through sessiond ('\(rtMarker)')")
+        }
+
+        // 8. The active-pane indicator tracks the REAL keyboard, not the last click: a click is delivered through the window's own event dispatch (hit-test → terminal takes first responder), and the indicator is read back off the pane VIEW — never off the reducer, which would prove only that the app agrees with itself.
+        if let agent = expectedAgents.first {
+            let paneID = ProjectState.paneID(forAgent: agent.name)
+            let orchestrator = ProjectState.orchestratorPaneID
+
+            // Activation is asynchronous: in visible mode the window is ordered in and activated, but it is not key until the run loop has spun. Wait for it, and FAIL if it never arrives — silently falling back to the non-key branch would quietly delete the click coverage.
+            let wantsKey = ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1"
+            let windowIsKey = wantsKey
+                ? waitUntil(5) { self.controller.window?.isKeyWindow ?? false }
+                : (controller.window?.isKeyWindow ?? false)
+            if wantsKey {
+                check(windowIsKey, "HIVE_SMOKE_VISIBLE window became key")
+            }
+
+            controller.dispatch(.focusPane(paneID))
+            check(waitUntil(2) { self.controller.firstResponderPane() == paneID },
+                  "a focus command hands the pane the real first responder")
+            check(controller.focusIndicator(pane: paneID) != .none,
+                  "the focused pane shows an indicator")
+            check(controller.focusIndicator(pane: orchestrator) == .none,
+                  "the pane that lost the keyboard drops its indicator")
+
+            if windowIsKey {
+                check(controller.postClick(pane: orchestrator),
+                      "click delivered to the orchestrator pane")
+                check(waitUntil(2) { self.controller.firstResponderPane() == orchestrator },
+                      "clicking a pane gives it the keyboard (first responder)")
+                check(controller.focusIndicator(pane: orchestrator) == .active,
+                      "the clicked pane shows the ACTIVE indicator in a key window")
+                check(controller.focusIndicator(pane: paneID) == .none,
+                      "the previously focused pane drops its indicator on click")
+                check(controller.state.focusedPane == orchestrator,
+                      "the reducer follows the real first responder after a click")
+                controller.dispatch(.focusPane(paneID))
+            } else {
+                // A click into a non-key window is an ACTIVATION on macOS, not a focus change, so click-to-focus cannot be asserted here. Say so rather than let the coverage look complete.
+                print("  (skipped: click-to-focus needs a key window — rerun with HIVE_SMOKE_VISIBLE=1)")
+
+                // What this mode CAN prove is the honesty rule: the pane still holds focus, and the indicator says so — but it must never claim the vivid "keystrokes land here" state while none can.
+                check(controller.focusIndicator(pane: paneID) == .inactive,
+                      "a non-key window shows the dimmed indicator, never .active")
+            }
+
+            controller.dispatch(.focusOrchestrator)
+            check(waitUntil(2) { self.controller.firstResponderPane() == orchestrator },
+                  "keyboard focus move hands the keyboard to the orchestrator")
+            check(controller.focusIndicator(pane: orchestrator) != .none
+                  && controller.focusIndicator(pane: paneID) == .none,
+                  "the indicator follows a keyboard focus move")
+        }
+
+        // 9. Closing a pane closes the pane, never the agent: the attach client dies, the pane view goes away, and no kill is issued — the agent's session survives its pane.
+        if let closeTarget {
+            let paneID = ProjectState.paneID(forAgent: closeTarget)
+            let countBefore = controller.paneViewCount
+            // Close the pane that currently holds the keyboard: the indicator must not survive on a dead pane, and exactly one live pane may claim focus afterwards.
+            controller.dispatch(.focusPane(paneID))
+            check(waitUntil(2) { self.controller.firstResponderPane() == paneID },
+                  "focused the pane that is about to close")
+            controller.dispatch(.closePane(paneID))
+            check(controller.paneViewCount == countBefore - 1, "closed pane view removed")
+            check(controller.state.panes[paneID] == nil, "closed pane left the reducer")
+            check(controller.sessiondTerminalView(pane: paneID) == nil,
+                  "renderer detached on close")
+            check(controller.currentPaneFrames().count == controller.state.panes.count,
+                  "layout re-solved after close")
+
+            let focused = controller.state.panes.keys.filter {
+                controller.focusIndicator(pane: $0) != .none
+            }
+            check(focused.count == 1, "exactly one live pane shows the indicator after a close")
+            check(controller.firstResponderPane() == focused.first,
+                  "the indicator sits on the pane that really took the keyboard")
+        }
+
+        if failures.isEmpty {
+            print("SMOKE OK — \(controller.state.panes.count) panes over sessiond")
+            exitSmoke(0, proof: "sessiond-smoke")
+        } else {
+            print("SMOKE FAIL:\n  " + failures.joined(separator: "\n  "))
+            exitSmoke(1, proof: "sessiond-smoke")
+        }
+    }
+}

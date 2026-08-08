@@ -1,0 +1,190 @@
+{
+  "vendor": "grok",
+  "capturedAt": "2026-08-02T21:45:17.006Z",
+  "vendorSessionId": "019fc470-27b8-7cc3-aa8e-5d6ee4ee7443",
+  "prompt": "Reply with exactly PONG and nothing else. Do not use tools.",
+  "rawUsageFrames": [
+    {
+      "sessionId": "019fc470-27b8-7cc3-aa8e-5d6ee4ee7443",
+      "update": {
+        "sessionUpdate": "turn_completed",
+        "prompt_id": "439ee5f4-c62e-4cd9-8f01-26a5cd98ca68",
+        "stop_reason": "end_turn",
+        "usage": {
+          "inputTokens": 15151,
+          "outputTokens": 28,
+          "totalTokens": 15179,
+          "cachedReadTokens": 128,
+          "cacheCreationTokens": 0,
+          "reasoningTokens": 22,
+          "modelCalls": 1,
+          "apiDurationMs": 1363,
+          "costUsdTicks": 302524000,
+          "modelUsage": {
+            "grok-4.5-build": {
+              "inputTokens": 15151,
+              "outputTokens": 28,
+              "totalTokens": 15179,
+              "cachedReadTokens": 128,
+              "cacheCreationTokens": 0,
+              "reasoningTokens": 22,
+              "modelCalls": 1,
+              "apiDurationMs": 1363,
+              "costUsdTicks": 302524000
+            }
+          },
+          "numTurns": 1
+        }
+      },
+      "_meta": {
+        "eventId": "019fc470-27b8-7cc3-aa8e-5d6ee4ee7443-28",
+        "agentTimestampMs": 1785707115283
+      }
+    },
+    {
+      "inputTokens": 15151,
+      "outputTokens": 28,
+      "totalTokens": 15179,
+      "cachedReadTokens": 128,
+      "cacheCreationTokens": 0,
+      "reasoningTokens": 22,
+      "modelCalls": 1,
+      "apiDurationMs": 1363,
+      "costUsdTicks": 302524000,
+      "modelUsage": {
+        "grok-4.5-build": {
+          "inputTokens": 15151,
+          "outputTokens": 28,
+          "totalTokens": 15179,
+          "cachedReadTokens": 128,
+          "cacheCreationTokens": 0,
+          "reasoningTokens": 22,
+          "modelCalls": 1,
+          "apiDurationMs": 1363,
+          "costUsdTicks": 302524000
+        }
+      },
+      "numTurns": 1
+    }
+  ],
+  "normalizedUsageEvents": [
+    {
+      "kind": "usage-updated",
+      "turnId": "439ee5f4-c62e-4cd9-8f01-26a5cd98ca68",
+      "contextPercent": null,
+      "inputTokens": 15151,
+      "outputTokens": 28,
+      "cachedInputTokens": 128,
+      "cacheCreationInputTokens": 0,
+      "reasoningTokens": 22,
+      "usageKey": "turn:439ee5f4-c62e-4cd9-8f01-26a5cd98ca68",
+      "cumulative": false,
+      "source": "grok-turn-completed",
+      "observedAt": "2026-08-02T21:45:15.283Z",
+      "contextWindow": 500000,
+      "sequence": 62,
+      "occurredAt": "2026-08-02T21:45:15.283Z"
+    },
+    {
+      "kind": "usage-updated",
+      "turnId": "turn-1",
+      "contextPercent": null,
+      "inputTokens": 15151,
+      "outputTokens": 28,
+      "contextWindow": 500000,
+      "sequence": 66,
+      "occurredAt": "2026-08-02T21:45:15.283Z"
+    }
+  ],
+  "toolCalls": [],
+  "assistantMessages": 2,
+  "liveModel": [
+    "grok-4.5"
+  ],
+  "contextWindow": [
+    500000,
+    500000
+  ],
+  "attributedEvents": [
+    {
+      "key": "turn:439ee5f4-c62e-4cd9-8f01-26a5cd98ca68",
+      "counts": {
+        "inputTokens": 15151,
+        "cachedInputTokens": 128,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 28,
+        "reasoningTokens": 22
+      },
+      "observedAt": "2026-08-02T21:45:15.283Z",
+      "source": "grok-turn-completed"
+    }
+  ],
+  "protocolTotals": {
+    "inputTokens": 15151,
+    "cachedInputTokens": 128,
+    "cacheCreationInputTokens": 0,
+    "outputTokens": 28,
+    "reasoningTokens": 22,
+    "totalTokens": 15179
+  },
+  "protocolTotalsAfterReplay": {
+    "inputTokens": 15151,
+    "cachedInputTokens": 128,
+    "cacheCreationInputTokens": 0,
+    "outputTokens": 28,
+    "reasoningTokens": 22,
+    "totalTokens": 15179
+  },
+  "artifactCollectorTotals": {
+    "inputTokens": 15151,
+    "cachedInputTokens": 128,
+    "cacheCreationInputTokens": null,
+    "outputTokens": 28,
+    "reasoningTokens": 22,
+    "totalTokens": 15179
+  },
+  "protocolProvenance": {
+    "source": "grok-turn-completed",
+    "observedAt": "2026-08-02T21:45:15.283Z"
+  },
+  "protocolProvenanceAfterReplay": {
+    "source": "grok-turn-completed",
+    "observedAt": "2026-08-02T21:45:15.283Z"
+  },
+  "artifactCollectorProvenance": {
+    "source": "grok-turn-completed",
+    "observedAt": "2026-08-02T21:45:15.000Z"
+  },
+  "factByFact": {
+    "inputTokens": "equal",
+    "cachedInputTokens": "equal",
+    "cacheCreationInputTokens": "gained: collector could not see it",
+    "outputTokens": "equal",
+    "reasoningTokens": "equal",
+    "totalTokens": "equal"
+  },
+  "scannerFacts": {
+    "model": "grok-4.5",
+    "contextTokens": null,
+    "contextPct": 0
+  },
+  "protocolFacts": {
+    "model": "grok-4.5",
+    "contextWindow": 500000,
+    "contextPct": null,
+    "contextTokens": null
+  },
+  "factByFactBeyondCounts": {
+    "liveModel": "equal",
+    "contextTokens": "neither states it",
+    "contextPct": "LOST: scanner measured it, protocol did not"
+  },
+  "contextKeysInRawFrames": [
+    "embeddedContext",
+    "totalContextTokens"
+  ],
+  "absentOverProtocol": [
+    "contextPct"
+  ],
+  "verdict": "lossless except contextPct: the vendor states it nowhere in its protocol"
+}

@@ -2,12 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  activateStagedUpdate,
-  ensureEmbeddingsRuntimeForRelease,
-  ensureGraphifyRuntimeForRelease,
-  rollbackWhenIdle,
-} from "../../src/cli/update";
+import { activateStagedUpdate, rollbackWhenIdle } from "../../src/cli/update";
 import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
 
 const blocker = {
@@ -22,65 +17,9 @@ const blocker = {
   liveAgents: ["new-agent"],
 };
 
-test("embeddings provisioning is owned by the newly activated binary", async () => {
-  const calls: Array<{ command: string; args: string[] }> = [];
-  const outcome = await ensureEmbeddingsRuntimeForRelease(
-    "0.0.8",
-    "/tmp/hive-install",
-    async (command, args) => {
-      calls.push({ command, args });
-      return "embedding runtime installed and probe-verified\n";
-    },
-  );
-
-  expect(calls).toEqual([
-    {
-      command: "/tmp/hive-install/current/hive",
-      args: ["embeddings-runtime-install"],
-    },
-  ]);
-  expect(outcome).toEqual({
-    ok: true,
-    detail: "embedding runtime installed and probe-verified",
-  });
-});
-
-test("a failed provisioning exec is an outcome, never a thrown update", async () => {
-  const outcome = await ensureEmbeddingsRuntimeForRelease(
-    "0.0.8",
-    "/tmp/hive-install",
-    async () => {
-      throw new Error("hive exited 1: embedding-native-unloadable");
-    },
-  );
-
-  expect(outcome).toEqual({
-    ok: false,
-    reason: "hive exited 1: embedding-native-unloadable",
-  });
-});
-
-test("Graphify provisioning is owned by the newly activated binary", async () => {
-  const calls: Array<{ command: string; args: string[] }> = [];
-  const outcome = await ensureGraphifyRuntimeForRelease(
-    "0.0.8",
-    "/tmp/hive-install",
-    async (command, args) => {
-      calls.push({ command, args });
-      return "graphifyy==0.9.25 installed\n";
-    },
-  );
-
-  expect(calls).toEqual([
-    {
-      command: "/tmp/hive-install/current/hive",
-      args: ["graphify-runtime-install"],
-    },
-  ]);
-  expect(outcome).toEqual({
-    ok: true,
-    detail: "graphifyy==0.9.25 installed",
-  });
+const fixtureProcessIdentity = async (pid: number) => ({
+  state: "live" as const,
+  startedAt: `process-${pid}`,
 });
 
 describe("machine mutation leases in update commands", () => {
@@ -89,7 +28,7 @@ describe("machine mutation leases in update commands", () => {
     const lines: string[] = [];
     let held = false;
 
-    await activateStagedUpdate("0.0.8", {
+    await activateStagedUpdate({
       acquireLease: async (purpose) => {
         order.push(`acquire:${purpose}`);
         held = true;
@@ -171,18 +110,20 @@ describe("machine mutation leases in update commands", () => {
       path: mutationPath,
       instanceId: "review",
       instanceHome: root,
+      processIdentity: fixtureProcessIdentity,
     });
     const updateCoordinator = new MachineMutationCoordinator({
       path: mutationPath,
       instanceId: "default",
       instanceHome: root,
+      processIdentity: fixtureProcessIdentity,
       instanceLiveness: async () => "live",
     });
     const landing = await landingCoordinator.beginOperation("landing");
     let mutated = false;
     try {
       await expect(
-        activateStagedUpdate("0.0.8", {
+        activateStagedUpdate({
           acquireLease: (purpose) => updateCoordinator.acquireLease(purpose),
           blockers: async () => [],
           inspectDaemon: async () => ({ state: "absent" }),
@@ -215,7 +156,7 @@ describe("machine mutation leases in update commands", () => {
   test("a team appearing after staging blocks activation and releases the lease", async () => {
     const order: string[] = [];
     const lines: string[] = [];
-    await activateStagedUpdate("0.0.8", {
+    await activateStagedUpdate({
       acquireLease: async () => {
         order.push("acquire");
         return { release: () => order.push("release") };
@@ -249,7 +190,7 @@ describe("machine mutation leases in update commands", () => {
   test("an activation error still releases the update lease", async () => {
     const order: string[] = [];
     await expect(
-      activateStagedUpdate("0.0.8", {
+      activateStagedUpdate({
         acquireLease: async () => ({ release: () => order.push("release") }),
         blockers: async () => [],
         inspectDaemon: async () => ({ state: "absent" }),
@@ -272,7 +213,7 @@ describe("machine mutation leases in update commands", () => {
 
   test("a failed embeddings install is a loud warning; the update still stands", async () => {
     const lines: string[] = [];
-    await activateStagedUpdate("0.0.8", {
+    await activateStagedUpdate({
       acquireLease: async () => ({ release: () => {} }),
       blockers: async () => [],
       inspectDaemon: async () => ({ state: "absent" }),
@@ -305,7 +246,7 @@ describe("machine mutation leases in update commands", () => {
 
   test("a throwing embeddings install is the same loud warning, never a failed update", async () => {
     const lines: string[] = [];
-    await activateStagedUpdate("0.0.8", {
+    await activateStagedUpdate({
       acquireLease: async () => ({ release: () => {} }),
       blockers: async () => [],
       inspectDaemon: async () => ({ state: "absent" }),
@@ -334,7 +275,7 @@ describe("machine mutation leases in update commands", () => {
 
   test("a failed Graphify install is loud; the update still stands", async () => {
     const lines: string[] = [];
-    await activateStagedUpdate("0.0.8", {
+    await activateStagedUpdate({
       acquireLease: async () => ({ release: () => {} }),
       blockers: async () => [],
       inspectDaemon: async () => ({ state: "absent" }),

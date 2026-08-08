@@ -1,15 +1,13 @@
 // The `/autonomy` dial: readable by the surfaces that display it, writable by
-// the operator alone. The adversarial cases matter most — an agent that can
+// the user alone. The adversarial cases matter most — an agent that can
 // raise its own autonomy has escaped its sandbox through the control plane.
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Autonomy, AutonomyControl } from "../../src/config/autonomy";
-import { HiveDatabase } from "../../src/daemon/db";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
+import { tempRoot } from "../temp-root";
 
-const home = mkdtempSync(join(tmpdir(), "hive-autonomy-endpoint-"));
+const home = tempRoot("hive-autonomy-endpoint-");
 process.env.HIVE_HOME = home;
 
 class FakeControl implements AutonomyControl {
@@ -66,9 +64,9 @@ const request = (
 };
 
 describe("GET /autonomy", () => {
-  test("the operator reads the live value", async () => {
+  test("the user reads the live value", async () => {
     const { daemon } = harness();
-    const { token } = daemon.capabilities.mint("operator", "operator");
+    const { token } = daemon.capabilities.mint("user", "user");
     const response = await request(daemon, token, "GET");
     expect(response.status).toEqual(200);
     expect(await response.json()).toEqual({ autonomy: "sandboxed" });
@@ -90,7 +88,7 @@ describe("GET /autonomy", () => {
 
   test("a daemon without a control reports null, not a guess", async () => {
     const { daemon } = harness({ withControl: false });
-    const { token } = daemon.capabilities.mint("operator", "operator");
+    const { token } = daemon.capabilities.mint("user", "user");
     expect(await (await request(daemon, token, "GET")).json()).toEqual({
       autonomy: null,
     });
@@ -99,9 +97,9 @@ describe("GET /autonomy", () => {
 });
 
 describe("POST /autonomy", () => {
-  test("the operator flips the dial and gets the confirmed value back", async () => {
+  test("the user flips the dial and gets the confirmed value back", async () => {
     const { daemon, control } = harness();
-    const { token } = daemon.capabilities.mint("operator", "operator");
+    const { token } = daemon.capabilities.mint("user", "user");
     const response = await request(daemon, token, "POST", {
       autonomy: "dangerous",
     });
@@ -131,7 +129,7 @@ describe("POST /autonomy", () => {
 
   test("an unknown value is refused before it reaches the control", async () => {
     const { daemon, control } = harness();
-    const { token } = daemon.capabilities.mint("operator", "operator");
+    const { token } = daemon.capabilities.mint("user", "user");
     for (const body of [{ autonomy: "yolo" }, { autonomy: 1 }, {}, null]) {
       expect((await request(daemon, token, "POST", body)).status).toEqual(400);
     }
@@ -142,7 +140,7 @@ describe("POST /autonomy", () => {
   test("a set that cannot persist is a 500 and the live value stands", async () => {
     const { daemon, control } = harness();
     control.failNextSet = true;
-    const { token } = daemon.capabilities.mint("operator", "operator");
+    const { token } = daemon.capabilities.mint("user", "user");
     const response = await request(daemon, token, "POST", {
       autonomy: "dangerous",
     });
@@ -156,7 +154,7 @@ describe("POST /autonomy", () => {
 
   test("a daemon without a control refuses to pretend it can set one", async () => {
     const { daemon } = harness({ withControl: false });
-    const { token } = daemon.capabilities.mint("operator", "operator");
+    const { token } = daemon.capabilities.mint("user", "user");
     expect(
       (await request(daemon, token, "POST", { autonomy: "dangerous" })).status,
     ).toEqual(503);

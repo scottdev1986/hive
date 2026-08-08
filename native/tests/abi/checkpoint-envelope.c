@@ -58,9 +58,6 @@ int main(void) {
   if (memcmp(fixture + 84, payload_sha256, sizeof(payload_sha256)) != 0)
     return 14;
 
-  /* Dual-source lock: when HVTCP001_FIXTURE_PATH is set, the on-disk 116-byte
-   * fixture (consumed by Zig @embedFile) must match this C static array byte
-   * for byte — otherwise Zig and C can drift while both suites stay green. */
   const char *path = getenv("HVTCP001_FIXTURE_PATH");
   if (path != NULL) {
     FILE *file = fopen(path, "rb");

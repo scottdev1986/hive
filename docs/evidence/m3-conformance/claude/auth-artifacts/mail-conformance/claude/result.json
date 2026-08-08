@@ -1,0 +1,48 @@
+{
+  "result": "failed",
+  "vendor": "claude",
+  "startedAt": "2026-08-02T13:08:16.187Z",
+  "completedAt": "2026-08-02T13:11:17.879Z",
+  "error": "vendor did not emit the authentication marker",
+  "agent": {
+    "id": "6dab1fdd-2a2f-491e-bf11-85fec035428c",
+    "name": "maya",
+    "tool": "claude",
+    "model": "claude-haiku-4-5-20251001",
+    "category": "simple_coding",
+    "status": "working",
+    "holdReason": null,
+    "holdResetAt": null,
+    "holdProviderRunId": null,
+    "quotaReservationId": "45a4c290-54fd-434b-9536-85e6669b7126",
+    "executionIdentity": {
+      "tool": "claude",
+      "model": "claude-haiku-4-5-20251001"
+    },
+    "taskDescription": "Reply exactly M3_AUTH_OK, then wait. Do not call tools or modify files.",
+    "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-auth.DmTupu/project/.hive/worktrees/maya",
+    "branch": "hive/maya-reply-exactly-m3-auth-ok-then",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "6ea398f2b3",
+      "subject": {
+        "kind": "agent",
+        "agentId": "6dab1fdd-2a2f-491e-bf11-85fec035428c"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc296-e6ab-7523-a750-1557932765e4",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    },
+    "toolSessionId": "ace06a2c-7059-4285-bea5-67e1eafe1d60",
+    "recoveryAttempts": 0,
+    "contextPct": null,
+    "contextWindow": 200000,
+    "createdAt": "2026-08-02T13:08:17.195Z",
+    "lastEventAt": "2026-08-02T13:09:18.173Z",
+    "capabilityEpoch": 0,
+    "readOnly": true,
+    "writeRevoked": false,
+    "graphifyCalls": null
+  }
+}

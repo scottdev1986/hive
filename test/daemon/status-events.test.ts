@@ -2,19 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import type { SessionEvent } from "../../src/daemon/session-host/contract";
 import {
   canonicalJson,
   emptyStatusProjection,
-  FakeSessionStatusSourceAdapter,
   InvalidWorkspaceSnapshotError,
-  ResumableStatusSubscription,
   reconcileStatusSnapshot,
   reduceStatusEvent,
   verifyWorkspaceSnapshot,
-  type WorkspaceStatusEventSource,
-  type WorkspaceStatusSourceEvent,
-} from "../../src/daemon/status-events";
+} from "../../src/daemon/status-service/events";
 import {
   type WorkspaceEventV2,
   WorkspaceEventV2Schema,
@@ -105,58 +100,5 @@ describe("status event reduction", () => {
       recovery: null,
       corruption: null,
     });
-  });
-
-  test("pauses on a gap, snapshots, then resumes at snapshot seq + 1", async () => {
-    const calls: string[] = [];
-    const source: WorkspaceStatusEventSource = {
-      async *subscribe(afterSeq) {
-        calls.push(afterSeq);
-        if (afterSeq === "0") yield event("2");
-        if (afterSeq === "2") yield event("3");
-      },
-      async fetchSnapshot() {
-        return snapshot("2");
-      },
-    };
-    const subscription = new ResumableStatusSubscription(source);
-    await subscription.run(() => {});
-    expect(calls).toEqual(["0", "2"]);
-    expect(subscription.current).toMatchObject({
-      highWaterSeq: "3",
-      paused: false,
-    });
-  });
-
-  test("keeps the unlanded sessiond broker behind the typed adapter seam", () => {
-    const {
-      schemaVersion: _,
-      eventId: __,
-      seq: ___,
-      entityRevision: ____,
-      ...adapted
-    } = event("1");
-    const adapter = new FakeSessionStatusSourceAdapter(() => adapted);
-    const sessionEvent: SessionEvent = {
-      schemaVersion: 1,
-      eventId: "evt_018f1e90-7b5a-7cc0-8000-000000000099",
-      eventSeq: "1",
-      locator: {
-        schemaVersion: 1,
-        instanceId: "instance-fixture",
-        subject: { kind: "agent", agentId: "agent-fixture" },
-        generation: 1,
-        sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000098",
-        hostKind: "sessiond",
-        engineBuildId: "engine-fixture",
-      },
-      kind: "session.heartbeat",
-      revision: "1",
-      occurredAt: "2026-07-16T12:00:00.000Z",
-      data: {},
-    };
-    expect(adapter.adapt(sessionEvent)).toBe(
-      adapted as WorkspaceStatusSourceEvent,
-    );
   });
 });

@@ -1,0 +1,10 @@
+{
+  "vendor": "codex",
+  "phase": "clean",
+  "exit": 0,
+  "observedAt": "2026-08-02T13:16:48Z",
+  "buildRootRemoved": true,
+  "authQaHomeRemoved": true,
+  "runQaHomeRemoved": true,
+  "frozenWorktreeRegistrationRemoved": true
+}

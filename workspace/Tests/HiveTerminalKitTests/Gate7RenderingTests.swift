@@ -42,14 +42,16 @@ final class Gate7RenderingTests: XCTestCase {
 
         let result = view.engine.processOutput(bytes: Data("gate-7-live-frame".utf8), streamSeq: 0)
         XCTAssertEqual(result, .success)
-        XCTAssertTrue(waitUntil { view.drawScheduledCount == 1 })
+        waitForMainQueue(delay: 0.05)
+        view.displayIfNeeded()
+        XCTAssertEqual(view.drawScheduledCount, 1)
         XCTAssertTrue(
             waitUntil(timeout: 2) { layer.contents != nil },
             "a real INVALIDATE draw must present an IOSurface into the renderer layer"
         )
     }
 
-    func testInvalidateCoalescesAndNeverDrawsAgainThroughAppKitDraw() {
+    func testInvalidateCoalescesIntoOneAppKitDraw() {
         let engine = FakeManualSurface()
         let view = HiveTerminalView(
             frame: NSRect(x: 0, y: 0, width: 400, height: 240),
@@ -60,7 +62,8 @@ final class Gate7RenderingTests: XCTestCase {
         engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
         engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
         engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
-        XCTAssertTrue(waitUntil { engine.drawCount == 1 })
+        view.displayIfNeeded()
+        XCTAssertEqual(engine.drawCount, 1)
         XCTAssertEqual(view.drawScheduledCount, 1)
 
         view.draw(view.bounds)
@@ -71,7 +74,8 @@ final class Gate7RenderingTests: XCTestCase {
         )
 
         engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
-        XCTAssertTrue(waitUntil { engine.drawCount == 2 }, "positive control: a later invalidate remains observable")
+        view.displayIfNeeded()
+        XCTAssertEqual(engine.drawCount, 2, "positive control: a later invalidate remains observable")
     }
 
     func testCloseCancelsDrawAlreadyQueuedByInvalidate() {
@@ -386,7 +390,8 @@ final class Gate7RenderingTests: XCTestCase {
         XCTAssertTrue(waitUntil { view.rendererHealthy })
         XCTAssertEqual(observed, [.unhealthy, .healthy])
         XCTAssertEqual(engine.refreshCount, 1)
-        XCTAssertTrue(waitUntil { engine.drawCount == 1 }, "one pending frame must present after recovery")
+        view.displayIfNeeded()
+        XCTAssertEqual(engine.drawCount, 1, "one pending frame must present after recovery")
     }
 
     func testRuntimeHealthActionTargetsOnlyItsRealSurface() throws {
@@ -435,7 +440,8 @@ final class Gate7RenderingTests: XCTestCase {
         defer { view.userClose() }
 
         engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
-        XCTAssertTrue(waitUntil { engine.drawCount == 1 })
+        view.displayIfNeeded()
+        XCTAssertEqual(engine.drawCount, 1)
         waitForMainQueue(delay: 0.15)
         view.draw(view.bounds)
         XCTAssertEqual(engine.drawCount, 1)

@@ -1,0 +1,8 @@
+=== up 2026-08-02T14:28:40Z
+src=/Users/scottkellar/Projects/hive/.dev/tmp/kimi/m3-frozen/source sha=7b8d29f071f95c7895868a6b4efb27cda6cd7f2c (dirty)
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-run.iLo7vx/project sha=f8cf07700544dfafe229ea3c1ded63cc24f00e7a
+sessiond=/Users/scottkellar/Projects/hive/.dev/tmp/kimi/m3-frozen/hive-sessiond bytes=3601024 mtime=Aug  2 10:18:58 2026
+port=50584 daemon_pid=62493 owner_pid=62686
+Hive daemon ready: {"engineBuildId":"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1","binaryPath":"/Users/scottkellar/Projects/hive/.dev/tmp/kimi/m3-frozen/hive","sourceHash":"8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712"}
+source_hash announced=8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712 computed=8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712
+daemon runs the sources under test

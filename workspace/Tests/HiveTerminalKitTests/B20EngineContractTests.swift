@@ -12,8 +12,18 @@ final class B20EngineContractTests: XCTestCase {
         let binding = SurfaceBinding(locator: makeTestLocator(), connectionId: "b2-neutral")
         try view.bind(to: binding)
 
+        let writesLock = NSLock()
         var writes: [Data] = []
-        view.engine.callbackContext.onWrite = { writes.append($0) }
+        func recordedWrites() -> [Data] {
+            writesLock.lock()
+            defer { writesLock.unlock() }
+            return writes
+        }
+        view.engine.callbackContext.onWrite = { data in
+            writesLock.lock()
+            writes.append(data)
+            writesLock.unlock()
+        }
         let chunks = [
             Data("\u{1B}[2J\u{1B}[HHive B2 neutral replay\r\n\u{1B}[38;5;39mmanual surface\u{1B}[0m".utf8),
             Data("\u{1B}[5n\u{1B}[c\u{1B}[>c\u{1B}[=c\u{1B}[>q\u{1B}P$qm\u{1B}\\\u{1B}P+q544E\u{1B}\\".utf8),
@@ -27,12 +37,16 @@ final class B20EngineContractTests: XCTestCase {
             sequence += UInt64(chunk.count)
         }
 
+        pumpMainQueue()
+        view.displayIfNeeded()
         XCTAssertTrue(waitUntil {
             let evidence = view.renderEvidence
             return evidence.drawCount > 0 && evidence.hasPresentedContents
         })
-        pumpMainQueue()
-        XCTAssertTrue(writes.isEmpty, "renderer copy must suppress DA/DSR/DECRQSS/XTGETTCAP replies")
+        XCTAssertTrue(
+            recordedWrites().isEmpty,
+            "renderer copy must suppress DA/DSR/DECRQSS/XTGETTCAP replies"
+        )
 
         let evidence = view.renderEvidence
         XCTAssertEqual(evidence.locator, binding.locator)
@@ -41,7 +55,7 @@ final class B20EngineContractTests: XCTestCase {
         XCTAssertFalse(evidence.engine.buildId.isEmpty)
 
         view.insertText("input-positive-control", replacementRange: NSRange(location: NSNotFound, length: 0))
-        XCTAssertTrue(waitUntil { writes == [Data("input-positive-control".utf8)] },
+        XCTAssertTrue(waitUntil { recordedWrites() == [Data("input-positive-control".utf8)] },
                       "positive control: AppKit-authored bytes must still reach the copied write callback")
     }
 

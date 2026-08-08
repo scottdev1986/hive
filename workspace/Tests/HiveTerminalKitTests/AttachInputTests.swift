@@ -12,401 +12,48 @@ final class AttachInputTests: XCTestCase {
         cellHeightPx: 20
     )
 
-    func testGate8TextWaitsForClaimThenUsesFrozenInputSubmit() throws {
+    func testTextSendsOneRawInputFrame() throws {
         let host = FakeHost(connectionId: "input-conn")
         let engine = FakeManualSurface()
         let view = try attachView(host: host, engine: engine)
-        let binding = try XCTUnwrap(view.binding)
-
         view.insertText("typed-✓\n", replacementRange: NSRange(location: NSNotFound, length: 0), associatedEvent: nil)
         drainMainQueue()
         try host.harvestViewerFrames()
 
-        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
+        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimAcquire })
         XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .inputSubmit })
-        let claimObject = try FrameCodec.parseJSONObject(claim.payload)
-        XCTAssertEqual(claimObject["writer"] as? String, "input-viewer")
-        XCTAssertEqual(claimObject["kind"] as? String, "human")
-        let claimSession = try XCTUnwrap(claimObject["session"] as? [String: Any])
-        XCTAssertEqual(claimSession["key"] as? String, binding.locator.sessionId)
-        XCTAssertEqual(claimSession["incarnation"] as? String, String(binding.generation))
-
-        let claimResult = try FrameCodec.jsonPayload([
-            "schemaVersion": 1,
-            "result": [
-                "state": "granted",
-                "claim": [
-                    "token": "claim-exact-generation",
-                    "writer": "input-viewer",
-                    "kind": "human",
-                    "leaseExpiresAt": "2099-01-01T00:00:00.000Z",
-                ],
-            ],
-        ])
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: claim.requestId,
-                payload: claimResult
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-
-        let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .inputSubmit })
+        let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .userInput })
         XCTAssertEqual(input.flags, [.contentSensitive])
-        XCTAssertNotEqual(input.requestId, 0)
-        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .humanInput })
-        let inputObject = try FrameCodec.parseJSONObject(input.payload)
-        XCTAssertEqual(inputObject["claimToken"] as? String, "claim-exact-generation")
-        let inputSession = try XCTUnwrap(inputObject["session"] as? [String: Any])
-        XCTAssertEqual(inputSession["key"] as? String, binding.locator.sessionId)
-        XCTAssertEqual(inputSession["incarnation"] as? String, String(binding.generation))
-        let operation = try XCTUnwrap(inputObject["operation"] as? [String: Any])
-        XCTAssertEqual(operation["kind"] as? String, "bytes")
-        XCTAssertEqual(operation["encoding"] as? String, "base64")
-        XCTAssertEqual(
-            Data(base64Encoded: try XCTUnwrap(operation["bytes"] as? String)),
-            Data("typed-✓\n".utf8)
-        )
-
-        let transactionId = try XCTUnwrap(inputObject["transactionId"] as? String)
-        let receipt = try FrameCodec.jsonPayload([
-            "schemaVersion": 1,
-            "resultKind": "input",
-            "receipt": [
-                "transactionId": transactionId,
-                "stage": "written-to-terminal",
-                "byteRange": ["start": "0", "endExclusive": "10"],
-                "orderedAt": "1",
-                "availableCreditBytes": FrameCodec.inputTransactionMaxBytes,
-                "consumedByProcess": "not-claimed",
-                "completeness": "complete",
-                "diagnostic": NSNull(),
-            ],
-        ])
-        view.pumpHostFrame(
-            WireFrame(
-                type: .applied,
-                flags: [.response, .final],
-                requestId: input.requestId,
-                payload: receipt
-            ),
-            frameBinding: binding
-        )
-        XCTAssertEqual(
-            view.inputSubmissionState,
-            .applied(transactionId: transactionId, stage: "written-to-terminal")
-        )
+        XCTAssertEqual(input.requestId, 0)
+        XCTAssertEqual(input.payload, Data("typed-✓\n".utf8))
     }
 
-    func testExpiredClaimRejectionReacquiresAndResubmitsInput() throws {
-        let host = FakeHost(connectionId: "input-expired-claim")
+    func testTerminalReplyUsesTheSameRawInputPath() throws {
+        let host = FakeHost(connectionId: "terminal-reply")
         let engine = FakeManualSurface()
         let view = try attachView(host: host, engine: engine)
-        let binding = try XCTUnwrap(view.binding)
 
-        view.insertText("second-command\n", replacementRange: NSRange(location: NSNotFound, length: 0), associatedEvent: nil)
-        drainMainQueue()
+        view.attachClient?.handleEncodedWrite(Data("reply".utf8))
         try host.harvestViewerFrames()
-        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
-        let firstClaimObject = try FrameCodec.parseJSONObject(claim.payload)
-        let firstClaimIdempotencyKey = try XCTUnwrap(
-            firstClaimObject["idempotencyKey"] as? String)
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: claim.requestId,
-                payload: try claimGrantedPayload(token: "claim-one")
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-        let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .inputSubmit })
-        let inputObject = try FrameCodec.parseJSONObject(input.payload)
-        let transactionId = try XCTUnwrap(inputObject["transactionId"] as? String)
 
-        // The host rejects with "input claim expired" (claim outlived its
-        // lease-clamped expiry): the client must re-claim and resubmit the
-        // held bytes, not fence input permanently.
-        view.pumpHostFrame(
-            WireFrame(
-                type: .applied,
-                flags: [.response, .final],
-                requestId: input.requestId,
-                payload: try inputRejectedPayload(
-                    transactionId: transactionId,
-                    diagnostic: "input claim expired"
-                )
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-        let reclaim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
-        XCTAssertNotEqual(reclaim.requestId, claim.requestId)
-        let reclaimObject = try FrameCodec.parseJSONObject(reclaim.payload)
-        XCTAssertNotEqual(
-            reclaimObject["idempotencyKey"] as? String,
-            firstClaimIdempotencyKey,
-            "an expired lease is a new acquisition, not an idempotent replay"
-        )
-
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: reclaim.requestId,
-                payload: try claimGrantedPayload(token: "claim-two")
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-        let resubmitted = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .inputSubmit })
-        let resubmittedObject = try FrameCodec.parseJSONObject(resubmitted.payload)
-        XCTAssertEqual(resubmittedObject["claimToken"] as? String, "claim-two")
-        let operation = try XCTUnwrap(resubmittedObject["operation"] as? [String: Any])
-        XCTAssertEqual(
-            Data(base64Encoded: try XCTUnwrap(operation["bytes"] as? String)),
-            Data("second-command\n".utf8)
-        )
-
-        // Even a second expiry is a completed rejection, not an unknown act.
-        // Keep the same bytes buffered and claim again instead of refusing the
-        // user's input.
-        let resubmittedTransactionId = try XCTUnwrap(resubmittedObject["transactionId"] as? String)
-        view.pumpHostFrame(
-            WireFrame(
-                type: .applied,
-                flags: [.response, .final],
-                requestId: resubmitted.requestId,
-                payload: try inputRejectedPayload(
-                    transactionId: resubmittedTransactionId,
-                    diagnostic: "input claim expired"
-                )
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-        let thirdClaim = try XCTUnwrap(
-            host.receivedFromViewer.last { $0.type == .claimAcquire })
-        XCTAssertNotEqual(thirdClaim.requestId, reclaim.requestId)
-    }
-
-    private func claimGrantedPayload(token: String) throws -> Data {
-        try FrameCodec.jsonPayload([
-            "schemaVersion": 1,
-            "result": [
-                "state": "granted",
-                "claim": [
-                    "token": token,
-                    "writer": "input-viewer",
-                    "kind": "human",
-                    "leaseExpiresAt": "2099-01-01T00:00:00.000Z",
-                ],
-            ],
-        ])
-    }
-
-    private func inputRejectedPayload(transactionId: String, diagnostic: String) throws -> Data {
-        try FrameCodec.jsonPayload([
-            "schemaVersion": 1,
-            "resultKind": "input",
-            "receipt": [
-                "transactionId": transactionId,
-                "stage": "rejected",
-                "availableCreditBytes": FrameCodec.inputTransactionMaxBytes,
-                "completeness": "complete",
-                "diagnostic": diagnostic,
-            ],
-        ])
-    }
-
-    func testSupersededConnectionClaimCannotReleaseHeldInput() throws {
-        let locator = makeTestLocator()
-        let hostA = FakeHost(connectionId: "input-old")
-        let engine = FakeManualSurface()
-        let view = try attachView(host: hostA, engine: engine, locator: locator, output: "A")
-        let oldBinding = try XCTUnwrap(view.binding)
-
-        view.insertText("must-not-cross\n", replacementRange: NSRange(location: NSNotFound, length: 0), associatedEvent: nil)
-        drainMainQueue()
-        try hostA.harvestViewerFrames()
-        let oldClaim = try XCTUnwrap(hostA.receivedFromViewer.last { $0.type == .claimAcquire })
-
-        let hostB = FakeHost(connectionId: "input-new")
-        try hostB.enqueueWelcome(instanceId: locator.instanceId, connectionId: "input-new")
-        hostB.enqueueSnapshotEnvelope(throughSeq: view.highWater, enginePayload: Data("new-snapshot".utf8))
-        hostB.enqueueOutput(streamSeq: view.highWater, bytes: Data("B".utf8))
-        _ = try view.attach(
-            grant: hostB.makeGrant(locator: locator),
-            geometry: geometry,
-            afterSeq: view.highWater,
-            transport: hostB.clientTransport
-        )
-        let newBinding = try XCTUnwrap(view.binding)
-        XCTAssertNotEqual(oldBinding.connectionId, newBinding.connectionId)
-
-        let lateClaim = try FrameCodec.jsonPayload([
-            "schemaVersion": 1,
-            "result": [
-                "state": "granted",
-                "claim": [
-                    "token": "late-old-token",
-                    "writer": "input-viewer",
-                    "kind": "human",
-                    "leaseExpiresAt": "2099-01-01T00:00:00.000Z",
-                ],
-            ],
-        ])
-        view.pumpHostFrame(
-            WireFrame(type: .claimResult, requestId: oldClaim.requestId, payload: lateClaim),
-            frameBinding: oldBinding
-        )
-        try hostA.harvestViewerFrames()
-        try hostB.harvestViewerFrames()
-        XCTAssertFalse(hostA.receivedFromViewer.contains { $0.type == .inputSubmit })
-        XCTAssertFalse(hostB.receivedFromViewer.contains { $0.type == .inputSubmit })
-        XCTAssertEqual(view.binding, newBinding)
-        XCTAssertEqual(view.claimPresentation, .free)
-        XCTAssertEqual(view.inputSubmissionState, .idle)
-    }
-
-    func testReleaseClaimBestEffortSendsCancelClaimRelease() throws {
-        let host = FakeHost(connectionId: "input-release")
-        let engine = FakeManualSurface()
-        let view = try attachView(host: host, engine: engine)
-        let binding = try XCTUnwrap(view.binding)
-
-        view.insertText("x", replacementRange: NSRange(location: NSNotFound, length: 0), associatedEvent: nil)
-        drainMainQueue()
-        try host.harvestViewerFrames()
-        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
-        let claimResult = try FrameCodec.jsonPayload([
-            "schemaVersion": 1,
-            "result": [
-                "state": "granted",
-                "claim": [
-                    "token": "claim-to-release",
-                    "writer": "input-viewer",
-                    "kind": "human",
-                    "leaseExpiresAt": "2099-01-01T00:00:00.000Z",
-                ],
-            ],
-        ])
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: claim.requestId,
-                payload: claimResult
-            ),
-            frameBinding: binding
-        )
-        XCTAssertEqual(view.claimPresentation, .humanOwned(viewerId: "input-viewer", claimId: "claim-to-release"))
-
-        view.releaseClaimBestEffort()
-        try host.harvestViewerFrames()
-        let release = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimRelease })
-        let object = try FrameCodec.parseJSONObject(release.payload)
-        XCTAssertEqual(object["claimToken"] as? String, "claim-to-release")
-        XCTAssertEqual(object["kind"] as? String, "cancel")
-        let session = try XCTUnwrap(object["session"] as? [String: Any])
-        XCTAssertEqual(session["key"] as? String, binding.locator.sessionId)
-        XCTAssertEqual(view.claimPresentation, .free)
-    }
-
-    func testCompositionEndReleasesOnlyAfterItsPendingInputIsApplied() throws {
-        let host = FakeHost(connectionId: "input-composition-end")
-        let engine = FakeManualSurface()
-        let view = try attachView(host: host, engine: engine)
-        let binding = try XCTUnwrap(view.binding)
-
-        // A composition begins a claim, then ends before the asynchronous
-        // CLAIM_RESULT arrives. The encoder's committed bytes land behind
-        // unmarkText; release must wait for both that submit and its receipt.
-        view.setMarkedText("preedit", selectedRange: .init(location: 0, length: 0), replacementRange: .init(location: 0, length: 0))
-        view.unmarkText()
-        view.attachClient?.handleEncodedWrite(Data("committed".utf8))
-        drainMainQueue()
-        try host.harvestViewerFrames()
-        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
-        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimRelease })
-
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: claim.requestId,
-                payload: try claimGrantedPayload(token: "claim-composition")
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-        let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .inputSubmit })
-        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimRelease })
-        let inputObject = try FrameCodec.parseJSONObject(input.payload)
-        let transactionId = try XCTUnwrap(inputObject["transactionId"] as? String)
-
-        view.pumpHostFrame(
-            WireFrame(
-                type: .applied,
-                flags: [.response, .final],
-                requestId: input.requestId,
-                payload: try FrameCodec.jsonPayload([
-                    "schemaVersion": 1,
-                    "resultKind": "input",
-                    "receipt": [
-                        "transactionId": transactionId,
-                        "stage": "written-to-terminal",
-                        "byteRange": ["start": "0", "endExclusive": "9"],
-                        "orderedAt": "1",
-                        "availableCreditBytes": FrameCodec.inputTransactionMaxBytes,
-                        "consumedByProcess": "not-claimed",
-                        "completeness": "complete",
-                        "diagnostic": NSNull(),
-                    ],
-                ])
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
-        let release = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimRelease })
-        let releaseObject = try FrameCodec.parseJSONObject(release.payload)
-        XCTAssertEqual(releaseObject["claimToken"] as? String, "claim-composition")
-        XCTAssertEqual(releaseObject["kind"] as? String, "cancel")
-        XCTAssertEqual(view.claimPresentation, .free)
+        let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .userInput })
+        XCTAssertEqual(input.payload, Data("reply".utf8))
     }
 
     func testOversizeEncodedInputIsChunkedWithoutRefusal() throws {
         let host = FakeHost(connectionId: "input-oversize")
         let engine = FakeManualSurface()
         let view = try attachView(host: host, engine: engine)
-        let binding = try XCTUnwrap(view.binding)
-        let bytes = Data(repeating: 0x61, count: FrameCodec.inputTransactionMaxBytes + 1)
+        let bytes = Data(repeating: 0x61, count: FrameCodec.streamChunkMaxBytes + 1)
 
         view.attachClient?.handleEncodedWrite(bytes)
         try host.harvestViewerFrames()
-        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: claim.requestId,
-                payload: try claimGrantedPayload(token: "claim-chunked-input")
-            ),
-            frameBinding: binding
-        )
-        try host.harvestViewerFrames()
 
-        let submits = host.receivedFromViewer.filter { $0.type == .inputSubmit }
+        let submits = host.receivedFromViewer.filter { $0.type == .userInput }
         XCTAssertEqual(submits.count, 2)
-        let submittedBytes = try submits.reduce(into: Data()) { result, submit in
-            let object = try FrameCodec.parseJSONObject(submit.payload)
-            let operation = try XCTUnwrap(object["operation"] as? [String: Any])
-            result.append(try XCTUnwrap(
-                Data(base64Encoded: try XCTUnwrap(operation["bytes"] as? String))))
+        let submittedBytes = submits.reduce(into: Data()) { result, submit in
+            XCTAssertLessThanOrEqual(submit.payload.count, FrameCodec.streamChunkMaxBytes)
+            result.append(submit.payload)
         }
         XCTAssertEqual(submittedBytes, bytes)
     }

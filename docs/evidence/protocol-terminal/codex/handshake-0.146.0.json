@@ -1,0 +1,34 @@
+{
+  "transport": "stdio JSONL over anonymous pipes",
+  "request": {
+    "method": "initialize",
+    "id": 1,
+    "params": {
+      "clientInfo": {
+        "name": "hive-schema-probe",
+        "title": "Hive schema probe",
+        "version": "0.0.0"
+      },
+      "capabilities": {
+        "experimentalApi": true,
+        "requestAttestation": false
+      }
+    }
+  },
+  "response": {
+    "id": 1,
+    "result": {
+      "userAgent": "hive-schema-probe/0.146.0 (<platform>; <architecture>) <terminal> (hive-schema-probe; 0.0.0)",
+      "codexHome": "<redacted-codex-home>",
+      "platformFamily": "unix",
+      "platformOs": "macos"
+    }
+  },
+  "followup": {
+    "method": "initialized"
+  },
+  "sanitizedFields": [
+    "response.result.userAgent platform, architecture, and terminal",
+    "response.result.codexHome"
+  ]
+}

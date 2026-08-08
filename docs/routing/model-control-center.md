@@ -56,7 +56,7 @@ never a meter. **That was already false when this article was first written.** T
 2026-07-13 controlled-spend experiment established `config.creditUsagePercent` as a
 real weekly gauge:
 
-- `src/daemon/quota-sources.ts` reads it as the gauge.
+- `src/usage-service/quota-sources.ts` reads it as the gauge.
 - `usageSurface` in `src/cli/model-control.ts` returns `"metered"` for the
   metered providers, and its switch **fails closed** on a vendor nobody
   classified — a new provider will not silently render as metered-and-empty.
@@ -78,7 +78,7 @@ Two further sections of that spec were wrong, and the UI must not build them:
   spawn; it never widens.
 
 And the spec's one stated **blocking dependency is fixed**: `buildModelInventory`
-(`src/daemon/model-inventory.ts`) is no longer two-valued — it emits `known-none`
+(`src/daemon/provider-capabilities/model-inventory.ts`) is no longer two-valued — it emits `known-none`
 with a detail alongside `known` and `unknown`. Effort pickers are unblocked.
 
 ## The route editor
@@ -100,7 +100,7 @@ no route of its own"), each editing an unordered weighted candidate set:
   60/20/20 are the same split.*
 - **Share preview.** Each candidate shows its normalized expected share
   (`expectedShare`, "≈N%"), computed the same way as the daemon's
-  `routeShares` (`src/daemon/router.ts`). When some provider holds more than
+  `routeShares` (`src/daemon/routing-service/router.ts`). When some provider holds more than
   one candidate, a per-provider share summary appears — the router never
   secretly normalizes by provider, so the UI must show the aggregate share
   honestly.
@@ -239,7 +239,7 @@ is the sole writer.
   with per-field provenance, billing, `usageSurfaces`, quota. **`quota: null` means the
   daemon could not be asked** — not an empty list, and never rendered as 0%.
 - **Write:** `hive routing policy | set-provider | set-model | set-effort |
-  set-route | export` (`src/cli/routing-policy.ts`, dispatched from
+  set-route | export` (`src/cli/routing-policy-command.ts`, dispatched from
   `src/cli.ts`). `set-selection` and `set-chain` no longer exist — the four
   mutations are the whole write surface, every one carrying
   `--expect-revision`. A route candidate on the wire is
@@ -263,7 +263,7 @@ application window should not behave like a new user account. On startup, an emp
 named policy — or Hive's still-untouched provisional suggestions — receives a one-time
 copy of the default instance's user-authored Model Control document: provider switches,
 exact model enablement, routes, and effort choices
-(`inheritDefaultModelControlSettings`, `src/daemon/instance-settings.ts`;
+(`inheritDefaultModelControlSettings`, `src/daemon/routing-service/instance-settings.ts`;
 `RoutingPolicyStore.importDefaultPolicy`). That copy is an audited local revision. It
 carries the user's existing spend consent on the same machine without coupling the
 daemons.
@@ -271,7 +271,7 @@ daemons.
 The import never overwrites a policy the named instance has edited, never imports a
 provisional source policy, and never synchronizes later edits. Agents, messages,
 credentials, ports, process namespaces, and every other runtime resource remain
-isolated. The reverse direction is explicit and human-initiated: `hive routing
+isolated. The reverse direction is explicit and user-initiated: `hive routing
 promote-default` (`RoutingPolicyStore.promote`).
 
 ## Status: built, including the route editor
@@ -287,7 +287,7 @@ come from [../workspace/ui-design-system.md](../workspace/ui-design-system.md).
 **Routing boundary:** the exact category route when present, else Global, else
 refuse. A configured category route whose candidates all refuse fails the spawn
 — empty and ineffective are intentionally different facts (`resolveRoute`,
-`src/schemas/routing-policy.ts`; `HiveRouter.select`, `src/daemon/router.ts`).
+`src/schemas/routing-policy.ts`; `HiveRouter.select`, `src/daemon/routing-service/router.ts`).
 
 ## See Also
 

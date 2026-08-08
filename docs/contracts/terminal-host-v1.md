@@ -50,7 +50,7 @@ Attach negotiates protocol and checkpoint capabilities. A cursor names both even
 
 ### 8. Input ownership
 
-Every input transaction is fenced by a host-issued claim/lease and the session incarnation. Human and automation are generic writer kinds. Claim acquisition completes synchronously before human bytes are accepted. Transactions are ordered and idempotent; concurrent writers cannot interleave one transaction with another. Key-event encoding belongs above the host.
+Every input transaction is fenced by a host-issued claim/lease and the session incarnation. User and automation are generic writer kinds. Claim acquisition completes synchronously before user bytes are accepted. Transactions are ordered and idempotent; concurrent writers cannot interleave one transaction with another. Key-event encoding belongs above the host.
 
 ### 9. Termination and terminal input
 
@@ -95,7 +95,7 @@ Row letters are unique across the contract family rather than per document: A–
 | F | Normal and signaled exit retain all tail bytes and separately order output closure, exit, and authoritative reap. | Neutral green; real tail/reap discriminator green (THV1-REAL-F) |
 | G | Broker restart reattaches to a durable parent; parent loss reports unavailable authority rather than fabricated exit. | Neutral green; real candidate baseline green |
 | H | Disconnect inside an escape and multibyte encoding resumes once from checkpoint/cursor without byte duplication or loss. | Neutral green; real candidate baseline green |
-| I | Concurrent human and automation writes obey claim fencing, transaction idempotency, and non-interleaving. | Neutral green; real candidate baseline green |
+| I | Concurrent user and automation writes obey claim fencing, transaction idempotency, and non-interleaving. | Neutral green; real candidate baseline green |
 | J | Immediate process-tree termination removes an escaped descendant, reports it as a survivor, or reports `unknown` with possible escapees explicitly unaccounted. | Neutral green; real candidate baseline green |
 | K | Canonical end-of-file, the same byte in literal mode, and terminal hangup have distinct results. | Neutral green; real candidate baseline green |
 | U | A subscription resumes from a caller-supplied event position or the current end, delivers every retained event in host order exactly once, keeps subscribers independent, bounds retained events by negotiated limits released by acknowledgement, reports a position outside retention as an explicit gap carrying the missing event range and a fresh-inspection requirement, and delivers the incarnation's closing facts separately ordered with the authoritative reap last. | Neutral green |

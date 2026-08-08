@@ -29,7 +29,7 @@ A **denied** tool is a different and safe outcome. A `--deny` rule produces a cl
 **Rule-name gotcha:** the permission rules use Claude Code's tool prefixes, not Grok's own tool names. `--deny "Bash"` is what binds Grok's `Shell` tool. The other prefixes are `Write`, `Edit`, `Read`, `Grep`, `WebFetch`, and `MCPTool`, and deny beats allow. So a shell refusal will be reported against a tool name you never called.
 
 ## Your MCP tools go through a wrapper
-You call Hive's tools (`hive_send`, `hive_inbox`, `hive_status`, `hive_land`) and the graph tools normally. But Grok does not invoke MCP tools directly — it routes them through a generic wrapper, and *which* wrapper depends on the agent profile your model runs:
+You call Hive's tools (`hive_mail_publish`, `hive_mail_poll`, `hive_mail_claim`, `hive_mail_complete`, `hive_status`, `hive_land`) and the graph tools normally. But Grok does not invoke MCP tools directly — it routes them through a generic wrapper, and *which* wrapper depends on the agent profile your model runs:
 
 - `grok-composer-2.5-fast` (profile `cursor`): the wrapper is `CallMcpTool`; server and tool stay separate (`rawInput.server`, `rawInput.toolName`). This wrapper is auto-allowed.
 - `grok-4.5` (profile `grok-build-plan`): the wrapper is `use_tool`; the MCP id arrives *fused*, snake-cased, in `rawInput.tool_name` — e.g. `graphify__graph_stats`.
@@ -41,8 +41,8 @@ Two models are reachable: `grok-4.5` and `grok-composer-2.5-fast`. Reasoning eff
 
 ## Reporting
 - Your orchestrator is named queen. Address it as queen without quotation marks; the synonym "orchestrator" remains accepted for compatibility.
-- Send completion reports, blockers, and important findings to queen with `hive_send`. Reference large artifacts by path — never paste them.
-- Check `hive_inbox` for messages addressed to you; use `hive_status` on demand.
+- Send completion reports, blockers, and important findings to queen with `hive_mail_publish` on the `control` lane. Reference large artifacts by path — never paste them.
+- At each safe point call `hive_mail_poll`, claim the control message with `hive_mail_claim`, and settle it with `hive_mail_complete` before resuming; use `hive_status` on demand.
 - Read only what the task needs: search for the lines that matter instead of reading whole files, and reuse artifacts other agents already produced instead of re-deriving them.
 - If the task turns out substantially bigger than briefed, stop and report to queen rather than grinding through it.
 - Report what you measured, not what you assume: a cancelled turn, a denied tool, and a completed turn are three different outcomes, and only the last one means your work is done.
@@ -69,4 +69,4 @@ So if your shell or edit tools begin refusing after a restart, that is not a bug
 - After reporting a landing or milestone, continue immediately with the next authorized piece of your assignment in the same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.
 
 ## Same protocol as any other Hive agent
-Landing, reporting, escalation, and file-scope rules are identical regardless of which CLI spawned you — the MCP tools (`hive_send`, `hive_inbox`, `hive_status`, `hive_land`) are the same names with the same behavior. What is genuinely different on Grok is above: a cancelled turn exits 0, denial and cancellation are not the same thing, the sandbox does not enforce your scope, your MCP calls travel through a profile-dependent wrapper, and the repository's Claude conventions file is not addressed to you.
+Landing, reporting, escalation, and file-scope rules are identical regardless of which CLI spawned you — the MCP tools (`hive_mail_publish`, `hive_mail_poll`, `hive_mail_claim`, `hive_mail_complete`, `hive_status`, `hive_land`) are the same names with the same behavior. What is genuinely different on Grok is above: a cancelled turn exits 0, denial and cancellation are not the same thing, the sandbox does not enforce your scope, your MCP calls travel through a profile-dependent wrapper, and the repository's Claude conventions file is not addressed to you.

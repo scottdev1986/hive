@@ -12,19 +12,15 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { hiveInstanceSuffix } from "../../daemon/instance-identity";
-import { shellQuote } from "../../daemon/session-host/shell-session";
+import { shellQuote } from "../../shared/shell-quote";
+import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { isRecord } from "../../shared/is-record";
 import { withFileLock } from "../file-lock";
+import { sanitizedGitEnv } from "../git-env";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
 import { graphifyHookPath, writeGraphifyHook } from "./shared/graphify-hook";
+import { daemonMcpUrl } from "./shared/mcp-scope";
 import { resolveProviderExecutable } from "./shared/provider-executable";
-import {
-  invalidRecoveryArtifactEvidence,
-  isMissingRecoveryArtifact,
-  type RecoverySessionArtifact,
-  recoveryArtifactTimestamp,
-  selectRecoverySessionId,
-} from "./shared/recovery-session";
 
 export interface GrokSpawnOptions {
   model: string;
@@ -32,10 +28,7 @@ export interface GrokSpawnOptions {
   worktreePath: string;
   readOnly: boolean;
   executable?: string;
-  /** The session UUID Hive assigns at creation because Grok has no session-id
-   * hook channel. */
   sessionId?: string;
-  /** Additional vendor system rules for this session. */
   rules?: string;
 }
 
@@ -49,8 +42,6 @@ export interface GrokAgentConfigOptions {
 
 export type GrokProjectTrust = "trusted" | "untrusted" | "unknown";
 
-/** Grok maps these compatibility names to native tools: `Bash` covers `Shell`,
- * and `MCPTool` covers both `CallMcpTool` and `use_tool`. Deny wins. */
 export const GROK_READ_ONLY_PERMISSION_RULES: {
   deny: readonly string[];
   allow: readonly string[];
@@ -121,26 +112,6 @@ export function resolveWorkingGrokExecutable() {
   ]);
 }
 
-export function probeGrokDefaultModel(executable = "grok"): string | null {
-  try {
-    const result = Bun.spawnSync([executable, "models"], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-      timeout: 10_000,
-      killSignal: "SIGKILL",
-    });
-    if (result.exitCode !== 0) return null;
-    for (const line of result.stdout.toString().split("\n")) {
-      const match = /^\s*\*\s+(\S+)\s+\(default\)\s*$/.exec(line);
-      if (match?.[1] !== undefined) return match[1];
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 function grokPermissionArgs(readOnly: boolean): string[] {
   if (!readOnly) return ["--always-approve"];
   return [
@@ -153,22 +124,7 @@ function grokPermissionArgs(readOnly: boolean): string[] {
 }
 
 function grokLaunchArgs(options: GrokSpawnOptions): string[] {
-  // `--no-auto-update` is REQUIRED for automated launches and is not optional
-  // polish: xAI's own headless/scripting guide says to pass it "when using
-  // headless mode (-p) or ACP (grok agent stdio) in scripts, CI, or other
-  // automated environments" (docs.x.ai/build/cli/headless-scripting, read
-  // 2026-07-26 against grok 0.2.112). A Hive agent is exactly that — nobody is
-  // at the keyboard to answer an update prompt or wait out a background
-  // re-exec.
-  //
-  // The flag is HIDDEN from `grok --help`, so it cannot be discovered by
-  // probing the binary; it is accepted and exits 0. That is why this was
-  // missed: the vendor rule for this repo is to read the vendor's
-  // documentation, not to infer the surface from the CLI.
-  //
-  // Deliberately a launch flag rather than `auto_update = false` in
-  // ~/.grok/config.toml: that file is the operator's, and Hive does not write
-  // vendor configuration to gain a capability.
+  // `--no-auto-update` is REQUIRED for automated launches and is not optional polish: xAI's own headless/scripting guide says to pass it "when using headless mode (-p) or ACP (grok agent stdio) in scripts, CI, or other automated environments" (docs.x.ai/build/cli/headless-scripting, read 2026-07-26 against grok 0.2.112). A Hive agent is exactly that — nobody is at the keyboard to answer an update prompt or wait out a background re-exec. The flag is HIDDEN from `grok --help`, so it cannot be discovered by probing the binary; it is accepted and exits 0. That is why this was missed: the vendor rule for this repo is to read the vendor's documentation, not to infer the surface from the CLI. Deliberately a launch flag rather than `auto_update = false` in ~/.grok/config.toml: that file is the user's, and Hive does not write vendor configuration to gain a capability.
   const argv = [
     options.executable ?? "grok",
     "--no-auto-update",
@@ -194,24 +150,7 @@ export function buildGrokSpawnCommand(options: GrokSpawnOptions): string[] {
   return argv;
 }
 
-/** Resume the exact durable session. `--session-id` creates and is forbidden. */
-export function buildGrokResumeCommand(
-  options: GrokSpawnOptions,
-  sessionId: string,
-): string[] {
-  const argv = grokLaunchArgs(options);
-  // Keep the update-suppression flag adjacent to argv[0] on both spawn and
-  // resume paths.
-  argv.splice(2, 0, "-r", sessionId);
-  return argv;
-}
-
-/**
- * Grok can otherwise inherit the operator's Claude/Cursor skills, rules,
- * agents, MCPs, and hooks. These process-local switches disable those imports.
- * They do not stop Grok ingesting repository-local Claude instructions or
- * settings; Grok exposes no switch for those sources.
- */
+/** Grok can otherwise inherit the user's Claude/Cursor skills, rules, agents, MCPs, and hooks. These process-local switches disable those imports. They do not stop Grok ingesting repository-local Claude instructions or settings; Grok exposes no switch for those sources. */
 export function wrapGrokSpawnWithCompatibilityEnv(command: string): string {
   const environment = Object.entries(GROK_COMPATIBILITY_ENV)
     .map(([key, value]) => `${key}=${value}`)
@@ -276,18 +215,7 @@ export function grokHookFilename(instanceId = hiveInstanceSuffix()): string {
   return `hive-${suffix}.json`;
 }
 
-/**
- * The repository an agent worktree belongs to, or null when it cannot be
- * determined.
- *
- * This exists for one sentence in one error message, and that sentence is the
- * whole value of the message. Grok's folder trust inherits: a decision recorded
- * for an ancestor covers every folder beneath it, worktrees included. Telling a
- * user to trust the agent
- * worktree would be advice they cannot act on, because that directory is minted
- * per spawn and deleted after; telling them to trust the repository is one
- * action that covers every agent they will ever run there.
- */
+/** The repository an agent worktree belongs to, or null when it cannot be determined. This exists for one sentence in one error message, and that sentence is the whole value of the message. Grok's folder trust inherits: a decision recorded for an ancestor covers every folder beneath it, worktrees included. Telling a user to trust the agent worktree would be advice they cannot act on, because that directory is minted per spawn and deleted after; telling them to trust the repository is one action that covers every agent they will ever run there. */
 export function repositoryRootForWorktree(worktreePath: string): string | null {
   const result = Bun.spawnSync(
     [
@@ -298,7 +226,12 @@ export function repositoryRootForWorktree(worktreePath: string): string | null {
       "--path-format=absolute",
       "--git-common-dir",
     ],
-    { stdout: "pipe", stderr: "ignore", timeout: 5_000 },
+    {
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: 5_000,
+      env: sanitizedGitEnv(),
+    },
   );
   if (result.exitCode !== 0) return null;
   const gitDir = result.stdout.toString().trim();
@@ -309,18 +242,7 @@ export function repositoryRootForWorktree(worktreePath: string): string | null {
       : dirname(gitDir);
 }
 
-/**
- * Why a Grok spawn into an untrusted worktree is refused rather than launched.
- *
- * Grok does not start repo-local (project-scoped) MCP servers in an untrusted
- * folder — its own `grok mcp doctor` says so verbatim — and Hive's MCP server
- * is exactly that. An agent that cannot reach it can still paint a screen and
- * hold a process, so every liveness signal Hive has reads healthy, and the
- * spawn still dies when `waitForMcpReporting` gives up.
- *
- * Hive does not write `~/.grok/trusted_folders.toml`. The trust contract is the
- * user's, and this message hands them the one action that settles it for good.
- */
+/** Why a Grok spawn into an untrusted worktree is refused rather than launched. Grok does not start repo-local (project-scoped) MCP servers in an untrusted folder — its own `grok mcp doctor` says so verbatim — and Hive's MCP server is exactly that. An agent that cannot reach it can still paint a screen and hold a process, so every liveness signal Hive has reads healthy — and the launch is no longer stopped for it: a missed reachability check only warns, and the agent is left running and permanently mute, visible as `credentialReporting` in hive_status but only to whoever reads it. Refusing at spawn is what keeps that from happening at all. Hive does not write `~/.grok/trusted_folders.toml`. The trust contract is the user's, and this message hands them the one action that settles it for good. */
 export function grokUntrustedWorktreeRefusal(
   name: string,
   worktreePath: string,
@@ -334,7 +256,7 @@ export function grokUntrustedWorktreeRefusal(
     `Grok reports ${worktreePath} as untrusted, so it will not start Hive's ` +
     `MCP server there — grok does not start repo-local (project-scoped) MCP ` +
     `servers in untrusted folders. Without it ${name} could open, hold a ` +
-    `terminal and look healthy while being unable to hive_send, hive_inbox or ` +
+    `terminal and look healthy while being unable to publish or poll mail or ` +
     `hive_land, so the spawn is refused now instead of failing in ~30s with a ` +
     `transport error that names none of this.\n` +
     `${remedy} — run \`grok\` there once and accept the trust prompt. Grok's ` +
@@ -409,12 +331,10 @@ export async function writeGrokAgentConfig(
   const prefix = stripHiveMcpTables(existing);
   const owned = [
     "[mcp_servers.hive]",
-    `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    `url = ${tomlString(daemonMcpUrl(options.daemonPort))}`,
     "enabled = true",
     "",
     "[mcp_servers.hive.headers]",
-    // Grok 0.2.112 expands ${VAR} in mcp_servers string fields at load time, so
-    // the live token stays in the environment and out of this project file.
     `Authorization = ${tomlString(`Bearer \${${HIVE_CAPABILITY_TOKEN_ENV}}`)}`,
     ...(options.graphifyUrl === undefined
       ? []
@@ -459,9 +379,6 @@ export async function writeGrokAgentConfig(
       hooks: {
         SessionStart: hook(eventCommand("session-start")),
         UserPromptSubmit: hook(eventCommand("turn-start")),
-        // No matcher: Grok's own tool names are the filter, and the script
-        // needs to see every tool call anyway — a graph call is what tells it
-        // this session has already gone graph-first.
         PreToolUse: [
           ...hook(eventCommand("tool-start")),
           ...(options.graphifyUrl === undefined
@@ -548,7 +465,6 @@ export function grokSessionsDirectory(home = grokHome()): string {
   return join(home, "sessions");
 }
 
-/** Serialize the trust store back out, preserving every key it carried. */
 function renderTrustedFolders(
   folders: Record<string, Record<string, unknown>>,
 ): string {
@@ -562,27 +478,7 @@ function renderTrustedFolders(
     .join("\n\n")}\n`;
 }
 
-/**
- * Record, in grok's own trust store, the decision the user already made by
- * opening Hive on this repository.
- *
- * Grok will not start repo-local MCP servers — Hive's included — in an
- * untrusted folder, and Hive's own config write is what makes a fresh agent
- * worktree untrusted. Without this a Grok agent can look healthy until it dies
- * on the MCP reporting deadline.
- *
- * The grant is the REPOSITORY, not the worktree, and that is not a choice:
- * grok ignores a trust entry keyed to a nested git root, so an entry for the
- * agent worktree has no effect. The narrowest grant that works is the repository the
- * user pointed Hive at, and it is therefore also broader than Hive's own
- * worktrees: the user's own manual `grok` runs in that repository become
- * trusted too. That is the cost of the assumption "opening Hive here is the
- * trust decision", and it is stated here so it is never a surprise.
- *
- * An entry the user already decided is left exactly as it is, including a
- * deliberate `trusted = false` — this seeds a missing decision, it never
- * overturns one.
- */
+/** Record, in grok's own trust store, the decision the user already made by opening Hive on this repository. Grok will not start repo-local MCP servers — Hive's included — in an untrusted folder, and Hive's own config write is what makes a fresh agent worktree untrusted. Without this a Grok agent can look healthy until it dies on the MCP reporting deadline. The grant is the REPOSITORY, not the worktree, and that is not a choice: grok ignores a trust entry keyed to a nested git root, so an entry for the agent worktree has no effect. The narrowest grant that works is the repository the user pointed Hive at, and it is therefore also broader than Hive's own worktrees: the user's own manual `grok` runs in that repository become trusted too. That is the cost of the assumption "opening Hive here is the trust decision", and it is stated here so it is never a surprise. An entry the user already decided is left exactly as it is, including a deliberate `trusted = false` — this seeds a missing decision, it never overturns one. */
 export async function seedGrokRepositoryTrust(
   repositoryRoot: string,
   home = grokHome(),
@@ -592,13 +488,7 @@ export async function seedGrokRepositoryTrust(
   );
   const path = join(home, "trusted_folders.toml");
   try {
-    // Hive's own lock, NOT grok's `trusted_folders.toml.lock`. Hive's is
-    // create-exclusive and grok keeps its lock file present permanently, so
-    // reusing the vendor's path blocks until the timeout, every time — which
-    // is exactly how the first version of this silently seeded nothing and
-    // left the spawn to refuse a repository Hive had just decided to trust.
-    // Two writers cannot be serialized across two different mutex disciplines
-    // anyway; this one keeps concurrent HIVE spawns off each other.
+    // Hive's own lock, NOT grok's `trusted_folders.toml.lock`. Hive's is create-exclusive and grok keeps its lock file present permanently, so reusing the vendor's path blocks until the timeout, every time — which is exactly how the first version of this silently seeded nothing and left the spawn to refuse a repository Hive had just decided to trust. Two writers cannot be serialized across two different mutex disciplines anyway; this one keeps concurrent HIVE spawns off each other.
     return await withFileLock(`${path}.hive.lock`, async () => {
       const source = await readFile(path, "utf8").catch(() => "");
       const parsed =
@@ -620,9 +510,7 @@ export async function seedGrokRepositoryTrust(
       return "seeded";
     });
   } catch {
-    // A store Hive cannot write is not fatal: the spawn path still inspects
-    // trust afterwards and refuses with the manual remedy. Never let a failed
-    // convenience become a failed launch on its own.
+    // A store Hive cannot write is not fatal: the spawn path still inspects trust afterwards and refuses with the manual remedy. Never let a failed convenience become a failed launch on its own.
     return "unwritable";
   }
 }
@@ -633,13 +521,8 @@ interface GrokSummaryLocation {
   mtimeMs: number;
   createdAt: unknown;
   path: string;
-  /** The session directory itself — `updates.jsonl` and `signals.json` are
-   * this session's telemetry, and they are only findable from here. */
   directory: string;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 async function findLatestGrokSummary(
   worktreePath: string,
@@ -658,21 +541,13 @@ async function findGrokSummaries(
   worktreePath: string,
   home?: string,
   sessionId?: string,
-  strictEvidence = false,
 ): Promise<GrokSummaryLocation[]> {
   const target = resolve(worktreePath);
   const root = grokSessionsDirectory(home);
   let projects: Dirent[];
   try {
     projects = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-      invalidRecoveryArtifactEvidence(
-        "Grok",
-        root,
-        "sessions directory cannot be read",
-      );
-    }
+  } catch {
     return [];
   }
   const summaries: GrokSummaryLocation[] = [];
@@ -682,14 +557,7 @@ async function findGrokSummaries(
     let recordedCwd: string | null;
     try {
       recordedCwd = (await readFile(join(projectPath, ".cwd"), "utf8")).trim();
-    } catch (error) {
-      if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-        invalidRecoveryArtifactEvidence(
-          "Grok",
-          join(projectPath, ".cwd"),
-          "project identity cannot be read",
-        );
-      }
+    } catch {
       recordedCwd = null;
     }
     if (project.name !== encodeURIComponent(target) && recordedCwd !== target) {
@@ -698,14 +566,7 @@ async function findGrokSummaries(
     let sessions: Dirent[];
     try {
       sessions = await readdir(projectPath, { withFileTypes: true });
-    } catch (error) {
-      if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-        invalidRecoveryArtifactEvidence(
-          "Grok",
-          projectPath,
-          "project directory cannot be read",
-        );
-      }
+    } catch {
       continue;
     }
     for (const session of sessions) {
@@ -716,32 +577,14 @@ async function findGrokSummaries(
       try {
         parsed = JSON.parse(await readFile(summaryPath, "utf8"));
         mtimeMs = (await stat(summaryPath)).mtimeMs;
-      } catch (error) {
-        if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-          invalidRecoveryArtifactEvidence(
-            "Grok",
-            summaryPath,
-            "cannot be read as a summary",
-          );
-        }
-        // A partial or concurrently deleted summary is not a candidate.
+      } catch {
         continue;
       }
       if (!isRecord(parsed) || !isRecord(parsed.info)) {
-        if (strictEvidence) {
-          invalidRecoveryArtifactEvidence("Grok", summaryPath, "has no info");
-        }
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
       const info = parsed.info;
       if (typeof info.id !== "string" || typeof info.cwd !== "string") {
-        if (strictEvidence) {
-          invalidRecoveryArtifactEvidence(
-            "Grok",
-            summaryPath,
-            "has invalid session identity",
-          );
-        }
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
       if (
@@ -753,13 +596,6 @@ async function findGrokSummaries(
         parsed.current_model_id !== undefined &&
         typeof parsed.current_model_id !== "string"
       ) {
-        if (strictEvidence) {
-          invalidRecoveryArtifactEvidence(
-            "Grok",
-            summaryPath,
-            "has an invalid model id",
-          );
-        }
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
       const model =
@@ -787,32 +623,7 @@ export async function findLatestGrokSessionId(
   return (await findLatestGrokSummary(worktreePath, home))?.id ?? null;
 }
 
-export async function discoverGrokRecoverySessionId(
-  worktreePath: string,
-  agentCreatedAt: string,
-  home?: string,
-): Promise<string | null> {
-  const artifacts: RecoverySessionArtifact[] = (
-    await findGrokSummaries(worktreePath, home, undefined, true)
-  ).map((summary) => ({
-    sessionId: summary.id,
-    createdAtMs: recoveryArtifactTimestamp(
-      "Grok",
-      summary.path,
-      summary.createdAt,
-    ),
-    path: summary.path,
-  }));
-  return selectRecoverySessionId("Grok", agentCreatedAt, artifacts);
-}
-
-/**
- * The session directory whose summary records this exact worktree cwd — where
- * `updates.jsonl` (the turn and tool-call stream) and `signals.json` (the
- * context reading) live. Pass `sessionId` whenever the row has one: without it
- * this resolves the newest session for the cwd, and a reused worktree still
- * holds every dead predecessor's session.
- */
+/** The session directory whose summary records this exact worktree cwd — where `updates.jsonl` (the turn and tool-call stream) and `signals.json` (the context reading) live. Pass `sessionId` whenever the row has one: without it this resolves the newest session for the cwd, and a reused worktree still holds every dead predecessor's session. */
 export async function findLatestGrokSessionDirectory(
   worktreePath: string,
   sessionId?: string,
@@ -821,15 +632,5 @@ export async function findLatestGrokSessionDirectory(
   return (
     (await findLatestGrokSummary(worktreePath, home, sessionId))?.directory ??
     null
-  );
-}
-
-export async function readLiveGrokModel(
-  worktreePath: string,
-  sessionId?: string,
-  home?: string,
-): Promise<string | null> {
-  return (
-    (await findLatestGrokSummary(worktreePath, home, sessionId))?.model ?? null
   );
 }

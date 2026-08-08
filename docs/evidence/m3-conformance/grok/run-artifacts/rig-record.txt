@@ -1,0 +1,8 @@
+=== up 2026-08-02T01:27:19Z
+src=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen/source sha=4fcb03fb403c14efc84aba0cec2cf5e6e36987f7 (dirty)
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-grok-run.q1gYCO/project sha=232c20d5c52228ed3e23bf6335b5714b7a6fb823
+sessiond=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen/hive-sessiond bytes=3601056 mtime=Aug  1 20:33:47 2026
+port=54531 daemon_pid=90313 owner_pid=90806
+Hive daemon ready: {"engineBuildId":"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1","binaryPath":"/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen/hive","sourceHash":"40a7498e662b43231fd5a6e70f61af37529ab590599a3f521367d7250c836aba"}
+source_hash announced=40a7498e662b43231fd5a6e70f61af37529ab590599a3f521367d7250c836aba computed=40a7498e662b43231fd5a6e70f61af37529ab590599a3f521367d7250c836aba
+daemon runs the sources under test

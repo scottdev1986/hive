@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "runId": "u5-msb6rwsf-onqkn0",
+  "sourceSha": "a38d9b92e7e8ae4657d2b141011b1db9b6948be0",
+  "provider": "grok",
+  "outcome": "pending-attestation",
+  "attemptOrdinal": 1,
+  "attemptedAt": "2026-08-02T02:35:26.394Z",
+  "retryAttempted": false,
+  "phase": "stable-composer",
+  "spawnRequested": true,
+  "admissionId": "b4ff4546-ed3b-46bd-85be-0ed5c9ef2396",
+  "name": "john",
+  "configuredModel": "grok-4.5",
+  "status": "spawning",
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "87f653c084",
+    "subject": {
+      "kind": "agent",
+      "agentId": "b4ff4546-ed3b-46bd-85be-0ed5c9ef2396"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc053-86e9-715f-bced-08269ca89ad4",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "composer": {
+    "profile": "grok",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  },
+  "captureSha256": "4501c2994cc664767776bac2ca1e8a35113c7a7930309e08d5b3aef9ea23fec6"
+}

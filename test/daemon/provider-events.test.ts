@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { HiveDatabase } from "../../src/daemon/db";
-import { recordProviderHookEvent } from "../../src/daemon/provider-events";
-import type { AgentRecord, ProviderRun } from "../../src/schemas";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { recordProviderHookEvent } from "../../src/daemon/provider-events/hook-event";
+import type { AgentRecord } from "../../src/schemas/agent";
+import type { ProviderRun } from "../../src/schemas/provider-run";
 
 const at = "2026-07-24T19:00:00.000Z";
 
@@ -19,7 +20,6 @@ function agent(tool: AgentRecord["tool"]): AgentRecord {
     contextPct: 0,
     createdAt: at,
     lastEventAt: at,
-    recoveryAttempts: 0,
     capabilityEpoch: 4,
     readOnly: false,
     writeRevoked: false,
@@ -53,9 +53,13 @@ function run(value: AgentRecord): ProviderRun {
     model: value.model,
     effort: null,
     conversationId: null,
-    pid: 4200,
-    startToken: "4200:1",
-    foregroundProcessGroupId: 4200,
+    adapterChild: {
+      pid: 4200,
+      startToken: "4200:1",
+      processGroupId: 4200,
+      observedAt: at,
+    },
+    protocolReceipt: null,
     capabilityEpoch: value.capabilityEpoch,
     launchGrantId: `grant-${value.tool}`,
     startedAt: at,

@@ -1,0 +1,62 @@
+// The tiered-retention sweep does two things against the daemon's own memory state: 1. Ages out the raw hot tier: episodic `events` rows older than `events_hot_days` are deleted — EXCEPT any row a digest's provenance still references, because a referenced event is still a drill-down target. 2. Demotes verified wiki articles whose `verified` date is older than `stale_after_days` to `stale`, in both repo and global scope, through the memory adapter's own update mechanics so article file, scope index, and log stay consistent. Stale is a demotion, not a deletion: the article stays visible and readable. The sweep is maintenance, not authority: the daemon logs a failure and keeps running.
+
+import type { MemoryRetentionConfig } from "../schemas/config-schema";
+import type { MemoryScope } from "../schemas/memory";
+import { countConsolidationCandidates } from "./consolidate";
+import type { EpisodicStore } from "./episodic";
+import { demoteMemoryFact, discoverMemoryFacts } from "./memory-store";
+
+export interface RetentionSweepReport {
+  eventsDeleted: number;
+  articlesDemoted: Array<{ scope: MemoryScope; id: string }>;
+  /** Stored-vector pairs at or above the consolidation similar threshold: count only, never applied here — the drift signal that tells the user `hive memory consolidate` is worth a run. */
+  consolidationCandidates: number;
+}
+
+const DAY_MS = 24 * 3_600_000;
+
+export async function runRetentionSweep(options: {
+  episodic: EpisodicStore;
+  repoRoot: string;
+  config: MemoryRetentionConfig;
+  now: Date;
+  /** Pairwise vector scan. Skip it on a kill-time sweep: the count is a diagnostic, and running it on the request thread is what made /handshake miss its 1s budget. */
+  countCandidates?: boolean;
+}): Promise<RetentionSweepReport> {
+  const { episodic, repoRoot, config, now } = options;
+  const report: RetentionSweepReport = {
+    eventsDeleted: 0,
+    articlesDemoted: [],
+    consolidationCandidates: 0,
+  };
+
+  const cutoff = new Date(
+    now.getTime() - config.events_hot_days * DAY_MS,
+  ).toISOString();
+  report.eventsDeleted = episodic.sweepEvents(cutoff, new Set());
+
+  // (3) Verified wiki articles whose verification aged out demote to stale.
+  const staleCutoff = new Date(now.getTime() - config.stale_after_days * DAY_MS)
+    .toISOString()
+    .slice(0, 10);
+  const demotionDate = now.toISOString().slice(0, 10);
+  for (const scope of ["repo", "global"] as const) {
+    for (const fact of await discoverMemoryFacts(repoRoot, scope)) {
+      if (fact.status !== "verified" || fact.verified === undefined) continue;
+      if (fact.verified >= staleCutoff) continue;
+      const demoted = await demoteMemoryFact(repoRoot, scope, fact.id, {
+        date: demotionDate,
+      });
+      if (demoted !== null) {
+        report.articlesDemoted.push({ scope, id: demoted.id });
+      }
+    }
+  }
+
+  // Count duplicate candidate pairs in the vector store so a growing pile is visible in the sweep report. Count only — consolidation is an offline, user-run pass, never something the sweep applies.
+  if (options.countCandidates !== false) {
+    report.consolidationCandidates = countConsolidationCandidates(episodic);
+  }
+
+  return report;
+}

@@ -1,5 +1,6 @@
 import XCTest
 import CoreGraphics
+import HiveTerminalKit
 @testable import WorkspaceCore
 
 final class ProjectStateTests: XCTestCase {
@@ -8,9 +9,66 @@ final class ProjectStateTests: XCTestCase {
                        tool: String = "claude", model: String = "opus",
                        task: String = "do things",
                        contextPct: Double = 12, closedAt: String? = nil) -> AgentSnapshot {
-        AgentSnapshot(name: name, tool: tool, model: model, status: status,
-                      taskDescription: task,
-                      contextPct: contextPct, closedAt: closedAt)
+        let pane: FeedPanePresentation
+        let activity: String
+        let severity: String?
+        switch status {
+        case "spawning":
+            pane = FeedPanePresentation(kind: "running")
+            activity = "spawning"
+            severity = nil
+        case "working", "idle":
+            pane = FeedPanePresentation(kind: "running")
+            activity = status
+            severity = nil
+        case "awaiting-approval":
+            pane = FeedPanePresentation(kind: "waiting", waitingKind: "approval")
+            activity = "needs-user"
+            severity = "waiting"
+        case "control-paused", "stuck":
+            pane = FeedPanePresentation(kind: "waiting", waitingKind: "userInput")
+            activity = "needs-user"
+            severity = "waiting"
+        case "done":
+            pane = FeedPanePresentation(kind: "completed")
+            activity = "done"
+            severity = "completed"
+        case "failed":
+            pane = FeedPanePresentation(kind: "failed")
+            activity = "failed"
+            severity = "failed"
+        case "dead":
+            pane = FeedPanePresentation(
+                kind: "disconnected", reason: "process reported dead",
+                lastConfirmed: "dead")
+            activity = "disconnected"
+            severity = "disconnected"
+        default:
+            pane = FeedPanePresentation(kind: "unknown")
+            activity = "unknown"
+            severity = nil
+        }
+        let attention = severity.map {
+            FeedAttentionPresentation(
+                id: "fixture-\(name)-\(status)", severity: $0,
+                title: "\(name) \(status)", detail: task, raisedAt: 1)
+        }
+        let panePresence = closedAt != nil || status == "dead" ? "closed" : "visible"
+        let terminalState: String
+        switch status {
+        case "spawning": terminalState = "pending"
+        case "dead": terminalState = "exited"
+        case "failed": terminalState = "failed"
+        default: terminalState = "live"
+        }
+        return AgentSnapshot(
+            name: name, tool: tool, model: model, status: status,
+            taskDescription: task, contextPct: contextPct, closedAt: closedAt,
+            presentation: AgentFeedPresentation(
+                panePresence: panePresence,
+                terminalState: terminalState,
+                headerDetail: status,
+                paneStatus: pane, activity: activity, attention: attention))
     }
 
     /// A workspace as the window builds it: orchestrator pane first, then a
@@ -22,7 +80,7 @@ final class ProjectStateTests: XCTestCase {
             agent("indexer"),
             agent("migrator", status: "awaiting-approval"),
             agent("flaky-e2e", status: "failed"),
-        ], now: 1)
+        ])
         return state
     }
 
@@ -38,17 +96,17 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(state.panes[paneID]?.closePending, true)
 
         // The agent runs on headless; the daemon still reports it as working.
-        state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")], now: 2)
+        state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")])
         XCTAssertEqual(state.panes[paneID]?.closePending, true,
                        "the user-closed pane is not rebuilt while the agent lives")
 
         // The agent later ends (exit, hive_kill): the daemon stops reporting
         // it, and the suppression is forgotten so a future agent of the same
         // name gets a pane again.
-        let confirmed = state.apply(feed: [agent("migrator"), agent("flaky-e2e")], now: 3)
+        let confirmed = state.apply(feed: [agent("migrator"), agent("flaky-e2e")])
         XCTAssertTrue(confirmed.contains(.paneClosePending(paneID)))
         state.apply(.closePane(paneID))
-        state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")], now: 4)
+        state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")])
         XCTAssertNotNil(state.panes[paneID], "a new agent by that name gets its pane")
     }
 
@@ -70,7 +128,7 @@ final class ProjectStateTests: XCTestCase {
         state.apply(feed: [
             agent("reviewer", status: "working", tool: "codex", model: "gpt-5.4",
                   task: "spawn-time assignment", contextPct: 12),
-        ], now: 1)
+        ])
 
         XCTAssertEqual(
             try XCTUnwrap(state.panes[paneID]).headerDescription,
@@ -79,7 +137,7 @@ final class ProjectStateTests: XCTestCase {
         let changes = state.apply(feed: [
             agent("reviewer", status: "idle", tool: "codex", model: "gpt-5.4",
                   task: "spawn-time assignment", contextPct: 12),
-        ], now: 2)
+        ])
         XCTAssertTrue(changes.contains(.statusChanged(paneID)))
         XCTAssertEqual(
             try XCTUnwrap(state.panes[paneID]).headerDescription,
@@ -89,9 +147,9 @@ final class ProjectStateTests: XCTestCase {
     func testContextOnlyFeedChangeRerendersHeader() throws {
         let state = ProjectState(projectID: "proj", displayName: "hive")
         let paneID = ProjectState.paneID(forAgent: "reviewer")
-        state.apply(feed: [agent("reviewer", contextPct: 12)], now: 1)
+        state.apply(feed: [agent("reviewer", contextPct: 12)])
 
-        let changes = state.apply(feed: [agent("reviewer", contextPct: 63)], now: 2)
+        let changes = state.apply(feed: [agent("reviewer", contextPct: 63)])
 
         XCTAssertTrue(changes.contains(.statusChanged(paneID)))
         XCTAssertEqual(try XCTUnwrap(state.panes[paneID]).contextPct, 63)
@@ -119,15 +177,15 @@ final class ProjectStateTests: XCTestCase {
                     hostKind: "sessiond",
                     engineBuildId: "engine"))
         }
-        state.apply(feed: [snapshot(generation: 1)], now: 1)
+        state.apply(feed: [snapshot(generation: 1)])
 
-        let changes = state.apply(feed: [snapshot(generation: 2)], now: 2)
+        let changes = state.apply(feed: [snapshot(generation: 2)])
 
         XCTAssertTrue(changes.contains(.statusChanged(paneID)))
         XCTAssertEqual(state.panes[paneID]?.sessionLocator?.generation, 2)
     }
 
-    func testStatusWordsMapToSemanticStatus() {
+    func testDaemonPresentationMapsToSemanticStatus() {
         let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
         state.apply(feed: [
@@ -140,7 +198,7 @@ final class ProjectStateTests: XCTestCase {
             agent("g", status: "done"),
             agent("h", status: "failed"),
             agent("i", status: "brand-new-status"),
-        ], now: 1)
+        ])
         func status(_ name: String) -> PaneStatus? {
             state.panes[ProjectState.paneID(forAgent: name)]?.status
         }
@@ -160,7 +218,7 @@ final class ProjectStateTests: XCTestCase {
     func testDeadAgentWithoutPaneIsNeverInserted() {
         let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
-        state.apply(feed: [agent("ghost", status: "dead")], now: 1)
+        state.apply(feed: [agent("ghost", status: "dead")])
         XCTAssertNil(state.panes[ProjectState.paneID(forAgent: "ghost")])
     }
 
@@ -171,14 +229,14 @@ final class ProjectStateTests: XCTestCase {
             agent("indexer", closedAt: "2026-07-10T00:00:00Z"),
             agent("migrator", status: "awaiting-approval"),
             agent("flaky-e2e", status: "failed"),
-        ], now: 2)
+        ])
         XCTAssertTrue(first.contains(.paneClosePending(paneID)))
         XCTAssertEqual(state.panes[paneID]?.closePending, true, "pane lingers through the grace window")
         let second = state.apply(feed: [
             agent("indexer", closedAt: "2026-07-10T00:00:00Z"),
             agent("migrator", status: "awaiting-approval"),
             agent("flaky-e2e", status: "failed"),
-        ], now: 3)
+        ])
         XCTAssertFalse(second.contains(.paneClosePending(paneID)), "pending close fires once")
     }
 
@@ -187,14 +245,14 @@ final class ProjectStateTests: XCTestCase {
         let changes = state.apply(feed: [
             agent("migrator", status: "awaiting-approval"),
             agent("flaky-e2e", status: "failed"),
-        ], now: 2)
+        ])
         XCTAssertTrue(changes.contains(.paneClosePending(ProjectState.paneID(forAgent: "indexer"))))
     }
 
     func testClosedAgentNeverGetsAPane() {
         let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
-        state.apply(feed: [agent("old", closedAt: "2026-07-01T00:00:00Z")], now: 1)
+        state.apply(feed: [agent("old", closedAt: "2026-07-01T00:00:00Z")])
         XCTAssertNil(state.panes[ProjectState.paneID(forAgent: "old")])
     }
 
@@ -224,7 +282,7 @@ final class ProjectStateTests: XCTestCase {
             agent("indexer"),
             agent("migrator", status: "working"),
             agent("flaky-e2e", status: "failed"),
-        ], now: 2)
+        ])
         XCTAssertFalse(state.attention.ordered.contains { $0.paneID == migrator },
                        "approval resolved in the TUI clears the amber item on the next snapshot")
         XCTAssertEqual(state.panes[migrator]?.status, .running)
@@ -241,8 +299,23 @@ final class ProjectStateTests: XCTestCase {
             agent("indexer"),
             agent("migrator", status: "awaiting-approval"),
             agent("flaky-e2e", status: "failed"),
-        ], now: 5)
+        ])
         XCTAssertEqual(state.panes[failed]?.status, .failed(acknowledged: true))
+        XCTAssertNil(state.attention.ordered.first { $0.paneID == failed })
+
+        let failedPresentation = agent("flaky-e2e", status: "failed").presentation
+        state.apply(feed: [
+            agent("indexer"),
+            agent("migrator", status: "awaiting-approval"),
+            AgentSnapshot(
+                name: "flaky-e2e", status: "vendor-future-word",
+                taskDescription: "do things", contextPct: 12,
+                presentation: failedPresentation),
+        ])
+        XCTAssertEqual(
+            state.panes[failed]?.status,
+            .failed(acknowledged: true),
+            "a raw status-word change cannot override identical backend presentation")
         XCTAssertNil(state.attention.ordered.first { $0.paneID == failed })
     }
 
@@ -252,7 +325,7 @@ final class ProjectStateTests: XCTestCase {
         for change in state.addOrchestrator() {
             if case .focusChanged(let pane) = change { focusChanges.append(pane) }
         }
-        for change in state.apply(feed: [agent("one"), agent("two")], now: 1) {
+        for change in state.apply(feed: [agent("one"), agent("two")]) {
             if case .focusChanged(let pane) = change { focusChanges.append(pane) }
         }
         XCTAssertEqual(focusChanges, [ProjectState.orchestratorPaneID],
@@ -274,7 +347,9 @@ final class ProjectStateTests: XCTestCase {
                 name: "visible",
                 status: status,
                 closedAt: closedAt,
-                sessionLocator: locator)
+                sessionLocator: locator,
+                presentation: agent(
+                    "visible", status: status, closedAt: closedAt).presentation)
         }
 
         state.apply(feed: [snapshot(status: "spawning")])
@@ -285,7 +360,7 @@ final class ProjectStateTests: XCTestCase {
                 agentName: "visible",
                 locator: locator,
                 state: .pending)]))
-        let measured = WorkspaceTerminalGeometry(
+        let measured = TerminalGeometry(
             columns: 117, rows: 41, widthPx: 1170, heightPx: 820,
             cellWidthPx: 10, cellHeightPx: 20)
         XCTAssertEqual(
@@ -320,6 +395,15 @@ final class ProjectStateTests: XCTestCase {
                 hostKind: "sessiond",
                 engineBuildId: "engine")
         }
+        func rootPresentation(activity: String, terminalState: String) -> AgentFeedPresentation {
+            AgentFeedPresentation(
+                panePresence: "visible",
+                terminalState: terminalState,
+                headerDetail: activity,
+                paneStatus: FeedPanePresentation(
+                    kind: activity == "unknown" ? "unknown" : "running"),
+                activity: activity)
+        }
 
         let first = locator(generation: 1)
         XCTAssertEqual(state.apply(
@@ -328,7 +412,10 @@ final class ProjectStateTests: XCTestCase {
                 status: nil,
                 host: "sessiond",
                 hostState: "awaiting-visibility",
-                sessionLocator: first)), [.statusChanged(ProjectState.orchestratorPaneID)])
+                sessionLocator: first,
+                presentation: rootPresentation(
+                    activity: "unknown", terminalState: "pending"))),
+            [.statusChanged(ProjectState.orchestratorPaneID)])
         XCTAssertEqual(state.visibilityInventory(), WorkspaceVisibilityInventory(
             inventoryRevision: "1",
             terminals: [WorkspaceVisibleTerminal(
@@ -339,13 +426,15 @@ final class ProjectStateTests: XCTestCase {
 
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(
             status: "idle", host: "sessiond", hostState: "running",
-            sessionLocator: first))
+            sessionLocator: first,
+            presentation: rootPresentation(activity: "idle", terminalState: "live")))
         XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .live)
 
         let second = locator(generation: 2)
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(
             status: "idle", host: "sessiond", hostState: "running",
-            sessionLocator: second))
+            sessionLocator: second,
+            presentation: rootPresentation(activity: "idle", terminalState: "live")))
         XCTAssertEqual(
             state.panes[ProjectState.orchestratorPaneID]?.sessionLocator,
             second,
@@ -371,12 +460,18 @@ final class ProjectStateTests: XCTestCase {
             host: "sessiond",
             hostState: "failed",
             hostDiagnostic: "native host registration failed",
-            sessionLocator: locator))
+            sessionLocator: locator,
+            presentation: AgentFeedPresentation(
+                panePresence: "visible",
+                terminalState: "failed",
+                headerDetail: "failed",
+                paneStatus: FeedPanePresentation(kind: "failed"),
+                activity: "failed")))
 
         let pane = state.panes[ProjectState.orchestratorPaneID]
-        XCTAssertEqual(pane?.feedStatus, "failed")
+        XCTAssertEqual(pane?.feedStatus, "unknown")
         XCTAssertEqual(pane?.status, .failed(acknowledged: false))
-        XCTAssertEqual(pane?.terminalHostState, "failed")
+        XCTAssertEqual(pane?.terminalVisibilityState, .failed)
         XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .failed)
     }
 
@@ -437,9 +532,21 @@ final class ProjectStateTests: XCTestCase {
         for snapshot in [missing, wrongType] {
             let agent = try XCTUnwrap(snapshot.agents?.first)
             XCTAssertEqual(agent.status, "unknown")
-            XCTAssertEqual(FeedStatusMap.paneStatus(for: agent.status), .unknown)
-            XCTAssertNotEqual(FeedStatusMap.paneStatus(for: agent.status), .running)
+            XCTAssertEqual(agent.presentation, .unknown)
         }
+    }
+
+    func testLiteralUnknownAgentStatusDecodesAndRendersVerbatim() throws {
+        let line = #"{"v":1,"agents":[{"name":"reviewer","tool":"codex","model":"gpt","status":"unknown","contextPct":0}]}"#
+        let snapshot = try XCTUnwrap(FeedLine.parse(line))
+        let decoded = try XCTUnwrap(snapshot.agents?.first)
+        XCTAssertEqual(decoded.status, "unknown")
+        XCTAssertEqual(decoded.presentation.renderedActivity, .unknown)
+
+        let state = ProjectState(projectID: "proj", displayName: "hive")
+        state.apply(feed: [decoded])
+        let pane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "reviewer")])
+        XCTAssertEqual(pane.headerDescription, "codex · gpt · unknown · ctx 0%")
     }
 
     func testFeedLineDecodesErrorAndToleratesGarbage() throws {

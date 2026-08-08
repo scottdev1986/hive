@@ -1,0 +1,40 @@
+{
+  "vendor": "codex",
+  "version": "0.146.0",
+  "transport": "codex-app-server",
+  "proof": "durable provider resume (§12 replacement)",
+  "capturedAt": "2026-08-02T20:08:03.239Z",
+  "passphrase": "HIVE-CODEX-4529",
+  "steps": {
+    "1-first-start-has-no-stored-ref": "pass",
+    "2-ref-recorded-at-creation": "pass",
+    "3-fact-planted": "pass",
+    "4-session-closed": "pass",
+    "5-resume-decided-from-the-record": "pass",
+    "6-resumed-the-same-conversation": "pass",
+    "7-history-survived-the-crash": "pass",
+    "8-version-mismatch-refuses": "pass",
+    "9-refusal-starts-a-new-conversation": "pass",
+    "10-runtime-version-is-known": "pass: 0.146.0"
+  },
+  "created": {
+    "schemaVersion": 1,
+    "identity": {
+      "provider": "codex",
+      "transport": "codex-app-server",
+      "version": "0.146.0",
+      "cwd": "/Users/scottkellar/Projects/hive/.dev/tmp/hive-durable-codex-4529"
+    },
+    "session": {
+      "vendorSessionId": "019fc417-136f-7081-ae00-cd70b175411b",
+      "replayedHistory": false
+    },
+    "recordedAt": "2026-08-02T20:07:54.546Z"
+  },
+  "resumedVendorSessionId": "019fc417-136f-7081-ae00-cd70b175411b",
+  "refusalReason": "stored session was created on version 0.0.0-not-installed; the connected runtime reports 0.146.0",
+  "notes": [
+    "resume goes through ProviderSession.resumeSession (thread/resume)",
+    "the resumed id came from the recorded ref, not from a rollout scan"
+  ]
+}

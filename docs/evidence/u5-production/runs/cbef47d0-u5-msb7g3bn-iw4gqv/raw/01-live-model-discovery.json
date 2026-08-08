@@ -1,0 +1,275 @@
+{
+  "schemaVersion": 1,
+  "firstRead": {
+    "observedAt": "2026-08-02T02:52:31.654Z",
+    "complete": true,
+    "discoveredCount": 37,
+    "renderedCount": 37,
+    "providers": {
+      "claude": {
+        "status": "ok",
+        "count": 4
+      },
+      "codex": {
+        "status": "ok",
+        "count": 8
+      },
+      "grok": {
+        "status": "ok",
+        "count": 1
+      },
+      "kimi": {
+        "status": "ok",
+        "count": 4
+      },
+      "opencode": {
+        "status": "ok",
+        "count": 20
+      }
+    },
+    "warnings": []
+  },
+  "secondRead": {
+    "observedAt": "2026-08-02T02:52:33.538Z",
+    "complete": true,
+    "discoveredCount": 37,
+    "renderedCount": 37,
+    "providers": {
+      "claude": {
+        "status": "ok",
+        "count": 4
+      },
+      "codex": {
+        "status": "ok",
+        "count": 8
+      },
+      "grok": {
+        "status": "ok",
+        "count": 1
+      },
+      "kimi": {
+        "status": "ok",
+        "count": 4
+      },
+      "opencode": {
+        "status": "ok",
+        "count": 20
+      }
+    },
+    "warnings": []
+  },
+  "selections": [
+    {
+      "provider": "claude",
+      "selected": {
+        "vendor": "claude",
+        "canonicalId": "claude-haiku-4-5-20251001",
+        "variant": null,
+        "displayName": "Haiku",
+        "aliases": [
+          "haiku"
+        ],
+        "effortLevels": {
+          "state": "unknown",
+          "reason": "field-absent"
+        },
+        "entitlement": "entitled",
+        "hidden": "unknown",
+        "plan": {
+          "status": "covered",
+          "detail": "usage credits are off, so nothing can be charged: a request past the plan limit is refused, not billed"
+        },
+        "routedCandidate": false,
+        "roles": [],
+        "when": "Not in any route; an explicit user request may still select it.",
+        "provenance": {
+          "observedAt": "2026-08-02T02:52:32.943Z",
+          "surface": "claude.initialize",
+          "cliVersion": "2.1.220"
+        }
+      },
+      "reread": {
+        "vendor": "claude",
+        "canonicalId": "claude-haiku-4-5-20251001",
+        "variant": null,
+        "displayName": "Haiku",
+        "aliases": [
+          "haiku"
+        ],
+        "effortLevels": {
+          "state": "unknown",
+          "reason": "field-absent"
+        },
+        "entitlement": "entitled",
+        "hidden": "unknown",
+        "plan": {
+          "status": "covered",
+          "detail": "usage credits are off, so nothing can be charged: a request past the plan limit is refused, not billed"
+        },
+        "routedCandidate": false,
+        "roles": [],
+        "when": "Not in any route; an explicit user request may still select it.",
+        "provenance": {
+          "observedAt": "2026-08-02T02:52:34.787Z",
+          "surface": "claude.initialize",
+          "cliVersion": "2.1.220"
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "selected": {
+        "vendor": "codex",
+        "canonicalId": "gpt-5.3-codex-spark",
+        "variant": null,
+        "displayName": "GPT-5.3-Codex-Spark",
+        "aliases": [],
+        "effortLevels": {
+          "state": "known",
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        },
+        "entitlement": "entitled",
+        "hidden": "visible",
+        "plan": {
+          "status": "covered",
+          "detail": "the plan still covers this (GPT-5.3-Codex-Spark pool 1% used)"
+        },
+        "routedCandidate": false,
+        "roles": [],
+        "when": "Not in any route; an explicit user request may still select it.",
+        "provenance": {
+          "observedAt": "2026-08-02T02:52:31.754Z",
+          "surface": "codex.model/list",
+          "cliVersion": "0.146.0"
+        }
+      },
+      "reread": {
+        "vendor": "codex",
+        "canonicalId": "gpt-5.3-codex-spark",
+        "variant": null,
+        "displayName": "GPT-5.3-Codex-Spark",
+        "aliases": [],
+        "effortLevels": {
+          "state": "known",
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ]
+        },
+        "entitlement": "entitled",
+        "hidden": "visible",
+        "plan": {
+          "status": "covered",
+          "detail": "the plan still covers this (GPT-5.3-Codex-Spark pool 1% used)"
+        },
+        "routedCandidate": false,
+        "roles": [],
+        "when": "Not in any route; an explicit user request may still select it.",
+        "provenance": {
+          "observedAt": "2026-08-02T02:52:33.630Z",
+          "surface": "codex.model/list",
+          "cliVersion": "0.146.0"
+        }
+      }
+    },
+    {
+      "provider": "opencode",
+      "selected": {
+        "vendor": "opencode",
+        "canonicalId": "opencode/deepseek-v4-flash-free",
+        "variant": null,
+        "displayName": null,
+        "aliases": [],
+        "effortLevels": {
+          "state": "unknown",
+          "reason": "surface-silent"
+        },
+        "entitlement": "entitled",
+        "hidden": "unknown",
+        "plan": {
+          "status": "unknown",
+          "detail": "Hive has no current plan or billing reading for this provider."
+        },
+        "routedCandidate": false,
+        "roles": [],
+        "when": "Not in any route; an explicit user request may still select it.",
+        "provenance": {
+          "observedAt": "2026-08-02T02:52:32.836Z",
+          "surface": "opencode.models",
+          "cliVersion": "1.18.11"
+        }
+      },
+      "reread": {
+        "vendor": "opencode",
+        "canonicalId": "opencode/deepseek-v4-flash-free",
+        "variant": null,
+        "displayName": null,
+        "aliases": [],
+        "effortLevels": {
+          "state": "unknown",
+          "reason": "surface-silent"
+        },
+        "entitlement": "entitled",
+        "hidden": "unknown",
+        "plan": {
+          "status": "unknown",
+          "detail": "Hive has no current plan or billing reading for this provider."
+        },
+        "routedCandidate": false,
+        "roles": [],
+        "when": "Not in any route; an explicit user request may still select it.",
+        "provenance": {
+          "observedAt": "2026-08-02T02:52:34.758Z",
+          "surface": "opencode.models",
+          "cliVersion": "1.18.11"
+        }
+      }
+    },
+    {
+      "provider": "grok",
+      "selection": {
+        "state": "deferred-until-after-required-live-admissions",
+        "safeCandidates": [
+          {
+            "canonicalId": "grok-4.5",
+            "plan": {
+              "status": "covered",
+              "detail": "usage credits are off, so nothing can be charged: a request past the plan limit is refused, not billed"
+            }
+          }
+        ]
+      },
+      "firstProviderRead": {
+        "status": "ok",
+        "count": 1
+      },
+      "secondProviderRead": {
+        "status": "ok",
+        "count": 1
+      }
+    },
+    {
+      "provider": "kimi",
+      "selection": {
+        "state": "hard-route-probe",
+        "canonicalId": "kimi-code/k3",
+        "reason": "measure the current daemon response to the resolved Kimi route"
+      },
+      "firstProviderRead": {
+        "status": "ok",
+        "count": 4
+      },
+      "secondProviderRead": {
+        "status": "ok",
+        "count": 4
+      }
+    }
+  ]
+}

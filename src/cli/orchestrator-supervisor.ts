@@ -1,8 +1,22 @@
-import type { AgentRecord, CapabilityProvider } from "../schemas";
-import { isLiveAgent, ORCHESTRATOR_NAME } from "../schemas";
-import { operatorFetch } from "./credential";
-import { buildHookEvent, postHookEvent } from "./event";
-import { fetchAgentStatus, sendOrchestratorMessage } from "./mcp";
+import { type AgentRecord, ORCHESTRATOR_NAME } from "../schemas/agent";
+import {
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "../schemas/capability";
+import {
+  type PrepareQueenLaunchRequest,
+  type PrepareQueenLaunchResponse,
+  PrepareQueenLaunchResponseSchema,
+} from "../schemas/run-checkpoint";
+import { isTestRunnerEnv } from "./invoker";
+import { userFetch } from "./credential";
+import {
+  daemonErrorDetail,
+  decodeJson,
+  UserDaemonClient,
+} from "./user-daemon-client";
+import { buildHookEvent, postHookEvent } from "./event-command";
+import { fetchAgentStatus } from "./mcp";
 import { launchOrchestrator } from "./orchestrator";
 import { withOrchestratorRuntime } from "./orchestrator-runtime";
 import { OrchestratorLaunchFailedError } from "./orchestrator-sessiond";
@@ -12,64 +26,31 @@ import {
   endTokenUsageSubject,
   startOrchestratorTokenSubject,
   startTokenUsageSession,
-} from "./token-usage";
+} from "../usage-service/token-usage-client";
+import { errorMessage } from "../shared/error-message";
+import { mintSessionRequestId } from "../daemon/session-host/locators";
 
 const STATUS_RETRY_MAX_MS = 30_000;
 const RAPID_EXIT_MS = 10_000;
-const TASK_PREVIEW_LENGTH = 240;
-
-const recoveryPing =
-  "Hive recovery: the previous orchestrator exited while your agent session " +
-  "remained active. Continue your current task, and send a concise recovery " +
-  `report to ${ORCHESTRATOR_NAME} with your objective, current status, branch and ` +
-  "worktree, files you are changing, blockers, and next action.";
 
 export interface OrchestratorSupervisorDependencies {
-  launch: (recoveryBrief: string) => Promise<number>;
+  initialTool: CapabilityProvider;
+  launch: (
+    tool: CapabilityProvider,
+    prepared: PrepareQueenLaunchResponse,
+  ) => Promise<number>;
+  prepareLaunch: (
+    request: PrepareQueenLaunchRequest,
+  ) => Promise<PrepareQueenLaunchResponse>;
+  desiredTool: () => Promise<CapabilityProvider | null>;
+  reportLaunchFailure: (
+    tool: CapabilityProvider,
+    detail: string,
+  ) => Promise<void>;
   fetchAgents: () => Promise<AgentRecord[]>;
-  sendRecoveryPing: (agentName: string, body: string) => Promise<void>;
   sleep: (milliseconds: number) => Promise<void>;
   now: () => number;
   report: (message: string) => void;
-}
-
-function oneLine(value: string): string {
-  return value.replaceAll(/\s+/g, " ").trim();
-}
-
-export function buildOrchestratorRecoveryBrief(
-  generation: number,
-  exitCode: number,
-  agents: AgentRecord[],
-  unconfirmedPings: string[],
-): string {
-  const unconfirmed = new Set(unconfirmedPings);
-  const rows = agents.map((agent) => {
-    const task = oneLine(agent.taskDescription).slice(0, TASK_PREVIEW_LENGTH);
-    return (
-      `- ${agent.name} | ${agent.tool}/${agent.liveModel ?? agent.model} | ` +
-      `${agent.status} | branch=${agent.branch ?? "unknown"} | ` +
-      `worktree=${agent.worktreePath ?? "unknown"} | ` +
-      `lastEvent=${agent.lastEventAt} | task=${task}`
-    );
-  });
-  const confirmedNames = agents
-    .map((agent) => agent.name)
-    .filter((name) => !unconfirmed.has(name));
-
-  return [
-    "RECOVERY MODE — BACKUP ORCHESTRATOR",
-    `You are backup generation ${generation}. The previous orchestrator process ` +
-      `exited with exit code ${exitCode} while live agents remained. Do not duplicate ` +
-      "or restart their work.",
-    "Call hive_status immediately, then read hive_inbox. The snapshot below is only " +
-      "the durable state observed at recovery time; agent replies are the current truth.",
-    "Active-agent snapshot:",
-    ...rows,
-    `Recovery request durably recorded: ${confirmedNames.join(", ") || "none"}.`,
-    `Recovery request NOT confirmed: ${unconfirmedPings.join(", ") || "none"}. ` +
-      "Contact any unconfirmed agent yourself after hive_status succeeds.",
-  ].join("\n");
 }
 
 async function readKnownAgentState(
@@ -81,8 +62,7 @@ async function readKnownAgentState(
       return await dependencies.fetchAgents();
     } catch (error) {
       dependencies.report(
-        "[hive] orchestrator exited, but Hive cannot determine whether agents " +
-          `remain active; refusing to guess and retrying (${error instanceof Error ? error.message : String(error)})`,
+        `[hive] Hive cannot determine agent state; refusing to guess and retrying (${errorMessage(error)})`,
       );
       await dependencies.sleep(delay);
       delay = Math.min(delay * 2, STATUS_RETRY_MAX_MS);
@@ -93,52 +73,65 @@ async function readKnownAgentState(
 export async function superviseOrchestratorSession(
   dependencies: OrchestratorSupervisorDependencies,
 ): Promise<number> {
-  let recoveryBrief = "";
-  let generation = 0;
   let consecutiveRapidExits = 0;
+  let lastLiveTool: CapabilityProvider | null = null;
+  let reason: PrepareQueenLaunchRequest["reason"] = "initial-boot";
+  let reasonDetail = "initial queen boot";
 
   while (true) {
+    const desired = await dependencies.desiredTool().catch(() => null);
+    const tool: CapabilityProvider =
+      desired ?? lastLiveTool ?? dependencies.initialTool;
+    if (desired !== null && lastLiveTool !== null && desired !== lastLiveTool) {
+      reason = "provider-change";
+      reasonDetail = `queen provider changed from ${lastLiveTool} to ${desired}`;
+    }
+    // Gate the relaunch on the daemon answering: readKnownAgentState retries
+    // until it gets through, while a rejected prepareLaunch would propagate
+    // out of the supervisor and kill it. The agent snapshot the succession
+    // needs is built daemon-side, so the read here only waits.
+    await readKnownAgentState(dependencies);
+    const requestId = mintSessionRequestId();
+    const prepared = await dependencies.prepareLaunch({
+      requestId,
+      provider: tool,
+      cwd: process.cwd(),
+      reason,
+      reasonDetail,
+    });
     const startedAt = dependencies.now();
     let exitCode: number;
     try {
-      exitCode = await dependencies.launch(recoveryBrief);
+      exitCode = await dependencies.launch(tool, prepared);
+      lastLiveTool = tool;
     } catch (error) {
       if (!(error instanceof OrchestratorLaunchFailedError)) throw error;
       dependencies.report(`[hive] ${error.message}`);
+      await dependencies
+        .reportLaunchFailure(tool, error.message)
+        .catch(() => {});
       exitCode = 1;
     }
     const lifetime = Math.max(0, dependencies.now() - startedAt);
-    const agents = await readKnownAgentState(dependencies);
-    const liveAgents = agents.filter(isLiveAgent);
-    if (liveAgents.length === 0) {
+    const after = await readKnownAgentState(dependencies);
+    const liveAgents = after.filter(
+      (agent) => !["dead", "done", "failed"].includes(agent.status),
+    );
+    const steered = await dependencies.desiredTool().catch(() => null);
+    if (liveAgents.length === 0 && (steered === null || steered === tool)) {
       dependencies.report(
         `[hive] orchestrator exited with code ${exitCode}; no live agents remain`,
       );
       return exitCode;
     }
-
-    dependencies.report(
-      `[hive] orchestrator exited with code ${exitCode} while ` +
-        `${liveAgents.length} agent${liveAgents.length === 1 ? " remains" : "s remain"} active; starting a backup`,
-    );
-
-    const pingResults = await Promise.allSettled(
-      liveAgents.map((agent) =>
-        dependencies.sendRecoveryPing(agent.name, recoveryPing),
-      ),
-    );
-    const unconfirmedPings = liveAgents
-      .filter((_agent, index) => pingResults[index]?.status === "rejected")
-      .map((agent) => agent.name);
-
-    generation += 1;
-    recoveryBrief = buildOrchestratorRecoveryBrief(
-      generation,
-      exitCode,
-      liveAgents,
-      unconfirmedPings,
-    );
-
+    reason =
+      steered !== null && steered !== tool
+        ? "provider-change"
+        : "root-exit-with-live-agents";
+    reasonDetail =
+      reason === "root-exit-with-live-agents"
+        ? `orchestrator exited with code ${exitCode} while ${liveAgents.length} agent(s) remained active`
+        : `orchestrator exited with code ${exitCode}`;
     consecutiveRapidExits =
       lifetime < RAPID_EXIT_MS ? consecutiveRapidExits + 1 : 0;
     if (consecutiveRapidExits > 0) {
@@ -146,12 +139,66 @@ export async function superviseOrchestratorSession(
         1_000 * 2 ** (consecutiveRapidExits - 1),
         STATUS_RETRY_MAX_MS,
       );
-      dependencies.report(
-        `[hive] orchestrator exited after ${lifetime}ms; backup starts in ${delay}ms`,
-      );
       await dependencies.sleep(delay);
     }
   }
+}
+
+export async function daemonSteeredTool(
+  port: number,
+): Promise<CapabilityProvider | null> {
+  const response = await new UserDaemonClient({
+    port,
+    verifyIdentity: !isTestRunnerEnv(),
+  })
+    .request("/queen-succession/steer")
+    .catch(() => null);
+  if (response === null || !response.ok) return null;
+  const body = (await response.json().catch(() => null)) as {
+    tool?: unknown;
+  } | null;
+  const parsed = CapabilityProviderSchema.safeParse(body?.tool);
+  return parsed.success ? parsed.data : null;
+}
+
+export async function reportQueenLaunchFailure(
+  port: number,
+  tool: CapabilityProvider,
+  detail: string,
+): Promise<void> {
+  const response = await new UserDaemonClient({
+    port,
+    verifyIdentity: !isTestRunnerEnv(),
+  }).request("/queen-succession/launch-failure", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider: tool, detail }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `queen launch-failure report refused: ${daemonErrorDetail(await decodeJson(response), `HTTP ${response.status}`).message}`,
+    );
+  }
+}
+
+export async function prepareQueenLaunch(
+  port: number,
+  request: PrepareQueenLaunchRequest,
+): Promise<PrepareQueenLaunchResponse> {
+  const response = await new UserDaemonClient({
+    port,
+    verifyIdentity: !isTestRunnerEnv(),
+  }).request("/queen-succession/prepare-launch", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `queen launch preparation refused: ${daemonErrorDetail(await decodeJson(response), `HTTP ${response.status}`).message}`,
+    );
+  }
+  return PrepareQueenLaunchResponseSchema.parse(await response.json());
 }
 
 export async function runWorkspaceOrchestrator(
@@ -165,91 +212,67 @@ export async function runWorkspaceOrchestrator(
       tokenSessionId = await startTokenUsageSession(port, cwd);
     } catch (error) {
       console.error(
-        `[hive] token tracking unavailable; launches continue unmetered: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `[hive] token tracking unavailable: ${errorMessage(error)}`,
       );
     }
     const exitCode = await superviseOrchestratorSession({
-      launch: async (recoveryBrief) => {
+      initialTool: tool,
+      desiredTool: () => daemonSteeredTool(port),
+      prepareLaunch: (request) => prepareQueenLaunch(port, { ...request, cwd }),
+      reportLaunchFailure: (launchTool, detail) =>
+        reportQueenLaunchFailure(port, launchTool, detail),
+      launch: async (launchTool, prepared) => {
         let subjectId: string | null = null;
         if (tokenSessionId !== null) {
-          try {
-            subjectId = await startOrchestratorTokenSubject(
-              port,
-              tokenSessionId,
-              tool,
-              cwd,
-            );
-          } catch (error) {
-            console.error(
-              `[hive] orchestrator token tracking unavailable: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            );
-          }
+          subjectId = await startOrchestratorTokenSubject(
+            port,
+            tokenSessionId,
+            launchTool,
+            cwd,
+          ).catch(() => null);
         }
         try {
-          // Provider SessionStart hooks are useful readiness evidence but are
-          // not universal and can fail independently of a live root. Publish
-          // the supervisor-owned lifecycle fact first so Workspace shows the
-          // truthful known state `spawning`, never a fabricated idle or gray
-          // unknown, while this generation starts.
           await postHookEvent(
-            buildHookEvent("session-launch", {
-              agent: ORCHESTRATOR_NAME,
-            }),
+            buildHookEvent("session-launch", { agent: ORCHESTRATOR_NAME }),
             port,
-            operatorFetch,
+            userFetch,
           );
-          return await withNativeOrchestratorTurnMonitor(tool, port, cwd, () =>
-            launchOrchestrator(tool, port, cwd, recoveryBrief),
-          );
+          return await withNativeOrchestratorTurnMonitor(
+            launchTool,
+            port,
+            cwd,
+            () =>
+              launchOrchestrator(
+                launchTool,
+                port,
+                cwd,
+                prepared.bootCapsule,
+                {},
+                prepared.targetGeneration,
+              ),
+          ).catch((error: unknown) => {
+            if (error instanceof OrchestratorLaunchFailedError) throw error;
+            throw new OrchestratorLaunchFailedError(errorMessage(error));
+          });
         } finally {
           if (subjectId !== null) {
-            await endTokenUsageSubject(port, subjectId).catch((error) => {
-              console.error(
-                `[hive] could not finalize orchestrator token usage: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-              );
-            });
+            await endTokenUsageSubject(port, subjectId).catch(() => {});
           }
         }
       },
       fetchAgents: async () => await fetchAgentStatus(port),
-      sendRecoveryPing: async (agentName, body) =>
-        await sendOrchestratorMessage(port, agentName, body),
       sleep: async (milliseconds) =>
         await new Promise((resolve) => setTimeout(resolve, milliseconds)),
       now: Date.now,
-      report: (message) => {
-        console.error(message);
-      },
+      report: (message) => console.error(message),
     });
-    try {
-      await postHookEvent(
-        buildHookEvent("session-end", {
-          agent: ORCHESTRATOR_NAME,
-        }),
-        port,
-        operatorFetch,
-      );
-    } catch (error) {
-      console.error(
-        `[hive] could not report orchestrator session end: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
+    await postHookEvent(
+      buildHookEvent("session-end", { agent: ORCHESTRATOR_NAME }),
+      port,
+      userFetch,
+    ).catch(() => {});
     if (tokenSessionId !== null) {
-      await endTokenUsageSession(port, tokenSessionId).catch((error) => {
-        console.error(
-          `[hive] could not finalize token session: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      });
+      await endTokenUsageSession(port, tokenSessionId).catch(() => {});
     }
     return exitCode;
   });

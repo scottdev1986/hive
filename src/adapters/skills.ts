@@ -10,41 +10,32 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { getHiveHome } from "../hive-home/home";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
-  type RoutingCategory,
+  unknownVendor,
+} from "../schemas/capability";
+import type { RoutingCategory } from "../schemas/routing-policy";
+import {
   SKILL_CATEGORY_BUCKETS,
   SKILL_ROLES,
   skillBucketNames,
   unknownRole,
-  unknownVendor,
-} from "../schemas";
+} from "../schemas/skill-address";
 import {
   SHIPPED_SKILLS,
   shippedSkillAddresses,
   shippedSkillsFor,
 } from "../skills/shipped";
 
-/** The shared vendor enum keeps skill provisioning exhaustive. */
 export type SkillTool = CapabilityProvider;
 
-/**
- * Who is being provisioned: the reader a skill has to be addressed to before it
- * is staged for them.
- *
- * A queen carries no category and the type says so, because she is spawned
- * under none — a `category` on a queen would be a filter nothing could ever
- * match, and the one place that reads it would quietly stage nothing.
- */
 export type SkillAudience =
   | { role: "queen"; tool: SkillTool }
   | { role: "agent"; tool: SkillTool; category?: RoutingCategory };
 
-/** Project skill roots are vendor contracts; an unknown vendor must fail
- * before any directory is chosen or written. */
 export function nativeSkillDirectory(tool: SkillTool): string {
   switch (tool) {
     case "claude":
@@ -68,13 +59,8 @@ const isMissingFileError = (error: unknown): boolean =>
   "code" in error &&
   error.code === "ENOENT";
 
-function hiveHome(): string {
-  return Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
-}
-
-/** The machine-wide skill root: `~/.hive/skills`, every repository's skills. */
 export function globalSkillsRoot(): string {
-  return join(hiveHome(), "skills");
+  return join(getHiveHome(), "skills");
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -124,18 +110,6 @@ async function discoverSkills(root: string): Promise<Map<string, string>> {
   return skills;
 }
 
-/**
- * The directories one audience reads, least specific first.
- *
- * Role is always the first segment. There is no unbucketed skill and no
- * top-level vendor bucket: a directory that does not say who it is for is not
- * addressed to anyone, and "everyone" is not an audience — it is the absence of
- * a decision.
- *
- * Order is precedence: a later directory overwrites a name an earlier one
- * staged, so the most specific address wins. Vendor precedes category because
- * what a CLI *is* changes less often than what an agent was sent to *do*.
- */
 export function skillOverlays(audience: SkillAudience): string[] {
   switch (audience.role) {
     case "queen":
@@ -143,8 +117,7 @@ export function skillOverlays(audience: SkillAudience): string[] {
     case "agent": {
       const base = ["agent", join("agent", audience.tool)];
       const category = audience.category;
-      // `default` is a routing fallback chain, never a task an agent ran under,
-      // so it addresses no directory (schemas/skill-address.ts).
+      // `default` is a routing fallback chain, never a task an agent ran under, so it addresses no directory (schemas/skill-address.ts).
       if (category === undefined || category === "default") return base;
       return [
         ...base,
@@ -157,19 +130,11 @@ export function skillOverlays(audience: SkillAudience): string[] {
   }
 }
 
-/** Which level of the tree an overlay sits at, so the bucket names excluded
- * from it are the ones that are buckets *there*. */
 function overlayLevel(overlay: string): "role" | "vendor" {
   return overlay.includes(sep) ? "vendor" : "role";
 }
 
-/**
- * The user's skills in one source root, for one audience.
- *
- * A directory that names a bucket at its level is always a bucket, so a skill
- * cannot be named after one — the ambiguity is resolved here rather than
- * discovered later, and the bucket wins a name it shares with a skill.
- */
+/** The user's skills in one source root, for one audience. A directory that names a bucket at its level is always a bucket, so a skill cannot be named after one — the ambiguity is resolved here rather than discovered later, and the bucket wins a name it shares with a skill. */
 async function discoverSkillsFor(
   root: string,
   audience: SkillAudience,
@@ -187,7 +152,6 @@ async function discoverSkillsFor(
   return found;
 }
 
-/** Every directory any audience can reach, relative to a source root. */
 function addressableDirectories(): Set<string> {
   const directories = new Set<string>();
   for (const role of SKILL_ROLES) {
@@ -211,15 +175,7 @@ function addressableDirectories(): Set<string> {
   return directories;
 }
 
-/**
- * Skills nobody can be given: a `SKILL.md` sitting at a path no audience reads.
- *
- * This includes every unaddressed skill and every mis-ordered path
- * (`agent/planning/claude/` rather than
- * `agent/claude/planning/`). They are returned rather than skipped because a
- * skill someone wrote that quietly stops loading is the worst failure this
- * grammar can produce — the caller's job is to say so, with the path.
- */
+/** Skills nobody can be given: a `SKILL.md` sitting at a path no audience reads. This includes every unaddressed skill and every mis-ordered path (`agent/planning/claude/` rather than `agent/claude/planning/`). They are returned rather than skipped because a skill someone wrote that quietly stops loading is the worst failure this grammar can produce — the caller's job is to say so, with the path. */
 export async function unaddressedSkills(root: string): Promise<string[]> {
   const addressable = addressableDirectories();
   const unaddressed: string[] = [];
@@ -247,23 +203,13 @@ export async function unaddressedSkills(root: string): Promise<string[]> {
   return unaddressed.sort();
 }
 
-/**
- * Every skill the user has, for one vendor, from both source roots.
- *
- * Both roots are read from outside any worktree — `~/.hive/skills` and the
- * *primary checkout's* `.hive/skills` — because a worktree is checked out from
- * a commit and would otherwise show only skills that had been committed. Read
- * from the primary, a skill behaves the same whether it is uncommitted,
- * committed, or gitignored, which is the only rule a person can hold in their
- * head. This mirrors how memory resolves `.hive/memory`.
- */
+/** Every skill the user has, for one vendor, from both source roots. Both roots are read from outside any worktree — `~/.hive/skills` and the *primary checkout's* `.hive/skills` — because a worktree is checked out from a commit and would otherwise show only skills that had been committed. Read from the primary, a skill behaves the same whether it is uncommitted, committed, or gitignored, which is the only rule a person can hold in their head. This mirrors how memory resolves `.hive/memory`. */
 async function userSkillsFor(
   repoRoot: string,
   audience: SkillAudience,
   globalSkillsPath: string,
 ): Promise<Map<string, string>> {
   const global = await discoverSkillsFor(globalSkillsPath, audience);
-  // The repository's skills intentionally override global ones of the name.
   for (const [name, source] of await discoverSkillsFor(
     join(repoRoot, ".hive", "skills"),
     audience,
@@ -273,25 +219,10 @@ async function userSkillsFor(
   return global;
 }
 
-/**
- * Where a worktree records the skill symlinks Hive actually created in it.
- *
- * Provenance is remembered, not re-derived. Re-listing the sources later
- * answers "what would provisioning produce right now", which is a different
- * question from "what did Hive put here", and the two disagree exactly where it
- * costs the most: a source deleted after the spawn drops out of the live
- * listing, while vendors sharing one native directory put another vendor's
- * skills — and another vendor's *name* for a skill — into the live listing for
- * a worktree that was never provisioned for them.
- */
+/** Where a worktree records the skill symlinks Hive actually created in it. Provenance is remembered, not re-derived. Re-listing the sources later answers "what would provisioning produce right now", which is a different question from "what did Hive put here", and the two disagree exactly where it costs the most: a source deleted after the spawn drops out of the live listing, while vendors sharing one native directory put another vendor's skills — and another vendor's *name* for a skill — into the live listing for a worktree that was never provisioned for them. */
 export const SKILL_LINK_MANIFEST = ".hive/skill-links.json";
 
-/**
- * The symlinks `provisionSkills` created in one worktree, as worktree-relative
- * paths mapped to the source each was pointed at. No manifest means Hive
- * created none; an unreadable one throws, because a caller that deletes on
- * "nothing here" must never be told that by a failed read.
- */
+/** The symlinks `provisionSkills` created in one worktree, as worktree-relative paths mapped to the source each was pointed at. No manifest means Hive created none; an unreadable one throws, because a caller that deletes on "nothing here" must never be told that by a failed read. */
 export async function provisionedSkillLinks(
   worktreePath: string,
 ): Promise<Map<string, string>> {
@@ -306,8 +237,7 @@ export async function provisionedSkillLinks(
   return new Map(Object.entries(JSON.parse(raw) as Record<string, string>));
 }
 
-/** Merged, never replaced: a link Hive created stays Hive's while it is still
- * on disk, even once a later spawn no longer produces it. */
+/** Merged, never replaced: a link Hive created stays Hive's while it is still on disk, even once a later spawn no longer produces it. */
 async function recordProvisionedLinks(
   worktreePath: string,
   links: Map<string, string>,
@@ -333,9 +263,7 @@ async function linkSkill(source: string, destination: string): Promise<void> {
         return;
       }
     }
-    // A byte-identical real copy (e.g. an install artifact that was
-    // accidentally committed, so every fresh worktree carries it) IS the
-    // skill — replace it with the canonical link instead of refusing.
+    // A byte-identical real copy (e.g. an install artifact that was accidentally committed, so every fresh worktree carries it) IS the skill — replace it with the canonical link instead of refusing.
     if (existing.isDirectory()) {
       const [shipped, wanted] = await Promise.all([
         readFile(join(destination, "SKILL.md"), "utf8").catch(() => null),
@@ -358,31 +286,19 @@ async function linkSkill(source: string, destination: string): Promise<void> {
   await symlink(source, destination, "dir");
 }
 
-/** What installing Hive's shipped skills into one directory did. Every skill
- * lands in exactly one of these buckets, and only `installed` wrote anything. */
 export interface SkillInstallReport {
   tool: SkillTool;
-  /** The vendor directory, relative to the root — for the summary line. */
   nativeDirectory: string;
-  /** Whether that directory had to be created (a fresh repo) or already existed. */
   createdDirectory: boolean;
-  /** Written now: nothing was there (or `--force` accepted the shipped copy). */
   installed: string[];
   /** Already byte-identical to the shipped version. */
   unchanged: string[];
-  /** Present and different. Left alone — the human's copy wins until `--force`. */
   drifted: string[];
-  /** The name is taken by a skill the user provides themselves (a symlink from
-   * their own `.hive/skills`). Theirs wins; Hive does not write through it. */
   userOwned: string[];
-  /** Not written, because another vendor installed in this same root reads the
-   * same directory and this skill is not addressed to it. Never silent: the
-   * caller reports it, because a skill that quietly did not install is
-   * indistinguishable from one that failed to. */
+  /** Not written, because another vendor installed in this same root reads the same directory and this skill is not addressed to it. Never silent: the caller reports it, because a skill that quietly did not install is indistinguishable from one that failed to. */
   withheld: string[];
 }
 
-/** Every vendor that reads `tool`'s project skill directory in this root. */
 export function skillReaders(
   tool: SkillTool,
   coresident: readonly SkillTool[] = [],
@@ -395,8 +311,6 @@ export function skillReaders(
   return [...readers];
 }
 
-/** Shared directories may contain a skill only when every reader is an
- * intended recipient. Single-vendor roots still receive vendor-only skills. */
 export function skillAddressesEveryReader(
   skill: { tools: SkillTool[] },
   readers: readonly SkillTool[],
@@ -404,29 +318,13 @@ export function skillAddressesEveryReader(
   return readers.every((reader) => skill.tools.includes(reader));
 }
 
-/** What installing Hive's base skills into a repository's `.hive/skills` did.
- * Same three outcomes as a vendor install, keyed by address so a name that
- * installs twice is reported twice — it is two files. */
 export interface BaseSkillInstallReport {
-  /** `<address>/<skill>`, written now. */
   installed: string[];
   /** Already byte-identical. */
   unchanged: string[];
-  /** Present and different: the human's, left alone until `--force`. */
   drifted: string[];
 }
 
-/**
- * Put Hive's own skills where the user's own skills live.
- *
- * `.hive/skills` lets a person answer "what do my agents know". Installing
- * Hive's skills here makes them ordinary: addressed by the same grammar,
- * editable in place, and overridden by an edit like every other skill.
- *
- * No vendor directory is touched and no vendor needs to be installed for this
- * to be right, because an address carries its own vendor: `agent/claude/` is
- * for claude whether or not claude is on this machine today.
- */
 export async function installBaseSkills(
   repoRoot: string,
   options: { force?: boolean } = {},
@@ -463,8 +361,6 @@ export async function installBaseSkills(
   return report;
 }
 
-/** Install without overwriting human files or writing through user symlinks.
- * Shared roots withhold skills not addressed to every reader. */
 export async function installShippedSkills(
   root: string,
   audience: SkillAudience,
@@ -477,14 +373,7 @@ export async function installShippedSkills(
   );
 }
 
-/**
- * The same install, into a directory named outright.
- *
- * An agent's destination is derived from its worktree and its vendor's native
- * path; a queen's is whatever her vendor gave Hive to work with — a plugin
- * directory, a `--skills-dir`, a redirected home — and none of those are under
- * a checkout. The choosing belongs to the caller, so this takes the answer.
- */
+/** The same install, into a directory named outright. An agent's destination is derived from its worktree and its vendor's native path; a queen's is whatever her vendor gave Hive to work with — a plugin directory, a `--skills-dir`, a redirected home — and none of those are under a checkout. The choosing belongs to the caller, so this takes the answer. */
 export async function installShippedSkillsInto(
   nativeRoot: string,
   audience: SkillAudience,
@@ -546,27 +435,14 @@ export async function installShippedSkillsInto(
   return report;
 }
 
-/**
- * Make one worktree's vendor skill directory true, at spawn.
- *
- * This function is the single path by which a skill reaches an agent,
- * plus `installShippedSkills` — which is the same install, run at a different
- * moment. Hive's own skills are *in the binary*, so they are laid down here for
- * every agent regardless of what the user's repo happens to contain; the user's
- * own skills are symlinked in from the primary checkout and `~/.hive/skills`.
- * The user's skills are linked first and a linked name is never written
- * through, so precedence reads off the code: **a skill the user wrote beats a
- * skill Hive ships.**
- */
+/** Make one worktree's vendor skill directory true, at spawn. This function is the single path by which a skill reaches an agent, plus `installShippedSkills` — which is the same install, run at a different moment. Hive's own skills are *in the binary*, so they are laid down here for every agent regardless of what the user's repo happens to contain; the user's own skills are symlinked in from the primary checkout and `~/.hive/skills`. The user's skills are linked first and a linked name is never written through, so precedence reads off the code: **a skill the user wrote beats a skill Hive ships.** */
 export async function provisionSkills(
   repoRoot: string,
   worktreePath: string,
   audience: SkillAudience,
   globalSkillsPath = globalSkillsRoot(),
 ): Promise<void> {
-  // Before any disk work: an unknown vendor must not get the user's own skills
-  // symlinked into a directory chosen for a different CLI, and must not get a
-  // half-provisioned worktree that a later read would call provisioned.
+  // Before any disk work: an unknown vendor must not get the user's own skills symlinked into a directory chosen for a different CLI, and must not get a half-provisioned worktree that a later read would call provisioned.
   const nativeDirectory = nativeSkillDirectory(audience.tool);
   const staged = await stageUserSkills(
     repoRoot,
@@ -575,8 +451,7 @@ export async function provisionSkills(
     globalSkillsPath,
   );
   if (staged.size > 0) {
-    // After the links exist, so a failed staging never leaves a path recorded
-    // as Hive's that Hive did not create.
+    // After the links exist, so a failed staging never leaves a path recorded as Hive's that Hive did not create.
     await recordProvisionedLinks(
       worktreePath,
       new Map(
@@ -595,15 +470,7 @@ export async function provisionSkills(
   );
 }
 
-/**
- * Symlink one audience's own skills into one directory, and say what was
- * linked, keyed by the absolute path each link was created at.
- *
- * No manifest is written here. A worktree records its links because
- * reconciliation later has to tell Hive's wiring from the agent's own work; a
- * queen's directory belongs to Hive outright and is rebuilt at every launch,
- * so there is nothing there to mistake for someone's work.
- */
+/** Symlink one audience's own skills into one directory, and say what was linked, keyed by the absolute path each link was created at. No manifest is written here. A worktree records its links because reconciliation later has to tell Hive's wiring from the agent's own work; a queen's directory belongs to Hive outright and is rebuilt at every launch, so there is nothing there to mistake for someone's work. */
 async function stageUserSkills(
   repoRoot: string,
   destination: string,
@@ -624,15 +491,7 @@ async function stageUserSkills(
   return links;
 }
 
-/**
- * Everything one audience is owed, in a directory Hive chose rather than a
- * worktree: the user's own skills, then Hive's shipped ones, then the prune.
- *
- * This is `provisionSkills` for a reader who has no checkout of their own —
- * the queen, whose vendor hands Hive a plugin directory or a `--skills-dir`
- * instead. The order and the precedence are the same, so a skill the user wrote
- * still beats a skill Hive ships.
- */
+/** Everything one audience is owed, in a directory Hive chose rather than a worktree: the user's own skills, then Hive's shipped ones, then the prune. This is `provisionSkills` for a reader who has no checkout of their own — the queen, whose vendor hands Hive a plugin directory or a `--skills-dir` instead. The order and the precedence are the same, so a skill the user wrote still beats a skill Hive ships. */
 export async function provisionSkillsInto(
   repoRoot: string,
   destination: string,
@@ -645,19 +504,7 @@ export async function provisionSkillsInto(
   await removeForeignShippedSkillsFrom(destination, audience);
 }
 
-/**
- * Codex and Grok share `.agents/skills`. A reused single-vendor worktree may
- * retain the other vendor's contracts, so remove only byte-identical Hive
- * copies. User symlinks and modified files are never touched.
- *
- * Foreign is now anything this audience is not offered — another vendor's
- * contract, and equally a skill for the other role or another category. A
- * worktree reused by an agent of a different category would otherwise keep a
- * contract addressed to work it was not sent to do.
- *
- * This runs at spawn, not multi-vendor init: one shared checkout cannot hide a
- * file from only one of two readers, while each agent worktree has one reader.
- */
+/** Codex, Grok, and Kimi share `.agents/skills`. A reused single-vendor worktree may retain another vendor's contract, so remove only byte-identical Hive copies. User symlinks and modified files are never touched. Foreign is now anything this audience is not offered — another vendor's contract, and equally a skill for the other role or another category. A worktree reused by an agent of a different category would otherwise keep a contract addressed to work it was not sent to do. This runs at spawn, not multi-vendor init: one shared checkout cannot hide a file from only one of its readers, while each agent worktree has one reader. */
 async function removeForeignShippedSkillsFrom(
   nativeRoot: string,
   audience: SkillAudience,
@@ -679,7 +526,6 @@ async function removeForeignShippedSkillsFrom(
         throw error;
       },
     );
-    // Only Hive's own, unmodified copy. Anything else is the human's.
     if (current !== skill.content) continue;
     await rm(destination, { recursive: true, force: true });
   }

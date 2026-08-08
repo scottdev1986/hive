@@ -1,7 +1,7 @@
 const std = @import("std");
-const broker = @import("broker");
 const generated = @import("session_protocol_generated");
 const protocol = @import("protocol");
+const session_types = @import("session_types");
 
 const WireSubject = struct {
     kind: []const u8,
@@ -18,59 +18,14 @@ pub const WireLocator = struct {
     engineBuildId: ?[]const u8,
 };
 
-const WireProcessRoot = struct {
-    pid: i32,
-    startToken: []const u8,
-    processGroupId: i32,
-};
-
-pub const WireGeometry = struct {
-    columns: u32,
-    rows: u32,
-    widthPx: u32,
-    heightPx: u32,
-    cellWidthPx: f64,
-    cellHeightPx: f64,
-};
-
-const WireVisibility = struct {
-    state: []const u8,
-    workspaceSessionId: []const u8,
-    openTerminalRevision: []const u8,
-    expiresAt: []const u8,
-};
-
-const WireHostProjection = struct {
-    locator: WireLocator,
-    hostPid: i32,
-    hostStartToken: []const u8,
-    processRoot: WireProcessRoot,
-    expectedExecutable: []const u8,
-    executableBuildHash: []const u8,
-    engineBuildId: []const u8,
-    protocol: struct { major: u8, minor: u8 },
-    geometry: WireGeometry,
-    state: []const u8,
-    outputSeq: []const u8,
-    checkpointSeq: []const u8,
-    visibility: WireVisibility,
-};
-
-pub const WireHostRegisterRequest = struct {
-    schemaVersion: u8,
-    record: WireHostProjection,
-};
+pub const WireGeometry = generated.TerminalGeometry;
 
 pub const HostRegistration = struct {
-    record: broker.HostRecord,
+    record: session_types.HostRecord,
     expires_at: []const u8,
-    created_at: []const u8,
-    checkpoint_available: bool,
-    executable_verified: bool,
-    complete: bool,
 };
 
-pub fn locatorValue(allocator: std.mem.Allocator, locator: broker.Locator) !std.json.Value {
+pub fn locatorValue(allocator: std.mem.Allocator, locator: session_types.Locator) !std.json.Value {
     var subject = std.json.ObjectMap.init(allocator);
     try subject.put("kind", .{ .string = @tagName(locator.subject) });
     switch (locator.subject) {
@@ -91,7 +46,7 @@ pub fn locatorValue(allocator: std.mem.Allocator, locator: broker.Locator) !std.
     return .{ .object = value };
 }
 
-pub fn processRootValue(allocator: std.mem.Allocator, root: broker.ProcessRoot) !std.json.Value {
+pub fn processRootValue(allocator: std.mem.Allocator, root: session_types.ProcessRoot) !std.json.Value {
     var value = std.json.ObjectMap.init(allocator);
     try value.put("pid", .{ .integer = root.pid });
     try value.put("startToken", .{ .string = root.start_token });
@@ -99,7 +54,7 @@ pub fn processRootValue(allocator: std.mem.Allocator, root: broker.ProcessRoot) 
     return .{ .object = value };
 }
 
-pub fn geometryValue(allocator: std.mem.Allocator, geometry: broker.Geometry) !std.json.Value {
+pub fn geometryValue(allocator: std.mem.Allocator, geometry: session_types.Geometry) !std.json.Value {
     var value = std.json.ObjectMap.init(allocator);
     try value.put("columns", .{ .integer = geometry.columns });
     try value.put("rows", .{ .integer = geometry.rows });
@@ -112,7 +67,7 @@ pub fn geometryValue(allocator: std.mem.Allocator, geometry: broker.Geometry) !s
 
 pub fn visibilityValue(
     allocator: std.mem.Allocator,
-    visibility: broker.Visibility,
+    visibility: session_types.Visibility,
     expires_at: []const u8,
 ) !std.json.Value {
     var revision_storage: [32]u8 = undefined;
@@ -176,88 +131,5 @@ pub fn encodeHostRegister(
         generated.wire_schema.host_register_payload,
         json,
     )) return error.InvalidHostRegister;
-    return json;
-}
-
-pub fn encodeRecordJson(
-    allocator: std.mem.Allocator,
-    registration: HostRegistration,
-) ![]u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const projection = try projectionValue(arena.allocator(), registration);
-    var root = projection.object;
-    try root.put("schemaVersion", .{ .integer = 1 });
-    try root.put("socketRelativePath", .{ .string = "host.sock" });
-    try root.put("createdAt", .{ .string = registration.created_at });
-    const json = try std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = root }, .{});
-    errdefer allocator.free(json);
-    if (!protocol.validateControlPayload(
-        allocator,
-        generated.wire_schema.host_record_v1,
-        json,
-    )) return error.InvalidHostRecord;
-    return json;
-}
-
-pub fn encodeCreatedPayload(
-    allocator: std.mem.Allocator,
-    registration: HostRegistration,
-) ![]u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const record = registration.record;
-    var output_storage: [32]u8 = undefined;
-    var checkpoint_storage: [32]u8 = undefined;
-    const output = try std.fmt.bufPrint(&output_storage, "{d}", .{record.output_seq});
-    const checkpoint = try std.fmt.bufPrint(&checkpoint_storage, "{d}", .{record.checkpoint_seq});
-
-    var input = std.json.ObjectMap.init(a);
-    try input.put("state", .{ .string = "FREE" });
-    try input.put("ownerViewerId", .null);
-    try input.put("claimId", .null);
-    const resources = std.json.ObjectMap.init(a);
-    const survivors = std.json.Array.init(a);
-    const diagnostics = std.json.Array.init(a);
-    var inspection = std.json.ObjectMap.init(a);
-    try inspection.put("schemaVersion", .{ .integer = 1 });
-    try inspection.put("locator", try locatorValue(a, record.locator));
-    try inspection.put("presence", .{ .string = "present" });
-    try inspection.put("complete", .{ .bool = registration.complete });
-    try inspection.put("hostPid", .{ .integer = record.host_pid });
-    try inspection.put("hostStartToken", .{ .string = record.host_start_token });
-    try inspection.put("shellRoot", try processRootValue(a, record.process_root));
-    var foreground = std.json.ObjectMap.init(a);
-    try foreground.put("state", .{ .string = "unknown" });
-    try foreground.put("runId", .null);
-    try inspection.put("foreground", .{ .object = foreground });
-    try inspection.put("expectedExecutable", .{ .string = record.expected_executable });
-    try inspection.put("executableVerified", .{ .bool = registration.executable_verified });
-    try inspection.put("outputSeq", .{ .string = try a.dupe(u8, output) });
-    try inspection.put("checkpointSeq", .{ .string = try a.dupe(u8, checkpoint) });
-    try inspection.put("checkpointAvailable", .{ .bool = registration.checkpoint_available });
-    try inspection.put("input", .{ .object = input });
-    try inspection.put("viewerCount", .{ .integer = 0 });
-    try inspection.put("geometry", try geometryValue(a, record.geometry));
-    try inspection.put("resources", .{ .object = resources });
-    try inspection.put("visibility", try visibilityValue(a, record.visibility, registration.expires_at));
-    try inspection.put("exit", .null);
-    try inspection.put("survivors", .{ .array = survivors });
-    try inspection.put("evidenceAt", .{ .string = registration.created_at });
-    try inspection.put("diagnosticIds", .{ .array = diagnostics });
-
-    var root = std.json.ObjectMap.init(a);
-    try root.put("schemaVersion", .{ .integer = 1 });
-    try root.put("locator", try locatorValue(a, record.locator));
-    try root.put("inspection", .{ .object = inspection });
-    try root.put("created", .{ .bool = true });
-    const json = try std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = root }, .{});
-    errdefer allocator.free(json);
-    if (!protocol.validateControlPayload(
-        allocator,
-        generated.wire_schema.created_payload,
-        json,
-    )) return error.InvalidCreatedPayload;
     return json;
 }

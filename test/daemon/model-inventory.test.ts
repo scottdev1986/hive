@@ -2,15 +2,15 @@ import { describe, expect, test } from "bun:test";
 import {
   buildModelInventory,
   formatModelInventory,
-} from "../../src/daemon/model-inventory";
+} from "../../src/daemon/provider-capabilities/model-inventory";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityRecord,
   type CapabilitySurface,
   known,
-  type RoutingPolicy,
   unknown,
-} from "../../src/schemas";
+} from "../../src/schemas/capability";
+import type { RoutingPolicy } from "../../src/schemas/routing-policy";
 import { required } from "../required";
 
 const AT = "2026-07-11T12:00:00.000Z";
@@ -125,6 +125,7 @@ describe("model inventory", () => {
       roles: [
         {
           scope: "complex_coding",
+          mode: "user-weighted",
           weight: 1,
           effort: { mode: "provider-controlled" },
         },
@@ -164,7 +165,7 @@ describe("model inventory", () => {
     ).toBe("Not in any route; an explicit user request may still select it.");
   });
 
-  test("renders the complete inventory and provenance for humans", () => {
+  test("renders the complete inventory and provenance for users", () => {
     const text = formatModelInventory(
       buildModelInventory({ discovery, policy, now: new Date(AT) }),
     );
@@ -210,12 +211,93 @@ describe("model inventory", () => {
     );
     expect(model.routedCandidate).toBeTrue();
     expect(model.roles).toContainEqual(
-      expect.objectContaining({ scope: "complex_coding", weight: 2 }),
+      expect.objectContaining({
+        scope: "complex_coding",
+        mode: "user-weighted",
+        weight: 2,
+      }),
     );
     expect(model.effortLevels).toEqual({
       state: "known",
       values: ["high", "xhigh"],
     });
+  });
+
+  // Both directions: hive-equal must project effective weight 1 for every
+  // candidate (never the inert stored ladder), and user-weighted must still
+  // surface differing stored ratings. A test that only checks equal mode
+  // cannot tell this change from a function that always returns 1.
+  test("roles report effective weight: equal under hive-equal, stored under user-weighted", () => {
+    const ladder = [
+      {
+        provider: "claude" as const,
+        model: "claude-fable-5",
+        effort: { mode: "exact" as const, value: "xhigh" },
+        weight: 95,
+      },
+      {
+        provider: "codex" as const,
+        model: "gpt-hidden",
+        effort: { mode: "provider-controlled" as const },
+        weight: 40,
+      },
+    ];
+    const equalPolicy: RoutingPolicy = {
+      ...policy,
+      categories: {
+        complex_coding: { mode: "hive-equal", candidates: ladder },
+      },
+    };
+    const equal = buildModelInventory({
+      discovery,
+      policy: equalPolicy,
+      now: new Date(AT),
+    });
+    const equalRoles = equal.models
+      .filter((model) => model.routedCandidate)
+      .flatMap((model) => model.roles);
+    expect(equalRoles).toHaveLength(2);
+    for (const role of equalRoles) {
+      expect(role).toMatchObject({
+        scope: "complex_coding",
+        mode: "hive-equal",
+        weight: 1,
+      });
+    }
+    expect(equal.models[0]?.when).toContain(
+      "In the complex_coding route (equal split)",
+    );
+    expect(equal.models[0]?.when).not.toContain("weight 95");
+
+    const weightedPolicy: RoutingPolicy = {
+      ...policy,
+      categories: {
+        complex_coding: { mode: "user-weighted", candidates: ladder },
+      },
+    };
+    const weighted = buildModelInventory({
+      discovery,
+      policy: weightedPolicy,
+      now: new Date(AT),
+    });
+    const fableRole = weighted.models.find(
+      (model) => model.canonicalId === "claude-fable-5",
+    )?.roles[0];
+    const hiddenRole = weighted.models.find(
+      (model) => model.canonicalId === "gpt-hidden",
+    )?.roles[0];
+    expect(fableRole).toMatchObject({
+      mode: "user-weighted",
+      weight: 95,
+    });
+    expect(hiddenRole).toMatchObject({
+      mode: "user-weighted",
+      weight: 40,
+    });
+    expect(fableRole?.weight).not.toBe(hiddenRole?.weight);
+    expect(weighted.models[0]?.when).toContain(
+      "In the complex_coding route (weight 95)",
+    );
   });
 });
 

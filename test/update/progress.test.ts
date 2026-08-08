@@ -4,13 +4,13 @@ import {
   formatRate,
   renderProgressLine,
   startDownload,
-} from "../../src/update/progress";
+} from "../../src/update-service/progress";
 
 const ESC = String.fromCharCode(27);
 const ANSI = new RegExp(`${ESC}\\[[0-9;]*[A-Za-z]`);
 
 describe("formatBytes", () => {
-  test("scales to the unit a human would use", () => {
+  test("scales to the unit a user would use", () => {
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(65_231_808)).toBe("65.2 MB");
     expect(formatBytes(2_400_000_000)).toBe("2.40 GB");

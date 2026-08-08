@@ -4,6 +4,8 @@ const neutral_host = @import("neutral_host");
 const process_inspector = @import("process_inspector");
 const neutral_evidence = @import("neutral_evidence");
 
+const neutral_contract = @import("neutral_contract");
+const neutral_runtime = @import("neutral_runtime");
 const ListRequest = neutral_evidence.ListRequest;
 const InspectRequest = neutral_evidence.InspectRequest;
 const ResizeRequest = neutral_evidence.ResizeRequest;
@@ -35,28 +37,19 @@ const measureDirectChildReap = neutral_evidence.measureDirectChildReap;
 
 pub const HostOperations = struct {
     allocator: std.mem.Allocator,
-    registry: *neutral_host.Registry,
-    session: neutral_host.SessionRef,
+    registry: *neutral_runtime.Registry,
+    session: neutral_contract.SessionRef,
     platform: process_inspector.Platform,
     evidence: EvidenceProvider,
     clock: EvidenceClock,
     scratch: std.heap.ArenaAllocator,
-    /// Only `resize` mutates the terminal, so operations assembled purely to
-    /// inspect or terminate may legitimately carry none -- which is why this
-    /// stays optional. It is a REQUIRED init parameter rather than a defaulted
-    /// field because a defaulted one is silently forgettable: the production
-    /// host omitted it once and every resize it served answered `unknown` with
-    /// nothing red to show for it.
-    /// A required OPTIONAL parameter only prevents omission, not an explicit
-    /// null. A host that must serve resize therefore builds through
-    /// `initServingTerminal`, whose terminal is not optional, so null cannot
-    /// reach it without changing which constructor is called.
+    /// Only `resize` mutates the terminal, so operations assembled purely to inspect or terminate may legitimately carry none -- which is why this stays optional. It is a REQUIRED init parameter rather than a defaulted field because a defaulted one is silently forgettable: the production host omitted it once and every resize it served answered `unknown` with nothing red to show for it. A required OPTIONAL parameter only prevents omission, not an explicit null. A host that must serve resize therefore builds through `initServingTerminal`, whose terminal is not optional, so null cannot reach it without changing which constructor is called.
     terminal: ?TerminalProvider,
 
     pub fn init(
         allocator: std.mem.Allocator,
-        registry: *neutral_host.Registry,
-        session: neutral_host.SessionRef,
+        registry: *neutral_runtime.Registry,
+        session: neutral_contract.SessionRef,
         platform: process_inspector.Platform,
         evidence: EvidenceProvider,
         clock: EvidenceClock,
@@ -79,14 +72,11 @@ pub const HostOperations = struct {
         };
     }
 
-    /// Construction for a host that MUST serve resize. The terminal is not
-    /// optional here, so the mistake this guards -- a resize-serving host
-    /// answering `unknown` because nothing was bound -- cannot be made by
-    /// passing null at the call site.
+    /// Construction for a host that MUST serve resize. The terminal is not optional here, so the mistake this guards -- a resize-serving host answering `unknown` because nothing was bound -- cannot be made by passing null at the call site.
     pub fn initServingTerminal(
         allocator: std.mem.Allocator,
-        registry: *neutral_host.Registry,
-        session: neutral_host.SessionRef,
+        registry: *neutral_runtime.Registry,
+        session: neutral_contract.SessionRef,
         platform: process_inspector.Platform,
         evidence: EvidenceProvider,
         clock: EvidenceClock,
@@ -102,11 +92,11 @@ pub const HostOperations = struct {
         self.* = undefined;
     }
 
-    pub fn handler(self: *HostOperations) neutral_host.OperationHandler {
+    pub fn handler(self: *HostOperations) neutral_runtime.OperationHandler {
         return .{ .context = self, .callFn = call };
     }
 
-    fn call(context: *anyopaque, request: neutral_host.OperationRequest) !neutral_host.OperationResponse {
+    fn call(context: *anyopaque, request: neutral_runtime.OperationRequest) !neutral_runtime.OperationResponse {
         const self: *HostOperations = @ptrCast(@alignCast(context));
         if (!request.session.eql(self.session)) return error.StaleSessionRef;
         return switch (request.operation) {
@@ -117,13 +107,8 @@ pub const HostOperations = struct {
         };
     }
 
-    /// Frozen `resize`. is an ordered mutation, not a setter: the revision
-    /// must advance, the geometry returned is what the terminal reported AFTER
-    /// the set rather than what was asked for, and a superseded revision names
-    /// the revision that superseded it instead of failing opaquely. The
-    /// revision floor is the durable record's, so a resize is fenced by the
-    /// same evidence a later inspection reports.
-    fn resize(self: *HostOperations, payload: []const u8) !neutral_host.OperationResponse {
+    /// Frozen `resize`. is an ordered mutation, not a setter: the revision must advance, the geometry returned is what the terminal reported AFTER the set rather than what was asked for, and a superseded revision names the revision that superseded it instead of failing opaquely. The revision floor is the durable record's, so a resize is fenced by the same evidence a later inspection reports.
+    fn resize(self: *HostOperations, payload: []const u8) !neutral_runtime.OperationResponse {
         _ = self.scratch.reset(.retain_capacity);
         const allocator = self.scratch.allocator();
         const request = try std.json.parseFromSliceLeaky(ResizeRequest, allocator, payload, .{});
@@ -131,8 +116,6 @@ pub const HostOperations = struct {
         if (!request.session.eql(self.session)) return error.StaleSessionRef;
 
         const record = self.registry.get(self.session) orelse return error.SessionNotFound;
-        // Copied out as a scalar: nothing below may read through a Record that
-        // borrows registry storage across a registry mutation.
         const current_revision = record.windowRevision;
         const revision = std.fmt.parseInt(u64, request.revision, 10) catch
             return error.InvalidResizeRequest;
@@ -149,24 +132,14 @@ pub const HostOperations = struct {
             .heightPixels = request.window.heightPixels,
         }, revision) catch |err| switch (err) {
             error.OutOfMemory => return err,
-            // A terminal that cannot be set is `unknown`: never a silent
-            // success, and never a fabricated readback.
+            // A terminal that cannot be set is `unknown`: never a silent success, and never a fabricated readback.
             else => return unknownResize(allocator, @errorName(err)),
         };
         const applied = switch (outcome) {
             .applied => |value| value,
-            // The set landed but its commit did not, so the record fell behind
-            // the terminal. The terminal is the authority on its own order, so
-            // answer from IT: if the revision the caller is retrying is the one
-            // the terminal already holds, that resize DID apply and the caller
-            // is owed the receipt it missed, not a refusal. Repairing the
-            // record below makes the retry idempotent rather than permanently
-            // stuck behind a floor that never advances.
+            // The set landed but its commit did not, so the record fell behind the terminal. The terminal is the authority on its own order, so answer from IT: if the revision the caller is retrying is the one the terminal already holds, that resize DID apply and the caller is owed the receipt it missed, not a refusal. Repairing the record below makes the retry idempotent rather than permanently stuck behind a floor that never advances.
             .superseded => |current| blk: {
-                // Either way the record is behind the terminal, so repair it
-                // first: inspection answers from the record, and leaving it
-                // behind would keep reporting a geometry the terminal stopped
-                // holding and keep admitting revisions the terminal refuses.
+                // Either way the record is behind the terminal, so repair it first: inspection answers from the record, and leaving it behind would keep reporting a geometry the terminal stopped holding and keep admitting revisions the terminal refuses.
                 _ = try self.registry.update(self.session, .{
                     .window = current.readback,
                     .windowRevision = current.revision,
@@ -176,8 +149,6 @@ pub const HostOperations = struct {
             },
         };
 
-        // Commit the READBACK, not the request: a later inspection must report
-        // the geometry the terminal actually holds.
         _ = try self.registry.update(self.session, .{
             .window = applied.readback,
             .windowRevision = applied.revision,
@@ -197,7 +168,7 @@ pub const HostOperations = struct {
         request: TerminateRequest,
         digest: [32]u8,
         result: WireTerminationResult,
-    ) !neutral_host.OperationResponse {
+    ) !neutral_runtime.OperationResponse {
         const encoded = try std.json.Stringify.valueAlloc(
             allocator,
             terminationPayload(result),
@@ -216,8 +187,8 @@ pub const HostOperations = struct {
 
     fn terminate(
         self: *HostOperations,
-        operation: neutral_host.OperationRequest,
-    ) !neutral_host.OperationResponse {
+        operation: neutral_runtime.OperationRequest,
+    ) !neutral_runtime.OperationResponse {
         _ = self.scratch.reset(.retain_capacity);
         const allocator = self.scratch.allocator();
         var parsed = try std.json.parseFromSlice(TerminateRequest, allocator, operation.payload, .{});
@@ -227,14 +198,7 @@ pub const HostOperations = struct {
             !std.mem.eql(u8, request.idempotencyKey, operation.idempotencyKey))
             return error.InvalidTerminationRequest;
         const canonical = try canonicalTermination(allocator, request);
-        // A.pending reservation means an earlier attempt reserved this key
-        // and died before committing, so the kill sequence below RE-EXECUTES
-        // against the recorded child identity. That is safe against PID reuse
-        // only because process_inspector re-verifies the recorded start token
-        // before any signal leaves this process (collectTree's root check,
-        // rootEvidence, and revalidate): a reused PID fails the token check,
-        // narrows the verified tree to empty, and is never signaled. The
-        // "pending termination re-execution" test below pins that guard.
+        // A.pending reservation means an earlier attempt reserved this key and died before committing, so the kill sequence below RE-EXECUTES against the recorded child identity. That is safe against PID reuse only because process_inspector re-verifies the recorded start token before any signal leaves this process (collectTree's root check, rootEvidence, and revalidate): a reused PID fails the token check, narrows the verified tree to empty, and is never signaled. The "pending termination re-execution" test below pins that guard.
         switch (try self.registry.reserveTermination(
             self.session,
             request.idempotencyKey,
@@ -409,7 +373,7 @@ pub const HostOperations = struct {
         );
     }
 
-    fn inspect(self: *HostOperations, payload: []const u8) !neutral_host.OperationResponse {
+    fn inspect(self: *HostOperations, payload: []const u8) !neutral_runtime.OperationResponse {
         _ = self.scratch.reset(.retain_capacity);
         const allocator = self.scratch.allocator();
         const request = try std.json.parseFromSliceLeaky(HostInspectRequest, allocator, payload, .{});
@@ -498,25 +462,20 @@ pub const HostOperations = struct {
 
 pub const Controller = struct {
     allocator: std.mem.Allocator,
-    registry: *neutral_host.Registry,
+    registry: *neutral_runtime.Registry,
     platform: process_inspector.Platform,
     clock: EvidenceClock,
-    /// Only `create` launches, so a controller assembled purely to inspect,
-    /// list or terminate is not obliged to carry a host it cannot use.
-    host: ?neutral_host.Host = null,
+    /// Only `create` launches, so a controller assembled purely to inspect, list or terminate is not obliged to carry a host it cannot use.
+    host: ?neutral_contract.Host = null,
 
-    /// Frozen `create`. The request payload is exactly the neutral create
-    /// request shape, so it parses directly and an unrecognised field is a
-    /// rejection rather than a silently dropped one. The response is the
-    /// document the ledger committed, which is what keeps a first create and
-    /// its replay from differing.
+    /// Frozen `create`. The request payload is exactly the neutral create request shape, so it parses directly and an unrecognised field is a rejection rather than a silently dropped one. The response is the document the ledger committed, which is what keeps a first create and its replay from differing.
     pub fn create(self: *Controller, payload: []const u8) ![]u8 {
         const host = self.host orelse return error.CreateHostUnavailable;
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const allocator = arena.allocator();
         var parsed = try std.json.parseFromSlice(
-            neutral_host.CreateRequest,
+            neutral_contract.CreateRequest,
             allocator,
             payload,
             .{},
@@ -536,10 +495,7 @@ pub const Controller = struct {
         return response;
     }
 
-    /// Frozen `resize`. The controller does not decide the outcome — it carries
-    /// the request to the host that owns the terminal and returns what the host
-    /// committed. An unreachable host is `unknown`: the caller learns the
-    /// resize was not evidenced, never that it was applied or refused.
+    /// Frozen `resize`. The controller does not decide the outcome — it carries the request to the host that owns the terminal and returns what the host committed. An unreachable host is `unknown`: the caller learns the resize was not evidenced, never that it was applied or refused.
     pub fn resize(self: *Controller, payload: []const u8) ![]u8 {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
@@ -550,10 +506,6 @@ pub const Controller = struct {
 
         const committed = blk: {
             var client = self.registry.connect(request.session) catch |err| {
-                // Local allocation failure is not host evidence. Reporting it
-                // as an unreachable host would tell the caller something about
-                // the SESSION that only happened inside this process
-                // the same distinction Controller.inspect makes.
                 if (err == error.OutOfMemory) return err;
                 break :blk null;
             };
@@ -586,7 +538,7 @@ pub const Controller = struct {
     fn fallbackInspectionValue(
         self: *Controller,
         allocator: std.mem.Allocator,
-        record: neutral_host.Record,
+        record: neutral_runtime.Record,
         diagnostic: []const u8,
     ) !std.json.Value {
         var time_storage: [24]u8 = undefined;
@@ -608,7 +560,7 @@ pub const Controller = struct {
     fn callInspect(
         self: *Controller,
         allocator: std.mem.Allocator,
-        record: neutral_host.Record,
+        record: neutral_runtime.Record,
         include_checkpoint: bool,
     ) ![]u8 {
         var client = try self.registry.connect(record.session);
@@ -636,10 +588,7 @@ pub const Controller = struct {
         if (request.value.schemaVersion != 1) return error.InvalidInspectRequest;
         const record = self.registry.get(request.value.session) orelse return error.SessionNotFound;
         return self.callInspect(self.allocator, record, true) catch |err| {
-            // A degraded fallback is evidence that the HOST could not be
-            // reached. Local allocation failure is not host evidence
-            // propagate it rather than committing a degraded inspection as if
-            // the host were gone.
+            // A degraded fallback is evidence that the HOST could not be reached. Local allocation failure is not host evidence propagate it rather than committing a degraded inspection as if the host were gone.
             if (err == error.OutOfMemory) return err;
             const fallback = try self.fallbackInspectionValue(
                 allocator,
@@ -728,15 +677,8 @@ pub const Controller = struct {
         };
         if (call_result) |response| return response;
 
-        // The host may have committed immediately before its socket vanished.
-        // Refresh, then prefer the exact durable replay over reconstruction.
         try self.registry.recover();
-        // A.pending reservation here must NOT re-execute the kill sequence
-        // the unreachable host may already have signaled the recorded child,
-        // and the recorded PID may since have been reused by an unrelated
-        // process. The controller commits durable evidence instead; the only
-        // re-execution path is the host-side one above, which is guarded by
-        // process_inspector's start-token revalidation before any signal.
+        // A.pending reservation here must NOT re-execute the kill sequence the unreachable host may already have signaled the recorded child, and the recorded PID may since have been reused by an unrelated process. The controller commits durable evidence instead; the only re-execution path is the host-side one above, which is guarded by process_inspector's start-token revalidation before any signal.
         switch (try self.registry.reserveTermination(
             request.session,
             request.idempotencyKey,

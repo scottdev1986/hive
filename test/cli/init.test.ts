@@ -3,11 +3,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-  discoverMemoryFacts,
-  parseMemoryFile,
-} from "../../src/adapters/memory";
-import { provisionSkills } from "../../src/adapters/skills";
-import {
   defaultInitDeps,
   ensureHiveStateGitignored,
   HIVE_GITIGNORE_ENTRIES,
@@ -18,6 +13,10 @@ import {
   scaffoldAgentsMd,
   seedInitFacts,
 } from "../../src/cli/init";
+import {
+  discoverMemoryFacts,
+  parseMemoryFile,
+} from "../../src/memory-service/memory-store";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 
 // `hive init` writes Hive's own state into its home — a throwaway one here,
@@ -78,7 +77,6 @@ async function tsRepo(): Promise<string> {
   );
   await writeFile(join(root, "bun.lock"), "");
   await writeFile(join(root, "tsconfig.json"), "{}");
-  await writeFile(join(root, "SPEC.md"), "# Spec\n\nRead SPEC.md.\n");
   await writeFile(join(root, "src/cli.ts"), "console.log(1)\n").catch(
     async () => {
       const { mkdir } = await import("node:fs/promises");
@@ -92,7 +90,7 @@ async function tsRepo(): Promise<string> {
 }
 
 describe("seedInitFacts — the memory seam", () => {
-  test("writes source:init + verified, scope repo, and upserts idempotently", async () => {
+  test("writes source:init unverified, scope repo, and upserts idempotently", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-init-seed-"));
     try {
       const ids = await seedInitFacts(
@@ -110,15 +108,18 @@ describe("seedInitFacts — the memory seam", () => {
       const facts = await discoverMemoryFacts(root, "repo");
       expect(facts).toHaveLength(1);
       const fact = required(facts[0]);
-      // Re-read the raw file: source/verified/scope must be on disk, not only in memory.
+      // Re-read the raw file: source/status/scope must be on disk, not only in memory.
       const raw = await readFile(fact.path, "utf8");
       const parsed = parseMemoryFile(fact.id, "repo", fact.path, raw);
       expect(parsed.source).toBe("init");
-      expect(parsed.verified).toBe("2026-07-10");
+      // What init infers from the repository is a claim awaiting confirmation.
+      // Nobody has checked it, and the write path can no longer say otherwise.
+      expect(parsed.status).toBe("unverified");
+      expect(parsed.verified).toBeUndefined();
       expect(parsed.scope).toBe("repo");
 
       // A re-run with the same title upserts in place (id is stable), bumping
-      // verified rather than accumulating a duplicate.
+      // the update date rather than accumulating a duplicate.
       await seedInitFacts(
         root,
         [
@@ -134,8 +135,7 @@ describe("seedInitFacts — the memory seam", () => {
       const updatedFact = required(after[0]);
       const reRaw = await readFile(updatedFact.path, "utf8");
       expect(
-        parseMemoryFile(updatedFact.id, "repo", updatedFact.path, reRaw)
-          .verified,
+        parseMemoryFile(updatedFact.id, "repo", updatedFact.path, reRaw).date,
       ).toBe("2026-08-01");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -152,7 +152,6 @@ describe("scaffoldAgentsMd", () => {
     expect(md).toContain("## Commands");
     expect(md).toContain("## Stack");
     expect(md).not.toContain("## Design");
-    expect(md).not.toContain("SPEC.md");
     expect(md).toContain("Review and fill these in");
   });
 });
@@ -188,12 +187,12 @@ describe("runInit", () => {
     try {
       await writeFile(
         join(root, "AGENTS.md"),
-        "# human instructions\nkeep me\n",
+        "# user instructions\nkeep me\n",
       );
       const result = await runInit(root, { scaffoldAgents: true }, testDeps());
       expect(result.agentsScaffolded).toBe(false);
       expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe(
-        "# human instructions\nkeep me\n",
+        "# user instructions\nkeep me\n",
       );
     } finally {
       await rm(root, { recursive: true, force: true });

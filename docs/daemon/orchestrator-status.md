@@ -1,7 +1,7 @@
 # Orchestrator status
 
-Updated: 2026-07-15
-Source: Hive source tree, 2026-07-15
+Updated: 2026-08-15
+Source: Hive source tree, 2026-08-15
 
 ## Summary
 
@@ -9,11 +9,11 @@ The root orchestrator is named queen. It has no row in the `agents` table, so it
 
 Prefer queen when addressing or referring to the root. The architectural role remains orchestrator; old and user input that says `orchestrator` is still understood. Authority is unchanged: queen is still the read-only root role with no agents row and no landing right.
 
-The derivation is `src/daemon/orchestrator-status.ts`; provider-native boundary bridging is `src/cli/orchestrator-turn-monitor.ts`. This article is the *why*.
+The derivation is `src/daemon/status-service/status-orchestrator.ts`; provider-native boundary bridging is `src/cli/orchestrator-turn-monitor.ts`. This article is the *why*.
 
 ## The rule
 
-`deriveOrchestratorStatus` (`src/daemon/orchestrator-status.ts:56-64`) reads the root's two most recent turn boundaries, newest first, and answers:
+`deriveOrchestratorStatus` (`src/daemon/status-service/status-orchestrator.ts:73-84`) reads the root's two most recent turn boundaries, newest first, and answers:
 
 - newest is `turn-start` → **working**
 - newest is `turn-end`, preceded by a `turn-start` → **idle**
@@ -21,7 +21,7 @@ The derivation is `src/daemon/orchestrator-status.ts`; provider-native boundary 
 
 It reads event **kinds only, never timestamps**. That is not stylistic — it is the type signature enforcing the design. No timeout inference can be introduced without changing the function's signature, which is exactly the review a timeout deserves.
 
-This word describes activity only. Assignment outcome lives in the separate durable `assignments` state machine (`active` / `in_progress` / `blocked` / `reported_complete` / `accepted`). A worker becoming idle, landing, or having a clean worktree never changes that outcome. Instead, an exact `turn-end` on an active or in-progress assignment transactionally queues one generation-keyed unfinished-idle message and immediately wakes queen; a same-agent follow-up advances the generation. Reported completion likewise wakes queen and stays open until explicit acceptance.
+This word describes activity only. The status spine's durable assignment record (`status_assignments`) is a report binding, not an outcome machine: one row per agent session, `open` from spawn until the kill closes it, and its job is to validate the agent's reports against the exact assignment identifiers its prompt carried. The report phases (`planning` / `implementing` / `testing` / `reviewing` / `blocked` / `complete`) ride on that binding and are descriptive — `complete` approves nothing and changes no task, gate, review, or landing state. A worker becoming idle, landing, or having a clean worktree never touches the row. What the work came to is settled elsewhere, never inferred from this word.
 
 Every provider feeds the same boundary stream under the root's preferred address queen. Delivery accepts the synonym `orchestrator` (case-insensitive) and stores the preferred form; pre-rename undelivered rows keyed as `orchestrator` still drain:
 
@@ -35,9 +35,7 @@ Agent reports follow the same provider boundary. Delivery to every interactive
 provider uses the exact `sessiond` locator and its serialized input lane. The
 root provider is selected only from the live supervisor
 marker under that instance's `HIVE_HOME`; PID liveness rejects stale markers,
-and a named instance cannot wake another instance. Workspace creates a
-recipient-scoped composer lease before a user's first keystroke, so every one
-of those delivery paths remains queued while a human draft exists.
+and a named instance cannot wake another instance.
 
 ## Contradiction is not absence
 
@@ -45,7 +43,7 @@ That third line is the whole article.
 
 **A `turn-end` whose predecessor is another `turn-end` is a contradiction.** A turn cannot end without having started. It means the hooks are lying to us — which is not hypothetical.
 
-Measured in the live `events` table: between **2026-07-11T19:39Z and 2026-07-12T10:58Z — 15 hours and 19 minutes — the root posted 231 `turn-end`s and exactly zero `turn-start`s.** A daemon port change had re-pointed every hook *except* `turn-start`, so the root kept posting turn-starts to a dead port (the incident recorded at `src/adapters/tools/claude.ts`). Grouped by hour, the imbalance is a clean step function: balanced before, 0/231 through the window, balanced again after the fix landed.
+Measured in the live `events` table: between **2026-07-11T19:39Z and 2026-07-12T10:58Z — 15 hours and 19 minutes — the root posted 231 `turn-end`s and exactly zero `turn-start`s.** A daemon port change had re-pointed every hook *except* `turn-start`, so the root kept posting turn-starts to a dead port. Grouped by hour, the imbalance is a clean step function: balanced before, 0/231 through the window, balanced again after the fix landed.
 
 A naive "the newest boundary is a `turn-end`, so it's idle" would have rendered a confident yellow **idle** dot for fifteen hours while the root worked continuously. Returning `null` there means the field is omitted, and an absent field is unknown, never false. The dot goes back to honest gray.
 
@@ -59,11 +57,11 @@ The same invariant appears in [database-resilience.md](database-resilience.md) a
 
 ## What we refused to synthesise
 
-**No timeout-based `stuck`. Ever.** "The root has not ended a turn in N minutes" describes a deep build turn exactly as well as it describes a wedged process. Delivery learned this the expensive way: the same inference fired **seven times in one evening** on agents that were merely working (`src/daemon/delivery.ts`). Elapsed time is not a state. This is the *measures acting, not being* bug class wearing a new hat, and it is precisely how that class keeps getting reintroduced — each time it looks like a reasonable safety net rather than a guess.
+**No timeout-based `stuck`. Ever.** "The root has not ended a turn in N minutes" describes a deep build turn exactly as well as it describes a wedged process. Delivery learned this the expensive way: the same inference fired **seven times in one evening** on agents that were merely working. Elapsed time is not a state. This is the *measures acting, not being* bug class wearing a new hat, and it is precisely how that class keeps getting reintroduced — each time it looks like a reasonable safety net rather than a guess.
 
-**No `needsUser` (red) for the root.** Red is reserved for *measured* blocked-on-human states — a pending approval record, control-paused, stuck. The root is a human-facing TUI, and a human sitting at it is not a blocked agent. There is no observation that would justify red, so no code path may produce it. A root that goes red is a bug by construction.
+**No `needsUser` (red) for the root.** Red is reserved for *measured* blocked-on-user states — a pending approval record, control-paused, stuck. The root is a user-facing TUI, and a user sitting at it is not a blocked agent. There is no observation that would justify red, so no code path may produce it. A root that goes red is a bug by construction.
 
-**No fake `agents` row.** The "queen / orchestrator has no agents row" invariant is load-bearing in at least four places — name reuse, capability grants (`src/daemon/capabilities.ts:243-247`: the operator and the root orchestrator have no row, which is also why they are exempt from the epoch check), spawner reservations, and delivery all read that table and assume its members are spawned agents. Adding a fake row to satisfy a *colour* would be the expensive kind of clever.
+**No fake `agents` row.** The "queen / orchestrator has no agents row" invariant is load-bearing in at least four places — name reuse, capability grants (`src/daemon/authorization/authorization-service.ts:243-247`: the user and the root orchestrator have no row, which is also why they are exempt from the epoch check), spawner reservations, and delivery all read that table and assume its members are spawned agents. Adding a fake row to satisfy a *colour* would be the expensive kind of clever.
 
 **No terminal scraping.** Reading the root's pane buffer to guess what it is doing burns context on screenshots and turns the conductor into a babysitter. Codex and Grok already persist typed turn boundaries, so Hive reads those exact records instead.
 
@@ -71,7 +69,7 @@ The same invariant appears in [database-resilience.md](database-resilience.md) a
 
 ## Liveness and turn state fail independently
 
-**The status dot is feed-derived.** Its turn word comes from daemon hook events. `TerminalPaneView.processTerminated` does clear `childRunning` and invoke `onChildExit`, but production assigns no `onChildExit` callback, so root-child exit is not currently observed for liveness. That callback is a known unwired seam.
+**The status dot is feed-derived.** Its turn word comes from daemon hook events.
 
 The feed and terminal process can therefore disagree: a provider's boundary source can go silent while the process is perfectly alive (the 15-hour Claude window above), and the process can die while the feed still carries the last boundary-derived state.
 
@@ -89,4 +87,4 @@ We accept it because it is bounded, self-evidently wrong to anyone looking at th
 
 - [Authorization](authorization.md) — `status:read`, the no-agents-row invariant, epoch exemption
 - [Database resilience](database-resilience.md) — the absence test, of which this rule is one instance
-- `src/daemon/orchestrator-status.ts` — the derivation itself, and the rule stated in full
+- `src/daemon/status-service/status-orchestrator.ts` — the derivation itself, and the rule stated in full

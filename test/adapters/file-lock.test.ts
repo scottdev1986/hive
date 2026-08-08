@@ -106,6 +106,51 @@ describe("withFileLock", () => {
       }),
     );
 
-    expect(await withFileLock(path, async () => "acquired")).toBe("acquired");
+    expect(
+      await withFileLock(path, async () => "acquired", {
+        probe: () => "dead",
+      }),
+    ).toBe("acquired");
+  });
+
+  test("breaks a foreign-uid lock only after the full wait window", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-file-lock-foreign-"));
+    roots.push(root);
+    const path = join(root, "state.lock");
+    await writeFile(
+      path,
+      JSON.stringify({ pid: 424242, token: "foreign-owner" }),
+    );
+
+    const startedAt = Date.now();
+    const holder = await withFileLock(
+      path,
+      async () => JSON.parse(await readFile(path, "utf8")),
+      {
+        probe: () => "other-uid",
+        deadlineMs: 300,
+      },
+    );
+    // Not immediate (a dead owner is reclaimed on sight) and not never (the
+    // old EPERM-is-alive reading wedged the lock until a user deleted it):
+    // the break lands at the window's end.
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(250);
+    expect(holder.token).not.toBe("foreign-owner");
+  });
+
+  test("never breaks a live same-uid holder's lock at the window", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-file-lock-held-"));
+    roots.push(root);
+    const path = join(root, "state.lock");
+    await writeFile(path, JSON.stringify({ pid: 424242, token: "live-owner" }));
+
+    await expect(
+      withFileLock(path, async () => "acquired", {
+        probe: () => "live",
+        deadlineMs: 200,
+      }),
+    ).rejects.toThrow("Timed out waiting for lock");
+    // The lock is untouched: it still names the original owner.
+    expect(JSON.parse(await readFile(path, "utf8")).token).toBe("live-owner");
   });
 });

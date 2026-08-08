@@ -1,0 +1,13 @@
+{
+  "transactionId": "qa-kimi-user-clear-1785680920944",
+  "stage": "written-to-terminal",
+  "byteRange": {
+    "start": "33",
+    "endExclusive": "34"
+  },
+  "orderedAt": "4",
+  "availableCreditBytes": 131072,
+  "consumedByProcess": "not-claimed",
+  "completeness": "complete",
+  "diagnostic": null
+}

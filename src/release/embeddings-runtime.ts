@@ -1,38 +1,13 @@
-/**
- * The embedding runtime bundling pipeline, shared by the two producers of the
- * exact same output:
- *
- *   - provisioning (src/cli/embeddings.ts) stages it into
- *     ~/.hive/tools/embeddings from a checkout's node_modules — the dev flow.
- *   - the release build (src/release/build.ts) stages the identical tree into
- *     a scratch dir and tars it as `embeddings-runtime.tar.gz`, the artifact a
- *     released binary downloads so a user without a checkout gets the same
- *     byte-layout (single ESM bundle + native napi assets + INSTALL.json).
- *
- * One pipeline, no duplicated staging: whatever install produces on a
- * developer's machine is what the release ships.
- *
- * The artifact is universal for darwin, like HiveWorkspace.tar.gz: the
- * onnxruntime-node package ships both darwin slices (arm64 and x64) in one
- * bin/, and the tokenizers napi binding Hive's closure pins is
- * darwin-universal — so one tarball is listed for both architectures in the
- * release manifest. (linux/win32 natives ride along; pruning them is a size
- * optimization, not a correctness one, and install does not prune either.)
- */
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { EMBEDDINGS_RUNTIME_BUNDLE } from "../daemon/memory-embeddings";
+import { EMBEDDINGS_RUNTIME_BUNDLE } from "../memory-service/embeddings";
 import { embeddingsRuntimeDigest } from "./embeddings-digest";
 
-/** The release asset name; listed in hive-release.json for both darwin arches. */
 export const EMBEDDINGS_RUNTIME_ASSET = "embeddings-runtime.tar.gz";
 
-/** The top-level directory inside the tarball; install unpacks with
- * `--strip-components 1`, the graphify bundle convention. */
 const TARBALL_TOPLEVEL = "embeddings-runtime";
 
-/** The bundle entry: exactly the surface memory-embeddings.ts consumes. */
 const RUNTIME_ENTRY =
   'export { FlagEmbedding, EmbeddingModel } from "fastembed";\n';
 
@@ -53,8 +28,6 @@ async function readPackageJson(dir: string): Promise<PackageJson | null> {
   }
 }
 
-/** Walk up from `start` looking for a node_modules that contains fastembed;
- * `--from` may name the node_modules dir itself or its parent. */
 export async function findSourceNodeModules(
   start: string,
 ): Promise<string | null> {
@@ -72,15 +45,7 @@ export async function findSourceNodeModules(
   }
 }
 
-/** fastembed plus its transitive dependency closure, resolved against the
- * source node_modules (bun/npm layouts hoist, so a flat walk suffices; each
- * package is copied wholesale, nested node_modules included). Both
- * `dependencies` and `optionalDependencies` are walked — the napi native
- * bindings (@anush008/tokenizers-*) are optional deps, and without them the
- * bundle's loader has nothing to dlopen — but a missing optional dep is
- * skipped (that is what optional means; the other platforms' binaries are
- * never installed), while a missing hard dependency is an explicit error.
- * Returns package name → source directory, fastembed first. */
+/** fastembed plus its transitive dependency closure, resolved against the source node_modules (bun/npm layouts hoist, so a flat walk suffices; each package is copied wholesale, nested node_modules included). Both `dependencies` and `optionalDependencies` are walked — the napi native bindings (@anush008/tokenizers-*) are optional deps, and without them the bundle's loader has nothing to dlopen — but a missing optional dep is skipped (that is what optional means; the other platforms' binaries are never installed), while a missing hard dependency is an explicit error. Returns package name → source directory, fastembed first. */
 export async function collectFastembedClosure(
   sourceNodeModules: string,
 ): Promise<Map<string, string>> {
@@ -117,12 +82,15 @@ export async function collectFastembedClosure(
   return resolved;
 }
 
-/** Copy the closure into the runtime dir, write the bundle entry, build the
- * single-file bundle, and place the native bin/ the bundle's runtime require
- * resolves (`../bin/napi-v3/...` relative to dist/). Returns the bundle path. */
+export interface EmbeddingsRuntimeStamp {
+  readonly installedAt?: string;
+  readonly source?: string;
+}
+
 export async function stageEmbeddingRuntime(
   sourceNodeModules: string,
   runtimeDir: string,
+  stamp?: EmbeddingsRuntimeStamp,
 ): Promise<string> {
   const closure = await collectFastembedClosure(sourceNodeModules);
   const targetNodeModules = join(runtimeDir, "node_modules");
@@ -180,8 +148,8 @@ export async function stageEmbeddingRuntime(
     `${JSON.stringify(
       {
         fastembed: fastembedVersion,
-        source: sourceNodeModules,
-        installedAt: new Date().toISOString(),
+        source: stamp?.source ?? sourceNodeModules,
+        installedAt: stamp?.installedAt ?? new Date().toISOString(),
         platform: process.platform,
         arch: process.arch,
       },
@@ -193,31 +161,95 @@ export async function stageEmbeddingRuntime(
 }
 
 export interface EmbeddingsRuntimeArtifact {
-  /** Path to the produced tar.gz. */
   path: string;
   sha256: string;
   size: number;
-  /**
-   * SHA-256 of the staged tree's LOADED surface (see embeddings-digest.ts).
-   * Computed before the staging dir is torn down, and equal to what a user's
-   * machine has after unpacking, because the tarball extracts the same files at
-   * the same relative paths. This is the value compiled into the CLI so the
-   * loader can refuse a tampered runtime.
-   */
+  /** SHA-256 of the staged tree's LOADED surface (see embeddings-digest.ts). Computed before the staging dir is torn down, and equal to what a user's machine has after unpacking, because the tarball extracts the same files at the same relative paths. This is the value compiled into the CLI so the loader can refuse a tampered runtime. */
   loadedDigest: string;
 }
 
-/**
- * Stage the runtime into a scratch dir under `outDir` and tar it as
- * `<outDir>/embeddings-runtime.tar.gz` with a single top-level
- * `embeddings-runtime/` directory — the release artifact `hive embeddings
- * install` downloads and verifies on machines without a checkout. The staged
- * tree is exactly what the CLI's own install flow produces, because both call
- * `stageEmbeddingRuntime`.
- */
+async function packTarGz(
+  parentDir: string,
+  entryName: string,
+  tarball: string,
+  deterministicMtime?: string,
+): Promise<void> {
+  if (deterministicMtime === undefined) {
+    const tar = Bun.spawn(
+      ["tar", "-czf", tarball, "-C", parentDir, entryName],
+      { stdout: "inherit", stderr: "inherit" },
+    );
+    if ((await tar.exited) !== 0) {
+      throw new Error(`tar of ${EMBEDDINGS_RUNTIME_ASSET} failed`);
+    }
+    return;
+  }
+  const parsed = Date.parse(deterministicMtime);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(
+      `deterministic embeddings mtime is not a date: ${deterministicMtime}`,
+    );
+  }
+  const stamped = new Date(parsed);
+  const touch = [
+    stamped.getUTCFullYear().toString().padStart(4, "0"),
+    (stamped.getUTCMonth() + 1).toString().padStart(2, "0"),
+    stamped.getUTCDate().toString().padStart(2, "0"),
+    stamped.getUTCHours().toString().padStart(2, "0"),
+    stamped.getUTCMinutes().toString().padStart(2, "0"),
+    ".",
+    stamped.getUTCSeconds().toString().padStart(2, "0"),
+  ].join("");
+  const pin = Bun.spawn(
+    [
+      "/usr/bin/find",
+      join(parentDir, entryName),
+      "-exec",
+      "/usr/bin/env",
+      "TZ=UTC",
+      "/usr/bin/touch",
+      "-t",
+      touch,
+      "{}",
+      "+",
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  const [pinCode, pinErr] = await Promise.all([
+    pin.exited,
+    new Response(pin.stderr).text(),
+  ]);
+  if (pinCode !== 0) {
+    throw new Error(`pinning embeddings mtimes failed: ${pinErr.trim()}`);
+  }
+  const pack = Bun.spawn(
+    [
+      "/bin/sh",
+      "-c",
+      'set -e; /usr/bin/find "$1" -print | /usr/bin/sort | COPYFILE_DISABLE=1 /bin/pax -w -x ustar | /usr/bin/gzip -n > "$2"',
+      "pack-embeddings",
+      entryName,
+      tarball,
+    ],
+    { cwd: parentDir, stdout: "inherit", stderr: "pipe" },
+  );
+  const [packCode, packErr] = await Promise.all([
+    pack.exited,
+    new Response(pack.stderr).text(),
+  ]);
+  if (packCode !== 0) {
+    throw new Error(
+      `deterministic tar of ${EMBEDDINGS_RUNTIME_ASSET} failed: ${packErr.trim()}`,
+    );
+  }
+}
+
 export async function buildEmbeddingsRuntimeArtifact(options: {
   sourceNodeModules: string;
   outDir: string;
+  installedAt?: string;
+  sourceLabel?: string;
+  deterministicMtime?: string;
 }): Promise<EmbeddingsRuntimeArtifact> {
   const staging = join(options.outDir, TARBALL_TOPLEVEL);
   await rm(staging, { recursive: true, force: true });
@@ -226,15 +258,17 @@ export async function buildEmbeddingsRuntimeArtifact(options: {
   await rm(tarball, { force: true });
   let loadedDigest: string;
   try {
-    await stageEmbeddingRuntime(options.sourceNodeModules, staging);
+    await stageEmbeddingRuntime(options.sourceNodeModules, staging, {
+      installedAt: options.installedAt,
+      source: options.sourceLabel,
+    });
     loadedDigest = await embeddingsRuntimeDigest(staging);
-    const tar = Bun.spawn(
-      ["tar", "-czf", tarball, "-C", options.outDir, TARBALL_TOPLEVEL],
-      { stdout: "inherit", stderr: "inherit" },
+    await packTarGz(
+      options.outDir,
+      TARBALL_TOPLEVEL,
+      tarball,
+      options.deterministicMtime,
     );
-    if ((await tar.exited) !== 0) {
-      throw new Error(`tar of ${EMBEDDINGS_RUNTIME_ASSET} failed`);
-    }
   } finally {
     await rm(staging, { recursive: true, force: true });
   }

@@ -3,11 +3,57 @@ import Carbon
 import Foundation
 import IOKit.hidsystem
 
-/// Input: native NSEvent → ghostty_surface_key/text/preedit/mouse → claim-bound
-/// write callback (encoder out). Split from `HiveTerminalView.swift` so input/
-/// IME/mouse and rendering/geometry can evolve without thrashing the same file.
 extension HiveTerminalView {
-    // MARK: - First responder / input
+    static let dropTypes: Set<NSPasteboard.PasteboardType> = [.fileURL]
+
+    public override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard let types = sender.draggingPasteboard.types,
+              !Set(types).isDisjoint(with: Self.dropTypes)
+        else { return [] }
+        return .copy
+    }
+
+    public override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        acceptFileDrop(from: sender.draggingPasteboard)
+    }
+
+    @discardableResult
+    func acceptFileDrop(from pasteboard: NSPasteboard) -> Bool {
+        guard let content = Self.droppedFileText(from: pasteboard) else { return false }
+        DispatchQueue.main.async { [weak self] in
+            self?.insertText(
+                content,
+                replacementRange: NSRange(location: NSNotFound, length: 0),
+                associatedEvent: nil
+            )
+        }
+        return true
+    }
+
+    static func droppedFileText(from pasteboard: NSPasteboard) -> String? {
+        let paths = (pasteboard.pasteboardItems ?? []).compactMap { item -> String? in
+            guard let propertyList = item.propertyList(forType: .fileURL),
+                  let url = NSURL(
+                      pasteboardPropertyList: propertyList,
+                      ofType: .fileURL
+                  ) as URL?,
+                  url.isFileURL
+            else { return nil }
+            return shellEscape(url.path)
+        }
+        return paths.isEmpty ? nil : paths.joined(separator: " ")
+    }
+
+    private static func shellEscape(_ text: String) -> String {
+        var result = text
+        for character in "\\ ()[]{}<>\"'`!#$&;|*?\t" {
+            result = result.replacingOccurrences(
+                of: String(character),
+                with: "\\\(character)"
+            )
+        }
+        return result
+    }
 
     public override var acceptsFirstResponder: Bool { true }
 
@@ -95,10 +141,6 @@ extension HiveTerminalView {
         engine.sendMousePos(x: p.x, y: bounds.height - p.y, modifiers: mapMods(event.modifierFlags))
     }
 
-    /// Forwards scroll to the terminal: 2x precision-scroll multiplier, and the
-    /// packed scroll-mods bitmask (bit 0 precision, bits 1-3 momentum phase)
-    /// from Ghostty.Input.ScrollMods — see `ManualSurfaceEngine.sendMouseScroll`
-    /// for the exact bit layout.
     public override func scrollWheel(with event: NSEvent) {
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
@@ -130,11 +172,6 @@ extension HiveTerminalView {
         return super.menu(for: event)
     }
 
-    /// Pure encoding, split out so every momentum phase is deterministic in
-    /// tests; a CGEvent-backed test separately proves scrollWheel wiring and
-    /// real pinned-engine xterm SGR output. Bit layout from Ghostty.Input.ScrollMods
-    /// (macos/Sources/Ghostty/Ghostty.Input.swift): bit 0 precision,
-    /// bits 1-3 momentum phase (NSEvent.Phase → Ghostty.Input.Momentum).
     static func scrollMods(precision: Bool, momentumPhase: NSEvent.Phase) -> Int32 {
         let momentum: Int32
         switch momentumPhase {
@@ -159,15 +196,10 @@ extension HiveTerminalView {
             event.modifierFlags.contains(.control)
         )
         if handleViewerScrollKey(event) { return }
-        if activeClaimNeeded(for: event) {
-            try? attachClient?.beginClaimAcquire()
-        }
         handleKeyDown(event) { self.interpretKeyEvents([$0]) }
     }
 
-    /// Hive clears every provider keybind, so the root pane needs explicit,
-    /// viewer-local history navigation. Modifier-only chords preserve ordinary
-    /// Home/End/Page keys for the provider and never acquire an input claim.
+    /// Hive clears every provider keybind, so the root pane needs explicit, viewer-local history navigation. Modifier-only chords preserve ordinary Home/End/Page keys for the provider and never acquire an input claim.
     func handleViewerScrollKey(_ event: NSEvent) -> Bool {
         let authoringModifiers: NSEvent.ModifierFlags = [
             .shift, .control, .option, .command,
@@ -193,9 +225,6 @@ extension HiveTerminalView {
         }
     }
 
-    /// Deterministic seam for the AppKit `interpretKeyEvents` callback cycle.
-    /// Tests supply the same synchronous setMarkedText/insertText calls an input
-    /// method makes, without depending on the machine's active keyboard layout.
     func handleKeyDown(
         _ event: NSEvent,
         keyboardLayoutID: () -> String? = HiveTerminalView.currentKeyboardLayoutID,
@@ -204,8 +233,7 @@ extension HiveTerminalView {
         let translatedGhosttyMods = engine.keyTranslationMods(mapMods(event.modifierFlags))
         let translatedFlags = Self.eventModifierFlags(translatedGhosttyMods)
 
-        // Preserve AppKit's hidden dead-key bits and change only the four
-        // device-independent modifiers Ghostty is allowed to translate.
+        // Preserve AppKit's hidden dead-key bits and change only the four device-independent modifiers Ghostty is allowed to translate.
         var translationMods = event.modifierFlags
         for flag in [NSEvent.ModifierFlags.shift, .control, .option, .command] {
             if translatedFlags.contains(flag) {
@@ -215,8 +243,6 @@ extension HiveTerminalView {
             }
         }
 
-        // Reusing the original object when flags are unchanged is required by
-        // AppKit's Korean input method; constructing an equivalent event breaks it.
         let translationEvent: NSEvent
         if translationMods == event.modifierFlags {
             translationEvent = event
@@ -240,11 +266,6 @@ extension HiveTerminalView {
         defer { keyTextAccumulator = nil }
 
         let markedTextBefore = hasMarkedText()
-        defer {
-            if markedTextBefore, !hasMarkedText() {
-                attachClient?.releaseAfterPendingInput()
-            }
-        }
         let keyboardIDBefore = markedTextBefore ? nil : keyboardLayoutID()
         interpret(translationEvent)
         if !markedTextBefore, keyboardIDBefore != keyboardLayoutID() {
@@ -289,20 +310,11 @@ extension HiveTerminalView {
         }
     }
 
-    /// Release path for physical keys. Ghostty's keyUp has no IME choreography
-    /// (unlike keyDown): `keyAction(GHOSTTY_ACTION_RELEASE, event: event)`.
     public override func keyUp(with event: NSEvent) {
         encodeKey(event, action: .release)
     }
 
-    /// Bare modifier press/release (Shift alone, Option alone, …) with no
-    /// accompanying character must still reach the terminal. Maps the specific
-    /// modifier keyCode to its GHOSTTY_MODS_* bit, skips while composing (an
-    /// IME grabbing modifier state mid-composition must not also encode as a
-    /// terminal key event), and determines press vs. release by checking the
-    /// CORRECT side's NX_DEVICE*KEYMASK bit — e.g. releasing right-shift while
-    /// left-shift is still held must report a release (`mods.rawValue & mod`
-    /// alone cannot tell which side is still down).
+    /// Bare modifier press/release (Shift alone, Option alone, …) with no accompanying character must still reach the terminal. Maps the specific modifier keyCode to its GHOSTTY_MODS_* bit, skips while composing (an IME grabbing modifier state mid-composition must not also encode as a terminal key event), and determines press vs. release by checking the CORRECT side's NX_DEVICE*KEYMASK bit — e.g. releasing right-shift while left-shift is still held must report a release (`mods.rawValue & mod` alone cannot tell which side is still down).
     public override func flagsChanged(with event: NSEvent) {
         let modifier: TerminalModifiers
         switch event.keyCode {
@@ -334,24 +346,12 @@ extension HiveTerminalView {
         encodeKey(event, action: action)
     }
 
-    // MARK: NSTextInputClient
-
-    /// Intentional divergence from the pinned SurfaceView_AppKit line
-    /// "We must have an associated event" (`guard NSApp.currentEvent != nil`).
-    /// Hive accepts eventless commits from dictation, Character Viewer, and
-    /// Services. `keyTextAccumulator` is the explicit routing boundary:
-    /// synchronous keyDown commits fold into that physical key exactly once,
-    /// while eventless NSTextInputClient commits use the surface text/preedit
-    /// path. Tests deliberately drive `associatedEvent: nil` through the same
-    /// implementation (some XCTest runners retain a synthetic current event);
-    /// restoring the upstream guard would remove that host capability.
+    /// Intentional divergence from the pinned SurfaceView_AppKit line "We must have an associated event" (`guard NSApp.currentEvent != nil`). Hive accepts eventless commits from dictation, Character Viewer, and Services. `keyTextAccumulator` is the explicit routing boundary: synchronous keyDown commits fold into that physical key exactly once, while eventless NSTextInputClient commits use the surface text/preedit path. Tests deliberately drive `associatedEvent: nil` through the same implementation (some XCTest runners retain a synthetic current event); restoring the upstream guard would remove that host capability.
     public func insertText(_ string: Any, replacementRange: NSRange) {
         insertText(string, replacementRange: replacementRange, associatedEvent: NSApp.currentEvent)
     }
 
-    /// Deterministic seam for the pinned upstream associated-event guard.
-    /// `associatedEvent` is deliberately not guarded: eventless commits are a
-    /// supported host capability, not an XCTest accident.
+    /// Deterministic seam for the pinned upstream associated-event guard. `associatedEvent` is deliberately not guarded: eventless commits are a supported host capability, not an XCTest accident.
     func insertText(_ string: Any, replacementRange: NSRange, associatedEvent: NSEvent?) {
         let text: String
         if let s = string as? String {
@@ -373,14 +373,10 @@ extension HiveTerminalView {
         if !text.isEmpty {
             onUserInput?(text, false, false)
         }
-        ensureClaimForAuthoring()
         if hadMarkedText, !text.isEmpty {
             _ = committedPreeditTextAction(.press, text: text)
         } else if !text.isEmpty {
             engine.sendText(text)
-        }
-        if hadMarkedText {
-            attachClient?.releaseAfterPendingInput()
         }
     }
 
@@ -389,8 +385,7 @@ extension HiveTerminalView {
         guard markedText.length > 0 else { return NSRange(location: NSNotFound, length: 0) }
         return NSRange(location: 0, length: markedText.length)
     }
-    /// Selection range from Ghostty's own tracking (`ghostty_surface_read_selection`).
-    /// Must not return a hardcoded NSNotFound placeholder when a selection exists.
+    /// Selection range from Ghostty's own tracking (`ghostty_surface_read_selection`). Must not return a hardcoded NSNotFound placeholder when a selection exists.
     public func selectedRange() -> NSRange {
         guard let selection = engine.readSelection() else {
             return NSRange(location: NSNotFound, length: 0)
@@ -408,14 +403,12 @@ extension HiveTerminalView {
         if keyTextAccumulator == nil, markedText.length > 0 {
             onUserInput?(markedText.string, false, false)
         }
-        ensureClaimForAuthoring()
         if keyTextAccumulator == nil {
             syncPreedit()
         }
     }
     public func unmarkText() {
         guard clearMarkedText() else { return }
-        attachClient?.releaseAfterPendingInput()
     }
     @discardableResult
     private func clearMarkedText() -> Bool {
@@ -431,14 +424,6 @@ extension HiveTerminalView {
         return NSAttributedString(string: text)
     }
     public func characterIndex(for point: NSPoint) -> Int { 0 }
-    /// IME insertion-point via `ghostty_surface_ime_point`. Ghostty reports
-    /// top-left-origin points; AppKit is bottom-left-origin, so y flips within
-    /// this view's frame before converting to window coordinates. Returning
-    /// the whole view bounds here misplaces every IME candidate/composition
-    /// popover regardless of cursor position.
-    ///
-    /// QuickLook-vs-IME disambiguation is not needed: this view does not
-    /// implement `quickLook(with:)`.
     public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         actualRange?.pointee = range
         guard let point = engine.imePoint() else {
@@ -452,9 +437,6 @@ extension HiveTerminalView {
             height: point.height
         )
         if range.length == 0, viewRect.width > 0 {
-            // imePoint.width is the whole preedit width, not one cell.
-            // Cell size is in backing pixels; divide by the renderer's applied
-            // scale to keep NSTextInputClient in points.
             if let size = engine.reportedSize(),
                size.cellWidthPx > 0,
                appliedContentScale.width > 0 {
@@ -466,17 +448,12 @@ extension HiveTerminalView {
         return toScreen(convert(viewRect, to: nil))
     }
 
-    /// NSTextInputClient's firstRect contract is SCREEN coordinates.
-    /// Do not return window coordinates: in a window with nonzero screen
-    /// origin every IME candidate window renders displaced. Convert
-    /// view→window via `convert(_:to: nil)`, then `window.convertToScreen`,
-    /// with the window rect as the no-window fallback.
+    /// NSTextInputClient's firstRect contract is SCREEN coordinates. Do not return window coordinates: in a window with nonzero screen origin every IME candidate window renders displaced. Convert view→window via `convert(_:to: nil)`, then `window.convertToScreen`, with the window rect as the no-window fallback.
     private func toScreen(_ winRect: NSRect) -> NSRect {
         guard let window else { return winRect }
         return window.convertToScreen(winRect)
     }
     public override func doCommand(by selector: Selector) {
-        // Fall through to key encoding path; Ghostty owns terminal commands.
         _ = selector
     }
 
@@ -495,13 +472,28 @@ extension HiveTerminalView {
     }
 
     @IBAction public func copy(_ sender: Any?) {
-        guard canCopySelection else { return }
-        _ = engine.performBindingAction("copy_to_clipboard")
+        if canCopySelection {
+            _ = engine.performBindingAction("copy_to_clipboard")
+            return
+        }
+        guard engine.mouseCaptured(),
+              let event = NSEvent.keyEvent(
+                  with: .keyDown,
+                  location: .zero,
+                  modifierFlags: [.command],
+                  timestamp: 0,
+                  windowNumber: 0,
+                  context: nil,
+                  characters: "c",
+                  charactersIgnoringModifiers: "c",
+                  isARepeat: false,
+                  keyCode: UInt16(kVK_ANSI_C)
+              ) else { return }
+        _ = encodeKey(event)
     }
 
     @IBAction public func paste(_ sender: Any?) {
         onUserInput?("v", true, false)
-        ensureClaimForAuthoring()
         _ = engine.performBindingAction("paste_from_clipboard")
     }
 
@@ -530,18 +522,22 @@ extension HiveTerminalView {
         dismissSearchUI(restoreTerminalFocus: true)
     }
 
-    // MARK: - Input helpers
-
-    /// Direct key-action seam used by releases, modifier changes, and byte
-    /// goldens. `keyDown` uses handleKeyDown so AppKit composition callbacks
-    /// are accumulated into this same physical key event.
-    func encodeKey(_ event: NSEvent, action explicitAction: TerminalKeyAction? = nil) {
+    @discardableResult
+    func encodeKey(
+        _ event: NSEvent,
+        action explicitAction: TerminalKeyAction? = nil
+    ) -> Bool {
         let action = explicitAction
             ?? (event.type == .keyUp
                 ? .release
                 : (event.isARepeat ? .repeat : .press))
         let text = event.type == .keyDown ? ghosttyCharacters(for: event) : nil
-        _ = keyAction(action, event: event, translationEvent: event, text: text)
+        return keyAction(
+            action,
+            event: event,
+            translationEvent: event,
+            text: text
+        )
     }
 
     @discardableResult
@@ -636,9 +632,7 @@ extension HiveTerminalView {
         return unsafeBitCast(pointer, to: CFString.self) as String
     }
 
-    /// Pinned Ghostty's `NSEvent.ghosttyCharacters`: control-modified
-    /// characters are restored before Ghostty's encoder applies Ctrl, and
-    /// AppKit's private-use function-key scalars are never injected as text.
+    /// Pinned Ghostty's `NSEvent.ghosttyCharacters`: control-modified characters are restored before Ghostty's encoder applies Ctrl, and AppKit's private-use function-key scalars are never injected as text.
     func ghosttyCharacters(for event: NSEvent) -> String? {
         guard let characters = event.characters else { return nil }
         if characters.count == 1,
@@ -664,9 +658,6 @@ extension HiveTerminalView {
         )
     }
 
-    /// Exact `Ghostty.Input.MouseButton(fromNSEventButtonNumber:)` table at
-    /// the frozen Ghostty pin. NSEvent numbers 3/4 are back/forward and map
-    /// to terminal buttons eight/nine, not four/five.
     static func mouseButton(forNSEventButtonNumber buttonNumber: Int) -> TerminalMouseButton {
         switch buttonNumber {
         case 0: return .left
@@ -684,15 +675,6 @@ extension HiveTerminalView {
         }
     }
 
-    /// Exact port of the real Ghostty macOS app's Ghostty.ghosttyMods
-    /// (macos/Sources/Ghostty/Ghostty.Input.swift) — symbolic GHOSTTY_MODS_*
-    /// constants (not magic numbers), caps lock, and left/right-sided
-    /// shift/ctrl/alt/cmd via the NX_DEVICE*KEYMASK device-dependent bits
-    /// carried in NSEvent.ModifierFlags.rawValue (NSEvent.modifierFlags's
-    /// public API only exposes the device-independent side, which can't
-    /// distinguish left/right at all). No num-lock mapping: the real app
-    /// doesn't map it either (GHOSTTY_MODS_NUM has no NSEvent equivalent
-    /// exposed this way), so matching it exactly means not inventing one.
     func mapMods(_ flags: NSEvent.ModifierFlags) -> TerminalModifiers {
         var mods: TerminalModifiers = []
         if flags.contains(.shift) { mods.insert(.shift) }
@@ -710,17 +692,4 @@ extension HiveTerminalView {
         return mods
     }
 
-    func activeClaimNeeded(for event: NSEvent) -> Bool {
-        // Ordinary text / delete / paste-like = authoring.
-        if let chars = event.charactersIgnoringModifiers, !chars.isEmpty {
-            if chars == "\u{1b}" { return false } // Escape often cancel/gesture
-            return true
-        }
-        return false
-    }
-
-    func ensureClaimForAuthoring() {
-        if case .humanOwned = attachClient?.claimPresentation { return }
-        try? attachClient?.beginClaimAcquire()
-    }
 }

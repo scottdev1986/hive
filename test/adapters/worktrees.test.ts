@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -16,16 +17,21 @@ import { provisionSkills } from "../../src/adapters/skills";
 import {
   assessStrandedWork,
   createWorktree,
-  listUnmergedHiveBranches,
+  listStaleOwnerRefs,
+  listSettlementBranches,
   listWorktrees,
   markBranchPreserved,
   observedWorktreeFiles,
-  removeWorktree,
+  reconcileOrphanedWorktrees,
   slugify,
+  WORKTREE_SETTLING_INTERVAL_MS,
 } from "../../src/adapters/worktrees";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
-import { CAPABILITY_PROVIDERS } from "../../src/schemas";
+import type { AgentRecord } from "../../src/schemas/agent";
+import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { CAPABILITY_PROVIDERS } from "../../src/schemas/capability";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
+import { errorMessage } from "../../src/shared/error-message";
+import { releaseTestWorktree as removeWorktree } from "../support/worktree-cleanup";
 
 let tempRoot = "";
 let repoRoot = "";
@@ -69,11 +75,7 @@ beforeAll(async () => {
   repoRoot = join(tempRoot, "repo");
   await writeFile(join(tempRoot, ".keep"), "");
 
-  const mkdirProcess = Bun.spawn(["mkdir", "-p", repoRoot], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  await mkdirProcess.exited;
+  await mkdir(repoRoot, { recursive: true });
 
   previousHiveHome = Bun.env.HIVE_HOME;
   Bun.env.HIVE_HOME = join(tempRoot, "hive-home");
@@ -142,32 +144,9 @@ describe("git worktree manager", () => {
     expect((await git("branch", "--list", created.branch)).trim()).toEqual("");
   });
 
-  test("refuses tracked changes unless discardTracked explicitly overrides", async () => {
-    const created = await createWorktree(repoRoot, "agent-5", "tracked-safety");
-    await writeFile(join(created.path, "README.md"), "changed tracked file\n");
-
-    let message = "";
-    try {
-      await removeWorktree(repoRoot, created.path, { deleteBranch: true });
-    } catch (error) {
-      message = error instanceof Error ? error.message : String(error);
-    }
-    expect(message.includes("uncommitted changes to tracked files")).toEqual(
-      true,
-    );
-    expect(message.includes("README.md")).toEqual(true);
-    expect(
-      (await listWorktrees(repoRoot)).some(
-        (worktree) => worktree.branch === created.branch,
-      ),
-    ).toEqual(true);
-
-    await removeWorktree(repoRoot, created.path, {
-      deleteBranch: true,
-      discardTracked: true,
-      force: false,
-    });
-    expect((await git("branch", "--list", created.branch)).trim()).toEqual("");
+  test("does not export an unrestricted worktree remover", async () => {
+    const adapter = await import("../../src/adapters/worktrees");
+    expect("removeWorktree" in adapter).toBe(false);
   });
 
   test("unregisters and cleans up a branch after manual directory deletion", async () => {
@@ -219,7 +198,7 @@ describe("git worktree manager", () => {
     // The measurement is by patch id, not commit id. A cherry-pick keeps the
     // change and takes a new sha, so counting `main..branch` calls a branch
     // whose work fully landed stranded — and nothing about it ever changes, so
-    // that worktree is kept forever and every reap needs a human to investigate.
+    // that worktree is kept forever and every reap needs a user to investigate.
     const created = await createWorktree(repoRoot, "agent-cherry", "picked");
     await writeFile(join(created.path, "landed.txt"), "the agent's work\n");
     await gitIn(created.path, "add", "-A");
@@ -334,13 +313,12 @@ describe("git worktree manager", () => {
     await writeFile(join(created.path, "design.md"), "kept deliberately\n");
     await git("-C", created.path, "add", "design.md");
     await git("-C", created.path, "commit", "-m", "preserved design");
-    await markBranchPreserved(repoRoot, created.branch, true);
+    await markBranchPreserved(repoRoot, created.branch);
     expect(
-      (await listUnmergedHiveBranches(repoRoot)).find(
+      (await listSettlementBranches(repoRoot)).find(
         (entry) => entry.branch === created.branch,
       )?.preserved,
     ).toEqual(true);
-    await markBranchPreserved(repoRoot, created.branch, false);
     await removeWorktree(repoRoot, created.path, {
       deleteBranch: true,
       discardTracked: true,
@@ -446,13 +424,59 @@ describe("git worktree manager", () => {
     try {
       await createWorktree(join(tempRoot, "not-a-repo"), "agent-4", "task");
     } catch (error) {
-      message = error instanceof Error ? error.message : String(error);
+      message = errorMessage(error);
     }
     expect(message.includes("not a git repository")).toEqual(true);
   });
 });
 
-describe("unmerged hive branch inventory", () => {
+describe("owner-ref inventory (I8)", () => {
+  test("finds this instance's stale owner refs and leaves mutation to settlement", async () => {
+    const live = await createWorktree(repoRoot, "owner-live", "still-here");
+    const liveRef = `refs/hive-owner/${hiveInstanceSuffix()}/${live.branch}`;
+    // Fabricate a stale owner ref: point at HEAD tip under a branch name that
+    // does not exist. The ref is the only thing left of a deleted branch.
+    const staleBranch = "hive/owner-stale-gone";
+    const staleRef = `refs/hive-owner/${hiveInstanceSuffix()}/${staleBranch}`;
+    await git("update-ref", staleRef, "HEAD");
+    // Sibling instance's stale ref must not be touched.
+    const siblingStale = `refs/hive-owner/sibling-instance/${staleBranch}`;
+    await git("update-ref", siblingStale, "HEAD");
+
+    expect((await git("show-ref", "--verify", staleRef)).trim()).toContain(
+      staleRef,
+    );
+    expect((await git("branch", "--list", staleBranch)).trim()).toBe("");
+
+    const result = await listStaleOwnerRefs(repoRoot);
+    expect(result.stale.map(({ ref }) => ref)).toEqual([staleRef]);
+    expect(result.kept.map(({ ref }) => ref)).toContain(liveRef);
+
+    // Inventory does not mutate any of the refs it measured.
+    expect((await git("show-ref", "--verify", staleRef)).trim()).toContain(
+      staleRef,
+    );
+    expect((await git("show-ref", "--verify", liveRef)).trim()).toContain(
+      liveRef,
+    );
+    expect((await git("show-ref", "--verify", siblingStale)).trim()).toContain(
+      siblingStale,
+    );
+
+    const second = await listStaleOwnerRefs(repoRoot);
+    expect(second.stale.map(({ ref }) => ref)).toEqual([staleRef]);
+    expect(second.kept.map(({ ref }) => ref)).toContain(liveRef);
+
+    await git("update-ref", "-d", staleRef);
+    await git("update-ref", "-d", siblingStale);
+    await removeWorktree(repoRoot, live.path, {
+      deleteBranch: true,
+      branch: live.branch,
+    });
+  });
+});
+
+describe("settlement branch inventory", () => {
   test("finds a branch holding commits that never reached main", async () => {
     // A hive/* branch with a commit whose worktree is gone: the ref is the only
     // surviving trace.
@@ -471,7 +495,7 @@ describe("unmerged hive branch inventory", () => {
     await inWorktree("commit", "-m", "rescue david's widgets work");
     await git("worktree", "remove", "--force", worktree);
 
-    const stranded = await listUnmergedHiveBranches(repoRoot);
+    const stranded = await listSettlementBranches(repoRoot);
 
     expect(stranded).toEqual([
       {
@@ -482,17 +506,19 @@ describe("unmerged hive branch inventory", () => {
     ]);
   });
 
-  test("ignores a hive branch whose commits are already on main", async () => {
+  test("reports a hive branch whose commits are already on main, holding nothing", async () => {
     await git("branch", "hive/landed-work", "main");
 
-    const stranded = await listUnmergedHiveBranches(repoRoot);
+    const stranded = await listSettlementBranches(repoRoot);
 
-    expect(stranded.map((entry) => entry.branch)).not.toContain(
-      "hive/landed-work",
-    );
+    // Listed, not hidden: settlement is answerable for releasing this branch, and a branch left
+    // out of the inventory has no case and is never released at all.
+    expect(
+      stranded.find((entry) => entry.branch === "hive/landed-work"),
+    ).toMatchObject({ unmergedCommits: 0 });
   });
 
-  test("reports nothing rather than throwing when main does not exist", async () => {
+  test("does not report a false empty inventory when main does not exist", async () => {
     const bare = await mkdtemp(join(tmpdir(), "hive-no-main-"));
     const init = Bun.spawn(["git", "-C", bare, "init", "-b", "trunk"], {
       stdout: "pipe",
@@ -500,7 +526,9 @@ describe("unmerged hive branch inventory", () => {
     });
     await init.exited;
     try {
-      expect(await listUnmergedHiveBranches(bare)).toEqual([]);
+      // Which read refuses first does not matter; that one of them refuses does. An empty list
+      // here would read as "no branch holds unlanded work" when nothing was measured at all.
+      await expect(listSettlementBranches(bare)).rejects.toThrow();
     } finally {
       await rm(bare, { recursive: true, force: true });
     }
@@ -539,9 +567,11 @@ describe("hive wiring", () => {
   // The fixture repository has no .gitignore, which is the arbitrary project
   // Hive has to work on: every shipped skill is untracked there.
   test("discounts the config and skills every vendor spawn provisions", async () => {
+    const instructionPath = join(tempRoot, "launch-prompt.txt");
+    await writeFile(instructionPath, "brief\n");
     for (const tool of CAPABILITY_PROVIDERS) {
       const created = await createWorktree(repoRoot, tool, "hive wiring");
-      await getAgentAdapter(tool).prepareSpawn({
+      await getAgentAdapter(tool).prepareRuntime({
         name: tool,
         model: "default",
         effort: "medium",
@@ -550,10 +580,7 @@ describe("hive wiring", () => {
         readOnly: false,
         dangerous: false,
         withCapability: true,
-        instructionPath: "/tmp/prompt.txt",
-        sessionId: `session-${tool}`,
-        kickoff: "Begin the assigned task.",
-        newVendorSessionId: "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f",
+        instructionPath,
         providerRunId: "018f1e90-7b5a-7cc0-8000-000000000223",
       });
       await provisionSkills(
@@ -745,5 +772,103 @@ describe("hive wiring", () => {
     expect(stranded.dirtyFiles).toEqual([
       ".claude/skills/hive-claude/notes.md",
     ]);
+  });
+});
+
+describe("owner liveness input for orphaned worktree reconciliation", () => {
+  // Missing agent rows must never authorize removal. The process probe is
+  // three-valued; unknown and live both keep the worktree.
+
+  test("keeps a missing-row worktree when the process probe reports live", async () => {
+    const owned = await createWorktree(repoRoot, "rowless-live", "liveness");
+    try {
+      const report = await reconcileOrphanedWorktrees(repoRoot, [], "main", {
+        now: () => Date.now() + WORKTREE_SETTLING_INTERVAL_MS + 1,
+        probeOwnerLiveness: () => "live",
+      });
+      expect(
+        report.worktrees.find((entry) => entry.path === owned.path),
+      ).toMatchObject({ action: "kept", rule: "live-agent" });
+    } finally {
+      await removeWorktree(repoRoot, owned.path, {
+        deleteBranch: true,
+        branch: owned.branch,
+      });
+    }
+  });
+
+  test("keeps a missing-row worktree when the process probe is unknown", async () => {
+    const owned = await createWorktree(repoRoot, "rowless-unk", "liveness");
+    try {
+      const report = await reconcileOrphanedWorktrees(repoRoot, [], "main", {
+        now: () => Date.now() + WORKTREE_SETTLING_INTERVAL_MS + 1,
+        probeOwnerLiveness: () => "unknown",
+      });
+      expect(
+        report.worktrees.find((entry) => entry.path === owned.path),
+      ).toMatchObject({
+        action: "kept",
+        rule: "assessment-failed",
+        note: "owner liveness unknown (missing agent row; process probe unanswerable)",
+      });
+    } finally {
+      await removeWorktree(repoRoot, owned.path, {
+        deleteBranch: true,
+        branch: owned.branch,
+      });
+    }
+  });
+
+  test("reports a clean orphan as eligible when the process probe reports dead", async () => {
+    const clean = await createWorktree(repoRoot, "rowless-dead", "liveness");
+    const report = await reconcileOrphanedWorktrees(repoRoot, [], "main", {
+      now: () => Date.now() + WORKTREE_SETTLING_INTERVAL_MS + 1,
+      probeOwnerLiveness: () => "dead",
+    });
+    expect(
+      report.worktrees.find((entry) => entry.path === clean.path),
+    ).toMatchObject({ action: "eligible", rule: "clean-orphan" });
+    expect(existsSync(clean.path)).toBe(true);
+    await removeWorktree(repoRoot, clean.path, {
+      deleteBranch: true,
+      branch: clean.branch,
+    });
+  });
+
+  test("a live agent row still keeps its worktree as live-agent", async () => {
+    const owned = await createWorktree(repoRoot, "row-live", "liveness");
+    const row = {
+      id: "agent-row-live",
+      name: "row-live",
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      category: "default",
+      status: "working",
+      taskDescription: "live row",
+      worktreePath: owned.path,
+      branch: owned.branch,
+      contextPct: null,
+      createdAt: "2026-08-10T12:00:00.000Z",
+      lastEventAt: "2026-08-10T12:00:00.000Z",
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+    } satisfies AgentRecord;
+    // If the row path asked the process probe, a "dead" answer would push it
+    // toward release. It must stay live-agent from the row alone.
+    try {
+      const report = await reconcileOrphanedWorktrees(repoRoot, [row], "main", {
+        now: () => Date.now() + WORKTREE_SETTLING_INTERVAL_MS + 1,
+        probeOwnerLiveness: () => "dead",
+      });
+      expect(
+        report.worktrees.find((entry) => entry.path === owned.path),
+      ).toMatchObject({ action: "kept", rule: "live-agent" });
+    } finally {
+      await removeWorktree(repoRoot, owned.path, {
+        deleteBranch: true,
+        branch: owned.branch,
+      });
+    }
   });
 });

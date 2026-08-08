@@ -1,0 +1,4621 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-12T22:00:00.000Z",
+      "snapshot": {
+        "generatedAt": "2026-07-12T22:00:00.000Z",
+        "providers": {
+          "claude": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "claude",
+                "accountFingerprint": "abc123",
+                "cliVersion": "2.1.207",
+                "canonicalId": "claude-opus-4-8",
+                "variant": null,
+                "launchToken": "claude-opus-4-8",
+                "aliases": [],
+                "displayName": "Opus 4.8",
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "unknown",
+                  "reason": "surface-silent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "known",
+                  "value": [
+                    "low",
+                    "medium",
+                    "high"
+                  ],
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "claude",
+              "model": {
+                "state": "known",
+                "value": "claude-opus-4-8",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "codex": {
+            "status": "unavailable",
+            "reason": "codex CLI not signed in"
+          },
+          "grok": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "grok",
+                "accountFingerprint": "grok123",
+                "cliVersion": "0.2.99",
+                "canonicalId": "grok-composer-2.5-fast",
+                "variant": null,
+                "launchToken": "grok-composer-2.5-fast",
+                "aliases": [],
+                "displayName": null,
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "grok.models",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "grok",
+              "model": {
+                "state": "known",
+                "value": "grok-4.5",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "kimi": {
+            "status": "unavailable",
+            "reason": "kimi CLI not signed in"
+          },
+          "opencode": {
+            "status": "unavailable",
+            "reason": "opencode CLI not signed in"
+          }
+        },
+        "billing": {
+          "claude": {
+            "creditsEnabled": {
+              "state": "known",
+              "value": false,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "generalUtilization": {
+              "state": "known",
+              "value": 63,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "modelUtilization": {},
+            "overflowUncertainty": null
+          },
+          "codex": null,
+          "grok": null,
+          "kimi": null,
+          "opencode": null
+        },
+        "usageSurfaces": {
+          "claude": "metered",
+          "codex": "metered",
+          "grok": "metered",
+          "kimi": "metered",
+          "opencode": "none"
+        },
+        "quota": [
+          {
+            "provider": "claude",
+            "account": "default",
+            "pool": "plan",
+            "origin": "discovered",
+            "overridesDiscovered": false,
+            "models": [
+              "*"
+            ],
+            "label": null,
+            "routable": true,
+            "confidence": "reported",
+            "freshness": "fresh",
+            "source": "provider",
+            "fiveHour": {
+              "availability": "available",
+              "unit": "percent",
+              "allowance": 100,
+              "used": 63,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": 37,
+              "remainingPct": 0.37,
+              "resetsAt": "2026-07-12T22:00:00.000Z",
+              "confidence": "reported",
+              "source": "provider",
+              "observedAt": "2026-07-12T22:00:00.000Z",
+              "windowMinutes": 300
+            },
+            "weekly": {
+              "availability": "unknown",
+              "unit": "percent",
+              "allowance": null,
+              "used": null,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": null,
+              "remainingPct": null,
+              "resetsAt": null,
+              "confidence": "missing",
+              "source": "none",
+              "observedAt": null,
+              "windowMinutes": null
+            }
+          }
+        ],
+        "quotaError": null,
+        "tokenUsage": {
+          "generatedAt": "2026-07-12T22:00:00.000Z",
+          "currentSessionId": null,
+          "sessions": [],
+          "attribution": "control-lower-bound"
+        },
+        "tokenUsageError": null
+      },
+      "routing": {
+        "policy": {
+          "schemaVersion": 3,
+          "revision": 6,
+          "updatedAt": "2026-07-13T16:05:40.344Z",
+          "provisional": false,
+          "providers": {
+            "claude": "enabled",
+            "codex": "enabled",
+            "grok": "disabled"
+          },
+          "models": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "state": "enabled",
+              "effort": {
+                "mode": "never-configured"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "state": "enabled",
+              "effort": {
+                "mode": "hive-decides"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "state": "disabled",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              }
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              }
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "state": "enabled",
+              "effort": {
+                "mode": "none"
+              }
+            }
+          ],
+          "global": {
+            "mode": "hive-equal",
+            "candidates": [
+              {
+                "provider": "claude",
+                "model": "claude-opus-4-8",
+                "effort": {
+                  "mode": "provider-controlled"
+                },
+                "weight": 1
+              },
+              {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": {
+                  "mode": "hive-decides"
+                },
+                "weight": 1
+              }
+            ]
+          },
+          "categories": {
+            "light_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "none"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "heavy_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "simple_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 4
+                },
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "standard_coding": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "complex_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 3
+                },
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "code_review": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-sonnet-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 2
+                }
+              ]
+            },
+            "planning": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "debugging": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "summarization": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "default": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            }
+          }
+        },
+        "categories": [
+          {
+            "id": "light_research",
+            "label": "Light research"
+          },
+          {
+            "id": "heavy_research",
+            "label": "Heavy research / synthesis"
+          },
+          {
+            "id": "simple_coding",
+            "label": "Simple coding"
+          },
+          {
+            "id": "standard_coding",
+            "label": "Standard coding"
+          },
+          {
+            "id": "complex_coding",
+            "label": "Complex coding"
+          },
+          {
+            "id": "code_review",
+            "label": "Code review"
+          },
+          {
+            "id": "planning",
+            "label": "Planning"
+          },
+          {
+            "id": "debugging",
+            "label": "Debugging"
+          },
+          {
+            "id": "summarization",
+            "label": "Summarization"
+          },
+          {
+            "id": "default",
+            "label": "Everything else"
+          }
+        ],
+        "modes": [
+          {
+            "id": "user-weighted",
+            "label": "Weighted split",
+            "caption": "Hive splits spawns by the weights you set. Weights are ratings, not percentages — 3/1/1 and 60/20/20 are the same split.",
+            "weightEditable": true
+          },
+          {
+            "id": "hive-equal",
+            "label": "Equal split",
+            "caption": "Every candidate gets the same share. Your weights are kept and apply again if you switch back.",
+            "weightEditable": false
+          }
+        ],
+        "defaultMode": "hive-equal",
+        "weightRange": {
+          "minimum": 1,
+          "maximum": 100,
+          "defaultValue": 1
+        },
+        "catalog": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              },
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          }
+        ],
+        "providers": {
+          "claude": {
+            "state": "enabled"
+          },
+          "codex": {
+            "state": "enabled"
+          },
+          "grok": {
+            "state": "disabled"
+          },
+          "kimi": {
+            "state": "unconfigured"
+          },
+          "opencode": {
+            "state": "unconfigured"
+          }
+        },
+        "models": [
+          {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "enabled",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "state": "disabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "state": "enabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "grok",
+            "model": "grok-4.5",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "disabled-by-provider",
+            "preferenceOn": false
+          }
+        ],
+        "candidates": [
+          {
+            "scope": "global",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "global",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "light_research",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "heavy_research",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "standard_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "code_review",
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "planning",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "debugging",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "summarization",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "default",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          }
+        ],
+        "warnings": []
+      },
+      "providers": {
+        "claude": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "paid-overflow-off",
+          "spendCaveat": null,
+          "usage": {
+            "state": "metered",
+            "windows": [
+              {
+                "label": "5 hour window",
+                "meter": {
+                  "state": "measured",
+                  "usedPercent": 63,
+                  "resetsAt": "2026-07-12T22:00:00.000Z",
+                  "observedAt": "2026-07-12T22:00:00.000Z",
+                  "confidence": "reported"
+                }
+              },
+              {
+                "label": "7 day window",
+                "meter": {
+                  "state": "unknown",
+                  "reason": "no reading for this window"
+                }
+              }
+            ]
+          },
+          "models": [
+            {
+              "canonicalId": "claude-opus-4-8",
+              "variant": null,
+              "displayId": "claude-opus-4-8",
+              "name": "Opus 4.8",
+              "effortAxis": {
+                "state": "known",
+                "levels": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "defaultLevel": null
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "codex": {
+          "catalogState": "unavailable",
+          "catalogReason": "codex CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "codex reported no usage data"
+          },
+          "models": []
+        },
+        "grok": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "grok reported no usage data"
+          },
+          "models": [
+            {
+              "canonicalId": "grok-composer-2.5-fast",
+              "variant": null,
+              "displayId": "grok-composer-2.5-fast",
+              "name": "Composer 2.5 Fast",
+              "effortAxis": {
+                "state": "none"
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "kimi": {
+          "catalogState": "unavailable",
+          "catalogReason": "kimi CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "kimi reported no usage data"
+          },
+          "models": []
+        },
+        "opencode": {
+          "catalogState": "unavailable",
+          "catalogReason": "opencode CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "unmetered"
+          },
+          "models": []
+        }
+      },
+      "tokenSessions": []
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-12T22:00:00.000Z",
+      "snapshot": {
+        "generatedAt": "2026-07-12T22:00:00.000Z",
+        "providers": {
+          "claude": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "claude",
+                "accountFingerprint": "abc123",
+                "cliVersion": "2.1.207",
+                "canonicalId": "claude-opus-4-8",
+                "variant": null,
+                "launchToken": "claude-opus-4-8",
+                "aliases": [],
+                "displayName": "Opus 4.8",
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "unknown",
+                  "reason": "surface-silent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "known",
+                  "value": [
+                    "low",
+                    "medium",
+                    "high"
+                  ],
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "claude",
+              "model": {
+                "state": "known",
+                "value": "claude-opus-4-8",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "codex": {
+            "status": "unavailable",
+            "reason": "codex CLI not signed in"
+          },
+          "grok": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "grok",
+                "accountFingerprint": "grok123",
+                "cliVersion": "0.2.99",
+                "canonicalId": "grok-composer-2.5-fast",
+                "variant": null,
+                "launchToken": "grok-composer-2.5-fast",
+                "aliases": [],
+                "displayName": null,
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "grok.models",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "grok",
+              "model": {
+                "state": "known",
+                "value": "grok-4.5",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "kimi": {
+            "status": "unavailable",
+            "reason": "kimi CLI not signed in"
+          },
+          "opencode": {
+            "status": "unavailable",
+            "reason": "opencode CLI not signed in"
+          }
+        },
+        "billing": {
+          "claude": {
+            "creditsEnabled": {
+              "state": "known",
+              "value": false,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "generalUtilization": {
+              "state": "known",
+              "value": 63,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "modelUtilization": {},
+            "overflowUncertainty": null
+          },
+          "codex": null,
+          "grok": null,
+          "kimi": null,
+          "opencode": null
+        },
+        "usageSurfaces": {
+          "claude": "metered",
+          "codex": "metered",
+          "grok": "metered",
+          "kimi": "metered",
+          "opencode": "none"
+        },
+        "quota": [
+          {
+            "provider": "claude",
+            "account": "default",
+            "pool": "plan",
+            "origin": "discovered",
+            "overridesDiscovered": false,
+            "models": [
+              "*"
+            ],
+            "label": null,
+            "routable": true,
+            "confidence": "reported",
+            "freshness": "fresh",
+            "source": "provider",
+            "fiveHour": {
+              "availability": "available",
+              "unit": "percent",
+              "allowance": 100,
+              "used": 63,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": 37,
+              "remainingPct": 0.37,
+              "resetsAt": "2026-07-12T22:00:00.000Z",
+              "confidence": "reported",
+              "source": "provider",
+              "observedAt": "2026-07-12T22:00:00.000Z",
+              "windowMinutes": 300
+            },
+            "weekly": {
+              "availability": "unknown",
+              "unit": "percent",
+              "allowance": null,
+              "used": null,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": null,
+              "remainingPct": null,
+              "resetsAt": null,
+              "confidence": "missing",
+              "source": "none",
+              "observedAt": null,
+              "windowMinutes": null
+            }
+          }
+        ],
+        "quotaError": null,
+        "tokenUsage": {
+          "generatedAt": "2026-07-12T22:00:00.000Z",
+          "currentSessionId": null,
+          "sessions": [],
+          "attribution": "control-lower-bound"
+        },
+        "tokenUsageError": null
+      },
+      "routing": {
+        "policy": {
+          "schemaVersion": 3,
+          "revision": 6,
+          "updatedAt": "2026-07-13T16:05:40.344Z",
+          "provisional": false,
+          "providers": {
+            "claude": "enabled",
+            "codex": "enabled",
+            "grok": "disabled"
+          },
+          "models": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "state": "enabled",
+              "effort": {
+                "mode": "never-configured"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "state": "enabled",
+              "effort": {
+                "mode": "hive-decides"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "state": "disabled",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              }
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              }
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "state": "enabled",
+              "effort": {
+                "mode": "none"
+              }
+            }
+          ],
+          "global": {
+            "mode": "hive-equal",
+            "candidates": [
+              {
+                "provider": "claude",
+                "model": "claude-opus-4-8",
+                "effort": {
+                  "mode": "provider-controlled"
+                },
+                "weight": 1
+              },
+              {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": {
+                  "mode": "hive-decides"
+                },
+                "weight": 1
+              }
+            ]
+          },
+          "categories": {
+            "light_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "none"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "heavy_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "simple_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 4
+                },
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "standard_coding": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "complex_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 3
+                },
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "code_review": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-sonnet-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 2
+                }
+              ]
+            },
+            "planning": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "debugging": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "summarization": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "default": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            }
+          }
+        },
+        "categories": [
+          {
+            "id": "light_research",
+            "label": "Light research"
+          },
+          {
+            "id": "heavy_research",
+            "label": "Heavy research / synthesis"
+          },
+          {
+            "id": "simple_coding",
+            "label": "Simple coding"
+          },
+          {
+            "id": "standard_coding",
+            "label": "Standard coding"
+          },
+          {
+            "id": "complex_coding",
+            "label": "Complex coding"
+          },
+          {
+            "id": "code_review",
+            "label": "Code review"
+          },
+          {
+            "id": "planning",
+            "label": "Planning"
+          },
+          {
+            "id": "debugging",
+            "label": "Debugging"
+          },
+          {
+            "id": "summarization",
+            "label": "Summarization"
+          },
+          {
+            "id": "default",
+            "label": "Everything else"
+          }
+        ],
+        "modes": [
+          {
+            "id": "user-weighted",
+            "label": "Weighted split",
+            "caption": "Hive splits spawns by the weights you set. Weights are ratings, not percentages — 3/1/1 and 60/20/20 are the same split.",
+            "weightEditable": true
+          },
+          {
+            "id": "hive-equal",
+            "label": "Equal split",
+            "caption": "Every candidate gets the same share. Your weights are kept and apply again if you switch back.",
+            "weightEditable": false
+          }
+        ],
+        "defaultMode": "hive-equal",
+        "weightRange": {
+          "minimum": 1,
+          "maximum": 100,
+          "defaultValue": 1
+        },
+        "catalog": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              },
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          }
+        ],
+        "providers": {
+          "claude": {
+            "state": "enabled"
+          },
+          "codex": {
+            "state": "enabled"
+          },
+          "grok": {
+            "state": "disabled"
+          },
+          "kimi": {
+            "state": "unconfigured"
+          },
+          "opencode": {
+            "state": "unconfigured"
+          }
+        },
+        "models": [
+          {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "enabled",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "state": "disabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "state": "enabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "grok",
+            "model": "grok-4.5",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "disabled-by-provider",
+            "preferenceOn": false
+          }
+        ],
+        "candidates": [
+          {
+            "scope": "global",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "global",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "light_research",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "heavy_research",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "standard_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "code_review",
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "planning",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "debugging",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "summarization",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "default",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          }
+        ],
+        "warnings": []
+      },
+      "providers": {
+        "claude": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "paid-overflow-off",
+          "spendCaveat": null,
+          "usage": {
+            "state": "metered",
+            "windows": [
+              {
+                "label": "5 hour window",
+                "meter": {
+                  "state": "measured",
+                  "usedPercent": 63,
+                  "resetsAt": "2026-07-12T22:00:00.000Z",
+                  "observedAt": "2026-07-12T22:00:00.000Z",
+                  "confidence": "reported"
+                }
+              },
+              {
+                "label": "7 day window",
+                "meter": {
+                  "state": "unknown",
+                  "reason": "no reading for this window"
+                }
+              }
+            ]
+          },
+          "models": [
+            {
+              "canonicalId": "claude-opus-4-8",
+              "variant": null,
+              "displayId": "claude-opus-4-8",
+              "name": "Opus 4.8",
+              "effortAxis": {
+                "state": "known",
+                "levels": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "defaultLevel": null
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "codex": {
+          "catalogState": "unavailable",
+          "catalogReason": "codex CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "codex reported no usage data"
+          },
+          "models": []
+        },
+        "grok": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "grok reported no usage data"
+          },
+          "models": [
+            {
+              "canonicalId": "grok-composer-2.5-fast",
+              "variant": null,
+              "displayId": "grok-composer-2.5-fast",
+              "name": "Composer 2.5 Fast",
+              "effortAxis": {
+                "state": "none"
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "kimi": {
+          "catalogState": "unavailable",
+          "catalogReason": "kimi CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "kimi reported no usage data"
+          },
+          "models": []
+        },
+        "opencode": {
+          "catalogState": "unavailable",
+          "catalogReason": "opencode CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "unmetered"
+          },
+          "models": []
+        }
+      },
+      "tokenSessions": []
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-12T22:00:00.000Z",
+      "snapshot": {
+        "generatedAt": "2026-07-12T22:00:00.000Z",
+        "providers": {
+          "claude": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "claude",
+                "accountFingerprint": "abc123",
+                "cliVersion": "2.1.207",
+                "canonicalId": "claude-opus-4-8",
+                "variant": null,
+                "launchToken": "claude-opus-4-8",
+                "aliases": [],
+                "displayName": "Opus 4.8",
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "unknown",
+                  "reason": "surface-silent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "known",
+                  "value": [
+                    "low",
+                    "medium",
+                    "high"
+                  ],
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "claude",
+              "model": {
+                "state": "known",
+                "value": "claude-opus-4-8",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "codex": {
+            "status": "unavailable",
+            "reason": "codex CLI not signed in"
+          },
+          "grok": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "grok",
+                "accountFingerprint": "grok123",
+                "cliVersion": "0.2.99",
+                "canonicalId": "grok-composer-2.5-fast",
+                "variant": null,
+                "launchToken": "grok-composer-2.5-fast",
+                "aliases": [],
+                "displayName": null,
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "grok.models",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "grok",
+              "model": {
+                "state": "known",
+                "value": "grok-4.5",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "kimi": {
+            "status": "unavailable",
+            "reason": "kimi CLI not signed in"
+          },
+          "opencode": {
+            "status": "unavailable",
+            "reason": "opencode CLI not signed in"
+          }
+        },
+        "billing": {
+          "claude": {
+            "creditsEnabled": {
+              "state": "known",
+              "value": false,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "generalUtilization": {
+              "state": "known",
+              "value": 63,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "modelUtilization": {},
+            "overflowUncertainty": null
+          },
+          "codex": null,
+          "grok": null,
+          "kimi": null,
+          "opencode": null
+        },
+        "usageSurfaces": {
+          "claude": "metered",
+          "codex": "metered",
+          "grok": "metered",
+          "kimi": "metered",
+          "opencode": "none"
+        },
+        "quota": [
+          {
+            "provider": "claude",
+            "account": "default",
+            "pool": "plan",
+            "origin": "discovered",
+            "overridesDiscovered": false,
+            "models": [
+              "*"
+            ],
+            "label": null,
+            "routable": true,
+            "confidence": "reported",
+            "freshness": "fresh",
+            "source": "provider",
+            "fiveHour": {
+              "availability": "available",
+              "unit": "percent",
+              "allowance": 100,
+              "used": 63,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": 37,
+              "remainingPct": 0.37,
+              "resetsAt": "2026-07-12T22:00:00.000Z",
+              "confidence": "reported",
+              "source": "provider",
+              "observedAt": "2026-07-12T22:00:00.000Z",
+              "windowMinutes": 300
+            },
+            "weekly": {
+              "availability": "unknown",
+              "unit": "percent",
+              "allowance": null,
+              "used": null,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": null,
+              "remainingPct": null,
+              "resetsAt": null,
+              "confidence": "missing",
+              "source": "none",
+              "observedAt": null,
+              "windowMinutes": null
+            }
+          }
+        ],
+        "quotaError": null,
+        "tokenUsage": {
+          "generatedAt": "2026-07-12T22:00:00.000Z",
+          "currentSessionId": null,
+          "sessions": [],
+          "attribution": "control-lower-bound"
+        },
+        "tokenUsageError": null
+      },
+      "routing": {
+        "policy": {
+          "schemaVersion": 3,
+          "revision": 6,
+          "updatedAt": "2026-07-13T16:05:40.344Z",
+          "provisional": false,
+          "providers": {
+            "claude": "enabled",
+            "codex": "enabled",
+            "grok": "disabled"
+          },
+          "models": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "state": "enabled",
+              "effort": {
+                "mode": "never-configured"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "state": "enabled",
+              "effort": {
+                "mode": "hive-decides"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "state": "disabled",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              }
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              }
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "state": "enabled",
+              "effort": {
+                "mode": "none"
+              }
+            }
+          ],
+          "global": {
+            "mode": "hive-equal",
+            "candidates": [
+              {
+                "provider": "claude",
+                "model": "claude-opus-4-8",
+                "effort": {
+                  "mode": "provider-controlled"
+                },
+                "weight": 1
+              },
+              {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": {
+                  "mode": "hive-decides"
+                },
+                "weight": 1
+              }
+            ]
+          },
+          "categories": {
+            "light_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "none"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "heavy_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "simple_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 4
+                },
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "standard_coding": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "complex_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 3
+                },
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "code_review": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-sonnet-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 2
+                }
+              ]
+            },
+            "planning": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "debugging": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "summarization": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "default": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            }
+          }
+        },
+        "categories": [
+          {
+            "id": "light_research",
+            "label": "Light research"
+          },
+          {
+            "id": "heavy_research",
+            "label": "Heavy research / synthesis"
+          },
+          {
+            "id": "simple_coding",
+            "label": "Simple coding"
+          },
+          {
+            "id": "standard_coding",
+            "label": "Standard coding"
+          },
+          {
+            "id": "complex_coding",
+            "label": "Complex coding"
+          },
+          {
+            "id": "code_review",
+            "label": "Code review"
+          },
+          {
+            "id": "planning",
+            "label": "Planning"
+          },
+          {
+            "id": "debugging",
+            "label": "Debugging"
+          },
+          {
+            "id": "summarization",
+            "label": "Summarization"
+          },
+          {
+            "id": "default",
+            "label": "Everything else"
+          }
+        ],
+        "modes": [
+          {
+            "id": "user-weighted",
+            "label": "Weighted split",
+            "caption": "Hive splits spawns by the weights you set. Weights are ratings, not percentages — 3/1/1 and 60/20/20 are the same split.",
+            "weightEditable": true
+          },
+          {
+            "id": "hive-equal",
+            "label": "Equal split",
+            "caption": "Every candidate gets the same share. Your weights are kept and apply again if you switch back.",
+            "weightEditable": false
+          }
+        ],
+        "defaultMode": "hive-equal",
+        "weightRange": {
+          "minimum": 1,
+          "maximum": 100,
+          "defaultValue": 1
+        },
+        "catalog": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              },
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          }
+        ],
+        "providers": {
+          "claude": {
+            "state": "enabled"
+          },
+          "codex": {
+            "state": "enabled"
+          },
+          "grok": {
+            "state": "disabled"
+          },
+          "kimi": {
+            "state": "unconfigured"
+          },
+          "opencode": {
+            "state": "unconfigured"
+          }
+        },
+        "models": [
+          {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "enabled",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "state": "disabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "state": "enabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "grok",
+            "model": "grok-4.5",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "disabled-by-provider",
+            "preferenceOn": false
+          }
+        ],
+        "candidates": [
+          {
+            "scope": "global",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "global",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "light_research",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "heavy_research",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "standard_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "code_review",
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "planning",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "debugging",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "summarization",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "default",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          }
+        ],
+        "warnings": []
+      },
+      "providers": {
+        "claude": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "paid-overflow-off",
+          "spendCaveat": null,
+          "usage": {
+            "state": "metered",
+            "windows": [
+              {
+                "label": "5 hour window",
+                "meter": {
+                  "state": "measured",
+                  "usedPercent": 63,
+                  "resetsAt": "2026-07-12T22:00:00.000Z",
+                  "observedAt": "2026-07-12T22:00:00.000Z",
+                  "confidence": "reported"
+                }
+              },
+              {
+                "label": "7 day window",
+                "meter": {
+                  "state": "unknown",
+                  "reason": "no reading for this window"
+                }
+              }
+            ]
+          },
+          "models": [
+            {
+              "canonicalId": "claude-opus-4-8",
+              "variant": null,
+              "displayId": "claude-opus-4-8",
+              "name": "Opus 4.8",
+              "effortAxis": {
+                "state": "known",
+                "levels": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "defaultLevel": null
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "codex": {
+          "catalogState": "unavailable",
+          "catalogReason": "codex CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "codex reported no usage data"
+          },
+          "models": []
+        },
+        "grok": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "grok reported no usage data"
+          },
+          "models": [
+            {
+              "canonicalId": "grok-composer-2.5-fast",
+              "variant": null,
+              "displayId": "grok-composer-2.5-fast",
+              "name": "Composer 2.5 Fast",
+              "effortAxis": {
+                "state": "none"
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "kimi": {
+          "catalogState": "unavailable",
+          "catalogReason": "kimi CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "kimi reported no usage data"
+          },
+          "models": []
+        },
+        "opencode": {
+          "catalogState": "unavailable",
+          "catalogReason": "opencode CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "unmetered"
+          },
+          "models": []
+        }
+      },
+      "tokenSessions": []
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "6-competing"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-12T22:00:00.000Z",
+      "snapshot": {
+        "generatedAt": "2026-07-12T22:00:00.000Z",
+        "providers": {
+          "claude": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "claude",
+                "accountFingerprint": "abc123",
+                "cliVersion": "2.1.207",
+                "canonicalId": "claude-opus-4-8",
+                "variant": null,
+                "launchToken": "claude-opus-4-8",
+                "aliases": [],
+                "displayName": "Opus 4.8",
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "unknown",
+                  "reason": "surface-silent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "known",
+                  "value": [
+                    "low",
+                    "medium",
+                    "high"
+                  ],
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "claude",
+              "model": {
+                "state": "known",
+                "value": "claude-opus-4-8",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "codex": {
+            "status": "unavailable",
+            "reason": "codex CLI not signed in"
+          },
+          "grok": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "grok",
+                "accountFingerprint": "grok123",
+                "cliVersion": "0.2.99",
+                "canonicalId": "grok-composer-2.5-fast",
+                "variant": null,
+                "launchToken": "grok-composer-2.5-fast",
+                "aliases": [],
+                "displayName": null,
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "grok.models",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "grok",
+              "model": {
+                "state": "known",
+                "value": "grok-4.5",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "kimi": {
+            "status": "unavailable",
+            "reason": "kimi CLI not signed in"
+          },
+          "opencode": {
+            "status": "unavailable",
+            "reason": "opencode CLI not signed in"
+          }
+        },
+        "billing": {
+          "claude": {
+            "creditsEnabled": {
+              "state": "known",
+              "value": false,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "generalUtilization": {
+              "state": "known",
+              "value": 63,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "modelUtilization": {},
+            "overflowUncertainty": null
+          },
+          "codex": null,
+          "grok": null,
+          "kimi": null,
+          "opencode": null
+        },
+        "usageSurfaces": {
+          "claude": "metered",
+          "codex": "metered",
+          "grok": "metered",
+          "kimi": "metered",
+          "opencode": "none"
+        },
+        "quota": [
+          {
+            "provider": "claude",
+            "account": "default",
+            "pool": "plan",
+            "origin": "discovered",
+            "overridesDiscovered": false,
+            "models": [
+              "*"
+            ],
+            "label": null,
+            "routable": true,
+            "confidence": "reported",
+            "freshness": "fresh",
+            "source": "provider",
+            "fiveHour": {
+              "availability": "available",
+              "unit": "percent",
+              "allowance": 100,
+              "used": 63,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": 37,
+              "remainingPct": 0.37,
+              "resetsAt": "2026-07-12T22:00:00.000Z",
+              "confidence": "reported",
+              "source": "provider",
+              "observedAt": "2026-07-12T22:00:00.000Z",
+              "windowMinutes": 300
+            },
+            "weekly": {
+              "availability": "unknown",
+              "unit": "percent",
+              "allowance": null,
+              "used": null,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": null,
+              "remainingPct": null,
+              "resetsAt": null,
+              "confidence": "missing",
+              "source": "none",
+              "observedAt": null,
+              "windowMinutes": null
+            }
+          }
+        ],
+        "quotaError": null,
+        "tokenUsage": {
+          "generatedAt": "2026-07-12T22:00:00.000Z",
+          "currentSessionId": null,
+          "sessions": [],
+          "attribution": "control-lower-bound"
+        },
+        "tokenUsageError": null
+      },
+      "routing": {
+        "policy": {
+          "schemaVersion": 3,
+          "revision": 6,
+          "updatedAt": "2026-07-13T16:05:40.344Z",
+          "provisional": false,
+          "providers": {
+            "claude": "enabled",
+            "codex": "enabled",
+            "grok": "disabled"
+          },
+          "models": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "state": "enabled",
+              "effort": {
+                "mode": "never-configured"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "state": "enabled",
+              "effort": {
+                "mode": "hive-decides"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "state": "disabled",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              }
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              }
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "state": "enabled",
+              "effort": {
+                "mode": "none"
+              }
+            }
+          ],
+          "global": {
+            "mode": "hive-equal",
+            "candidates": [
+              {
+                "provider": "claude",
+                "model": "claude-opus-4-8",
+                "effort": {
+                  "mode": "provider-controlled"
+                },
+                "weight": 1
+              },
+              {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": {
+                  "mode": "hive-decides"
+                },
+                "weight": 1
+              }
+            ]
+          },
+          "categories": {
+            "light_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "none"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "heavy_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "simple_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 4
+                },
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "standard_coding": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "complex_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 3
+                },
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "code_review": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-sonnet-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 2
+                }
+              ]
+            },
+            "planning": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "debugging": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "summarization": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "default": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            }
+          }
+        },
+        "categories": [
+          {
+            "id": "light_research",
+            "label": "Light research"
+          },
+          {
+            "id": "heavy_research",
+            "label": "Heavy research / synthesis"
+          },
+          {
+            "id": "simple_coding",
+            "label": "Simple coding"
+          },
+          {
+            "id": "standard_coding",
+            "label": "Standard coding"
+          },
+          {
+            "id": "complex_coding",
+            "label": "Complex coding"
+          },
+          {
+            "id": "code_review",
+            "label": "Code review"
+          },
+          {
+            "id": "planning",
+            "label": "Planning"
+          },
+          {
+            "id": "debugging",
+            "label": "Debugging"
+          },
+          {
+            "id": "summarization",
+            "label": "Summarization"
+          },
+          {
+            "id": "default",
+            "label": "Everything else"
+          }
+        ],
+        "modes": [
+          {
+            "id": "user-weighted",
+            "label": "Weighted split",
+            "caption": "Hive splits spawns by the weights you set. Weights are ratings, not percentages — 3/1/1 and 60/20/20 are the same split.",
+            "weightEditable": true
+          },
+          {
+            "id": "hive-equal",
+            "label": "Equal split",
+            "caption": "Every candidate gets the same share. Your weights are kept and apply again if you switch back.",
+            "weightEditable": false
+          }
+        ],
+        "defaultMode": "hive-equal",
+        "weightRange": {
+          "minimum": 1,
+          "maximum": 100,
+          "defaultValue": 1
+        },
+        "catalog": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              },
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          }
+        ],
+        "providers": {
+          "claude": {
+            "state": "enabled"
+          },
+          "codex": {
+            "state": "enabled"
+          },
+          "grok": {
+            "state": "disabled"
+          },
+          "kimi": {
+            "state": "unconfigured"
+          },
+          "opencode": {
+            "state": "unconfigured"
+          }
+        },
+        "models": [
+          {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "enabled",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "state": "disabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "state": "enabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "grok",
+            "model": "grok-4.5",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "disabled-by-provider",
+            "preferenceOn": false
+          }
+        ],
+        "candidates": [
+          {
+            "scope": "global",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "global",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "light_research",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "heavy_research",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "standard_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "code_review",
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "planning",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "debugging",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "summarization",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "default",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          }
+        ],
+        "warnings": []
+      },
+      "providers": {
+        "claude": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "paid-overflow-off",
+          "spendCaveat": null,
+          "usage": {
+            "state": "metered",
+            "windows": [
+              {
+                "label": "5 hour window",
+                "meter": {
+                  "state": "measured",
+                  "usedPercent": 63,
+                  "resetsAt": "2026-07-12T22:00:00.000Z",
+                  "observedAt": "2026-07-12T22:00:00.000Z",
+                  "confidence": "reported"
+                }
+              },
+              {
+                "label": "7 day window",
+                "meter": {
+                  "state": "unknown",
+                  "reason": "no reading for this window"
+                }
+              }
+            ]
+          },
+          "models": [
+            {
+              "canonicalId": "claude-opus-4-8",
+              "variant": null,
+              "displayId": "claude-opus-4-8",
+              "name": "Opus 4.8",
+              "effortAxis": {
+                "state": "known",
+                "levels": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "defaultLevel": null
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "codex": {
+          "catalogState": "unavailable",
+          "catalogReason": "codex CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "codex reported no usage data"
+          },
+          "models": []
+        },
+        "grok": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "grok reported no usage data"
+          },
+          "models": [
+            {
+              "canonicalId": "grok-composer-2.5-fast",
+              "variant": null,
+              "displayId": "grok-composer-2.5-fast",
+              "name": "Composer 2.5 Fast",
+              "effortAxis": {
+                "state": "none"
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "kimi": {
+          "catalogState": "unavailable",
+          "catalogReason": "kimi CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "kimi reported no usage data"
+          },
+          "models": []
+        },
+        "opencode": {
+          "catalogState": "unavailable",
+          "catalogReason": "opencode CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "unmetered"
+          },
+          "models": []
+        }
+      },
+      "tokenSessions": []
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "6-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-12T22:00:00.000Z",
+      "snapshot": {
+        "generatedAt": "2026-07-12T22:00:00.000Z",
+        "providers": {
+          "claude": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "claude",
+                "accountFingerprint": "abc123",
+                "cliVersion": "2.1.207",
+                "canonicalId": "claude-opus-4-8",
+                "variant": null,
+                "launchToken": "claude-opus-4-8",
+                "aliases": [],
+                "displayName": "Opus 4.8",
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "unknown",
+                  "reason": "surface-silent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "known",
+                  "value": [
+                    "low",
+                    "medium",
+                    "high"
+                  ],
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "claude.initialize",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "claude",
+              "model": {
+                "state": "known",
+                "value": "claude-opus-4-8",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "claude.initialize",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "codex": {
+            "status": "unavailable",
+            "reason": "codex CLI not signed in"
+          },
+          "grok": {
+            "status": "ok",
+            "records": [
+              {
+                "provider": "grok",
+                "accountFingerprint": "grok123",
+                "cliVersion": "0.2.99",
+                "canonicalId": "grok-composer-2.5-fast",
+                "variant": null,
+                "launchToken": "grok-composer-2.5-fast",
+                "aliases": [],
+                "displayName": null,
+                "entitled": {
+                  "state": "known",
+                  "value": true,
+                  "surface": "grok.models",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "hidden": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportsEffort": {
+                  "state": "known",
+                  "value": false,
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "supportedEffortLevels": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "defaultEffort": {
+                  "state": "unknown",
+                  "reason": "field-absent",
+                  "surface": "grok.models_cache",
+                  "observedAt": "2026-07-12T22:00:00.000Z"
+                },
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            ],
+            "effectiveDefault": {
+              "provider": "grok",
+              "model": {
+                "state": "known",
+                "value": "grok-4.5",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              },
+              "effort": {
+                "state": "unknown",
+                "reason": "surface-silent",
+                "surface": "grok.models",
+                "observedAt": "2026-07-12T22:00:00.000Z"
+              }
+            }
+          },
+          "kimi": {
+            "status": "unavailable",
+            "reason": "kimi CLI not signed in"
+          },
+          "opencode": {
+            "status": "unavailable",
+            "reason": "opencode CLI not signed in"
+          }
+        },
+        "billing": {
+          "claude": {
+            "creditsEnabled": {
+              "state": "known",
+              "value": false,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "generalUtilization": {
+              "state": "known",
+              "value": 63,
+              "surface": "claude.get_usage",
+              "observedAt": "2026-07-12T22:00:00.000Z"
+            },
+            "modelUtilization": {},
+            "overflowUncertainty": null
+          },
+          "codex": null,
+          "grok": null,
+          "kimi": null,
+          "opencode": null
+        },
+        "usageSurfaces": {
+          "claude": "metered",
+          "codex": "metered",
+          "grok": "metered",
+          "kimi": "metered",
+          "opencode": "none"
+        },
+        "quota": [
+          {
+            "provider": "claude",
+            "account": "default",
+            "pool": "plan",
+            "origin": "discovered",
+            "overridesDiscovered": false,
+            "models": [
+              "*"
+            ],
+            "label": null,
+            "routable": true,
+            "confidence": "reported",
+            "freshness": "fresh",
+            "source": "provider",
+            "fiveHour": {
+              "availability": "available",
+              "unit": "percent",
+              "allowance": 100,
+              "used": 63,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": 37,
+              "remainingPct": 0.37,
+              "resetsAt": "2026-07-12T22:00:00.000Z",
+              "confidence": "reported",
+              "source": "provider",
+              "observedAt": "2026-07-12T22:00:00.000Z",
+              "windowMinutes": 300
+            },
+            "weekly": {
+              "availability": "unknown",
+              "unit": "percent",
+              "allowance": null,
+              "used": null,
+              "reserved": 0,
+              "reservedIsEstimate": true,
+              "remaining": null,
+              "remainingPct": null,
+              "resetsAt": null,
+              "confidence": "missing",
+              "source": "none",
+              "observedAt": null,
+              "windowMinutes": null
+            }
+          }
+        ],
+        "quotaError": null,
+        "tokenUsage": {
+          "generatedAt": "2026-07-12T22:00:00.000Z",
+          "currentSessionId": null,
+          "sessions": [],
+          "attribution": "control-lower-bound"
+        },
+        "tokenUsageError": null
+      },
+      "routing": {
+        "policy": {
+          "schemaVersion": 3,
+          "revision": 6,
+          "updatedAt": "2026-07-13T16:05:40.344Z",
+          "provisional": false,
+          "providers": {
+            "claude": "enabled",
+            "codex": "enabled",
+            "grok": "disabled"
+          },
+          "models": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "state": "enabled",
+              "effort": {
+                "mode": "never-configured"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "state": "enabled",
+              "effort": {
+                "mode": "hive-decides"
+              }
+            },
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "state": "disabled",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              }
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              }
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "state": "enabled",
+              "effort": {
+                "mode": "none"
+              }
+            }
+          ],
+          "global": {
+            "mode": "hive-equal",
+            "candidates": [
+              {
+                "provider": "claude",
+                "model": "claude-opus-4-8",
+                "effort": {
+                  "mode": "provider-controlled"
+                },
+                "weight": 1
+              },
+              {
+                "provider": "codex",
+                "model": "gpt-5.6-sol",
+                "effort": {
+                  "mode": "hive-decides"
+                },
+                "weight": 1
+              }
+            ]
+          },
+          "categories": {
+            "light_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "none"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "heavy_research": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "simple_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 4
+                },
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "standard_coding": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "complex_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 3
+                },
+                {
+                  "provider": "codex",
+                  "model": "gpt-5.6-sol",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "code_review": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-sonnet-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 2
+                }
+              ]
+            },
+            "planning": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "hive-decides"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "debugging": {
+              "mode": "user-weighted",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-fable-5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "high"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "summarization": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "grok",
+                  "model": "grok-4.5",
+                  "effort": {
+                    "mode": "exact",
+                    "value": "low"
+                  },
+                  "weight": 1
+                }
+              ]
+            },
+            "default": {
+              "mode": "hive-equal",
+              "candidates": [
+                {
+                  "provider": "claude",
+                  "model": "claude-opus-4-8",
+                  "effort": {
+                    "mode": "provider-controlled"
+                  },
+                  "weight": 1
+                }
+              ]
+            }
+          }
+        },
+        "categories": [
+          {
+            "id": "light_research",
+            "label": "Light research"
+          },
+          {
+            "id": "heavy_research",
+            "label": "Heavy research / synthesis"
+          },
+          {
+            "id": "simple_coding",
+            "label": "Simple coding"
+          },
+          {
+            "id": "standard_coding",
+            "label": "Standard coding"
+          },
+          {
+            "id": "complex_coding",
+            "label": "Complex coding"
+          },
+          {
+            "id": "code_review",
+            "label": "Code review"
+          },
+          {
+            "id": "planning",
+            "label": "Planning"
+          },
+          {
+            "id": "debugging",
+            "label": "Debugging"
+          },
+          {
+            "id": "summarization",
+            "label": "Summarization"
+          },
+          {
+            "id": "default",
+            "label": "Everything else"
+          }
+        ],
+        "modes": [
+          {
+            "id": "user-weighted",
+            "label": "Weighted split",
+            "caption": "Hive splits spawns by the weights you set. Weights are ratings, not percentages — 3/1/1 and 60/20/20 are the same split.",
+            "weightEditable": true
+          },
+          {
+            "id": "hive-equal",
+            "label": "Equal split",
+            "caption": "Every candidate gets the same share. Your weights are kept and apply again if you switch back.",
+            "weightEditable": false
+          }
+        ],
+        "defaultMode": "hive-equal",
+        "weightRange": {
+          "minimum": 1,
+          "maximum": 100,
+          "defaultValue": 1
+        },
+        "catalog": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              },
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "exact:high",
+                "label": "high",
+                "effort": {
+                  "mode": "exact",
+                  "value": "high"
+                }
+              },
+              {
+                "argument": "exact:low",
+                "label": "low",
+                "effort": {
+                  "mode": "exact",
+                  "value": "low"
+                }
+              },
+              {
+                "argument": "exact:medium",
+                "label": "medium",
+                "effort": {
+                  "mode": "exact",
+                  "value": "medium"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effortOptions": [
+              {
+                "argument": "hive-decides",
+                "label": "Hive decides",
+                "effort": {
+                  "mode": "hive-decides"
+                }
+              },
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              },
+              {
+                "argument": "provider-controlled",
+                "label": "Provider controlled",
+                "effort": {
+                  "mode": "provider-controlled"
+                }
+              }
+            ],
+            "addEffortOptions": [
+              {
+                "argument": "none",
+                "label": "No effort setting",
+                "effort": {
+                  "mode": "none"
+                }
+              }
+            ],
+            "startingEffort": {
+              "mode": "hive-decides"
+            }
+          }
+        ],
+        "providers": {
+          "claude": {
+            "state": "enabled"
+          },
+          "codex": {
+            "state": "enabled"
+          },
+          "grok": {
+            "state": "disabled"
+          },
+          "kimi": {
+            "state": "unconfigured"
+          },
+          "opencode": {
+            "state": "unconfigured"
+          }
+        },
+        "models": [
+          {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "state": "enabled",
+            "source": "model",
+            "rowState": "enabled",
+            "preferenceOn": true
+          },
+          {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "state": "disabled",
+            "source": "model",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "state": "enabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": false
+          },
+          {
+            "provider": "grok",
+            "model": "grok-4.5",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "unavailable",
+            "preferenceOn": true
+          },
+          {
+            "provider": "grok",
+            "model": "grok-composer-2.5-fast",
+            "state": "disabled",
+            "source": "provider",
+            "rowState": "disabled-by-provider",
+            "preferenceOn": false
+          }
+        ],
+        "candidates": [
+          {
+            "scope": "global",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "global",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "light_research",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "heavy_research",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "simple_coding",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "standard_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "complex_coding",
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "code_review",
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "planning",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          },
+          {
+            "scope": "debugging",
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "summarization",
+            "provider": "grok",
+            "model": "grok-4.5",
+            "status": "unresolvable"
+          },
+          {
+            "scope": "default",
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "status": "effective"
+          }
+        ],
+        "warnings": []
+      },
+      "providers": {
+        "claude": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "paid-overflow-off",
+          "spendCaveat": null,
+          "usage": {
+            "state": "metered",
+            "windows": [
+              {
+                "label": "5 hour window",
+                "meter": {
+                  "state": "measured",
+                  "usedPercent": 63,
+                  "resetsAt": "2026-07-12T22:00:00.000Z",
+                  "observedAt": "2026-07-12T22:00:00.000Z",
+                  "confidence": "reported"
+                }
+              },
+              {
+                "label": "7 day window",
+                "meter": {
+                  "state": "unknown",
+                  "reason": "no reading for this window"
+                }
+              }
+            ]
+          },
+          "models": [
+            {
+              "canonicalId": "claude-opus-4-8",
+              "variant": null,
+              "displayId": "claude-opus-4-8",
+              "name": "Opus 4.8",
+              "effortAxis": {
+                "state": "known",
+                "levels": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "defaultLevel": null
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "codex": {
+          "catalogState": "unavailable",
+          "catalogReason": "codex CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "codex reported no usage data"
+          },
+          "models": []
+        },
+        "grok": {
+          "catalogState": "available",
+          "catalogReason": null,
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "grok reported no usage data"
+          },
+          "models": [
+            {
+              "canonicalId": "grok-composer-2.5-fast",
+              "variant": null,
+              "displayId": "grok-composer-2.5-fast",
+              "name": "Composer 2.5 Fast",
+              "effortAxis": {
+                "state": "none"
+              },
+              "poolExhausted": false
+            }
+          ]
+        },
+        "kimi": {
+          "catalogState": "unavailable",
+          "catalogReason": "kimi CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "silent",
+            "reason": "kimi reported no usage data"
+          },
+          "models": []
+        },
+        "opencode": {
+          "catalogState": "unavailable",
+          "catalogReason": "opencode CLI not signed in",
+          "planLabel": null,
+          "billingChip": "unknown",
+          "spendCaveat": "Hive cannot read this vendor's billing",
+          "usage": {
+            "state": "unmetered"
+          },
+          "models": []
+        }
+      },
+      "tokenSessions": []
+    }
+  }
+]

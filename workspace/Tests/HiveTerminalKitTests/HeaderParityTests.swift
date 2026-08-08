@@ -11,7 +11,7 @@ final class HeaderParityTests: XCTestCase {
         let native = repoRoot
             .appendingPathComponent("native/include/hive_ghostty_bridge.h")
         let shipped = repoRoot
-            .appendingPathComponent("workspace/Sources/HiveGhosttyC/include/hive_ghostty_bridge.h")
+            .appendingPathComponent("workspace/Sources/HiveGhosttyC/include/hive_ghostty_bridge_module.h")
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: native.path),
                       "native authority missing at \(native.path)")
@@ -32,7 +32,7 @@ final class HeaderParityTests: XCTestCase {
         XCTAssertEqual(
             nativeBytes,
             shippedBytes,
-            "hive_ghostty_bridge.h content drift between native/ and HiveGhosttyC"
+            "Ghostty bridge header content drift between native/ and HiveGhosttyC"
         )
         XCTAssertTrue(
             String(data: nativeBytes, encoding: .utf8)?.contains("hive_ghostty_event_fn") == true

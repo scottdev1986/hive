@@ -3,8 +3,7 @@
   "generatedFrom": [
     "src/schemas/session-protocol.ts",
     "src/schemas/status-envelope.ts",
-    "src/schemas/capability.ts",
-    "src/schemas/message-envelope.ts"
+    "src/schemas/capability.ts"
   ],
   "schemas": {
     "helloPayload": {
@@ -368,11 +367,13 @@
         "connectionId": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "serverEpoch": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "limits": {
@@ -450,8 +451,8 @@
             "NOT_FOUND",
             "NOT_READY",
             "ALREADY_EXISTS",
-            "HUMAN_OWNED",
-            "HUMAN_ORPHANED",
+            "USER_OWNED",
+            "USER_ORPHANED",
             "INPUT_BUSY",
             "REBASE_REQUIRED",
             "SNAPSHOT_REQUIRED",
@@ -503,6 +504,7 @@
         "monoNanos": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         }
       },
@@ -726,11 +728,13 @@
                 "outputSeq": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "checkpointSeq": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "visibility": {
@@ -752,12 +756,11 @@
                     "openTerminalRevision": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     "expiresAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -1097,11 +1100,13 @@
             "outputSeq": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "checkpointSeq": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "visibility": {
@@ -1123,12 +1128,11 @@
                 "openTerminalRevision": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "expiresAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -1184,15 +1188,13 @@
                 "type": "string",
                 "enum": [
                   "view",
-                  "human-input",
+                  "user-input",
                   "resize"
                 ]
               }
             },
             "expiresAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              "type": "string"
             },
             "geometry": {
               "readOnly": true,
@@ -1477,11 +1479,13 @@
         "outputSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "checkpointSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "visibility": {
@@ -1503,12 +1507,11 @@
             "openTerminalRevision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "expiresAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              "type": "string"
             }
           },
           "required": [
@@ -1519,14 +1522,8 @@
           ],
           "additionalProperties": false
         },
-        "socketRelativePath": {
-          "type": "string",
-          "const": "host.sock"
-        },
         "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         }
       },
       "required": [
@@ -1544,7 +1541,6 @@
         "outputSeq",
         "checkpointSeq",
         "visibility",
-        "socketRelativePath",
         "createdAt"
       ],
       "additionalProperties": false
@@ -1768,6 +1764,7 @@
             "openTerminalRevision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             }
           },
@@ -1798,678 +1795,6 @@
       ],
       "additionalProperties": false,
       "x-hive-positive-open-terminal-revision": "visibility"
-    },
-    "createCommitPayload": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "readOnly": true,
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
-        "totalLength": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 1048576
-        },
-        "sha256": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "totalLength",
-        "sha256"
-      ],
-      "additionalProperties": false
-    },
-    "createdPayload": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "readOnly": true,
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
-        "locator": {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "instanceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "subject": {
-              "readOnly": true,
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "root"
-                    }
-                  },
-                  "required": [
-                    "kind"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "agent"
-                    },
-                    "agentId": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "agentId"
-                  ],
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "sessionId": {
-              "type": "string",
-              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            },
-            "hostKind": {
-              "type": "string",
-              "const": "sessiond"
-            },
-            "engineBuildId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "instanceId",
-            "subject",
-            "generation",
-            "sessionId",
-            "hostKind",
-            "engineBuildId"
-          ],
-          "additionalProperties": false
-        },
-        "inspection": {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "locator": {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "schemaVersion": {
-                  "type": "number",
-                  "const": 1
-                },
-                "instanceId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "subject": {
-                  "readOnly": true,
-                  "oneOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "const": "root"
-                        }
-                      },
-                      "required": [
-                        "kind"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "kind": {
-                          "type": "string",
-                          "const": "agent"
-                        },
-                        "agentId": {
-                          "type": "string",
-                          "minLength": 1
-                        }
-                      },
-                      "required": [
-                        "kind",
-                        "agentId"
-                      ],
-                      "additionalProperties": false
-                    }
-                  ]
-                },
-                "generation": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 9007199254740991
-                },
-                "sessionId": {
-                  "type": "string",
-                  "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-                },
-                "hostKind": {
-                  "type": "string",
-                  "const": "sessiond"
-                },
-                "engineBuildId": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "schemaVersion",
-                "instanceId",
-                "subject",
-                "generation",
-                "sessionId",
-                "hostKind",
-                "engineBuildId"
-              ],
-              "additionalProperties": false
-            },
-            "presence": {
-              "type": "string",
-              "enum": [
-                "present",
-                "exited",
-                "lost",
-                "unknown"
-              ]
-            },
-            "complete": {
-              "type": "boolean"
-            },
-            "hostPid": {
-              "anyOf": [
-                {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "hostStartToken": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "shellRoot": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "pid": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "startToken": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "processGroupId": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "required": [
-                    "pid",
-                    "startToken",
-                    "processGroupId"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "foreground": {
-              "oneOf": [
-                {
-                  "readOnly": true,
-                  "type": "object",
-                  "properties": {
-                    "state": {
-                      "type": "string",
-                      "const": "shell-idle"
-                    },
-                    "runId": {
-                      "type": "null"
-                    }
-                  },
-                  "required": [
-                    "state",
-                    "runId"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "readOnly": true,
-                  "type": "object",
-                  "properties": {
-                    "state": {
-                      "type": "string",
-                      "const": "managed"
-                    },
-                    "runId": {
-                      "type": "string",
-                      "format": "uuid",
-                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
-                    },
-                    "pid": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "startToken": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "foregroundProcessGroupId": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "required": [
-                    "state",
-                    "runId",
-                    "pid",
-                    "startToken",
-                    "foregroundProcessGroupId"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "readOnly": true,
-                  "type": "object",
-                  "properties": {
-                    "state": {
-                      "type": "string",
-                      "const": "unmanaged"
-                    },
-                    "runId": {
-                      "type": "null"
-                    },
-                    "pid": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "startToken": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "foregroundProcessGroupId": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "required": [
-                    "state",
-                    "runId",
-                    "pid",
-                    "startToken",
-                    "foregroundProcessGroupId"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "readOnly": true,
-                  "type": "object",
-                  "properties": {
-                    "state": {
-                      "type": "string",
-                      "const": "unknown"
-                    },
-                    "runId": {
-                      "type": "null"
-                    }
-                  },
-                  "required": [
-                    "state",
-                    "runId"
-                  ],
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "expectedExecutable": {
-              "type": "string",
-              "minLength": 1
-            },
-            "executableVerified": {
-              "type": "boolean"
-            },
-            "outputSeq": {
-              "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
-            },
-            "checkpointSeq": {
-              "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
-            },
-            "checkpointAvailable": {
-              "type": "boolean"
-            },
-            "input": {
-              "type": "object",
-              "properties": {
-                "state": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "enum": [
-                        "FREE",
-                        "HUMAN_GESTURE",
-                        "HUMAN_OWNED",
-                        "HUMAN_ORPHANED",
-                        "AUTOMATION_BUFFERING",
-                        "AUTOMATION_COMMITTED",
-                        "TERMINATING",
-                        "CLOSED"
-                      ]
-                    },
-                    {
-                      "type": "string",
-                      "const": "UNKNOWN"
-                    }
-                  ]
-                },
-                "ownerViewerId": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "claimId": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "state",
-                "ownerViewerId",
-                "claimId"
-              ],
-              "additionalProperties": false
-            },
-            "viewerCount": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 4
-            },
-            "geometry": {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "columns": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 1000
-                },
-                "rows": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 1000
-                },
-                "widthPx": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "heightPx": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "cellWidthPx": {
-                  "type": "number",
-                  "exclusiveMinimum": 0
-                },
-                "cellHeightPx": {
-                  "type": "number",
-                  "exclusiveMinimum": 0
-                }
-              },
-              "required": [
-                "columns",
-                "rows",
-                "widthPx",
-                "heightPx",
-                "cellWidthPx",
-                "cellHeightPx"
-              ],
-              "additionalProperties": false,
-              "x-hive-max-active-cells": 250000
-            },
-            "resources": {
-              "readOnly": true,
-              "type": "object",
-              "propertyNames": {
-                "type": "string"
-              },
-              "additionalProperties": {
-                "type": "number"
-              }
-            },
-            "visibility": {
-              "type": "object",
-              "properties": {
-                "state": {
-                  "type": "string",
-                  "enum": [
-                    "attaching",
-                    "visible",
-                    "reconnecting",
-                    "expired"
-                  ]
-                },
-                "workspaceSessionId": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "openTerminalRevision": {
-                  "type": "string",
-                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-                  "format": "hive-uint64-decimal"
-                },
-                "expiresAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
-                }
-              },
-              "required": [
-                "state",
-                "workspaceSessionId",
-                "openTerminalRevision",
-                "expiresAt"
-              ],
-              "additionalProperties": false
-            },
-            "exit": {
-              "anyOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "code": {
-                      "anyOf": [
-                        {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "signal": {
-                      "anyOf": [
-                        {
-                          "type": "integer",
-                          "minimum": -9007199254740991,
-                          "maximum": 9007199254740991
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
-                    "observedAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
-                    }
-                  },
-                  "required": [
-                    "code",
-                    "signal",
-                    "observedAt"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "survivors": {
-              "readOnly": true,
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "pid": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "startToken": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "reason": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "pid",
-                  "startToken",
-                  "reason"
-                ],
-                "additionalProperties": false
-              }
-            },
-            "evidenceAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
-            },
-            "diagnosticIds": {
-              "readOnly": true,
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "locator",
-            "presence",
-            "complete",
-            "hostPid",
-            "hostStartToken",
-            "shellRoot",
-            "foreground",
-            "expectedExecutable",
-            "executableVerified",
-            "outputSeq",
-            "checkpointSeq",
-            "checkpointAvailable",
-            "input",
-            "viewerCount",
-            "geometry",
-            "resources",
-            "visibility",
-            "exit",
-            "survivors",
-            "evidenceAt",
-            "diagnosticIds"
-          ],
-          "additionalProperties": false
-        },
-        "created": {
-          "type": "boolean",
-          "const": true
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "locator",
-        "inspection",
-        "created"
-      ],
-      "additionalProperties": false
     },
     "listPayload": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2704,6 +2029,7 @@
                   "revision": {
                     "type": "string",
                     "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                    "description": "unsigned 64-bit integer encoded as a decimal string",
                     "format": "hive-uint64-decimal"
                   }
                 },
@@ -2727,11 +2053,13 @@
                       "start": {
                         "type": "string",
                         "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                        "description": "unsigned 64-bit integer encoded as a decimal string",
                         "format": "hive-uint64-decimal"
                       },
                       "endExclusive": {
                         "type": "string",
                         "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                        "description": "unsigned 64-bit integer encoded as a decimal string",
                         "format": "hive-uint64-decimal"
                       }
                     },
@@ -2782,11 +2110,13 @@
                           "throughEventSequence": {
                             "type": "string",
                             "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                            "description": "unsigned 64-bit integer encoded as a decimal string",
                             "format": "hive-uint64-decimal"
                           },
                           "throughOutputOffset": {
                             "type": "string",
                             "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                            "description": "unsigned 64-bit integer encoded as a decimal string",
                             "format": "hive-uint64-decimal"
                           },
                           "opaqueBytes": {
@@ -2835,14 +2165,12 @@
                       "kind": {
                         "type": "string",
                         "enum": [
-                          "human",
+                          "user",
                           "automation"
                         ]
                       },
                       "leaseExpiresAt": {
-                        "type": "string",
-                        "format": "date-time",
-                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -2889,9 +2217,7 @@
                         ]
                       },
                       "observedAt": {
-                        "type": "string",
-                        "format": "date-time",
-                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -2952,9 +2278,7 @@
                             ]
                           },
                           "observedAt": {
-                            "type": "string",
-                            "format": "date-time",
-                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                            "type": "string"
                           }
                         },
                         "required": [
@@ -3050,9 +2374,7 @@
                 }
               },
               "evidenceAt": {
-                "type": "string",
-                "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                "type": "string"
               },
               "diagnostics": {
                 "readOnly": true,
@@ -3336,6 +2658,7 @@
             "revision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             }
           },
@@ -3359,11 +2682,13 @@
                 "start": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "endExclusive": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -3414,11 +2739,13 @@
                     "throughEventSequence": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     "throughOutputOffset": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     "opaqueBytes": {
@@ -3467,14 +2794,12 @@
                 "kind": {
                   "type": "string",
                   "enum": [
-                    "human",
+                    "user",
                     "automation"
                   ]
                 },
                 "leaseExpiresAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -3521,9 +2846,7 @@
                   ]
                 },
                 "observedAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -3584,9 +2907,7 @@
                       ]
                     },
                     "observedAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -3682,9 +3003,7 @@
           }
         },
         "evidenceAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "diagnostics": {
           "readOnly": true,
@@ -3759,9 +3078,7 @@
           ]
         },
         "deadline": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "idempotencyKey": {
           "type": "string",
@@ -3826,9 +3143,7 @@
                   ]
                 },
                 "observedAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -3889,9 +3204,7 @@
                       ]
                     },
                     "observedAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -4092,6 +3405,7 @@
         "openTerminalRevision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         }
       },
@@ -4196,13 +3510,12 @@
           "const": "active"
         },
         "expiresAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "openTerminalRevision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         }
       },
@@ -4343,6 +3656,7 @@
             "orphanAgeMilliseconds": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "diagnostic": {
@@ -4437,6 +3751,7 @@
                 {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 {
@@ -4602,7 +3917,7 @@
             "type": "string",
             "enum": [
               "view",
-              "human-input",
+              "user-input",
               "resize"
             ]
           }
@@ -4712,9 +4027,7 @@
           "minLength": 1
         },
         "expiresAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "engineBuildId": {
           "type": "string",
@@ -4723,11 +4036,13 @@
         "checkpointSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "outputSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "operations": {
@@ -4737,7 +4052,7 @@
             "type": "string",
             "enum": [
               "view",
-              "human-input",
+              "user-input",
               "resize"
             ]
           }
@@ -4893,6 +4208,7 @@
         "afterSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         }
       },
@@ -4940,7 +4256,7 @@
         "kind": {
           "type": "string",
           "enum": [
-            "human",
+            "user",
             "automation"
           ]
         },
@@ -4998,14 +4314,12 @@
                     "kind": {
                       "type": "string",
                       "enum": [
-                        "human",
+                        "user",
                         "automation"
                       ]
                     },
                     "leaseExpiresAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -5048,14 +4362,12 @@
                         "kind": {
                           "type": "string",
                           "enum": [
-                            "human",
+                            "user",
                             "automation"
                           ]
                         },
                         "leaseExpiresAt": {
-                          "type": "string",
-                          "format": "date-time",
-                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                          "type": "string"
                         }
                       },
                       "required": [
@@ -5139,9 +4451,24 @@
           ],
           "additionalProperties": false
         },
-        "claimToken": {
+        "provenance": {
           "type": "string",
-          "minLength": 1
+          "enum": [
+            "user",
+            "automation",
+            "terminal"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "edit",
+            "submit",
+            "cancel",
+            "gesture",
+            "deliver",
+            "keys"
+          ]
         },
         "transactionId": {
           "type": "string",
@@ -5238,7 +4565,8 @@
       "required": [
         "schemaVersion",
         "session",
-        "claimToken",
+        "provenance",
+        "action",
         "transactionId",
         "idempotencyKey",
         "operation"
@@ -5310,6 +4638,7 @@
         "revision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "idempotencyKey": {
@@ -5368,11 +4697,13 @@
                         "start": {
                           "type": "string",
                           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                          "description": "unsigned 64-bit integer encoded as a decimal string",
                           "format": "hive-uint64-decimal"
                         },
                         "endExclusive": {
                           "type": "string",
                           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                          "description": "unsigned 64-bit integer encoded as a decimal string",
                           "format": "hive-uint64-decimal"
                         }
                       },
@@ -5392,6 +4723,7 @@
                     {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     {
@@ -5474,6 +4806,7 @@
                     "revision": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     "readback": {
@@ -5513,6 +4846,7 @@
                     "orderedAt": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     "foregroundProcessObservation": {
@@ -5540,6 +4874,7 @@
                     "currentRevision": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     }
                   },
@@ -5593,6 +4928,7 @@
             "throughSeq": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             }
           },
@@ -6019,9 +5355,7 @@
                       ]
                     },
                     "observedAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -6077,9 +5411,7 @@
                               ]
                             },
                             "observedAt": {
-                              "type": "string",
-                              "format": "date-time",
-                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                              "type": "string"
                             }
                           },
                           "required": [
@@ -6218,11 +5550,13 @@
         "throughEventSequence": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "throughOutputOffset": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "opaqueBytes": {
@@ -6449,6 +5783,7 @@
             "revision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             }
           },
@@ -6472,11 +5807,13 @@
                 "start": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "endExclusive": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -6527,11 +5864,13 @@
                     "throughEventSequence": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     "throughOutputOffset": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     "opaqueBytes": {
@@ -6580,14 +5919,12 @@
                 "kind": {
                   "type": "string",
                   "enum": [
-                    "human",
+                    "user",
                     "automation"
                   ]
                 },
                 "leaseExpiresAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -6634,9 +5971,7 @@
                   ]
                 },
                 "observedAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -6697,9 +6032,7 @@
                       ]
                     },
                     "observedAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -6795,9 +6128,7 @@
           }
         },
         "evidenceAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "diagnostics": {
           "readOnly": true,
@@ -6867,9 +6198,7 @@
           ]
         },
         "deadline": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "idempotencyKey": {
           "type": "string",
@@ -6929,9 +6258,7 @@
                   ]
                 },
                 "observedAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -6992,9 +6319,7 @@
                       ]
                     },
                     "observedAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -7153,6 +6478,7 @@
         "revision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "idempotencyKey": {
@@ -7195,11 +6521,13 @@
         "revision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "orderedAt": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "window": {
@@ -7259,6 +6587,7 @@
             "revision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "readback": {
@@ -7298,6 +6627,7 @@
             "orderedAt": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "foregroundProcessObservation": {
@@ -7325,6 +6655,7 @@
             "currentRevision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             }
           },
@@ -7436,11 +6767,13 @@
             "eventSequence": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "outputOffset": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "checkpoint": {
@@ -7554,11 +6887,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "checkpoint": {
@@ -7624,11 +6959,13 @@
                 "start": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "endExclusive": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -7774,11 +7111,13 @@
                     "eventSequence": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     },
                     "outputOffset": {
                       "type": "string",
                       "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "description": "unsigned 64-bit integer encoded as a decimal string",
                       "format": "hive-uint64-decimal"
                     }
                   },
@@ -7915,11 +7254,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -7974,11 +7315,13 @@
                 "start": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "endExclusive": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8059,11 +7402,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8126,11 +7471,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8329,9 +7676,7 @@
                           ]
                         },
                         "observedAt": {
-                          "type": "string",
-                          "format": "date-time",
-                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                          "type": "string"
                         }
                       },
                       "required": [
@@ -8387,9 +7732,7 @@
                                   ]
                                 },
                                 "observedAt": {
-                                  "type": "string",
-                                  "format": "date-time",
-                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                                  "type": "string"
                                 }
                               },
                               "required": [
@@ -8494,11 +7837,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8511,6 +7856,7 @@
             "revision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "window": {
@@ -8591,11 +7937,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8622,14 +7970,12 @@
                     "kind": {
                       "type": "string",
                       "enum": [
-                        "human",
+                        "user",
                         "automation"
                       ]
                     },
                     "leaseExpiresAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -8688,11 +8034,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8709,11 +8057,13 @@
                 "start": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "endExclusive": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8771,11 +8121,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8832,11 +8184,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8875,9 +8229,7 @@
                   ]
                 },
                 "observedAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -8930,11 +8282,13 @@
                 "eventSequence": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "outputOffset": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -8990,9 +8344,7 @@
                           ]
                         },
                         "observedAt": {
-                          "type": "string",
-                          "format": "date-time",
-                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                          "type": "string"
                         }
                       },
                       "required": [
@@ -9071,11 +8423,13 @@
             "eventSequence": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "outputOffset": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             }
           },
@@ -9128,11 +8482,13 @@
             "eventSequence": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "outputOffset": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             }
           },
@@ -9211,7 +8567,7 @@
             "inventoryRevision": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             }
           },
           "required": [
@@ -9293,21 +8649,17 @@
                 "inventoryRevision": {
                   "type": "string",
                   "pattern": "^(?:[1-9][0-9]{0,19})$",
-                  "format": "hive-uint64-decimal"
+                  "description": "unsigned 64-bit integer encoded as a decimal string"
                 },
                 "state": {
                   "type": "string",
                   "const": "active"
                 },
                 "issuedAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 },
                 "expiresAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -10010,11 +9362,13 @@
         "outputSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "checkpointSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "checkpointAvailable": {
@@ -10029,9 +9383,9 @@
                   "type": "string",
                   "enum": [
                     "FREE",
-                    "HUMAN_GESTURE",
-                    "HUMAN_OWNED",
-                    "HUMAN_ORPHANED",
+                    "USER_GESTURE",
+                    "USER_OWNED",
+                    "USER_ORPHANED",
                     "AUTOMATION_BUFFERING",
                     "AUTOMATION_COMMITTED",
                     "TERMINATING",
@@ -10152,12 +9506,11 @@
             "openTerminalRevision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "expiresAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              "type": "string"
             }
           },
           "required": [
@@ -10198,9 +9551,7 @@
                   ]
                 },
                 "observedAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -10244,9 +9595,7 @@
           }
         },
         "evidenceAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "diagnosticIds": {
           "readOnly": true,
@@ -10639,11 +9988,13 @@
             "outputSeq": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "checkpointSeq": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "description": "unsigned 64-bit integer encoded as a decimal string",
               "format": "hive-uint64-decimal"
             },
             "checkpointAvailable": {
@@ -10658,9 +10009,9 @@
                       "type": "string",
                       "enum": [
                         "FREE",
-                        "HUMAN_GESTURE",
-                        "HUMAN_OWNED",
-                        "HUMAN_ORPHANED",
+                        "USER_GESTURE",
+                        "USER_OWNED",
+                        "USER_ORPHANED",
                         "AUTOMATION_BUFFERING",
                         "AUTOMATION_COMMITTED",
                         "TERMINATING",
@@ -10781,12 +10132,11 @@
                 "openTerminalRevision": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "expiresAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -10827,9 +10177,7 @@
                       ]
                     },
                     "observedAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -10873,9 +10221,7 @@
               }
             },
             "evidenceAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              "type": "string"
             },
             "diagnosticIds": {
               "readOnly": true,
@@ -10944,6 +10290,7 @@
         "expectedOutputSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         }
       },
@@ -11038,6 +10385,7 @@
         "outputSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "columns": {
@@ -11048,6 +10396,11 @@
         "rows": {
           "type": "integer",
           "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "rowStart": {
+          "type": "integer",
+          "minimum": 0,
           "maximum": 9007199254740991
         },
         "screen": {
@@ -11091,12 +10444,81 @@
             }
           ]
         },
+        "styledText": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "truncated": {
           "type": "boolean"
         },
         "sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "composer": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "profile": {
+                  "type": "string",
+                  "enum": [
+                    "claude",
+                    "codex",
+                    "grok",
+                    "kimi",
+                    "opencode"
+                  ]
+                },
+                "present": {
+                  "type": "boolean"
+                },
+                "nonempty": {
+                  "type": "boolean"
+                },
+                "stable": {
+                  "type": "boolean"
+                },
+                "userEditSinceEmpty": {
+                  "type": "boolean"
+                },
+                "userOperationInFlight": {
+                  "type": "boolean"
+                },
+                "claim": {
+                  "type": "boolean"
+                },
+                "invariant": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "fault"
+                  ]
+                }
+              },
+              "required": [
+                "profile",
+                "present",
+                "nonempty",
+                "stable",
+                "userEditSinceEmpty",
+                "userOperationInFlight",
+                "claim",
+                "invariant"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -11104,11 +10526,14 @@
         "outputSeq",
         "columns",
         "rows",
+        "rowStart",
         "screen",
         "cursor",
         "text",
+        "styledText",
         "truncated",
-        "sha256"
+        "sha256",
+        "composer"
       ],
       "additionalProperties": false
     },
@@ -11172,7 +10597,7 @@
             "type": "string",
             "enum": [
               "view",
-              "human-input",
+              "user-input",
               "resize"
             ]
           }
@@ -11276,9 +10701,7 @@
           "minLength": 1
         },
         "expiresAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "engineBuildId": {
           "type": "string",
@@ -11287,11 +10710,13 @@
         "checkpointSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "outputSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "operations": {
@@ -11301,7 +10726,7 @@
             "type": "string",
             "enum": [
               "view",
-              "human-input",
+              "user-input",
               "resize"
             ]
           }
@@ -11340,6 +10765,7 @@
         "openTerminalRevision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         }
       },
@@ -11438,13 +10864,12 @@
           "const": "active"
         },
         "expiresAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "openTerminalRevision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         }
       },
@@ -11585,6 +11010,7 @@
         "revision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         }
       },
@@ -11742,11 +11168,13 @@
                 "start": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 },
                 "endExclusive": {
                   "type": "string",
                   "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "description": "unsigned 64-bit integer encoded as a decimal string",
                   "format": "hive-uint64-decimal"
                 }
               },
@@ -11762,9 +11190,7 @@
           ]
         },
         "evidenceAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "diagnosticId": {
           "anyOf": [
@@ -11934,9 +11360,7 @@
                   ]
                 },
                 "observedAt": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                  "type": "string"
                 }
               },
               "required": [
@@ -12032,6 +11456,7 @@
         "eventSeq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "locator": {
@@ -12118,12 +11543,11 @@
         "revision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "occurredAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "data": {
           "readOnly": true,
@@ -12161,6 +11585,7 @@
         "seq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "entity": {
@@ -12189,12 +11614,11 @@
         "entityRevision": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "occurredAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "kind": {
           "type": "string",
@@ -12208,11 +11632,12 @@
               "enum": [
                 "sessiond",
                 "provider-hook",
+                "provider-protocol",
                 "provider-app-server",
                 "provider-telemetry",
                 "agent-report",
                 "task",
-                "operator"
+                "user"
               ]
             },
             "id": {
@@ -12220,9 +11645,7 @@
               "minLength": 1
             },
             "observedAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              "type": "string"
             },
             "confidence": {
               "type": "string",
@@ -12277,6 +11700,7 @@
         "seq": {
           "type": "string",
           "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "description": "unsigned 64-bit integer encoded as a decimal string",
           "format": "hive-uint64-decimal"
         },
         "entities": {
@@ -12300,6 +11724,7 @@
               "entityRevision": {
                 "type": "string",
                 "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                "description": "unsigned 64-bit integer encoded as a decimal string",
                 "format": "hive-uint64-decimal"
               },
               "projection": {
@@ -12320,9 +11745,7 @@
           }
         },
         "createdAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+          "type": "string"
         },
         "contentSha256": {
           "type": "string",
@@ -12356,12 +11779,10 @@
             "assignmentGeneration": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             },
             "openedAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              "type": "string"
             },
             "state": {
               "type": "string",
@@ -12395,21 +11816,17 @@
             "assignmentGeneration": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             },
             "openedAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              "type": "string"
             },
             "state": {
               "type": "string",
               "const": "closed"
             },
             "closedAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+              "type": "string"
             }
           },
           "required": [
@@ -12441,7 +11858,7 @@
             "assignmentGeneration": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             },
             "progress": {
               "type": "integer",
@@ -12488,8 +11905,7 @@
             "summary",
             "evidenceRefs",
             "freshForSeconds",
-            "phase",
-            "blocker"
+            "phase"
           ],
           "additionalProperties": false
         },
@@ -12507,7 +11923,7 @@
             "assignmentGeneration": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             },
             "progress": {
               "type": "integer",
@@ -12554,8 +11970,7 @@
             "summary",
             "evidenceRefs",
             "freshForSeconds",
-            "phase",
-            "blocker"
+            "phase"
           ],
           "additionalProperties": false
         },
@@ -12573,7 +11988,7 @@
             "assignmentGeneration": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             },
             "progress": {
               "type": "integer",
@@ -12620,8 +12035,7 @@
             "summary",
             "evidenceRefs",
             "freshForSeconds",
-            "phase",
-            "blocker"
+            "phase"
           ],
           "additionalProperties": false
         },
@@ -12639,7 +12053,7 @@
             "assignmentGeneration": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             },
             "progress": {
               "type": "integer",
@@ -12686,8 +12100,7 @@
             "summary",
             "evidenceRefs",
             "freshForSeconds",
-            "phase",
-            "blocker"
+            "phase"
           ],
           "additionalProperties": false
         },
@@ -12705,7 +12118,7 @@
             "assignmentGeneration": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             },
             "progress": {
               "type": "integer",
@@ -12773,7 +12186,7 @@
             "assignmentGeneration": {
               "type": "string",
               "pattern": "^(?:[1-9][0-9]{0,19})$",
-              "format": "hive-uint64-decimal"
+              "description": "unsigned 64-bit integer encoded as a decimal string"
             },
             "progress": {
               "type": "integer",
@@ -12820,8 +12233,7 @@
             "summary",
             "evidenceRefs",
             "freshForSeconds",
-            "phase",
-            "blocker"
+            "phase"
           ],
           "additionalProperties": false
         }
@@ -12879,7 +12291,7 @@
             "role": {
               "type": "string",
               "enum": [
-                "operator",
+                "user",
                 "orchestrator",
                 "writer",
                 "reader"
@@ -12949,7 +12361,7 @@
             "role": {
               "type": "string",
               "enum": [
-                "operator",
+                "user",
                 "orchestrator",
                 "writer",
                 "reader"
@@ -12991,7 +12403,7 @@
                 },
                 "scope": {
                   "type": "string",
-                  "const": "operator"
+                  "const": "user"
                 }
               },
               "required": [
@@ -13022,212 +12434,6 @@
           "additionalProperties": false
         }
       ]
-    },
-    "terminalDeliveryAttempt": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
-        "transactionId": {
-          "type": "string",
-          "pattern": "^txn_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-        },
-        "messageId": {
-          "type": "string",
-          "pattern": "^msg_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-        },
-        "locator": {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "instanceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "subject": {
-              "readOnly": true,
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "root"
-                    }
-                  },
-                  "required": [
-                    "kind"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "agent"
-                    },
-                    "agentId": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "agentId"
-                  ],
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "sessionId": {
-              "type": "string",
-              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            },
-            "hostKind": {
-              "type": "string",
-              "const": "sessiond"
-            },
-            "engineBuildId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "instanceId",
-            "subject",
-            "generation",
-            "sessionId",
-            "hostKind",
-            "engineBuildId"
-          ],
-          "additionalProperties": false
-        },
-        "recipientGeneration": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "adapter": {
-          "type": "string",
-          "enum": [
-            "claude-tui",
-            "codex-tui",
-            "codex-app-server",
-            "grok-tui"
-          ]
-        },
-        "priority": {
-          "type": "string",
-          "enum": [
-            "normal",
-            "urgent"
-          ]
-        },
-        "evidence": {
-          "type": "string",
-          "enum": [
-            "transport-written",
-            "provider-observed",
-            "attempt-in-doubt"
-          ]
-        },
-        "byteRange": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "start": {
-                  "type": "string",
-                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-                  "format": "hive-uint64-decimal"
-                },
-                "endExclusive": {
-                  "type": "string",
-                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-                  "format": "hive-uint64-decimal"
-                }
-              },
-              "required": [
-                "start",
-                "endExclusive"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "nativeEndpointReceipt": {
-          "anyOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "startedAt": {
-          "type": "string",
-          "format": "date-time",
-          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
-        },
-        "completedAt": {
-          "anyOf": [
-            {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "evidenceRefs": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "transactionId",
-        "messageId",
-        "locator",
-        "recipientGeneration",
-        "adapter",
-        "priority",
-        "evidence",
-        "byteRange",
-        "nativeEndpointReceipt",
-        "startedAt",
-        "completedAt",
-        "evidenceRefs"
-      ],
-      "additionalProperties": false,
-      "x-hive-exactly-one-of": [
-        "byteRange",
-        "nativeEndpointReceipt"
-      ]
     }
   },
   "contract": {
@@ -13240,28 +12446,23 @@
         "ghosttyVendor": "vendor/ghostty/",
         "sessiond": "native/sessiond/",
         "sessiondProtocol": "native/sessiond/src/protocol.zig",
-        "sessiondBroker": "native/sessiond/src/broker.zig",
         "sessiondHost": "native/sessiond/src/session_host.zig",
         "sessiondPtyHost": "native/sessiond/src/pty_host.zig",
         "sessiondTerminalState": "native/sessiond/src/terminal_state.zig",
         "sessiondInputArbiter": "native/sessiond/src/input_arbiter.zig",
         "sessiondProcessInspector": "native/sessiond/src/process_inspector.zig",
         "daemonSessionHost": "src/daemon/session-host/",
-        "daemonSessionHostContract": "src/daemon/session-host/contract.ts",
+        "daemonSessionHostContract": "src/daemon/session-host/session-host-contract.ts",
         "daemonSessiondHost": "src/daemon/session-host/sessiond-host.ts",
-        "daemonHierarchyRouter": "src/daemon/session-host/hierarchy-router.ts",
         "schemas": "src/schemas/",
         "sessionProtocolSchema": "src/schemas/session-protocol.ts",
         "statusEnvelopeSchema": "src/schemas/status-envelope.ts",
-        "messageEnvelopeSchema": "src/schemas/message-envelope.ts",
         "terminalKit": "workspace/Sources/HiveTerminalKit/",
         "workspaceCore": "workspace/Sources/WorkspaceCore/",
-        "statusReducer": "workspace/Sources/WorkspaceCore/StatusReducer.swift",
-        "hierarchyReducer": "workspace/Sources/WorkspaceCore/HierarchyReducer.swift",
+        "statusReducer": "workspace/Sources/WorkspaceCore/WorkspaceStatus.swift",
         "fixtures": "workspace/Tests/WorkspaceCoreTests/Fixtures/",
         "conformance": "test/session-host-conformance/",
-        "terminalCorpus": "test/terminal-corpus/",
-        "ghosttyBuildScript": "scripts/build-ghosttykit.sh"
+        "ghosttyBuildScript": "scripts/native/build-ghosttykit.sh"
       },
       "limits": {
         "liveSessionsPerHiveHome": 64,
@@ -13340,10 +12541,6 @@
         "ERROR": 3,
         "PING": 4,
         "PONG": 5,
-        "CREATE_BEGIN": 256,
-        "CREATE_INPUT": 257,
-        "CREATE_COMMIT": 258,
-        "CREATED": 259,
         "LIST": 272,
         "LISTED": 273,
         "INSPECT": 274,
@@ -13367,7 +12564,7 @@
         "ATTACH_READY": 522,
         "CLAIM_ACQUIRE": 768,
         "CLAIM_RESULT": 769,
-        "HUMAN_INPUT": 770,
+        "USER_INPUT": 770,
         "CLAIM_RELEASE": 771,
         "GESTURE_INPUT": 772,
         "INPUT_SUBMIT": 773,
@@ -13378,7 +12575,9 @@
         "AUTOMATION_CANCEL": 788,
         "HOST_REGISTER": 1024,
         "HOST_ADOPT": 1025,
-        "GRANT_REGISTER": 1026
+        "GRANT_REGISTER": 1026,
+        "HOST_CAPTURE": 1027,
+        "HOST_CAPTURED": 1028
       },
       "frameTypeGroups": [
         {
@@ -13397,16 +12596,6 @@
           ],
           "direction": "bidirectional",
           "purpose": "connection-liveness"
-        },
-        {
-          "names": [
-            "CREATE_BEGIN",
-            "CREATE_INPUT",
-            "CREATE_COMMIT",
-            "CREATED"
-          ],
-          "direction": "daemon-broker-bidirectional",
-          "purpose": "transactional-create"
         },
         {
           "names": [
@@ -13446,7 +12635,7 @@
             "ORPHAN_DISCARDED"
           ],
           "direction": "daemon-broker-host-bidirectional",
-          "purpose": "operator-orphaned-claim-discard"
+          "purpose": "user-orphaned-claim-discard"
         },
         {
           "names": [
@@ -13493,13 +12682,13 @@
         },
         {
           "names": [
-            "HUMAN_INPUT",
+            "USER_INPUT",
             "CLAIM_RELEASE",
             "GESTURE_INPUT",
             "INPUT_SUBMIT"
           ],
           "direction": "viewer-to-host",
-          "purpose": "ordered-human-input"
+          "purpose": "ordered-user-input"
         },
         {
           "names": [
@@ -13516,17 +12705,18 @@
           "names": [
             "HOST_REGISTER",
             "HOST_ADOPT",
-            "GRANT_REGISTER"
+            "GRANT_REGISTER",
+            "HOST_CAPTURE",
+            "HOST_CAPTURED"
           ],
           "direction": "broker-host-bidirectional",
           "purpose": "authenticated-internal-lifecycle"
         }
       ],
       "rawByteFrameTypes": [
-        "CREATE_INPUT",
         "SNAPSHOT_BYTES",
         "OUTPUT",
-        "HUMAN_INPUT",
+        "USER_INPUT",
         "AUTOMATION_CHUNK"
       ],
       "errorCodes": [
@@ -13540,8 +12730,8 @@
         "NOT_FOUND",
         "NOT_READY",
         "ALREADY_EXISTS",
-        "HUMAN_OWNED",
-        "HUMAN_ORPHANED",
+        "USER_OWNED",
+        "USER_ORPHANED",
         "INPUT_BUSY",
         "REBASE_REQUIRED",
         "SNAPSHOT_REQUIRED",
@@ -13558,9 +12748,9 @@
       ],
       "inputArbiterStates": [
         "FREE",
-        "HUMAN_GESTURE",
-        "HUMAN_OWNED",
-        "HUMAN_ORPHANED",
+        "USER_GESTURE",
+        "USER_OWNED",
+        "USER_ORPHANED",
         "AUTOMATION_BUFFERING",
         "AUTOMATION_COMMITTED",
         "TERMINATING",
@@ -13571,13 +12761,13 @@
           "from": "FREE",
           "event": "CLAIM_ACQUIRE",
           "through": [],
-          "to": "HUMAN_OWNED"
+          "to": "USER_OWNED"
         },
         {
           "from": "FREE",
           "event": "GESTURE_INPUT",
           "through": [
-            "HUMAN_GESTURE"
+            "USER_GESTURE"
           ],
           "to": "FREE"
         },
@@ -13588,32 +12778,32 @@
           "to": "AUTOMATION_BUFFERING"
         },
         {
-          "from": "HUMAN_OWNED",
-          "event": "HUMAN_INPUT",
+          "from": "USER_OWNED",
+          "event": "USER_INPUT",
           "through": [],
-          "to": "HUMAN_OWNED"
+          "to": "USER_OWNED"
         },
         {
-          "from": "HUMAN_OWNED",
+          "from": "USER_OWNED",
           "event": "CLAIM_RELEASE",
           "through": [],
           "to": "FREE"
         },
         {
-          "from": "HUMAN_OWNED",
+          "from": "USER_OWNED",
           "event": "VIEWER_DISCONNECT",
           "through": [],
-          "to": "HUMAN_ORPHANED"
+          "to": "USER_ORPHANED"
         },
         {
-          "from": "HUMAN_ORPHANED",
-          "event": "OPERATOR_RESUME",
+          "from": "USER_ORPHANED",
+          "event": "USER_RESUME",
           "through": [],
-          "to": "HUMAN_OWNED"
+          "to": "USER_OWNED"
         },
         {
-          "from": "HUMAN_ORPHANED",
-          "event": "OPERATOR_DISCARD",
+          "from": "USER_ORPHANED",
+          "event": "USER_DISCARD",
           "through": [],
           "to": "FREE"
         },
@@ -13731,7 +12921,7 @@
         ],
         "captureMetadata": [
           "self",
-          "operator"
+          "user"
         ],
         "captureVisibleText": [
           "terminal:observe",
@@ -13766,11 +12956,12 @@
       "eventSourceKinds": [
         "sessiond",
         "provider-hook",
+        "provider-protocol",
         "provider-app-server",
         "provider-telemetry",
         "agent-report",
         "task",
-        "operator"
+        "user"
       ],
       "confidence": [
         "authoritative",
@@ -13829,57 +13020,6 @@
         ],
         "resumeAt": "seq+1"
       }
-    },
-    "messageTerminalBinding": {
-      "owner": "docs/design/hive-communication.html#data-model",
-      "adapters": {
-        "claude-tui": {
-          "readiness": [
-            "SessionStart",
-            "UserPromptSubmit",
-            "Stop",
-            "PostToolUse"
-          ],
-          "unknownModalBlocksDelivery": true,
-          "strongestAutomaticReceipt": "provider-observed"
-        },
-        "codex-tui": {
-          "readiness": [
-            "SessionStart",
-            "UserPromptSubmit",
-            "Stop",
-            "PostToolUse"
-          ],
-          "unknownModalBlocksDelivery": true,
-          "strongestAutomaticReceipt": "provider-observed"
-        },
-        "codex-app-server": {
-          "readiness": [
-            "native-session-state",
-            "native-turn-state"
-          ],
-          "unknownModalBlocksDelivery": true,
-          "strongestAutomaticReceipt": "provider-observed"
-        },
-        "grok-tui": {
-          "readiness": [
-            "process-health",
-            "transcript-activity"
-          ],
-          "unknownModalBlocksDelivery": true,
-          "strongestAutomaticReceipt": "provider-observed"
-        }
-      },
-      "evidence": [
-        "transport-written",
-        "provider-observed",
-        "attempt-in-doubt"
-      ],
-      "limits": {
-        "providerObservationWaitMilliseconds": 5000,
-        "automatedPayloadBytes": 1048576
-      },
-      "blindRetryAfterCommittedOrInDoubt": false
     }
   }
 }

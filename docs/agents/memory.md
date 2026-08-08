@@ -1,11 +1,11 @@
 # Agent memory: what the field does, and why Hive does what it does
 
 Updated: 2026-07-14
-Sources: Hive source tree, 2026-07-14; [SPEC decision 5](../../SPEC.md)
+Sources: Hive source tree, 2026-07-14
 
 ## Summary
 
-Every mature coding-agent vendor now ships two memory tracks — a committed human-authored instruction file and an agent-authored auto-accumulating store — and conflating them is the classic mistake. This article is the sourced provenance behind [SPEC.md decision 5](../../SPEC.md): the external survey that argued Hive's write policy, its staleness handling, and its index-plus-retrieval shape. The Hive decisions themselves live in SPEC and are not re-argued here.
+Every mature coding-agent vendor now ships two memory tracks — a committed user-authored instruction file and an agent-authored auto-accumulating store — and conflating them is the classic mistake. This article is the sourced provenance behind Hive's memory design: the external survey that argued Hive's write policy, its staleness handling, and its index-plus-retrieval shape.
 
 > **Currency caveat, preserved deliberately.** Every vendor mechanic below was checked against a live doc or source in **July 2026**. These are protocol and product surfaces, not stable contracts. **Re-verify before trusting any of it against a newer release.** A survey of moving targets ages; the *patterns* below outlive the vendors' current implementations of them.
 
@@ -13,7 +13,7 @@ Every mature coding-agent vendor now ships two memory tracks — a committed hum
 
 The single thing everyone agrees on, and it is a split in kind, not degree:
 
-- A **human-authored, always-injected instruction file** — `CLAUDE.md`, `AGENTS.md`, `.cursor/rules`, `.github/copilot-instructions.md`. Committed, shared, deliberate. Loaded in full every session, bounded only by size caps.
+- A **user-authored, always-injected instruction file** — `CLAUDE.md`, `AGENTS.md`, `.cursor/rules`, `.github/copilot-instructions.md`. Committed, shared, deliberate. Loaded in full every session, bounded only by size caps.
 - An **agent-authored, auto-accumulating memory store** — Claude Code auto memory, Cursor Memories, Windsurf/Cascade Memories, GitHub Copilot agentic memory. Cheap, per-user or per-repo, written as the agent works.
 
 Codex is the lone outlier: `AGENTS.md` and nothing else, no native agent-written memory. Everyone else runs both.
@@ -28,13 +28,13 @@ The gap that matters for a multi-vendor tool: **Claude Code reads `CLAUDE.md`, n
 
 > **Any cross-vendor design that assumes one filename will silently starve the other vendor's agents.**
 
-This is why Hive neither picks the filename nor injects the contents: the vendor loads its own conventions file natively, and *which* file a given repo uses is a repo-specific fact Hive leaves to the vendor rather than a constant it hardcodes (SPEC decision 5).
+This is why Hive neither picks the filename nor injects the contents: the vendor loads its own conventions file natively, and *which* file a given repo uses is a repo-specific fact Hive leaves to the vendor rather than a constant it hardcodes.
 
 ## Vendor mechanisms worth stealing from
 
 **Claude Code.** `CLAUDE.md` is a scope hierarchy (managed-policy → user → project → local) that is **concatenated, not overridden**, root-down. `@path` imports expand at launch (max depth 4) and **do not save tokens**. Guidance: keep each file **under 200 lines** — longer files "consume more context and reduce adherence." Content arrives as a *user message after the system prompt* — soft guidance, not enforcement; hard rules belong in a hook. Auto memory (v2.1.59+, on by default) stores per-git-repo, machine-local, and its recall design is the load-bearing part: a **`MEMORY.md` index** (only the first **200 lines or 25 KB**, whichever comes first, loaded at session start) plus **topic files that are not loaded at startup** and are read on demand. Index-plus-retrieval, built to bound token cost — the same shape Hive landed.
 
-**Codex.** `AGENTS.md` only. Global then repo-root-down-to-cwd, concatenated root-down, nearest-to-cwd highest-precedence. `AGENTS.override.md` *replaces* a level rather than merging. Concatenation stops at `project_doc_max_bytes`, **default 32 KiB — and truncation is silent.** No warning when instructions are cut. This is why Hive's `hive init` will *offer* to scaffold an `AGENTS.md` when none exists but will never append to a human's existing one (`src/cli/init.ts:9-10`).
+**Codex.** `AGENTS.md` only. Global then repo-root-down-to-cwd, concatenated root-down, nearest-to-cwd highest-precedence. `AGENTS.override.md` *replaces* a level rather than merging. Concatenation stops at `project_doc_max_bytes`, **default 32 KiB — and truncation is silent.** No warning when instructions are cut. This is why Hive's `hive init` will *offer* to scaffold an `AGENTS.md` when none exists but will never append to a user's existing one (`src/cli/init.ts:9-10`).
 
 **Cursor.** `.cursor/rules/*.mdc` with four activation modes — Always, Agent-requested, Auto-attached (glob), Manual. Only Always rules cost tokens every request. Size guidance **under 500 lines** — the firmest public per-file number in the field. Memories are agent-proposed and **user-approved before saving**.
 
@@ -63,17 +63,17 @@ This is why Hive neither picks the filename nor injects the contents: the vendor
 
 **Write policy — dedup before write, and never silently into the shared tier.** The dominant pattern is retrieve-similar-then-decide *before* writing (Mem0's ADD/UPDATE/DELETE/NOOP; Zep's dedup + invalidation; LangMem's `existing`-gated managers). And:
 
-> **Auto-capture is universally suggestion or local-only, never a silent write into the shared tier.** Devin and Cursor route through human approval; Windsurf keeps it local; Copilot validates against code before applying.
+> **Auto-capture is universally suggestion or local-only, never a silent write into the shared tier.** Devin and Cursor route through user approval; Windsurf keeps it local; Copilot validates against code before applying.
 
-A spec that lets agents silently write shared, load-bearing facts is out of step with every shipped product. This is why Hive's silent auto-extraction stays deferred until its write policy is trusted (SPEC decision 5).
+A spec that lets agents silently write shared, load-bearing facts is out of step with every shipped product. This is why Hive's silent auto-extraction stays deferred until its write policy is trusted.
 
-**Retrieval — a tiny index plus pull-on-demand.** The hybrid worth copying for a file-backed tool is Letta MemFS / Claude auto-memory: a small always-loaded index (path + title + status) with full content pulled only on match. **You cannot pull what you cannot see exists** — the index is what makes search-on-demand actually fire. Hive implements exactly this: `buildMemoryIndex` (`src/adapters/memory.ts:785-804`) rebuilds and reads each scope's `wiki/index.md`, capped at `MEMORY_INDEX_MAX_ENTRIES = 30` rows (`src/adapters/memory.ts:32`), and article bodies never enter the spawn brief. Full articles are pulled through `memory_read` (`src/daemon/server.ts:4005-4017`).
+**Retrieval — a tiny index plus pull-on-demand.** The hybrid worth copying for a file-backed tool is Letta MemFS / Claude auto-memory: a small always-loaded index (path + title + status) with full content pulled only on match. **You cannot pull what you cannot see exists** — the index is what makes search-on-demand actually fire. Hive implements exactly this: `buildMemoryIndex` (`src/memory-service/memory-store.ts: buildMemoryIndex`) rebuilds and reads each scope's `wiki/index.md`, capped at `MEMORY_INDEX_MAX_ENTRIES = 30` rows (`src/memory-service/memory-store.ts: MEMORY_INDEX_MAX_ENTRIES`), and article bodies never enter the spawn brief. Full articles are pulled through `memory_read` (`src/daemon/server.ts:4005-4017`).
 
 **Staleness — the sharpest differentiator and the biggest shipped gap.** Zep's bi-temporal supersede-don't-delete is the strongest *primitive*; Copilot's citation-validation-before-use + 28-day TTL is the strongest *shipped* one. Everyone else handles staleness only by contradiction-driven overwrite, losing the audit trail; Devin and Windsurf have essentially none. The load-bearing rule across the rigorous systems:
 
 > **A recalled fact must be re-checked against current reality before it drives an action.** Facts age. A recalled fact is a claim, not truth.
 
-Hive's version of this is enforced rather than hoped for: the index is a pointer, the article is a claim, and the repo plus linked raw evidence are truth — **a recalled article that names a concrete path, command, or flag is re-checked against the repo before it drives an action** (SPEC decision 5). Hive gets Zep's point-in-time reconstruction free from git-committed markdown, without the knowledge-graph weight.
+Hive's version of this is enforced rather than hoped for: the index is a pointer, the article is a claim, and the repo plus linked raw evidence are truth — **a recalled article that names a concrete path, command, or flag is re-checked against the repo before it drives an action**. Hive gets Zep's point-in-time reconstruction free from git-committed markdown, without the knowledge-graph weight.
 
 **Token budget is also an accuracy budget.** This is the argument that decides the whole shape, and it is *not* a price argument:
 
@@ -87,9 +87,9 @@ Hive's accounting makes this explicit: the injected index is a **flat tax** (30 
 
 ## Where this lands in Hive
 
-The design decisions, token accounting, and rejected alternatives are argued in [SPEC.md decision 5](../../SPEC.md) and are deliberately not duplicated here. In one breath: Hive already sits on the industry-consensus shape (committed markdown + always-injected index + search-on-demand), and the growth areas the survey identified are a **write policy** (Mem0's dedup-before-write; suggestion, never silent shared write) and **provenance + verification** (Copilot's re-validate-before-load-bearing).
+In one breath: Hive already sits on the industry-consensus shape (committed markdown + always-injected index + search-on-demand), and the growth areas the survey identified are a **write policy** (Mem0's dedup-before-write; suggestion, never silent shared write) and **provenance + verification** (Copilot's re-validate-before-load-bearing).
 
-Two boundaries the survey did not supply but SPEC draws, and which matter when reading any of this back:
+Two boundaries the survey did not supply but Hive draws, and which matter when reading any of this back:
 
 - **Memory holds narrative truth, not derivable structure.** Only non-derivable narrative lessons live in memory. A build command lives in the repo's manifest and a doc name in its tree — both are read when needed, never copied into a memory article.
 - **A shipped skill is not a followed skill.** The `hive-memory` skill explains compilation and lint judgment, but the write contract (`topic`, `source`, `evidence`, explicit `status`, `supersedes`) is enforced at the MCP schema *and* re-parsed in the filesystem adapter — because telemetry already proved that progressive disclosure is not an enforcement path.
@@ -110,4 +110,3 @@ Carried forward verbatim, because a spec that cites a marketing figure as eviden
 - [Context degradation and agent recycling](context-and-recycling.md) — why a small injected surface is an accuracy budget, and the constraint-pinning result
 - [Rejected approaches](../routing/rejected-approaches.md) — measured token costs of what enters a spawn prompt
 - [Database resilience](../daemon/database-resilience.md) — the sibling invariant: absence is a finding, not a zero
-- [SPEC.md decision 5](../../SPEC.md) — what "memory" actually means in Hive

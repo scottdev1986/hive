@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { providerTerminalEnvironment } from "../../src/daemon/provider-terminal-environment";
+import { providerTerminalEnvironment } from "../../src/daemon/session-host/provider-terminal-environment";
 
 describe("providerTerminalEnvironment", () => {
   test("keeps launcher NO_COLOR out of the interactive provider terminal", () => {

@@ -1,0 +1,1771 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "run": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "root": {
+          "availability": "present",
+          "value": {
+            "kind": "queen-root",
+            "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+            "instanceId": "instance-fixture",
+            "repo": "hive"
+          }
+        },
+        "phase": {
+          "availability": "present",
+          "value": "P3"
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "topologyShape": {
+          "availability": "present",
+          "value": "full-hive"
+        },
+        "g1": {
+          "availability": "present",
+          "value": {
+            "state": "approved",
+            "decider": "engineer",
+            "decidedAt": "2026-07-30T12:00:00.000Z",
+            "spec": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "plan": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "topology": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "budget": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        },
+        "g2": {
+          "availability": "present",
+          "value": {
+            "state": "pending"
+          }
+        },
+        "topologySource": {
+          "availability": "present",
+          "value": "hierarchy"
+        }
+      },
+      "node": {
+        "schemaVersion": 2,
+        "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "2",
+        "parentNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "ownerNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "organizationalRole": {
+          "availability": "present",
+          "value": "lead-worker"
+        },
+        "assignmentKind": {
+          "availability": "present",
+          "value": "lead-coordination"
+        },
+        "taskScope": {
+          "availability": "present",
+          "value": [
+            "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "task_018f4f5e-0000-7000-8000-0000000000a3"
+          ]
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "binding": {
+          "availability": "present",
+          "value": {
+            "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+            "agentId": "zoe",
+            "generation": 1
+          }
+        }
+      },
+      "budget": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "limits": {
+          "availability": "present",
+          "value": {
+            "activeSessions": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "totalSpawns": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "perLeadCrew": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "reviewerPool": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "vendorQuota": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "tokens": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "costCents": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wallTimeMs": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "ci": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wakeBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "messageBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            }
+          }
+        }
+      },
+      "review": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "reviews": {
+          "availability": "present",
+          "value": [
+            {
+              "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+              "revision": "1",
+              "verdict": "accepted",
+              "invalidation": {
+                "state": "current"
+              },
+              "reviewer": {
+                "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                "agentId": "sarah",
+                "generation": 1
+              },
+              "candidate": {
+                "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+            }
+          ]
+        }
+      },
+      "incident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "runDecision": {
+          "availability": "present",
+          "value": [
+            {
+              "idempotencyKey": "approve-g1-once",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "accepted"
+              },
+              "observedRevision": "3"
+            },
+            {
+              "idempotencyKey": "approve-g1-again",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "rejected",
+                "failureCode": "gate-already-decided"
+              },
+              "observedRevision": "3"
+            }
+          ]
+        },
+        "recovery": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no ownership-transfer source supplied for this snapshot"
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "recoveryIncident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "5",
+        "runDecision": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no run-control decision source supplied for this snapshot"
+        },
+        "recovery": {
+          "availability": "present",
+          "value": [
+            {
+              "transferId": "transfer_018f4f5e-0000-7000-8000-000000000801",
+              "reason": "owner-bindings-unbound",
+              "lostOwnerNodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "successorNodeId": "node_018f4f5e-0000-7000-8000-000000000107",
+              "hierarchyRevision": "5"
+            }
+          ]
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "unmeasuredRun": {
+        "schemaVersion": 2,
+        "runId": "run_00000000-0000-7000-8000-0000000000a0",
+        "entityRevision": "0",
+        "root": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "phase": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "lifecycle": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologyShape": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no TopologyDecision supplied"
+        },
+        "g1": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "g2": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologySource": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no hierarchy or legacy source supplied"
+        }
+      },
+      "stranded": {
+        "schemaVersion": 2,
+        "runId": null,
+        "entityRevision": "0",
+        "items": {
+          "availability": "present",
+          "value": [
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000106",
+              "agentId": "emma",
+              "branch": "hive/emma",
+              "workManifestRevision": {
+                "revision": "1",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "unmergedCommits": 2,
+              "dirtyFileCount": 1,
+              "disposition": "preserve"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "run": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "root": {
+          "availability": "present",
+          "value": {
+            "kind": "queen-root",
+            "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+            "instanceId": "instance-fixture",
+            "repo": "hive"
+          }
+        },
+        "phase": {
+          "availability": "present",
+          "value": "P3"
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "topologyShape": {
+          "availability": "present",
+          "value": "full-hive"
+        },
+        "g1": {
+          "availability": "present",
+          "value": {
+            "state": "approved",
+            "decider": "engineer",
+            "decidedAt": "2026-07-30T12:00:00.000Z",
+            "spec": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "plan": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "topology": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "budget": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        },
+        "g2": {
+          "availability": "present",
+          "value": {
+            "state": "pending"
+          }
+        },
+        "topologySource": {
+          "availability": "present",
+          "value": "hierarchy"
+        }
+      },
+      "node": {
+        "schemaVersion": 2,
+        "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "2",
+        "parentNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "ownerNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "organizationalRole": {
+          "availability": "present",
+          "value": "lead-worker"
+        },
+        "assignmentKind": {
+          "availability": "present",
+          "value": "lead-coordination"
+        },
+        "taskScope": {
+          "availability": "present",
+          "value": [
+            "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "task_018f4f5e-0000-7000-8000-0000000000a3"
+          ]
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "binding": {
+          "availability": "present",
+          "value": {
+            "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+            "agentId": "zoe",
+            "generation": 1
+          }
+        }
+      },
+      "budget": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "limits": {
+          "availability": "present",
+          "value": {
+            "activeSessions": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "totalSpawns": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "perLeadCrew": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "reviewerPool": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "vendorQuota": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "tokens": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "costCents": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wallTimeMs": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "ci": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wakeBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "messageBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            }
+          }
+        }
+      },
+      "review": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "reviews": {
+          "availability": "present",
+          "value": [
+            {
+              "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+              "revision": "1",
+              "verdict": "accepted",
+              "invalidation": {
+                "state": "current"
+              },
+              "reviewer": {
+                "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                "agentId": "sarah",
+                "generation": 1
+              },
+              "candidate": {
+                "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+            }
+          ]
+        }
+      },
+      "incident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "runDecision": {
+          "availability": "present",
+          "value": [
+            {
+              "idempotencyKey": "approve-g1-once",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "accepted"
+              },
+              "observedRevision": "3"
+            },
+            {
+              "idempotencyKey": "approve-g1-again",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "rejected",
+                "failureCode": "gate-already-decided"
+              },
+              "observedRevision": "3"
+            }
+          ]
+        },
+        "recovery": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no ownership-transfer source supplied for this snapshot"
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "recoveryIncident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "5",
+        "runDecision": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no run-control decision source supplied for this snapshot"
+        },
+        "recovery": {
+          "availability": "present",
+          "value": [
+            {
+              "transferId": "transfer_018f4f5e-0000-7000-8000-000000000801",
+              "reason": "owner-bindings-unbound",
+              "lostOwnerNodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "successorNodeId": "node_018f4f5e-0000-7000-8000-000000000107",
+              "hierarchyRevision": "5"
+            }
+          ]
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "unmeasuredRun": {
+        "schemaVersion": 2,
+        "runId": "run_00000000-0000-7000-8000-0000000000a0",
+        "entityRevision": "0",
+        "root": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "phase": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "lifecycle": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologyShape": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no TopologyDecision supplied"
+        },
+        "g1": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "g2": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologySource": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no hierarchy or legacy source supplied"
+        }
+      },
+      "stranded": {
+        "schemaVersion": 2,
+        "runId": null,
+        "entityRevision": "0",
+        "items": {
+          "availability": "present",
+          "value": [
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000106",
+              "agentId": "emma",
+              "branch": "hive/emma",
+              "workManifestRevision": {
+                "revision": "1",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "unmergedCommits": 2,
+              "dirtyFileCount": 1,
+              "disposition": "preserve"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "run": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "root": {
+          "availability": "present",
+          "value": {
+            "kind": "queen-root",
+            "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+            "instanceId": "instance-fixture",
+            "repo": "hive"
+          }
+        },
+        "phase": {
+          "availability": "present",
+          "value": "P3"
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "topologyShape": {
+          "availability": "present",
+          "value": "full-hive"
+        },
+        "g1": {
+          "availability": "present",
+          "value": {
+            "state": "approved",
+            "decider": "engineer",
+            "decidedAt": "2026-07-30T12:00:00.000Z",
+            "spec": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "plan": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "topology": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "budget": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        },
+        "g2": {
+          "availability": "present",
+          "value": {
+            "state": "pending"
+          }
+        },
+        "topologySource": {
+          "availability": "present",
+          "value": "hierarchy"
+        }
+      },
+      "node": {
+        "schemaVersion": 2,
+        "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "2",
+        "parentNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "ownerNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "organizationalRole": {
+          "availability": "present",
+          "value": "lead-worker"
+        },
+        "assignmentKind": {
+          "availability": "present",
+          "value": "lead-coordination"
+        },
+        "taskScope": {
+          "availability": "present",
+          "value": [
+            "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "task_018f4f5e-0000-7000-8000-0000000000a3"
+          ]
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "binding": {
+          "availability": "present",
+          "value": {
+            "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+            "agentId": "zoe",
+            "generation": 1
+          }
+        }
+      },
+      "budget": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "limits": {
+          "availability": "present",
+          "value": {
+            "activeSessions": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "totalSpawns": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "perLeadCrew": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "reviewerPool": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "vendorQuota": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "tokens": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "costCents": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wallTimeMs": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "ci": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wakeBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "messageBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            }
+          }
+        }
+      },
+      "review": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "reviews": {
+          "availability": "present",
+          "value": [
+            {
+              "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+              "revision": "1",
+              "verdict": "accepted",
+              "invalidation": {
+                "state": "current"
+              },
+              "reviewer": {
+                "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                "agentId": "sarah",
+                "generation": 1
+              },
+              "candidate": {
+                "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+            }
+          ]
+        }
+      },
+      "incident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "runDecision": {
+          "availability": "present",
+          "value": [
+            {
+              "idempotencyKey": "approve-g1-once",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "accepted"
+              },
+              "observedRevision": "3"
+            },
+            {
+              "idempotencyKey": "approve-g1-again",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "rejected",
+                "failureCode": "gate-already-decided"
+              },
+              "observedRevision": "3"
+            }
+          ]
+        },
+        "recovery": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no ownership-transfer source supplied for this snapshot"
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "recoveryIncident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "5",
+        "runDecision": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no run-control decision source supplied for this snapshot"
+        },
+        "recovery": {
+          "availability": "present",
+          "value": [
+            {
+              "transferId": "transfer_018f4f5e-0000-7000-8000-000000000801",
+              "reason": "owner-bindings-unbound",
+              "lostOwnerNodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "successorNodeId": "node_018f4f5e-0000-7000-8000-000000000107",
+              "hierarchyRevision": "5"
+            }
+          ]
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "unmeasuredRun": {
+        "schemaVersion": 2,
+        "runId": "run_00000000-0000-7000-8000-0000000000a0",
+        "entityRevision": "0",
+        "root": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "phase": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "lifecycle": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologyShape": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no TopologyDecision supplied"
+        },
+        "g1": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "g2": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologySource": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no hierarchy or legacy source supplied"
+        }
+      },
+      "stranded": {
+        "schemaVersion": 2,
+        "runId": null,
+        "entityRevision": "0",
+        "items": {
+          "availability": "present",
+          "value": [
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000106",
+              "agentId": "emma",
+              "branch": "hive/emma",
+              "workManifestRevision": {
+                "revision": "1",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "unmergedCommits": 2,
+              "dirtyFileCount": 1,
+              "disposition": "preserve"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "3-competing"
+    },
+    "value": {
+      "run": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "root": {
+          "availability": "present",
+          "value": {
+            "kind": "queen-root",
+            "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+            "instanceId": "instance-fixture",
+            "repo": "hive"
+          }
+        },
+        "phase": {
+          "availability": "present",
+          "value": "P3"
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "topologyShape": {
+          "availability": "present",
+          "value": "full-hive"
+        },
+        "g1": {
+          "availability": "present",
+          "value": {
+            "state": "approved",
+            "decider": "engineer",
+            "decidedAt": "2026-07-30T12:00:00.000Z",
+            "spec": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "plan": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "topology": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "budget": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        },
+        "g2": {
+          "availability": "present",
+          "value": {
+            "state": "pending"
+          }
+        },
+        "topologySource": {
+          "availability": "present",
+          "value": "hierarchy"
+        }
+      },
+      "node": {
+        "schemaVersion": 2,
+        "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "2",
+        "parentNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "ownerNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "organizationalRole": {
+          "availability": "present",
+          "value": "lead-worker"
+        },
+        "assignmentKind": {
+          "availability": "present",
+          "value": "lead-coordination"
+        },
+        "taskScope": {
+          "availability": "present",
+          "value": [
+            "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "task_018f4f5e-0000-7000-8000-0000000000a3"
+          ]
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "binding": {
+          "availability": "present",
+          "value": {
+            "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+            "agentId": "zoe",
+            "generation": 1
+          }
+        }
+      },
+      "budget": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "limits": {
+          "availability": "present",
+          "value": {
+            "activeSessions": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "totalSpawns": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "perLeadCrew": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "reviewerPool": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "vendorQuota": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "tokens": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "costCents": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wallTimeMs": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "ci": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wakeBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "messageBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            }
+          }
+        }
+      },
+      "review": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "reviews": {
+          "availability": "present",
+          "value": [
+            {
+              "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+              "revision": "1",
+              "verdict": "accepted",
+              "invalidation": {
+                "state": "current"
+              },
+              "reviewer": {
+                "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                "agentId": "sarah",
+                "generation": 1
+              },
+              "candidate": {
+                "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+            }
+          ]
+        }
+      },
+      "incident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "runDecision": {
+          "availability": "present",
+          "value": [
+            {
+              "idempotencyKey": "approve-g1-once",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "accepted"
+              },
+              "observedRevision": "3"
+            },
+            {
+              "idempotencyKey": "approve-g1-again",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "rejected",
+                "failureCode": "gate-already-decided"
+              },
+              "observedRevision": "3"
+            }
+          ]
+        },
+        "recovery": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no ownership-transfer source supplied for this snapshot"
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "recoveryIncident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "5",
+        "runDecision": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no run-control decision source supplied for this snapshot"
+        },
+        "recovery": {
+          "availability": "present",
+          "value": [
+            {
+              "transferId": "transfer_018f4f5e-0000-7000-8000-000000000801",
+              "reason": "owner-bindings-unbound",
+              "lostOwnerNodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "successorNodeId": "node_018f4f5e-0000-7000-8000-000000000107",
+              "hierarchyRevision": "5"
+            }
+          ]
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "unmeasuredRun": {
+        "schemaVersion": 2,
+        "runId": "run_00000000-0000-7000-8000-0000000000a0",
+        "entityRevision": "0",
+        "root": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "phase": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "lifecycle": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologyShape": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no TopologyDecision supplied"
+        },
+        "g1": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "g2": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologySource": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no hierarchy or legacy source supplied"
+        }
+      },
+      "stranded": {
+        "schemaVersion": 2,
+        "runId": null,
+        "entityRevision": "0",
+        "items": {
+          "availability": "present",
+          "value": [
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000106",
+              "agentId": "emma",
+              "branch": "hive/emma",
+              "workManifestRevision": {
+                "revision": "1",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "unmergedCommits": 2,
+              "dirtyFileCount": 1,
+              "disposition": "preserve"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "3-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "run": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "root": {
+          "availability": "present",
+          "value": {
+            "kind": "queen-root",
+            "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+            "instanceId": "instance-fixture",
+            "repo": "hive"
+          }
+        },
+        "phase": {
+          "availability": "present",
+          "value": "P3"
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "topologyShape": {
+          "availability": "present",
+          "value": "full-hive"
+        },
+        "g1": {
+          "availability": "present",
+          "value": {
+            "state": "approved",
+            "decider": "engineer",
+            "decidedAt": "2026-07-30T12:00:00.000Z",
+            "spec": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "plan": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "topology": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "budget": {
+              "revision": "1",
+              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        },
+        "g2": {
+          "availability": "present",
+          "value": {
+            "state": "pending"
+          }
+        },
+        "topologySource": {
+          "availability": "present",
+          "value": "hierarchy"
+        }
+      },
+      "node": {
+        "schemaVersion": 2,
+        "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "2",
+        "parentNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "ownerNodeId": {
+          "availability": "present",
+          "value": null
+        },
+        "organizationalRole": {
+          "availability": "present",
+          "value": "lead-worker"
+        },
+        "assignmentKind": {
+          "availability": "present",
+          "value": "lead-coordination"
+        },
+        "taskScope": {
+          "availability": "present",
+          "value": [
+            "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "task_018f4f5e-0000-7000-8000-0000000000a3"
+          ]
+        },
+        "lifecycle": {
+          "availability": "present",
+          "value": "active"
+        },
+        "binding": {
+          "availability": "present",
+          "value": {
+            "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+            "agentId": "zoe",
+            "generation": 1
+          }
+        }
+      },
+      "budget": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "limits": {
+          "availability": "present",
+          "value": {
+            "activeSessions": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "totalSpawns": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "perLeadCrew": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "reviewerPool": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "vendorQuota": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "tokens": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "costCents": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wallTimeMs": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "ci": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "wakeBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            },
+            "messageBudget": {
+              "hard": 10,
+              "soft": 8,
+              "reserved": 4,
+              "used": 2
+            }
+          }
+        }
+      },
+      "review": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "1",
+        "reviews": {
+          "availability": "present",
+          "value": [
+            {
+              "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+              "revision": "1",
+              "verdict": "accepted",
+              "invalidation": {
+                "state": "current"
+              },
+              "reviewer": {
+                "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                "agentId": "sarah",
+                "generation": 1
+              },
+              "candidate": {
+                "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+            }
+          ]
+        }
+      },
+      "incident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "3",
+        "runDecision": {
+          "availability": "present",
+          "value": [
+            {
+              "idempotencyKey": "approve-g1-once",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "accepted"
+              },
+              "observedRevision": "3"
+            },
+            {
+              "idempotencyKey": "approve-g1-again",
+              "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "outcome": {
+                "status": "rejected",
+                "failureCode": "gate-already-decided"
+              },
+              "observedRevision": "3"
+            }
+          ]
+        },
+        "recovery": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no ownership-transfer source supplied for this snapshot"
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "recoveryIncident": {
+        "schemaVersion": 2,
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "entityRevision": "5",
+        "runDecision": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no run-control decision source supplied for this snapshot"
+        },
+        "recovery": {
+          "availability": "present",
+          "value": [
+            {
+              "transferId": "transfer_018f4f5e-0000-7000-8000-000000000801",
+              "reason": "owner-bindings-unbound",
+              "lostOwnerNodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "successorNodeId": "node_018f4f5e-0000-7000-8000-000000000107",
+              "hierarchyRevision": "5"
+            }
+          ]
+        },
+        "breaker": {
+          "availability": "absent",
+          "reason": "source-absent",
+          "detail": "no anomaly circuit-breaker record exists in the daemon"
+        }
+      },
+      "unmeasuredRun": {
+        "schemaVersion": 2,
+        "runId": "run_00000000-0000-7000-8000-0000000000a0",
+        "entityRevision": "0",
+        "root": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "phase": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "lifecycle": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologyShape": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no TopologyDecision supplied"
+        },
+        "g1": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "g2": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no Run record supplied"
+        },
+        "topologySource": {
+          "availability": "absent",
+          "reason": "unmeasured",
+          "detail": "no hierarchy or legacy source supplied"
+        }
+      },
+      "stranded": {
+        "schemaVersion": 2,
+        "runId": null,
+        "entityRevision": "0",
+        "items": {
+          "availability": "present",
+          "value": [
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000106",
+              "agentId": "emma",
+              "branch": "hive/emma",
+              "workManifestRevision": {
+                "revision": "1",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "unmergedCommits": 2,
+              "dirtyFileCount": 1,
+              "disposition": "preserve"
+            }
+          ]
+        }
+      }
+    }
+  }
+]

@@ -8,9 +8,6 @@ struct GhosttyClipboardContent: Equatable {
     let data: String
 }
 
-/// Per-surface clipboard state carried through `ghostty_surface_config_s.userdata`.
-/// Ghostty invokes these callbacks while a surface entry is active, so every
-/// completion is deferred to avoid re-entering C from inside its callback.
 final class GhosttyClipboardContext {
     typealias ReadHandler = (ghostty_clipboard_e) -> String?
     typealias WriteHandler = (ghostty_clipboard_e, [GhosttyClipboardContent]) -> Void
@@ -114,8 +111,7 @@ final class GhosttyClipboardContext {
                   self.acceptingCompletions,
                   self.pendingRequestStates.remove(state) != nil,
                   let surface = self.surface else { return }
-            // No confirmation UI exists yet. Empty + confirmed consumes the
-            // preserved request without authorizing the unsafe original.
+            // No confirmation UI exists yet. Empty + confirmed consumes the preserved request without authorizing the unsafe original.
             surface.completeClipboardRequest("", state: state, confirmed: true)
         }
     }

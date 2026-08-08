@@ -1,0 +1,144 @@
+{
+  "vendor": "claude",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.local/share/claude/versions/2.1.220",
+  "binaryBefore": {
+    "version": "2.1.220 (Claude Code)",
+    "device": 16777234,
+    "inode": 221405480,
+    "size": 256908272,
+    "mtimeMs": 1784943532952.554
+  },
+  "claudeCredentialDigest": null,
+  "operatorBefore": {
+    ".claude": "1b9be54b0d9927753b2a3cdd2fd3f779f943d71ba7aa4f2169210fc4c91a5fb8",
+    ".claude.json": "fd47bc2ccb3749a4fcf684c4b5bd2f3cb812f5cd9b01010ed5eba958b984d3bf"
+  },
+  "borrowed": [],
+  "artifacts": [],
+  "binaryAfter": {
+    "version": "2.1.220 (Claude Code)",
+    "device": 16777234,
+    "inode": 221405480,
+    "size": 256908272,
+    "mtimeMs": 1784943532952.554
+  },
+  "claudeCredentialDigestAfter": null,
+  "operatorAfter": {
+    ".claude": "4cd4675df2085ebb142a7eb86f4f64bcfbc6b8056c3f378137c949fca8eed1c7",
+    ".claude.json": "fd47bc2ccb3749a4fcf684c4b5bd2f3cb812f5cd9b01010ed5eba958b984d3bf"
+  },
+  "changedOperatorPaths": [
+    ".claude"
+  ],
+  "changedOperatorNodes": {
+    ".claude": [
+      {
+        "relativePath": ".",
+        "before": {
+          "relativePath": ".",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 2722109,
+          "mode": 493,
+          "size": 928,
+          "mtimeMs": 1785675864210.2075
+        },
+        "after": {
+          "relativePath": ".",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 2722109,
+          "mode": 493,
+          "size": 928,
+          "mtimeMs": 1785676211298.9297
+        }
+      },
+      {
+        "relativePath": "history.jsonl",
+        "before": {
+          "relativePath": "history.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 35941047,
+          "mode": 420,
+          "size": 13087155,
+          "mtimeMs": 1785675864210.0784
+        },
+        "after": {
+          "relativePath": "history.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 35941047,
+          "mode": 420,
+          "size": 13088410,
+          "mtimeMs": 1785676211298.7522
+        }
+      },
+      {
+        "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-david/ec30a00e-91c9-44e8-8956-d053c5582e70.jsonl",
+        "before": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-david/ec30a00e-91c9-44e8-8956-d053c5582e70.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284523240,
+          "mode": 384,
+          "size": 678034,
+          "mtimeMs": 1785676085983.7427
+        },
+        "after": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive--hive-worktrees-david/ec30a00e-91c9-44e8-8956-d053c5582e70.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284523240,
+          "mode": 384,
+          "size": 679973,
+          "mtimeMs": 1785676093510.951
+        }
+      },
+      {
+        "relativePath": "projects/-Users-scottkellar-Projects-hive/abd5fdc1-a120-4319-92a7-997263641e61.jsonl",
+        "before": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive/abd5fdc1-a120-4319-92a7-997263641e61.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284486147,
+          "mode": 384,
+          "size": 821517,
+          "mtimeMs": 1785675920784.612
+        },
+        "after": {
+          "relativePath": "projects/-Users-scottkellar-Projects-hive/abd5fdc1-a120-4319-92a7-997263641e61.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284486147,
+          "mode": 384,
+          "size": 840649,
+          "mtimeMs": 1785676219256.233
+        }
+      },
+      {
+        "relativePath": "sessions/41843.json",
+        "before": {
+          "relativePath": "sessions/41843.json",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284484929,
+          "mode": 420,
+          "size": 361,
+          "mtimeMs": 1785675920682.8135
+        },
+        "after": {
+          "relativePath": "sessions/41843.json",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284484929,
+          "mode": 420,
+          "size": 361,
+          "mtimeMs": 1785676211297.5645
+        }
+      }
+    ]
+  },
+  "artifactsAfter": []
+}

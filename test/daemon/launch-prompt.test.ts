@@ -1,15 +1,11 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  codexInstructionProfilePath,
-  wrapCodexWithInstructionProfile,
   wrapGrokWithRulesFile,
-  writeCodexInstructionProfile,
   writeLaunchPrompt,
-} from "../../src/daemon/launch-prompt";
+} from "../../src/daemon/spawn/launch-prompt";
 
 let root = "";
 let previousHiveHome: string | undefined;
@@ -59,20 +55,4 @@ test("Grok's launch leaves the bootstrap shell alive so the pane survives its ex
 
   expect(output).toContain("grok-ran");
   expect(output).toContain("FALLBACK_REACHED");
-});
-
-test("Codex receives developer instructions through an ephemeral profile", async () => {
-  const session = "hive-maya";
-  await writeCodexInstructionProfile(session, "secret instructions");
-  const profile = codexInstructionProfilePath(session);
-  const command = wrapCodexWithInstructionProfile(
-    `grep -q 'developer_instructions' '${profile}'`,
-    session,
-  );
-  const child = Bun.spawn(["sh", "-lc", command], {
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  expect(await child.exited).toBe(0);
-  expect(existsSync(profile)).toBe(false);
 });

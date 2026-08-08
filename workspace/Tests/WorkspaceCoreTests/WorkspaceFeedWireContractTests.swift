@@ -27,9 +27,15 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
         XCTAssertEqual(agent.status, "working")
         XCTAssertEqual(agent.taskDescription, "Index the repository")
         XCTAssertEqual(agent.contextPct, 41.5)
+        let dimensions = try XCTUnwrap(agent.statusDimensions)
+        XCTAssertEqual(dimensions.revision, "6")
+        XCTAssertEqual(agent.presentation.headerDetail, "runtime=ready · turn=working · input=free · mail=none · health=healthy · attention=none")
         XCTAssertNil(agent.closedAt)
-        XCTAssertEqual(FeedStatusMap.paneStatus(for: agent.status), .running)
+        XCTAssertEqual(agent.presentation.paneStatus.paneStatus(), .running)
+        XCTAssertEqual(agent.presentation.renderedActivity, .working)
         XCTAssertEqual(decoded.autonomy, "dangerous")
         XCTAssertEqual(decoded.orchestrator?.status, "working")
+        XCTAssertEqual(
+            decoded.orchestrator?.presentation.renderedActivity, .working)
     }
 }

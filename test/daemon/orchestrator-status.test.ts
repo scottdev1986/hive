@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   deriveOrchestratorStatus,
   type TurnBoundaryKind,
-} from "../../src/daemon/orchestrator-status";
+} from "../../src/daemon/status-service/status-orchestrator";
 
 describe("deriveOrchestratorStatus", () => {
   test("a supervisor-owned launch is known to be spawning, not idle", () => {

@@ -1,0 +1,20 @@
+{
+  "agents": [],
+  "memory": {
+    "embeddings": {
+      "provider": "local",
+      "model": "bge-small-en-v1.5",
+      "state": "pending",
+      "runtimeDir": "/private/tmp/hvqa-gr/tools/embeddings",
+      "vectors": {
+        "articles": 0,
+        "facts": 0,
+        "total": 0
+      }
+    }
+  },
+  "terminalWrites": {
+    "total": 0,
+    "bySession": {}
+  }
+}

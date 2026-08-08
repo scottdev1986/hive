@@ -1,17 +1,12 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { getHiveHome } from "../hive-home/home";
 import {
   DEFAULT_QUOTA_CONFIG,
-  type HiveConfig,
-  HiveConfigSchema,
   type QuotaConfig,
   QuotaConfigSchema,
-} from "../schemas";
-
-const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
-const hiveHome = (): string => Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
+} from "../schemas/quota";
+import { type HiveConfig, HiveConfigSchema } from "../schemas/config-schema";
+import { errorMessage } from "../shared/error-message";
 
 async function readToml(path: string): Promise<unknown | undefined> {
   const file = Bun.file(path);
@@ -26,8 +21,13 @@ async function readToml(path: string): Promise<unknown | undefined> {
   }
 }
 
+/** The file `loadHiveConfig` reads. A writer must target this exact path, not its own reconstruction of it, or a compare-and-set would fence a file nobody loads. */
+export function hiveConfigPath(): string {
+  return join(getHiveHome(), "config.toml");
+}
+
 export async function loadHiveConfig(): Promise<HiveConfig> {
-  const path = join(hiveHome(), "config.toml");
+  const path = hiveConfigPath();
   const raw = await readToml(path);
 
   try {
@@ -38,7 +38,7 @@ export async function loadHiveConfig(): Promise<HiveConfig> {
 }
 
 export async function loadQuotaConfig(): Promise<QuotaConfig> {
-  const path = join(hiveHome(), "quota.toml");
+  const path = join(getHiveHome(), "quota.toml");
   const raw = await readToml(path);
 
   try {

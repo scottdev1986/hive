@@ -248,6 +248,7 @@
         "outputSeq": "4096",
         "columns": 120,
         "rows": 40,
+        "rowStart": 0,
         "screen": "primary",
         "cursor": {
           "row": 4,
@@ -255,8 +256,19 @@
           "visible": true
         },
         "text": "fixture output",
+        "styledText": "fixture output",
         "truncated": false,
-        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "composer": {
+          "profile": "codex",
+          "present": true,
+          "nonempty": false,
+          "stable": true,
+          "userEditSinceEmpty": false,
+          "userOperationInFlight": false,
+          "claim": false,
+          "invariant": "ok"
+        }
       }
     },
     {
@@ -274,7 +286,7 @@
         },
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ]
       }
@@ -303,7 +315,7 @@
         "outputSeq": "4096",
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ]
       }
@@ -516,41 +528,6 @@
       }
     },
     {
-      "name": "terminal delivery attempt",
-      "schema": "terminalDeliveryAttempt",
-      "value": {
-        "schemaVersion": 1,
-        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
-        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "recipientGeneration": 3,
-        "adapter": "codex-tui",
-        "priority": "normal",
-        "evidence": "transport-written",
-        "byteRange": {
-          "start": "5000",
-          "endExclusive": "5012"
-        },
-        "nativeEndpointReceipt": null,
-        "startedAt": "2026-07-16T12:00:00.000Z",
-        "completedAt": "2026-07-16T12:00:00.010Z",
-        "evidenceRefs": [
-          "session-event:1"
-        ]
-      }
-    },
-    {
       "name": "workspace snapshot v2",
       "schema": "workspaceSnapshotV2",
       "value": {
@@ -588,12 +565,12 @@
       "schema": "hv1CapabilityRecord",
       "value": {
         "id": "018f1e90-7b5a-7cc0-8000-000000000008",
-        "subject": "operator",
-        "role": "operator",
+        "subject": "user",
+        "role": "user",
         "epoch": 0,
         "constraints": {
           "content": true,
-          "scope": "operator"
+          "scope": "user"
         },
         "subjects": [
           "agent-fixture"
@@ -777,7 +754,6 @@
           "openTerminalRevision": "7",
           "expiresAt": "2026-07-16T12:00:30.000Z"
         },
-        "socketRelativePath": "host.sock",
         "createdAt": "2026-07-16T12:00:00.000Z"
       }
     },
@@ -827,98 +803,6 @@
           "workspaceStartToken": "4000:123455",
           "openTerminalRevision": "7"
         }
-      }
-    },
-    {
-      "name": "CREATE_COMMIT digest",
-      "schema": "createCommitPayload",
-      "value": {
-        "schemaVersion": 1,
-        "totalLength": 12,
-        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      }
-    },
-    {
-      "name": "CREATED result",
-      "schema": "createdPayload",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "inspection": {
-          "schemaVersion": 1,
-          "locator": {
-            "schemaVersion": 1,
-            "instanceId": "hive-fixture",
-            "subject": {
-              "kind": "agent",
-              "agentId": "agent-fixture"
-            },
-            "generation": 3,
-            "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-            "hostKind": "sessiond",
-            "engineBuildId": "engine-fixture"
-          },
-          "presence": "present",
-          "complete": true,
-          "hostPid": 4100,
-          "hostStartToken": "4100:123456",
-          "shellRoot": {
-            "pid": 4101,
-            "startToken": "4101:123457",
-            "processGroupId": 4101
-          },
-          "foreground": {
-            "state": "managed",
-            "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
-            "pid": 4102,
-            "startToken": "4102:123458",
-            "foregroundProcessGroupId": 4102
-          },
-          "expectedExecutable": "/bin/zsh",
-          "executableVerified": true,
-          "outputSeq": "4096",
-          "checkpointSeq": "2048",
-          "checkpointAvailable": true,
-          "input": {
-            "state": "FREE",
-            "ownerViewerId": null,
-            "claimId": null
-          },
-          "viewerCount": 1,
-          "geometry": {
-            "columns": 120,
-            "rows": 40,
-            "widthPx": 1200,
-            "heightPx": 800,
-            "cellWidthPx": 10,
-            "cellHeightPx": 20
-          },
-          "resources": {
-            "rssBytes": 16777216
-          },
-          "visibility": {
-            "state": "attaching",
-            "workspaceSessionId": "workspace-fixture",
-            "openTerminalRevision": "7",
-            "expiresAt": "2026-07-16T12:00:30.000Z"
-          },
-          "exit": null,
-          "survivors": [],
-          "evidenceAt": "2026-07-16T12:00:00.000Z",
-          "diagnosticIds": []
-        },
-        "created": true
       }
     },
     {
@@ -992,7 +876,7 @@
             "inputOwner": {
               "token": "claim-fixture-token",
               "writer": "viewer-fixture",
-              "kind": "human",
+              "kind": "user",
               "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
             },
             "exit": null,
@@ -1088,7 +972,7 @@
         "inputOwner": {
           "token": "claim-fixture-token",
           "writer": "viewer-fixture",
-          "kind": "human",
+          "kind": "user",
           "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
         },
         "exit": null,
@@ -1244,11 +1128,11 @@
         "priorOwnerViewerId": "viewer-a",
         "priorClaimId": "clm_018f1e90-7b5a-7cc0-8000-000000000001",
         "orphanAgeMilliseconds": "120000",
-        "diagnostic": "orphaned human claim discarded"
+        "diagnostic": "orphaned user claim discarded"
       }
     },
     {
-      "name": "ORPHAN_DISCARDED types a held human preemption",
+      "name": "ORPHAN_DISCARDED types a held user preemption",
       "schema": "orphanDiscardedPayload",
       "value": {
         "schemaVersion": 1,
@@ -1256,7 +1140,7 @@
         "priorOwnerViewerId": "viewer-a",
         "priorClaimId": "clm_018f1e90-7b5a-7cc0-8000-000000000001",
         "orphanAgeMilliseconds": null,
-        "diagnostic": "held human claim preempted for delivery"
+        "diagnostic": "held user claim preempted for delivery"
       }
     },
     {
@@ -1287,7 +1171,7 @@
         },
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ]
       }
@@ -1317,7 +1201,7 @@
         "outputSeq": "4096",
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ]
       }
@@ -1539,7 +1423,7 @@
         "viewerId": "viewer-fixture",
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ],
         "expiresAt": "2026-07-16T12:00:30.000Z",
@@ -1715,7 +1599,7 @@
         "inputOwner": {
           "token": "claim-fixture-token",
           "writer": "viewer-fixture",
-          "kind": "human",
+          "kind": "user",
           "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
         },
         "exit": null,
@@ -2071,7 +1955,7 @@
         "owner": {
           "token": "claim-fixture-token",
           "writer": "viewer-fixture",
-          "kind": "human",
+          "kind": "user",
           "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
         },
         "session": {
@@ -2317,7 +2201,7 @@
           "incarnation": "3"
         },
         "writer": "viewer-fixture",
-        "kind": "human",
+        "kind": "user",
         "leaseMilliseconds": 15000,
         "idempotencyKey": "claim-fixture-key"
       }
@@ -2332,7 +2216,7 @@
           "claim": {
             "token": "claim-fixture-token",
             "writer": "viewer-fixture",
-            "kind": "human",
+            "kind": "user",
             "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
           }
         }
@@ -2347,7 +2231,8 @@
           "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
           "incarnation": "3"
         },
-        "claimToken": "claim-fixture-token",
+        "provenance": "automation",
+        "action": "deliver",
         "transactionId": "terminal-input-fixture",
         "idempotencyKey": "input-fixture-key",
         "operation": {
@@ -2539,39 +2424,13 @@
       "name": "spec rejects empty argv",
       "schema": "sessionSpec",
       "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "provider": "codex",
-        "toolSessionId": "tool-session-fixture",
-        "cwd": "/tmp/hive-fixture",
-        "argv": [],
-        "environment": {
-          "TERM": "xterm-ghostty"
-        },
-        "expectedExecutable": "/bin/zsh",
-        "readOnly": false,
-        "capabilityEpoch": 9,
-        "geometry": {
-          "columns": 120,
-          "rows": 40,
-          "widthPx": 1200,
-          "heightPx": 800,
-          "cellWidthPx": 10,
-          "cellHeightPx": 20
-        },
-        "launchGrantId": "grant-fixture",
-        "launchGrantRevision": 2
+        "columns": 120,
+        "rows": 40,
+        "widthPx": 1200,
+        "heightPx": 800,
+        "cellWidthPx": 10,
+        "cellHeightPx": 20,
+        "argv": []
       }
     },
     {
@@ -2802,29 +2661,9 @@
       "name": "capture rejects malformed digest",
       "schema": "captureResult",
       "value": {
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "outputSeq": "4096",
-        "columns": 120,
-        "rows": 40,
-        "screen": "primary",
-        "cursor": {
-          "row": 4,
-          "column": 12,
-          "visible": true
-        },
-        "text": "fixture output",
-        "truncated": false,
+        "include": "visible-text",
+        "maxRows": 50,
+        "expectedOutputSeq": "4096",
         "sha256": "bad"
       }
     },
@@ -2850,6 +2689,27 @@
       "name": "grant requires endpoint",
       "schema": "attachGrant",
       "value": {
+        "viewerId": "viewer-fixture",
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "operations": [
+          "view",
+          "user-input",
+          "resize"
+        ],
+        "endpoint": ""
+      }
+    },
+    {
+      "name": "visibility rejects invalid pid",
+      "schema": "visibilityRequest",
+      "value": {
         "locator": {
           "schemaVersion": 1,
           "instanceId": "hive-fixture",
@@ -2862,7 +2722,7 @@
           "hostKind": "sessiond",
           "engineBuildId": "engine-fixture"
         },
-        "endpoint": "",
+        "endpoint": "/tmp/hive-fixture/session.sock",
         "token": "opaque-token",
         "expiresAt": "2026-07-16T12:00:30.000Z",
         "engineBuildId": "engine-fixture",
@@ -2870,40 +2730,21 @@
         "outputSeq": "4096",
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
-        ]
-      }
-    },
-    {
-      "name": "visibility rejects invalid pid",
-      "schema": "visibilityRequest",
-      "value": {
-        "workspaceSessionId": "workspace-fixture",
-        "workspacePid": 0,
-        "workspaceStartToken": "4000:123455",
-        "openTerminalRevision": "7"
+        ],
+        "workspacePid": 0
       }
     },
     {
       "name": "lease rejects inactive state",
       "schema": "visibilityLease",
       "value": {
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "state": "expired",
-        "expiresAt": "2026-07-16T12:00:15.000Z",
-        "openTerminalRevision": "7"
+        "workspaceSessionId": "workspace-fixture",
+        "workspacePid": 4000,
+        "workspaceStartToken": "4000:123455",
+        "openTerminalRevision": "7",
+        "state": "expired"
       }
     },
     {
@@ -2964,6 +2805,34 @@
       "name": "automation rejects unknown submit",
       "schema": "automatedInputMetadata",
       "value": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "geometry": {
+          "columns": 120,
+          "rows": 40,
+          "widthPx": 1200,
+          "heightPx": 800,
+          "cellWidthPx": 10,
+          "cellHeightPx": 20
+        },
+        "revision": "8",
+        "submit": "enter"
+      }
+    },
+    {
+      "name": "receipt rejects false read evidence",
+      "schema": "inputReceipt",
+      "value": {
         "terminal": {
           "schemaVersion": 1,
           "instanceId": "hive-fixture",
@@ -2983,20 +2852,7 @@
           "processGroupId": 4200
         },
         "idempotencyKey": "fixture-key",
-        "submit": "enter"
-      }
-    },
-    {
-      "name": "receipt rejects false read evidence",
-      "schema": "inputReceipt",
-      "value": {
-        "state": "read",
-        "byteRange": {
-          "start": "5000",
-          "endExclusive": "5012"
-        },
-        "evidenceAt": "2026-07-16T12:00:00.000Z",
-        "diagnosticId": null
+        "state": "read"
       }
     },
     {
@@ -3034,7 +2890,30 @@
       "name": "session event rejects wrong version",
       "schema": "sessionEvent",
       "value": {
-        "schemaVersion": 2,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "state": "terminated",
+        "exit": null,
+        "survivors": [],
+        "errors": [],
+        "schemaVersion": 2
+      }
+    },
+    {
+      "name": "workspace event rejects screen source",
+      "schema": "workspaceEventV2",
+      "value": {
+        "schemaVersion": 1,
         "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000005",
         "eventSeq": "1",
         "locator": {
@@ -3054,31 +2933,12 @@
         "occurredAt": "2026-07-16T12:00:00.000Z",
         "data": {
           "outputSeq": "4096"
-        }
-      }
-    },
-    {
-      "name": "workspace event rejects screen source",
-      "schema": "workspaceEventV2",
-      "value": {
-        "schemaVersion": 2,
-        "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000006",
-        "seq": "2",
-        "entity": {
-          "kind": "agent",
-          "id": "agent-fixture"
         },
-        "entityRevision": "2",
-        "occurredAt": "2026-07-16T12:00:00.000Z",
-        "kind": "agent.status-reported",
         "source": {
           "kind": "terminal-screen",
           "id": "screen",
           "observedAt": "2026-07-16T12:00:00.000Z",
           "confidence": "low"
-        },
-        "data": {
-          "phase": "testing"
         }
       }
     },
@@ -3107,75 +2967,19 @@
       }
     },
     {
-      "name": "terminal attempt rejects recipient acknowledgment",
-      "schema": "terminalDeliveryAttempt",
-      "value": {
-        "schemaVersion": 1,
-        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
-        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "recipientGeneration": 3,
-        "adapter": "codex-tui",
-        "priority": "normal",
-        "evidence": "recipient-acknowledged",
-        "byteRange": {
-          "start": "5000",
-          "endExclusive": "5012"
-        },
-        "nativeEndpointReceipt": null,
-        "startedAt": "2026-07-16T12:00:00.000Z",
-        "completedAt": "2026-07-16T12:00:00.010Z",
-        "evidenceRefs": [
-          "session-event:1"
-        ]
-      }
-    },
-    {
-      "name": "terminal attempt requires one receipt form",
-      "schema": "terminalDeliveryAttempt",
-      "value": {
-        "schemaVersion": 1,
-        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
-        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "recipientGeneration": 3,
-        "adapter": "codex-tui",
-        "priority": "normal",
-        "evidence": "transport-written",
-        "byteRange": null,
-        "nativeEndpointReceipt": null,
-        "startedAt": "2026-07-16T12:00:00.000Z",
-        "completedAt": "2026-07-16T12:00:00.010Z",
-        "evidenceRefs": [
-          "session-event:1"
-        ]
-      }
-    },
-    {
       "name": "snapshot rejects malformed digest",
       "schema": "workspaceSnapshotV2",
+      "value": {
+        "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+        "generation": 3,
+        "include": "visible-text",
+        "maxRows": 50,
+        "contentSha256": "bad"
+      }
+    },
+    {
+      "name": "assignment generation starts at one",
+      "schema": "flatAssignment",
       "value": {
         "schemaVersion": 2,
         "instanceId": "hive-fixture",
@@ -3191,53 +2995,45 @@
           }
         ],
         "createdAt": "2026-07-16T12:00:00.000Z",
-        "contentSha256": "bad"
+        "contentSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "assignmentGeneration": "0"
       }
     },
     {
-      "name": "assignment generation starts at one",
-      "schema": "flatAssignment",
+      "name": "user scope requires subjects",
+      "schema": "hv1CapabilityRecord",
       "value": {
         "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
         "agentId": "agent-fixture",
-        "assignmentGeneration": "0",
+        "assignmentGeneration": "1",
         "state": "open",
         "openedAt": "2026-07-16T12:00:00.000Z",
         "closedAt": null
       }
     },
     {
-      "name": "operator scope requires subjects",
-      "schema": "hv1CapabilityRecord",
-      "value": {
-        "id": "018f1e90-7b5a-7cc0-8000-000000000008",
-        "subject": "operator",
-        "role": "operator",
-        "epoch": 0,
-        "constraints": {
-          "content": true,
-          "scope": "operator"
-        },
-        "issuedAt": "2026-07-16T12:00:00.000Z",
-        "expiresAt": "2026-07-17T12:00:00.000Z",
-        "revokedAt": null
-      }
-    },
-    {
       "name": "status update requires stable request id",
       "schema": "hiveUpdateStatusInput",
       "value": {
-        "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
-        "assignmentGeneration": "42",
-        "phase": "testing",
-        "progress": 80,
-        "summary": "Running the shared contract corpus",
-        "blocker": null,
-        "evidenceRefs": [
-          "event:fixture"
-        ],
-        "nextCheckpoint": "Cross-language parity",
-        "freshForSeconds": 120
+        "schemaVersion": 2,
+        "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000006",
+        "seq": "2",
+        "entity": {
+          "kind": "agent",
+          "id": "agent-fixture"
+        },
+        "entityRevision": "2",
+        "occurredAt": "2026-07-16T12:00:00.000Z",
+        "kind": "agent.status-reported",
+        "source": {
+          "kind": "agent-report",
+          "id": "agent-fixture:3",
+          "observedAt": "2026-07-16T12:00:00.000Z",
+          "confidence": "authoritative"
+        },
+        "data": {
+          "phase": "testing"
+        }
       }
     },
     {
@@ -3347,7 +3143,7 @@
       }
     },
     {
-      "name": "HostRecordV1 rejects an absolute socket path",
+      "name": "HostRecordV1 rejects the retired socketRelativePath field",
       "schema": "hostRecordV1",
       "value": {
         "schemaVersion": 1,
@@ -3394,8 +3190,8 @@
           "openTerminalRevision": "7",
           "expiresAt": "2026-07-16T12:00:30.000Z"
         },
-        "socketRelativePath": "/tmp/host.sock",
-        "createdAt": "2026-07-16T12:00:00.000Z"
+        "createdAt": "2026-07-16T12:00:00.000Z",
+        "socketRelativePath": "host.sock"
       }
     },
     {
@@ -3525,35 +3321,6 @@
       }
     },
     {
-      "name": "CREATE_COMMIT rejects oversized input",
-      "schema": "createCommitPayload",
-      "value": {
-        "schemaVersion": 1,
-        "totalLength": 1048577,
-        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      }
-    },
-    {
-      "name": "CREATED rejects missing inspection",
-      "schema": "createdPayload",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "created": true
-      }
-    },
-    {
       "name": "LIST rejects Hive scope",
       "schema": "listPayload",
       "value": {
@@ -3637,7 +3404,7 @@
         "inputOwner": {
           "token": "claim-fixture-token",
           "writer": "viewer-fixture",
-          "kind": "human",
+          "kind": "user",
           "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
         },
         "exit": null,
@@ -3764,7 +3531,7 @@
         },
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ]
       }
@@ -3793,7 +3560,7 @@
         "outputSeq": "4096",
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ]
       }
@@ -3997,7 +3764,7 @@
         "viewerId": "viewer-fixture",
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ],
         "expiresAt": "2026-07-16T12:00:30.000Z",
@@ -4021,7 +3788,7 @@
         "viewerId": "viewer-fixture",
         "operations": [
           "view",
-          "human-input",
+          "user-input",
           "resize"
         ],
         "expiresAt": "2026-07-16T12:00:30.000Z",
@@ -4178,7 +3945,7 @@
         "inputOwner": {
           "token": "claim-fixture-token",
           "writer": "viewer-fixture",
-          "kind": "human",
+          "kind": "user",
           "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
         },
         "exit": null,
@@ -4597,7 +4364,7 @@
       "value": {
         "schemaVersion": 1,
         "writer": "viewer",
-        "kind": "human",
+        "kind": "user",
         "leaseMilliseconds": 1,
         "idempotencyKey": "claim"
       }
@@ -4623,7 +4390,8 @@
           "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
           "incarnation": "3"
         },
-        "claimToken": "claim-fixture-token",
+        "provenance": "automation",
+        "action": "deliver",
         "transactionId": "terminal-input-fixture",
         "idempotencyKey": "input-fixture-key",
         "operation": {

@@ -66,7 +66,11 @@ final class B24ViewerSemanticsTests: XCTestCase {
         }
     }
 
-    private func keyEquivalent(_ key: String, modifiers: NSEvent.ModifierFlags) -> NSEvent {
+    private func keyEquivalent(
+        _ key: String,
+        modifiers: NSEvent.ModifierFlags,
+        keyCode: UInt16 = 0
+    ) -> NSEvent {
         NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
@@ -77,7 +81,7 @@ final class B24ViewerSemanticsTests: XCTestCase {
             characters: key,
             charactersIgnoringModifiers: key,
             isARepeat: false,
-            keyCode: 0
+            keyCode: keyCode
         )!
     }
 
@@ -178,7 +182,7 @@ final class B24ViewerSemanticsTests: XCTestCase {
         XCTAssertNil(terminal.searchOverlayForTesting)
     }
 
-    func testCommandCopyIsConsumedLocallyAndEnabledOnlyForASelection() {
+    func testCommandCopyRoutesToTheCurrentSelectionOwner() {
         let engine = FakeManualSurface()
         let terminal = makeTerminal(engine)
         let copyItem = NSMenuItem(title: "Copy", action: #selector(HiveTerminalView.copy(_:)), keyEquivalent: "c")
@@ -187,13 +191,53 @@ final class B24ViewerSemanticsTests: XCTestCase {
         XCTAssertFalse(terminal.validateMenuItem(copyItem))
         terminal.copy(nil)
         XCTAssertTrue(engine.bindingActions.isEmpty)
+        XCTAssertTrue(engine.keysSentDetail.isEmpty)
+        XCTAssertFalse(terminal.performKeyEquivalent(with: keyEquivalent(
+            "c",
+            modifiers: .command,
+            keyCode: UInt16(kVK_ANSI_C)
+        )), "Command-C must not be injected into an ordinary shell")
+
+        engine.fakeMouseCaptured = true
+        XCTAssertTrue(terminal.validateMenuItem(copyItem))
+        XCTAssertTrue(terminal.performKeyEquivalent(with: keyEquivalent(
+            "c",
+            modifiers: .command,
+            keyCode: UInt16(kVK_ANSI_C)
+        )))
+        XCTAssertTrue(engine.bindingActions.isEmpty)
+        XCTAssertEqual(engine.keysSentDetail.count, 1)
+        XCTAssertEqual(engine.keysSentDetail[0].action, .press)
+        XCTAssertEqual(engine.keysSentDetail[0].modifiers, .command)
+        XCTAssertEqual(engine.keysSentDetail[0].keycode, UInt32(kVK_ANSI_C))
 
         engine.fakeSelection = (offset: 0, length: 4)
         engine.fakeSelectedText = "copy"
         XCTAssertTrue(terminal.canCopySelection)
         XCTAssertTrue(terminal.validateMenuItem(copyItem))
-        XCTAssertTrue(terminal.performKeyEquivalent(with: keyEquivalent("c", modifiers: .command)))
+        XCTAssertTrue(terminal.performKeyEquivalent(with: keyEquivalent(
+            "c",
+            modifiers: .command,
+            keyCode: UInt16(kVK_ANSI_C)
+        )))
         XCTAssertEqual(engine.bindingActions, ["copy_to_clipboard"])
+        XCTAssertEqual(engine.keysSentDetail.count, 1, "a host selection must win over child routing")
+    }
+
+    func testCopyMenuForwardsToAMouseCapturedChildWithoutAHostSelection() {
+        let engine = FakeManualSurface()
+        engine.fakeMouseCaptured = true
+        let terminal = makeTerminal(engine)
+        let copyItem = NSMenuItem(title: "Copy", action: #selector(HiveTerminalView.copy(_:)), keyEquivalent: "c")
+
+        XCTAssertTrue(terminal.validateMenuItem(copyItem))
+        terminal.copy(copyItem)
+
+        XCTAssertTrue(engine.bindingActions.isEmpty)
+        XCTAssertEqual(engine.keysSentDetail.count, 1)
+        XCTAssertEqual(engine.keysSentDetail[0].action, .press)
+        XCTAssertEqual(engine.keysSentDetail[0].modifiers, .command)
+        XCTAssertEqual(engine.keysSentDetail[0].keycode, UInt32(kVK_ANSI_C))
     }
 
     func testFindKeyEquivalentsOwnSearchWithoutBecomingProviderInput() {

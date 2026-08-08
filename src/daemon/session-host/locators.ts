@@ -1,9 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
-import { resolve } from "node:path";
-import type { AgentRecord } from "../../schemas";
-import type { SessionLocator, SessionSubject } from "./contract";
-
-const INSTANCE_HASH_LENGTH = 10;
+import { randomBytes } from "node:crypto";
+import type { AgentRecord } from "../../schemas/agent";
+import type { SessionLocator, SessionSubject } from "./session-host-contract";
 
 export function sameSessionLocator(
   left: SessionLocator,
@@ -23,13 +20,6 @@ export function sameSessionLocator(
     left.hostKind === right.hostKind &&
     left.engineBuildId === right.engineBuildId
   );
-}
-
-export function sessionInstanceId(hiveHome: string): string {
-  return createHash("sha256")
-    .update(resolve(hiveHome))
-    .digest("hex")
-    .slice(0, INSTANCE_HASH_LENGTH);
 }
 
 export function mintSessionLocator(

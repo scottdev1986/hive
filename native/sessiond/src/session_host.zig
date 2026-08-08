@@ -1,26 +1,22 @@
-//! One HOST process owns one provider generation.
-//! This module composes the landed PTY, process-inspection, input-arbiter, and
-//! terminal-state leaves. Broker registry/admission authority remains in
-//! broker.zig; this module implements only the host process and its launcher.
+// ! One HOST process owns one provider generation. ! This module composes the landed PTY, process-inspection, input-arbiter, and ! terminal-state leaves for the directly launched host process.
 
 const std = @import("std");
 const boot_envelope = @import("boot_envelope");
-const broker = @import("broker");
+const daemon_identity = @import("daemon_identity");
 const generated = @import("session_protocol_generated");
 const input_arbiter = @import("input_arbiter");
 const process_inspector = @import("process_inspector");
 const protocol = @import("protocol");
 const pty_host = @import("pty_host");
+const session_types = @import("session_types");
 const neutral_host = @import("neutral_host");
-const neutral_control_plane = @import("neutral_control_plane");
+
 const wall_clock = @import("wall_clock");
-/// Re-exported so real-host tests can derive checkpoint thresholds from the
-/// shipped constants instead of restating them.
-pub const terminal_state = @import("terminal_state");
+const terminal_state = @import("terminal_state");
 
 const c = @cImport({
-    @cInclude("fcntl.h");
     @cInclude("signal.h");
+    @cInclude("sys/event.h");
     @cInclude("sys/socket.h");
     @cInclude("sys/stat.h");
     @cInclude("sys/time.h");
@@ -33,87 +29,74 @@ test {
     std.testing.refAllDecls(@This());
 }
 
-pub const inherited_control_fd = boot_envelope.inherited_control_fd;
-pub const BootMessage = boot_envelope.Message;
-pub const writeBootMessage = boot_envelope.write;
-pub const readBootMessage = boot_envelope.read;
+const inherited_control_fd = boot_envelope.inherited_control_fd;
+const readBootMessage = boot_envelope.read;
 
-pub const VisibilityLease = @import("visibility_lease").VisibilityLease;
+const VisibilityLease = @import("visibility_lease").VisibilityLease;
 
+const neutral_contract = @import("neutral_contract");
+const neutral_runtime = @import("neutral_runtime");
+const checkpoint_format = @import("checkpoint_format");
+const neutral_evidence = @import("neutral_evidence");
+const neutral_operations = @import("neutral_operations");
 pub fn requireEngineBuildId(value: ?[]const u8) !void {
-    const expected = try broker.engineBuildIdHex();
+    const expected = try session_types.engineBuildIdHex();
     if (value == null or !std.mem.eql(u8, value.?, &expected))
         return error.EngineMismatch;
 }
 
 const terminal_adapter = @import("terminal_adapter");
 const ghostty_c = terminal_adapter.c_api;
-pub const canonical_scrollback_bytes = terminal_adapter.canonical_scrollback_bytes;
-pub const BridgeExport = terminal_adapter.BridgeExport;
-pub const RealVtEngine = terminal_adapter.RealVtEngine;
-pub const PtyQueueSink = terminal_adapter.PtyQueueSink;
-pub const RealInputEncoder = terminal_adapter.RealInputEncoder;
+const canonical_scrollback_bytes = terminal_adapter.canonical_scrollback_bytes;
+const BridgeExport = terminal_adapter.BridgeExport;
+const RealVtEngine = terminal_adapter.RealVtEngine;
+const PtyQueueSink = terminal_adapter.PtyQueueSink;
 
 const final_evidence = @import("final_evidence");
-pub const FinalState = final_evidence.FinalState;
-pub const FinalSurvivor = final_evidence.FinalSurvivor;
-pub const FinalError = final_evidence.FinalError;
-pub const FinalEvidence = final_evidence.FinalEvidence;
-pub const writeFinalExclusive = final_evidence.writeExclusive;
+const FinalState = final_evidence.FinalState;
+const FinalSurvivor = final_evidence.FinalSurvivor;
+const FinalError = final_evidence.FinalError;
+const FinalEvidence = final_evidence.FinalEvidence;
+const writeFinalExclusive = final_evidence.writeExclusive;
 
 const host_record = @import("host_record");
 const WireLocator = host_record.WireLocator;
 const WireGeometry = host_record.WireGeometry;
-const WireHostRegisterRequest = host_record.WireHostRegisterRequest;
-pub const HostRegistration = host_record.HostRegistration;
+const HostRegistration = host_record.HostRegistration;
 const locatorValue = host_record.locatorValue;
 const processRootValue = host_record.processRootValue;
 const geometryValue = host_record.geometryValue;
 const visibilityValue = host_record.visibilityValue;
 const protocolValue = host_record.protocolValue;
-pub const encodeHostRegister = host_record.encodeHostRegister;
-pub const encodeRecordJson = host_record.encodeRecordJson;
-pub const encodeCreatedPayload = host_record.encodeCreatedPayload;
+const encodeHostRegister = host_record.encodeHostRegister;
 
 const host_wire = @import("host_wire");
 const readRequiredFrame = host_wire.readRequiredFrame;
 const writeHostFailure = host_wire.writeFailure;
 const host_registration = @import("host_registration");
-pub const serveInheritedRegistration = host_registration.serveInheritedRegistration;
-pub const sendReadyAfterBoot = host_registration.sendReadyAfterBoot;
-pub const ParsedRegistration = host_registration.ParsedRegistration;
-const promoteTrustedExecutableEvidence = host_registration.promoteTrustedExecutableEvidence;
+const sendReadyAfterBoot = host_registration.sendReadyAfterBoot;
 const parseLocator = host_registration.parseLocator;
-const parseRegistration = host_registration.parseRegistration;
-const launchFreshChild = host_registration.launchFreshChild;
-const acknowledgeFreshChild = host_registration.acknowledgeFreshChild;
 const writeHostWelcome = host_registration.writeHostWelcome;
-const validatedHostLeaseRemaining = host_registration.validatedLeaseRemaining;
 const WireHello = host_registration.WireHello;
 
 const host_process = @import("host_runtime");
-const closeHostInheritedDescriptors = host_process.closeHostInheritedDescriptors;
-const scrubbedHostEnvironment = host_process.scrubbedHostEnvironment;
-const spawnHostProcess = host_process.spawnHostProcess;
-const killAndWait = host_process.killAndWait;
+const security = @import("security_helpers");
 const setControlTimeoutMs = host_process.setControlTimeoutMs;
 const setControlTimeout = host_process.setControlTimeout;
 const ConnectionDeadline = host_process.ConnectionDeadline;
 const readConnectionFrame = host_process.readConnectionFrame;
 const acceptedConnectionReady = host_process.acceptedConnectionReady;
-pub const HostRuntime = host_process.HostRuntime;
+const HostRuntime = host_process.HostRuntime;
 const executableBuildHash = host_process.executableBuildHash;
-const LaunchClient = host_process.LaunchClient;
-pub const ProductionHostLauncher = host_process.ProductionHostLauncher;
 
 const host_core = @import("host_core");
-pub const checkpointWireSeq = host_core.checkpointWireSeq;
-pub const GrantOperations = host_core.GrantOperations;
-pub const ViewerAuthorization = host_core.ViewerAuthorization;
-pub const TerminationBinding = host_core.TerminationBinding;
+const checkpointWireSeq = host_core.checkpointWireSeq;
+const GrantOperations = host_core.GrantOperations;
+const ViewerAuthorization = host_core.ViewerAuthorization;
+const TerminationBinding = host_core.TerminationBinding;
 const max_replay_entries = host_core.max_replay_entries;
 const deliverGracefulAction = host_core.deliverGracefulAction;
-pub const HostCore = host_core.HostCore;
+const HostCore = host_core.HostCore;
 const ExpectedPeerRole = enum { broker, viewer, either };
 
 const AcceptedHello = struct {
@@ -140,7 +123,7 @@ fn acceptHostHello(
     now_ns: u64,
     expected_role: ExpectedPeerRole,
 ) !?AcceptedHello {
-    const peer = try broker.inspectPeer(stream.handle);
+    const peer = try daemon_identity.inspectPeer(stream.handle);
     if (peer.uid != std.posix.getuid() or
         peer.gid != @as(u32, @intCast(c.getgid())))
         return error.UnauthenticatedPeer;
@@ -220,8 +203,6 @@ fn acceptHostHello(
 
 const AuthorizedViewer = struct {
     authorization: ViewerAuthorization,
-    /// HOST_ATTACH request header fields for correlated snapshot frames and
-    /// typed attach failures.
     attach_minor: u8,
     attach_request_id: u64,
 };
@@ -230,8 +211,7 @@ fn viewerAttachFailureCode(err: anyerror) protocol.WireError {
     return switch (err) {
         error.VisibilityExpired => .not_ready,
         error.InvalidHostAttach => .malformed_frame,
-        // Exact-locator fence: a wrong or superseded generation is a
-        // typed refusal before any grant/token evaluation.
+        // Exact-locator fence: a wrong or superseded generation is a typed refusal before any grant/token evaluation.
         error.AttachLocatorMismatch => .generation_mismatch,
         error.InvalidViewerGrant => .unauthenticated,
         error.OutOfMemory => .resource_exhausted,
@@ -273,9 +253,6 @@ fn authorizeViewerAfterHello(
     };
 }
 
-/// Authenticates the existing generated viewer HELLO and consumes the existing
-/// generated HOST_ATTACH request. The caller retains the stream and begins the
-/// snapshot/output sequence.
 pub fn authorizeViewerConnection(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
@@ -291,10 +268,163 @@ pub fn authorizeViewerConnection(
     return authorized.authorization;
 }
 
-fn serveBrokerRequest(
+const WireCaptureRequest = struct {
+    include: []const u8,
+    maxRows: u16,
+    expectedOutputSeq: ?[]const u8 = null,
+};
+
+fn captureTerminalPayload(
+    allocator: std.mem.Allocator,
+    locator: session_types.Locator,
+    state: *terminal_state.TerminalState,
+    real_engine: *RealVtEngine,
+    payload: []const u8,
+) ![]u8 {
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.capture_request,
+        payload,
+    )) return error.InvalidCaptureRequest;
+    var parsed = try std.json.parseFromSlice(WireCaptureRequest, allocator, payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+    const include_text = if (std.mem.eql(u8, parsed.value.include, "visible-text"))
+        true
+    else if (std.mem.eql(u8, parsed.value.include, "metadata"))
+        false
+    else
+        return error.InvalidCaptureRequest;
+    if (parsed.value.expectedOutputSeq) |expected| {
+        const expected_seq = std.fmt.parseInt(u64, expected, 10) catch
+            return error.InvalidCaptureRequest;
+        if (expected_seq != state.outputSeq()) return error.CaptureSequenceMismatch;
+    }
+
+    var capture = try real_engine.capture(
+        allocator,
+        parsed.value.maxRows,
+        include_text,
+    );
+    defer capture.deinit();
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var cursor = std.json.ObjectMap.init(a);
+    try cursor.put("row", .{ .integer = capture.cursor.row });
+    try cursor.put("column", .{ .integer = capture.cursor.column });
+    try cursor.put("visible", .{ .bool = capture.cursor.visible });
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    if (capture.text) |text| hasher.update(text);
+    hasher.update(&.{0});
+    if (capture.styled_text) |text| hasher.update(text);
+    var digest: [32]u8 = undefined;
+    hasher.final(&digest);
+    const digest_hex = std.fmt.bytesToHex(digest, .lower);
+    const output_seq = try std.fmt.allocPrint(a, "{d}", .{state.outputSeq()});
+    var root = std.json.ObjectMap.init(a);
+    try root.put("locator", try locatorValue(a, locator));
+    try root.put("outputSeq", .{ .string = output_seq });
+    try root.put("columns", .{ .integer = capture.columns });
+    try root.put("rows", .{ .integer = capture.rows });
+    try root.put("rowStart", .{ .integer = capture.row_start });
+    try root.put("screen", .{ .string = @tagName(capture.screen) });
+    try root.put("cursor", .{ .object = cursor });
+    try root.put("text", if (capture.text) |text| .{ .string = text } else .null);
+    try root.put(
+        "styledText",
+        if (capture.styled_text) |text| .{ .string = text } else .null,
+    );
+    try root.put("truncated", .{ .bool = capture.row_start != 0 });
+    try root.put("sha256", .{ .string = try a.dupe(u8, &digest_hex) });
+    try root.put("composer", .null);
+    const response = try std.json.Stringify.valueAlloc(
+        allocator,
+        std.json.Value{ .object = root },
+        .{},
+    );
+    errdefer allocator.free(response);
+    if (response.len > generated.limits.control_json_bytes)
+        return error.CapturePayloadTooLarge;
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.capture_result,
+        response,
+    )) return error.InvalidCaptureResponse;
+    return response;
+}
+
+test "HOST_CAPTURE encodes the measured libghostty grid" {
+    var clock_context: u8 = 0;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const engine_build_id = try RealVtEngine.engineBuildId();
+    const real_engine = try RealVtEngine.create(std.testing.allocator, 8, 3, null);
+    var state = terminal_state.TerminalState.init(
+        std.testing.allocator,
+        real_engine.engine(),
+        RealVtEngine.factory(),
+        .{ .context = &clock_context, .nowFn = FixedClock.now },
+        &engine_build_id,
+        .{
+            .columns = 8,
+            .rows = 3,
+            .cell_width_px_16_16 = 8 << 16,
+            .cell_height_px_16_16 = 16 << 16,
+        },
+        temporary.dir,
+    );
+    defer state.deinit();
+    try state.feedOutput("first\r\n\x1b[1msecond\x1b[0m");
+    const response = try captureTerminalPayload(
+        std.testing.allocator,
+        fixtureRegistration().record.locator,
+        &state,
+        real_engine,
+        "{\"include\":\"visible-text\",\"maxRows\":2}",
+    );
+    defer std.testing.allocator.free(response);
+    try std.testing.expect(protocol.validateControlPayload(
+        std.testing.allocator,
+        generated.wire_schema.capture_result,
+        response,
+    ));
+    const Captured = struct {
+        outputSeq: []const u8,
+        columns: u16,
+        rows: u16,
+        rowStart: u16,
+        cursor: struct { row: u16, column: u16, visible: bool },
+        text: ?[]const u8,
+        styledText: ?[]const u8,
+        truncated: bool,
+    };
+    var captured = try std.json.parseFromSlice(Captured, std.testing.allocator, response, .{
+        .ignore_unknown_fields = true,
+    });
+    defer captured.deinit();
+    try std.testing.expectEqual(
+        state.outputSeq(),
+        try std.fmt.parseInt(u64, captured.value.outputSeq, 10),
+    );
+    try std.testing.expectEqual(@as(u16, 8), captured.value.columns);
+    try std.testing.expectEqual(@as(u16, 3), captured.value.rows);
+    try std.testing.expectEqual(@as(u16, 1), captured.value.rowStart);
+    try std.testing.expectEqual(@as(u16, 1), captured.value.cursor.row);
+    try std.testing.expectEqual(@as(u16, 6), captured.value.cursor.column);
+    try std.testing.expect(captured.value.cursor.visible);
+    try std.testing.expect(captured.value.truncated);
+    try std.testing.expect(std.mem.indexOf(u8, captured.value.text.?, "second") != null);
+    try std.testing.expect(std.mem.indexOf(u8, captured.value.styledText.?, "\x1b[1m") != null);
+}
+
+fn serveControlRequest(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
+    state: ?*terminal_state.TerminalState,
+    real_engine: ?*RealVtEngine,
     hello_build_id: []const u8,
     deadline: *const ConnectionDeadline,
     now_ns: u64,
@@ -305,22 +435,15 @@ fn serveBrokerRequest(
         try writeHostFailure(allocator, stream, request.header, .malformed_frame);
         return;
     }
-    // Same-uid + instanceId + buildId prove only that the peer is A local
-    // process running the same executable; the 32-byte adoption secret is the
-    // proof it is THE broker that owns this host. HOST_ADOPT is therefore the
-    // only pre-adoption verb: terminate, grant_register, visibility_renew and
-    // any future privileged RPC fail closed until adoption has set
-    // core.adopted (write-once for the host's lifetime).
+    // Same-uid + instanceId + buildId prove only that the peer is A local process running the same executable; the 32-byte adoption secret is the proof it is THE broker that owns this host. HOST_ADOPT is therefore the only pre-adoption verb: terminate, grant_register, visibility_renew and any future privileged RPC fail closed until adoption has set core.adopted (write-once for the host's lifetime).
     if (request.header.type_code != generated.frame_type.host_adopt and !core.adopted) {
         try writeHostFailure(allocator, stream, request.header, .unauthenticated);
         return;
     }
     switch (request.header.type_code) {
         generated.frame_type.host_adopt => {
-            // Kernel-owned peer identity, read before the secret is checked so
-            // the supervisor this host watches from here on is the process the
-            // kernel says is on the other end of the socket, never a claim.
-            const adopting = broker.inspectPeer(stream.handle) catch null;
+            // Kernel-owned peer identity, read before the secret is checked so the supervisor this host watches from here on is the process the kernel says is on the other end of the socket, never a claim.
+            const adopting = daemon_identity.inspectPeer(stream.handle) catch null;
             const response = core.adopt(
                 request.payload,
                 hello_build_id,
@@ -385,15 +508,38 @@ fn serveBrokerRequest(
                 response,
             );
         },
-        generated.frame_type.input_orphan_discard => {
-            const response = core.discardInputOrphan(request.payload, now_ns) catch {
-                try writeHostFailure(allocator, stream, request.header, .malformed_frame);
+        generated.frame_type.host_capture => {
+            const terminal = real_engine orelse {
+                try writeHostFailure(allocator, stream, request.header, .verification_unknown);
                 return;
             };
-            defer core.allocator.free(response);
+            const terminal_state_value = state orelse {
+                try writeHostFailure(allocator, stream, request.header, .verification_unknown);
+                return;
+            };
+            const response = captureTerminalPayload(
+                allocator,
+                core.registration.record.locator,
+                terminal_state_value,
+                terminal,
+                request.payload,
+            ) catch |err| {
+                try writeHostFailure(
+                    allocator,
+                    stream,
+                    request.header,
+                    switch (err) {
+                        error.InvalidCaptureRequest => .malformed_frame,
+                        error.CapturePayloadTooLarge => .resource_exhausted,
+                        else => .verification_unknown,
+                    },
+                );
+                return;
+            };
+            defer allocator.free(response);
             try protocol.writeFrame(
                 stream,
-                request.header.response(generated.frame_type.orphan_discarded, response.len),
+                request.header.response(generated.frame_type.host_captured, response.len),
                 response,
             );
         },
@@ -422,13 +568,12 @@ fn serveBrokerRequest(
     }
 }
 
-/// Serves one authenticated broker RPC on an already-accepted host.sock
-/// connection. Kernel identity is captured before HELLO; broker JSON claims
-/// are used only as cross-checks. The broker opens one connection per RPC.
-pub fn serveHostConnection(
+fn serveHostConnectionWithTerminal(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
+    state: ?*terminal_state.TerminalState,
+    real_engine: ?*RealVtEngine,
     now_ns: u64,
     budget_ms: u64,
 ) !void {
@@ -436,7 +581,16 @@ pub fn serveHostConnection(
     const deadline = try ConnectionDeadline.initWithBudget(&timer, budget_ms);
     var hello = (try acceptHostHello(allocator, stream, core, &deadline, now_ns, .broker)) orelse return;
     defer hello.deinit();
-    return serveBrokerRequest(allocator, stream, core, hello.build_id, &deadline, now_ns);
+    return serveControlRequest(
+        allocator,
+        stream,
+        core,
+        state,
+        real_engine,
+        hello.build_id,
+        &deadline,
+        now_ns,
+    );
 }
 
 fn viewerFailureCode(err: anyerror) protocol.WireError {
@@ -462,7 +616,8 @@ fn handleViewerFrame(
     request: *const protocol.Frame,
     now_ns: u64,
 ) !void {
-    const expected_flags: u16 = if (request.header.type_code == generated.frame_type.input_submit)
+    const expected_flags: u16 = if (request.header.type_code == generated.frame_type.input_submit or
+        request.header.type_code == generated.frame_type.user_input)
         generated.frame_flag.content_sensitive
     else
         0;
@@ -470,25 +625,15 @@ fn handleViewerFrame(
         try writeHostFailure(allocator, stream, request.header, .malformed_frame);
         return;
     }
+    if (request.header.type_code == generated.frame_type.user_input) {
+        if (!authorization.operations.user_input) return error.Forbidden;
+        try core.submitRawInput(request.payload);
+        return;
+    }
     var response_type: u16 = undefined;
     const response = switch (request.header.type_code) {
-        generated.frame_type.claim_acquire => blk: {
-            if (!authorization.operations.human_input) {
-                try writeHostFailure(allocator, stream, request.header, .forbidden);
-                return;
-            }
-            response_type = generated.frame_type.claim_result;
-            break :blk core.claimInput(
-                request.payload,
-                authorization.viewer_id,
-                now_ns,
-            ) catch |err| {
-                try writeHostFailure(allocator, stream, request.header, viewerFailureCode(err));
-                return;
-            };
-        },
         generated.frame_type.input_submit => blk: {
-            if (!authorization.operations.human_input) {
+            if (!authorization.operations.user_input) {
                 try writeHostFailure(allocator, stream, request.header, .forbidden);
                 return;
             }
@@ -513,21 +658,6 @@ fn handleViewerFrame(
                 return;
             };
         },
-        generated.frame_type.claim_release => blk: {
-            if (!authorization.operations.human_input) {
-                try writeHostFailure(allocator, stream, request.header, .forbidden);
-                return;
-            }
-            response_type = generated.frame_type.applied;
-            break :blk core.releaseInput(
-                request.payload,
-                authorization.viewer_id,
-                now_ns,
-            ) catch |err| {
-                try writeHostFailure(allocator, stream, request.header, viewerFailureCode(err));
-                return;
-            };
-        },
         else => {
             try writeHostFailure(allocator, stream, request.header, .unsupported_frame);
             return;
@@ -541,13 +671,10 @@ fn handleViewerFrame(
     );
 }
 
-/// One live attached viewer stream owned by the host loop.
 const AttachedViewer = struct {
     stream: std.net.Stream,
     authorization: ViewerAuthorization,
-    /// Exclusive journal byte offset already written to this viewer.
     sent_seq: u64,
-    /// Exclusive contiguous OUTPUT high-water the viewer acknowledged (APPLIED).
     acked_seq: u64,
 
     fn close(self: *AttachedViewer, allocator: std.mem.Allocator) void {
@@ -557,9 +684,6 @@ const AttachedViewer = struct {
     }
 };
 
-/// Push retained journal bytes from `seq.*` to the journal end as ordered
-/// unsolicited OUTPUT frames (stream_seq = absolute first-byte offset),
-/// chunked at the negotiated stream bound. Advances `seq.*`.
 fn pushRetainedOutput(
     stream: std.net.Stream,
     state: *terminal_state.TerminalState,
@@ -582,12 +706,7 @@ fn pushRetainedOutput(
     seq.* += @as(u64, @intCast(slice.len));
 }
 
-/// attach stream for an authorized viewer: when the requested cursor is
-/// below the retained journal start, the newest verified HVTCP001 checkpoint
-/// envelope is sent as correlated SNAPSHOT_BYTES chunks; every retained byte
-/// after the effective base then replays as ordered OUTPUT. Returns the
-/// exclusive high-water written. A cursor the retained journal and checkpoint
-/// cannot bridge is a typed CHECKPOINT_UNAVAILABLE failure, never silence.
+/// attach stream for an authorized viewer: when the requested cursor is below the retained journal start, the newest verified HVTCP001 checkpoint envelope is sent as correlated SNAPSHOT_BYTES chunks; every retained byte after the effective base then replays as ordered OUTPUT. Returns the exclusive high-water written. A cursor the retained journal and checkpoint cannot bridge is a typed CHECKPOINT_UNAVAILABLE failure, never silence.
 fn beginViewerStream(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
@@ -614,7 +733,7 @@ fn beginViewerStream(
             try writeHostFailure(allocator, stream, attach_header, .checkpoint_unavailable);
             return error.CheckpointUnavailable;
         }
-        var buffer: [terminal_state.checkpoint_stream_chunk_bytes]u8 = undefined;
+        var buffer: [checkpoint_format.checkpoint_stream_chunk_bytes]u8 = undefined;
         var offset: usize = 0;
         while (offset < checkpoint.totalBytes()) {
             const take = try checkpoint.readAt(&buffer, offset);
@@ -638,8 +757,6 @@ fn beginViewerStream(
     return base;
 }
 
-/// Correlated proof that HOST_ATTACH completed, including the valid
-/// zero-replay case where the viewer is already at the host's high-water.
 fn writeAttachReady(
     stream: std.net.Stream,
     authorized: *const AuthorizedViewer,
@@ -654,15 +771,13 @@ fn writeAttachReady(
     }, "");
 }
 
-/// Serves one accepted host.sock connection. A broker connection is one RPC.
-/// A viewer connection authorizes, streams the attach snapshot/replay, and is
-/// returned to the host loop as the live attached viewer; the caller closes
-/// the stream in every other outcome.
+/// Serves one accepted host.sock connection. A broker connection is one RPC. A viewer connection authorizes, streams the attach snapshot/replay, and is returned to the host loop as the live attached viewer; the caller closes the stream in every other outcome.
 fn serveSessionConnection(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
     state: *terminal_state.TerminalState,
+    real_engine: *RealVtEngine,
     timer: *std.time.Timer,
 ) !?AttachedViewer {
     const now_ns = timer.read();
@@ -671,7 +786,16 @@ fn serveSessionConnection(
     defer hello.deinit();
     switch (hello.role) {
         .broker => {
-            try serveBrokerRequest(allocator, stream, core, hello.build_id, &deadline, now_ns);
+            try serveControlRequest(
+                allocator,
+                stream,
+                core,
+                state,
+                real_engine,
+                hello.build_id,
+                &deadline,
+                now_ns,
+            );
             return null;
         },
         .viewer => {
@@ -697,8 +821,7 @@ fn serveSessionConnection(
     }
 }
 
-/// Per-iteration bound on dispatched inbound viewer frames so a chatty viewer
-/// cannot starve the PTY pump.
+/// Per-iteration bound on dispatched inbound viewer frames so a chatty viewer cannot starve the PTY pump.
 const viewer_inbound_frames_per_iteration = 32;
 
 fn publishViewerFloor(
@@ -714,11 +837,9 @@ fn publishViewerFloor(
 
 fn detachAttachedViewer(
     allocator: std.mem.Allocator,
-    core: *HostCore,
     viewers: *std.ArrayList(AttachedViewer),
     viewer_index: usize,
     state: *terminal_state.TerminalState,
-    now_ns: u64,
     cause: []const u8,
     detail: ?anyerror,
 ) void {
@@ -735,18 +856,14 @@ fn detachAttachedViewer(
             state.retainedOutputStart(),
         },
     );
-    // an unclean drop affects only this viewer's claim.
-    core.onViewerDetached(viewer.authorization.viewer_id, now_ns);
     viewer.close(allocator);
     publishViewerFloor(viewers, state);
 }
 
 fn installAttachedViewer(
     allocator: std.mem.Allocator,
-    core: *HostCore,
     viewers: *std.ArrayList(AttachedViewer),
     state: *terminal_state.TerminalState,
-    now_ns: u64,
     incoming: AttachedViewer,
 ) !void {
     var viewer = incoming;
@@ -759,11 +876,9 @@ fn installAttachedViewer(
         )) {
             detachAttachedViewer(
                 allocator,
-                core,
                 viewers,
                 index,
                 state,
-                now_ns,
                 "superseded-by-same-viewer",
                 null,
             );
@@ -779,8 +894,6 @@ const ViewerDetach = struct {
     detail: ?anyerror,
 };
 
-/// Pushes output and dispatches inbound frames for one viewer. A failure is
-/// returned to the collection owner so only this connection is detached.
 fn pumpAttachedViewer(
     allocator: std.mem.Allocator,
     viewer: *AttachedViewer,
@@ -788,20 +901,10 @@ fn pumpAttachedViewer(
     state: *terminal_state.TerminalState,
     timer: *std.time.Timer,
 ) ?ViewerDetach {
-    // One absolute budget per pump call: poll proves only that SOME byte is
-    // readable, so a dribbling viewer cannot stall the host loop.
+    // One absolute budget per pump call: poll proves only that SOME byte is readable, so a dribbling viewer cannot stall the host loop.
     const deadline = ConnectionDeadline.init(timer) catch return null;
-    // Journal pressure may evict past one lagging viewer. Detach only that
-    // viewer; unrelated renderers continue from their own cursors.
     if (state.retainedOutputStart() > viewer.sent_seq) {
         return .{ .cause = "retention-gap", .detail = null };
-    }
-    if (state.outputSeq() > viewer.sent_seq and
-        viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
-    {
-        pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch |err| {
-            return .{ .cause = "output-write", .detail = err };
-        };
     }
     var handled: u32 = 0;
     while (handled < viewer_inbound_frames_per_iteration) : (handled += 1) {
@@ -811,26 +914,25 @@ fn pumpAttachedViewer(
             .revents = 0,
         }};
         const ready = std.posix.poll(&fds, 0) catch 0;
-        if (ready == 0 or fds[0].revents == 0) return null;
+        if (ready == 0 or fds[0].revents == 0) break;
         var frame = readConnectionFrame(allocator, viewer.stream, &deadline) catch |err| {
             return .{ .cause = "inbound-read", .detail = err };
         };
         defer {
-            if (frame.header.type_code == generated.frame_type.input_submit)
+            if (frame.header.type_code == generated.frame_type.input_submit or
+                frame.header.type_code == generated.frame_type.user_input)
                 std.crypto.secureZero(u8, frame.payload);
             frame.deinit(allocator);
         }
         if (frame.header.type_code == generated.frame_type.applied) {
             if (viewerOutputAckThroughSeq(allocator, &frame)) |through_seq| {
-                // Duplicate/stale acks are harmless retransmits; an ack
-                // beyond what was sent is a protocol violation.
+                // Duplicate/stale acks are harmless retransmits; an ack beyond what was sent is a protocol violation.
                 if (through_seq <= viewer.sent_seq) {
                     if (through_seq > viewer.acked_seq) viewer.acked_seq = through_seq;
                     continue;
                 }
             }
-            // A malformed or impossible acknowledgement cannot erase or
-            // disconnect a healthy terminal.
+            // A malformed or impossible acknowledgement cannot erase or disconnect a healthy terminal.
             continue;
         }
         handleViewerFrame(
@@ -843,6 +945,13 @@ fn pumpAttachedViewer(
             timer.read(),
         ) catch |err| {
             return .{ .cause = "frame-handle", .detail = err };
+        };
+    }
+    if (state.outputSeq() > viewer.sent_seq and
+        viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
+    {
+        pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch |err| {
+            return .{ .cause = "output-write", .detail = err };
         };
     }
     return null;
@@ -866,11 +975,9 @@ fn pumpAttachedViewers(
         )) |reason| {
             detachAttachedViewer(
                 allocator,
-                core,
                 viewers,
                 index,
                 state,
-                timer.read(),
                 reason.cause,
                 reason.detail,
             );
@@ -881,8 +988,6 @@ fn pumpAttachedViewers(
     publishViewerFloor(viewers, state);
 }
 
-/// Parses a viewer→host APPLIED output acknowledgement; null on any shape
-/// that is not the frozen output branch.
 fn viewerOutputAckThroughSeq(
     allocator: std.mem.Allocator,
     frame: *const protocol.Frame,
@@ -910,6 +1015,7 @@ fn viewerOutputAckThroughSeq(
 const WireCreateSpec = struct {
     schemaVersion: u8,
     locator: WireLocator,
+    provider: []const u8,
     cwd: []const u8,
     argv: []const []const u8,
     environment: std.json.Value,
@@ -923,17 +1029,15 @@ const WireCreateSpec = struct {
     },
 };
 
-/// Same validation as `environmentStrings`, but kept as name/value pairs for
-/// the neutral create request, which joins them itself.
 fn environmentEntries(
     allocator: std.mem.Allocator,
     value: std.json.Value,
-) ![]const neutral_host.EnvironmentEntry {
+) ![]const neutral_contract.EnvironmentEntry {
     const object = switch (value) {
         .object => |object| object,
         else => return error.InvalidEnvironment,
     };
-    const result = try allocator.alloc(neutral_host.EnvironmentEntry, object.count());
+    const result = try allocator.alloc(neutral_contract.EnvironmentEntry, object.count());
     var iterator = object.iterator();
     var index: usize = 0;
     while (iterator.next()) |entry| : (index += 1) {
@@ -1000,8 +1104,6 @@ fn validateSpawnStrings(
     }
 }
 
-const sameExecutableIdentity = @import("executable_identity").sameFile;
-
 fn geometryFixed16_16(value: f64) !u32 {
     const scale = 65_536.0;
     const maximum = @as(f64, @floatFromInt(std.math.maxInt(u32))) / scale;
@@ -1034,10 +1136,7 @@ const PersistenceCursor = struct {
     checkpoint_seq: ?u64 = null,
 };
 
-/// Streaming output batches persist the journal on the batch window; any
-/// path that needs the tail durable NOW (terminate, lease expiry, startup) or
-/// that just verified a checkpoint (which evicted the covered journal prefix)
-/// forces the rewrite.
+/// Streaming output batches persist the journal on the batch window; any path that needs the tail durable NOW (terminate, lease expiry, startup) or that just verified a checkpoint (which evicted the covered journal prefix) forces the rewrite.
 const JournalPersist = enum { batched, forced };
 
 fn persistTerminalState(
@@ -1064,51 +1163,24 @@ fn refreshRegistration(
     state: *terminal_state.TerminalState,
 ) void {
     core.registration.record.output_seq = state.outputSeq();
-    core.registration.checkpoint_available = state.checkpointAvailable();
     core.registration.record.checkpoint_seq = checkpointWireSeq(state);
 }
 
-fn queueInitialInput(
-    allocator: std.mem.Allocator,
-    encoder: *RealInputEncoder,
-    sink: *PtyQueueSink,
-    bytes: []const u8,
-) !void {
-    if (bytes.len == 0) return;
-    var encoded: std.ArrayList(u8) = .{};
-    defer {
-        if (encoded.capacity > 0) std.crypto.secureZero(u8, encoded.allocatedSlice());
-        encoded.deinit(allocator);
-    }
-    const capacity = bytes.len * input_arbiter.encoded_expansion_factor +
-        input_arbiter.encoded_framing_slack;
-    try encoded.ensureTotalCapacity(allocator, capacity);
-    try encoder.encoder().encode(allocator, bytes, .none, &encoded);
-    try sink.arbiterSink().write(encoded.items);
-}
-
-/// The real terminal behind the neutral control plane's mutation seam. The
-/// neutral plane deliberately owns no terminal, so without this binding its
-/// resize handler has nothing to set and answers `unknown`.
-/// It performs the SAME two-part mutation the production resize path does: the
-/// PTY set with its post-set readback, and the shadow VT following the applied
-/// window so later checkpoints carry the real geometry rather than the
-/// create-time size. Setting the PTY alone would leave the shadow behind
-/// and make a restored checkpoint render at the wrong size.
+/// The real terminal behind the neutral control plane's mutation seam. The neutral plane deliberately owns no terminal, so without this binding its resize handler has nothing to set and answers `unknown`. It performs the SAME two-part mutation the production resize path does: the PTY set with its post-set readback, and the shadow VT following the applied window so later checkpoints carry the real geometry rather than the create-time size. Setting the PTY alone would leave the shadow behind and make a restored checkpoint render at the wrong size.
 const NeutralTerminalSource = struct {
     pty: *pty_host.PtyHost,
     state: *terminal_state.TerminalState,
     test_resize_columns_adjustment: u32 = 0,
 
-    fn provider(self: *NeutralTerminalSource) neutral_control_plane.TerminalProvider {
+    fn provider(self: *NeutralTerminalSource) neutral_evidence.TerminalProvider {
         return .{ .context = self, .resizeFn = resize };
     }
 
     fn resize(
         context: *anyopaque,
-        window: neutral_host.WindowSize,
+        window: neutral_contract.WindowSize,
         revision: u64,
-    ) anyerror!neutral_control_plane.TerminalResize {
+    ) anyerror!neutral_evidence.TerminalResize {
         const self: *NeutralTerminalSource = @ptrCast(@alignCast(context));
         const columns = std.math.add(u32, window.columns, self.test_resize_columns_adjustment) catch
             return error.InvalidGeometry;
@@ -1143,14 +1215,8 @@ const NeutralTerminalSource = struct {
         } };
     }
 
-    /// The mutation has two halves and the PTY half lands first, so a failure
-    /// in between leaves the shadow behind a terminal that has already moved.
-    /// Reporting the terminal's order without repairing the shadow would let a
-    /// retry be answered `applied` for a geometry the shadow does not hold, and
-    /// a checkpoint taken afterwards would restore at the wrong size. So the
-    /// shadow is brought into agreement here too, and if it cannot be, this
-    /// reports nothing applied at all.
-    fn current(self: *NeutralTerminalSource) !neutral_control_plane.AppliedResize {
+    /// The mutation has two halves and the PTY half lands first, so a failure in between leaves the shadow behind a terminal that has already moved. Reporting the terminal's order without repairing the shadow would let a retry be answered `applied` for a geometry the shadow does not hold, and a checkpoint taken afterwards would restore at the wrong size. So the shadow is brought into agreement here too, and if it cannot be, this reports nothing applied at all.
+    fn current(self: *NeutralTerminalSource) !neutral_evidence.AppliedResize {
         var prepared = try self.state.prepareResize(.{
             .columns = self.pty.geometry.columns,
             .rows = self.pty.geometry.rows,
@@ -1173,7 +1239,7 @@ const NeutralTerminalSource = struct {
         };
     }
 
-    fn neutralWindow(geometry: pty_host.Geometry) neutral_host.WindowSize {
+    fn neutralWindow(geometry: pty_host.Geometry) neutral_contract.WindowSize {
         return .{
             .columns = geometry.columns,
             .rows = geometry.rows,
@@ -1188,18 +1254,18 @@ const NeutralLiveEvidenceSource = struct {
     pty: *pty_host.PtyHost,
     state: *terminal_state.TerminalState,
 
-    fn provider(self: *NeutralLiveEvidenceSource) neutral_control_plane.EvidenceProvider {
+    fn provider(self: *NeutralLiveEvidenceSource) neutral_evidence.EvidenceProvider {
         return .{ .context = self, .measureFn = measure };
     }
 
     fn measure(
         context: *anyopaque,
         allocator: std.mem.Allocator,
-    ) !neutral_control_plane.LiveEvidence {
+    ) !neutral_evidence.LiveEvidence {
         const self: *NeutralLiveEvidenceSource = @ptrCast(@alignCast(context));
         var diagnostics: std.ArrayList([]const u8) = .{};
         const foreground_process_group_id: ?i32 = self.pty.foregroundProcessGroupId() catch null;
-        var newest_checkpoint: ?neutral_control_plane.CheckpointSnapshot = null;
+        var newest_checkpoint: ?neutral_evidence.CheckpointSnapshot = null;
         if (self.state.newestCheckpoint()) |checkpoint| {
             const encoded_size = std.base64.standard.Encoder.calcSize(
                 checkpoint.header.payload_length,
@@ -1220,37 +1286,18 @@ const NeutralLiveEvidenceSource = struct {
                 };
             }
         }
-        var input_owner: ?neutral_control_plane.WireInputClaim = null;
-        // Active claim first; otherwise the retained orphan still names the
-        // input owner of record while the arbiter holds HUMAN_ORPHANED.
-        if (self.core.active_claim orelse self.core.orphaned_claim) |claim| {
-            const kind = std.meta.stringToEnum(
-                @FieldType(neutral_control_plane.WireInputClaim, "kind"),
-                claim.kind,
-            );
-            if (kind) |value| {
-                input_owner = .{
-                    .token = try allocator.dupe(u8, claim.token),
-                    .writer = try allocator.dupe(u8, claim.writer),
-                    .kind = value,
-                    .leaseExpiresAt = try allocator.dupe(u8, claim.lease_expires_at),
-                };
-            } else {
-                try diagnostics.append(allocator, "input-owner-kind-invalid");
-            }
-        }
         return .{
             .foregroundProcessGroupId = foreground_process_group_id,
             .newestCheckpoint = newest_checkpoint,
-            .inputOwner = input_owner,
+            .inputOwner = null,
             .diagnostics = try diagnostics.toOwnedSlice(allocator),
         };
     }
 };
 
 fn refreshNeutralRecord(
-    registry: *neutral_host.Registry,
-    session: neutral_host.SessionRef,
+    registry: *neutral_runtime.Registry,
+    session: neutral_contract.SessionRef,
     core: *HostCore,
     pty: *pty_host.PtyHost,
     state: *terminal_state.TerminalState,
@@ -1279,17 +1326,17 @@ fn refreshNeutralRecord(
 }
 
 const NeutralHostServing = struct {
-    operations: *neutral_control_plane.HostOperations,
+    operations: *neutral_operations.HostOperations,
     core: *HostCore,
 
-    fn handler(self: *NeutralHostServing) neutral_host.OperationHandler {
+    fn handler(self: *NeutralHostServing) neutral_runtime.OperationHandler {
         return .{ .context = self, .callFn = call };
     }
 
     fn call(
         context: *anyopaque,
-        request: neutral_host.OperationRequest,
-    ) !neutral_host.OperationResponse {
+        request: neutral_runtime.OperationRequest,
+    ) !neutral_runtime.OperationResponse {
         const self: *NeutralHostServing = @ptrCast(@alignCast(context));
         const response = self.operations.handler().call(request) catch |err| {
             switch (request.operation) {
@@ -1314,56 +1361,229 @@ const NeutralHostServing = struct {
 };
 
 fn serveNeutralAccepted(
-    endpoint: *neutral_host.HostEndpoint,
+    endpoint: *neutral_runtime.HostEndpoint,
     stream: std.net.Stream,
-    handler: neutral_host.OperationHandler,
+    handler: neutral_runtime.OperationHandler,
     timeout_ms: u64,
 ) !void {
     defer stream.close();
-    const flags = c.fcntl(stream.handle, c.F_GETFL);
-    if (flags < 0 or
-        c.fcntl(stream.handle, c.F_SETFL, flags & ~@as(c_int, c.O_NONBLOCK)) < 0)
-        return error.SocketBlockingFailed;
+    try security.setBlocking(stream.handle, error.SocketBlockingFailed);
     try setControlTimeoutMs(stream.handle, timeout_ms);
     try endpoint.serveAccepted(stream, handler);
 }
 
+/// How long the host loop may sleep with no descriptor ready. Two obligations are answered on a
+/// clock rather than by a descriptor and ride this tick: renewing the visibility lease, which has
+/// to land inside `generated.limits.visibility_expiry_ms`, and checking for supervisor loss, which
+/// has to keep observing the supervisor across `host_core.supervisor_grace_ns`. Both windows are
+/// seconds wide, so this leaves each of them room to spare while an idle host does nothing at all
+/// in between.
+const host_tick_ms: isize = 1000;
+const host_tick_ns: u64 = @as(u64, @intCast(host_tick_ms)) * std.time.ns_per_ms;
+
+/// The host loop's blocking wait, so an idle terminal costs no CPU and a keystroke wakes the host
+/// on the byte instead of on the next retry.
+///
+/// Registered once at `open`: the two listening sockets, the PTY master's read side, and the root
+/// child process, which all outlive the loop; the PTY master's write side, left disabled because a
+/// write only needs retrying while the ordered queue still holds bytes the master would not take;
+/// and the tick timer, which is added exactly once because re-registering an EVFILT_TIMER restarts
+/// its interval. Viewer sockets are registered as they attach — closing a descriptor removes its
+/// registrations, so a detached viewer needs no matching call here.
+///
+/// `block` reports only the root-child exit event, whose one-shot kernel notification must be
+/// retained across the next loop pass. Every descriptor source is still re-checked without
+/// blocking, so their individual identities remain irrelevant.
+const HostWait = struct {
+    queue: std.posix.fd_t,
+    pty_master: std.posix.fd_t,
+    child_ident: usize,
+    pty_write_armed: bool = false,
+
+    /// EVFILT_TIMER identifies its registration by this number rather than by a descriptor. Any
+    /// value is legal because the timer is the only non-descriptor filter on this queue.
+    const timer_ident: usize = 0;
+
+    fn open(
+        host_listener: std.posix.fd_t,
+        neutral_listener: std.posix.fd_t,
+        pty_master: std.posix.fd_t,
+        child_pid: i32,
+    ) !HostWait {
+        const queue = try std.posix.kqueue();
+        errdefer std.posix.close(queue);
+        const changes = [_]std.posix.Kevent{
+            readChange(host_listener),
+            readChange(neutral_listener),
+            readChange(pty_master),
+            .{
+                .ident = @intCast(child_pid),
+                .filter = @intCast(c.EVFILT_PROC),
+                .flags = @intCast(c.EV_ADD | c.EV_ONESHOT),
+                .fflags = @intCast(c.NOTE_EXIT),
+                .data = 0,
+                .udata = 0,
+            },
+            .{
+                .ident = @intCast(pty_master),
+                .filter = std.c.EVFILT.WRITE,
+                .flags = std.c.EV.ADD | std.c.EV.DISABLE,
+                .fflags = 0,
+                .data = 0,
+                .udata = 0,
+            },
+            .{
+                .ident = timer_ident,
+                .filter = std.c.EVFILT.TIMER,
+                .flags = std.c.EV.ADD,
+                // No NOTE_SECONDS/USECONDS/NSECONDS unit flag, which is what makes the period
+                // below milliseconds.
+                .fflags = 0,
+                .data = host_tick_ms,
+                .udata = 0,
+            },
+        };
+        try submit(queue, &changes);
+        return .{
+            .queue = queue,
+            .pty_master = pty_master,
+            .child_ident = @intCast(child_pid),
+        };
+    }
+
+    fn close(self: *HostWait) void {
+        std.posix.close(self.queue);
+        self.* = undefined;
+    }
+
+    fn watchViewer(self: *HostWait, viewer: std.posix.fd_t) !void {
+        try submit(self.queue, &[_]std.posix.Kevent{readChange(viewer)});
+    }
+
+    /// Sleep until one of the registered sources is ready or the tick timer fires. `write_pending`
+    /// is the PTY write queue's state: a short write leaves bytes behind that only the master
+    /// becoming writable can retire, and watching for that unconditionally would wake the host
+    /// continuously on an idle terminal whose master is always writable.
+    fn block(self: *HostWait, write_pending: bool) !bool {
+        if (write_pending != self.pty_write_armed) {
+            try submit(self.queue, &[_]std.posix.Kevent{.{
+                .ident = @intCast(self.pty_master),
+                .filter = std.c.EVFILT.WRITE,
+                .flags = if (write_pending) std.c.EV.ENABLE else std.c.EV.DISABLE,
+                .fflags = 0,
+                .data = 0,
+                .udata = 0,
+            }});
+            self.pty_write_armed = write_pending;
+        }
+        // Events beyond this array stay queued and are reported on the next call, and the loop
+        // body re-checks every source regardless, so its size bounds one syscall's output rather
+        // than how much the host can notice.
+        var ready: [8]std.posix.Kevent = undefined;
+        const count = try std.posix.kevent(self.queue, &.{}, &ready, null);
+        for (ready[0..count]) |event| {
+            if (event.ident == self.child_ident and
+                event.filter == @as(i16, @intCast(c.EVFILT_PROC)) and
+                event.fflags & @as(u32, @intCast(c.NOTE_EXIT)) != 0)
+                return true;
+        }
+        return false;
+    }
+
+    fn readChange(descriptor: std.posix.fd_t) std.posix.Kevent {
+        return .{
+            .ident = @intCast(descriptor),
+            .filter = std.c.EVFILT.READ,
+            .flags = std.c.EV.ADD,
+            .fflags = 0,
+            .data = 0,
+            .udata = 0,
+        };
+    }
+
+    /// Apply registrations without collecting events. An empty event list makes the kernel report
+    /// a rejected registration as a failed call instead of burying it in the returned events.
+    fn submit(queue: std.posix.fd_t, changes: []const std.posix.Kevent) !void {
+        const immediately: std.posix.timespec = .{ .sec = 0, .nsec = 0 };
+        _ = try std.posix.kevent(queue, changes, &.{}, &immediately);
+    }
+};
+
+/// Everything a live host owes on a clock rather than on a descriptor becoming ready. Returns true
+/// once supervisor loss has terminated this host, which ends the loop.
+fn serviceHostTick(core: *HostCore, now_ns: u64) !bool {
+    // A live host holds its own lease open. Nothing has to arrive for a terminal to keep living,
+    // and nothing infers its death: the only things that end a terminal are an explicit
+    // termination and the supervisor check below. Self-terminating on a supervisor this host could
+    // no longer observe killed working agents whose vendor TUI was rendered and running.
+    core.lease.touch(now_ns);
+    // Without this the host cannot notice that the process which launched it is gone. A daemon
+    // crash or a missed teardown would leave it reparented to launchd, holding its socket and
+    // burning its provider's tokens, with nothing left that could ever ask it to stop.
+    return core.enforceSupervisorLoss(now_ns);
+}
+
 fn runHostLoop(
     runtime: *HostRuntime,
-    neutral_registry: *neutral_host.Registry,
-    neutral_endpoint: *neutral_host.HostEndpoint,
+    neutral_registry: *neutral_runtime.Registry,
+    neutral_endpoint: *neutral_runtime.HostEndpoint,
     neutral_serving: *NeutralHostServing,
     core: *HostCore,
     timer: *std.time.Timer,
     pty: *pty_host.PtyHost,
     state: *terminal_state.TerminalState,
+    real_engine: *RealVtEngine,
     persistence: *PersistenceCursor,
 ) !void {
     var attached: std.ArrayList(AttachedViewer) = .{};
     defer {
         while (attached.items.len > 0) {
             var viewer = attached.pop().?;
-            core.onViewerDetached(viewer.authorization.viewer_id, timer.read());
             viewer.close(core.allocator);
         }
         attached.deinit(core.allocator);
         state.setViewerFloor(null);
     }
+    var wait = try HostWait.open(
+        runtime.server.stream.handle,
+        neutral_endpoint.server.stream.handle,
+        pty.master_fd,
+        pty.pid,
+    );
+    defer wait.close();
+    // Zero makes the first pass tick, so a host launched by an already-dead supervisor notices at
+    // once instead of outliving it by a tick.
+    var next_tick_ns: u64 = 0;
+    var root_exit_pending = false;
     while (!core.terminated) {
         refreshRegistration(core, state);
         const now_ns = timer.read();
-        // A live host holds its own lease open. Nothing has to arrive for a
-        // terminal to keep living, and nothing infers its death: the only thing
-        // that ends a terminal is an explicit termination. Self-terminating on
-        // a supervisor this host could no longer observe killed working agents
-        // whose vendor TUI was rendered and running.
-        core.lease.touch(now_ns);
+        if (now_ns >= next_tick_ns) {
+            next_tick_ns = now_ns + host_tick_ns;
+            if (try serviceHostTick(core, now_ns)) break;
+        }
+
+        if (root_exit_pending) {
+            while (true) {
+                const output = pty.readAvailable() catch |err| switch (err) {
+                    error.Closed => break,
+                    else => return err,
+                };
+                if (output.bytes.len == 0) break;
+                try state.feedOutput(output.bytes);
+                try persistTerminalState(state, runtime.directory, persistence, .batched);
+                refreshRegistration(core, state);
+            }
+            try persistTerminalState(state, runtime.directory, persistence, .forced);
+            refreshRegistration(core, state);
+            pumpAttachedViewers(core.allocator, &attached, core, state, timer);
+            const response = try core.terminateBound(.immediate, null);
+            core.allocator.free(response);
+            break;
+        }
 
         if (try runtime.accept()) |stream| {
-            // A per-connection setup failure — a peer that reset the socket
-            // before setsockopt ran — drops THIS connection and keeps serving.
-            // It must never tear down the host: a single client cannot kill
-            // the terminal.
+            // A per-connection setup failure — a peer that reset the socket before setsockopt ran — drops THIS connection and keeps serving. It must never tear down the host: a single client cannot kill the terminal.
             if (!acceptedConnectionReady(stream.handle)) {
                 std.log.err("host connection setup refused; dropping connection", .{});
                 stream.close();
@@ -1374,22 +1594,20 @@ fn runHostLoop(
                 stream,
                 core,
                 state,
+                real_engine,
                 timer,
             ) catch |err| blk: {
                 std.log.err("host connection refused: {s}", .{@errorName(err)});
                 break :blk null;
             };
             if (accepted) |viewer| {
-                // retarget is scoped to one viewer identity. Renderer,
-                // observer, and automation viewers coexist on the same host.
                 try installAttachedViewer(
                     core.allocator,
-                    core,
                     &attached,
                     state,
-                    timer.read(),
                     viewer,
                 );
+                try wait.watchViewer(viewer.stream.handle);
             } else {
                 stream.close();
             }
@@ -1415,8 +1633,7 @@ fn runHostLoop(
                 neutral_serving.handler(),
                 generated.limits.control_rpc_timeout_ms,
             ) catch |err| {
-                // A timeout after any partial frame is fatal to this stream;
-                // serveNeutralAccepted closes it; the next request is fresh.
+                // A timeout after any partial frame is fatal to this stream; serveNeutralAccepted closes it; the next request is fresh.
                 std.log.err("neutral host operation refused: {s}", .{@errorName(err)});
             };
             continue;
@@ -1430,8 +1647,7 @@ fn runHostLoop(
             error.Closed => {
                 try persistTerminalState(state, runtime.directory, persistence, .forced);
                 refreshRegistration(core, state);
-                // Best-effort tail push: every journaled byte reaches the
-                // attached viewers before the endpoint closes (drain).
+                // Best-effort tail push: every journaled byte reaches the attached viewers before the endpoint closes (drain).
                 pumpAttachedViewers(core.allocator, &attached, core, state, timer);
                 const response = try core.terminateBound(.immediate, null);
                 core.allocator.free(response);
@@ -1441,29 +1657,17 @@ fn runHostLoop(
         };
         if (output.bytes.len > 0) {
             try state.feedOutput(output.bytes);
-            // Streaming batch: journal rewrite rides the batch window;
-            // checkpoints still persist the moment they verify.
             try persistTerminalState(state, runtime.directory, persistence, .batched);
             refreshRegistration(core, state);
         }
         pumpAttachedViewers(core.allocator, &attached, core, state, timer);
-        std.Thread.sleep(std.time.ns_per_ms);
+        root_exit_pending = try wait.block(pty.write_queue.items.len > 0);
     }
 }
 
-/// Environment variable naming the unix socket this host dials for its boot
-/// message. Absent means the launcher handed the control socket down as an
-/// inherited descriptor instead.
 pub const control_socket_env = "HIVE_HOST_CONTROL_SOCKET";
 
-/// The control stream carrying the HVB1 boot message.
-/// A launcher that can hand a socketpair down as a descriptor passes nothing
-/// and this inherits fd 3. A launcher that cannot — anything that is not a
-/// forking C parent — names a socket it is already listening on, and the host
-/// dials it. Both produce the same private SOCK_STREAM, so everything after
-/// this point is identical; only who calls connect changes.
-/// The path is per-host, so accepting one connection on it is unambiguous
-/// without a correlation token.
+/// The control stream carrying the HVB1 boot message. A launcher that can hand a socketpair down as a descriptor passes nothing and this inherits fd 3. A launcher that cannot — anything that is not a forking C parent — names a socket it is already listening on, and the host dials it. Both produce the same private SOCK_STREAM, so everything after this point is identical; only who calls connect changes. The path is per-host, so accepting one connection on it is unambiguous without a correlation token.
 fn openControlStream(allocator: std.mem.Allocator) !std.net.Stream {
     const path = std.process.getEnvVarOwned(allocator, control_socket_env) catch |err| switch (err) {
         error.EnvironmentVariableNotFound => return .{ .handle = inherited_control_fd },
@@ -1473,14 +1677,13 @@ fn openControlStream(allocator: std.mem.Allocator) !std.net.Stream {
     return std.net.connectUnixSocket(path);
 }
 
-/// Entry point for the same executable's `host` role.
 pub fn runHostRole(
     allocator: std.mem.Allocator,
-    hive_home: []const u8,
+    roots: security.Roots,
 ) !void {
     const control = try openControlStream(allocator);
     defer control.close();
-    runHostRoleWithControl(allocator, hive_home, control) catch |err| {
+    runHostRoleWithControl(allocator, roots, control) catch |err| {
         host_registration.sendStartupFailure(
             allocator,
             control,
@@ -1492,12 +1695,9 @@ pub fn runHostRole(
 
 fn runHostRoleWithControl(
     allocator: std.mem.Allocator,
-    hive_home: []const u8,
+    roots: security.Roots,
     control: std.net.Stream,
 ) !void {
-    // Both ends of the boot handshake share one bound: this host forks a login
-    // shell and a vendor CLI before it can answer READY, and under a wide burst
-    // that is seconds, not milliseconds.
     try setControlTimeoutMs(control.handle, host_process.host_ready_timeout_ms);
     const control_file: std.fs.File = .{ .handle = control.handle };
     var boot = try readBootMessage(allocator, control_file.deprecatedReader());
@@ -1510,8 +1710,6 @@ fn runHostRoleWithControl(
     )) return error.InvalidCreatePayload;
     var spec = try std.json.parseFromSlice(WireCreateSpec, allocator, boot.spec_json, .{
         .ignore_unknown_fields = true,
-        // The boot envelope is scrubbed once its input and adoption secret
-        // have been transferred into their live owners.
         .allocate = .alloc_always,
     });
     defer spec.deinit();
@@ -1542,7 +1740,7 @@ fn runHostRoleWithControl(
 
     var runtime = try HostRuntime.open(
         allocator,
-        hive_home,
+        roots,
         locator.session_id,
         boot.adoption_secret,
     );
@@ -1554,25 +1752,16 @@ fn runHostRoleWithControl(
     var pty = try pty_host.PtyHost.init(allocator);
     defer pty.deinit();
 
-    // Production create runs through the neutral host, so a created session is
-    // recorded in the registry the neutral control plane enumerates and is
-    // covered by the create-idempotency ledger. The terminal itself is still
-    // this process's `pty`; the neutral host borrows it.
-    var neutral_runtime = try neutral_host.Runtime.open(allocator, hive_home);
-    defer neutral_runtime.deinit();
-    var neutral_registry = try neutral_host.Registry.open(allocator, &neutral_runtime);
+    var nh_runtime = try neutral_runtime.Runtime.open(allocator, roots);
+    defer nh_runtime.deinit();
+    var neutral_registry = try neutral_runtime.Registry.open(allocator, &nh_runtime);
     defer neutral_registry.deinit();
     var direct = neutral_host.DirectHost.init(allocator, &neutral_registry, &pty);
     defer direct.deinit();
 
     const created = try direct.host().create(.{
-        // The neutral host never interprets the key; the Hive session id is
-        // simply the opaque name the adapter above already chose.
+        // The neutral host never interprets the key; the Hive session id is simply the opaque name the adapter above already chose.
         .key = locator.session_id,
-        // The frozen create-begin payload carries no idempotency key, so it is
-        // derived from the create attempt this boot envelope represents: a
-        // respawned host replaying the same attempt replays the ledger entry
-        // instead of launching a second child.
         .idempotencyKey = spec.value.visibility.openTerminalRevision,
         .command = .{
             .executable = spec.value.argv[0],
@@ -1581,9 +1770,7 @@ fn runHostRoleWithControl(
             .completeEnvironment = try environmentEntries(a, spec.value.environment),
             .descriptorMap = &.{},
         },
-        // Spelled out to preserve the behaviour of the bare spawn this
-        // replaced, which passed no profile and so took the terminal layer's
-        // defaults. The frozen spec carries no profile to honour yet.
+        // Spelled out to preserve the behaviour of the bare spawn this replaced, which passed no profile and so took the terminal layer's defaults. The frozen spec carries no profile to honour yet.
         .terminalProfile = .{
             .inputMode = .literal,
             .echo = false,
@@ -1612,12 +1799,11 @@ fn runHostRoleWithControl(
         },
         .exited, .unknown => return error.ProviderExecFailed,
     };
-    // Evidence the frozen create result does not carry,
-    const launch_evidence = direct.launch_evidence orelse return error.ProviderExecFailed;
+    _ = direct.launch_evidence orelse return error.ProviderExecFailed;
 
-    var neutral_endpoint = try neutral_host.HostEndpoint.open(
+    var neutral_endpoint = try neutral_runtime.HostEndpoint.open(
         allocator,
-        &neutral_runtime,
+        &nh_runtime,
         created.session,
     );
     defer neutral_endpoint.deinit();
@@ -1643,16 +1829,8 @@ fn runHostRoleWithControl(
         runtime.directory,
     );
     defer state.deinit();
-    const real_encoder = try RealInputEncoder.create(allocator, real_engine);
-    defer real_encoder.deinit();
-    var arbiter = input_arbiter.InputArbiter.init(
-        allocator,
-        sink.arbiterSink(),
-        real_encoder.encoder(),
-        real_encoder.cancelEncoder(),
-    );
+    var arbiter = input_arbiter.InputArbiter.init(sink.arbiterSink());
     defer arbiter.deinit();
-    try queueInitialInput(allocator, real_encoder, &sink, boot.initial_input);
     var persistence: PersistenceCursor = .{};
     try persistTerminalState(&state, runtime.directory, &persistence, .forced);
 
@@ -1662,25 +1840,13 @@ fn runHostRoleWithControl(
     };
     var host_token_storage: [64]u8 = undefined;
     const host_token = try host_identity.start_token.format(&host_token_storage);
-    // Already formatted by the create that
     const root_token = launch.child.startToken;
-    // The CLOEXEC barrier above proves execve(spec.argv[0],...) succeeded.
-    // Verify the contract's resolved argv[0] identity, not a later proc_pidpath
-    // sample: hardened or self-replacing providers can make that sample
-    // unobservable even though this host remains their direct parent.
-    const executable_verified = sameExecutableIdentity(
-        allocator,
-        spec.value.expectedExecutable,
-        spec.value.argv[0],
-    );
     const host_executable = host_identity.executablePath();
     if (host_executable.len == 0) return error.HostIdentityUnavailable;
     const host_build_id = try executableBuildHash(allocator, host_executable);
     defer allocator.free(host_build_id);
-    var created_storage: [24]u8 = undefined;
     var expiry_storage: [24]u8 = undefined;
-    const created_at = try broker.wallDeadline(&created_storage, 0);
-    const expires_at = try broker.wallDeadline(
+    const expires_at = try wall_clock.deadline(
         &expiry_storage,
         generated.limits.visibility_expiry_ms,
     );
@@ -1722,10 +1888,6 @@ fn runHostRoleWithControl(
             .checkpoint_seq = checkpointWireSeq(&state),
         },
         .expires_at = try a.dupe(u8, expires_at),
-        .created_at = try a.dupe(u8, created_at),
-        .checkpoint_available = state.checkpointAvailable(),
-        .executable_verified = executable_verified,
-        .complete = launch_evidence.rootSnapshotStatus == .stable,
     };
     var core = try HostCore.init(
         allocator,
@@ -1741,34 +1903,27 @@ fn runHostRoleWithControl(
         .directory = runtime.directory,
         .arbiter = &arbiter,
     });
-    // The broker forked this process, so it is still the parent here. Watching
-    // it directly is what replaced the visibility lease: a host orphaned by a
-    // dead broker reparents to launchd and would otherwise keep a vendor
-    // running — and burning tokens — with nobody left to stop it. A restarting
-    // broker re-binds this watch when it proves the adoption secret.
     core.bindSupervisor(host_core.SupervisorWatch.of(c.getppid()) orelse
         return error.SupervisorUnobservable);
-    var neutral_evidence: NeutralLiveEvidenceSource = .{
+    var live_evidence: NeutralLiveEvidenceSource = .{
         .core = &core,
         .pty = &pty,
         .state = &state,
     };
     var neutral_platform = process_inspector.RealPlatform.init();
-    // Bound at construction: without a terminal the neutral resize handler has
-    // nothing to set and every resize the shipped host receives is `unknown`.
     var neutral_terminal: NeutralTerminalSource = .{ .pty = &pty, .state = &state };
-    var neutral_operations = try neutral_control_plane.HostOperations.initServingTerminal(
+    var host_operations = try neutral_operations.HostOperations.initServingTerminal(
         allocator,
         &neutral_registry,
         neutral_endpoint.session,
         neutral_platform.platform(),
-        neutral_evidence.provider(),
-        neutral_control_plane.EvidenceClock.system(),
+        live_evidence.provider(),
+        neutral_evidence.EvidenceClock.system(),
         neutral_terminal.provider(),
     );
-    defer neutral_operations.deinit();
+    defer host_operations.deinit();
     var neutral_serving: NeutralHostServing = .{
-        .operations = &neutral_operations,
+        .operations = &host_operations,
         .core = &core,
     };
     boot.deinit(allocator);
@@ -1794,6 +1949,7 @@ fn runHostRoleWithControl(
         &timer,
         &pty,
         &state,
+        real_engine,
         &persistence,
     );
 }
@@ -1812,9 +1968,12 @@ test "ready neutral endpoint drops a timed-out partial frame" {
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try neutral_host.Runtime.open(std.testing.allocator, root);
+    var runtime = try neutral_runtime.Runtime.open(
+        std.testing.allocator,
+        .{ .socket = root, .state = root },
+    );
     defer runtime.deinit();
-    var registry = try neutral_host.Registry.open(std.testing.allocator, &runtime);
+    var registry = try neutral_runtime.Registry.open(std.testing.allocator, &runtime);
     defer registry.deinit();
     const reserved = try registry.reserve(
         "partial-frame-proof",
@@ -1826,7 +1985,7 @@ test "ready neutral endpoint drops a timed-out partial frame" {
         .reserved => |record| record.session,
         .existing => return error.UnexpectedNeutralSessionReplay,
     };
-    var endpoint = try neutral_host.HostEndpoint.open(
+    var endpoint = try neutral_runtime.HostEndpoint.open(
         std.testing.allocator,
         &runtime,
         session,
@@ -1850,14 +2009,14 @@ test "ready neutral endpoint drops a timed-out partial frame" {
 
         fn operation(
             context: *anyopaque,
-            _: neutral_host.OperationRequest,
-        ) !neutral_host.OperationResponse {
+            _: neutral_runtime.OperationRequest,
+        ) !neutral_runtime.OperationResponse {
             const self: *@This() = @ptrCast(@alignCast(context));
             self.called = true;
             return .{ .payload = "unexpected" };
         }
 
-        fn handler(self: *@This()) neutral_host.OperationHandler {
+        fn handler(self: *@This()) neutral_runtime.OperationHandler {
             return .{ .context = self, .callFn = operation };
         }
     };
@@ -1869,34 +2028,11 @@ test "ready neutral endpoint drops a timed-out partial frame" {
 }
 
 test "WELCOME engine build id passes create validation and a wrong id fails" {
-    const welcome_engine_build_id = try broker.engineBuildIdHex();
+    const welcome_engine_build_id = try session_types.engineBuildIdHex();
     try requireEngineBuildId(&welcome_engine_build_id);
     var wrong = welcome_engine_build_id;
     wrong[0] = if (wrong[0] == '0') '1' else '0';
     try std.testing.expectError(error.EngineMismatch, requireEngineBuildId(&wrong));
-}
-
-test "host registration confirms a future lease bounded by fifteen seconds" {
-    var valid_storage: [24]u8 = undefined;
-    const valid = try broker.wallDeadline(
-        &valid_storage,
-        generated.limits.visibility_expiry_ms,
-    );
-    const remaining = try validatedHostLeaseRemaining(valid);
-    try std.testing.expect(remaining > 0);
-    try std.testing.expect(
-        remaining <= generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
-    );
-
-    var unbounded_storage: [24]u8 = undefined;
-    const unbounded = try broker.wallDeadline(
-        &unbounded_storage,
-        generated.limits.visibility_expiry_ms + 1_000,
-    );
-    try std.testing.expectError(
-        error.InvalidTimestamp,
-        validatedHostLeaseRemaining(unbounded),
-    );
 }
 
 test "a running host holds its own lease open" {
@@ -1905,10 +2041,7 @@ test "a running host holds its own lease open" {
     const first = lease.expires_mono_ns;
     try std.testing.expect(!lease.expired(first - 1));
 
-    // Past the unrenewed deadline with no renewal from anywhere: the host is
-    // still running, so it touches its own lease and the terminal lives. A
-    // running host holds its own lease open: reading an unrenewed lease as
-    // death kills working agents whose vendor TUI is rendered and running.
+    // Past the unrenewed deadline with no renewal from anywhere: the host is still running, so it touches its own lease and the terminal lives. A running host holds its own lease open: reading an unrenewed lease as death kills working agents whose vendor TUI is rendered and running.
     lease.touch(first + 1);
     try std.testing.expect(lease.expires_mono_ns > first);
     try std.testing.expect(!lease.expired(first + 1));
@@ -2041,15 +2174,8 @@ test "live VT effects use only the bounded PTY sink with an audit control" {
 }
 
 test "real libghostty-vt export is copied and TerminalState is sole engine owner" {
-    // Assert the exact options object handed to ghostty_terminal_new. A
-    // literal 50_000 at the constructor call site must make this test red.
     const options = RealVtEngine.terminalOptions(80, 24);
     try std.testing.expectEqual(canonical_scrollback_bytes, options.max_scrollback);
-    const TestClock = struct {
-        fn now(_: *anyopaque) u64 {
-            return 1;
-        }
-    };
     var clock_context: u8 = 0;
     const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
     const engine = real_engine.engine();
@@ -2068,7 +2194,7 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
         std.testing.allocator,
         engine,
         RealVtEngine.factory(),
-        .{ .context = &clock_context, .nowFn = TestClock.now },
+        .{ .context = &clock_context, .nowFn = FixedClock.now },
         &engine_build_id,
         .{
             .columns = 80,
@@ -2098,141 +2224,8 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
         std.posix.AT.SYMLINK_NOFOLLOW,
     );
     try std.testing.expectEqual(first_checkpoint.ino, unchanged_checkpoint.ino);
-    // No real_engine.deinit: TerminalState owns the injected engine and its
-    // deferred deinit is the single destruction path.
 }
 
-test "48 MiB scrollback survives 500x500 streamed checkpoint and real lib-vt restore" {
-    const allocator = std.testing.allocator;
-    const real_engine = try RealVtEngine.create(allocator, 80, 24, null);
-
-    var image_limit: u64 = 0;
-    try std.testing.expectEqual(
-        ghostty_c.GHOSTTY_SUCCESS,
-        ghostty_c.ghostty_terminal_get(
-            real_engine.terminal,
-            ghostty_c.GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT,
-            &image_limit,
-        ),
-    );
-    try std.testing.expectEqual(@as(u64, 16 * 1024 * 1024), image_limit);
-
-    const line_count = 80_000;
-    const columns = 79;
-    const stride = columns + 2;
-    const history = try allocator.alloc(u8, line_count * stride);
-    defer allocator.free(history);
-    for (0..line_count) |line| {
-        const start = line * stride;
-        @memset(history[start..][0..columns], 'x');
-        history[start + columns] = '\r';
-        history[start + columns + 1] = '\n';
-    }
-    try real_engine.engine().write(history);
-
-    var total_rows_before: usize = 0;
-    var scrollback_rows_before: usize = 0;
-    try std.testing.expectEqual(
-        ghostty_c.GHOSTTY_SUCCESS,
-        ghostty_c.ghostty_terminal_get(
-            real_engine.terminal,
-            ghostty_c.GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
-            &total_rows_before,
-        ),
-    );
-    try std.testing.expectEqual(
-        ghostty_c.GHOSTTY_SUCCESS,
-        ghostty_c.ghostty_terminal_get(
-            real_engine.terminal,
-            ghostty_c.GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
-            &scrollback_rows_before,
-        ),
-    );
-    // Replacing the constructor's actual option with 50_000 bytes retains
-    // about 800 rows and makes this direct behavioral proof fail.
-    try std.testing.expectEqual(@as(usize, 71_727), total_rows_before);
-    try std.testing.expectEqual(@as(usize, 71_703), scrollback_rows_before);
-
-    const TestClock = struct {
-        fn now(_: *anyopaque) u64 {
-            return 1;
-        }
-    };
-    var clock_context: u8 = 0;
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    const engine_build_id = try RealVtEngine.engineBuildId();
-    var state = terminal_state.TerminalState.init(
-        allocator,
-        real_engine.engine(),
-        RealVtEngine.factory(),
-        .{ .context = &clock_context, .nowFn = TestClock.now },
-        &engine_build_id,
-        .{
-            .columns = 80,
-            .rows = 24,
-            .cell_width_px_16_16 = 8 << 16,
-            .cell_height_px_16_16 = 16 << 16,
-        },
-        temporary.dir,
-    );
-    defer state.deinit();
-    try state.resize(.{
-        .columns = 500,
-        .rows = 500,
-        .cell_width_px_16_16 = 8 << 16,
-        .cell_height_px_16_16 = 16 << 16,
-    });
-
-    const checkpoint = state.newestCheckpoint() orelse return error.TestUnexpectedResult;
-    // Mutation control: restoring the old 64 MiB allocating producer makes
-    // this exact test fail before a checkpoint can be retained.
-    try std.testing.expect(checkpoint.header.payload_length >
-        terminal_state.checkpoint_contiguous_max_bytes);
-    try std.testing.expectEqual(@as(u32, 309_929_873), checkpoint.header.payload_length);
-    try std.testing.expect(checkpoint.header.payload_length <=
-        terminal_state.checkpoint_max_bytes);
-    try std.testing.expect(state.checkpointAvailable());
-
-    const restored = try RealVtEngine.create(allocator, 80, 24, null);
-    defer restored.engine().deinit();
-    _ = try state.restoreInto(restored.engine());
-    const live_digest = state.engine.digest();
-    const restored_digest = restored.engine().digest();
-    try std.testing.expectEqualSlices(u8, &live_digest, &restored_digest);
-
-    var live_total_rows: usize = 0;
-    var live_scrollback_rows: usize = 0;
-    var restored_total_rows: usize = 0;
-    var restored_scrollback_rows: usize = 0;
-    for ([_]struct { terminal: ghostty_c.GhosttyTerminal, total: *usize, scrollback: *usize }{
-        .{ .terminal = real_engine.terminal, .total = &live_total_rows, .scrollback = &live_scrollback_rows },
-        .{ .terminal = restored.terminal, .total = &restored_total_rows, .scrollback = &restored_scrollback_rows },
-    }) |measurement| {
-        try std.testing.expectEqual(
-            ghostty_c.GHOSTTY_SUCCESS,
-            ghostty_c.ghostty_terminal_get(
-                measurement.terminal,
-                ghostty_c.GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
-                measurement.total,
-            ),
-        );
-        try std.testing.expectEqual(
-            ghostty_c.GHOSTTY_SUCCESS,
-            ghostty_c.ghostty_terminal_get(
-                measurement.terminal,
-                ghostty_c.GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
-                measurement.scrollback,
-            ),
-        );
-    }
-    try std.testing.expectEqual(live_total_rows, restored_total_rows);
-    try std.testing.expectEqual(live_scrollback_rows, restored_scrollback_rows);
-    try std.testing.expectEqual(@as(usize, 71_727), live_total_rows);
-    try std.testing.expectEqual(@as(usize, 71_227), live_scrollback_rows);
-}
-
-/// Reads every byte already buffered on `stream` without blocking.
 fn drainReadable(stream: std.net.Stream, sink: *std.ArrayList(u8)) !void {
     var buf: [4096]u8 = undefined;
     while (true) {
@@ -2249,10 +2242,6 @@ fn drainReadable(stream: std.net.Stream, sink: *std.ArrayList(u8)) !void {
     }
 }
 
-// Regression: the host loop feeds PTY output and THEN pumps the attached
-// viewer, so a checkpoint firing inside feedOutput evicted the journal ahead of
-// the viewer's sent_seq; the pump's push then read an evicted range and the host
-// detached a live pane every checkpoint interval. Drives the loop's exact order.
 test "a checkpoint inside feedOutput never detaches the attached viewer" {
     const AdvancingClock = struct {
         nanos: u64 = 0,
@@ -2319,8 +2308,6 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
     var received: std.ArrayList(u8) = .{};
     defer received.deinit(std.testing.allocator);
 
-    // Loop iteration one: feed, then pump. The collection publishes its
-    // slowest delivered high-water as the retention floor.
     try state.feedOutput("first");
     pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
     try std.testing.expectEqual(@as(usize, 1), attached.items.len);
@@ -2328,8 +2315,7 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
     try drainReadable(sockets[1], &received);
     try std.testing.expect(std.mem.indexOf(u8, received.items, "first") != null);
 
-    // Loop iteration two: the 30s interval has elapsed, so feedOutput
-    // checkpoints and evicts before the pump ever runs.
+    // Loop iteration two: the 30s interval has elapsed, so feedOutput checkpoints and evicts before the pump ever runs.
     clock.nanos += terminal_state.checkpoint_interval_ns;
     try state.feedOutput("second");
     try std.testing.expect(state.checkpointSeq() > 0);
@@ -2341,8 +2327,6 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
     try drainReadable(sockets[1], &received);
     try std.testing.expect(std.mem.indexOf(u8, received.items, "second") != null);
 
-    // A viewer that is gone must release the floor, or retention would grow to
-    // the journal bound behind a pane nobody is watching.
     peer_open = false;
     sockets[1].close();
     pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
@@ -2351,11 +2335,6 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
 }
 
 test "daemon viewer coexists with renderer and detaches independently" {
-    const StoppedClock = struct {
-        fn now(_: *anyopaque) u64 {
-            return 1;
-        }
-    };
     var clock_context: u8 = 0;
 
     const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
@@ -2366,7 +2345,7 @@ test "daemon viewer coexists with renderer and detaches independently" {
         std.testing.allocator,
         real_engine.engine(),
         RealVtEngine.factory(),
-        .{ .context = &clock_context, .nowFn = StoppedClock.now },
+        .{ .context = &clock_context, .nowFn = FixedClock.now },
         &engine_build_id,
         .{
             .columns = 80,
@@ -2403,10 +2382,8 @@ test "daemon viewer coexists with renderer and detaches independently" {
     }
     try installAttachedViewer(
         std.testing.allocator,
-        &core,
         &attached,
         &state,
-        timer.read(),
         .{
             .stream = renderer_sockets[0],
             .authorization = .{
@@ -2421,15 +2398,13 @@ test "daemon viewer coexists with renderer and detaches independently" {
     );
     try installAttachedViewer(
         std.testing.allocator,
-        &core,
         &attached,
         &state,
-        timer.read(),
         .{
             .stream = daemon_sockets[0],
             .authorization = .{
                 .viewer_id = try std.testing.allocator.dupe(u8, "hive-daemon:fixture"),
-                .operations = .{ .view = true, .human_input = true },
+                .operations = .{ .view = true, .user_input = true },
                 .geometry = fixtureRegistration().record.geometry,
                 .after_seq = 0,
             },
@@ -2468,17 +2443,8 @@ test "daemon viewer coexists with renderer and detaches independently" {
     );
 }
 
-// The journal-pressure path deliberately evicts past the viewer floor, and the
-// viewer it drops is by definition one whose unacknowledged window is full. If
-// the pump tested backpressure first it would skip the cursor read forever: the
-// lost range would never be observed, the socket would stay open, and the pane
-// would freeze silently — which contract forbids.
+// The journal-pressure path deliberately evicts past the viewer floor, and the viewer it drops is by definition one whose unacknowledged window is full. If the pump tested backpressure first it would skip the cursor read forever: the lost range would never be observed, the socket would stay open, and the pane would freeze silently — which contract forbids.
 test "retention loss detaches a viewer whose unacknowledged window is full" {
-    const StoppedClock = struct {
-        fn now(_: *anyopaque) u64 {
-            return 1;
-        }
-    };
     var clock_context: u8 = 0;
 
     const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
@@ -2489,7 +2455,7 @@ test "retention loss detaches a viewer whose unacknowledged window is full" {
         std.testing.allocator,
         real_engine.engine(),
         RealVtEngine.factory(),
-        .{ .context = &clock_context, .nowFn = StoppedClock.now },
+        .{ .context = &clock_context, .nowFn = FixedClock.now },
         &engine_build_id,
         .{ .columns = 80, .rows = 24 },
         temporary.dir,
@@ -2511,10 +2477,6 @@ test "retention loss detaches a viewer whose unacknowledged window is full" {
     const sockets = try socketPair();
     defer sockets[1].close();
 
-    // Exactly what the pressure path leaves behind: the journal has been
-    // evicted past a viewer whose unacknowledged window is at the cap. Feeding
-    // there for real costs 8 MiB of Debug libghostty-vt parsing (minutes — see
-    // FreezeEEngine), so the cursors are set to that state directly.
     const window = generated.limits.viewer_queue_bytes;
     state.journal.start_seq = window + 1;
     state.output_seq = window + 1;
@@ -2535,8 +2497,7 @@ test "retention loss detaches a viewer whose unacknowledged window is full" {
         .acked_seq = 0,
     });
     publishViewerFloor(&attached, &state);
-    // Precondition: the backpressure gate really is shut, so this test cannot
-    // pass through the ordinary push-then-fail route.
+    // Precondition: the backpressure gate really is shut, so this test cannot pass through the ordinary push-then-fail route.
     try std.testing.expect(
         attached.items[0].sent_seq - attached.items[0].acked_seq >= window,
     );
@@ -2546,51 +2507,12 @@ test "retention loss detaches a viewer whose unacknowledged window is full" {
     try std.testing.expectEqual(@as(usize, 0), attached.items.len);
     try std.testing.expect(state.viewer_floor_seq == null);
 
-    // Peer-observable: EOF, not an open socket that never speaks again. The
-    // wire cannot carry a typed failure here (ERROR is response-flagged and an
-    // unsolicited request_id 0 is malformed), so the close IS the signal, and
-    // the re-attach types the gap.
+    // Peer-observable: EOF, not an open socket that never speaks again. The wire cannot carry a typed failure here (ERROR is response-flagged and an unsolicited request_id 0 is malformed), so the close IS the signal, and the re-attach types the gap.
     var eof: [1]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 0), try std.posix.read(sockets[1].handle, &eof));
 }
 
-test "real input encoder uses terminal paste mode and separate Ghostty keys" {
-    const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
-    defer real_engine.engine().deinit();
-    const encoder = try RealInputEncoder.create(std.testing.allocator, real_engine);
-    defer encoder.deinit();
-    var encoded: std.ArrayList(u8) = .{};
-    defer {
-        if (encoded.capacity > 0) std.crypto.secureZero(u8, encoded.allocatedSlice());
-        encoded.deinit(std.testing.allocator);
-    }
-    try encoded.ensureTotalCapacity(std.testing.allocator, 256);
-
-    try encoder.encoder().encode(
-        std.testing.allocator,
-        "hello\nunsafe\x1b",
-        .none,
-        &encoded,
-    );
-    try std.testing.expectEqualStrings("hello\runsafe ", encoded.items);
-
-    encoded.clearRetainingCapacity();
-    try real_engine.engine().write("\x1b[?2004h");
-    try encoder.encoder().encode(
-        std.testing.allocator,
-        "body",
-        .@"return",
-        &encoded,
-    );
-    try std.testing.expect(std.mem.startsWith(u8, encoded.items, "\x1b[200~body\x1b[201~"));
-    try std.testing.expectEqual(@as(u8, '\r'), encoded.items[encoded.items.len - 1]);
-
-    encoded.clearRetainingCapacity();
-    try encoder.cancelEncoder().encode(std.testing.allocator, &encoded);
-    try std.testing.expectEqualStrings("\x03", encoded.items);
-}
-
-test "host runtime accepts the broker layout and rejects a public sessiond directory" {
+test "host runtime accepts the launcher layout and rejects a public hosts directory" {
     var path_storage: [96]u8 = undefined;
     const root = try std.fmt.bufPrint(
         &path_storage,
@@ -2599,32 +2521,159 @@ test "host runtime accepts the broker layout and rejects a public sessiond direc
     );
     try std.fs.makeDirAbsolute(root);
     defer std.fs.deleteTreeAbsolute(root) catch {};
-    var broker_runtime = try broker.Runtime.open(std.testing.allocator, root);
-    defer broker_runtime.deinit();
     const session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000a1";
-    var directory = try broker_runtime.openHostDirectory(session_id, true);
-    const secret = try broker.createAdoptionSecret(directory);
-    directory.close();
-
-    var home = try std.fs.openDirAbsolute(root, .{});
-    defer home.close();
-    var runtime_parent = try home.openDir("runtime", .{ .no_follow = true });
-    defer runtime_parent.close();
-    try runtime_parent.chmod(0o755);
+    var state_root = try std.fs.openDirAbsolute(root, .{});
+    defer state_root.close();
+    try state_root.makePath("hosts/ses_018f1e90-7b5a-7cc0-8000-0000000000a1");
+    // The root's own mode is the caller's business — it is asserted for ownership only, so a
+    // group-readable root must still be accepted. Privacy is enforced from `hosts` inward.
+    try state_root.chmod(0o755);
+    var hosts = try state_root.openDir("hosts", .{ .no_follow = true });
+    defer hosts.close();
+    try hosts.chmod(0o700);
+    var directory = try hosts.openDir(session_id, .{ .no_follow = true });
+    defer directory.close();
+    try directory.chmod(0o700);
+    const secret: [32]u8 = @splat(0x5a);
+    var secret_file = try directory.createFile("adopt.cap", .{ .mode = 0o600, .exclusive = true });
+    try secret_file.chmod(0o600);
+    try secret_file.writeAll(&secret);
+    secret_file.close();
+    const roots: security.Roots = .{ .socket = root, .state = root };
     var host_runtime = try HostRuntime.open(
         std.testing.allocator,
-        root,
+        roots,
         session_id,
         secret,
     );
+    // The socket is bound under the socket root, not inside the session's state directory — the
+    // state directory is free to sit under a home too long to bind in.
+    try std.testing.expect(std.mem.endsWith(
+        u8,
+        host_runtime.socket_path,
+        &host_process.hostSocketName(session_id),
+    ));
+    _ = try std.fs.cwd().statFile(host_runtime.socket_path);
     host_runtime.deinit();
 
-    try broker_runtime.directory.chmod(0o755);
+    try hosts.chmod(0o755);
     try std.testing.expectError(
         error.DirectorySubstitution,
-        HostRuntime.open(std.testing.allocator, root, session_id, secret),
+        HostRuntime.open(std.testing.allocator, roots, session_id, secret),
     );
 }
+
+test "a session reclaims its own dead socket and is refused its live one" {
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(
+        &path_storage,
+        "/tmp/hr{x}",
+        .{std.crypto.random.int(u32)},
+    );
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    const session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000a1";
+    var state_root = try std.fs.openDirAbsolute(root, .{});
+    defer state_root.close();
+    try state_root.makePath("hosts/ses_018f1e90-7b5a-7cc0-8000-0000000000a1");
+    var hosts = try state_root.openDir("hosts", .{ .no_follow = true });
+    defer hosts.close();
+    try hosts.chmod(0o700);
+    var directory = try hosts.openDir(session_id, .{ .no_follow = true });
+    defer directory.close();
+    try directory.chmod(0o700);
+    const secret: [32]u8 = @splat(0x5a);
+    var secret_file = try directory.createFile("adopt.cap", .{ .mode = 0o600, .exclusive = true });
+    try secret_file.chmod(0o600);
+    try secret_file.writeAll(&secret);
+    secret_file.close();
+    const roots: security.Roots = .{ .socket = root, .state = root };
+
+    // A socket left behind by a host that died without unlinking: bound, then closed with the
+    // inode still on disk. This is what a SIGKILLed terminal leaves under a root nothing sweeps.
+    const name = host_process.hostSocketName(session_id);
+    const stale_path = try std.fs.path.join(std.testing.allocator, &.{ root, &name });
+    defer std.testing.allocator.free(stale_path);
+    {
+        const stale_address = try std.net.Address.initUnix(stale_path);
+        const saved_umask = std.c.umask(0o177);
+        var corpse = try stale_address.listen(.{});
+        _ = std.c.umask(saved_umask);
+        corpse.deinit();
+    }
+    _ = try std.fs.cwd().statFile(stale_path);
+
+    // STALE: the name is taken and nobody is behind it, so the session gets its socket back.
+    var reclaimed = try HostRuntime.open(std.testing.allocator, roots, session_id, secret);
+    _ = try std.fs.cwd().statFile(reclaimed.socket_path);
+
+    // LIVE: the same name, while the first host is still serving it, is refused — and the refusal
+    // must leave that socket exactly where it is. A reclaim that unlinked first would pass the
+    // refusal check above and still have handed one session's address to two hosts.
+    try std.testing.expectError(
+        error.SocketAddressHeldByLiveHost,
+        HostRuntime.open(std.testing.allocator, roots, session_id, secret),
+    );
+    _ = try std.fs.cwd().statFile(reclaimed.socket_path);
+    const survivor = try std.net.connectUnixSocket(reclaimed.socket_path);
+    survivor.close();
+    reclaimed.deinit();
+}
+
+test "the host socket root is preflighted against sun_path, as the neutral one already was" {
+    var path_storage: [96]u8 = undefined;
+    const base = try std.fmt.bufPrint(
+        &path_storage,
+        "/tmp/hp{x}",
+        .{std.crypto.random.int(u32)},
+    );
+    try std.fs.makeDirAbsolute(base);
+    defer std.fs.deleteTreeAbsolute(base) catch {};
+    const session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000a1";
+    var state_root = try std.fs.openDirAbsolute(base, .{});
+    defer state_root.close();
+    try state_root.makePath("hosts/ses_018f1e90-7b5a-7cc0-8000-0000000000a1");
+    var hosts = try state_root.openDir("hosts", .{ .no_follow = true });
+    defer hosts.close();
+    try hosts.chmod(0o700);
+    var directory = try hosts.openDir(session_id, .{ .no_follow = true });
+    defer directory.close();
+    try directory.chmod(0o700);
+    const secret: [32]u8 = @splat(0x5a);
+    var secret_file = try directory.createFile("adopt.cap", .{ .mode = 0o600, .exclusive = true });
+    try secret_file.chmod(0o600);
+    try secret_file.writeAll(&secret);
+    secret_file.close();
+
+    // A socket root one byte too long to hold any socket name. Before this preflight the host path
+    // never measured anything and the bind failed as a bare NameTooLong from inside boot.
+    const overlong_name: [90]u8 = @splat('x');
+    try state_root.makeDir(&overlong_name);
+    const overlong = try std.fs.path.join(std.testing.allocator, &.{ base, &overlong_name });
+    defer std.testing.allocator.free(overlong);
+    try std.testing.expectError(error.SocketPathTooLong, HostRuntime.open(
+        std.testing.allocator,
+        .{ .socket = overlong, .state = base },
+        session_id,
+        secret,
+    ));
+
+    // Positive control: the identical layout with a root that fits opens, so the refusal above is
+    // the length and nothing else.
+    var accepted = try HostRuntime.open(
+        std.testing.allocator,
+        .{ .socket = base, .state = base },
+        session_id,
+        secret,
+    );
+    accepted.deinit();
+}
+
+const FixedClock = struct {
+    fn now(_: *anyopaque) u64 {
+        return 1;
+    }
+};
 
 fn fixtureRegistration() HostRegistration {
     return .{
@@ -2668,89 +2717,19 @@ fn fixtureRegistration() HostRegistration {
             .checkpoint_seq = 0,
         },
         .expires_at = "2026-07-17T14:30:15.000Z",
-        .created_at = "2026-07-17T14:30:00.000Z",
-        .checkpoint_available = false,
-        .executable_verified = true,
-        .complete = true,
     };
 }
 
-const TestIdentityEncoder = struct {
-    context: u8 = 0,
-
-    fn encoder(self: *TestIdentityEncoder) input_arbiter.Encoder {
-        return .{ .context = self, .encodeFn = encode };
-    }
-
-    fn cancelEncoder(self: *TestIdentityEncoder) input_arbiter.CancelEncoder {
-        return .{ .context = self, .encodeFn = cancel };
-    }
-
-    fn encode(
-        context: *anyopaque,
-        allocator: std.mem.Allocator,
-        body: []const u8,
-        submit: input_arbiter.SubmitAction,
-        out: *std.ArrayList(u8),
-    ) anyerror!void {
-        _ = context;
-        _ = submit;
-        try out.appendSlice(allocator, body);
-    }
-
-    fn cancel(
-        context: *anyopaque,
-        allocator: std.mem.Allocator,
-        out: *std.ArrayList(u8),
-    ) anyerror!void {
-        _ = context;
-        _ = allocator;
-        _ = out;
-    }
-};
-
-test "HOST_REGISTER record and CREATED use generated strict schemas" {
+test "HOST_REGISTER uses its generated strict schema" {
     const registration = fixtureRegistration();
     const host_register = try encodeHostRegister(std.testing.allocator, registration);
     defer std.testing.allocator.free(host_register);
-    const record = try encodeRecordJson(std.testing.allocator, registration);
-    defer std.testing.allocator.free(record);
-    const created = try encodeCreatedPayload(std.testing.allocator, registration);
-    defer std.testing.allocator.free(created);
     try std.testing.expect(protocol.validateControlPayload(
         std.testing.allocator,
         generated.wire_schema.host_register_payload,
         host_register,
     ));
-    try std.testing.expect(protocol.validateControlPayload(
-        std.testing.allocator,
-        generated.wire_schema.host_record_v1,
-        record,
-    ));
-    try std.testing.expect(protocol.validateControlPayload(
-        std.testing.allocator,
-        generated.wire_schema.created_payload,
-        created,
-    ));
 }
-
-const RegistrationThread = struct {
-    stream: std.net.Stream,
-    registration: HostRegistration,
-    failure: ?anyerror = null,
-    boot: ?BootMessage = null,
-
-    fn run(self: *@This()) void {
-        self.boot = serveInheritedRegistration(
-            std.heap.c_allocator,
-            self.stream,
-            self.registration,
-        ) catch |err| {
-            self.failure = err;
-            return;
-        };
-    }
-};
 
 fn socketPair() ![2]std.net.Stream {
     var sockets: [2]c_int = .{ -1, -1 };
@@ -2762,56 +2741,6 @@ fn socketPair() ![2]std.net.Stream {
     };
 }
 
-test "fresh child receives private boot and returns one READY registration" {
-    var sockets = try socketPair();
-    defer sockets[0].close();
-    defer sockets[1].close();
-    var expiry_storage: [24]u8 = undefined;
-    var registration = fixtureRegistration();
-    registration.expires_at = try broker.wallDeadline(
-        &expiry_storage,
-        generated.limits.visibility_expiry_ms,
-    );
-    var host: RegistrationThread = .{
-        .stream = sockets[1],
-        .registration = registration,
-    };
-    const thread = try std.Thread.spawn(.{}, RegistrationThread.run, .{&host});
-    var thread_joined = false;
-    defer if (!thread_joined) {
-        _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
-        thread.join();
-    };
-    const secret: [32]u8 = @splat(0x5a);
-    var ready = try launchFreshChild(
-        std.testing.allocator,
-        sockets[0],
-        "{\"schemaVersion\":1}",
-        "initial",
-        secret,
-        "host-build-a",
-        "instance-a",
-    );
-    defer ready.parsed.deinit(std.testing.allocator);
-    try acknowledgeFreshChild(sockets[0], ready.request_header);
-    thread.join();
-    thread_joined = true;
-    try std.testing.expect(host.failure == null);
-    var boot = &(host.boot orelse return error.MissingBootMessage);
-    defer boot.deinit(std.heap.c_allocator);
-    try std.testing.expectEqualStrings("initial", boot.initial_input);
-    try std.testing.expectEqualSlices(u8, &secret, &boot.adoption_secret);
-    try std.testing.expectEqualStrings(
-        fixtureRegistration().record.locator.session_id,
-        ready.parsed.registration.record.locator.session_id,
-    );
-    try std.testing.expect(
-        ready.parsed.registration.record.visibility.expires_mono_ns > 0 and
-            ready.parsed.registration.record.visibility.expires_mono_ns <=
-                generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
-    );
-}
-
 test "fresh child reports its real startup failure instead of an invalid frame" {
     var sockets = try socketPair();
     defer sockets[0].close();
@@ -2821,183 +2750,26 @@ test "fresh child reports its real startup failure instead of an invalid frame" 
         sockets[1],
         error.ProviderExecFailed,
     );
-    try std.testing.expectError(
-        error.FreshChildFailed,
-        launchFreshChild(
-            std.testing.allocator,
-            sockets[0],
-            "{\"schemaVersion\":1}",
-            "",
-            @splat(0),
-            "host-build-a",
-            "instance-a",
-        ),
+    var failure = try readRequiredFrame(std.testing.allocator, sockets[0]);
+    defer failure.deinit(std.testing.allocator);
+    try std.testing.expectEqual(generated.frame_type.@"error", failure.header.type_code);
+    try std.testing.expectEqual(
+        generated.frame_flag.response |
+            generated.frame_flag.final |
+            generated.frame_flag.error_flag,
+        failure.header.flags,
     );
-}
-
-test "HostLauncher positive control observes failed same-role exec" {
-    var child = try spawnHostProcess(std.testing.allocator, "/definitely/not/hive-sessiond");
-    defer child.stream.close();
-    var status: c_int = 0;
-    try std.testing.expectEqual(child.pid, c.waitpid(child.pid, &status, 0));
-    const wait_status: u32 = @bitCast(status);
-    try std.testing.expect(std.posix.W.IFEXITED(wait_status));
-    try std.testing.expectEqual(@as(u32, 127), std.posix.W.EXITSTATUS(wait_status));
-}
-
-test "production launcher restores trusted executable evidence after frozen registration parse" {
-    var expiry_storage: [24]u8 = undefined;
-    var registration = fixtureRegistration();
-    registration.expires_at = try broker.wallDeadline(
-        &expiry_storage,
-        generated.limits.visibility_expiry_ms,
-    );
-    const register_payload = try encodeHostRegister(std.testing.allocator, registration);
-    defer std.testing.allocator.free(register_payload);
-    var parsed = try parseRegistration(std.testing.allocator, register_payload);
-    defer parsed.deinit(std.testing.allocator);
-    try std.testing.expect(!parsed.registration.executable_verified);
-
-    const created_payload = try promoteTrustedExecutableEvidence(
+    try std.testing.expect(protocol.validateControlPayload(
         std.testing.allocator,
-        registration.record.expected_executable,
-        &.{registration.record.expected_executable},
-        &parsed,
-    );
-    defer std.testing.allocator.free(created_payload);
-    try std.testing.expect(parsed.registration.executable_verified);
-    try std.testing.expect(std.mem.indexOf(
-        u8,
-        created_payload,
-        "\"executableVerified\":true",
-    ) != null);
-}
-
-test "failed READY acknowledgement reaps and removes the launch client" {
-    var sockets = try socketPair();
-    defer sockets[1].close();
-    const no_sigpipe: c_int = 1;
-    if (c.setsockopt(
-        sockets[0].handle,
-        c.SOL_SOCKET,
-        c.SO_NOSIGPIPE,
-        &no_sigpipe,
-        @sizeOf(c_int),
-    ) != 0 or c.shutdown(sockets[0].handle, c.SHUT_WR) != 0)
-        return error.SocketWriteFailureUnavailable;
-
-    const pid = c.fork();
-    if (pid < 0) return error.HostForkFailed;
-    if (pid == 0) {
-        c._exit(0);
-    }
-    var child_reaped = false;
-    defer if (!child_reaped) killAndWait(@intCast(pid));
-
-    var expiry_storage: [24]u8 = undefined;
-    var registration = fixtureRegistration();
-    registration.record.host_pid = @intCast(pid);
-    registration.expires_at = try broker.wallDeadline(
-        &expiry_storage,
-        generated.limits.visibility_expiry_ms,
-    );
-    const payload = try encodeHostRegister(std.testing.allocator, registration);
-    defer std.testing.allocator.free(payload);
-    var parsed = try parseRegistration(std.testing.allocator, payload);
-    var parsed_owned = true;
-    defer if (parsed_owned) parsed.deinit(std.testing.allocator);
-
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
-    var wire = try broker.WireHostClient.init(
-        std.testing.allocator,
-        temporary.dir,
-        "/tmp/not-used-host.sock",
-        .{ .device = 1, .inode = 2, .owner_uid = std.posix.getuid(), .mode = 0o600 },
-        parsed.registration.record,
-        "broker-build-a",
-    );
-    var wire_owned = true;
-    defer if (wire_owned) wire.deinit();
-
-    var launcher: ProductionHostLauncher = .{
-        .allocator = std.testing.allocator,
-        .canonical_home = try std.testing.allocator.dupe(u8, "/tmp"),
-    };
-    defer launcher.deinit();
-    const client = try std.testing.allocator.create(LaunchClient);
-    client.* = .{
-        .allocator = std.testing.allocator,
-        .parsed = parsed,
-        .wire = wire,
-        .host_pid = @intCast(pid),
-        .adoption_secret = @splat(0),
-        .pending_id = 1,
-        .pending_stream = sockets[0],
-        .ready_header = .{
-            .minor = generated.protocol_minor,
-            .type_code = generated.frame_type.host_register,
-            .flags = 0,
-            .payload_length = 0,
-            .request_id = 2,
-            .stream_seq = 0,
-        },
-    };
-    try launcher.clients.append(std.testing.allocator, client);
-    parsed_owned = false;
-    wire_owned = false;
-
-    try std.testing.expect(!try launcher.finalizeOne(1, .admitted));
-    var status: c_int = 0;
-    var waited = c.waitpid(pid, &status, c.WNOHANG);
-    var attempts: u8 = 0;
-    while (waited == 0 and attempts < 100) : (attempts += 1) {
-        std.Thread.sleep(std.time.ns_per_ms);
-        waited = c.waitpid(pid, &status, c.WNOHANG);
-    }
-    if (waited == pid or (waited < 0 and std.posix.errno(waited) == .CHILD))
-        child_reaped = true;
-    try std.testing.expect(waited < 0 and std.posix.errno(waited) == .CHILD);
-    try std.testing.expectEqual(@as(usize, 0), launcher.clients.items.len);
-}
-
-test "HostLauncher child closes broker descriptors above inherited fd 3" {
-    var pipe_fds: [2]c_int = undefined;
-    if (c.pipe(&pipe_fds) != 0) return error.PipeFailed;
-    defer _ = c.close(pipe_fds[0]);
-    var write_fd = pipe_fds[1];
-    defer {
-        if (write_fd >= 0) _ = c.close(write_fd);
-    }
-    if (write_fd <= inherited_control_fd) {
-        const duplicate = c.fcntl(write_fd, c.F_DUPFD, inherited_control_fd + 1);
-        if (duplicate < 0) return error.DescriptorDuplicateFailed;
-        _ = c.close(write_fd);
-        write_fd = duplicate;
-    }
-    const pid = c.fork();
-    if (pid < 0) return error.HostForkFailed;
-    if (pid == 0) {
-        _ = c.close(pipe_fds[0]);
-        closeHostInheritedDescriptors(c.getdtablesize());
-        const byte: u8 = 1;
-        const wrote = c.write(write_fd, &byte, 1);
-        c._exit(if (wrote < 0 and std.posix.errno(wrote) == .BADF) 0 else 1);
-    }
-    _ = c.close(write_fd);
-    write_fd = -1;
-    var status: c_int = 0;
-    if (c.waitpid(pid, &status, 0) != pid) return error.ChildWaitFailed;
-    const wait_status: u32 = @bitCast(status);
-    try std.testing.expect(std.posix.W.IFEXITED(wait_status));
-    try std.testing.expectEqual(@as(u32, 0), std.posix.W.EXITSTATUS(wait_status));
-    var byte: [1]u8 = undefined;
-    try std.testing.expectEqual(@as(isize, 0), c.read(pipe_fds[0], &byte, 1));
+        generated.wire_schema.error_payload,
+        failure.payload,
+    ));
+    try std.testing.expect(std.mem.indexOf(u8, failure.payload, "ProviderExecFailed") != null);
 }
 
 fn adoptionChallenge(
     allocator: std.mem.Allocator,
-    locator: broker.Locator,
+    locator: session_types.Locator,
     secret: [32]u8,
 ) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -3081,15 +2853,19 @@ test "HOST_ADOPT positive controls reject wrong secret and expired lease" {
 const HostConnectionThread = struct {
     stream: std.net.Stream,
     core: *HostCore,
+    state: ?*terminal_state.TerminalState = null,
+    real_engine: ?*RealVtEngine = null,
     now_ns: u64,
     budget_ms: u64 = generated.limits.control_rpc_timeout_ms,
     failure: ?anyerror = null,
 
     fn run(self: *@This()) void {
-        serveHostConnection(
+        serveHostConnectionWithTerminal(
             std.heap.c_allocator,
             self.stream,
             self.core,
+            self.state,
+            self.real_engine,
             self.now_ns,
             self.budget_ms,
         ) catch |err| {
@@ -3249,8 +3025,7 @@ test "host.sock positive control returns typed error for wrong adoption secret" 
     try std.testing.expect(std.mem.indexOf(u8, response.payload, "UNAUTHENTICATED") != null);
 }
 
-/// Runs one full broker-role adoption handshake over its own connection so
-/// later RPC connections meet the privileged-RPC adoption precondition.
+/// Runs one full broker-role adoption handshake over its own connection so later RPC connections meet the privileged-RPC adoption precondition.
 fn adoptForTest(core: *HostCore, registration: HostRegistration, secret: [32]u8) !void {
     var sockets = try socketPair();
     defer sockets[0].close();
@@ -3275,9 +3050,81 @@ fn adoptForTest(core: *HostCore, registration: HostRegistration, secret: [32]u8)
     try std.testing.expect(core.adopted);
 }
 
-/// Serves one broker-role request on a fresh connection and returns the raw
-/// response frame; the caller owns (and must deinit) the frame.
-fn serveOneBrokerRequest(
+test "host.sock HOST_CAPTURE returns the measured terminal generation" {
+    const secret: [32]u8 = @splat(0x4d);
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.heap.c_allocator,
+        registration,
+        secret,
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    try adoptForTest(&core, registration, secret);
+
+    var clock_context: u8 = 0;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const engine_build_id = try RealVtEngine.engineBuildId();
+    const real_engine = try RealVtEngine.create(std.testing.allocator, 8, 3, null);
+    var state = terminal_state.TerminalState.init(
+        std.testing.allocator,
+        real_engine.engine(),
+        RealVtEngine.factory(),
+        .{ .context = &clock_context, .nowFn = FixedClock.now },
+        &engine_build_id,
+        .{
+            .columns = 8,
+            .rows = 3,
+            .cell_width_px_16_16 = 8 << 16,
+            .cell_height_px_16_16 = 16 << 16,
+        },
+        temporary.dir,
+    );
+    defer state.deinit();
+    try state.feedOutput("first\r\n\x1b[1msecond\x1b[0m");
+
+    var sockets = try socketPair();
+    defer sockets[0].close();
+    defer sockets[1].close();
+    var server: HostConnectionThread = .{
+        .stream = sockets[1],
+        .core = &core,
+        .state = &state,
+        .real_engine = real_engine,
+        .now_ns = 2_000,
+    };
+    const thread = try std.Thread.spawn(.{}, HostConnectionThread.run, .{&server});
+    errdefer thread.join();
+    errdefer _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
+    try writeTestBrokerHello(sockets[0], registration);
+    try readTestWelcome(sockets[0]);
+    try writeTestHostRequest(
+        sockets[0],
+        generated.frame_type.host_capture,
+        "{\"include\":\"visible-text\",\"maxRows\":2}",
+    );
+    var response = try readRequiredFrame(std.testing.allocator, sockets[0]);
+    defer response.deinit(std.testing.allocator);
+    thread.join();
+    try std.testing.expect(server.failure == null);
+    try std.testing.expectEqual(generated.frame_type.host_captured, response.header.type_code);
+    try std.testing.expectEqual(
+        generated.frame_flag.response | generated.frame_flag.final,
+        response.header.flags,
+    );
+    try std.testing.expect(protocol.validateControlPayload(
+        std.testing.allocator,
+        generated.wire_schema.capture_result,
+        response.payload,
+    ));
+    try std.testing.expect(std.mem.indexOf(u8, response.payload, "second") != null);
+}
+
+/// Serves one broker-role request on a fresh connection and returns the raw response frame; the caller owns (and must deinit) the frame.
+fn serveOneControlRequest(
     core: *HostCore,
     registration: HostRegistration,
     type_code: u16,
@@ -3332,14 +3179,13 @@ test "host.sock fails closed for privileged broker RPCs before adoption" {
     );
     defer core.deinit();
 
-    // GRANT_REGISTER pre-adoption: typed refusal, nothing stored.
     const grant_payload = try grantRegistrationPayload(
         std.testing.allocator,
         @splat(0x92),
         generated.limits.attach_grant_timeout_ms,
     );
     defer std.testing.allocator.free(grant_payload);
-    var grant_response = try serveOneBrokerRequest(
+    var grant_response = try serveOneControlRequest(
         &core,
         registration,
         generated.frame_type.grant_register,
@@ -3362,7 +3208,7 @@ test "host.sock fails closed for privileged broker RPCs before adoption" {
         2,
     );
     defer std.testing.allocator.free(renew_payload);
-    var renew_response = try serveOneBrokerRequest(
+    var renew_response = try serveOneControlRequest(
         &core,
         registration,
         generated.frame_type.visibility_renew,
@@ -3372,10 +3218,9 @@ test "host.sock fails closed for privileged broker RPCs before adoption" {
     try expectUnauthenticatedRefusal(&renew_response);
     try std.testing.expectEqual(@as(u64, 1), core.lease.open_terminal_revision);
 
-    // TERMINATE pre-adoption: typed refusal, host still live.
     const terminate_payload = try terminationPayload(std.testing.allocator, registration, "immediate");
     defer std.testing.allocator.free(terminate_payload);
-    var terminate_response = try serveOneBrokerRequest(
+    var terminate_response = try serveOneControlRequest(
         &core,
         registration,
         generated.frame_type.terminate,
@@ -3385,9 +3230,8 @@ test "host.sock fails closed for privileged broker RPCs before adoption" {
     try expectUnauthenticatedRefusal(&terminate_response);
     try std.testing.expect(!core.terminated);
 
-    // Positive control: after a real adoption handshake the same RPC serves.
     try adoptForTest(&core, registration, secret);
-    var granted_response = try serveOneBrokerRequest(
+    var granted_response = try serveOneControlRequest(
         &core,
         registration,
         generated.frame_type.grant_register,
@@ -3424,9 +3268,7 @@ test "slow-dribble connection is dropped at the absolute service deadline" {
     var sockets = try socketPair();
     defer sockets[0].close();
     defer sockets[1].close();
-    // A 250 ms budget stands in for the production 10 s one: without the
-    // absolute deadline this partial HELLO re-arms the per-syscall timeout
-    // forever and holds the single-threaded host loop with it.
+    // A 250 ms budget stands in for the production 10 s one: without the absolute deadline this partial HELLO re-arms the per-syscall timeout forever and holds the single-threaded host loop with it.
     var server: HostConnectionThread = .{
         .stream = sockets[1],
         .core = &core,
@@ -3435,28 +3277,18 @@ test "slow-dribble connection is dropped at the absolute service deadline" {
     };
     const thread = try std.Thread.spawn(.{}, HostConnectionThread.run, .{&server});
     var timer = try std.time.Timer.start();
-    // Dribble: fewer bytes than one frame header, then silence.
     const partial = [_]u8{0} ** 8;
     try sockets[0].writeAll(&partial);
     thread.join();
     const elapsed = timer.read();
     try std.testing.expect(server.failure != null);
     try std.testing.expect(elapsed < generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms);
-    // Dropped at its own budget, so the loop always regains control: it still
-    // has a supervisor to observe and viewers to pump.
+    // Dropped at its own budget, so the loop always regains control: it still has a supervisor to observe and viewers to pump.
     try std.testing.expect(elapsed < 5 * std.time.ns_per_s);
     try std.testing.expect(!core.adopted);
 }
 
 fn inputSubmitPayload(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
-    return inputSubmitPayloadUnderClaim(allocator, key, "claim-token");
-}
-
-fn inputSubmitPayloadUnderClaim(
-    allocator: std.mem.Allocator,
-    key: []const u8,
-    claim_token: []const u8,
-) ![]u8 {
     const registration = fixtureRegistration();
     return std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -3464,7 +3296,8 @@ fn inputSubmitPayloadUnderClaim(
             .key = registration.record.locator.session_id,
             .incarnation = "1",
         },
-        .claimToken = claim_token,
+        .provenance = "user",
+        .action = "edit",
         .transactionId = key,
         .idempotencyKey = key,
         .operation = .{ .kind = "hangup" },
@@ -3473,7 +3306,7 @@ fn inputSubmitPayloadUnderClaim(
 
 const reuse_rejection = "idempotency key reused with different input";
 
-test "a resend under a fresh claim token replays instead of being called different input" {
+test "an identical resend replays instead of being called different input" {
     const registration = fixtureRegistration();
     var core = try HostCore.init(
         std.testing.allocator,
@@ -3485,26 +3318,20 @@ test "a resend under a fresh claim token replays instead of being called differe
     );
     defer core.deinit();
 
-    const first = try inputSubmitPayloadUnderClaim(std.testing.allocator, "msg-1", "claim_aaa");
+    const first = try inputSubmitPayload(std.testing.allocator, "msg-1");
     defer std.testing.allocator.free(first);
     const applied = try core.submitInput(first, "hive-daemon:inst", 2_000);
     defer core.allocator.free(applied);
     try std.testing.expectEqual(@as(usize, 1), core.input_replays.items.len);
 
-    // The daemon released its claim when that cycle closed, so the resend
-    // acquires a new one and CLAIM_ACQUIRE mints a fresh random token. Nothing
-    // about the INPUT itself changed: same key, same transaction, same bytes.
-    const resent = try inputSubmitPayloadUnderClaim(std.testing.allocator, "msg-1", "claim_bbb");
+    const resent = try inputSubmitPayload(std.testing.allocator, "msg-1");
     defer std.testing.allocator.free(resent);
     const replayed = try core.submitInput(resent, "hive-daemon:inst", 3_000);
     defer core.allocator.free(replayed);
     try std.testing.expect(std.mem.indexOf(u8, replayed, reuse_rejection) == null);
-    // A replay hit, not a second reservation — the message is delivered once.
     try std.testing.expectEqual(@as(usize, 1), core.input_replays.items.len);
 
-    // The writer is still what scopes the ledger: another viewer guessing the
-    // key does not get to read back this writer's receipt.
-    const stolen = try inputSubmitPayloadUnderClaim(std.testing.allocator, "msg-1", "claim_ccc");
+    const stolen = try inputSubmitPayload(std.testing.allocator, "msg-1");
     defer std.testing.allocator.free(stolen);
     const refused = try core.submitInput(stolen, "workspace-pane-nina", 4_000);
     defer core.allocator.free(refused);
@@ -3529,26 +3356,20 @@ test "replay ledgers evict the oldest entry beyond the retention cap" {
         const key = try std.fmt.bufPrint(&key_storage, "input-key-{d}", .{index});
         const payload = try inputSubmitPayload(std.testing.allocator, key);
         defer std.testing.allocator.free(payload);
-        // No termination binding: the receipt is "binding unavailable", but the
-        // replay entry is still reserved — exactly the client-driven growth the
-        // cap exists to bound.
         const applied = try core.submitInput(payload, "viewer-a", 2_000);
         defer core.allocator.free(applied);
         try std.testing.expect(core.input_replays.items.len <= max_replay_entries);
     }
     try std.testing.expectEqual(max_replay_entries, core.input_replays.items.len);
-    // FIFO: the four oldest keys evicted, the window retains the newest.
     try std.testing.expectEqualStrings("input-key-4", core.input_replays.items[0].idempotency_key);
     var recent_storage: [32]u8 = undefined;
     const recent_key = try std.fmt.bufPrint(&recent_storage, "input-key-{d}", .{max_replay_entries + 3});
-    // Recent-key idempotency still works: a replay hits the ledger (no append).
     const replay_payload = try inputSubmitPayload(std.testing.allocator, recent_key);
     defer std.testing.allocator.free(replay_payload);
     const replayed = try core.submitInput(replay_payload, "viewer-a", 2_000);
     defer core.allocator.free(replayed);
     try std.testing.expectEqual(max_replay_entries, core.input_replays.items.len);
 
-    // The resize ledger shares the cap.
     index = 0;
     while (index < max_replay_entries + 2) : (index += 1) {
         const key = try std.fmt.bufPrint(&key_storage, "resize-key-{d}", .{index});
@@ -3568,30 +3389,10 @@ test "replay ledgers evict the oldest entry beyond the retention cap" {
     try std.testing.expectEqualStrings("resize-key-2", core.resize_replays.items[0].idempotency_key);
 }
 
-test "host child environment strips DYLD_ but keeps the rest" {
-    if (c.setenv("DYLD_HIVE_SCRUB_TEST", "1", 1) != 0) return error.SetEnvironmentFailed;
-    defer _ = c.unsetenv("DYLD_HIVE_SCRUB_TEST");
-    if (c.setenv("HIVE_SCRUB_KEEP_TEST", "1", 1) != 0) return error.SetEnvironmentFailed;
-    defer _ = c.unsetenv("HIVE_SCRUB_KEEP_TEST");
-    const scrubbed = try scrubbedHostEnvironment(std.testing.allocator);
-    defer std.testing.allocator.free(scrubbed);
-    try std.testing.expect(scrubbed.len > 0);
-    try std.testing.expect(scrubbed[scrubbed.len - 1] == null);
-    var kept = false;
-    for (scrubbed) |entry| {
-        const text = std.mem.span(entry orelse break);
-        try std.testing.expect(!std.mem.startsWith(u8, text, "DYLD_"));
-        if (std.mem.startsWith(u8, text, "HIVE_SCRUB_KEEP_TEST=")) kept = true;
-    }
-    try std.testing.expect(kept);
-}
-
 test "null-sink VT effects retention fails closed at the journal ceiling" {
     const audit = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
     defer audit.engine().deinit();
-    // Simulate a verification engine that already retains the journal
-    // ceiling: one more PTY-effect byte must fail closed, not grow the
-    // session-lifetime copy without bound.
+    // Simulate a verification engine that already retains the journal ceiling: one more PTY-effect byte must fail closed, not grow the session-lifetime copy without bound.
     try audit.effects.ensureTotalCapacity(std.testing.allocator, terminal_state.journal_max_bytes);
     audit.effects.items.len = terminal_state.journal_max_bytes;
     const reply = "x";
@@ -3600,9 +3401,6 @@ test "null-sink VT effects retention fails closed at the journal ceiling" {
     try std.testing.expectEqual(terminal_state.journal_max_bytes, audit.effects.items.len);
 }
 
-// The engine digest is a full checkpoint export of the whole terminal. Taking
-// it on every write made each output chunk cost O(terminal state), which is
-// what made a sustained-output run livelock; only tryCheckpoint reads it.
 test "sustained output does not export a checkpoint per written chunk" {
     const real = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
     const engine = real.engine();
@@ -3613,8 +3411,7 @@ test "sustained output does not export a checkpoint per written chunk" {
     while (index < 16) : (index += 1) try engine.write("sustained output ");
     try std.testing.expectEqual(baseline, real.bridge_exports);
 
-    // Deferring the measurement must not stale it: the first read pays for one
-    // export, a repeat read pays for none, and a later write invalidates it.
+    // Deferring the measurement must not stale it: the first read pays for one export, a repeat read pays for none, and a later write invalidates it.
     const measured = engine.digest();
     try std.testing.expectEqual(baseline + 1, real.bridge_exports);
     try std.testing.expectEqualSlices(u8, &measured, &engine.digest());
@@ -3626,22 +3423,11 @@ test "sustained output does not export a checkpoint per written chunk" {
     try std.testing.expect(!std.mem.eql(u8, &measured, &after));
 }
 
-// Freeze case E producer size. An exact
-/// multiple of `freeze_e_block_bytes`, so the expected byte at absolute offset
-/// `o` is `block[o % freeze_e_block_bytes]`.
 const freeze_e_target_bytes: usize = 100 * 1024 * 1024;
 const freeze_e_block_bytes: usize = 64 * 1024;
-/// Bytes read before the software stop is issued: far enough into the file that
-/// the producer provably still has work left, cheap enough to reach quickly.
+/// Bytes read before the software stop is issued: far enough into the file that the producer provably still has work left, cheap enough to reach quickly.
 const freeze_e_stop_after_bytes: u64 = 8 * 1024 * 1024;
 
-/// Minimal VT engine for freeze case E. libghostty-vt verifies page integrity
-/// on every scroll in a Debug build, which puts 100 MiB of real parsing well
-/// over an hour in the ordinary native suite; VT throughput and fidelity are
-/// B1's qualification surface, not this case's. Everything freeze case E is
-/// about — the PTY, software flow control, the journal, the checkpoint store,
-/// eviction and the gap — stays real, and this double costs O(1) per chunk by
-/// carrying a rolling hash of the bytes written instead of the bytes.
 const FreezeEEngine = struct {
     const magic = "FREEZEE1";
 
@@ -3728,9 +3514,6 @@ const FreezeEEngine = struct {
 
 var freeze_e_factory_context: u8 = 0;
 
-/// Drains a real PTY into the real journal exactly as the host loop does, while
-/// recording the two facts freeze case E is about: the digest of every byte read
-/// and the high-water of retained journal memory.
 const FreezeEDrainer = struct {
     host: *pty_host.PtyHost,
     state: *terminal_state.TerminalState,
@@ -3738,9 +3521,6 @@ const FreezeEDrainer = struct {
     total: u64 = 0,
     max_retained: usize = 0,
 
-    /// Reads until `until` bytes have been consumed, or until `idle_budget`
-    /// consecutive would-block polls prove the producer quiescent. Returns true
-    /// only for the quiescent stop, so a caller can tell "stopped" from "done".
     fn drain(self: *FreezeEDrainer, until: u64, idle_budget: usize) !bool {
         var idle: usize = 0;
         while (self.total < until) {
@@ -3769,21 +3549,12 @@ fn freezeESendFlowByte(host: *pty_host.PtyHost, byte: u8) !void {
     try host.writeDrainAll();
 }
 
-// Freeze case E: a 100 MiB producer with a stopped/resumed reader and software
-// flow stop/start must keep byte integrity, bound retained memory, and report
-// an explicit gap instead of a silently shortened replay. pty_host's SLO-04
-// seed proves the read path alone; this drives the real journal, the real
-// checkpoint store, and the real VT engine behind them.
 test "freeze E: 100 MiB producer bounds retention, keeps byte integrity, and gaps explicitly" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
 
     const allocator = std.testing.allocator;
     const block = try allocator.alloc(u8, freeze_e_block_bytes);
     defer allocator.free(block);
-    // Printable ASCII only: a control byte would make the producer a VT fuzz
-    // corpus (B1's subject), and OPOST|ONLCR would rewrite a bare newline into
-    // CR LF so the bytes read would no longer be the bytes produced. Column
-    // wrapping still drives the scrollback this case needs.
     for (block, 0..) |*byte, index| byte.* = 0x20 + @as(u8, @intCast(index % 95));
     comptime std.debug.assert(freeze_e_target_bytes % freeze_e_block_bytes == 0);
 
@@ -3841,9 +3612,7 @@ test "freeze E: 100 MiB producer bounds retention, keeps byte integrity, and gap
 
     var drainer: FreezeEDrainer = .{ .host = &host, .state = &state };
 
-    // Positive control for the quiescence instrument: while the producer runs,
-    // the same detector that must fire after XOFF must NOT fire here. Without
-    // this, "quiescent" could just mean "the poll budget was too small".
+    // Positive control for the quiescence instrument: while the producer runs, the same detector that must fire after XOFF must NOT fire here. Without this, "quiescent" could just mean "the poll budget was too small".
     try std.testing.expect(!try drainer.drain(freeze_e_stop_after_bytes, 2_000));
     try std.testing.expectEqual(freeze_e_stop_after_bytes, drainer.total);
 
@@ -3854,7 +3623,6 @@ test "freeze E: 100 MiB producer bounds retention, keeps byte integrity, and gap
     const stopped_total = drainer.total;
     try std.testing.expect(stopped_total < freeze_e_target_bytes);
 
-    // The stop holds: a further quiet window yields no byte at all.
     std.Thread.sleep(100 * std.time.ns_per_ms);
     try std.testing.expect(try drainer.drain(freeze_e_target_bytes, 50));
     try std.testing.expectEqual(stopped_total, drainer.total);
@@ -3864,16 +3632,14 @@ test "freeze E: 100 MiB producer bounds retention, keeps byte integrity, and gap
     try std.testing.expect(!try drainer.drain(freeze_e_target_bytes, 5_000));
     try std.testing.expectEqual(@as(u8, 2), flow_transitions);
 
-    // Byte integrity: every produced byte arrived exactly once, in order,
-    // across the stop and the restart.
+    // Byte integrity: every produced byte arrived exactly once, in order, across the stop and the restart.
     var observed_digest: [32]u8 = undefined;
     drainer.digest.final(&observed_digest);
     try std.testing.expectEqual(@as(u64, freeze_e_target_bytes), drainer.total);
     try std.testing.expectEqualSlices(u8, &expected_digest, &observed_digest);
     try std.testing.expectEqual(@as(u64, freeze_e_target_bytes), state.outputSeq());
 
-    // Bounded memory: 100 MiB flowed through a journal that never exceeded its
-    // ceiling, and nothing outside the journal is retained on its behalf.
+    // Bounded memory: 100 MiB flowed through a journal that never exceeded its ceiling, and nothing outside the journal is retained on its behalf.
     try std.testing.expect(drainer.max_retained <= terminal_state.journal_max_bytes);
     try std.testing.expect(state.journal.retainedBytes() <= terminal_state.journal_max_bytes);
 
@@ -3886,8 +3652,6 @@ test "freeze E: 100 MiB producer bounds retention, keeps byte integrity, and gap
         state.journal.sliceFrom(retained_start - 1),
     );
 
-    // The gap boundary is exact and its checkpoint requirement is honest: when
-    // a checkpoint is offered as the bridge, it must reach the retained start.
     const retained = try state.journal.sliceFrom(retained_start);
     try std.testing.expectEqual(freeze_e_target_bytes - retained_start, retained.len);
     if (state.checkpointAvailable()) {
@@ -3895,8 +3659,6 @@ test "freeze E: 100 MiB producer bounds retention, keeps byte integrity, and gap
         try std.testing.expect(checkpoint.header.through_seq >= retained_start);
     }
 
-    // Retained bytes are the exact source bytes at their absolute offsets, so
-    // eviction moved the window without corrupting or resequencing the tail.
     var offset: usize = 0;
     while (offset < retained.len) {
         const from = @as(usize, @intCast((retained_start + offset) % freeze_e_block_bytes));
@@ -3919,12 +3681,12 @@ fn grantRegistrationPayload(
     var tagged_storage: [71]u8 = undefined;
     const tagged = try std.fmt.bufPrint(&tagged_storage, "sha256:{s}", .{&hash_hex});
     var expiry_storage: [24]u8 = undefined;
-    const expires_at = try broker.wallDeadline(&expiry_storage, additional_ms);
+    const expires_at = try wall_clock.deadline(&expiry_storage, additional_ms);
     return std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
         .grantTokenSha256 = tagged,
         .viewerId = "viewer-a",
-        .operations = &[_][]const u8{ "view", "human-input" },
+        .operations = &[_][]const u8{ "view", "user-input" },
         .expiresAt = expires_at,
         .geometry = .{
             .columns = @as(u16, 80),
@@ -3939,7 +3701,7 @@ fn grantRegistrationPayload(
 
 fn hostAttachPayload(
     allocator: std.mem.Allocator,
-    locator: broker.Locator,
+    locator: session_types.Locator,
     token: []const u8,
 ) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -4038,8 +3800,6 @@ test "HOST_ATTACH consumes an exact one-use viewer grant" {
     );
     defer std.testing.allocator.free(attach_payload);
 
-    // Positive control: a different HELLO capability neither authorizes nor
-    // consumes the registered grant.
     try std.testing.expectError(
         error.InvalidViewerGrant,
         core.authorizeViewerAttach(attach_payload, "wrong-capability", 3_000),
@@ -4050,453 +3810,13 @@ test "HOST_ATTACH consumes an exact one-use viewer grant" {
     defer authorization.deinit(std.testing.allocator);
     try std.testing.expectEqualStrings("viewer-a", authorization.viewer_id);
     try std.testing.expect(authorization.operations.view);
-    try std.testing.expect(authorization.operations.human_input);
+    try std.testing.expect(authorization.operations.user_input);
     try std.testing.expectEqual(@as(u64, 0), authorization.after_seq);
     try std.testing.expectEqual(@as(usize, 0), core.grants.items.len);
     try std.testing.expectError(
         error.InvalidViewerGrant,
         core.authorizeViewerAttach(attach_payload, token, 3_000),
     );
-}
-
-test "CLAIM_RESULT reports unknown without inventing an owner when the arbiter is unavailable" {
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        @splat(0x31),
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    const payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-a",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 1_000),
-        .idempotencyKey = "claim-unknown",
-    }, .{});
-    defer std.testing.allocator.free(payload);
-    const result = try core.claimInput(payload, "viewer-a", 2_000);
-    defer std.testing.allocator.free(result);
-    try std.testing.expect(protocol.validateControlPayload(
-        std.testing.allocator,
-        generated.wire_schema.claim_result_payload,
-        result,
-    ));
-    try std.testing.expect(std.mem.indexOf(u8, result, "\"state\":\"unknown\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, result, "\"owner\"") == null);
-}
-
-// RED control: after viewer-a is granted a human claim, a second viewer
-// (or the same viewer after a drop without CLAIM_RELEASE) is denied while
-// host `active_claim` is never cleared on stream close. Documents the orphan
-// permanent-input-death mechanism until onViewerDetached + claimRelease land.
-test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared" {
-    var pty = try pty_host.PtyHost.init(std.testing.allocator);
-    defer pty.deinit();
-    var sink: PtyQueueSink = .{ .pty = &pty };
-    var encoder: TestIdentityEncoder = .{};
-    var arbiter = input_arbiter.InputArbiter.init(
-        std.testing.allocator,
-        sink.arbiterSink(),
-        encoder.encoder(),
-        encoder.cancelEncoder(),
-    );
-    defer arbiter.deinit();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        @splat(0x31),
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
-
-    const first = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-a",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 60_000),
-        .idempotencyKey = "claim-a",
-    }, .{});
-    defer std.testing.allocator.free(first);
-    const granted = try core.claimInput(first, "viewer-a", 2_000);
-    defer std.testing.allocator.free(granted);
-    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
-    try std.testing.expect(core.active_claim != null);
-
-    // Simulate drop without CLAIM_RELEASE / onViewerDetached (today's host loop).
-    const second = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-b",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 60_000),
-        .idempotencyKey = "claim-b",
-    }, .{});
-    defer std.testing.allocator.free(second);
-    const denied = try core.claimInput(second, "viewer-b", 3_000);
-    defer std.testing.allocator.free(denied);
-    try std.testing.expect(std.mem.indexOf(u8, denied, "\"state\":\"denied\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, denied, "input already claimed") != null);
-    // Host still holds the first claim — second reattach cannot recover without detach.
-    try std.testing.expect(core.active_claim != null);
-
-    // Unclean drop path (fix): onViewerDetached clears host claim + orphans arbiter.
-    core.onViewerDetached("viewer-a", 3_500);
-    try std.testing.expect(core.active_claim == null);
-    try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
-    // The dropped claim is retained as the input owner of record for
-    // inspection (real-host-golden inspects inputOwner after viewer detach).
-    try std.testing.expect(core.orphaned_claim != null);
-    try std.testing.expectEqualStrings("viewer-a", core.orphaned_claim.?.writer);
-    try std.testing.expectEqualStrings("human", core.orphaned_claim.?.kind);
-    try std.testing.expect(core.orphaned_claim.?.token.len > 0);
-    try std.testing.expect(core.orphaned_claim.?.lease_expires_at.len > 0);
-
-    // Never-steal mutation: automation still cannot take an orphaned human lease.
-    const automation = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "automation-contender",
-        .kind = "automation",
-        .leaseMilliseconds = @as(u64, 60_000),
-        .idempotencyKey = "claim-auto",
-    }, .{});
-    defer std.testing.allocator.free(automation);
-    const auto_denied = try core.claimInput(automation, "automation-contender", 3_500);
-    defer std.testing.allocator.free(auto_denied);
-    // Invariant must bite as a real denial — unknown/error paths do not count.
-    try std.testing.expect(std.mem.indexOf(u8, auto_denied, "\"state\":\"denied\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, auto_denied, "HumanOrphaned") != null);
-    try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
-
-    // Returning human (viewer-b as operator resume) is granted a new claim.
-    const third = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-b",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 60_000),
-        .idempotencyKey = "claim-b-resume",
-    }, .{});
-    defer std.testing.allocator.free(third);
-    const resumed = try core.claimInput(third, "viewer-b", 4_000);
-    defer std.testing.allocator.free(resumed);
-    try std.testing.expect(std.mem.indexOf(u8, resumed, "\"state\":\"granted\"") != null);
-    try std.testing.expect(core.active_claim != null);
-    // A grant resolves ownership: the retained orphan is gone.
-    try std.testing.expect(core.orphaned_claim == null);
-    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
-
-    // Clean CLAIM_RELEASE → FREE; next human acquires without resume.
-    const token = core.active_claim.?.token;
-    const release_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .claimToken = token,
-        .kind = "cancel",
-    }, .{});
-    defer std.testing.allocator.free(release_payload);
-    const released = try core.releaseInput(release_payload, "viewer-b", 5_000);
-    defer std.testing.allocator.free(released);
-    try std.testing.expect(core.active_claim == null);
-    try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
-
-    const fourth = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-c",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 60_000),
-        .idempotencyKey = "claim-c-clean",
-    }, .{});
-    defer std.testing.allocator.free(fourth);
-    const clean = try core.claimInput(fourth, "viewer-c", 6_000);
-    defer std.testing.allocator.free(clean);
-    try std.testing.expect(std.mem.indexOf(u8, clean, "\"state\":\"granted\"") != null);
-    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
-}
-
-fn claimAcquirePayload(
-    allocator: std.mem.Allocator,
-    registration: HostRegistration,
-    writer: []const u8,
-    kind: []const u8,
-    lease_ms: u64,
-    idempotency_key: []const u8,
-) ![]u8 {
-    return std.json.Stringify.valueAlloc(allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = writer,
-        .kind = kind,
-        .leaseMilliseconds = lease_ms,
-        .idempotencyKey = idempotency_key,
-    }, .{});
-}
-
-// The delivery gate must ask whether a human is still holding input, not
-// whether a claim was ever recorded. Live messages were refused nineteen
-// minutes past an expired lease, on behalf of operators who had left.
-test "an expired human input claim does not block delivery" {
-    var pty = try pty_host.PtyHost.init(std.testing.allocator);
-    defer pty.deinit();
-    var sink: PtyQueueSink = .{ .pty = &pty };
-    var encoder: TestIdentityEncoder = .{};
-    var arbiter = input_arbiter.InputArbiter.init(
-        std.testing.allocator,
-        sink.arbiterSink(),
-        encoder.encoder(),
-        encoder.cancelEncoder(),
-    );
-    defer arbiter.deinit();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        @splat(0x31),
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
-
-    // A human takes input with a one-second lease and then stops typing.
-    const human = try claimAcquirePayload(
-        std.testing.allocator,
-        registration,
-        "workspace-pane-nina",
-        "human",
-        1_000,
-        "claim-human",
-    );
-    defer std.testing.allocator.free(human);
-    const granted = try core.claimInput(human, "workspace-pane-nina", 2_000);
-    defer std.testing.allocator.free(granted);
-    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
-    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
-
-    // Two seconds later that lease is a second stale. Delivery proceeds.
-    const automation = try claimAcquirePayload(
-        std.testing.allocator,
-        registration,
-        "hive-daemon",
-        "automation",
-        60_000,
-        "claim-auto",
-    );
-    defer std.testing.allocator.free(automation);
-    const delivered = try core.claimInput(automation, "hive-daemon", 2_000_000_000);
-    defer std.testing.allocator.free(delivered);
-    try std.testing.expect(std.mem.indexOf(u8, delivered, "\"state\":\"granted\"") != null);
-    try std.testing.expect(core.active_claim != null);
-    try std.testing.expectEqualStrings("hive-daemon", core.active_claim.?.writer);
-}
-
-// The original requirement, and the one the expiry cut must not cost: nothing
-// is ever taken from a human who is actually holding input. Automation waits
-// for the turn boundary instead.
-test "a live human input claim still defers delivery" {
-    var pty = try pty_host.PtyHost.init(std.testing.allocator);
-    defer pty.deinit();
-    var sink: PtyQueueSink = .{ .pty = &pty };
-    var encoder: TestIdentityEncoder = .{};
-    var arbiter = input_arbiter.InputArbiter.init(
-        std.testing.allocator,
-        sink.arbiterSink(),
-        encoder.encoder(),
-        encoder.cancelEncoder(),
-    );
-    defer arbiter.deinit();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        @splat(0x31),
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
-
-    const human = try claimAcquirePayload(
-        std.testing.allocator,
-        registration,
-        "workspace-pane-nina",
-        "human",
-        10_000,
-        "claim-human",
-    );
-    defer std.testing.allocator.free(human);
-    const granted = try core.claimInput(human, "workspace-pane-nina", 2_000);
-    defer std.testing.allocator.free(granted);
-    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
-
-    // Five seconds in, five seconds of lease remain: the human is still there.
-    const automation = try claimAcquirePayload(
-        std.testing.allocator,
-        registration,
-        "hive-daemon",
-        "automation",
-        60_000,
-        "claim-auto",
-    );
-    defer std.testing.allocator.free(automation);
-    const denied = try core.claimInput(automation, "hive-daemon", 5_000_000_000);
-    defer std.testing.allocator.free(denied);
-    try std.testing.expect(std.mem.indexOf(u8, denied, "\"state\":\"denied\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, denied, "input already claimed") != null);
-    // The human keeps input, and keeps it as the owner of record.
-    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
-    try std.testing.expect(core.active_claim != null);
-    try std.testing.expectEqualStrings("workspace-pane-nina", core.active_claim.?.writer);
-}
-
-test "human input ownership lasts until release or viewer detach" {
-    var pty = try pty_host.PtyHost.init(std.testing.allocator);
-    defer pty.deinit();
-    _ = switch (try pty.spawn(.{
-        .argv = &[_][]const u8{"/bin/cat"},
-        .geometry = .{ .columns = 80, .rows = 24 },
-    })) {
-        .running => |readback| readback,
-        .exec_failed => return error.TestUnexpectedResult,
-    };
-    var sink: PtyQueueSink = .{ .pty = &pty };
-    var encoder: TestIdentityEncoder = .{};
-    var arbiter = input_arbiter.InputArbiter.init(
-        std.testing.allocator,
-        sink.arbiterSink(),
-        encoder.encoder(),
-        encoder.cancelEncoder(),
-    );
-    defer arbiter.deinit();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        @splat(0x31),
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
-
-    // A connected viewer's keyboard ownership is connection-scoped for as long
-    // as its lease is current: within the lease, idle time cannot revoke it.
-    // Past the lease the claim no longer holds input — see "an expired human
-    // input claim does not block delivery", which owns that half.
-    const claim_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-a",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 2_000),
-        .idempotencyKey = "claim-connection-a",
-    }, .{});
-    defer std.testing.allocator.free(claim_payload);
-    const granted = try core.claimInput(
-        claim_payload,
-        "viewer-a",
-        2_000 * std.time.ns_per_ms,
-    );
-    defer std.testing.allocator.free(granted);
-    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
-    const owner_token = try std.testing.allocator.dupe(u8, core.active_claim.?.token);
-    defer std.testing.allocator.free(owner_token);
-
-    // Submit a second into the lease. The same connected viewer remains
-    // authoritative and its token is unchanged.
-    const input = try a3BytesPayload(
-        std.testing.allocator,
-        registration,
-        core.active_claim.?.token,
-        "claim-connection-input",
-        "claim-connection-input",
-        "x",
-    );
-    defer std.testing.allocator.free(input);
-    const applied = try core.submitInput(input, "viewer-a", 3_000 * std.time.ns_per_ms);
-    defer std.testing.allocator.free(applied);
-    try std.testing.expect(std.mem.indexOf(u8, applied, "\"stage\":\"written-to-terminal\"") != null);
-    try std.testing.expectEqualStrings(owner_token, core.active_claim.?.token);
-
-    // A second viewer is fenced until the owning connection detaches.
-    const contender_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-b",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 2_000),
-        .idempotencyKey = "claim-connection-b",
-    }, .{});
-    defer std.testing.allocator.free(contender_payload);
-    const denied = try core.claimInput(
-        contender_payload,
-        "viewer-b",
-        3_000 * std.time.ns_per_ms,
-    );
-    defer std.testing.allocator.free(denied);
-    try std.testing.expect(std.mem.indexOf(u8, denied, "\"state\":\"denied\"") != null);
-
-    core.onViewerDetached("viewer-a", 3_000 * std.time.ns_per_ms);
-    const reacquired = try core.claimInput(
-        contender_payload,
-        "viewer-b",
-        3_001 * std.time.ns_per_ms,
-    );
-    defer std.testing.allocator.free(reacquired);
-    try std.testing.expect(std.mem.indexOf(u8, reacquired, "\"state\":\"granted\"") != null);
-    try std.testing.expect(!std.mem.eql(u8, owner_token, core.active_claim.?.token));
 }
 
 test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered receipt" {
@@ -4510,13 +3830,7 @@ test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered recei
         .exec_failed => return error.TestUnexpectedResult,
     };
     var sink: PtyQueueSink = .{ .pty = &pty };
-    var encoder: TestIdentityEncoder = .{};
-    var arbiter = input_arbiter.InputArbiter.init(
-        std.testing.allocator,
-        sink.arbiterSink(),
-        encoder.encoder(),
-        encoder.cancelEncoder(),
-    );
+    var arbiter = input_arbiter.InputArbiter.init(sink.arbiterSink());
     defer arbiter.deinit();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -4532,32 +3846,14 @@ test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered recei
     defer core.deinit();
     core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
 
-    const claim_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-a",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 1_000),
-        .idempotencyKey = "claim-hangup",
-    }, .{});
-    defer std.testing.allocator.free(claim_payload);
-    const claim_result = try core.claimInput(claim_payload, "viewer-a", 2_000);
-    defer std.testing.allocator.free(claim_result);
-    const Granted = struct { result: struct { claim: struct { token: []const u8 } } };
-    var granted = try std.json.parseFromSlice(Granted, std.testing.allocator, claim_result, .{
-        .ignore_unknown_fields = true,
-    });
-    defer granted.deinit();
     const input_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
         .schemaVersion = @as(u8, 1),
         .session = .{
             .key = registration.record.locator.session_id,
             .incarnation = "1",
         },
-        .claimToken = granted.value.result.claim.token,
+        .provenance = "user",
+        .action = "edit",
         .transactionId = "hangup-transaction",
         .idempotencyKey = "hangup-idempotency",
         .operation = .{ .kind = "hangup" },
@@ -4584,6 +3880,158 @@ test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered recei
     try std.testing.expect(parsed.value.receipt.byteRange == null);
     const exit = try pty.waitExit(true);
     try std.testing.expect(exit.reaped);
+}
+
+fn userBytesPayload(
+    allocator: std.mem.Allocator,
+    provenance: []const u8,
+    action: []const u8,
+    transaction: []const u8,
+    bytes: []const u8,
+) ![]u8 {
+    const registration = fixtureRegistration();
+    const encoded = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(bytes.len));
+    defer allocator.free(encoded);
+    _ = std.base64.standard.Encoder.encode(encoded, bytes);
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .provenance = provenance,
+        .action = action,
+        .transactionId = transaction,
+        .idempotencyKey = transaction,
+        .operation = .{ .kind = "bytes", .encoding = "base64", .bytes = encoded },
+    }, .{});
+}
+
+test "generated input enums accept every schema provenance and action" {
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+
+    const user = try userBytesPayload(std.testing.allocator, "user", "edit", "txn-user", "hi");
+    defer std.testing.allocator.free(user);
+    const applied = try core.submitInput(user, "viewer-a", 2_000);
+    defer std.testing.allocator.free(applied);
+
+    const cases = [_]struct { provenance: []const u8, action: []const u8 }{
+        .{ .provenance = "automation", .action = "edit" },
+        .{ .provenance = "automation", .action = "deliver" },
+        .{ .provenance = "user", .action = "deliver" },
+        .{ .provenance = "user", .action = "keys" },
+    };
+    for (cases, 0..) |case, index| {
+        var transaction_storage: [32]u8 = undefined;
+        const transaction = try std.fmt.bufPrint(&transaction_storage, "txn-auto-{d}", .{index});
+        const payload = try userBytesPayload(
+            std.testing.allocator,
+            case.provenance,
+            case.action,
+            transaction,
+            "notice",
+        );
+        defer std.testing.allocator.free(payload);
+        const result = try core.submitInput(payload, "viewer-a", 3_000);
+        defer std.testing.allocator.free(result);
+    }
+    try std.testing.expectEqual(@as(usize, 5), core.input_replays.items.len);
+}
+
+test "two viewers interleave user input through one ordered arbiter" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const output_name = "ordered-input.bin";
+    (try tmp.dir.createFile(output_name, .{})).close();
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const output_path = try tmp.dir.realpath(output_name, &path_buf);
+
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    _ = switch (try pty.spawn(.{
+        .argv = &.{ "/bin/sh", "-c", "exec /bin/cat > \"$1\"", "hive-input-test", output_path },
+        .geometry = .{ .columns = 80, .rows = 24 },
+    })) {
+        .running => |readback| readback,
+        .exec_failed => return error.TestUnexpectedResult,
+    };
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var arbiter = input_arbiter.InputArbiter.init(sink.arbiterSink());
+    defer arbiter.deinit();
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    const Applied = struct {
+        resultKind: []const u8,
+        receipt: struct {
+            stage: []const u8,
+            byteRange: ?struct { start: []const u8, endExclusive: []const u8 },
+        },
+    };
+    const writes = [_]struct { viewer: []const u8, transaction: []const u8, bytes: []const u8 }{
+        .{ .viewer = "viewer-a", .transaction = "txn-a-1", .bytes = "alpha" },
+        .{ .viewer = "viewer-b", .transaction = "txn-b-1", .bytes = "BETA" },
+        .{ .viewer = "viewer-a", .transaction = "txn-a-2", .bytes = "\x1b[A" },
+    };
+    var expected_start: u64 = 0;
+    var expected_len: usize = 0;
+    for (writes) |write| {
+        const payload = try userBytesPayload(
+            std.testing.allocator,
+            "user",
+            "edit",
+            write.transaction,
+            write.bytes,
+        );
+        defer std.testing.allocator.free(payload);
+        const applied = try core.submitInput(payload, write.viewer, 3_000);
+        defer std.testing.allocator.free(applied);
+        var parsed = try std.json.parseFromSlice(Applied, std.testing.allocator, applied, .{
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        try std.testing.expectEqualStrings("written-to-terminal", parsed.value.receipt.stage);
+        const range = parsed.value.receipt.byteRange orelse return error.TestUnexpectedResult;
+        var start_storage: [24]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&start_storage, "{d}", .{expected_start});
+        try std.testing.expectEqualStrings(expected, range.start);
+        expected_start += write.bytes.len;
+        expected_len += write.bytes.len;
+        var end_storage: [24]u8 = undefined;
+        const expected_end = try std.fmt.bufPrint(&end_storage, "{d}", .{expected_start});
+        try std.testing.expectEqualStrings(expected_end, range.endExclusive);
+    }
+
+    var observed: [64]u8 = undefined;
+    var count: usize = 0;
+    for (0..500) |_| {
+        const output = try tmp.dir.openFile(output_name, .{});
+        count = try output.readAll(&observed);
+        output.close();
+        if (count == expected_len) break;
+        std.Thread.sleep(2 * std.time.ns_per_ms);
+    }
+    try std.testing.expectEqualStrings("alphaBETA\x1b[A", observed[0..count]);
 }
 
 test "viewer wire authenticates HELLO and validates HOST_ATTACH before streaming" {
@@ -4650,8 +4098,7 @@ test "host.sock GRANT_REGISTER stores only the one-use hash" {
         1_000,
     );
     defer core.deinit();
-    // Privileged broker RPCs fail closed until adoption (the broker opens one
-    // connection per RPC, so adoption runs on its own connection first).
+    // Privileged broker RPCs fail closed until adoption (the broker opens one connection per RPC, so adoption runs on its own connection first).
     try adoptForTest(&core, registration, secret);
     var sockets = try socketPair();
     defer sockets[0].close();
@@ -4710,458 +4157,6 @@ test "GRANT_REGISTER positive control rejects an expired grant" {
     defer std.testing.allocator.free(payload);
     try std.testing.expectError(error.Expired, core.registerGrant(payload, 2_000));
     try std.testing.expectEqual(@as(usize, 0), core.grants.items.len);
-}
-
-fn orphanDiscardPayload(
-    allocator: std.mem.Allocator,
-    registration: HostRegistration,
-    mode: []const u8,
-) ![]u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    var root = std.json.ObjectMap.init(arena.allocator());
-    try root.put("schemaVersion", .{ .integer = 1 });
-    try root.put("locator", try locatorValue(arena.allocator(), registration.record.locator));
-    try root.put("mode", .{ .string = mode });
-    return std.json.Stringify.valueAlloc(
-        allocator,
-        std.json.Value{ .object = root },
-        .{},
-    );
-}
-
-// A human claim orphaned by an unclean viewer drop denied every automation
-// claim forever, and operatorDiscard had no caller. INPUT_ORPHAN_DISCARD is
-// that caller. This walks the whole deadlock: claim -> unclean drop ->
-// automation DENIED -> discard -> automation GRANTED.
-test "INPUT_ORPHAN_DISCARD ends the HumanOrphaned deadlock and automation is heard again" {
-    var pty = try pty_host.PtyHost.init(std.testing.allocator);
-    defer pty.deinit();
-    var sink: PtyQueueSink = .{ .pty = &pty };
-    var encoder: TestIdentityEncoder = .{};
-    var arbiter = input_arbiter.InputArbiter.init(
-        std.testing.allocator,
-        sink.arbiterSink(),
-        encoder.encoder(),
-        encoder.cancelEncoder(),
-    );
-    defer arbiter.deinit();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        @splat(0x31),
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
-
-    const discard_payload = try orphanDiscardPayload(std.testing.allocator, registration, "orphaned");
-    defer std.testing.allocator.free(discard_payload);
-    const preempt_payload = try orphanDiscardPayload(std.testing.allocator, registration, "held");
-    defer std.testing.allocator.free(preempt_payload);
-
-    // POSITIVE CONTROL: a FREE arbiter is refused, in-band, naming its state.
-    // Without this the typed discarded result below could be a constant.
-    const free_refusal = try core.discardInputOrphan(discard_payload, 1_500);
-    defer std.testing.allocator.free(free_refusal);
-    try std.testing.expect(std.mem.indexOf(u8, free_refusal, "\"state\":\"refused\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, free_refusal, "free") != null);
-
-    const human = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-a",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 60_000),
-        .idempotencyKey = "claim-a",
-    }, .{});
-    defer std.testing.allocator.free(human);
-    const granted = try core.claimInput(human, "viewer-a", 2_000);
-    defer std.testing.allocator.free(granted);
-    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
-
-    // NEVER-STEAL CONTROL: a LIVE human claim is refused too. This is the whole
-    // invariant; if this ever passes, the discard has become a steal.
-    const live_refusal = try core.discardInputOrphan(discard_payload, 2_500);
-    defer std.testing.allocator.free(live_refusal);
-    try std.testing.expect(std.mem.indexOf(u8, live_refusal, "\"state\":\"refused\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, live_refusal, "human_owned") != null);
-    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
-
-    // Delivery may preempt a held human draft when authorized. That result
-    // is distinct from an orphan discard, so callers can show/audit it.
-    const preempted = try core.discardInputOrphan(preempt_payload, 2_750);
-    defer std.testing.allocator.free(preempted);
-    try std.testing.expect(std.mem.indexOf(u8, preempted, "\"state\":\"preempted\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, preempted, "\"priorOwnerViewerId\":\"viewer-a\"") != null);
-    try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
-    try std.testing.expect(core.active_claim == null);
-
-    const regranted = try core.claimInput(human, "viewer-a", 2_800);
-    defer std.testing.allocator.free(regranted);
-    try std.testing.expect(std.mem.indexOf(u8, regranted, "\"state\":\"granted\"") != null);
-
-    // The arming condition: the viewer dies without releasing.
-    core.onViewerDetached("viewer-a", 3_000);
-    try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
-
-    const automation = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "hive-daemon",
-        .kind = "automation",
-        .leaseMilliseconds = @as(u64, 60_000),
-        .idempotencyKey = "claim-auto-1",
-    }, .{});
-    defer std.testing.allocator.free(automation);
-    const deadlocked = try core.claimInput(automation, "hive-daemon", 3_000);
-    defer std.testing.allocator.free(deadlocked);
-    try std.testing.expect(std.mem.indexOf(u8, deadlocked, "\"state\":\"denied\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, deadlocked, "HumanOrphaned") != null);
-
-    // The exit: discard reports the orphan's owner of record and frees input.
-    const discarded = try core.discardInputOrphan(discard_payload, 123_003_000);
-    defer std.testing.allocator.free(discarded);
-    try std.testing.expect(std.mem.indexOf(u8, discarded, "\"state\":\"discarded\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, discarded, "\"priorOwnerViewerId\":\"viewer-a\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, discarded, "\"orphanAgeMilliseconds\":\"123\"") != null);
-    try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
-    try std.testing.expect(core.orphaned_claim == null);
-
-    // Retry: the same automation claim the deadlock denied is now granted.
-    const retry = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "hive-daemon",
-        .kind = "automation",
-        .leaseMilliseconds = @as(u64, 60_000),
-        .idempotencyKey = "claim-auto-2",
-    }, .{});
-    defer std.testing.allocator.free(retry);
-    const retried = try core.claimInput(retry, "hive-daemon", 4_000);
-    defer std.testing.allocator.free(retried);
-    try std.testing.expect(std.mem.indexOf(u8, retried, "\"state\":\"granted\"") != null);
-}
-
-fn a3BytesPayload(
-    allocator: std.mem.Allocator,
-    registration: HostRegistration,
-    claim_token: []const u8,
-    transaction_id: []const u8,
-    idempotency_key: []const u8,
-    body: []const u8,
-) ![]u8 {
-    const encoded = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(body.len));
-    defer allocator.free(encoded);
-    _ = std.base64.standard.Encoder.encode(encoded, body);
-    return std.json.Stringify.valueAlloc(allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .claimToken = claim_token,
-        .transactionId = transaction_id,
-        .idempotencyKey = idempotency_key,
-        .operation = .{ .kind = "bytes", .encoding = "base64", .bytes = encoded },
-    }, .{});
-}
-
-fn c1AutomatedBytesPayload(
-    allocator: std.mem.Allocator,
-    registration: HostRegistration,
-    claim_token: []const u8,
-    transaction_id: []const u8,
-    body: []const u8,
-    pid: i32,
-    start_token: []const u8,
-    process_group_id: i32,
-) ![]u8 {
-    const encoded = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(body.len));
-    defer allocator.free(encoded);
-    _ = std.base64.standard.Encoder.encode(encoded, body);
-    return std.json.Stringify.valueAlloc(allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .claimToken = claim_token,
-        .transactionId = transaction_id,
-        .idempotencyKey = transaction_id,
-        .expectedForeground = .{
-            .pid = pid,
-            .startToken = start_token,
-            .processGroupId = process_group_id,
-        },
-        .operation = .{ .kind = "bytes", .encoding = "base64", .bytes = encoded },
-    }, .{});
-}
-
-test "A3 live drill: automation never writes inside a human composition" {
-    const human_bytes = [_][]const u8{ "H1", "H2", "H3", "H4" };
-    const composition = "H1H2H3H4";
-    const automation = "AUTOMATION";
-
-    var pty = try pty_host.PtyHost.init(std.testing.allocator);
-    defer pty.deinit();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    const output_name = "a3-interleaving.bin";
-    const created = try tmp.dir.createFile(output_name, .{});
-    created.close();
-    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const output_path = try tmp.dir.realpath(output_name, &path_buf);
-    switch (try pty.spawn(.{
-        .argv = &[_][]const u8{
-            "/bin/sh",
-            "-c",
-            "exec /bin/cat >> \"$1\"",
-            "hive-a3-drill",
-            output_path,
-        },
-        .geometry = .{ .columns = 80, .rows = 24 },
-    })) {
-        .running => {},
-        .exec_failed => return error.TestUnexpectedResult,
-    }
-
-    var sink: PtyQueueSink = .{ .pty = &pty };
-    var encoder: TestIdentityEncoder = .{};
-    var arbiter = input_arbiter.InputArbiter.init(
-        std.testing.allocator,
-        sink.arbiterSink(),
-        encoder.encoder(),
-        encoder.cancelEncoder(),
-    );
-    defer arbiter.deinit();
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        @splat(0x31),
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
-
-    const human_claim = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "viewer-human",
-        .kind = "human",
-        .leaseMilliseconds = @as(u64, 10_000),
-        .idempotencyKey = "a3-human",
-    }, .{});
-    defer std.testing.allocator.free(human_claim);
-    const human_granted = try core.claimInput(human_claim, "viewer-human", 2_000);
-    defer std.testing.allocator.free(human_granted);
-    try std.testing.expect(std.mem.indexOf(u8, human_granted, "\"state\":\"granted\"") != null);
-    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
-    const human_token = core.active_claim.?.token;
-
-    // Contend at every transaction boundary: the active human claim denies
-    // automation, and a submit attempted with a forged token is fenced by the
-    // single host write path before it can reach the PTY.
-    for (human_bytes, 0..) |body, index| {
-        var id_storage: [48]u8 = undefined;
-        const id = try std.fmt.bufPrint(&id_storage, "a3-human-{d}", .{index});
-        const human_submit = try a3BytesPayload(
-            std.testing.allocator,
-            registration,
-            human_token,
-            id,
-            id,
-            body,
-        );
-        defer std.testing.allocator.free(human_submit);
-        const human_applied = try core.submitInput(human_submit, "viewer-human", 3_000);
-        defer std.testing.allocator.free(human_applied);
-        try std.testing.expect(
-            std.mem.indexOf(u8, human_applied, "\"stage\":\"written-to-terminal\"") != null,
-        );
-
-        var auto_id_storage: [48]u8 = undefined;
-        const auto_id = try std.fmt.bufPrint(&auto_id_storage, "a3-auto-{d}", .{index});
-        const auto_claim = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-            .schemaVersion = @as(u8, 1),
-            .session = .{
-                .key = registration.record.locator.session_id,
-                .incarnation = "1",
-            },
-            .writer = "hive-daemon",
-            .kind = "automation",
-            .leaseMilliseconds = @as(u64, 10_000),
-            .idempotencyKey = auto_id,
-        }, .{});
-        defer std.testing.allocator.free(auto_claim);
-        const auto_denied = try core.claimInput(auto_claim, "hive-daemon", 3_000);
-        defer std.testing.allocator.free(auto_denied);
-        try std.testing.expect(std.mem.indexOf(u8, auto_denied, "\"state\":\"denied\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, auto_denied, human_token) != null);
-
-        const forced_submit = try a3BytesPayload(
-            std.testing.allocator,
-            registration,
-            "forged-automation-claim",
-            auto_id,
-            auto_id,
-            automation,
-        );
-        defer std.testing.allocator.free(forced_submit);
-        const auto_refused = try core.submitInput(forced_submit, "hive-daemon", 3_000);
-        defer std.testing.allocator.free(auto_refused);
-        try std.testing.expect(std.mem.indexOf(u8, auto_refused, "\"stage\":\"rejected\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, auto_refused, "input claim fenced") != null);
-    }
-
-    for (0..500) |_| {
-        const file = try tmp.dir.openFile(output_name, .{});
-        const size = try file.getEndPos();
-        file.close();
-        if (size >= composition.len) break;
-        std.Thread.sleep(2 * std.time.ns_per_ms);
-    }
-    std.Thread.sleep(150 * std.time.ns_per_ms);
-    const during_file = try tmp.dir.openFile(output_name, .{});
-    defer during_file.close();
-    const during = try during_file.readToEndAlloc(std.testing.allocator, 4096);
-    defer std.testing.allocator.free(during);
-    try std.testing.expectEqualStrings(composition, during);
-
-    const release = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .claimToken = human_token,
-        .kind = "submit",
-    }, .{});
-    defer std.testing.allocator.free(release);
-    const released = try core.releaseInput(release, "viewer-human", 4_000);
-    defer std.testing.allocator.free(released);
-    try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
-
-    // Positive control: the same automation path reaches the child immediately
-    // after release, so its absence above is the human claim, not a dead path.
-    const auto_claim = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = registration.record.locator.session_id,
-            .incarnation = "1",
-        },
-        .writer = "hive-daemon",
-        .kind = "automation",
-        .leaseMilliseconds = @as(u64, 10_000),
-        .idempotencyKey = "a3-auto-after-release",
-    }, .{});
-    defer std.testing.allocator.free(auto_claim);
-    const auto_granted = try core.claimInput(auto_claim, "hive-daemon", 5_000);
-    defer std.testing.allocator.free(auto_granted);
-    try std.testing.expect(std.mem.indexOf(u8, auto_granted, "\"state\":\"granted\"") != null);
-    const foreground_process_group_id = try pty.foregroundProcessGroupId();
-    const foreground = process_inspector.observeProcessPresent(foreground_process_group_id) orelse
-        return error.TestUnexpectedResult;
-    var foreground_token_storage: [64]u8 = undefined;
-    const foreground_token = try foreground.start_token.format(&foreground_token_storage);
-    const raced_submit = try c1AutomatedBytesPayload(
-        std.testing.allocator,
-        registration,
-        core.active_claim.?.token,
-        "c1-raced-submit",
-        automation,
-        foreground.pid,
-        "0:0",
-        foreground_process_group_id,
-    );
-    defer std.testing.allocator.free(raced_submit);
-    const raced = try core.submitInput(raced_submit, "hive-daemon", 5_000);
-    defer std.testing.allocator.free(raced);
-    try std.testing.expect(std.mem.indexOf(u8, raced, "\"stage\":\"rejected\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, raced, "foreground-changed") != null);
-
-    const auto_submit = try c1AutomatedBytesPayload(
-        std.testing.allocator,
-        registration,
-        core.active_claim.?.token,
-        "a3-auto-submit",
-        automation,
-        foreground.pid,
-        foreground_token,
-        foreground_process_group_id,
-    );
-    defer std.testing.allocator.free(auto_submit);
-    const auto_applied = try core.submitInput(auto_submit, "hive-daemon", 5_000);
-    defer std.testing.allocator.free(auto_applied);
-    try std.testing.expect(
-        std.mem.indexOf(u8, auto_applied, "\"stage\":\"written-to-terminal\"") != null,
-    );
-
-    for (0..500) |_| {
-        const file = try tmp.dir.openFile(output_name, .{});
-        const size = try file.getEndPos();
-        file.close();
-        if (size >= composition.len + automation.len) break;
-        std.Thread.sleep(2 * std.time.ns_per_ms);
-    }
-    std.Thread.sleep(150 * std.time.ns_per_ms);
-    const final_file = try tmp.dir.openFile(output_name, .{});
-    defer final_file.close();
-    const recorded = try final_file.readToEndAlloc(std.testing.allocator, 4096);
-    defer std.testing.allocator.free(recorded);
-    try std.testing.expectEqualStrings(composition ++ automation, recorded);
-}
-
-test "INPUT_ORPHAN_DISCARD rejects a locator that is not this host's" {
-    var pty = try pty_host.PtyHost.init(std.testing.allocator);
-    defer pty.deinit();
-    var sink: PtyQueueSink = .{ .pty = &pty };
-    var encoder: TestIdentityEncoder = .{};
-    var arbiter = input_arbiter.InputArbiter.init(
-        std.testing.allocator,
-        sink.arbiterSink(),
-        encoder.encoder(),
-        encoder.cancelEncoder(),
-    );
-    defer arbiter.deinit();
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-    var registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        @splat(0x31),
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
-
-    registration.record.locator.generation = 2;
-    const foreign = try orphanDiscardPayload(std.testing.allocator, registration, "orphaned");
-    defer std.testing.allocator.free(foreign);
-    try std.testing.expectError(error.InvalidOrphanDiscard, core.discardInputOrphan(foreign, 1_000));
 }
 
 fn visibilityRenewPayload(
@@ -5362,8 +4357,6 @@ test "optional provider graceful action reaches the PTY without fabricated bytes
         .running => {},
         .exec_failed => return error.TestUnexpectedResult,
     }
-    // Trailing NL is intentional input; OPOST|ONLCR expands it to CRLF on the
-    // master read path (same contract as the interactive shell).
     const action = "explicit-provider-graceful-action\n";
     const echoed = "explicit-provider-graceful-action\r\n";
     try deliverGracefulAction(.{
@@ -5488,18 +4481,13 @@ test "a host self-terminates only once its supervisor is observably gone" {
     }
     try bindTestProvider(std.testing.allocator, &core, &pty, temporary.dir);
     const provider_pid = core.registration.record.process_root.pid;
-    // A live supervisor, long past the unrenewed visibility deadline: nothing
-    // dies. A running host holds its own lease open; reading an unrenewed
-    // lease as death kills working agents whose vendor TUI is rendered and
-    // running.
+    // A live supervisor, long past the unrenewed visibility deadline: nothing dies. A running host holds its own lease open; reading an unrenewed lease as death kills working agents whose vendor TUI is rendered and running.
     core.bindSupervisor(host_core.SupervisorWatch.of(c.getpid()).?);
     const past_old_lease = 1_000 + 10 * generated.limits.visibility_expiry_ms * std.time.ns_per_ms;
     try std.testing.expect(!try core.enforceSupervisorLoss(past_old_lease));
     try std.testing.expect(!core.terminated);
 
-    // Same pid, different start token: whatever holds that pid now is not the
-    // process that supervised this host. Absence must be continuous through
-    // the grace window, which exists so a restarting broker can adopt.
+    // Same pid, different start token: whatever holds that pid now is not the process that supervised this host. Absence must be continuous through the grace window, which exists so a restarting broker can adopt.
     core.supervisor.?.start_token.microseconds +%= 1;
     try std.testing.expect(!try core.enforceSupervisorLoss(past_old_lease));
     try std.testing.expect(!try core.enforceSupervisorLoss(
@@ -5522,18 +4510,279 @@ test "a host self-terminates only once its supervisor is observably gone" {
     try std.testing.expect(std.mem.indexOf(u8, final, "SUPERVISOR_GONE") != null);
 }
 
+test "the host wait returns on PTY output rather than on its tick" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    // A child that says nothing until told to, so the wait below is entered with the master
+    // quiet and can only be released by the write that follows.
+    switch (try pty.spawn(.{
+        .argv = &[_][]const u8{"/bin/cat"},
+        .geometry = .{ .columns = 80, .rows = 24, .width_px = 800, .height_px = 480 },
+    })) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
+    var listeners = try socketPair();
+    defer listeners[0].close();
+    defer listeners[1].close();
+
+    var wait = try HostWait.open(
+        listeners[0].handle,
+        listeners[1].handle,
+        pty.master_fd,
+        pty.pid,
+    );
+    defer wait.close();
+    _ = try pty.writeAccept("wake\n");
+    try pty.writeDrainAll();
+
+    var timer = try std.time.Timer.start();
+    _ = try wait.block(false);
+    // Anything close to host_tick_ms means the descriptor was never watched and the timer did
+    // the waking, which would leave every terminal byte waiting on the next tick.
+    try std.testing.expect(timer.read() < host_tick_ns / 2);
+    var seen: usize = 0;
+    while (seen == 0) seen = (try pty.readAvailable()).bytes.len;
+}
+
+test "the host wait reports root exit and persists waitpid evidence" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    const launch = switch (try pty.spawn(.{
+        .argv = &[_][]const u8{
+            "/bin/sh",
+            "-c",
+            "/bin/sleep 0.1; exit 23",
+        },
+        .geometry = .{ .columns = 80, .rows = 24 },
+    })) {
+        .running => |value| value,
+        .exec_failed => return error.TestUnexpectedResult,
+    };
+    var listeners = try socketPair();
+    defer listeners[0].close();
+    defer listeners[1].close();
+    var wait = try HostWait.open(
+        listeners[0].handle,
+        listeners[1].handle,
+        pty.master_fd,
+        pty.pid,
+    );
+    defer wait.close();
+
+    var timer = try std.time.Timer.start();
+    var root_exited = false;
+    while (!root_exited) {
+        root_exited = try wait.block(false);
+        try std.testing.expect(timer.read() < host_tick_ns / 2);
+    }
+    try std.testing.expect(timer.read() < host_tick_ns / 2);
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var registration = fixtureRegistration();
+    var token_storage: [64]u8 = undefined;
+    registration.record.process_root.pid = launch.pid;
+    registration.record.process_root.process_group_id = launch.pgid;
+    registration.record.process_root.start_token = try launch.start_token.format(&token_storage);
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = temporary.dir });
+    const response = try core.terminateBound(.immediate, null);
+    defer std.testing.allocator.free(response);
+    try std.testing.expect(core.terminated);
+    try std.testing.expect(pty.master_fd < 0);
+    const final = try temporary.dir.readFileAlloc(
+        std.testing.allocator,
+        "final.json",
+        generated.limits.control_json_bytes,
+    );
+    defer std.testing.allocator.free(final);
+    try std.testing.expect(std.mem.indexOf(u8, final, "\"exitCode\":23") != null);
+    try std.testing.expect(std.mem.indexOf(u8, final, "\"waitObserved\":true") != null);
+}
+
+test "the running host loop is what reaps a host whose supervisor is gone" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    // A bound socket's path has to fit in sun_path, and the test cache directory is already too
+    // deep to leave room for one.
+    var root_storage: [32]u8 = undefined;
+    const root = try std.fmt.bufPrint(
+        &root_storage,
+        "/tmp/hsl-{x}",
+        .{std.crypto.random.int(u64)},
+    );
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{});
+    defer root_directory.close();
+    try root_directory.chmod(0o700);
+
+    const registration = fixtureRegistration();
+    const session_id = registration.record.locator.session_id;
+    const secret: [32]u8 = @splat(0x5c);
+    var hosts_directory = try root_directory.makeOpenPath("hosts", .{});
+    defer hosts_directory.close();
+    try hosts_directory.chmod(0o700);
+    var host_directory = try hosts_directory.makeOpenPath(session_id, .{});
+    defer host_directory.close();
+    try host_directory.chmod(0o700);
+    {
+        // HostRuntime.open proves the adoption secret against this file before it binds anything.
+        const capability = try host_directory.createFile("adopt.cap", .{ .mode = 0o600 });
+        defer capability.close();
+        try capability.writeAll(&secret);
+    }
+
+    var runtime = try HostRuntime.open(
+        std.testing.allocator,
+        .{ .socket = root, .state = root },
+        session_id,
+        secret,
+    );
+    defer runtime.deinit();
+    var nh_runtime = try neutral_runtime.Runtime.open(
+        std.testing.allocator,
+        .{ .socket = root, .state = root },
+    );
+    defer nh_runtime.deinit();
+    var neutral_registry = try neutral_runtime.Registry.open(std.testing.allocator, &nh_runtime);
+    defer neutral_registry.deinit();
+    const reserved = try neutral_registry.reserve(
+        session_id,
+        "supervisor-loss-proof",
+        @splat(0x42),
+        .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    );
+    const session = switch (reserved) {
+        .reserved => |record| record.session,
+        .existing => return error.TestUnexpectedResult,
+    };
+    var neutral_endpoint = try neutral_runtime.HostEndpoint.open(
+        std.testing.allocator,
+        &nh_runtime,
+        session,
+    );
+    defer neutral_endpoint.deinit();
+
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        secret,
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer {
+        if (!std.mem.eql(
+            u8,
+            core.registration.record.process_root.start_token,
+            registration.record.process_root.start_token,
+        )) core.allocator.free(core.registration.record.process_root.start_token);
+        core.deinit();
+    }
+    try bindTestProvider(std.testing.allocator, &core, &pty, runtime.directory);
+
+    var timer = try std.time.Timer.start();
+    // The loop reads its clock from this timer, so backdating the origin puts the very first tick
+    // past host_core.supervisor_grace_ns instead of making the test wait out the real window.
+    timer.started.timestamp.sec -= 200;
+    var timer_clock: TimerClock = .{ .timer = &timer };
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, sink.effectSink());
+    const engine_build_digest = try RealVtEngine.engineBuildId();
+    var state = terminal_state.TerminalState.init(
+        std.testing.allocator,
+        real_engine.engine(),
+        RealVtEngine.factory(),
+        .{ .context = &timer_clock, .nowFn = TimerClock.now },
+        &engine_build_digest,
+        .{
+            .columns = 80,
+            .rows = 24,
+            .cell_width_px_16_16 = try geometryFixed16_16(10),
+            .cell_height_px_16_16 = try geometryFixed16_16(20),
+        },
+        runtime.directory,
+    );
+    defer state.deinit();
+    var live_evidence: NeutralLiveEvidenceSource = .{
+        .core = &core,
+        .pty = &pty,
+        .state = &state,
+    };
+    var neutral_platform = process_inspector.RealPlatform.init();
+    var neutral_terminal: NeutralTerminalSource = .{ .pty = &pty, .state = &state };
+    var host_operations = try neutral_operations.HostOperations.initServingTerminal(
+        std.testing.allocator,
+        &neutral_registry,
+        neutral_endpoint.session,
+        neutral_platform.platform(),
+        live_evidence.provider(),
+        neutral_evidence.EvidenceClock.system(),
+        neutral_terminal.provider(),
+    );
+    defer host_operations.deinit();
+    var neutral_serving: NeutralHostServing = .{
+        .operations = &host_operations,
+        .core = &core,
+    };
+    var persistence: PersistenceCursor = .{};
+
+    // Same pid, different start token: whatever holds that pid now is not the process that
+    // supervised this host, and the absence predates the grace window. Nothing but the loop can
+    // act on that — enforceSupervisorLoss has no other caller — so a loop that returns with the
+    // host terminated for SUPERVISOR_GONE is the whole proof.
+    core.bindSupervisor(host_core.SupervisorWatch.of(c.getpid()).?);
+    core.supervisor.?.start_token.microseconds +%= 1;
+    core.supervisor.?.lost_since_ns = 1;
+    const provider_pid = core.registration.record.process_root.pid;
+
+    try runHostLoop(
+        &runtime,
+        &neutral_registry,
+        &neutral_endpoint,
+        &neutral_serving,
+        &core,
+        &timer,
+        &pty,
+        &state,
+        real_engine,
+        &persistence,
+    );
+
+    try std.testing.expect(core.terminated);
+    try std.testing.expect(switch (process_inspector.observeProcess(provider_pid)) {
+        .absent => true,
+        .present, .unobservable => false,
+    });
+    const loop_final = try runtime.directory.readFileAlloc(
+        std.testing.allocator,
+        "final.json",
+        generated.limits.control_json_bytes,
+    );
+    defer std.testing.allocator.free(loop_final);
+    try std.testing.expect(std.mem.indexOf(u8, loop_final, "SUPERVISOR_GONE") != null);
+}
+
 comptime {
-    // Composition imports are deliberate even before every surface is wired.
-    _ = broker;
     _ = input_arbiter;
     _ = process_inspector;
     _ = protocol;
     _ = pty_host;
 }
 
-/// A shadow VT whose resize can be made to fail on demand. Everything else is
-/// inert: this case is about the two-part mutation's failure boundary, not
-/// about VT fidelity.
 const BrittleShadowEngine = struct {
     allocator: std.mem.Allocator,
     fail_export: bool = false,
@@ -5625,10 +4874,6 @@ test "neutral resize drives the production adapter across both representations" 
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
     const allocator = std.testing.allocator;
 
-    // The REAL production adapter over a REAL pseudo-terminal and a REAL
-    // TerminalState. An earlier proof used a test-local terminal that held no
-    // shadow at all, so nothing executed NeutralTerminalSource and neither half
-    // of its two-part mutation was covered.
     var pty = try pty_host.PtyHost.init(allocator);
     defer pty.deinit();
     _ = try pty.spawn(.{
@@ -5659,14 +4904,13 @@ test "neutral resize drives the production adapter across both representations" 
         .test_resize_columns_adjustment = 1,
     };
     const provider = source.provider();
-    const window: neutral_host.WindowSize = .{
+    const window: neutral_contract.WindowSize = .{
         .columns = 100,
         .rows = 30,
         .widthPixels = 1000,
         .heightPixels = 600,
     };
 
-    // Both halves land on a healthy path.
     switch (try provider.resize(window, 1)) {
         .applied => |applied| {
             try std.testing.expectEqual(@as(u64, 1), applied.revision);
@@ -5679,11 +4923,8 @@ test "neutral resize drives the production adapter across both representations" 
     try std.testing.expectEqual(@as(u32, 30), live_shadow.rows);
     source.test_resize_columns_adjustment = 0;
 
-    // Mutation control for the old PTY-first ordering: fail the candidate's
-    // post-resize export. Neither the PTY nor live renderer may move, and the
-    // already verified base checkpoint must keep reattachability observable.
     live_shadow.fail_clone_export = true;
-    const divergent: neutral_host.WindowSize = .{
+    const divergent: neutral_contract.WindowSize = .{
         .columns = 120,
         .rows = 40,
         .widthPixels = 1200,
@@ -5695,7 +4936,6 @@ test "neutral resize drives the production adapter across both representations" 
     try std.testing.expectEqual(@as(u32, 101), live_shadow.columns);
     try std.testing.expect(state.checkpointAvailable());
 
-    // Once export succeeds, the same revision commits both representations.
     live_shadow.fail_clone_export = false;
     switch (try provider.resize(divergent, 2)) {
         .applied => |applied| {

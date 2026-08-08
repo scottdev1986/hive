@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "runId": "u5-msaukaje-ebu1dx",
+  "startedAt": "2026-08-01T20:51:52.538Z",
+  "home": "/private/tmp/hvqa-g",
+  "project": "/private/tmp/u5p-d",
+  "sourceRoot": "/Users/scottkellar/Projects/hive/.hive/worktrees/anna",
+  "sourceSha": "1aa95e5d528717c80dbb51779e9777cf1f29ffde",
+  "daemonPort": 64968,
+  "initialPolicyRevision": 2,
+  "initialAgentCount": 0,
+  "pendingAssertions": {
+    "stopProvider": "production endpoint absent in this production proof leg",
+    "terminateTerminal": "production endpoint absent in this production proof leg",
+    "viewerProcessSigkill": "awaiting the production Workspace rendezvous"
+  }
+}

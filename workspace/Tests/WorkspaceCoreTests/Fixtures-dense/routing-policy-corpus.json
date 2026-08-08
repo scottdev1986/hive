@@ -1,0 +1,2646 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 3,
+      "revision": 6,
+      "updatedAt": "2026-07-13T16:05:40.344Z",
+      "provisional": false,
+      "providers": {
+        "claude": "enabled",
+        "codex": "enabled",
+        "grok": "disabled",
+        "kimi": "enabled",
+        "opencode": "enabled"
+      },
+      "models": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "state": "enabled",
+          "effort": {
+            "mode": "never-configured"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-fable-5",
+          "state": "enabled",
+          "effort": {
+            "mode": "hive-decides"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-5",
+          "state": "disabled",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "state": "enabled",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-4-5",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-8",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-9",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-5",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-9",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-7",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-nova",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.3",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-atlas",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3-fast",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-2",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-heavy",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2-instruct",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-lite",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-vision",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        }
+      ],
+      "global": {
+        "mode": "hive-equal",
+        "candidates": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 1
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 1
+          }
+        ]
+      },
+      "categories": {
+        "light_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "none"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "heavy_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "simple_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 4
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "standard_coding": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "complex_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 3
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "code_review": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 2
+            }
+          ]
+        },
+        "planning": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "debugging": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "summarization": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "default": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 3,
+      "revision": 6,
+      "updatedAt": "2026-07-13T16:05:40.344Z",
+      "provisional": false,
+      "providers": {
+        "claude": "enabled",
+        "codex": "enabled",
+        "grok": "disabled",
+        "kimi": "enabled",
+        "opencode": "enabled"
+      },
+      "models": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "state": "enabled",
+          "effort": {
+            "mode": "never-configured"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-fable-5",
+          "state": "enabled",
+          "effort": {
+            "mode": "hive-decides"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-5",
+          "state": "disabled",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "state": "enabled",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-4-5",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-8",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-9",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-5",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-9",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-7",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-nova",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.3",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-atlas",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3-fast",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-2",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-heavy",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2-instruct",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-lite",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-vision",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        }
+      ],
+      "global": {
+        "mode": "hive-equal",
+        "candidates": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 1
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 1
+          }
+        ]
+      },
+      "categories": {
+        "light_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "none"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "heavy_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "simple_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 4
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "standard_coding": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "complex_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 3
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "code_review": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 2
+            }
+          ]
+        },
+        "planning": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "debugging": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "summarization": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "default": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 3,
+      "revision": 6,
+      "updatedAt": "2026-07-13T16:05:40.344Z",
+      "provisional": false,
+      "providers": {
+        "claude": "enabled",
+        "codex": "enabled",
+        "grok": "disabled",
+        "kimi": "enabled",
+        "opencode": "enabled"
+      },
+      "models": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "state": "enabled",
+          "effort": {
+            "mode": "never-configured"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-fable-5",
+          "state": "enabled",
+          "effort": {
+            "mode": "hive-decides"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-5",
+          "state": "disabled",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "state": "enabled",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-4-5",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-8",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-9",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-5",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-9",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-7",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-nova",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.3",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-atlas",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3-fast",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-2",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-heavy",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2-instruct",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-lite",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-vision",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        }
+      ],
+      "global": {
+        "mode": "hive-equal",
+        "candidates": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 1
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 1
+          }
+        ]
+      },
+      "categories": {
+        "light_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "none"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "heavy_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "simple_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 4
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "standard_coding": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "complex_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 3
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "code_review": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 2
+            }
+          ]
+        },
+        "planning": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "debugging": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "summarization": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "default": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "6-competing"
+    },
+    "value": {
+      "schemaVersion": 3,
+      "revision": 6,
+      "updatedAt": "2026-07-13T16:05:40.344Z",
+      "provisional": false,
+      "providers": {
+        "claude": "enabled",
+        "codex": "enabled",
+        "grok": "disabled",
+        "kimi": "enabled",
+        "opencode": "enabled"
+      },
+      "models": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "state": "enabled",
+          "effort": {
+            "mode": "never-configured"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-fable-5",
+          "state": "enabled",
+          "effort": {
+            "mode": "hive-decides"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-5",
+          "state": "disabled",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "state": "enabled",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-4-5",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-8",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-9",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-5",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-9",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-7",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-nova",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.3",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-atlas",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3-fast",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-2",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-heavy",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2-instruct",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-lite",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-vision",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        }
+      ],
+      "global": {
+        "mode": "hive-equal",
+        "candidates": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 1
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 1
+          }
+        ]
+      },
+      "categories": {
+        "light_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "none"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "heavy_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "simple_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 4
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "standard_coding": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "complex_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 3
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "code_review": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 2
+            }
+          ]
+        },
+        "planning": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "debugging": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "summarization": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "default": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "6-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 3,
+      "revision": 6,
+      "updatedAt": "2026-07-13T16:05:40.344Z",
+      "provisional": false,
+      "providers": {
+        "claude": "enabled",
+        "codex": "enabled",
+        "grok": "disabled",
+        "kimi": "enabled",
+        "opencode": "enabled"
+      },
+      "models": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "state": "enabled",
+          "effort": {
+            "mode": "never-configured"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-fable-5",
+          "state": "enabled",
+          "effort": {
+            "mode": "hive-decides"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-5",
+          "state": "disabled",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "state": "enabled",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-4-5",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-5",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-8",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-9",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-haiku-5",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-4-9",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-7",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-luna",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-nova",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.3",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-atlas",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-fast",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3-fast",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-2",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-1-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "grok",
+          "model": "grok-3",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4-heavy",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-mini",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k2-instruct",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k1",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-lite",
+          "effort": {
+            "mode": "none"
+          }
+        },
+        {
+          "provider": "kimi",
+          "model": "kimi-k3-vision",
+          "effort": {
+            "mode": "never-configured"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-terra-fast",
+          "effort": {
+            "mode": "hive-decides"
+          },
+          "state": "disabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.5",
+          "effort": {
+            "mode": "exact",
+            "value": "high"
+          }
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.4",
+          "effort": {
+            "mode": "exact",
+            "value": "medium"
+          },
+          "state": "enabled"
+        },
+        {
+          "provider": "opencode",
+          "model": "gpt-5.6-sol",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "state": "disabled"
+        }
+      ],
+      "global": {
+        "mode": "hive-equal",
+        "candidates": [
+          {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 1
+          },
+          {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 1
+          }
+        ]
+      },
+      "categories": {
+        "light_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "none"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "heavy_research": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "simple_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 4
+            },
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "standard_coding": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "complex_coding": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 3
+            },
+            {
+              "provider": "codex",
+              "model": "gpt-5.6-sol",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "code_review": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-sonnet-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 2
+            }
+          ]
+        },
+        "planning": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "hive-decides"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "debugging": {
+          "mode": "user-weighted",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-fable-5",
+              "effort": {
+                "mode": "exact",
+                "value": "high"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "summarization": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "grok",
+              "model": "grok-4.5",
+              "effort": {
+                "mode": "exact",
+                "value": "low"
+              },
+              "weight": 1
+            }
+          ]
+        },
+        "default": {
+          "mode": "hive-equal",
+          "candidates": [
+            {
+              "provider": "claude",
+              "model": "claude-opus-4-8",
+              "effort": {
+                "mode": "provider-controlled"
+              },
+              "weight": 1
+            }
+          ]
+        }
+      }
+    }
+  }
+]

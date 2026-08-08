@@ -3,20 +3,14 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
-# Local zig caches are per-checkout: concurrent worktrees sharing one local
-# cache land on the same content-addressed manifest files and serialize on
-# zig's blocking flock, which has no timeout — runs hang silently instead of
-# failing. The global cache below stays shared; fetched packages are immutable
-# and sharing them is what keeps a fresh worktree warm.
+# Local zig caches are per-checkout: concurrent worktrees sharing one local cache land on the same content-addressed manifest files and serialize on zig's blocking flock, which has no timeout — runs hang silently instead of failing. The global cache below stays shared; fetched packages are immutable and sharing them is what keeps a fresh worktree warm.
 CHECKOUT_KEY=$(printf '%s' "$ROOT" | /usr/bin/shasum | /usr/bin/cut -c1-12)
 LOCAL_CACHE="$CACHE/zig-local/checkout-$CHECKOUT_KEY"
 LOCK="$ROOT/native/toolchain-lock.json"
 VERSION=$(/usr/bin/plutil -extract zig.version raw -o - "$LOCK")
 
-"$ROOT/scripts/preflight-native-toolchain.sh"
+"$ROOT/scripts/native/preflight-native-toolchain.sh"
 
-# System zig from PATH; the preflight above has already asserted it matches
-# the locked version ($VERSION).
 ZIG=zig
 case "$(uname -m)" in
   arm64) TARGET=aarch64-macos.14.0 ;;
@@ -27,18 +21,16 @@ case "$(uname -m)" in
     ;;
 esac
 
-OVERLAY=$("$ROOT/scripts/prepare-zig-xcode-overlay.sh")
-PATH="$ROOT/scripts/zig-runner-tools:$PATH"
+OVERLAY=$("$ROOT/scripts/native/prepare-zig-xcode-overlay.sh")
+PATH="$ROOT/scripts/native/zig-runner-tools:$PATH"
 export PATH
 
-# Liam's HVTCP001 C fixture + Zig shared binary must agree (F5 dual-source lock).
 ABI_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hive-sessiond-abi.XXXXXX")
 trap 'rm -rf "$ABI_TMP"' EXIT HUP INT TERM
 /usr/bin/clang -std=c11 -Wall -Wextra -Werror -o "$ABI_TMP/checkpoint-envelope" \
   "$ROOT/native/tests/abi/checkpoint-envelope.c"
 HVTCP001_FIXTURE_PATH="$ROOT/native/tests/abi/hvtcp001-header.bin" \
   "$ABI_TMP/checkpoint-envelope"
-# header-standalone needs Ghostty headers (syntax-only ABI check).
 if [ ! -f "$ROOT/vendor/ghostty/include/ghostty.h" ]; then
   echo "missing required Ghostty header for header-standalone ABI check: $ROOT/vendor/ghostty/include/ghostty.h" >&2
   exit 1
@@ -50,11 +42,7 @@ env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
   "$ROOT/native/tests/abi/header-standalone.c"
 echo "header-standalone ABI check passed"
 
-# Recovery compatibility is build-configuration-sensitive. The production
-# ReleaseFast C ABI must read the immediately preceding on-disk checkpoint,
-# while Debug/non-C-ABI layouts must reject that ID. Keep both assertions in
-# this standard gate so deleting the acceptsBuildId configuration fence is a
-# measured failure rather than a green Ghostty-only unit-test mutation.
+# Recovery compatibility is build-configuration-sensitive. The production ReleaseFast C ABI must read the immediately preceding on-disk checkpoint, while Debug/non-C-ABI layouts must reject that ID. Keep both assertions in this standard gate so deleting the acceptsBuildId configuration fence is a measured failure rather than a green Ghostty-only unit-test mutation.
 cd "$ROOT/vendor/ghostty"
 if ! checkpoint_debug_summary=$("$ZIG" build --cache-dir "$LOCAL_CACHE/ghostty-checkpoint-debug" \
   --global-cache-dir "$CACHE/zig-global" \
@@ -82,8 +70,7 @@ case "$checkpoint_release_summary" in
   *) echo "ReleaseFast checkpoint test count drifted; the filtered assertions may not have executed" >&2; exit 1 ;;
 esac
 
-# real-host-golden overrides HIVE_HOME to a private /tmp root; agent shells that
-# inherit a live HIVE_HOME must not skip that override (see real-host-golden.zig).
+# real-host-golden overrides HIVE_HOME to a private /tmp root; agent shells that inherit a live HIVE_HOME must not skip that override (see real-host-golden.zig).
 cd "$ROOT/native/sessiond"
 "$ZIG" build --cache-dir "$LOCAL_CACHE/sessiond" \
   --global-cache-dir "$CACHE/zig-global" \
@@ -95,5 +82,5 @@ if [ "$MIN_OS" != "14.0" ]; then
   exit 1
 fi
 cd "$ROOT"
-bun test ./native/sessiond/test/identity-parity.ts
-bun test ./native/sessiond/test/ts-live-create.ts
+bun run "$ROOT/scripts/test-sandbox.ts" -- \
+  bun test ./native/sessiond/test/identity-parity.ts ./native/sessiond/test/ts-live-create.ts

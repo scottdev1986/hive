@@ -232,7 +232,7 @@ describe("the release workflow's signing steps", () => {
         [
           process.execPath,
           "run",
-          join(repoRoot, "scripts/signing/verify-manifest.ts"),
+          join(repoRoot, "scripts/signing/signing-verify-manifest.ts"),
           path,
         ],
         {

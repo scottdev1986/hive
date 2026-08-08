@@ -7,8 +7,8 @@ import {
   parseHookStdin,
   readHookStdin,
   runHiveEvent,
-} from "../../src/cli/event";
-import { HookEventSchema } from "../../src/schemas";
+} from "../../src/cli/event-command";
+import { HookEventSchema } from "../../src/schemas/event";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -318,7 +318,7 @@ describe("hive event", () => {
         text: async () => JSON.stringify({ session_id: "abc" }),
       }),
     ).toEqual({ toolSessionId: "abc" });
-    // TTY means a human, not a hook runner.
+    // TTY means a user, not a hook runner.
     expect(
       await readHookStdin({
         isTTY: true,

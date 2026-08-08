@@ -9,7 +9,7 @@ import {
   queenSkillDelivery,
 } from "../../src/adapters/queen-skills";
 import { buildOrchestratorCommand } from "../../src/cli/orchestrator";
-import { CAPABILITY_PROVIDERS } from "../../src/schemas";
+import { CAPABILITY_PROVIDERS } from "../../src/schemas/capability";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 
 /**
@@ -64,16 +64,12 @@ test("grok's directory is the home the launch actually sets", () => {
 });
 
 test("the launch carries what the vendor needs to read her directory", () => {
-  const claude = buildOrchestratorCommand(
-    "claude",
-    4000,
-    "",
-    "claude",
-    "",
-    "",
-    [],
-    queenSkillDelivery("claude", "/queen").launchArgs,
-  );
+  const claude = buildOrchestratorCommand({
+    tool: "claude",
+    port: 4000,
+    executable: "claude",
+    queenSkillArgs: queenSkillDelivery("claude", "/queen").launchArgs,
+  });
   expect(claude).toContain("--plugin-dir");
   expect(claude).toContain(claudeQueenPluginRoot("/queen"));
   // The flag that makes the plugin necessary is still there: without it the
@@ -110,10 +106,20 @@ test("a queen is given her own skills, and not an agent's", async () => {
     readFile(join(directory, "house-style", "SKILL.md"), "utf8"),
   ).rejects.toThrow();
 
-  // Hive's own: alignment and memory are hers, the worktree contract and the
-  // coding guidelines are not.
-  expect(shippedSkillsFor({ role: "queen", tool: "claude" })).toHaveLength(2);
-  for (const hers of ["hive-alignment", "hive-memory"]) {
+  // Hive's own: alignment, memory, and every pull-tier decision topic are
+  // hers; the worktree contract and coding guidelines are not.
+  expect(shippedSkillsFor({ role: "queen", tool: "claude" })).toHaveLength(9);
+  for (const hers of [
+    "hive-memory",
+    "hive-alignment",
+    "hive-board-conventions",
+    "hive-dispatch",
+    "hive-escalation",
+    "hive-landing",
+    "hive-mail-discipline",
+    "hive-succession",
+    "hive-worktree-lifecycle",
+  ]) {
     expect(await readFile(join(directory, hers, "SKILL.md"), "utf8")).toContain(
       `name: ${hers}`,
     );

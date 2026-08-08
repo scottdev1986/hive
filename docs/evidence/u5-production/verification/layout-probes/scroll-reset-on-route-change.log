@@ -1,0 +1,35 @@
+Building for debugging...
+[0/15] Write sources
+[1/15] Write swift-version--58304C5D6DBC2206.txt
+[3/7] Emitting module HiveWorkspace
+[4/7] Compiling HiveWorkspace WorkspaceShellWindowController.swift
+/Users/scottkellar/Projects/hive/.hive/worktrees/anna/workspace/Sources/HiveWorkspace/Shell/WorkspaceShellWindowController.swift:299:13: warning: initialization of immutable value 'routeChanged' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+297 |
+298 |     private func renderScreen() {
+299 |         let routeChanged = renderedRoute != state.activeRoute
+    |             `- warning: initialization of immutable value 'routeChanged' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+300 |         let liveRunVisible = state.activeRoute == .liveRun && liveRunWorkbench != nil
+301 |         liveRunHeightCeiling?.isActive = liveRunVisible
+[4/9] Write Objects.LinkFileList
+[5/9] Linking HiveWorkspace
+[6/9] Applying HiveWorkspace
+[8/10] Emitting module HiveWorkspaceTests
+[8/10] Write Objects.LinkFileList
+[9/10] Linking HiveWorkspacePackageTests
+Build complete! (1.98s)
+Test Suite 'Selected tests' started at 2026-08-01 22:14:41.568.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-08-01 22:14:41.569.
+Test Suite 'WorkspaceShellViewTests' started at 2026-08-01 22:14:41.569.
+Test Case '-[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenScrollsInsideTheRequestedWindowSize]' started.
+/Users/scottkellar/Projects/hive/.hive/worktrees/anna/workspace/Tests/HiveWorkspaceTests/WorkspaceShellViewTests.swift:292: error: -[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenScrollsInsideTheRequestedWindowSize] : XCTAssertGreaterThan failed: ("0.0") is not greater than ("0.0") - a same-route render must preserve the user's scroll position
+Test Case '-[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenScrollsInsideTheRequestedWindowSize]' failed (1.321 seconds).
+Test Suite 'WorkspaceShellViewTests' failed at 2026-08-01 22:14:42.891.
+	 Executed 1 test, with 1 failure (0 unexpected) in 1.321 (1.322) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' failed at 2026-08-01 22:14:42.891.
+	 Executed 1 test, with 1 failure (0 unexpected) in 1.321 (1.322) seconds
+Test Suite 'Selected tests' failed at 2026-08-01 22:14:42.891.
+	 Executed 1 test, with 1 failure (0 unexpected) in 1.321 (1.323) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

@@ -1,8 +1,7 @@
 # Quota surfaces
 
 Updated: 2026-07-14
-Sources: Hive source tree and linked raw measurements, 2026-07-14
-Raw: [Grok spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md) · [billing BEFORE](../../raw/grok/grok-billing-BEFORE.json) / [AFTER1](../../raw/grok/grok-billing-AFTER1.json) / [AFTER3](../../raw/grok/grok-billing-AFTER3.json) · [live quota verification](../../raw/grok/grok-quota-live-verification.txt) · [model-control snapshot](../../raw/grok/grok-model-control-verification.json)
+Sources: Hive source tree and live vendor measurements, 2026-07-14
 
 ## Summary
 
@@ -12,13 +11,13 @@ Versions, stated exactly: the Codex and Claude surfaces were driven against **co
 
 ## The shape of the problem
 
-There is no API on any of the three that answers *"how many tokens does my plan include."* Any absolute allowance in Hive is therefore either an operator's planning fiction or an invention — which is why discovered pools are denominated in **percent, with an allowance of exactly 100 by construction**.
+There is no API on any of the three that answers *"how many tokens does my plan include."* Any absolute allowance in Hive is therefore either an user's planning fiction or an invention — which is why discovered pools are denominated in **percent, with an allowance of exactly 100 by construction**.
 
 All three surfaces are readable **without starting a turn**, so Hive probes them at startup for free. And two of the three meter some models **twice**: once against an account-wide pool every model spends from, and again against a cap belonging to that model alone. A quota number is only useful once you know *which models it governs*.
 
 ## Codex — `account/rateLimits/read`
 
-`codex app-server` speaks JSON-RPC 2.0 over stdio. **`initialize` followed by an `initialized` notification is mandatory**; any method sent before the handshake completes is rejected with `"Not initialized"` (`src/daemon/quota-sources.ts:18-19`, `:318`). Then `account/rateLimits/read` (no params) returns the account's limits. No `thread/start`, no `turn/start`, no prompt. It is part of the **stable, non-experimental** protocol, which is why Hive stamps its readings `authoritative`.
+`codex app-server` speaks JSON-RPC 2.0 over stdio. **`initialize` followed by an `initialized` notification is mandatory**; any method sent before the handshake completes is rejected with `"Not initialized"` (`src/usage-service/quota-sources.ts: CodexStdioProbeTransport`). Then `account/rateLimits/read` (no params) returns the account's limits. No `thread/start`, no `turn/start`, no prompt. It is part of the **stable, non-experimental** protocol, which is why Hive stamps its readings `authoritative`.
 
 The authoritative schema is not in the docs — the binary generates it: `codex app-server generate-json-schema --experimental --out DIR`.
 
@@ -38,15 +37,15 @@ Wire format is **camelCase**. `resetsAt` is **unix epoch seconds**. `usedPercent
 }
 ```
 
-**`primary`/`secondary` are positional names, not semantic ones.** Hive sorts by `windowDurationMins` (`src/daemon/quota-sources.ts:142-162`) so a snapshot that lists its weekly bucket first cannot invert the two. A window sorted by a *guessed* duration lands in the wrong bucket silently.
+**`primary`/`secondary` are positional names, not semantic ones.** Hive sorts by `windowDurationMins` (`src/usage-service/quota-sources.ts: orderRateLimitWindows`) so a snapshot that lists its weekly bucket first cannot invert the two. A window sorted by a *guessed* duration lands in the wrong bucket silently.
 
-A **null slot in this authoritative response is a positive statement** that the plan has no second meter — but a slot that was non-null and failed to parse is `unknown`, never confident absence. That distinction is one comparison in the code (`src/daemon/quota-sources.ts:204-208`: `reported > parsed ? "unknown" : "not-metered"`). It is not decoration: the live prolite account reports **no five-hour window at all** ([raw verification](../../raw/grok/grok-quota-live-verification.txt) — `codex … 5h: not metered`). Rendering that absence as a *failure* is a bug this exact rule prevents.
+A **null slot in this authoritative response is a positive statement** that the plan has no second meter — but a slot that was non-null and failed to parse is `unknown`, never confident absence. That distinction is one comparison in the code (`src/usage-service/quota-sources.ts: readingsFromCodexResponse`: `reported > parsed ? "unknown" : "not-metered"`). It is not decoration: the measured prolite account reports **no five-hour window at all**. Rendering that absence as a *failure* is a bug this exact rule prevents.
 
-`rateLimitResetCredits` is real headroom Hive deliberately does **not** count: the live account carries unspent full-reset grants, redeemable via `account/rateLimitResetCredit/consume`. Burning a human's finite reset grant to admit a spawn is a decision a human should make.
+`rateLimitResetCredits` is real headroom Hive deliberately does **not** count: the live account carries unspent full-reset grants, redeemable via `account/rateLimitResetCredit/consume`. Burning a user's finite reset grant to admit a spawn is a decision a user should make.
 
 ## Claude — the `get_usage` control request, and its statusline twin
 
-`claude -p --input-format stream-json --output-format stream-json` speaks a bidirectional control protocol. Send `control_request` subtype `initialize`, then `get_usage`, and close stdin **without ever sending a user message**: the account's plan usage comes back at `total_cost_usd: 0`. The CLI's own schema calls `get_usage` *"Experimental — the response shape may change"*, which is why Hive records its readings as **`reported`**, not `authoritative` (`src/daemon/quota-sources.ts:617-669`).
+`claude -p --input-format stream-json --output-format stream-json` speaks a bidirectional control protocol. Send `control_request` subtype `initialize`, then `get_usage`, and close stdin **without ever sending a user message**: the account's plan usage comes back at `total_cost_usd: 0`. The CLI's own schema calls `get_usage` *"Experimental — the response shape may change"*, which is why Hive records its readings as **`reported`**, not `authoritative` (`src/usage-service/quota-sources.ts: ClaudeStdioProbeTransport`).
 
 ```jsonc
 {
@@ -61,7 +60,7 @@ A **null slot in this authoritative response is a positive statement** that the 
 }
 ```
 
-**The statusline surface describes the same facts in different words and is parsed SEPARATELY.** `get_usage` says `utilization` with an **ISO-8601** `resets_at`; the statusLine hook input says **`used_percentage`** with `resets_at` in **unix seconds** (`src/cli/statusline.ts:52-68`). Both are 0–100. Both parsers exist, deliberately, in different files. A single parser that assumed one spelling would read the other as absent — which, per the [capability-discovery](capability-discovery.md) rule, is exactly how a guessed key becomes a silent zero.
+**The statusline surface describes the same facts in different words.** `get_usage` says `utilization` with an **ISO-8601** `resets_at`; the statusLine hook input says **`used_percentage`** with `resets_at` in **unix seconds**. Both are 0–100. A single parser that assumed one spelling would read the other as absent — which, per the [capability-discovery](capability-discovery.md) rule, is exactly how a guessed key becomes a silent zero.
 
 `model_scoped[]` carries a `display_name` and, in every reading observed, a **null model id** — `rate_limits.limits[]` says so outright: `scope.model: { "id": null, "display_name": "Fable" }`. The pool names its model and withholds its identifier.
 
@@ -69,7 +68,7 @@ Hive calls the control request rather than the `api.anthropic.com/api/oauth/usag
 
 ## Grok — ACP `_x.ai/billing` (gauge + guard)
 
-`grok agent stdio` speaks ACP JSON-RPC. After the same free `initialize` + `initialized`, the extension method **`_x.ai/billing` with params `{}`** returns the SuperGrok account's weekly usage (`src/daemon/quota-sources.ts:1100-1106`). **No session, no prompt, no turn** — the probe is spend-insensitive, confirmed by a three-run probe-only control that never moved the number ([spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-experiment.md)).
+`grok agent stdio` speaks ACP JSON-RPC. After the same free `initialize` + `initialized`, the extension method **`_x.ai/billing` with params `{}`** returns the SuperGrok account's weekly usage (`src/usage-service/quota-sources.ts: GrokStdioProbeTransport`). **No session, no prompt, no turn** — the probe is spend-insensitive, confirmed by a three-run probe-only control that never moved the number.
 
 **The leading underscore is mandatory.** Bare `x.ai/billing` returns `-32601 Method not found`.
 
@@ -91,7 +90,7 @@ Hive calls the control request rather than the `api.anthropic.com/api/oauth/usag
 
 ### Gauge vs guard
 
-**`config.creditUsagePercent` is a real usage meter.** It is not inferred: across a measured burn it moved 2 → 3 → 4 → 7 → **8** while the money rails sat flat at zero, and a probe-only control run three times did not move it at all ([BEFORE](../../raw/grok/grok-billing-BEFORE.json) / [AFTER1](../../raw/grok/grok-billing-AFTER1.json) / [AFTER3](../../raw/grok/grok-billing-AFTER3.json)). Two caveats came out of the same experiment and are properties of the surface: **multi-minute lag** (a burn showed up ~5 minutes later) and **coarse integer percent**.
+**`config.creditUsagePercent` is a real usage meter.** It is not inferred: across a measured burn it moved 2 → 3 → 4 → 7 → **8** while the money rails sat flat at zero, and a probe-only control run three times did not move it at all. Two caveats came out of the same experiment and are properties of the surface: **multi-minute lag** (a burn showed up ~5 minutes later) and **coarse integer percent**.
 
 `onDemandCap` / `onDemandUsed` / `prepaidBalance` are **money guards**, never capacity. Their zeros mean *paid overflow is off* — never *empty tank*.
 
@@ -99,11 +98,11 @@ Hive calls the control request rather than the `api.anthropic.com/api/oauth/usag
 
 ### Five-hour is a positive `not-metered`
 
-No five-hour field has ever been observed on `_x.ai/billing`. That is **absence by design**, and Hive records `fiveHourMeterState: "not-metered"` (`src/daemon/quota-sources.ts:976-978`) — a positive statement.
+No five-hour field has ever been observed on `_x.ai/billing`. That is **absence by design**, and Hive records `fiveHourMeterState: "not-metered"` (`src/usage-service/quota-sources.ts: readingsFromGrokBilling`) — a positive statement.
 
-But: **a missing percent on a *recognized* surface is `unknown`, never `not-metered`** (`src/daemon/quota-sources.ts:979-982`). The vendor *does* meter the weekly pool; a payload that parses but carries no usable number means Hive failed to read it, not that the vendor said "unlimited." The two states are one line apart in the code and they mean opposite things. (`weeklyMeterState: weekly === null ? "unknown" : "metered"`.)
+But: **a missing percent on a *recognized* surface is `unknown`, never `not-metered`** (`src/usage-service/quota-sources.ts: readingsFromGrokBilling`). The vendor *does* meter the weekly pool; a payload that parses but carries no usable number means Hive failed to read it, not that the vendor said "unlimited." The two states are one line apart in the code and they mean opposite things. (`weeklyMeterState: weekly === null ? "unknown" : "metered"`.)
 
-Grok's weekly pool binds account-wide as `models: ["*"]` (`src/daemon/quota-sources.ts:975`), so **it needs no display-name join** — unlike the two below.
+Grok's weekly pool binds account-wide as `models: ["*"]` (`src/usage-service/quota-sources.ts: readingsFromGrokBilling`), so **it needs no display-name join** — unlike the two below.
 
 ## Binding a pool to the models it meters
 
@@ -113,7 +112,7 @@ Three consequences, and they are the whole point:
 
 > **A model is gated by every pool that meters it, and the tightest one governs.**
 
-Checking only the *first* matching pool is what put two deep-tier agents onto a model whose own weekly pool sat at **99%**: the general pool had 39% of its week left and said yes, while the model's dedicated pool had 1% and was never asked. A run that spends from two meters holds a reservation in **each**, reserved atomically only after every pool fits (`src/daemon/quota-ledger.ts:1157-1195`).
+Checking only the *first* matching pool is what put two deep-tier agents onto a model whose own weekly pool sat at **99%**: the general pool had 39% of its week left and said yes, while the model's dedicated pool had 1% and was never asked. A run that spends from two meters holds a reservation in **each**, reserved atomically only after every pool fits (`QuotaLedger.reserveGroupUnchecked` in `src/usage-service/quota-ledger.ts`).
 
 **A model with no cap of its own is metered by the general pool — never by nothing.** Minting a phantom per-model pool for it and reporting "usage unknown, routing unconstrained" invents a meter *and* does the worst possible thing with it: an unconstrained model is the most attractive route there is, so the phantom actively pulls traffic toward itself.
 
@@ -138,13 +137,13 @@ The most embarrassing failure in this system's history: `hive quota` reported 12
 Both of the failures above were *defended in comments as the safe direction*.
 
 - The **`max()` quota floor**: usage was `max(Hive's entire ledger for the window, reading + spend since)` so that "an optimistic provider number can never free capacity Hive knows it spent." Every word of that holds except **knows**. Hive never knew — it guessed, from a static per-tier table. The floor let the guess outrank the measurement, and once the guess won the `max()` it *inherited the measurement's provenance*. That is how an invented number came to wear the word `authoritative`.
-- The **200k context denominator**: pinned so an inflated percentage "errs toward recycling early rather than silently degrading." It clamped live agents at a fake 100% full and had the orchestrator burning quota re-briefing agents it should have kept (`src/cli/statusline.ts:125-133`).
+- The **200k context denominator**: pinned so an inflated percentage "errs toward recycling early rather than silently degrading." It clamped live agents at a fake 100% full and had the orchestrator burning quota re-briefing agents it should have kept.
 
 The rule is not "never be conservative." It is: **name what each direction of error actually costs before calling one of them safe.** A confidently wrong number is worse than an admitted unknown, because the unknown invites a question and the wrong number closes it.
 
 ## The model-vendor / pool-provider guard
 
-A spend belongs to the vendor whose model produced it. The ledger holds one row that disagrees — a Claude model's usage billed to the Codex meter, written when routing chose `tool=codex` while the caller had pinned a Claude model. The guard now lives at the **write** (`src/daemon/quota-ledger.ts:1050-1082`), and positive catalog evidence is the only state that permits attribution:
+A spend belongs to the vendor whose model produced it. The ledger holds one row that disagrees — a Claude model's usage billed to the Codex meter, written when routing chose `tool=codex` while the caller had pinned a Claude model. The guard now lives at the **write** (`QuotaLedger.requireCoherent` in `src/usage-service/quota-ledger.ts`), and positive catalog evidence is the only state that permits attribution:
 
 - **claimed** by exactly one catalog, and that vendor matches the pool → accept.
 - **claimed** by a catalog, and the vendor disagrees with the pool → **throw**.
@@ -162,4 +161,4 @@ The predecessor asked a model-name regex and treated its null — "I cannot plac
 - [Capability discovery](capability-discovery.md) — the catalog side of the pool→model join
 - [Grok](grok.md) — the vendor whose only quota surface is `_x.ai/billing`
 - [Launch mechanics](launch-mechanics.md)
-- [Quota and headroom](../routing/quota-and-headroom.md) · [Routing policy](../routing/routing-policy.md) · [SPEC §6](../../SPEC.md#6-who-picks-the-model)
+- [Quota and headroom](../routing/quota-and-headroom.md) · [Routing policy](../routing/routing-policy.md)

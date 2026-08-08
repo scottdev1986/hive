@@ -5,13 +5,6 @@ public enum Direction: String, Codable, CaseIterable {
     case left, right, up, down
 }
 
-/// Spatial focus movement over solved pane frames.
-///
-/// Coordinates are the solver's: x grows right, y grows down (top-left origin).
-/// A candidate must lie strictly beyond the source pane's edge in the travel
-/// direction. Candidates sharing perpendicular overlap with the source win
-/// over non-overlapping ones; then smallest travel distance; then largest
-/// overlap; then PaneID for a total deterministic order.
 public enum SpatialNavigator {
 
     public static func pane(

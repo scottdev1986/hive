@@ -1,0 +1,38 @@
+{
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "51f864cdfa",
+    "subject": {
+      "kind": "agent",
+      "agentId": "7c498b77-ba6a-447a-8a3c-9fe3a6018d98"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc29b-9106-7ddf-8feb-bdcea808183d",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "outputSeq": "15078",
+  "columns": 80,
+  "rows": 24,
+  "rowStart": 0,
+  "screen": "primary",
+  "cursor": {
+    "row": 21,
+    "column": 36,
+    "visible": true
+  },
+  "text": "│ model:     gpt-5.3-codex-spark high   /model to change │\n│ directory: ~/project/.hive/worktrees/maya              │\n╰────────────────────────────────────────────────────────╯\n\n  Tip: Try the Desktop app. Run 'codex app' or visit\n  https://chatgpt.com/codex?app-landing-page=true\n\n\n› Begin the assigned task.\n\n\n⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without\n  review for this invocation.\n\n⚠ MCP startup interrupted. The following servers were not initialized: hive\n\n• Running SessionStart hook\n\n• Working (1s • esc to interrupt)\n\n\n› QA_CODEX_HUMAN_DRAFT_1785676402183\n\n  tab to queue message                                       100% context left",
+  "styledText": "\u001b[0m\u001b[2m│ model:     \u001b[0mgpt-5.3-codex-spark high\u001b[0m\u001b[2m   \u001b[0m\u001b[38;5;6m/model\u001b[0m\u001b[2m to change │\u001b[0m\r\n\u001b[0m\u001b[2m│ directory: \u001b[0m~/project/.hive/worktrees/maya\u001b[0m\u001b[2m              │\u001b[0m\r\n\u001b[0m\u001b[2m╰────────────────────────────────────────────────────────╯\u001b[0m\r\n\r\n  \u001b[0m\u001b[1mTip:\u001b[0m Try the \u001b[0m\u001b[1mDesktop app\u001b[0m. Run 'codex app' or visit\r\n  https://chatgpt.com/codex?app-landing-page=true\r\n\r\n\r\n\u001b[0m\u001b[1m\u001b[2m› \u001b[0mBegin the assigned task.\r\n\r\n\r\n\u001b[0m\u001b[38;5;3m⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without\u001b[0m\r\n  \u001b[0m\u001b[38;5;3mreview for this invocation.\u001b[0m\r\n\r\n\u001b[0m\u001b[38;5;3m⚠ MCP startup interrupted. The following servers were not initialized: hive\u001b[0m\r\n\r\n• \u001b[0m\u001b[2mRunning SessionSta\u001b[0mr\u001b[0m\u001b[1mt hoo\u001b[0mk\r\n\r\n• \u001b[0m\u001b[2mWorkin\u001b[0mg \u001b[0m\u001b[2m(1s • esc to interrupt)\u001b[0m\r\n\r\n\r\n\u001b[0m\u001b[1m› \u001b[0mQA_CODEX_HUMAN_DRAFT_1785676402183\r\n\r\n  \u001b[0m\u001b[2mtab to queue message\u001b[0m                                       \u001b[0m\u001b[2m100% context left\u001b[0m",
+  "truncated": false,
+  "sha256": "d762c7168e3997c7c0263613eb61b035934ddde7bd26f00fe85e691dff74e231",
+  "composer": {
+    "profile": "codex",
+    "present": true,
+    "nonempty": true,
+    "stable": true,
+    "userEditSinceEmpty": true,
+    "userOperationInFlight": false,
+    "claim": true,
+    "invariant": "ok"
+  }
+}

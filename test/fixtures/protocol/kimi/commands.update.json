@@ -1,0 +1,104 @@
+{
+  "sessionUpdate": "available_commands_update",
+  "availableCommands": [
+    {
+      "name": "compact",
+      "description": "Compact the conversation context",
+      "input": {
+        "hint": "<optional custom summarization instructions>"
+      }
+    },
+    {
+      "name": "status",
+      "description": "Show current session status"
+    },
+    {
+      "name": "usage",
+      "description": "Show session token usage"
+    },
+    {
+      "name": "mcp",
+      "description": "Show MCP server status"
+    },
+    {
+      "name": "tasks",
+      "description": "List background tasks"
+    },
+    {
+      "name": "help",
+      "description": "Show available ACP commands"
+    },
+    {
+      "name": "check-kimi-code-docs",
+      "description": "Answer questions about the Kimi Code product using the official documentation — CLI usage, configuration, slash commands, features, membership and quota, API onboarding, third-party tool setup, and error codes. Use when the user asks how Kimi Code works, how to set something up, or what a Kimi Code error message means."
+    },
+    {
+      "name": "custom-theme",
+      "description": "Create or edit a kimi-code custom color theme — a JSON file under the resolved KIMI_CODE_HOME data directory that recolors the TUI. Use when the user wants their own theme, asks for a specific palette or mood, or wants to tweak an existing custom theme's colors."
+    },
+    {
+      "name": "import-from-cc-codex",
+      "description": "Import Claude Code and Codex instructions, skills, and MCP settings into Kimi Code."
+    },
+    {
+      "name": "mcp-config",
+      "description": "Configure MCP servers and handle MCP OAuth login."
+    },
+    {
+      "name": "sub-skill",
+      "description": "Discover and reorganize the skill inventory into hierarchical sub-skill bundles. Use when the user asks to review, group, or consolidate skills into a parent bundle."
+    },
+    {
+      "name": "sub-skill.consolidate",
+      "description": "Apply an approved sub-skill grouping by moving user-specified skills into a parent bundle, with timestamped backups of every modified directory."
+    },
+    {
+      "name": "sub-skill.review",
+      "description": "Analyze the available skill set and recommend candidate groups that could be consolidated into sub-skill bundles. Read-only — proposes a plan, does not move files."
+    },
+    {
+      "name": "update-config",
+      "description": "Inspect or edit kimi-code's own config — `config.toml` (model, provider, permission, hooks) and `tui.toml` (theme, editor, notifications, auto-update). Use when the user asks what a setting does or wants to change one."
+    },
+    {
+      "name": "write-goal",
+      "description": "Help the user craft a well-specified `/goal` objective for goal mode — turn a rough intention into a completion contract with a clear finish line, proof, boundaries, and stop rule. Use when the user asks for help writing, refining, or improving a goal."
+    },
+    {
+      "name": "skill:code-comments",
+      "description": "Write clear, plain-spoken code comments and documentation that lives alongside the code. Use when writing or reviewing code that needs inline documentation—file headers, function docs, architectural decisions, or explanatory comments. Optimized for both user readers and AI coding assistants who benefit from co-located context."
+    },
+    {
+      "name": "skill:find-skills",
+      "description": "Helps users discover and install agent skills when they ask questions like \"how do I do X\", \"find a skill for X\", \"is there a skill that can...\", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill."
+    },
+    {
+      "name": "skill:grill-me",
+      "description": "A relentless interview to sharpen a plan or design."
+    },
+    {
+      "name": "skill:hive-kimi",
+      "description": "Operating contract only for a Kimi Code agent spawned by Hive into a git worktree; it does not apply to any other vendor. Read this immediately on waking inside a directory under .hive/worktrees/, or whenever a prompt identifies you as a Hive-spawned Kimi agent — before editing a file or reporting status."
+    },
+    {
+      "name": "skill:hive-memory",
+      "description": "Maintain Hive's durable repo knowledge by compiling immutable observations into canonical articles. Use for memory ingestion, deliberate article consolidation and cascade updates, memory queries, conflict reconciliation, or linting .hive/memory and ~/.hive/memory."
+    },
+    {
+      "name": "skill:karpathy-guidelines",
+      "description": "Behavioral guidelines to reduce common LLM coding mistakes. Use when writing, reviewing, or refactoring code to avoid overcomplication, make surgical changes, surface assumptions, and define verifiable success criteria."
+    },
+    {
+      "name": "skill:karpathy-llm-wiki",
+      "description": "Use when building or maintaining a personal LLM-powered knowledge base. Triggers: ingesting sources into a wiki, querying wiki knowledge, linting wiki quality, 'add to wiki', 'what do I know about', or any mention of 'LLM wiki' or 'Karpathy wiki'."
+    },
+    {
+      "name": "skill:typescript-best-practices",
+      "description": "Use when reading or writing TypeScript or JavaScript files (.ts, .tsx, .js, tsconfig.json)."
+    },
+    {
+      "name": "skill:zig-best-practices",
+      "description": "Use when reading or writing Zig files (.zig, build.zig, build.zig.zon)."
+    }
+  ]
+}

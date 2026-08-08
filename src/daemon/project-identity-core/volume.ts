@@ -1,16 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { type Stats, statSync } from "node:fs";
 
-import type { Provenance, VolumeBehavior } from "./types";
+import type { Provenance, VolumeBehavior } from "./project-identity-types";
 
-/** Volume behavior is per-volume, so the cache is keyed by st_dev. */
 const cache = new Map<number, VolumeBehavior>();
 
 export function clearVolumeCache(): void {
   cache.clear();
 }
 
-/** Path to the compiled Swift helper, or null when it has not been built. */
 let helperPath: string | null | undefined;
 
 export function setVolumeHelperPath(path: string | null): void {
@@ -40,10 +38,6 @@ function foundationVolInfo(
   }
 }
 
-/**
- * Rebuild `path` with the component at `index` replaced. Components are split
- * from an absolute realpath, so index 0 is the first name below `/`.
- */
 function withComponent(
   path: string,
   index: number,
@@ -54,14 +48,7 @@ function withComponent(
   return `/${parts.join("/")}`;
 }
 
-/**
- * Read-only volume probe: rewrite one component of an existing path and stat the
- * result. If the rewritten path names the same inode, the volume ignores that
- * distinction. Nothing is created, so this is safe on a read-only mount.
- *
- * Returns null when no component of `path` can express the distinction (e.g. an
- * all-ASCII path can never test Unicode normalization).
- */
+/** Read-only volume probe: rewrite one component of an existing path and stat the result. If the rewritten path names the same inode, the volume ignores that distinction. Nothing is created, so this is safe on a read-only mount. Returns null when no component of `path` can express the distinction (e.g. an all-ASCII path can never test Unicode normalization). */
 function probeInsensitivity(
   path: string,
   flip: (component: string) => string | null,
@@ -73,7 +60,6 @@ function probeInsensitivity(
     return null;
   }
   const parts = path.split("/").filter((p) => p.length > 0);
-  // Deepest component first: it is the one most likely to be on the target volume.
   for (let i = parts.length - 1; i >= 0; i--) {
     const component = parts[i];
     if (component === undefined) continue;
@@ -84,11 +70,8 @@ function probeInsensitivity(
     try {
       other = statSync(variant);
     } catch {
-      // The rewritten name does not exist: the volume distinguishes it.
       return false;
     }
-    // The name exists. Same inode => the volume folds the distinction.
-    // Different inode => two real directories, so the volume distinguishes it.
     return other.ino === self.ino && other.dev === self.dev;
   }
   return null;
@@ -108,11 +91,6 @@ function flipNormalization(component: string): string | null {
   return component === nfd ? nfc : nfd;
 }
 
-/**
- * Determine how `canonicalPath`'s volume treats case and Unicode normalization.
- * `canonicalPath` must exist. Foundation is authoritative for case; the stat
- * probe is the fallback and the only source for normalization.
- */
 export function describeVolume(canonicalPath: string): VolumeBehavior {
   const dev = statSync(canonicalPath).dev;
   const cached = cache.get(dev);

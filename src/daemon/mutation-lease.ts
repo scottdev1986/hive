@@ -1,13 +1,17 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { hiveInstanceSuffix, resolveHiveHome } from "./instance-identity";
+import { probeProcessLiveness } from "../adapters/process-liveness";
+import { machineHiveHome } from "../hive-home/home";
+import {
+  hiveInstanceSuffix,
+  resolveHiveHome,
+} from "../hive-home/instance-identity";
 import {
   type DaemonInstanceLiveness,
   daemonInstanceLiveness,
-} from "./lifecycle";
+} from "./lifecycle/daemon-lifecycle";
 
 const MachineMutationPurposeSchema = z.enum([
   "update",
@@ -56,7 +60,9 @@ const OperationRowSchema = z.object({
 
 type OperationRow = z.infer<typeof OperationRowSchema>;
 
-export function getMachineMutationDatabasePath(runtimeRoot = tmpdir()): string {
+export function getMachineMutationDatabasePath(
+  runtimeRoot = `${machineHiveHome()}.runtime`,
+): string {
   const uid = typeof process.getuid === "function" ? process.getuid() : null;
   const runtimeDirectory = join(runtimeRoot, `hive-${uid ?? "user"}`);
   mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 });
@@ -89,13 +95,14 @@ async function processIdentity(pid: number): Promise<ProcessIdentityState> {
   if (exitCode === 0 && startedAt !== "") {
     return { state: "live", startedAt };
   }
-  try {
-    process.kill(pid, 0);
-    return { state: "unknown" };
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    return code === "ESRCH" ? { state: "dead" } : { state: "unknown" };
-  }
+  // ps could not name a start time. Only "dead" is reclaimable; live, other-uid,
+  // and unknown stay unknown so we do not steal a lease from a process we cannot
+  // identify. ERR_INVALID_ARG_TYPE is dead in probeProcessLiveness (an out-of-range
+  // pid never existed), which the previous kill(pid,0) copy treated as unknown
+  // and made permanently unreclaimable.
+  return probeProcessLiveness(pid) === "dead"
+    ? { state: "dead" }
+    : { state: "unknown" };
 }
 
 export interface MachineMutationCoordinatorOptions {

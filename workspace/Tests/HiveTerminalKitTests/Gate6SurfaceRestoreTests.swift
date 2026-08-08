@@ -82,7 +82,7 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
             return directory
         }
         XCTFail("matching \(runtimeArchitecture) cross-library fixtures missing — " +
-                "rerun scripts/build-ghosttykit.sh; gate 6 never skips")
+                "rerun scripts/native/build-ghosttykit.sh; gate 6 never skips")
         throw NSError(domain: "Gate6SurfaceRestoreTests", code: 1)
     }
 

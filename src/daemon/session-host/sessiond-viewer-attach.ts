@@ -1,10 +1,9 @@
 import { connect, type Socket } from "node:net";
 import type { z } from "zod";
-import type { TerminalGeometry } from "../../schemas/session-protocol";
+import { safeJsonParse } from "../../shared/json";
 import {
+  type TerminalGeometry,
   AppliedPayloadSchema,
-  ClaimAcquirePayloadSchema,
-  ClaimResultPayloadSchema,
   ErrorPayloadSchema,
   FRAME_FLAGS,
   FRAME_HEADER,
@@ -19,7 +18,7 @@ import {
   TERMINAL_LIMITS,
   WelcomePayloadSchema,
 } from "../../schemas/session-protocol";
-import type { AttachGrant, SessionLocator } from "./contract";
+import type { AttachGrant, SessionLocator } from "./session-host-contract";
 import {
   encodeSessiondFrame,
   type SessiondFrame,
@@ -36,7 +35,6 @@ import { TerminalScreen } from "./terminal-screen";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const OUTPUT_REPLAY_TIMEOUT_MS = 1_000;
-/** No frame for this long means the host has finished replaying. */
 const OUTPUT_QUIET_MS = 120;
 const OUTPUT_POLL_MS = 20;
 
@@ -47,14 +45,6 @@ const frameNames = new Map<number, FrameTypeName>(
   ]),
 );
 
-/**
- * Stream-tolerant frame decoder for the viewer wire.
- *
- * The control decoder rejects any frame with
- * `streamSeq != 0`; a HOST_ATTACH connection immediately receives SNAPSHOT/OUTPUT
- * stream frames that carry a nonzero byte offset in `streamSeq`. This decoder
- * accepts both and leaves ordering/correlation to the client.
- */
 class ViewerFrameDecoder {
   private buffered = new Uint8Array();
 
@@ -151,28 +141,10 @@ export interface ViewerAttachDependencies {
   grant: AttachGrant;
   geometry: TerminalGeometry;
   viewerId: string;
-  /** Opens the host.sock UDS named by the grant endpoint. Overridable in tests. */
   connect?: (endpoint: string) => Promise<Socket>;
   handshakeTimeoutMs?: number;
 }
 
-/**
- * A single daemon-side viewer connection to a neutral host's `host.sock`
- * (terminal-stack-transition.html#attach).
- *
- * It performs the frozen attach handshake (HELLO(viewer)+grant → WELCOME →
- * HOST_ATTACH) and then, on one open connection, acquires an automation input
- * claim, submits one transaction, and releases the claim. The claim lives in the
- * host keyed by this connection's viewer id; closing the socket drops it
- * (`onViewerDetached`), so claim → submit → release MUST share this one
- * connection — which is why this is not projected through the per-call
- * connect/close of {@link SessiondHost.claimInput}/`submitInput`.
- *
- * Incoming OUTPUT frames are acknowledged with the
- * terminal-stack-transition.html#attach APPLIED high-water so the
- * host does not backpressure the viewer during the inject; SNAPSHOT/EVENT frames
- * are consumed and PING is answered.
- */
 export class SessiondViewerAttachClient {
   private readonly decoder = new ViewerFrameDecoder();
   private readonly pending = new Map<bigint, PendingResponse>();
@@ -181,20 +153,9 @@ export class SessiondViewerAttachClient {
   private failure: Error | null = null;
   private maxInputTransactionBytes = TERMINAL_LIMITS.inputTransactionBytes;
   private outputHighWater = 0n;
-  /** When the last OUTPUT frame landed, for the replay-settled wait. */
   private lastOutputAt = 0;
   private attachRequestId: bigint | null = null;
-  /**
-   * The pane's screen, maintained as frames arrive, or null when this
-   * connection exists only to inject input.
-   *
-   * Feeding the emulator incrementally is what lets the whole replay be
-   * consumed without bounding it: the screen occupies rows x columns no matter
-   * how many bytes pass through, so there is nothing to truncate and no head of
-   * the stream to lose.
-   */
   private screen: TerminalScreen | null = null;
-  /** Streaming so a multi-byte character split across frames still decodes. */
   private readonly outputDecoder = new TextDecoder("utf-8");
   private outputComplete = true;
   private outputWaiter: Readonly<{
@@ -203,10 +164,6 @@ export class SessiondViewerAttachClient {
     reject: (error: Error) => void;
     timeout: ReturnType<typeof setTimeout>;
   }> | null = null;
-  private activeClaimToken: string | null = null;
-  /** The engine's own SessionRef for the held claim. Never derive it from the
-   * Hive locator: incarnation is engine-assigned, not the generation. */
-  private activeClaimSession: SessionRef | null = null;
 
   private constructor(
     private readonly socket: Socket,
@@ -222,27 +179,13 @@ export class SessiondViewerAttachClient {
     );
   }
 
-  /** Connect, complete the viewer handshake, and return an attached client. */
   static async attach(
     deps: ViewerAttachDependencies,
   ): Promise<SessiondViewerAttachClient> {
     return SessiondViewerAttachClient.connect(deps, deps.grant.outputSeq);
   }
 
-  /**
-   * Read what the pane is currently showing, without taking input from it.
-   *
-   * The cursor is 0 — everything the host still retains — and not the grant's
-   * `checkpointSeq`. That field names the newest checkpoint, so attaching at it
-   * asks sessiond to replay only what follows the base state. A viewer that persisted between calls could add
-   * that delta to a screen it already held; this one is opened per observation
-   * and holds nothing, and it discards the SNAPSHOT_BYTES the host offers as
-   * the base. Skipping the base while dropping its snapshot can report a
-   * complete observation with none of the pane's existing text.
-   *
-   * Zero is also the one cursor sessiond will never refuse: above `output_seq`
-   * the host fails the attach outright rather than clamping.
-   */
+  /** Read what the pane is currently showing, without taking input from it. The cursor is 0 — everything the host still retains — and not the grant's `checkpointSeq`. That field names the newest checkpoint, so attaching at it asks sessiond to replay only what follows the base state. A viewer that persisted between calls could add that delta to a screen it already held; this one is opened per observation and holds nothing, and it discards the SNAPSHOT_BYTES the host offers as the base. Skipping the base while dropping its snapshot can report a complete observation with none of the pane's existing text. Zero is also the one cursor sessiond will never refuse: above `output_seq` the host fails the attach outright rather than clamping. */
   static async observeOutput(deps: ViewerAttachDependencies): Promise<
     Readonly<{
       outputThrough: string;
@@ -266,21 +209,6 @@ export class SessiondViewerAttachClient {
     }
   }
 
-  /**
-   * Wait for the host's replay, without trusting the grant's sequence as the
-   * whole story.
-   *
-   * The grant carries the sequence recorded when a host registers, not live
-   * pane progress. A
-   * pane that has been printing for minutes can still be advertised at
-   * `outputSeq: 0`, and `waitForOutput("0")` would resolve immediately with an
-   * empty tail while reporting `complete`.
-   *
-   * A HOST_ATTACH connection is streamed SNAPSHOT/OUTPUT immediately, so the
-   * bytes are already on their way. The honest wait is therefore: satisfy the
-   * grant's target when it is real, and otherwise keep reading until the host
-   * goes quiet.
-   */
   private async settleReplay(target: string): Promise<void> {
     const through = BigInt(target);
     if (through > 0n) {
@@ -348,9 +276,6 @@ export class SessiondViewerAttachClient {
     this.maxInputTransactionBytes = welcome.limits.maxInputTransactionBytes;
     this.decoder.setControlFrameMaxBytes(welcome.limits.controlFrameMaxBytes);
 
-    // HOST_ATTACH streams SNAPSHOT/OUTPUT and then answers with correlated
-    // ATTACH_READY. That explicit response distinguishes a caught-up viewer
-    // from a host that accepted nothing and went silent.
     const hostAttach = HostAttachPayloadSchema.parse({
       schemaVersion: 1,
       locator: this.deps.locator,
@@ -383,27 +308,18 @@ export class SessiondViewerAttachClient {
     });
   }
 
-  /**
-   * Acquire an automation claim and submit one input transaction on this
-   * connection. Returns the frozen receipt, or a claim decline naming the
-   * arbiter's own diagnostic when it refuses (a human owns or orphaned the
-   * claim). Never steal a held human claim. The caller marks `injected`, never
-   * `applied`; every refusal on this wire carries its reason out.
-   */
   async injectAutomated(
     request: Readonly<{
       session: SessionRef;
-      writer: string;
       transactionId: string;
       idempotencyKey: string;
       bytes: Uint8Array;
-      leaseMilliseconds: number;
+      action: "deliver" | "keys" | "submit";
       expectedForeground?: ExpectedForeground;
       isPromptPending?: () => boolean;
     }>,
   ): Promise<
     | Readonly<{ kind: "receipt"; receipt: InputReceipt }>
-    | Readonly<{ kind: "claim-declined"; detail: string }>
     | Readonly<{ kind: "stale" }>
   > {
     if (request.bytes.byteLength > this.maxInputTransactionBytes) {
@@ -413,43 +329,13 @@ export class SessiondViewerAttachClient {
         null,
       );
     }
-    const claimPayload = ClaimAcquirePayloadSchema.parse({
-      schemaVersion: 1,
-      session: request.session,
-      writer: request.writer,
-      kind: "automation",
-      leaseMilliseconds: request.leaseMilliseconds,
-      idempotencyKey: `${request.idempotencyKey}:claim`,
-    });
-    const claimResult = this.decodeResponse(
-      await this.request("CLAIM_ACQUIRE", "CLAIM_RESULT", 0, claimPayload),
-      ClaimResultPayloadSchema,
-    ).result;
-    if (claimResult.state !== "granted") {
-      // Denied/unknown — a human owns the arbiter or it is unavailable. Leave the
-      // envelope queued; the arbiter, not this client, is the never-steal truth.
-      const owner =
-        claimResult.state === "denied" && claimResult.owner !== null
-          ? ` (held by ${claimResult.owner.kind} writer ${claimResult.owner.writer}, ` +
-            `lease expires ${claimResult.owner.leaseExpiresAt})`
-          : "";
-      return {
-        kind: "claim-declined",
-        detail: `claim ${claimResult.state}: ${claimResult.diagnostic}${owner}`,
-      };
-    }
-    this.activeClaimToken = claimResult.claim.token;
-    this.activeClaimSession = request.session;
-
-    // CLAIM_ACQUIRE is awaited above. Re-check the exact prompt generation
-    // after that wait and immediately before INPUT_SUBMIT, so a person or a
-    // replacement hook cannot turn an old decision into input for a new popup.
     if (request.isPromptPending?.() === false) return { kind: "stale" };
 
     const submitPayload = InputSubmitPayloadSchema.parse({
       schemaVersion: 1,
       session: request.session,
-      claimToken: claimResult.claim.token,
+      provenance: "automation",
+      action: request.action,
       transactionId: request.transactionId,
       idempotencyKey: request.idempotencyKey,
       ...(request.expectedForeground === undefined
@@ -478,37 +364,9 @@ export class SessiondViewerAttachClient {
     return { kind: "receipt", receipt: applied.receipt };
   }
 
-  /** Release any held claim (best effort) and close the socket. */
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    if (
-      this.activeClaimToken !== null &&
-      this.activeClaimSession !== null &&
-      this.failure === null
-    ) {
-      const release = {
-        schemaVersion: 1,
-        session: this.activeClaimSession,
-        claimToken: this.activeClaimToken,
-        kind: "submit",
-      };
-      try {
-        this.writeFrame(
-          "CLAIM_RELEASE",
-          0,
-          0n,
-          textEncoder.encode(JSON.stringify(release)),
-        );
-      } catch {
-        // The host also frees the claim on our disconnect; a failed release is
-        // not worth surfacing over the receipt we already have.
-      }
-    }
-    this.activeClaimToken = null;
-    this.activeClaimSession = null;
-    // Graceful half-close flushes the release before FIN; a hard destroy could
-    // drop it. The host frees the claim either way (onViewerDetached).
     this.socket.end();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
@@ -620,8 +478,6 @@ export class SessiondViewerAttachClient {
       case "SNAPSHOT_BYTES":
       case "EVENT":
       case "DETACH":
-        // Consumed: the daemon injector does not render, but must drain the
-        // stream so the socket buffer does not stall.
         return;
       default:
         this.resolvePending(frame);
@@ -652,9 +508,6 @@ export class SessiondViewerAttachClient {
   private acknowledgeOutput(frame: SessiondFrame): void {
     const throughSeq = frame.streamSeq + BigInt(frame.payload.byteLength);
     if (throughSeq <= this.outputHighWater) return;
-    // A frame that does not begin where the last one ended means the host could
-    // not bridge our cursor — it replayed from a checkpoint we did not decode —
-    // so the screen has no base under it and the reader must be told.
     if (frame.streamSeq !== this.outputHighWater) this.outputComplete = false;
     this.screen?.write(
       this.outputDecoder.decode(frame.payload, { stream: true }),
@@ -682,16 +535,12 @@ export class SessiondViewerAttachClient {
         0n,
         textEncoder.encode(JSON.stringify(ack)),
       );
-    } catch {
-      // A failed ack only risks backpressure; the inflight request will still
-      // resolve or time out on its own.
-    }
+    } catch {}
   }
 
   private resolvePending(frame: SessiondFrame): void {
     const pending = this.pending.get(frame.requestId);
     if (pending === undefined) {
-      // An uncorrelated control frame on the viewer wire is a protocol break.
       this.fail(
         new SessiondProtocolError("sessiond returned an uncorrelated response"),
       );
@@ -754,11 +603,7 @@ export class SessiondViewerAttachClient {
 }
 
 function safeJson(payload: Uint8Array): unknown {
-  try {
-    return JSON.parse(textDecoder.decode(payload));
-  } catch {
-    return null;
-  }
+  return safeJsonParse(textDecoder.decode(payload)) ?? null;
 }
 
 function defaultConnect(endpoint: string): Promise<Socket> {

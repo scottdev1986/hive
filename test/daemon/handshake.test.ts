@@ -7,7 +7,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { sourceBuildHash } from "../../src/daemon/handshake";
+import {
+  currentBuildHash,
+  DaemonInstanceMismatchError,
+  sourceBuildHash,
+  verifyDaemonInstanceWhenReady,
+} from "../../src/daemon/lifecycle/daemon-lifecycle";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 const fixtures: string[] = [];
@@ -39,6 +44,12 @@ afterEach(() => {
 });
 
 describe("sourceBuildHash", () => {
+  test("hashes the source checkout containing the moved lifecycle module", async () => {
+    expect(await currentBuildHash()).toBe(
+      await sourceBuildHash(join(import.meta.dir, "..", "..")),
+    );
+  });
+
   test("changes for every non-TypeScript input embedded by the release build", async () => {
     const root = buildInputFixture();
     const baseline = await sourceBuildHash(root);
@@ -71,5 +82,68 @@ describe("sourceBuildHash", () => {
       "export const fixture = 2;\n",
     );
     expect(await sourceBuildHash(root)).toBe(baseline);
+  });
+});
+
+describe("verifyDaemonInstanceWhenReady", () => {
+  test("retries transient startup failures and succeeds once", async () => {
+    let attempts = 0;
+    let now = 0;
+
+    await verifyDaemonInstanceWhenReady(4321, "expected", {
+      verify: async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("daemon is still starting");
+      },
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+      timeoutMs: 1_000,
+      retryMs: 100,
+    });
+
+    expect(attempts).toBe(3);
+    expect(now).toBe(200);
+  });
+
+  test("never retries an instance identity mismatch", async () => {
+    let attempts = 0;
+
+    await expect(
+      verifyDaemonInstanceWhenReady(4321, "expected", {
+        verify: async () => {
+          attempts += 1;
+          throw new DaemonInstanceMismatchError(4321, "expected", "different");
+        },
+        sleep: async () => {
+          throw new Error("identity mismatches must not sleep");
+        },
+      }),
+    ).rejects.toBeInstanceOf(DaemonInstanceMismatchError);
+
+    expect(attempts).toBe(1);
+  });
+
+  test("rethrows the last startup error when the retry budget expires", async () => {
+    let attempts = 0;
+    let now = 0;
+
+    await expect(
+      verifyDaemonInstanceWhenReady(4321, "expected", {
+        verify: async () => {
+          attempts += 1;
+          throw new Error(`startup attempt ${attempts}`);
+        },
+        now: () => now,
+        sleep: async (milliseconds) => {
+          now += milliseconds;
+        },
+        timeoutMs: 200,
+        retryMs: 100,
+      }),
+    ).rejects.toThrow("startup attempt 3");
+
+    expect(attempts).toBe(3);
   });
 });

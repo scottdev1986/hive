@@ -1,37 +1,28 @@
-import {
-  ClaudeCapabilityProbe,
-  CodexCapabilityProbe,
-  GrokCapabilityProbe,
-  KimiCapabilityProbe,
-  OpencodeCapabilityProbe,
-} from "../daemon/capability-discovery";
-import { HiveDatabase } from "../daemon/db";
+import { z } from "zod";
+import { discoverRuntimeCapabilities } from "../daemon/provider-capabilities/snapshot-authority";
 import {
   buildModelInventory,
   formatModelInventory,
-} from "../daemon/model-inventory";
-import { RoutingPolicyStore } from "../daemon/routing-policy-store";
+} from "../daemon/provider-capabilities/model-inventory";
 import {
   type AccountBilling,
   type AccountBillings,
   knownBillings,
-  readBillingWithMemory,
-} from "../daemon/usage-credits";
-import type {
-  EffortTarget,
-  RouteCandidate,
-  RoutePolicy,
-  RoutingPolicy,
-} from "../schemas";
-import { forEachProvider, providersOf, ROUTING_CATEGORIES } from "../schemas";
-
-/**
- * `hive routing` — the auditability answer: what the user's routes say, what
- * the vendors' catalogs hold, what the account is billed, and what the
- * escalation record has measured. There is no derived table because there is
- * no derivation: the user is the router, and this prints their policy
- * verbatim next to the live facts the launch gate will check it against.
- */
+} from "../usage-service/usage-credits/usage-credit-types";
+import { readBillingWithMemory } from "../usage-service/usage-credits/usage-credit-memory";
+import {
+  type EffortTarget,
+  type RouteCandidate,
+  type RoutePolicy,
+  type RoutingPolicy,
+  RoutingPolicySchema,
+  ROUTING_CATEGORIES,
+} from "../schemas/routing-policy";
+import { EscalationSchema } from "../schemas/escalation";
+import { forEachProvider, providersOf } from "../schemas/capability";
+import { requireDaemonPort } from "./control";
+import { isTestRunnerEnv } from "./invoker";
+import { UserDaemonClient } from "./user-daemon-client";
 
 const describeEffort = (effort: EffortTarget): string =>
   effort.mode === "exact"
@@ -81,12 +72,7 @@ function formatRoutes(policy: RoutingPolicy): string[] {
   return lines;
 }
 
-/**
- * The measured billing state, in one line per vendor in the union. `unknown`
- * prints as unknown: a credit flag Hive could not read is never rendered as
- * "off", because "off" reads as "this model cannot run" and would silently
- * disable a model the user is using.
- */
+/** The measured billing state, in one line per vendor in the union. `unknown` prints as unknown: a credit flag Hive could not read is never rendered as "off", because "off" reads as "this model cannot run" and would silently disable a model the user is using. */
 function describeBilling(billings: AccountBillings | null): string {
   if (billings === null) return "not read — spend evidence is unavailable";
   return providersOf(billings)
@@ -114,27 +100,20 @@ function describeProviderBilling(billing: AccountBilling | undefined): string {
 
 export async function printRouting(): Promise<void> {
   const now = new Date();
-  const [claude, codex, grok, kimi, opencode, billings] = await Promise.all([
-    new ClaudeCapabilityProbe().read(),
-    new CodexCapabilityProbe().read(),
-    new GrokCapabilityProbe().read(),
-    new KimiCapabilityProbe().read(),
-    new OpencodeCapabilityProbe().read(),
+  // The policy and the escalation record live in the store the daemon owns; they are read from the daemon, never side-read from its database. When no daemon is running that is the answer, reported by requireDaemonPort instead of a stale file opened behind the owner's back.
+  const client = new UserDaemonClient({
+    port: requireDaemonPort(),
+    verifyIdentity: !isTestRunnerEnv(),
+  });
+  const [discovery, billings, policyBody, escalationsBody] = await Promise.all([
+    forEachProvider(discoverRuntimeCapabilities),
     forEachProvider(readBillingWithMemory).then(knownBillings),
+    client.json("/routing/policy", undefined, "throw"),
+    client.json("/routing/escalations", undefined, "throw"),
   ]);
-  const discovery = { claude, codex, grok, kimi, opencode };
-
-  const db = HiveDatabase.openReadonly();
-  let policy: RoutingPolicy;
-  let escalations: ReturnType<HiveDatabase["listEscalations"]>;
-  try {
-    // Fail-closed on purpose: a corrupt policy store throws out of read() and
-    // this command reports it instead of printing a blank, permissive table.
-    policy = new RoutingPolicyStore(db).read(now);
-    escalations = db.listEscalations();
-  } finally {
-    db.close();
-  }
+  // Fail-closed on purpose: a corrupt policy or escalation record fails the parse and this command reports it instead of printing a blank, permissive table.
+  const policy = RoutingPolicySchema.parse(policyBody);
+  const escalations = z.array(EscalationSchema).parse(escalationsBody);
 
   const lines = [
     ...formatRoutes(policy),

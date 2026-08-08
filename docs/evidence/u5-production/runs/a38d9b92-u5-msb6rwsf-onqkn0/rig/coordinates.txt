@@ -1,0 +1,7 @@
+requested_home=/private/tmp/hvqa-j
+home=/private/tmp/hvqa-j
+default_home=/private/tmp/hvqa-j/default
+port=51470
+project=/private/tmp/u5p-e
+source=/Users/scottkellar/Projects/hive/.hive/worktrees/anna
+hive_bin=/private/tmp/hvqa-j/artifacts/hive-bin

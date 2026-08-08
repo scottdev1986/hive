@@ -17,15 +17,6 @@ public struct TerminalScrollState: Equatable, Sendable {
     public fileprivate(set) var viewportOffset: UInt64 = 0
     public fileprivate(set) var viewportLength: UInt64 = 0
     public fileprivate(set) var hasUnseenOutput = false
-    /// Output applied since the last SCROLLBAR notification.
-    ///
-    /// The notification is delivered async on main while output applies on the
-    /// pane's terminal I/O thread, so between a user's scroll and the
-    /// notification that reports it this state still says "at the bottom" while
-    /// the terminal has already moved off it. Output arriving in that window is
-    /// unseen output, and remembering that it arrived is what lets the
-    /// notification credit it when it lands — without reading the engine on
-    /// every output frame to find out.
     fileprivate var outputSinceScrollbarUpdate = false
 
     public var followsBottom: Bool {
@@ -93,13 +84,7 @@ extension HiveTerminalView {
         if restoreTerminalFocus { window?.makeFirstResponder(self) }
     }
 
-    /// Runs on the main thread once per applied OUTPUT frame, for every pane.
-    ///
-    /// It reads no engine state. Do not export the semantic viewport here: that
-    /// takes the same renderer mutex the terminal I/O thread holds while parsing
-    /// a chunk, and with several streaming panes it dominates the main queue
-    /// ahead of keystrokes. Scroll totals arrive from the SCROLLBAR action
-    /// (user-paced); this only records that output arrived.
+    /// Runs on the main thread once per applied OUTPUT frame, for every pane. It reads no engine state. Do not export the semantic viewport here: that takes the same renderer mutex the terminal I/O thread holds while parsing a chunk, and with several streaming panes it dominates the main queue ahead of keystrokes. Scroll totals arrive from the SCROLLBAR action (user-paced); this only records that output arrived.
     func noteOutputApplied() {
         scrollStateStorage.outputSinceScrollbarUpdate = true
         guard !scrollStateStorage.followsBottom else { return }
@@ -114,8 +99,6 @@ extension HiveTerminalView {
         if scrollStateStorage.followsBottom {
             scrollStateStorage.hasUnseenOutput = false
         } else if scrollStateStorage.outputSinceScrollbarUpdate {
-            // First news the viewport left the bottom; output applied while
-            // this notification was in flight is unseen.
             scrollStateStorage.hasUnseenOutput = true
         }
         scrollStateStorage.outputSinceScrollbarUpdate = false
@@ -154,8 +137,7 @@ extension HiveTerminalView {
     func performScrollToBottom() -> Bool {
         guard engine.performBindingAction("scroll_to_bottom") else { return false }
         scrollStateStorage.hasUnseenOutput = false
-        // Everything applied before this moment is now on screen; a SCROLLBAR
-        // notification still in flight must not resurrect the indicator for it.
+        // Everything applied before this moment is now on screen; a SCROLLBAR notification still in flight must not resurrect the indicator for it.
         scrollStateStorage.outputSinceScrollbarUpdate = false
         dismissNewOutputIndicator()
         return true
@@ -190,7 +172,13 @@ extension HiveTerminalView {
 
         switch key {
         case "c":
-            copy(nil)
+            if canCopySelection {
+                copy(nil)
+            } else if engine.mouseCaptured() {
+                _ = encodeKey(event)
+            } else {
+                return super.performKeyEquivalent(with: event)
+            }
             return true
         case "f":
             showSearch(nil)
@@ -208,7 +196,9 @@ extension HiveTerminalView {
 
 extension HiveTerminalView: NSMenuItemValidation {
     public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if menuItem.action == #selector(copy(_:)) { return canCopySelection }
+        if menuItem.action == #selector(copy(_:)) {
+            return canCopySelection || engine.mouseCaptured()
+        }
         return true
     }
 }

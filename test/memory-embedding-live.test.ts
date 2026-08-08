@@ -12,19 +12,19 @@ import { required } from "./required";
 
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeMemoryFact } from "../src/adapters/memory";
-import { runMemorySelfTest } from "../src/cli/memory-self-test";
-import { EpisodicStore } from "../src/daemon/episodic-store";
 import {
   MemoryEmbeddingIndex,
   MemoryEmbeddingService,
   memoryModelsDir,
-} from "../src/daemon/memory-embeddings";
-import { MemoryIndex } from "../src/daemon/memory-index";
-import { buildMemoryRecallBundle } from "../src/daemon/memory-triggers";
+} from "../src/memory-service/embeddings";
+import { EpisodicStore } from "../src/memory-service/episodic";
+import { MemoryIndex } from "../src/memory-service/fts-index";
+import { writeMemoryFact } from "../src/memory-service/memory-store";
+import { buildMemoryRecallBundle } from "../src/memory-service/recall";
+import { runMemorySelfTest } from "../src/memory-service/self-test";
 
 const live = process.env.HIVE_LIVE_MEMORY_EMBEDDINGS === "1";
 const liveSuite = live ? describe : describe.skip;
@@ -88,15 +88,16 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
   let index: MemoryEmbeddingIndex;
   let service: MemoryEmbeddingService;
   let store: EpisodicStore;
-  // The model cache stays in the REAL Hive models dir so repeated live runs
-  // reuse the download; only memory state is sandboxed.
-  const realModelsDir = memoryModelsDir();
+  // The cache stays inside the bounded test root. A live run may download the
+  // model, but it cannot mutate the developer's Hive home.
+  const boundedModelsDir = memoryModelsDir();
   /** Article ids as the wiki write actually slugged them (slugs truncate). */
   const idByTitle = new Map<string, string>();
   const canaryId = (): string => required(idByTitle.get(CANARY.title));
 
   beforeAll(async () => {
     tempRoot = await mkdtemp(join(tmpdir(), "hive-hm5-live-"));
+    await mkdir(boundedModelsDir, { recursive: true });
     previousHiveHome = Bun.env.HIVE_HOME;
     Bun.env.HIVE_HOME = join(tempRoot, "hive-home");
     repo = join(tempRoot, "repo");
@@ -122,7 +123,7 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
 
     service = new MemoryEmbeddingService(
       { provider: "local", model: "bge-small-en-v1.5" },
-      { cacheDir: realModelsDir },
+      { cacheDir: boundedModelsDir },
     );
     store = new EpisodicStore(":memory:");
     index = new MemoryEmbeddingIndex({ store, service });

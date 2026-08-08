@@ -1,0 +1,57 @@
+# P6 mutation probes — do these tests actually fail on a broken build?
+# date: 2026-08-02T18:18:32Z
+
+## probe 1: delete the turn-boundary deferral in nextWake
+(fail) wake scheduling > a wake raised during an active turn waits for the boundary [2.03ms]
+(fail) wake against the fake provider > a wake raised mid-turn waits for the provider's own boundary [1.92ms]
+ 36 pass
+ 2 fail
+
+## probe 2: let mail_claimed be written straight from published
+(fail) evidence, not acts > a claim without a presentation behind it is refused [1.74ms]
+ 37 pass
+ 1 fail
+
+## probe 3: accept the submission key as turn evidence
+(fail) evidence, not acts > a request acknowledgement can never become turn_observed [1.98ms]
+ 37 pass
+ 1 fail
+
+## restored: unmodified tree
+ 38 pass
+ 0 fail
+
+## probe 4 (flat status): let the stored word stand instead of deriving
+# date: 2026-08-02T18:36:19Z
+(fail) the flat status a surface renders > no lifecycle event at all reads unknown, never idle [0.20ms]
+(fail) the flat status a surface renders > a turn state with no flat word does not borrow a neighbour [0.09ms]
+(fail) the flat status a surface renders > an event nobody has authority for cannot resolve it [0.06ms]
+ 24 pass
+ 3 fail
+
+## restored
+ 27 pass
+ 0 fail
+
+## probe 5 (ACL): stop refusing a foreign recipient
+# date: 2026-08-02T18:41:05Z
+(fail) mail-ready notification > a subject cannot watch another subject's mailbox [1.78ms]
+(fail) the mail-ready endpoint > asking for another subject's mailbox is refused, not answered [48.10ms]
+(fail) the mail-ready endpoint > acknowledging for someone else is refused and changes nothing [46.12ms]
+ 35 pass
+ 3 fail
+
+## restored
+ 38 pass
+ 0 fail
+
+## probe 6 (wake hole): drop the settle-time announcement
+# date: 2026-08-02T18:51:29Z
+(fail) mail-ready after a lane frees up > the message a busy lane withheld is announced once it is offerable [2.46ms]
+(fail) mail-ready after a lane frees up > a frontend that acknowledged the old sequence still sees the new one [2.09ms]
+ 10 pass
+ 2 fail
+
+## restored
+ 12 pass
+ 0 fail

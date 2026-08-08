@@ -212,3 +212,91 @@ test("make run rejects a stale hash announced by a live daemon", () => {
     rmSync(fixture, { recursive: true, force: true });
   }
 });
+
+test("make run launches Workspace before the live memory verification", () => {
+  const fixture = mkdtempSync(
+    join(OUTSIDE_REPO_TMPDIR, "hive-make-run-order-"),
+  );
+  const binDir = join(fixture, "bin");
+  const binary = join(fixture, "hive");
+  const project = join(fixture, "project");
+  const dev = join(fixture, "dev");
+  const workspaceLaunched = join(fixture, "workspace-launched");
+  const memoryVerified = join(fixture, "memory-verified");
+  const daemonExited = join(fixture, "daemon-exited");
+  try {
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(join(project, ".git"), { recursive: true });
+    writeFileSync(
+      binary,
+      [
+        "#!/bin/sh",
+        `workspace_launched=${JSON.stringify(workspaceLaunched)}`,
+        `memory_verified=${JSON.stringify(memoryVerified)}`,
+        `daemon_exited=${JSON.stringify(daemonExited)}`,
+        'if [ "$1" = "init" ]; then exit 0; fi',
+        'if [ "$1" = "daemon" ]; then',
+        '  echo "Hive daemon ready: fixture"',
+        '  while [ ! -f "$memory_verified" ]; do sleep 0.01; done',
+        '  touch "$daemon_exited"',
+        "  exit 0",
+        "fi",
+        'if [ "$#" -eq 0 ]; then touch "$workspace_launched"; exit 0; fi',
+        "exit 99",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(binary, 0o755);
+
+    const fakeBun = join(binDir, "bun");
+    writeFileSync(
+      fakeBun,
+      [
+        "#!/bin/sh",
+        `workspace_launched=${JSON.stringify(workspaceLaunched)}`,
+        `memory_verified=${JSON.stringify(memoryVerified)}`,
+        `daemon_exited=${JSON.stringify(daemonExited)}`,
+        'case "$2" in',
+        "  */dev-memory-setup.ts) exit 0 ;;",
+        "  */verify-dev-run.ts)",
+        '    if [ "$3" = "--memory" ]; then',
+        '      [ -f "$workspace_launched" ] || exit 41',
+        '      touch "$memory_verified"',
+        '      while [ ! -f "$daemon_exited" ]; do sleep 0.01; done',
+        "      exit 0",
+        "    fi",
+        '    [ ! -f "$workspace_launched" ] || exit 42',
+        "    exit 0",
+        "    ;;",
+        "esac",
+        "exit 99",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeBun, 0o755);
+
+    const result = Bun.spawnSync(
+      [
+        "make",
+        "run",
+        `HIVE_BIN=${binary}`,
+        `PROJECT=${project}`,
+        `DEV=${dev}`,
+        `DEV_HOME=${join(fixture, "home")}`,
+        `INSTALL_ROOT=${join(fixture, "root")}`,
+        `DAEMON_STARTUP_LOG=${join(dev, "daemon-startup.log")}`,
+      ],
+      {
+        cwd: root,
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(workspaceLaunched)).toBe(true);
+    expect(existsSync(memoryVerified)).toBe(true);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});

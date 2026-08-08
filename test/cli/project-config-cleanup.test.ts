@@ -63,7 +63,7 @@ describe("repairLeakedProjectConfig", () => {
           "[mcp_servers.hive]",
           'url = "http://127.0.0.1:4483/mcp"',
           "",
-          "[mcp_servers.hive.tools.hive_send]",
+          "[mcp_servers.hive.tools.hive_mail_publish]",
           'approval_mode = "approve"',
           "",
         ].join("\n"),

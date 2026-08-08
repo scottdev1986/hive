@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "runId": "u5-msb7g3bn-iw4gqv",
+  "sourceSha": "cbef47d0b024318f03bfeeb7a6636c887f0806c9",
+  "provider": "kimi",
+  "outcome": "pending-attestation",
+  "attemptOrdinal": 1,
+  "attemptedAt": "2026-08-02T02:52:50.751Z",
+  "retryAttempted": false,
+  "phase": "stable-composer",
+  "spawnRequested": true,
+  "admissionId": "9819faed-b5f4-48f9-9721-54632ecdca70",
+  "name": "sarah",
+  "configuredModel": "kimi-code/k3",
+  "status": "spawning",
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "fba75ed1ad",
+    "subject": {
+      "kind": "agent",
+      "agentId": "9819faed-b5f4-48f9-9721-54632ecdca70"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc063-7610-7889-bd28-8c2333185d64",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "composer": {
+    "profile": "kimi",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  },
+  "captureSha256": "7a191b8962ba1c7960d9a1446180888f2339ad954b9fa06c893c662ec7a125c7"
+}

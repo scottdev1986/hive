@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-oa
+home=/private/tmp/hvqa-oa
+default_home=/private/tmp/hvqa-oa/default
+port=50143
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-auth.1b4BP8/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-nina-opencode/source
+hive_bin=/private/tmp/hvqa-oa/artifacts/hive-bin

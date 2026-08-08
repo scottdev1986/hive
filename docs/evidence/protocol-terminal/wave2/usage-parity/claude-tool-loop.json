@@ -1,0 +1,2006 @@
+{
+  "vendor": "claude-tool-loop",
+  "capturedAt": "2026-08-02T21:45:11.894Z",
+  "vendorSessionId": "f22c312f-e033-4e92-9950-982fd8ce640e",
+  "prompt": "Use the Glob tool to list *.json files in this directory, then reply DONE.",
+  "rawUsageFrames": [
+    {
+      "is_error": false,
+      "duration_api_ms": 4020,
+      "num_turns": 2,
+      "stop_reason": "end_turn",
+      "session_id": "f22c312f-e033-4e92-9950-982fd8ce640e",
+      "total_cost_usd": 0.0128246,
+      "usage": {
+        "input_tokens": 20,
+        "cache_creation_input_tokens": 3066,
+        "cache_read_input_tokens": 56176,
+        "output_tokens": 211,
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 3066,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "not_available",
+        "iterations": [
+          {
+            "input_tokens": 10,
+            "output_tokens": 75,
+            "cache_read_input_tokens": 28088,
+            "cache_creation_input_tokens": 3066,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 3066
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "modelUsage": {
+        "claude-haiku-4-5-20251001": {
+          "inputTokens": 20,
+          "outputTokens": 211,
+          "cacheReadInputTokens": 56176,
+          "cacheCreationInputTokens": 3066,
+          "webSearchRequests": 0,
+          "costUSD": 0.0128246,
+          "contextWindow": 200000,
+          "maxOutputTokens": 32000,
+          "canonicalModel": "claude-haiku-4-5",
+          "provider": "firstParty"
+        }
+      },
+      "permission_denials": [],
+      "terminal_reason": "completed",
+      "fast_mode_state": "off",
+      "fast_mode_disabled_reason": "sdk_opt_in_required",
+      "origin": {
+        "kind": "user"
+      },
+      "subtype": "success",
+      "api_error_status": null,
+      "result": "DONE",
+      "ttft_ms": 2277,
+      "ttft_stream_ms": 1121,
+      "time_to_request_ms": 144,
+      "user_message_uuid": "524df029-5d48-4e50-87a8-9be66cd2b2d8",
+      "request_sent_wall_ms": 1785707105464,
+      "type": "result",
+      "duration_ms": 4468,
+      "uuid": "08c30d6f-7ffd-44f8-9a11-1e06fbcccc4d"
+    },
+    {
+      "categories": [
+        {
+          "name": "System prompt",
+          "tokens": 235,
+          "color": "promptBorder"
+        },
+        {
+          "name": "System tools",
+          "tokens": 16007,
+          "color": "inactive"
+        },
+        {
+          "name": "MCP tools (deferred)",
+          "tokens": 52269,
+          "color": "inactive",
+          "isDeferred": true
+        },
+        {
+          "name": "System tools (deferred)",
+          "tokens": 16732,
+          "color": "inactive",
+          "isDeferred": true
+        },
+        {
+          "name": "Custom agents",
+          "tokens": 56,
+          "color": "permission"
+        },
+        {
+          "name": "Memory files",
+          "tokens": 5781,
+          "color": "claude"
+        },
+        {
+          "name": "Skills",
+          "tokens": 1783,
+          "color": "warning"
+        },
+        {
+          "name": "Messages",
+          "tokens": 7303,
+          "color": "purple_FOR_SUBAGENTS_ONLY"
+        },
+        {
+          "name": "Free space",
+          "tokens": 168835,
+          "color": "promptBorder"
+        }
+      ],
+      "totalTokens": 31164,
+      "maxTokens": 200000,
+      "rawMaxTokens": 200000,
+      "autocompactSource": "auto",
+      "percentage": 16,
+      "gridRows": [
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "System prompt",
+            "tokens": 235,
+            "percentage": 0,
+            "squareFullness": 0.11750000000000001
+          },
+          {
+            "color": "inactive",
+            "isFilled": true,
+            "categoryName": "System tools",
+            "tokens": 16007,
+            "percentage": 8,
+            "squareFullness": 1
+          },
+          {
+            "color": "inactive",
+            "isFilled": true,
+            "categoryName": "System tools",
+            "tokens": 16007,
+            "percentage": 8,
+            "squareFullness": 1
+          },
+          {
+            "color": "inactive",
+            "isFilled": true,
+            "categoryName": "System tools",
+            "tokens": 16007,
+            "percentage": 8,
+            "squareFullness": 1
+          },
+          {
+            "color": "inactive",
+            "isFilled": true,
+            "categoryName": "System tools",
+            "tokens": 16007,
+            "percentage": 8,
+            "squareFullness": 1
+          },
+          {
+            "color": "inactive",
+            "isFilled": true,
+            "categoryName": "System tools",
+            "tokens": 16007,
+            "percentage": 8,
+            "squareFullness": 1
+          },
+          {
+            "color": "inactive",
+            "isFilled": true,
+            "categoryName": "System tools",
+            "tokens": 16007,
+            "percentage": 8,
+            "squareFullness": 1
+          },
+          {
+            "color": "inactive",
+            "isFilled": true,
+            "categoryName": "System tools",
+            "tokens": 16007,
+            "percentage": 8,
+            "squareFullness": 1
+          },
+          {
+            "color": "inactive",
+            "isFilled": true,
+            "categoryName": "System tools",
+            "tokens": 16007,
+            "percentage": 8,
+            "squareFullness": 1
+          },
+          {
+            "color": "permission",
+            "isFilled": true,
+            "categoryName": "Custom agents",
+            "tokens": 56,
+            "percentage": 0,
+            "squareFullness": 0.027999999999999997
+          }
+        ],
+        [
+          {
+            "color": "claude",
+            "isFilled": true,
+            "categoryName": "Memory files",
+            "tokens": 5781,
+            "percentage": 3,
+            "squareFullness": 1
+          },
+          {
+            "color": "claude",
+            "isFilled": true,
+            "categoryName": "Memory files",
+            "tokens": 5781,
+            "percentage": 3,
+            "squareFullness": 1
+          },
+          {
+            "color": "claude",
+            "isFilled": true,
+            "categoryName": "Memory files",
+            "tokens": 5781,
+            "percentage": 3,
+            "squareFullness": 0.8904999999999998
+          },
+          {
+            "color": "warning",
+            "isFilled": true,
+            "categoryName": "Skills",
+            "tokens": 1783,
+            "percentage": 1,
+            "squareFullness": 0.8915
+          },
+          {
+            "color": "purple_FOR_SUBAGENTS_ONLY",
+            "isFilled": true,
+            "categoryName": "Messages",
+            "tokens": 7303,
+            "percentage": 4,
+            "squareFullness": 1
+          },
+          {
+            "color": "purple_FOR_SUBAGENTS_ONLY",
+            "isFilled": true,
+            "categoryName": "Messages",
+            "tokens": 7303,
+            "percentage": 4,
+            "squareFullness": 1
+          },
+          {
+            "color": "purple_FOR_SUBAGENTS_ONLY",
+            "isFilled": true,
+            "categoryName": "Messages",
+            "tokens": 7303,
+            "percentage": 4,
+            "squareFullness": 1
+          },
+          {
+            "color": "purple_FOR_SUBAGENTS_ONLY",
+            "isFilled": true,
+            "categoryName": "Messages",
+            "tokens": 7303,
+            "percentage": 4,
+            "squareFullness": 0.6515
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ],
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ],
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ],
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ],
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ],
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ],
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ],
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ],
+        [
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          },
+          {
+            "color": "promptBorder",
+            "isFilled": true,
+            "categoryName": "Free space",
+            "tokens": 168835,
+            "percentage": 84,
+            "squareFullness": 1
+          }
+        ]
+      ],
+      "model": "claude-haiku-4-5-20251001",
+      "memoryFiles": [
+        {
+          "path": "/Users/scottkellar/Projects/hive/.hive/worktrees/alice/CLAUDE.md",
+          "type": "Project",
+          "tokens": 602
+        },
+        {
+          "path": "/Users/scottkellar/.claude/projects/-Users-scottkellar-Projects-hive/memory/MEMORY.md",
+          "type": "AutoMem",
+          "tokens": 5179
+        }
+      ],
+      "mcpTools": [
+        {
+          "name": "mcp__claude_ai_Google_Drive__copy_file",
+          "serverName": "claude_ai_Google_Drive",
+          "tokens": 331,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__claude_ai_Google_Drive__create_file",
+          "serverName": "claude_ai_Google_Drive",
+          "tokens": 714,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__claude_ai_Google_Drive__download_file_content",
+          "serverName": "claude_ai_Google_Drive",
+          "tokens": 305,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__claude_ai_Google_Drive__get_file_metadata",
+          "serverName": "claude_ai_Google_Drive",
+          "tokens": 177,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__claude_ai_Google_Drive__get_file_permissions",
+          "serverName": "claude_ai_Google_Drive",
+          "tokens": 107,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__claude_ai_Google_Drive__list_recent_files",
+          "serverName": "claude_ai_Google_Drive",
+          "tokens": 304,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__claude_ai_Google_Drive__read_file_content",
+          "serverName": "claude_ai_Google_Drive",
+          "tokens": 701,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__claude_ai_Google_Drive__search_files",
+          "serverName": "claude_ai_Google_Drive",
+          "tokens": 679,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__get_community",
+          "serverName": "graphify",
+          "tokens": 163,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__get_neighbors",
+          "serverName": "graphify",
+          "tokens": 172,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__get_node",
+          "serverName": "graphify",
+          "tokens": 132,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__get_pr_impact",
+          "serverName": "graphify",
+          "tokens": 216,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__god_nodes",
+          "serverName": "graphify",
+          "tokens": 124,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__graph_stats",
+          "serverName": "graphify",
+          "tokens": 115,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__list_prs",
+          "serverName": "graphify",
+          "tokens": 212,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__query_graph",
+          "serverName": "graphify",
+          "tokens": 282,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__shortest_path",
+          "serverName": "graphify",
+          "tokens": 191,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__graphify__triage_prs",
+          "serverName": "graphify",
+          "tokens": 222,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__graph_locate",
+          "serverName": "hive",
+          "tokens": 259,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_approvals",
+          "serverName": "hive",
+          "tokens": 172,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_approve",
+          "serverName": "hive",
+          "tokens": 123,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_channel_create",
+          "serverName": "hive",
+          "tokens": 792,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_channel_send",
+          "serverName": "hive",
+          "tokens": 422,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_contract_create",
+          "serverName": "hive",
+          "tokens": 633,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_escalate",
+          "serverName": "hive",
+          "tokens": 365,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_grant_issue",
+          "serverName": "hive",
+          "tokens": 768,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_kill",
+          "serverName": "hive",
+          "tokens": 160,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_land",
+          "serverName": "hive",
+          "tokens": 196,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_mail_claim",
+          "serverName": "hive",
+          "tokens": 188,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_mail_complete",
+          "serverName": "hive",
+          "tokens": 287,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_mail_poll",
+          "serverName": "hive",
+          "tokens": 232,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_mail_publish",
+          "serverName": "hive",
+          "tokens": 389,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_mail_status",
+          "serverName": "hive",
+          "tokens": 134,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_mark_dead",
+          "serverName": "hive",
+          "tokens": 135,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_models",
+          "serverName": "hive",
+          "tokens": 99,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_node_create",
+          "serverName": "hive",
+          "tokens": 499,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_ownership_transfer",
+          "serverName": "hive",
+          "tokens": 431,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_pickup_handoff",
+          "serverName": "hive",
+          "tokens": 123,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_preserve_branch",
+          "serverName": "hive",
+          "tokens": 127,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_quota_reconcile",
+          "serverName": "hive",
+          "tokens": 496,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_quota_status",
+          "serverName": "hive",
+          "tokens": 86,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_recover",
+          "serverName": "hive",
+          "tokens": 129,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_review_put",
+          "serverName": "hive",
+          "tokens": 1082,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_run_checkpoint",
+          "serverName": "hive",
+          "tokens": 885,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_spawn",
+          "serverName": "hive",
+          "tokens": 346,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_spawn_many",
+          "serverName": "hive",
+          "tokens": 2718,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_status",
+          "serverName": "hive",
+          "tokens": 335,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_succession_attest",
+          "serverName": "hive",
+          "tokens": 266,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_task_create",
+          "serverName": "hive",
+          "tokens": 2278,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_task_update",
+          "serverName": "hive",
+          "tokens": 265,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_terminal_observe",
+          "serverName": "hive",
+          "tokens": 219,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_token_usage",
+          "serverName": "hive",
+          "tokens": 106,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_update_status",
+          "serverName": "hive",
+          "tokens": 549,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__hive_validation_train_put",
+          "serverName": "hive",
+          "tokens": 771,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_delete",
+          "serverName": "hive",
+          "tokens": 166,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_digest",
+          "serverName": "hive",
+          "tokens": 361,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_note",
+          "serverName": "hive",
+          "tokens": 323,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_pitfall",
+          "serverName": "hive",
+          "tokens": 298,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_promote",
+          "serverName": "hive",
+          "tokens": 265,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_query",
+          "serverName": "hive",
+          "tokens": 414,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_read",
+          "serverName": "hive",
+          "tokens": 190,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_recall",
+          "serverName": "hive",
+          "tokens": 376,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_reindex",
+          "serverName": "hive",
+          "tokens": 150,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_search",
+          "serverName": "hive",
+          "tokens": 188,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__hive__memory_write",
+          "serverName": "hive",
+          "tokens": 682,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__analyze_calls",
+          "serverName": "idea",
+          "tokens": 990,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__apply_patch",
+          "serverName": "idea",
+          "tokens": 273,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__build_project",
+          "serverName": "idea",
+          "tokens": 353,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__cancel_sql_query",
+          "serverName": "idea",
+          "tokens": 177,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__create_database_connection",
+          "serverName": "idea",
+          "tokens": 404,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__create_new_file",
+          "serverName": "idea",
+          "tokens": 321,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__edit_database_connection",
+          "serverName": "idea",
+          "tokens": 457,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__execute_run_configuration",
+          "serverName": "idea",
+          "tokens": 1050,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__execute_sql_query",
+          "serverName": "idea",
+          "tokens": 390,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__execute_terminal_command",
+          "serverName": "idea",
+          "tokens": 647,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__execute_tool",
+          "serverName": "idea",
+          "tokens": 187,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__fetch_query_result",
+          "serverName": "idea",
+          "tokens": 310,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__generate_inspection_kts_api",
+          "serverName": "idea",
+          "tokens": 251,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__generate_inspection_kts_examples",
+          "serverName": "idea",
+          "tokens": 272,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__generate_psi_tree",
+          "serverName": "idea",
+          "tokens": 277,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__get_all_open_file_paths",
+          "serverName": "idea",
+          "tokens": 180,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__get_database_object_description",
+          "serverName": "idea",
+          "tokens": 421,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__get_file_problems",
+          "serverName": "idea",
+          "tokens": 335,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__get_project_dependencies",
+          "serverName": "idea",
+          "tokens": 260,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__get_project_modules",
+          "serverName": "idea",
+          "tokens": 176,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__get_repositories",
+          "serverName": "idea",
+          "tokens": 172,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__get_run_configurations",
+          "serverName": "idea",
+          "tokens": 512,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__get_symbol_info",
+          "serverName": "idea",
+          "tokens": 399,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__git_status",
+          "serverName": "idea",
+          "tokens": 323,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__introspect_schema",
+          "serverName": "idea",
+          "tokens": 377,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__lint_files",
+          "serverName": "idea",
+          "tokens": 469,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__list_database_connections",
+          "serverName": "idea",
+          "tokens": 163,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__list_database_schemas",
+          "serverName": "idea",
+          "tokens": 191,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__list_directory_tree",
+          "serverName": "idea",
+          "tokens": 297,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__list_recent_sql_queries",
+          "serverName": "idea",
+          "tokens": 225,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__list_schema_object_kinds",
+          "serverName": "idea",
+          "tokens": 201,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__list_schema_objects",
+          "serverName": "idea",
+          "tokens": 341,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__open_file_in_editor",
+          "serverName": "idea",
+          "tokens": 222,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__preview_table_data",
+          "serverName": "idea",
+          "tokens": 426,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__read_file",
+          "serverName": "idea",
+          "tokens": 421,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__reformat_file",
+          "serverName": "idea",
+          "tokens": 232,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__rename_refactoring",
+          "serverName": "idea",
+          "tokens": 566,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__run_inspection_kts",
+          "serverName": "idea",
+          "tokens": 340,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__search_file",
+          "serverName": "idea",
+          "tokens": 405,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__search_regex",
+          "serverName": "idea",
+          "tokens": 361,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__search_symbol",
+          "serverName": "idea",
+          "tokens": 501,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__search_text",
+          "serverName": "idea",
+          "tokens": 357,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__test_database_connection",
+          "serverName": "idea",
+          "tokens": 222,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_control_session",
+          "serverName": "idea",
+          "tokens": 1249,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_evaluate_expression",
+          "serverName": "idea",
+          "tokens": 834,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_get_debugger_status",
+          "serverName": "idea",
+          "tokens": 266,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_get_frame_values",
+          "serverName": "idea",
+          "tokens": 681,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_get_stack",
+          "serverName": "idea",
+          "tokens": 712,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_get_threads",
+          "serverName": "idea",
+          "tokens": 528,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_get_value_by_path",
+          "serverName": "idea",
+          "tokens": 958,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_list_breakpoints",
+          "serverName": "idea",
+          "tokens": 729,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_remove_breakpoint",
+          "serverName": "idea",
+          "tokens": 585,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_run_to_line",
+          "serverName": "idea",
+          "tokens": 665,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_set_breakpoint",
+          "serverName": "idea",
+          "tokens": 1841,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_set_variable",
+          "serverName": "idea",
+          "tokens": 840,
+          "isLoaded": false
+        },
+        {
+          "name": "mcp__idea__xdebug_start_debugger_session",
+          "serverName": "idea",
+          "tokens": 1302,
+          "isLoaded": false
+        }
+      ],
+      "agents": [
+        {
+          "agentType": "codex:codex-rescue",
+          "source": "plugin",
+          "tokens": 56
+        }
+      ],
+      "slashCommands": {
+        "totalCommands": 24,
+        "includedCommands": 24,
+        "tokens": 971
+      },
+      "skills": {
+        "totalSkills": 24,
+        "includedSkills": 24,
+        "tokens": 1783,
+        "skillFrontmatter": [
+          {
+            "name": "code-comments",
+            "source": "projectSettings",
+            "tokens": 87
+          },
+          {
+            "name": "hive-claude",
+            "source": "projectSettings",
+            "tokens": 69
+          },
+          {
+            "name": "hive-memory",
+            "source": "projectSettings",
+            "tokens": 70
+          },
+          {
+            "name": "karpathy-guidelines",
+            "source": "projectSettings",
+            "tokens": 61
+          },
+          {
+            "name": "karpathy-llm-wiki",
+            "source": "projectSettings",
+            "tokens": 67
+          },
+          {
+            "name": "typescript-best-practices",
+            "source": "projectSettings",
+            "tokens": 30
+          },
+          {
+            "name": "zig-best-practices",
+            "source": "projectSettings",
+            "tokens": 23
+          },
+          {
+            "name": "codex:rescue",
+            "source": "plugin",
+            "pluginName": "codex",
+            "tokens": 30
+          },
+          {
+            "name": "codex:setup",
+            "source": "plugin",
+            "pluginName": "codex",
+            "tokens": 26
+          },
+          {
+            "name": "codex:codex-cli-runtime",
+            "source": "plugin",
+            "pluginName": "codex",
+            "tokens": 27
+          },
+          {
+            "name": "codex:codex-result-handling",
+            "source": "plugin",
+            "pluginName": "codex",
+            "tokens": 25
+          },
+          {
+            "name": "codex:gpt-5-4-prompting",
+            "source": "plugin",
+            "pluginName": "codex",
+            "tokens": 43
+          },
+          {
+            "name": "dataviz",
+            "source": "built-in",
+            "tokens": 287
+          },
+          {
+            "name": "update-config",
+            "source": "built-in",
+            "tokens": 177
+          },
+          {
+            "name": "keybindings-help",
+            "source": "built-in",
+            "tokens": 62
+          },
+          {
+            "name": "simplify",
+            "source": "built-in",
+            "tokens": 47
+          },
+          {
+            "name": "fewer-permission-prompts",
+            "source": "built-in",
+            "tokens": 48
+          },
+          {
+            "name": "loop",
+            "source": "built-in",
+            "tokens": 86
+          },
+          {
+            "name": "schedule",
+            "source": "built-in",
+            "tokens": 95
+          },
+          {
+            "name": "claude-api",
+            "source": "built-in",
+            "tokens": 271
+          },
+          {
+            "name": "run",
+            "source": "built-in",
+            "tokens": 92
+          },
+          {
+            "name": "init",
+            "source": "built-in",
+            "tokens": 17
+          },
+          {
+            "name": "review",
+            "source": "built-in",
+            "tokens": 20
+          },
+          {
+            "name": "security-review",
+            "source": "built-in",
+            "tokens": 23
+          }
+        ]
+      },
+      "autoCompactThreshold": 167000,
+      "isAutoCompactEnabled": true,
+      "messageBreakdown": {
+        "toolCallTokens": 32,
+        "toolResultTokens": 2106,
+        "attachmentTokens": 5442,
+        "assistantMessageTokens": 538,
+        "userMessageTokens": 19,
+        "redirectedContextTokens": 0,
+        "unattributedTokens": 0,
+        "toolCallsByType": [
+          {
+            "name": "Glob",
+            "callTokens": 32,
+            "resultTokens": 2106
+          }
+        ],
+        "attachmentsByType": [
+          {
+            "name": "deferred_tools_delta",
+            "tokens": 2180
+          },
+          {
+            "name": "skill_listing",
+            "tokens": 1930
+          },
+          {
+            "name": "hook_success",
+            "tokens": 675
+          },
+          {
+            "name": "agent_listing_delta",
+            "tokens": 512
+          },
+          {
+            "name": "hook_additional_context",
+            "tokens": 145
+          }
+        ]
+      },
+      "apiUsage": {
+        "input_tokens": 10,
+        "output_tokens": 75,
+        "cache_creation_input_tokens": 3066,
+        "cache_read_input_tokens": 28088
+      }
+    }
+  ],
+  "normalizedUsageEvents": [
+    {
+      "kind": "usage-updated",
+      "turnId": "524df029-5d48-4e50-87a8-9be66cd2b2d8",
+      "contextPercent": null,
+      "inputTokens": 59262,
+      "outputTokens": 211,
+      "cachedInputTokens": 56176,
+      "cacheCreationInputTokens": 3066,
+      "reasoningTokens": null,
+      "usageKey": "result:08c30d6f-7ffd-44f8-9a11-1e06fbcccc4d",
+      "cumulative": false,
+      "source": "claude-stream-json",
+      "observedAt": "2026-08-02T21:45:09.788Z",
+      "sequence": 73,
+      "occurredAt": "2026-08-02T21:45:09.788Z"
+    },
+    {
+      "kind": "usage-updated",
+      "turnId": "524df029-5d48-4e50-87a8-9be66cd2b2d8",
+      "contextPercent": 16,
+      "inputTokens": null,
+      "outputTokens": null,
+      "contextWindow": 200000,
+      "sequence": 76,
+      "occurredAt": "2026-08-02T21:45:10.464Z"
+    }
+  ],
+  "toolCalls": [
+    "Glob"
+  ],
+  "assistantMessages": 1,
+  "liveModel": [
+    "claude-haiku-4-5-20251001"
+  ],
+  "contextWindow": [
+    200000
+  ],
+  "attributedEvents": [
+    {
+      "key": "result:08c30d6f-7ffd-44f8-9a11-1e06fbcccc4d",
+      "counts": {
+        "inputTokens": 59262,
+        "cachedInputTokens": 56176,
+        "cacheCreationInputTokens": 3066,
+        "outputTokens": 211,
+        "reasoningTokens": null
+      },
+      "observedAt": "2026-08-02T21:45:09.788Z",
+      "source": "claude-stream-json"
+    }
+  ],
+  "protocolTotals": {
+    "inputTokens": 59262,
+    "cachedInputTokens": 56176,
+    "cacheCreationInputTokens": 3066,
+    "outputTokens": 211,
+    "reasoningTokens": null,
+    "totalTokens": 59473
+  },
+  "protocolTotalsAfterReplay": {
+    "inputTokens": 59262,
+    "cachedInputTokens": 56176,
+    "cacheCreationInputTokens": 3066,
+    "outputTokens": 211,
+    "reasoningTokens": null,
+    "totalTokens": 59473
+  },
+  "artifactCollectorTotals": {
+    "inputTokens": 59262,
+    "cachedInputTokens": 56176,
+    "cacheCreationInputTokens": 3066,
+    "outputTokens": 211,
+    "reasoningTokens": null,
+    "totalTokens": 59473
+  },
+  "protocolProvenance": {
+    "source": "claude-stream-json",
+    "observedAt": "2026-08-02T21:45:09.788Z"
+  },
+  "protocolProvenanceAfterReplay": {
+    "source": "claude-stream-json",
+    "observedAt": "2026-08-02T21:45:09.788Z"
+  },
+  "artifactCollectorProvenance": {
+    "source": "claude-transcript",
+    "observedAt": "2026-08-02T21:45:09.626Z"
+  },
+  "factByFact": {
+    "inputTokens": "equal",
+    "cachedInputTokens": "equal",
+    "cacheCreationInputTokens": "equal",
+    "outputTokens": "equal",
+    "reasoningTokens": "equal",
+    "totalTokens": "equal"
+  },
+  "scannerFacts": {
+    "model": "claude-haiku-4-5-20251001",
+    "contextTokens": 31239,
+    "contextPct": null
+  },
+  "protocolFacts": {
+    "model": "claude-haiku-4-5-20251001",
+    "contextWindow": 200000,
+    "contextPct": 16,
+    "contextTokens": 32000
+  },
+  "factByFactBeyondCounts": {
+    "liveModel": "equal",
+    "contextTokens": "equal",
+    "contextPct": "gained: scanner could not see it"
+  },
+  "contextKeysInRawFrames": [
+    "contextWindow",
+    "context_management",
+    "redirectedContextTokens"
+  ],
+  "absentOverProtocol": [],
+  "verdict": "lossless"
+}

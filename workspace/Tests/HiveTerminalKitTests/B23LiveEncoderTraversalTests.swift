@@ -6,7 +6,7 @@ import XCTest
 /// B2.3/A3 acceptance matrix — LIVE-PTY traversal for the encoder rows.
 ///
 /// Connects the two halves of the input proof: real encoder → production UDS
-/// transport → authenticated human claim → `INPUT_SUBMIT` → real sessiond →
+/// transport → authenticated user claim → `INPUT_SUBMIT` → real sessiond →
 /// real PTY. `LiveHostAttachTests.testLiveGate8InputRoundTrip` drives a
 /// `FakeManualSurface` (no real encoder); unit encoder rows capture `onWrite`
 /// from a real surface that never reaches a PTY.
@@ -22,7 +22,7 @@ import XCTest
 ///
 /// Constraints:
 ///
-/// 1. ONE CLAIM, MANY ROWS. A human input claim is never stolen — when a viewer
+/// 1. ONE CLAIM, MANY ROWS. A user input claim is never stolen — when a viewer
 ///    drops it the arbiter orphans it, and `AttachReplayClient` has no release
 ///    call (`claimRelease` exists but nothing sends it). A second attach in the
 ///    same session is denied; every row shares ONE attach and ONE claim, and
@@ -43,7 +43,7 @@ import XCTest
 ///    the PTY child to emit the mode as real output, which is not done here.
 ///
 /// Opt-in: requires `HIVE_B22_PROOF_HOME` naming a home prepared by
-/// `scripts/b22-live-attach-proof.ts` (run it with `HIVE_B22_NO_APP=1`; the
+/// `scripts/qa/b22-live-attach-proof.ts` (run it with `HIVE_B22_NO_APP=1`; the
 /// rendered pane is not needed and the app carries a known blank-pane defect).
 /// The harness port leaks between runs — wait for it to free before restarting.
 final class B23LiveEncoderTraversalTests: XCTestCase {
@@ -97,7 +97,7 @@ final class B23LiveEncoderTraversalTests: XCTestCase {
         ]
     }
 
-    /// Drives every mode-free row through one attach and one human claim, and
+    /// Drives every mode-free row through one attach and one user claim, and
     /// requires the host to report writing each one to the live PTY.
     func testEncoderBytesReachTheLivePtyAtTheWriteBoundary() throws {
         let (proof, _) = try loadProof()
@@ -105,7 +105,7 @@ final class B23LiveEncoderTraversalTests: XCTestCase {
         let grantLine = try issueGrant(proof, viewerId: viewerId)
         XCTAssertEqual(grantLine.status, 0, "grant refused: \(grantLine.output)")
         let grant = try parseGrant(grantLine.output)
-        XCTAssertTrue(grant.operations.contains("human-input"), "no input authority in grant")
+        XCTAssertTrue(grant.operations.contains("user-input"), "no input authority in grant")
 
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
         defer { surface.free() }

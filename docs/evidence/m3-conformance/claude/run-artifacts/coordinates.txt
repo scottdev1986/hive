@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-cr
+home=/private/tmp/hvqa-cr
+default_home=/private/tmp/hvqa-cr/default
+port=53184
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/claude/m3-frozen/source
+hive_bin=/private/tmp/hvqa-cr/artifacts/hive-bin

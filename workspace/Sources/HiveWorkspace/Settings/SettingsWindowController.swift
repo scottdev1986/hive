@@ -1,6 +1,5 @@
 import AppKit
 
-/// The Settings window: task routing, model consent, and session token usage.
 final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
     private static let tasksItem = NSToolbarItem.Identifier("hive.settings.tasks")
@@ -13,10 +12,15 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private var usageController: UsageSettingsController!
     private var appearanceController: AppearanceSettingsController!
     private(set) var dataSource: ModelControlDataSource!
-    private let container = NSViewController()
 
-    convenience init(hivePath: String?, daemonPort: Int?, initialWidth: Double? = nil) {
-        let dataSource = ModelControlDataSource(hivePath: hivePath, daemonPort: daemonPort)
+    convenience init(
+        hivePath: String?, daemonPort: Int?, instanceHome: String? = nil,
+        initialWidth: Double? = nil,
+        makeDaemonClient: (() async throws -> WorkspaceDaemonClient)? = nil
+    ) {
+        let dataSource = ModelControlDataSource(
+            hivePath: hivePath, daemonPort: daemonPort, instanceHome: instanceHome,
+            makeDaemonClient: makeDaemonClient)
         let tasks = TasksSettingsController(dataSource: dataSource)
         let models = ModelsSettingsController(dataSource: dataSource)
         let usage = UsageSettingsController(dataSource: dataSource)
@@ -25,9 +29,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         let width = CGFloat(initialWidth ?? 880)
         let container = NSViewController()
         container.view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 820))
-        // Pin the window's idea of the content size. Without this, AppKit
-        // adopts the content's Auto Layout FITTING width at display time and
-        // overrides any frame we set and can open the window wider than the screen.
+        // Pin the window's idea of the content size. Without this, AppKit adopts the content's Auto Layout FITTING width at display time and overrides any frame we set and can open the window wider than the screen.
         container.preferredContentSize = NSSize(width: width, height: 820)
 
         let window = NSWindow(contentViewController: container)
@@ -65,12 +67,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
         window.contentMinSize = NSSize(
             width: Theme.Metric.minContentWidth + 2 * Theme.Space.page, height: 420)
-        // The user's own saved frame wins when one exists; otherwise the
-        // window opens at a sensible default CLAMPED TO THE SCREEN — it must
-        // never open off it; AppKit's fitting-size pass can open this window
-        // wider than the display. Verification runs (explicit width)
-        // skip the autosave entirely so they never fight a saved frame and
-        // never overwrite the user's.
+        // The user's own saved frame wins when one exists; otherwise the window opens at a sensible default CLAMPED TO THE SCREEN — it must never open off it; AppKit's fitting-size pass can open this window wider than the display. Verification runs (explicit width) skip the autosave entirely so they never fight a saved frame and never overwrite the user's.
         let restored: Bool
         if initialWidth == nil {
             window.setFrameAutosaveName("HiveModelControlCenter")
@@ -93,11 +90,8 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         dataSource.refresh()
     }
 
-    /// The selected section, reasserted on every show so window display
-    /// quirks can never leave the toolbar and the visible page disagreeing.
+    /// The selected section, reasserted on every show so window display quirks can never leave the toolbar and the visible page disagreeing.
     private var currentSection = "tasks"
-    /// Verification affordance: reassert this width after display, because
-    /// the first display pass re-adopts the content's fitting width.
     private var forcedWidth: CGFloat?
 
     private func select(page: SettingsPageController) {
@@ -118,14 +112,12 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         select(section: currentSection)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        // After the key-view loop settles: open at the top, not wherever the
-        // first focusable control happened to live.
+        // After the key-view loop settles: open at the top, not wherever the first focusable control happened to live.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if let width = self.forcedWidth, let window = self.window {
                 let clamped = max(window.contentMinSize.width, width)
-                // The hard cap is the one sizing input the fitting pass
-                // cannot exceed.
+                // The hard cap is the one sizing input the fitting pass cannot exceed.
                 window.contentMaxSize = NSSize(
                     width: clamped, height: .greatestFiniteMagnitude)
                 window.setContentSize(NSSize(width: clamped, height: 820))
@@ -136,8 +128,6 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
             self.appearanceController.scrollToTop()
         }
     }
-
-    // MARK: NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [Self.tasksItem, Self.modelsItem, Self.usageItem, Self.appearanceItem]
@@ -194,13 +184,8 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     @objc private func showUsage(_ sender: Any?) { select(page: usageController) }
     @objc private func showAppearance(_ sender: Any?) { select(page: appearanceController) }
 
-    /// Every section key the chain below actually resolves. An unrecognised key
-    /// still falls through to Tasks — that behaviour is pre-existing and kept —
-    /// but it is now reported instead of silently looking correct.
     static let knownSections = ["tasks", "models", "usage", "appearance"]
 
-    /// Programmatic section selection ("tasks" / "models" / "usage" /
-    /// "appearance") — used by the launch affordance and the smoke harness.
     func select(section: String) {
         if !Self.knownSections.contains(section) {
             NSLog("hive settings: unknown section %@, falling back to tasks", section)

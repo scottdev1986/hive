@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "version": "0.0.0",
+  "tag": "v0.0.0",
+  "channel": "stable",
+  "commit": "cbef47d0b024318f03bfeeb7a6636c887f0806c9",
+  "publishedAt": "2026-08-02T02:50:00.000Z",
+  "securityCritical": false,
+  "wireProtocol": {
+    "min": 1,
+    "max": 1
+  },
+  "schemaEpoch": 1,
+  "artifacts": [
+    {
+      "name": "hive-darwin-arm64",
+      "kind": "cli",
+      "platform": "darwin",
+      "arch": "arm64",
+      "size": 73764706,
+      "sha256": "9f390762a2e4a303d5abd68a8abfdaf00ecc2fcbee28a86e1015f74c4b3dcfa6",
+      "buildHash": "8332ed32d8755d59841f7146257f531c2a8db8d39b05f7e63a7c5c6f65a51e8c"
+    },
+    {
+      "name": "hive-darwin-x64",
+      "kind": "cli",
+      "platform": "darwin",
+      "arch": "x64",
+      "size": 81330256,
+      "sha256": "9dfd3191d1b3eed08937df10c409b2f68fb3e19a8bdf4e912321d84684ab450e",
+      "buildHash": "1c1298b462e4934f67d3784f518ba72521ae065ed838e7c1a20e019309e4a9ba"
+    },
+    {
+      "name": "HiveWorkspace.tar.gz",
+      "kind": "workspace",
+      "platform": "darwin",
+      "arch": "arm64",
+      "size": 20182680,
+      "sha256": "d8db0dccec0ec7d545adeb6d112d8811c908ed55fd758469fbca1e72bf6cfd5e",
+      "buildHash": "d8db0dccec0ec7d545adeb6d112d8811c908ed55fd758469fbca1e72bf6cfd5e"
+    },
+    {
+      "name": "HiveWorkspace.tar.gz",
+      "kind": "workspace",
+      "platform": "darwin",
+      "arch": "x64",
+      "size": 20182680,
+      "sha256": "d8db0dccec0ec7d545adeb6d112d8811c908ed55fd758469fbca1e72bf6cfd5e",
+      "buildHash": "d8db0dccec0ec7d545adeb6d112d8811c908ed55fd758469fbca1e72bf6cfd5e"
+    }
+  ]
+}

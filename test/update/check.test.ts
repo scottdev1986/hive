@@ -11,7 +11,7 @@ import {
   readUpdateCache,
   updatesDisabled,
   writeUpdateCache,
-} from "../../src/update/check";
+} from "../../src/update-service/check";
 
 let home: string;
 let cachePath: string;

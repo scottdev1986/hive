@@ -9,10 +9,6 @@ import type {
   TerminationResult,
 } from "./terminal-host-contract";
 
-/**
- * Project-neutral visibility extension for terminal hosts whose process
- * lifetime is authorized by a live external representation.
- */
 export const TERMINAL_HOST_VISIBILITY_CONTRACT_VERSION = "1.0.0" as const;
 
 export type VisibilitySourceIdentity = Readonly<{
@@ -114,9 +110,5 @@ export interface VisibilityAdmissionHost {
   ): Promise<VisibilityRenewalResult>;
 }
 
-/**
- * Required host profile for visibility-backed creation. Its `create` replaces
- * the unguarded base operation; all other A0 operations retain their shape.
- */
 export type VisibilityTerminalHost = Omit<TerminalHost, "create"> &
   VisibilityAdmissionHost;

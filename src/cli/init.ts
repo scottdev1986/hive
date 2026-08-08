@@ -1,56 +1,31 @@
-/**
- * `hive init` — the gated enrichment pass.
- *
- * `hive init` is the work that *must* be asked for, because it writes into the
- * user's repo or spends their tokens:
- *   - When no `AGENTS.md` exists, *offer* to scaffold a starter one (opt-in,
- *     never blind — Codex caps the AGENTS.md chain at 32 KiB and truncates
- *     silently, so we never append to a human's existing instructions).
- *   - Seed a small set of narrative memory articles with `source: "init"` and a
- *     `verified` date, derived and re-derivable —
- *     distinct from the earned facts an agent learns.
- *   - Ensure `.gitignore` covers Hive's exact derived-state paths, never the
- *     `.hive/` parent because that also contains user-authored project skills.
- *
- * Running the command is the authorization, and every action it takes is
- * printed. Seeded facts are indexed immediately when a daemon is available;
- * otherwise the report names the startup rebuild instead of claiming the index
- * already changed.
- * Graphify is provisioned on every run to build Hive's local code graph. A
- * failed download or build is reported as a loud deferred state. Init also
- * installs the probe-verified embedding runtime under
- * ~/.hive/tools/embeddings. On a machine without network access, semantic
- * memory stays on full-text search until a later `hive init` completes it,
- * and the rest of init still finishes.
- * Model-authored narrative is supplied by the caller — hive's models are its
- * agents, not this CLI — and written through the same seeding path.
- */
+/** `hive init` — the gated enrichment pass. `hive init` is the work that *must* be asked for, because it writes into the user's repo or spends their tokens: - When no `AGENTS.md` exists, *offer* to scaffold a starter one (opt-in, never blind — Codex caps the AGENTS.md chain at 32 KiB and truncates silently, so we never append to a user's existing instructions). - Seed a small set of narrative memory articles with `source: "init"` and a `verified` date, derived and re-derivable — distinct from the earned facts an agent learns. - Ensure `.gitignore` covers Hive's exact derived-state paths, never the `.hive/` parent because that also contains user-authored project skills. Running the command is the authorization, and every action it takes is printed. Seeded facts are indexed immediately when a daemon is available; otherwise the report names the startup rebuild instead of claiming the index already changed. Graphify is provisioned on every run to build Hive's local code graph. A failed download or build is reported as a loud deferred state. Init also installs the probe-verified embedding runtime under ~/.hive/tools/embeddings. On a machine without network access, semantic memory stays on full-text search until a later `hive init` completes it, and the rest of init still finishes. Model-authored narrative is supplied by the caller — hive's models are its agents, not this CLI — and written through the same seeding path. */
 import { existsSync } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import {
-  listMemoryFacts,
-  type MemoryWriteFileInput,
-  writeMemoryFact,
-} from "../adapters/memory";
 import {
   type BaseSkillInstallReport,
   globalSkillsRoot,
   installBaseSkills,
   unaddressedSkills,
 } from "../adapters/skills";
-import { expectedDaemonHandshake } from "../daemon/handshake";
-import { probeDaemonReuse } from "../daemon/lifecycle";
-import { projectStateDir } from "../daemon/project-state";
+import { expectedDaemonHandshake } from "../daemon/lifecycle/daemon-lifecycle";
+import { probeDaemonReuse } from "../daemon/lifecycle/daemon-lifecycle";
+import { projectStateDir } from "../daemon/project-identity-core/state";
+import {
+  listMemoryFacts,
+  writeMemoryFact,
+} from "../memory-service/memory-store";
+import type { MemoryWriteFileInput } from "../memory-service/store-records";
 import type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
-import { ensureEmbeddingsRuntime } from "./embeddings";
-import { provisionGraphify } from "./graphify";
+import { slugify } from "../shared/slugify";
+import { ensureEmbeddingsRuntime } from "./embeddings-command";
+import { provisionGraphify } from "./graphify-command";
 import { reindexMemory } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
-import { projectRootOrCwd } from "./project-root";
+import { projectRootOrCwd } from "../daemon/project-identity-core/project-root";
+import { errorMessage } from "../shared/error-message";
 
-/** A narrative fact for init to seed. A stable id keeps a re-run upserting the
- * same fact in place rather than accumulating duplicates. */
+/** A narrative fact for init to seed. A stable id keeps a re-run upserting the same fact in place rather than accumulating duplicates. */
 export interface InitFact {
   title: string;
   body: string;
@@ -59,23 +34,15 @@ export interface InitFact {
 }
 
 export interface InitOptions {
-  /** Opt-in `AGENTS.md` scaffold. Only ever writes when none exists. */
   scaffoldAgents?: boolean;
-  /** Model-authored narrative facts to seed with `source: "init"`. */
   facts?: InitFact[];
-  /** Replace a skill the user has edited with Hive's shipped version. Without
-   * it, an edited skill is reported as drifted and left exactly as it is. */
   force?: boolean;
-  /** Injected for tests; defaults to today. */
   today?: string;
 }
 
 export interface InitResult {
   agentsScaffolded: boolean;
-  /** Ids of the facts seeded (upserted) this run. */
   factsSeeded: string[];
-  /** What Hive's own skills did in `.hive/skills`: written, already current,
-   * or left alone because the copy there is the human's. */
   skills: BaseSkillInstallReport;
   messages: string[];
 }
@@ -91,18 +58,13 @@ export interface InitDeps {
   fileExists: (path: string) => Promise<boolean>;
   readFile: (path: string) => Promise<string>;
   writeFile: (path: string, contents: string) => Promise<void>;
-  /** The next daemon rebuilds the index when no daemon is available yet. */
   reindexMemory: (root: string) => Promise<"indexed" | "deferred">;
   installBaseSkills: (
     root: string,
     options: { force?: boolean },
   ) => Promise<BaseSkillInstallReport>;
-  /** Install or re-prove Graphify and build this repository's code graph. */
   provisionGraphify: (root: string) => Promise<number>;
-  /** Record that init completed here, so bare `hive` stops offering to init. */
   writeInitStamp: (root: string) => Promise<void>;
-  /** Install (or re-prove) the machine-level embedding runtime. The outcome
-   * is reported; a failure defers semantic memory, it does not fail init. */
   installEmbeddings: () => Promise<EmbeddingsInstallOutcome>;
   today: () => string;
 }
@@ -142,10 +104,6 @@ export const defaultInitDeps: InitDeps = {
   today: () => new Date().toISOString().slice(0, 10),
 };
 
-/** The marker `hive init` leaves in the project's derived-state dir. Bare
- * `hive` reads it to know whether this repo ever completed the init flow.
- * Deleting it (or the state dir, as `hive uninstall --repo` does) makes bare
- * `hive` offer init again, which is exactly right. */
 export function initStampPath(root: string): string {
   return join(projectStateDir(root), "initialized");
 }
@@ -154,23 +112,6 @@ export function isRepoInitialized(root: string): boolean {
   return existsSync(initStampPath(root));
 }
 
-function slugify(title: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40)
-    .replace(/-+$/g, "");
-  return slug || "fact";
-}
-
-/**
- * Seed narrative facts as `source: "init"`, `verified: <today>`, scope `repo`.
- * Every fact gets a stable id (explicit, or a slug of its title) so a later
- * `hive init` re-run upserts it in place — the id-overwrite path is exactly the
- * dedup-before-write policy requires, and re-confirming a fact bumps its
- * `verified` date while leaving earned facts untouched. Returns the ids written.
- */
 export async function seedInitFacts(
   root: string,
   facts: InitFact[],
@@ -190,17 +131,16 @@ export async function seedInitFacts(
       date: today,
       source: "init",
       evidence: "Derived by hive init from the current repository",
-      status: "verified",
+      // Seeded from the repository rather than checked by anyone: `hive init` reads the tree and writes what it inferred, which is a claim awaiting confirmation, not a confirmed one. A later session that checks it can stamp it with memory_verify.
+      status: "unverified",
       supersedes: [id],
-      verified: today,
     });
     seeded.push(written.id);
   }
   return seeded;
 }
 
-/** Never collapse the first two entries into `.hive/`: that directory also
- * contains project skills. */
+/** Never collapse the first two entries into `.hive/`: that directory also contains project skills. */
 export const HIVE_GITIGNORE_ENTRIES = [
   ".hive/memory/",
   ".hive/worktrees/",
@@ -221,11 +161,7 @@ function gitignoreContains(entry: string, lines: readonly string[]): boolean {
   return lines.some((line) => normalizedGitignoreLine(line) === wanted);
 }
 
-/**
- * Ensure the project's `.gitignore` contains every Hive derived-state entry.
- * Existing content is never reordered or rewritten; only missing entries are
- * appended.
- */
+/** Ensure the project's `.gitignore` contains every Hive derived-state entry. Existing content is never reordered or rewritten; only missing entries are appended. */
 export async function ensureHiveStateGitignored(
   cwd: string,
   deps: Pick<
@@ -250,10 +186,7 @@ export async function ensureHiveStateGitignored(
   return `${exists ? "Updated" : "Created"} .gitignore with Hive's local derived-state entries.`;
 }
 
-/** A minimal starter `AGENTS.md` — a starting point a human refines (every
- * vendor's `/init` frames it that way), not a template pretending to be
- * authoritative. Hive does not detect this repo's commands, stack, or design
- * docs, so those sections are prompts to fill in, never invented values. */
+/** A minimal starter `AGENTS.md` — a starting point a user refines (every vendor's `/init` frames it that way), not a template pretending to be authoritative. Hive does not detect this repo's commands, stack, or design docs, so those sections are prompts to fill in, never invented values. */
 export function scaffoldAgentsMd(): string {
   return [
     "# Agent instructions",
@@ -300,15 +233,7 @@ export async function runInit(
     }
   }
 
-  // 2. Skills. Hive's own skills live in the binary (src/skills/shipped.ts), so
-  //    this works on a machine that has only the binary and never consults a
-  //    checkout. They install into `.hive/skills/` at the same addresses a
-  //    person writes by hand, beside the skills they wrote — one directory that
-  //    answers "what do my agents know", rather than Hive's half of the answer
-  //    living inside the binary and appearing only inside a worktree. No vendor
-  //    needs to be installed for this to be right: an address carries its own
-  //    vendor. Nothing the user wrote is overwritten; drift is reported, and
-  //    `--force` is the only way to take Hive's copy over theirs.
+  // 2. Skills. Hive's own skills live in the binary (src/skills/shipped.ts), so this works on a machine that has only the binary and never consults a checkout. They install into `.hive/skills/` at the same addresses a person writes by hand, beside the skills they wrote — one directory that answers "what do my agents know", rather than Hive's half of the answer living inside the binary and appearing only inside a worktree. No vendor needs to be installed for this to be right: an address carries its own vendor. Nothing the user wrote is overwritten; drift is reported, and `--force` is the only way to take Hive's copy over theirs.
   const skills = await deps.installBaseSkills(
     cwd,
     options.force === true ? { force: true } : {},
@@ -328,8 +253,7 @@ export async function runInit(
       `Skills: ${skills.drifted.join(", ")} differs from the version Hive ships — your copy is untouched. Re-run \`hive init --force\` to take Hive's.`,
     );
   }
-  // A skill at an address nobody reads is the one failure this layout can hide,
-  // so it is named here with the path rather than left to be noticed.
+  // A skill at an address nobody reads is the one failure this layout can hide, so it is named here with the path rather than left to be noticed.
   for (const root of [join(cwd, ".hive", "skills"), globalSkillsRoot()]) {
     const orphans = await unaddressedSkills(root).catch(() => []);
     if (orphans.length > 0) {
@@ -341,12 +265,9 @@ export async function runInit(
     }
   }
 
-  // 3. .gitignore: Hive's exact generated paths are local derived state. Never
-  //    write a bare `.hive/`: project skills under it belong in version control.
+  // 3. .gitignore: Hive's exact generated paths are local derived state. Never write a bare `.hive/`: project skills under it belong in version control.
   messages.push(await ensureHiveStateGitignored(cwd, deps));
 
-  // 4. Seed narrative facts (source: init): genuinely narrative knowledge an
-  //    agent should start with, distinct from the facts an agent earns.
   const facts = options.facts ?? [];
   const factsSeeded =
     facts.length === 0 ? [] : await seedInitFacts(cwd, facts, today, deps);
@@ -363,20 +284,16 @@ export async function runInit(
       );
     } catch (error) {
       messages.push(
-        `Seeded ${articles} (source: init), but memory indexing failed: ${
-          error instanceof Error ? error.message : String(error)
-        }\nFix: after the daemon starts, run \`hive memory reindex\`.`,
+        `Seeded ${articles} (source: init), but memory indexing failed: ${errorMessage(
+          error,
+        )}\nFix: after the daemon starts, run \`hive memory reindex\`.`,
       );
     }
   }
 
-  // 5. Embedding runtime. Init installs the local semantic-memory tool. When
-  //    setup cannot complete, the message names `hive init` as the retry
-  //    and recall stays on full-text search in the meantime.
+  // 5. Embedding runtime. Init installs the local semantic-memory tool. When setup cannot complete, the message names `hive init` as the retry and recall stays on full-text search in the meantime.
   messages.push(await provisionEmbeddings(deps));
 
-  // 6. Graphify builds the local code graph Hive uses for structural context.
-  //    A failed install or build is loud so offline init completes honestly.
   const graphifyExit = await deps.provisionGraphify(cwd);
   messages.push(
     graphifyExit === 0
@@ -398,13 +315,10 @@ async function provisionEmbeddings(deps: InitDeps): Promise<string> {
   } catch (error) {
     outcome = {
       ok: false,
-      reason: error instanceof Error ? error.message : String(error),
+      reason: errorMessage(error),
     };
   }
   if (outcome.ok) return `Embeddings: ${outcome.detail}.`;
-  // Embeddings are a required component — this is a degraded product, so the
-  // failure is an alarm, not a quiet note. Init still completes: the runtime
-  // is machine-level and recoverable, unlike the repo state above.
   return [
     "⚠ EMBEDDINGS NOT INSTALLED — Hive memory is DEGRADED: semantic recall is",
     `unavailable and search is FTS-only until the runtime lands (${outcome.reason}).`,
@@ -412,8 +326,6 @@ async function provisionEmbeddings(deps: InitDeps): Promise<string> {
   ].join("\n");
 }
 
-/** Read a JSON array of `InitFact`s from a file, so a human or orchestrator can
- * supply model-authored narrative through the CLI. */
 export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
   const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
   if (!Array.isArray(parsed)) {
@@ -438,12 +350,7 @@ export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
   });
 }
 
-/** CLI entry: `hive init [--scaffold-agents] [--seed-facts <path>]`.
- * Prints what it did and stops. */
 export async function runInitCli(options: {
-  /** The project root; defaults to the git toplevel of process.cwd(), so
-   * `hive init` from a repo subdirectory initializes the repo, not the
-   * subdirectory. */
   cwd?: string;
   scaffoldAgents?: boolean;
   seedFacts?: string;

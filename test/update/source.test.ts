@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MANIFEST_ASSET, SIGNATURE_ASSET } from "../../src/release/manifest";
-import { githubReleaseSource } from "../../src/update/source";
+import { githubReleaseSource } from "../../src/update-service/source";
 
 const MANIFEST = {
   schema: 1,
@@ -47,7 +47,10 @@ interface AssetResponse {
   readonly contentLength: number | null;
 }
 
-/** A GitHub that serves the manifest, no signature, and one asset. */
+const DISTINCTIVE_SIGNATURE = "distinctive-signature-fixture";
+const SIGNATURE_BYTES = new TextEncoder().encode(`${DISTINCTIVE_SIGNATURE}\n`);
+
+/** A GitHub that serves the manifest, its signature, and one asset. */
 function fakeGitHub(
   asset: AssetResponse,
   releaseTag = "v0.0.9",
@@ -64,6 +67,10 @@ function fakeGitHub(
               browser_download_url: "https://x/manifest",
             },
             {
+              name: SIGNATURE_ASSET,
+              browser_download_url: "https://x/signature",
+            },
+            {
               name: "hive-darwin-arm64",
               browser_download_url: "https://x/cli",
             },
@@ -73,6 +80,9 @@ function fakeGitHub(
     }
     if (url.endsWith("/manifest")) {
       return Promise.resolve(new Response(JSON.stringify(manifest)));
+    }
+    if (url.endsWith("/signature")) {
+      return Promise.resolve(new Response(SIGNATURE_BYTES));
     }
     if (url.endsWith("/cli")) {
       return Promise.resolve(streamed(asset.chunks, asset.contentLength));
@@ -153,13 +163,13 @@ describe("githubReleaseSource download", () => {
     expect(bytes.byteLength).toBe(12);
   });
 
-  test("a release with no signature asset yields a null signature", async () => {
+  test("loads the exact bytes from the advertised signature asset", async () => {
     const source = await githubReleaseSource(
       "0.0.9",
       "owner/repo",
       fakeGitHub({ chunks: [chunk("abcdefghijkl")], contentLength: 12 }),
     );
-    expect(source.signature).toBeNull();
+    expect(source.signature).toBe(DISTINCTIVE_SIGNATURE);
     expect(source.manifest.version).toBe("0.0.9");
     // The exact bytes, not a re-serialization: the signature is over these.
     expect(new TextDecoder().decode(source.manifestBytes)).toBe(
@@ -195,9 +205,5 @@ describe("githubReleaseSource download", () => {
         ),
       ),
     ).rejects.toThrow(/requested hive 0\.0\.9 but GitHub returned v0\.0\.8/);
-  });
-
-  test("SIGNATURE_ASSET is the name the source looks for", () => {
-    expect(SIGNATURE_ASSET).toBe("hive-release.json.sig");
   });
 });

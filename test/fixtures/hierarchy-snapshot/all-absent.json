@@ -1,0 +1,117 @@
+[
+  {
+    "kind": "hierarchy-run",
+    "id": "run_00000000-0000-7000-8000-0000000000a0",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_00000000-0000-7000-8000-0000000000a0",
+      "entityRevision": "0",
+      "root": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no Run record supplied"
+      },
+      "phase": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no Run record supplied"
+      },
+      "lifecycle": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no Run record supplied"
+      },
+      "topologyShape": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no TopologyDecision supplied"
+      },
+      "g1": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no Run record supplied"
+      },
+      "g2": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no Run record supplied"
+      },
+      "topologySource": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no hierarchy or legacy source supplied"
+      }
+    }
+  },
+  {
+    "kind": "hierarchy-task",
+    "id": "run_00000000-0000-7000-8000-0000000000a0:tasks",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_00000000-0000-7000-8000-0000000000a0",
+      "entityRevision": "0",
+      "tasks": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no task source supplied for this snapshot"
+      }
+    }
+  },
+  {
+    "kind": "hierarchy-budget",
+    "id": "run_00000000-0000-7000-8000-0000000000a0:budget",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_00000000-0000-7000-8000-0000000000a0",
+      "entityRevision": "0",
+      "limits": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no RunBudget supplied"
+      }
+    }
+  },
+  {
+    "kind": "hierarchy-review",
+    "id": "run_00000000-0000-7000-8000-0000000000a0:reviews",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_00000000-0000-7000-8000-0000000000a0",
+      "entityRevision": "0",
+      "reviews": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no Review records supplied"
+      }
+    }
+  },
+  {
+    "kind": "hierarchy-incident",
+    "id": "run_00000000-0000-7000-8000-0000000000a0:incident",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_00000000-0000-7000-8000-0000000000a0",
+      "entityRevision": "0",
+      "runDecision": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no run-control decision source supplied for this snapshot"
+      },
+      "recovery": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no ownership-transfer source supplied for this snapshot"
+      },
+      "breaker": {
+        "availability": "absent",
+        "reason": "source-absent",
+        "detail": "no anomaly circuit-breaker record exists in the daemon"
+      }
+    }
+  }
+]

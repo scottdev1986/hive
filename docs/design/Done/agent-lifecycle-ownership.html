@@ -144,7 +144,7 @@
     A single <code>hive_spawn</code> traverses six layers and ends in three processes: a
     sessiond host, a login <code>zsh</code> on a PTY, and the vendor TUI running beneath
     that shell. The orchestration lives in <code>spawnReserved</code>
-    (<code>src/daemon/spawner-impl.ts</code>). That part is unchanged.
+    (<code>src/daemon/spawn/spawner-impl.ts</code>). That part is unchanged.
   </p>
   <p>
     What changed is the loop that ran <em>beside</em> it. Every five seconds the daemon
@@ -444,7 +444,7 @@
   <h2>4. Ownership</h2>
   <p>
     The organising principle is <strong>mechanism versus policy</strong>, and the second
-    rule the operator named: <strong>the terminal must not depend on spawning, and
+    rule the user named: <strong>the terminal must not depend on spawning, and
     spawning must not depend on the terminal.</strong> A terminal may make itself easy to
     observe; nothing may make it wait.
   </p>
@@ -843,7 +843,7 @@
     <thead><tr><th>Path</th><th>Killed a terminal because&hellip;</th></tr></thead>
     <tbody>
       <tr><td><code>spawner-impl.ts</code></td><td>the daemon had not observed the provider's foreground yet</td></tr>
-      <tr><td><code>orchestrator-sessiond.ts</code></td><td>the same, for the queen</td></tr>
+      <tr><td><code>orchestrator-host/sessiond-controller.ts</code></td><td>the same, for the queen</td></tr>
       <tr><td><code>server.ts</code> <code>reconcileOrphanTerminals</code></td><td>no agent row referred to it</td></tr>
       <tr><td><code>recovery.ts</code> <code>releaseSupersededGeneration</code></td><td>a crash resume superseded it</td></tr>
       <tr><td><code>broker.zig</code> <code>terminateAll</code></td><td>the broker observed its daemon exit &mdash; killed <em>every</em> host</td></tr>
@@ -853,7 +853,7 @@
 
   <p>
     Explicit termination stays: <code>hive_kill</code> and agent teardown are the
-    operator asking, not Hive inferring. What is gone is every path that decided a
+    user asking, not Hive inferring. What is gone is every path that decided a
     terminal should die from indirect evidence.
   </p>
 

@@ -1,0 +1,141 @@
+[
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent\":{\"id\":\"9c9a9ddf-3185-46d1-92ef-8e909df462db\",\"name\":\"maya\",\"tool\":\"opencode\",\"model\":\"openai/gpt-5.6-terra\",\"category\":\"simple_coding\",\"status\":\"dead\",\"holdReason\":null,\"holdResetAt\":null,\"holdProviderRunId\":null,\"closedAt\":\"2026-08-02T13:01:28.730Z\",\"quotaReservationId\":\"9e8c4252-a1d0-488c-8c11-836225ba8a8b\",\"executionIdentity\":{\"tool\":\"opencode\",\"model\":\"openai/gpt-5.6-terra\"},\"taskDescription\":\"Wait quietly for a terminal delivery test. Do not use tools or modify files.\",\"worktreePath\":\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-run.RG7Udr/project/.hive/worktrees/maya\",\"branch\":\"hive/maya-wait-quietly-for-a-terminal-de\",\"sessionLocator\":{\"schemaVersion\":1,\"instanceId\":\"85c9eb608c\",\"subject\":{\"kind\":\"agent\",\"agentId\":\"9c9a9ddf-3185-46d1-92ef-8e909df462db\"},\"generation\":1,\"sessionId\":\"ses_019fc28f-9e27-7a74-8b09-4180a6534b69\",\"hostKind\":\"sessiond\",\"engineBuildId\":\"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1\"},\"toolSessionId\":\"ses_03d6f7705ffeVg5Z0pnvXqImSP\",\"recoveryAttempts\":0,\"contextPct\":null,\"createdAt\":\"2026-08-02T13:00:19.879Z\",\"lastEventAt\":\"2026-08-02T13:01:28.730Z\",\"capabilityEpoch\":0,\"readOnly\":true,\"writeRevoked\":false},\"cleaned\":{\"sessionId\":\"ses_019fc28f-9e27-7a74-8b09-4180a6534b69\",\"worktreePath\":null,\"branch\":null},\"reaped\":{\"killed\":[{\"pid\":60539,\"command\":\"/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-nina-opencode/hive-sessiond host\"},{\"pid\":60540,\"command\":\"/bin/zsh -l -i -c hive_terminal_command=\\\"$1\\\"\\\\012if [[ -n \\\"${HISTFILE:-}\\\" ]]; then\\\\012  print -s -- \\\"$hive_terminal_command\\\"\\\\012  fc -AI \\\"$HISTFILE\\\" 2>/dev/null || true\\\\012fi\\\\012eval \\\"$hive_terminal_command\\\"\\\\012exec /bin/zsh -l -i hive-terminal HIVE_CAPABILITY_TOKEN=\\\"$(cat '/private/tmp/hvqa-or/credentials/maya.cap')\\\" '/Users/scottkellar/.opencode/bin/opencode' '-m' 'openai/gpt-5.6-terra' '--agent' 'hive' '--prompt' 'Begin the assigned task.'\"},{\"pid\":60543,\"command\":\"/Users/scottkellar/.opencode/bin/opencode -m openai/gpt-5.6-terra --agent hive --prompt Begin the assigned task.\"}],\"survivors\":[]},\"preserved\":null,\"stranded\":null}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "agent": {
+          "id": "9c9a9ddf-3185-46d1-92ef-8e909df462db",
+          "name": "maya",
+          "tool": "opencode",
+          "model": "openai/gpt-5.6-terra",
+          "category": "simple_coding",
+          "status": "dead",
+          "holdReason": null,
+          "holdResetAt": null,
+          "holdProviderRunId": null,
+          "closedAt": "2026-08-02T13:01:28.730Z",
+          "quotaReservationId": "9e8c4252-a1d0-488c-8c11-836225ba8a8b",
+          "executionIdentity": {
+            "tool": "opencode",
+            "model": "openai/gpt-5.6-terra"
+          },
+          "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+          "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-run.RG7Udr/project/.hive/worktrees/maya",
+          "branch": "hive/maya-wait-quietly-for-a-terminal-de",
+          "sessionLocator": {
+            "schemaVersion": 1,
+            "instanceId": "85c9eb608c",
+            "subject": {
+              "kind": "agent",
+              "agentId": "9c9a9ddf-3185-46d1-92ef-8e909df462db"
+            },
+            "generation": 1,
+            "sessionId": "ses_019fc28f-9e27-7a74-8b09-4180a6534b69",
+            "hostKind": "sessiond",
+            "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+          },
+          "toolSessionId": "ses_03d6f7705ffeVg5Z0pnvXqImSP",
+          "recoveryAttempts": 0,
+          "contextPct": null,
+          "createdAt": "2026-08-02T13:00:19.879Z",
+          "lastEventAt": "2026-08-02T13:01:28.730Z",
+          "capabilityEpoch": 0,
+          "readOnly": true,
+          "writeRevoked": false
+        },
+        "cleaned": {
+          "sessionId": "ses_019fc28f-9e27-7a74-8b09-4180a6534b69",
+          "worktreePath": null,
+          "branch": null
+        },
+        "reaped": {
+          "killed": [
+            {
+              "pid": 60539,
+              "command": "/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-nina-opencode/hive-sessiond host"
+            },
+            {
+              "pid": 60540,
+              "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-or/credentials/maya.cap')\" '/Users/scottkellar/.opencode/bin/opencode' '-m' 'openai/gpt-5.6-terra' '--agent' 'hive' '--prompt' 'Begin the assigned task.'"
+            },
+            {
+              "pid": 60543,
+              "command": "/Users/scottkellar/.opencode/bin/opencode -m openai/gpt-5.6-terra --agent hive --prompt Begin the assigned task."
+            }
+          ],
+          "survivors": []
+        },
+        "preserved": null,
+        "stranded": null
+      }
+    }
+  },
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent\":{\"id\":\"9c9a9ddf-3185-46d1-92ef-8e909df462db\",\"name\":\"maya\",\"tool\":\"opencode\",\"model\":\"openai/gpt-5.6-terra\",\"category\":\"simple_coding\",\"status\":\"dead\",\"holdReason\":null,\"holdResetAt\":null,\"holdProviderRunId\":null,\"closedAt\":\"2026-08-02T13:01:28.730Z\",\"quotaReservationId\":\"9e8c4252-a1d0-488c-8c11-836225ba8a8b\",\"executionIdentity\":{\"tool\":\"opencode\",\"model\":\"openai/gpt-5.6-terra\"},\"taskDescription\":\"Wait quietly for a terminal delivery test. Do not use tools or modify files.\",\"worktreePath\":null,\"branch\":null,\"sessionLocator\":{\"schemaVersion\":1,\"instanceId\":\"85c9eb608c\",\"subject\":{\"kind\":\"agent\",\"agentId\":\"9c9a9ddf-3185-46d1-92ef-8e909df462db\"},\"generation\":1,\"sessionId\":\"ses_019fc28f-9e27-7a74-8b09-4180a6534b69\",\"hostKind\":\"sessiond\",\"engineBuildId\":\"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1\"},\"toolSessionId\":\"ses_03d6f7705ffeVg5Z0pnvXqImSP\",\"recoveryAttempts\":0,\"contextPct\":null,\"createdAt\":\"2026-08-02T13:00:19.879Z\",\"lastEventAt\":\"2026-08-02T13:01:29.772Z\",\"capabilityEpoch\":0,\"readOnly\":true,\"writeRevoked\":false},\"cleaned\":{\"sessionId\":\"ses_019fc28f-9e27-7a74-8b09-4180a6534b69\",\"worktreePath\":\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-run.RG7Udr/project/.hive/worktrees/maya\",\"branch\":\"hive/maya-wait-quietly-for-a-terminal-de\"},\"reaped\":{\"killed\":[],\"survivors\":[]},\"preserved\":null,\"stranded\":null}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "agent": {
+          "id": "9c9a9ddf-3185-46d1-92ef-8e909df462db",
+          "name": "maya",
+          "tool": "opencode",
+          "model": "openai/gpt-5.6-terra",
+          "category": "simple_coding",
+          "status": "dead",
+          "holdReason": null,
+          "holdResetAt": null,
+          "holdProviderRunId": null,
+          "closedAt": "2026-08-02T13:01:28.730Z",
+          "quotaReservationId": "9e8c4252-a1d0-488c-8c11-836225ba8a8b",
+          "executionIdentity": {
+            "tool": "opencode",
+            "model": "openai/gpt-5.6-terra"
+          },
+          "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+          "worktreePath": null,
+          "branch": null,
+          "sessionLocator": {
+            "schemaVersion": 1,
+            "instanceId": "85c9eb608c",
+            "subject": {
+              "kind": "agent",
+              "agentId": "9c9a9ddf-3185-46d1-92ef-8e909df462db"
+            },
+            "generation": 1,
+            "sessionId": "ses_019fc28f-9e27-7a74-8b09-4180a6534b69",
+            "hostKind": "sessiond",
+            "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+          },
+          "toolSessionId": "ses_03d6f7705ffeVg5Z0pnvXqImSP",
+          "recoveryAttempts": 0,
+          "contextPct": null,
+          "createdAt": "2026-08-02T13:00:19.879Z",
+          "lastEventAt": "2026-08-02T13:01:29.772Z",
+          "capabilityEpoch": 0,
+          "readOnly": true,
+          "writeRevoked": false
+        },
+        "cleaned": {
+          "sessionId": "ses_019fc28f-9e27-7a74-8b09-4180a6534b69",
+          "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-run.RG7Udr/project/.hive/worktrees/maya",
+          "branch": "hive/maya-wait-quietly-for-a-terminal-de"
+        },
+        "reaped": {
+          "killed": [],
+          "survivors": []
+        },
+        "preserved": null,
+        "stranded": null
+      }
+    }
+  }
+]

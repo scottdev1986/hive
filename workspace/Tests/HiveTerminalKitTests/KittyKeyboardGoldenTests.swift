@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import XCTest
 import HiveGhosttyC
 import IOKit.hidsystem
@@ -106,6 +107,21 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         )!
     }
 
+    private func makeCommandCEvent() -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "c",
+            charactersIgnoringModifiers: "c",
+            isARepeat: false,
+            keyCode: UInt16(kVK_ANSI_C)
+        )!
+    }
+
     /// Non-kitty golden: shift+Enter must emit "\x1b[27;2;13~" (xterm
     /// modified-keys style), exactly once, through the REAL NSEvent → keyDown
     /// → interpretKeyEvents/accumulator → ghostty_surface_key path.
@@ -151,6 +167,22 @@ final class KittyKeyboardGoldenTests: XCTestCase {
                        "kitty-mode shift+Enter must match Ghostty's own key_encode fixture byte-for-byte")
     }
 
+    func testMouseCapturedCommandCopyReachesTheKittyChild() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+        let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
+        let modes = Data("\u{1B}[?1000h\u{1B}[>1u".utf8)
+        XCTAssertEqual(surface.processOutput(bytes: modes, streamSeq: 0), .success)
+        XCTAssertTrue(surface.mouseCaptured())
+        XCTAssertFalse(terminal.canCopySelection)
+
+        let log = WriteLog()
+        surface.callbackContext.onWrite = { log.append($0) }
+
+        XCTAssertTrue(terminal.performKeyEquivalent(with: makeCommandCEvent()))
+
+        XCTAssertEqual(drain(log, until: 1), [Data("\u{1B}[99;9u".utf8)])
+    }
 
     /// Kitty flags 0b1011 request disambiguation, event types, and all keys.
     /// The same physical key must then distinguish press, repeat, and release

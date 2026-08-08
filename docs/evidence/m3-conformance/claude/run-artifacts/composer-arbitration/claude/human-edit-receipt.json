@@ -1,0 +1,13 @@
+{
+  "transactionId": "qa-claude-user-edit-1785676354581",
+  "stage": "written-to-terminal",
+  "byteRange": {
+    "start": "0",
+    "endExclusive": "35"
+  },
+  "orderedAt": "5",
+  "availableCreditBytes": 131072,
+  "consumedByProcess": "not-claimed",
+  "completeness": "complete",
+  "diagnostic": null
+}

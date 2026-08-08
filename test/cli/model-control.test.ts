@@ -3,7 +3,7 @@ import {
   buildModelControlSnapshotFixture,
   MODEL_CONTROL_SNAPSHOT_FIXTURE,
   modelControlSnapshotFixtureDependencies,
-} from "../../scripts/test-fixtures/model-control-snapshot";
+} from "../fixtures/builders/model-control-snapshot";
 import { buildModelControlSnapshot } from "../../src/cli/model-control";
 import {
   type CapabilityProvider,

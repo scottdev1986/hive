@@ -3,7 +3,7 @@ import {
   monitorNativeOrchestratorTurns,
   type NativeTurnArtifact,
 } from "../../src/cli/orchestrator-turn-monitor";
-import type { TurnBoundaryKind } from "../../src/daemon/orchestrator-status";
+import type { TurnBoundaryKind } from "../../src/daemon/status-service/status-orchestrator";
 
 const oldArtifact = { sessionId: "old", path: "/old/events.jsonl" };
 const newArtifact = { sessionId: "new", path: "/new/events.jsonl" };

@@ -9,14 +9,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promoteDefaultModelControl } from "../../src/cli/promote-default";
-import { HiveDatabase } from "../../src/daemon/db";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
-import { inheritDefaultModelControlSettings } from "../../src/daemon/instance-settings";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { machineModelControlDatabase } from "../../src/daemon/routing-service/instance-settings";
 import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
 } from "../../src/daemon/routing-policy-store";
-import type { RoutingPolicy } from "../../src/schemas";
+import type { RoutingPolicy } from "../../src/schemas/routing-policy";
 
 const NOW = new Date("2026-07-22T12:00:00.000Z");
 const roots: string[] = [];
@@ -264,6 +264,60 @@ test("promote refuses while the default daemon owns its database", async () => {
   }
 });
 
+test("promote refuses on a slow-but-alive default daemon, never reading it as dead", async () => {
+  const { currentHome, defaultHome } = fixture();
+  writeCurrentPolicy(currentHome);
+  const instanceId = hiveInstanceSuffix(defaultHome);
+  writeFileSync(
+    join(defaultHome, "daemon.lock"),
+    JSON.stringify({
+      pid: process.pid,
+      instanceId,
+      startedAt: NOW.toISOString(),
+    }),
+  );
+  writeFileSync(join(defaultHome, "daemon.port"), "4317\n");
+  // The handshake answers in 600ms: far past the old 250ms probe budget, well
+  // inside the destructive gate's. The mock honors the abort signal, so a
+  // regression to a short timeout reads "unknown" and fails this test with
+  // the wrong refusal — only "live" proves the gate waited for the answer.
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+    ((_input: unknown, init?: RequestInit) =>
+      new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(
+          () =>
+            resolve(
+              Response.json({
+                productVersion: "test",
+                buildHash: "test",
+                wireProtocol: { min: 1, max: 1 },
+                schemaEpoch: 1,
+                capabilities: ["daemon-handshake-v1"],
+                instanceId,
+                hiveUuid: "test",
+                identityKey: "test",
+                repoFamilyKey: null,
+                generation: 1,
+              }),
+            ),
+          600,
+        );
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new DOMException("The operation timed out.", "TimeoutError"));
+        });
+      })) as typeof fetch,
+  );
+  try {
+    await expect(
+      promoteDefaultModelControl({ currentHome, defaultHome, now: NOW }),
+    ).rejects.toThrow("default Hive daemon is live");
+    expect(existsSync(join(defaultHome, "hive.db"))).toBeFalse();
+  } finally {
+    fetchSpy.mockRestore();
+  }
+});
+
 test("promote throws on a corrupt target policy without resetting it", async () => {
   const { currentHome, defaultHome } = fixture();
   writeCurrentPolicy(currentHome);
@@ -294,25 +348,27 @@ test("promote throws on a corrupt target policy without resetting it", async () 
   }
 });
 
-test("a fresh instance inherits the promoted policy identically", async () => {
+test("a fresh instance reads the promoted policy identically", async () => {
   const { root, currentHome, defaultHome } = fixture();
   const source = writeCurrentPolicy(currentHome);
   await promoteDefaultModelControl({ currentHome, defaultHome, now: NOW });
 
   const freshHome = join(root, "fresh");
   mkdirSync(freshHome, { recursive: true });
+  const priorDefaultHome = process.env.HIVE_DEFAULT_HOME;
+  process.env.HIVE_DEFAULT_HOME = defaultHome;
   const freshDb = new HiveDatabase(join(freshHome, "hive.db"));
+  const freshPolicyDb = machineModelControlDatabase(freshDb);
   try {
-    const fresh = new RoutingPolicyStore(freshDb);
-    expect(
-      inheritDefaultModelControlSettings(fresh, {
-        currentHome: freshHome,
-        sourceHome: defaultHome,
-        now: NOW,
-      }),
-    ).toBeTrue();
-    expectCopied(fresh.read(NOW), source);
+    expect(freshPolicyDb.opened).toBeTrue();
+    expectCopied(
+      new RoutingPolicyStore(freshPolicyDb.database).read(NOW),
+      source,
+    );
   } finally {
+    freshPolicyDb.database.close();
     freshDb.close();
+    if (priorDefaultHome === undefined) delete process.env.HIVE_DEFAULT_HOME;
+    else process.env.HIVE_DEFAULT_HOME = priorDefaultHome;
   }
 });

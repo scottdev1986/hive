@@ -1,15 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// One provider: official mark, title, master toggle, billing chips, honest
-/// usage block, and the disclosure into its model rows.
-///
-/// The usage block mounts exactly one of:
-/// - `UsageMeterView`s (metered, with per-window unknown/stale states)
-/// - a silent-feed unknown block (metered vendor, no reading)
-/// - `UnmeteredPanelView` (vendor publishes no capacity — deliberate)
-/// - an unknown block (Hive could not ask the daemon)
-/// There is no code path that mounts a meter for an unmetered vendor.
+/// One provider: official mark, title, master toggle, billing chips, honest usage block, and the disclosure into its model rows. The usage block mounts exactly one of: - `UsageMeterView`s (metered, with per-window unknown/stale states) - a silent-feed unknown block (metered vendor, no reading) - `UnmeteredPanelView` (vendor publishes no capacity — deliberate) - an unknown block (Hive could not ask the daemon) There is no code path that mounts a meter for an unmetered vendor.
 final class ProviderCardView: CardView {
 
     private let provider: ProviderID
@@ -33,25 +25,20 @@ final class ProviderCardView: CardView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    private var snapshot: ModelControlSnapshot? { dataSource.snapshot }
-
-    private var catalog: ProviderCatalog? {
-        snapshot?.providers[provider.rawValue]
-    }
-
     private var providerAvailable: Bool {
-        if case .available = catalog { return true }
-        return false
+        presentation?.catalogState == "available"
     }
 
     private var providerEnabled: Bool {
         dataSource.providerMasterOn(provider)
     }
 
-    /// False = no explicit row in the policy store: off by default, awaiting
-    /// consent — an invitation, not a shutdown.
     private var providerConfigured: Bool {
         dataSource.providerConfigured(provider)
+    }
+
+    private var presentation: WorkspaceProviderPresentation? {
+        dataSource.providerPresentation(provider)
     }
 
     private func rebuild() {
@@ -60,7 +47,6 @@ final class ProviderCardView: CardView {
 
         let title = ProviderBranding.title(for: provider)
 
-        // ── Header: mark · title · badge · spacer · master switch
         let mark = ProviderMarkView(provider: provider)
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = Theme.Font.title
@@ -80,9 +66,6 @@ final class ProviderCardView: CardView {
                 text: MCCCopy.badgeNotAvailable, symbol: "bolt.horizontal.circle",
                 style: .warning))
         } else if !providerEnabled {
-            // Two different off-reasons, two different looks: a deliberate
-            // user off warns; an unconfigured provider (no consent yet)
-            // invites.
             headerViews.append(providerConfigured
                 ? CapsuleBadge(
                     text: MCCCopy.badgeProviderOff, symbol: "power",
@@ -101,8 +84,6 @@ final class ProviderCardView: CardView {
         contentStack.addArrangedSubview(header)
         pinToContentWidth(header)
 
-        // ── Body: dims only for a DELIBERATE off — an awaiting-consent card
-        // stays full strength.
         let body = NSStackView()
         body.orientation = .vertical
         body.alignment = .leading
@@ -118,12 +99,9 @@ final class ProviderCardView: CardView {
         buildModelsSection(into: body)
     }
 
-    // MARK: Meta (plan + billing chips)
-
     private func buildMetaRow(into body: NSStackView) {
         var chips: [NSView] = []
-        if let plan = MeterDerivation.planLabel(
-            provider: provider, quota: snapshot?.quota) {
+        if let plan = presentation?.planLabel {
             let planText = plan.prefix(1).uppercased() + plan.dropFirst() + " plan"
             let label = NSTextField(labelWithString: planText)
             label.font = Theme.Font.callout
@@ -131,16 +109,15 @@ final class ProviderCardView: CardView {
             label.compressHorizontally(toolTip: String(planText))
             chips.append(label)
         }
-        let billing = snapshot?.billing[provider.rawValue] ?? nil
-        switch BillingChip.derive(from: billing) {
-        case .paidOverflowOff:
+        switch presentation?.billingChip {
+        case "paid-overflow-off":
             // Calm: the wallet is safe. Never a nag.
             chips.append(CapsuleBadge(
                 text: MCCCopy.badgePaidOverflowOff, symbol: "lock", style: .neutral))
-        case .creditsAvailable:
+        case "credits-available":
             chips.append(CapsuleBadge(
                 text: MCCCopy.badgeCreditsAvailable, symbol: "creditcard", style: .neutral))
-        case .unknown:
+        default:
             chips.append(CapsuleBadge(
                 text: MCCCopy.badgeBillingUnknown, symbol: "questionmark.circle",
                 style: .neutral))
@@ -153,15 +130,10 @@ final class ProviderCardView: CardView {
         body.addArrangedSubview(row)
     }
 
-    // MARK: Usage
-
     private func buildUsageBlock(into body: NSStackView) {
-        guard providerAvailable || snapshot != nil else { return }
-        let usage = MeterDerivation.usage(
-            provider: provider,
-            surface: snapshot?.usageSurfaces[provider.rawValue],
-            quota: snapshot?.quota,
-            quotaError: snapshot?.quotaError)
+        guard providerAvailable || dataSource.view != nil else { return }
+        let usage = presentation?.usage.rendered
+            ?? ProviderUsage.unknown(reason: "the daemon omitted provider presentation")
 
         switch usage {
         case .metered(let windows):
@@ -179,8 +151,6 @@ final class ProviderCardView: CardView {
             meters.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
 
         case .silent(let reason):
-            // A normally-metered vendor said nothing. Expected, named, and
-            // NOT an outage: the provider stays enabled and spawnable.
             let meter = UsageMeterView()
             meter.apply(window: MeterWindow(
                 label: "Usage", state: .unknown(reason: reason)))
@@ -209,15 +179,13 @@ final class ProviderCardView: CardView {
         }
     }
 
-    // MARK: Models
-
     private var disclosureButton: NSButton?
     private var modelsContainer: NSStackView?
 
     private func buildModelsSection(into body: NSStackView) {
-        switch catalog {
-        case .available(let models, _)?:
-            let visible = models
+        switch presentation?.catalogState {
+        case "available":
+            let visible = presentation?.models ?? []
             let disclose = NSButton(
                 title: "\(visible.count) model\(visible.count == 1 ? "" : "s")",
                 target: self, action: #selector(disclosureToggled(_:)))
@@ -235,32 +203,23 @@ final class ProviderCardView: CardView {
             rows.alignment = .leading
             rows.spacing = 0
             let providerTitle = ProviderBranding.title(for: provider)
-            // Nil when spend is verified impossible (credits known off).
-            let spendCaveat = SpendCaveat.derive(
-                from: snapshot?.billing[provider.rawValue] ?? nil)
-            for (index, model) in visible.enumerated() {
+            let spendCaveat = presentation?.spendCaveat
+            for (index, modelPresentation) in visible.enumerated() {
                 if index > 0 {
                                         let separator = NSBox.hdsSeparator()
                     rows.addArrangedSubview(separator)
                     separator.widthAnchor.constraint(equalTo: rows.widthAnchor).isActive = true
                 }
-                // The policy store's grain is the canonical model id — a
-                // context-window variant is not a different routing target.
-                let modelId = model.canonicalId
-                let hiddenByVendor = model.hidden.value == true
+                let modelId = modelPresentation.canonicalId
                 let rowState = dataSource.rowState(
-                    provider: provider, model: modelId,
-                    available: !hiddenByVendor)
+                    provider: provider, model: modelId)
                 let row = ModelRowView(
-                    model: model,
+                    presentation: modelPresentation,
                     rowState: rowState,
-                    effortAxis: EffortAxis.derive(from: model),
                     effortSelection: dataSource.effortSelection(
                         provider: provider, model: modelId),
                     providerTitle: providerTitle,
-                    poolExhausted: MeterDerivation.modelPoolExhausted(
-                        provider: provider, canonicalId: model.canonicalId,
-                        quota: snapshot?.quota),
+                    poolExhausted: modelPresentation.poolExhausted,
                     spendCaveat: spendCaveat,
                     onToggle: { [weak self] enabled in
                         guard let self else { return }
@@ -281,31 +240,25 @@ final class ProviderCardView: CardView {
             rows.isHidden = !expanded
             modelsContainer = rows
 
-        case .unavailable(let reason)?:
-            let label = NSTextField(wrappingLabelWithString: reason)
+        case "unavailable":
+            let label = NSTextField(wrappingLabelWithString:
+                presentation?.catalogReason ?? "The daemon did not provide a model catalog.")
             label.font = Theme.Font.caption
             label.textColor = .secondaryLabelColor
             label.compressHorizontally()
             body.addArrangedSubview(label)
             label.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
 
-        case nil:
+        default:
             break
         }
     }
 
-    // MARK: Actions
-
     @objc private func masterToggled(_ sender: NSSwitch) {
         let enabled = sender.state == .on
-        // Instant local write; every child row flips to override chrome now.
-        // Persistence follows through the daemon's CAS contract.
         dataSource.setProviderEnabled(provider, enabled)
     }
 
-    /// Expand/collapse is local and fluid: the rows stay in the hierarchy and
-    /// animate their layout change — no wholesale rebuild, no jolt. Reduce
-    /// Motion collapses instantly.
     @objc private func disclosureToggled(_ sender: NSButton) {
         expanded.toggle()
         onExpandToggle(expanded)
@@ -333,10 +286,6 @@ final class ProviderCardView: CardView {
     }
 }
 
-/// The unmetered vendor panel: same card chrome as everyone else,
-/// a muted inset, `info.circle`, and copy that names the condition. No hollow
-/// meter track, no error red, no bare "N/A" — this vendor is a first-class
-/// citizen with an unmeasurable surface, and the panel must look designed.
 final class UnmeteredPanelView: InsetPanelView {
 
     init(vendorName: String) {

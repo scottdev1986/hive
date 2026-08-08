@@ -128,7 +128,7 @@ final class FakeHost {
             engineBuildId: localEngineBuildId,
             checkpointSeq: checkpointSeq,
             outputSeq: outputSeq,
-            operations: ["view", "human-input", "resize"]
+            operations: ["view", "user-input", "resize"]
         )
     }
 

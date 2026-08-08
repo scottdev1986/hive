@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HiveDatabase } from "../../src/daemon/db";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
   canonicalRoutingPolicyJson,
   policyModelEnablement,
@@ -20,10 +20,10 @@ import {
 import {
   modelPolicyState,
   providerPolicyState,
-  resolveRoute,
   type RoutePolicy,
   type RoutingPolicy,
-} from "../../src/schemas";
+  resolveRoute,
+} from "../../src/schemas/routing-policy";
 import { required } from "../required";
 
 const NOW = new Date("2026-07-12T12:00:00.000Z");
@@ -597,7 +597,7 @@ describe("mutations and compare-and-set", () => {
         provider: "claude",
         state: "enabled",
       },
-      "the-operator",
+      "the-user",
       NOW,
     );
     const events = db.database
@@ -613,7 +613,7 @@ describe("mutations and compare-and-set", () => {
     }[];
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      actor: "the-operator",
+      actor: "the-user",
       operation: "set-provider",
       revision: 1,
     });
@@ -715,112 +715,6 @@ describe("first-boot seeding — consent is never seeded, candidates are exact i
     );
     expect(afterEdit.seeded).toBeFalse();
     expect(afterEdit.policy.revision).toBe(edited.revision);
-  });
-});
-
-describe("named-instance Model Control inheritance", () => {
-  function userPolicy(): { db: HiveDatabase; policy: RoutingPolicy } {
-    const sourceDb = new HiveDatabase(":memory:");
-    const source = new RoutingPolicyStore(sourceDb);
-    source.apply(
-      {
-        op: "set-provider",
-        expectedRevision: 0,
-        provider: "grok",
-        state: "enabled",
-      },
-      "human",
-      NOW,
-    );
-    const policy = source.apply(
-      {
-        op: "set-route",
-        expectedRevision: 1,
-        scope: "light_research",
-        route: {
-          mode: "user-weighted",
-          candidates: [
-            {
-              provider: "grok",
-              model: "grok-4.5",
-              effort: { mode: "exact", value: "low" },
-              weight: 2,
-            },
-          ],
-        },
-      },
-      "human",
-      NOW,
-    );
-    return { db: sourceDb, policy };
-  }
-
-  test("copies routes, model consent, provider switches, and effort into an empty store", () => {
-    const source = userPolicy();
-    try {
-      const result = store.importDefaultPolicy(source.policy, NOW);
-      expect(result.imported).toBeTrue();
-      expect(result.policy.revision).toBe(1);
-      expect(result.policy.provisional).toBeFalse();
-      expect(result.policy.providers).toEqual(source.policy.providers);
-      expect(result.policy.models).toEqual(source.policy.models);
-      expect(result.policy.global).toEqual(source.policy.global);
-      expect(result.policy.categories).toEqual(source.policy.categories);
-    } finally {
-      source.db.close();
-    }
-  });
-
-  test("replaces only Hive's untouched provisional baseline", () => {
-    store.seedProvisionalBaseline(
-      { vendorDefaults: { grok: "old-suggestion" } },
-      NOW,
-    );
-    const source = userPolicy();
-    try {
-      const result = store.importDefaultPolicy(source.policy, NOW);
-      expect(result.imported).toBeTrue();
-      expect(result.policy.revision).toBe(2);
-      expect(
-        result.policy.categories.light_research?.candidates[0]?.model,
-      ).toBe("grok-4.5");
-    } finally {
-      source.db.close();
-    }
-  });
-
-  test("never overwrites a named instance's own edit or imports provisional consent", () => {
-    const provisionalDb = new HiveDatabase(":memory:");
-    const provisional = new RoutingPolicyStore(
-      provisionalDb,
-    ).seedProvisionalBaseline(
-      { vendorDefaults: { grok: "grok-4.5" } },
-      NOW,
-    ).policy;
-    try {
-      expect(store.importDefaultPolicy(provisional, NOW).imported).toBeFalse();
-      store.apply(
-        {
-          op: "set-provider",
-          expectedRevision: 0,
-          provider: "codex",
-          state: "disabled",
-        },
-        "named-instance-user",
-        NOW,
-      );
-      const source = userPolicy();
-      try {
-        expect(
-          store.importDefaultPolicy(source.policy, NOW).imported,
-        ).toBeFalse();
-        expect(store.read(NOW).providers).toEqual({ codex: "disabled" });
-      } finally {
-        source.db.close();
-      }
-    } finally {
-      provisionalDb.close();
-    }
   });
 });
 
@@ -1027,4 +921,273 @@ describe("the spawner join — policyModelEnablement answers the AuthorizedLaunc
       RoutingPolicyCorruptError,
     );
   });
+});
+
+describe("the machine policy under real-world damage", () => {
+  test("an unreadable policy stops the daemon's first-boot seed instead of being replaced by defaults", () => {
+    db.database.run(
+      `INSERT INTO routing_policy (id, revision, updatedAt, document)
+       VALUES (1, 7, ?, ?)`,
+      [NOW.toISOString(), '{"schemaVersion":3,"revision":7,'],
+    );
+
+    // The startup path asks isEmpty() before seeding; a damaged row is not
+    // empty, and reading it is loud.
+    expect(store.isEmpty()).toBeFalse();
+    expect(() =>
+      store.seedProvisionalBaseline(
+        { vendorDefaults: { codex: "gpt-5.6-sol" } },
+        NOW,
+      ),
+    ).toThrow(RoutingPolicyCorruptError);
+
+    // The user's damaged document is still exactly what it was: no seed, no
+    // default, no silent repair.
+    const stored = db.database
+      .query("SELECT revision, document FROM routing_policy WHERE id = 1")
+      .get() as { revision: number; document: string };
+    expect(stored.revision).toBe(7);
+    expect(stored.document).toBe('{"schemaVersion":3,"revision":7,');
+  });
+
+  test("a model id no vendor currently advertises is preserved, never quietly dropped", () => {
+    const route: RoutePolicy = {
+      mode: "user-weighted",
+      candidates: [
+        {
+          provider: "codex",
+          model: "gpt-5.9-unreleased",
+          effort: { mode: "exact", value: "xhigh" },
+          weight: 40,
+        },
+      ],
+    };
+    store.apply(
+      { op: "set-route", expectedRevision: 0, scope: "planning", route },
+      "user",
+      NOW,
+    );
+
+    const policy = store.read(NOW);
+    expect(policy.categories.planning).toEqual(route);
+    expect(
+      required(policy.models.find((row) => row.model === "gpt-5.9-unreleased"))
+        .state,
+    ).toBe("enabled");
+    expect(canonicalRoutingPolicyJson(policy)).toContain("gpt-5.9-unreleased");
+  });
+
+  test("a category route with no candidates is refused loudly; null is how a category is cleared", () => {
+    store.apply(
+      {
+        op: "set-route",
+        expectedRevision: 0,
+        scope: "debugging",
+        route: {
+          mode: "hive-equal",
+          candidates: [
+            {
+              provider: "codex",
+              model: "gpt-5.6-sol",
+              effort: { mode: "provider-controlled" },
+              weight: 1,
+            },
+          ],
+        },
+      },
+      "user",
+      NOW,
+    );
+
+    expect(() =>
+      store.apply(
+        {
+          op: "set-route",
+          expectedRevision: 1,
+          scope: "debugging",
+          route: { mode: "hive-equal", candidates: [] },
+        },
+        "user",
+        NOW,
+      ),
+    ).toThrow();
+    // The refused write changed nothing.
+    expect(store.read(NOW).revision).toBe(1);
+    expect(store.read(NOW).categories.debugging?.candidates).toHaveLength(1);
+
+    store.apply(
+      {
+        op: "set-route",
+        expectedRevision: 1,
+        scope: "debugging",
+        route: null,
+      },
+      "user",
+      NOW,
+    );
+    expect(store.read(NOW).categories.debugging).toBeUndefined();
+  });
+
+  test("two daemons sharing the machine database cannot both win a write", () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-shared-policy-"));
+    const path = join(root, "hive.db");
+    const firstDb = new HiveDatabase(path);
+    const secondDb = new HiveDatabase(path);
+    try {
+      const first = new RoutingPolicyStore(firstDb);
+      const second = new RoutingPolicyStore(secondDb);
+      // Both daemons read the same revision, then both save.
+      const shared = first.read(NOW).revision;
+      expect(second.read(NOW).revision).toBe(shared);
+
+      first.apply(
+        {
+          op: "set-provider",
+          expectedRevision: shared,
+          provider: "codex",
+          state: "enabled",
+        },
+        "first-daemon",
+        NOW,
+      );
+      expect(() =>
+        second.apply(
+          {
+            op: "set-provider",
+            expectedRevision: shared,
+            provider: "codex",
+            state: "disabled",
+          },
+          "second-daemon",
+          NOW,
+        ),
+      ).toThrow(RoutingPolicyConflictError);
+
+      // The loser reloads and sees the winner's write through its own
+      // connection — one document, not two diverging copies.
+      expect(second.read(NOW).providers.codex).toBe("enabled");
+      expect(second.read(NOW).revision).toBe(shared + 1);
+    } finally {
+      secondDb.close();
+      firstDb.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("real concurrency — separate processes on one machine database", () => {
+  test("overlapping writers all lose TYPED, never with a raw SQLite error", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-policy-race-"));
+    const path = join(root, "hive.db");
+    // Create the schema up front so the children race the write, not the DDL.
+    const seed = new HiveDatabase(path);
+    new RoutingPolicyStore(seed);
+    seed.close();
+
+    const child = join(root, "writer.ts");
+    writeFileSync(
+      child,
+      `import { HiveDatabase } from ${JSON.stringify(join(import.meta.dir, "../../src/daemon/database/hive-database"))};
+import { RoutingPolicyStore } from ${JSON.stringify(join(import.meta.dir, "../../src/daemon/routing-policy-store"))};
+
+const [path, startAt, model] = process.argv.slice(2);
+const db = new HiveDatabase(path);
+const store = new RoutingPolicyStore(db);
+const expectedRevision = store.read().revision;
+// Every writer reads first, then they are released together: the reads
+// genuinely overlap, which is what makes the write a real race.
+while (Date.now() < Number(startAt)) {}
+try {
+  store.apply(
+    {
+      op: "set-route",
+      expectedRevision,
+      scope: "planning",
+      route: {
+        mode: "hive-equal",
+        candidates: [
+          {
+            provider: "codex",
+            model,
+            effort: { mode: "provider-controlled" },
+            weight: 1,
+          },
+        ],
+      },
+    },
+    model,
+  );
+  console.log(JSON.stringify({ ok: true, model }));
+} catch (error) {
+  console.log(
+    JSON.stringify({
+      ok: false,
+      name: error instanceof Error ? error.name : "not-an-error",
+      message: error instanceof Error ? error.message : String(error),
+    }),
+  );
+}
+db.close();
+`,
+    );
+
+    const startAt = Date.now() + 1500;
+    const writers = Array.from({ length: 8 }, (_, index) =>
+      Bun.spawn({
+        cmd: [
+          process.execPath,
+          "run",
+          child,
+          path,
+          String(startAt),
+          `racer-${index}`,
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    );
+    const results = await Promise.all(
+      writers.map(async (writer) => {
+        const [stdout] = await Promise.all([
+          new Response(writer.stdout).text(),
+          writer.exited,
+        ]);
+        return JSON.parse(stdout.trim()) as {
+          ok: boolean;
+          name?: string;
+          message?: string;
+          model?: string;
+        };
+      }),
+    );
+
+    try {
+      const winners = results.filter((result) => result.ok);
+      const losers = results.filter((result) => !result.ok);
+      expect(winners).toHaveLength(1);
+      expect(losers).toHaveLength(7);
+      // The whole point: a loser gets Hive's typed conflict, never a raw
+      // SQLITE_BUSY / BUSY_SNAPSHOT leaking out of the driver.
+      expect([...new Set(losers.map((loser) => loser.name))]).toEqual([
+        "RoutingPolicyConflictError",
+      ]);
+      for (const loser of losers) {
+        expect(loser.message).toContain("revision conflict");
+      }
+
+      // ...and every loser can now read the winner's document.
+      const after = new HiveDatabase(path);
+      try {
+        const policy = new RoutingPolicyStore(after).read();
+        expect(policy.revision).toBe(1);
+        expect(policy.categories.planning?.candidates[0]?.model).toBe(
+          required(winners[0]).model,
+        );
+      } finally {
+        after.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hive reliable agent messaging — research and reference design</title>
+    <style>
+      :root { --ink:#172033; --muted:#5d6a80; --paper:#f7f9fc; --card:#fff; --line:#dce3ed; --blue:#2457d6; --cyan:#00a6b2; --green:#147a54; --amber:#b66b00; --red:#b42e3c; --violet:#7758d8; }
+      * { box-sizing:border-box; }
+      body { margin:0; color:var(--ink); background:var(--paper); font:16px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+      main { max-width:1200px; margin:auto; padding:44px 24px 80px; }
+      h1,h2,h3 { line-height:1.14; letter-spacing:-.025em; } h1 { font-size:clamp(2.25rem,5vw,4.6rem); max-width:1000px; margin:0 0 16px; } h2 { font-size:1.65rem; margin:50px 0 14px; } h3 { font-size:1.08rem; margin:0 0 8px; }
+      p { max-width:88ch; } a { color:var(--blue); } code { color:#73380c; font: .88em ui-monospace,SFMono-Regular,Menlo,monospace; background:#fff2df; padding:.1em .28em; border-radius:4px; }
+      .eyebrow { color:var(--blue); font-weight:800; text-transform:uppercase; letter-spacing:.13em; font-size:.76rem; } .lede { color:var(--muted); font-size:1.2rem; max-width:820px; }
+      .callout { border-left:5px solid var(--blue); background:#edf3ff; padding:18px 20px; border-radius:0 10px 10px 0; max-width:1000px; } .warning { border-color:var(--amber); background:#fff7e9; }
+      .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px; } .card { background:var(--card); border:1px solid var(--line); box-shadow:0 1px 3px #1423450a; border-radius:12px; padding:18px; }
+      .metric { font-size:2.3rem; font-weight:800; line-height:1; color:var(--blue); } .small { color:var(--muted); font-size:.9rem; }
+      table { border-collapse:collapse; width:100%; background:var(--card); font-size:.92rem; } th,td { padding:11px 12px; border:1px solid var(--line); vertical-align:top; text-align:left; } th { background:#eef3fb; } .yes { color:var(--green); font-weight:800; } .no { color:var(--red); font-weight:800; } .partial { color:var(--amber); font-weight:800; }
+      .diagram { background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px; overflow:auto; } svg { min-width:720px; width:100%; height:auto; } .chart { display:grid; grid-template-columns:155px 1fr 48px; gap:8px 12px; align-items:center; max-width:760px; background:white; border:1px solid var(--line); padding:18px; border-radius:12px; } .bar { height:21px; background:#e9edf3; border-radius:5px; overflow:hidden; } .bar > i { display:block; height:100%; border-radius:5px; background:linear-gradient(90deg,var(--cyan),var(--blue)); } .bar.bad > i { background:linear-gradient(90deg,#ef9a9a,var(--red)); }
+      .pill { display:inline-block; font-size:.75rem; font-weight:750; border-radius:99px; padding:2px 8px; background:#e9f7f0; color:var(--green); } .pill.warn { background:#fff2dc;color:#8b5300; } .pill.red { background:#ffe8e9;color:var(--red); }
+      ol li, ul li { margin:.42em 0; } .sources li { margin:.7em 0; } .prototype { background:#102036; color:#eaf1ff; border-radius:12px; padding:22px; max-width:1000px; } .prototype h2 { margin:0 0 8px; } button { appearance:none; border:0; background:#76e4cf; color:#072b2b; border-radius:7px; font:700 15px inherit; padding:10px 14px; cursor:pointer; } #proof { white-space:pre-wrap; background:#07111f; padding:14px; border-radius:8px; min-height:105px; margin:16px 0 0; color:#d7e9ff; } .foot { color:var(--muted); border-top:1px solid var(--line); margin-top:60px; padding-top:18px; font-size:.9rem; }
+      @media (max-width:600px) { main{padding:28px 16px 60px}.chart{grid-template-columns:115px 1fr 34px;font-size:.8rem} th,td{padding:8px;font-size:.82rem} }
+      @media print { body{background:white}main{max-width:none;padding:20px}.card,.diagram,.chart,table{break-inside:avoid} }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">Hive architecture research · 1 August 2026</div>
+      <h1>Reliable agent messaging without ever touching the user’s composer</h1>
+      <p class="lede">A research-backed reference design for Codex, Claude Code, Kimi Code, Grok Build, and OpenCode. The recommendation is a durable, pull-at-safe-point mailbox over MCP—not terminal paste, simulated keystrokes, Escape, or vendor chat-input injection.</p>
+
+      <div class="callout">
+        <strong>Decision.</strong> Make Hive’s daemon the authoritative broker. Persist an envelope before acknowledging a sender; expose it to every agent through the same authenticated MCP mailbox; let the agent consume it only at a declared safe point. A terminal notification may be an optional, user-owned visual indicator, but is never a delivery mechanism and never writes into the composer.
+      </div>
+      <div class="callout warning" style="margin-top:14px">
+        <strong>Hard-cutover rule.</strong> The new mailbox replaces the old delivery system; it does not sit beside it. Remove terminal notice injection, Escape-based urgency, fallback delivery, legacy message states, and their delivery-attempt code. Hive must have exactly one agent-message path after cutover.
+      </div>
+
+      <section>
+        <h2>Executive result</h2>
+        <div class="grid">
+          <article class="card"><div class="metric">0</div><h3>terminal writes on the message path</h3><p class="small">No paste, Enter, Escape, focus change, or overlay in an agent’s vendor input field.</p></article>
+          <article class="card"><div class="metric">1</div><h3>portable baseline</h3><p class="small">One MCP mailbox protocol across all five vendors, with vendor hooks used only to schedule polling.</p></article>
+          <article class="card"><div class="metric">2</div><h3>separate receipts</h3><p class="small">“Stored durably” is not “seen by the model.” “Leased” is not “completed.” The state machine records both.</p></article>
+          <article class="card"><div class="metric">≤ 1</div><h3>attention item per safe point</h3><p class="small">Every other normal update is summarized or deferred, preventing mailbox-driven context overflow.</p></article>
+        </div>
+        <p><strong>Important limit:</strong> “zero interruption” and “make a model notice a message immediately” are mutually incompatible for a busy turn. The honest guarantee is <em>durable acceptance now, model-visible consumption at the next safe point</em>. A true emergency stop is a separate, explicit control-plane action with user/user policy—not a disguised message that cancels a user’s work.</p>
+      </section>
+
+      <section>
+        <h2>What Hive does now, and why it fails</h2>
+        <p>Hive already has valuable foundations: a SQLite/WAL message table, a per-recipient sequence, sender idempotency keys, acknowledgement, and terminal-attempt records. The problem is the final hop: a compact inbox notice is written into a live vendor terminal. Its state <code>notified</code> only proves a transport write, while <code>acknowledged</code> relies on model cooperation.</p>
+        <p>The repository’s <a href="../incidents/2026-07-21-messaging-regression.md">2026-07-21 incident report</a> establishes the concrete failure: an orphaned user input claim caused sessiond to refuse automation forever, leaving a durable row queued and silent. This was not an isolated bug in one vendor—it demonstrates that a shared user composer cannot be a reliable machine queue.</p>
+        <div class="diagram">
+          <svg viewBox="0 0 1050 350" role="img" aria-label="Current terminal injection versus proposed broker pull design">
+            <style>.t{font:600 16px ui-sans-serif,system-ui;fill:#172033}.s{font:13px ui-sans-serif,system-ui;fill:#5d6a80}.box{fill:#fff;stroke:#cfd9e7;stroke-width:2}.bad{fill:#fff0f0;stroke:#b42e3c;stroke-width:2}.good{fill:#edfff8;stroke:#147a54;stroke-width:2}.arr{stroke:#2457d6;stroke-width:3;marker-end:url(#a)}.dash{stroke:#b42e3c;stroke-width:3;stroke-dasharray:7 6;marker-end:url(#r)}</style>
+            <defs><marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3z" fill="#2457d6"/></marker><marker id="r" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3z" fill="#b42e3c"/></marker></defs>
+            <text x="25" y="34" class="t">Current: durable row, then terminal-composer injection</text>
+            <rect x="25" y="58" width="170" height="80" rx="10" class="box"/><text x="52" y="94" class="t">SQLite message</text><text x="52" y="117" class="s">queued</text>
+            <line x1="195" y1="98" x2="286" y2="98" class="arr"/><rect x="288" y="58" width="210" height="80" rx="10" class="bad"/><text x="309" y="94" class="t">input arbiter / TTY</text><text x="309" y="117" class="s">user draft may own it</text>
+            <line x1="498" y1="98" x2="590" y2="98" class="dash"/><rect x="592" y="58" width="200" height="80" rx="10" class="bad"/><text x="617" y="94" class="t">vendor composer</text><text x="617" y="117" class="s">notice competes with user</text>
+            <text x="820" y="97" class="s">failure: denied / wrong foreground /</text><text x="820" y="118" class="s">orphaned claim / model never reads</text>
+            <text x="25" y="207" class="t">Proposed: broker persists; vendor-side agent pulls at a safe point</text>
+            <rect x="25" y="232" width="175" height="80" rx="10" class="good"/><text x="47" y="267" class="t">outbox + inbox</text><text x="47" y="290" class="s">atomic durable accept</text>
+            <line x1="200" y1="272" x2="296" y2="272" class="arr"/><rect x="298" y="232" width="190" height="80" rx="10" class="good"/><text x="326" y="267" class="t">MCP mailbox</text><text x="326" y="290" class="s">capability-authenticated</text>
+            <line x1="488" y1="272" x2="583" y2="272" class="arr"/><rect x="585" y="232" width="190" height="80" rx="10" class="good"/><text x="603" y="267" class="t">safe-point poll</text><text x="603" y="290" class="s">one bounded batch</text>
+            <line x1="775" y1="272" x2="870" y2="272" class="arr"/><rect x="872" y="232" width="150" height="80" rx="10" class="good"/><text x="892" y="267" class="t">model tools</text><text x="892" y="290" class="s">claim / complete</text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <h2>Research findings</h2>
+        <table>
+          <thead><tr><th>Source / pattern</th><th>What the source establishes</th><th>Hive implication</th></tr></thead>
+          <tbody>
+            <tr><td><a href="https://agentic-design.ai/patterns/multi-agent/message-queuing">Agentic Design: message queuing</a></td><td>Independent producer/consumer coordination should be asynchronous rather than blocking another agent’s work.</td><td>Use a mailbox and status transitions—not a conversation-input handoff.</td></tr>
+            <tr><td><a href="https://a2a-protocol.org/dev/specification/">Agent2Agent (A2A) Protocol</a></td><td>Tasks have a lifecycle; polling, streams and authenticated webhook push are distinct update mechanisms. Its spec says webhook consumers should process duplicate deliveries idempotently.</td><td>Future federation can map Hive task outcomes to A2A. Keep A2A push at the broker/dashboard boundary, never as vendor-composer injection.</td></tr>
+            <tr><td><a href="https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/framework/message-and-communication.html">Microsoft AutoGen Core</a></td><td>Uses typed, serializable data messages with direct routing and topic pub/sub; direct request-response and broadcast are deliberately separate.</td><td>Make Hive envelopes typed and distinguish command/reply traffic from one-way progress topics.</td></tr>
+            <tr><td><a href="https://docs.nats.io/nats-concepts/jetstream">NATS JetStream</a></td><td>At-least-once is the normal reliable baseline; deduplicated publish IDs plus acknowledgement protocol can provide exactly-once quality of service.</td><td>Use a stable idempotency key on publish and idempotent effects on completion. Do not claim magical exactly-once delivery.</td></tr>
+            <tr><td><a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html">Amazon SQS visibility timeout</a></td><td>A received message remains durable but invisible while leased; expiry makes it eligible again. DLQs stop permanent retry loops.</td><td>Replace “notified” with an expiring processing lease; use a quarantine queue for poison messages and surface it to queen.</td></tr>
+            <tr><td><a href="https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-message-loss-and-duplicates">Azure Service Bus</a></td><td>Explicit settlement avoids loss; consumers must be idempotent; sender dedupe and ordered sessions solve distinct problems.</td><td>Commit completion after the handler’s durable effect. Partition ordering by recipient + work lane, never global FIFO.</td></tr>
+            <tr><td><a href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports">MCP transport specification</a></td><td>Streamable HTTP is a multi-connection JSON-RPC transport with session management, resumability/redelivery guidance, localhost-binding and Origin/authentication requirements.</td><td>Use one localhost Streamable HTTP MCP server for Hive; keep SQLite as source of truth, not the MCP connection.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Vendor capability assessment</h2>
+        <p>The baseline deliberately depends only on an agent being able to call an MCP tool. Hooks and native APIs improve when the next safe point is discovered; they never carry message bodies into the user’s input channel.</p>
+        <table>
+          <thead><tr><th>Vendor in Hive</th><th>Officially documented integration evidence</th><th>Use in proposed design</th><th>Do not use as delivery</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Codex</strong></td><td><a href="https://developers.openai.com/codex/app-server/">App Server</a> provides bidirectional JSON-RPC, thread/turn events, <code>turn/start</code>, <code>turn/steer</code>, <code>turn/interrupt</code>, and MCP status/tool calls.</td><td><span class="yes">Yes</span> MCP mailbox baseline. Optional App Server adapter can report safe turn completion and thread health.</td><td>Do not map normal Hive mail to <code>turn/steer</code>, <code>thread/inject_items</code>, or interruption; those change model-visible conversation state.</td></tr>
+            <tr><td><strong>Claude Code</strong></td><td><a href="https://code.claude.com/docs/en/mcp">MCP</a> supports HTTP/Streamable HTTP; <a href="https://code.claude.com/docs/en/hooks">hooks</a> expose per-tool and per-turn events. Claude also documents MCP channels that can push into a session.</td><td><span class="yes">Yes</span> MCP mailbox; fast, bounded poll scheduling after <code>PostToolUse</code>, <code>PostToolBatch</code>, <code>Stop</code>, and session resume.</td><td>Do not use MCP channels for agent mail: they intentionally inject a message into a session and violate the zero-interruption invariant.</td></tr>
+            <tr><td><strong>Kimi Code</strong></td><td><a href="https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html">Kimi MCP docs</a> explicitly support stdio, HTTP, and SSE. <a href="https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html">Hooks</a> run scripts on lifecycle events but are fail-open.</td><td><span class="yes">Yes</span> MCP mailbox over HTTP. A hook can report a safe-point opportunity, never become the correctness path.</td><td>Do not rely on hook output for guaranteed enforcement or inject into the TUI; Kimi documents fail-open hook failures.</td></tr>
+            <tr><td><strong>Grok Build</strong></td><td>xAI’s <a href="https://x.ai/cli">official Grok Build page</a> says hooks, plugins, and MCP servers work; its <a href="https://x.ai/news/grok-build-cli">launch announcement</a> documents ACP and headless mode. Hive’s installed adapter already observes structured updates.</td><td><span class="partial">Gate on a live conformance test</span> for the installed Grok Build version, then use the MCP mailbox exactly as others do.</td><td>Do not infer a stable native message-injection API from a TUI. No such public delivery contract was located in xAI’s current docs.</td></tr>
+            <tr><td><strong>OpenCode</strong></td><td><a href="https://opencode.ai/docs/plugins/">Plugins</a> expose session and tool events; <a href="https://dev.opencode.ai/docs/cli/">CLI docs</a> document MCP management. Its V2 plugin API is explicitly beta.</td><td><span class="yes">Yes</span> MCP mailbox. A stable plugin event can schedule polling; feature-detect V1/V2 rather than trusting a version label.</td><td>Do not use <code>tui.prompt.append</code> or an experimental request transform to inject mail; both contaminate the user/model prompt path.</td></tr>
+          </tbody>
+        </table>
+        <p class="small">Interpretation: each vendor has a supported tool/MCP integration surface, so Hive has a portable consumer transport. None offers a common, documented, out-of-band “make the model consume this message without changing its conversation” API. That is why the queue must be external and pull-based.</p>
+      </section>
+
+      <section>
+        <h2>Reference architecture</h2>
+        <div class="diagram">
+          <svg viewBox="0 0 1100 540" role="img" aria-label="Hive broker reference architecture with publish outbox lanes mailbox and safe point consumers">
+            <style>.t{font:700 16px ui-sans-serif,system-ui;fill:#172033}.s{font:13px ui-sans-serif,system-ui;fill:#4f6079}.g{fill:#effbf6;stroke:#147a54;stroke-width:2}.b{fill:#eef4ff;stroke:#2457d6;stroke-width:2}.y{fill:#fff7e9;stroke:#b66b00;stroke-width:2}.n{fill:#fff;stroke:#cfd9e7;stroke-width:2}.a{stroke:#2457d6;stroke-width:3;marker-end:url(#m)}.d{stroke:#00a6b2;stroke-width:3;stroke-dasharray:6 5;marker-end:url(#c)}</style>
+            <defs><marker id="m" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3z" fill="#2457d6"/></marker><marker id="c" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3z" fill="#00a6b2"/></marker></defs>
+            <rect x="25" y="42" width="175" height="85" rx="10" class="n"/><text x="48" y="77" class="t">Sender agent</text><text x="48" y="100" class="s">hive_mail_publish</text>
+            <line x1="200" y1="85" x2="291" y2="85" class="a"/>
+            <rect x="293" y="28" width="260" height="115" rx="10" class="g"/><text x="320" y="68" class="t">Atomic transaction</text><text x="320" y="92" class="s">message + outbox event + idempotency</text><text x="320" y="114" class="s">sender gets accepted receipt</text>
+            <line x1="553" y1="85" x2="643" y2="85" class="a"/>
+            <rect x="645" y="28" width="220" height="115" rx="10" class="b"/><text x="673" y="68" class="t">Broker policy</text><text x="673" y="92" class="s">auth · quotas · coalesce</text><text x="673" y="114" class="s">priority · routing · audit</text>
+            <line x1="755" y1="143" x2="755" y2="199" class="a"/>
+            <rect x="570" y="201" width="370" height="138" rx="10" class="g"/><text x="595" y="235" class="t">Durable recipient mailbox</text><text x="595" y="260" class="s">control lane (bounded, FIFO) · work lane (coalesced)</text><text x="595" y="285" class="s">lease owner + expiry · attempts · DLQ reason</text><text x="595" y="310" class="s">no vendor terminal state is stored here</text>
+            <rect x="34" y="206" width="345" height="128" rx="10" class="y"/><text x="59" y="240" class="t">Pressure governor</text><text x="59" y="264" class="s">1 control item / safe point</text><text x="59" y="287" class="s">normal updates merge by sender + topic</text><text x="59" y="310" class="s">overflow → digest / DLQ / queen alert</text>
+            <line x1="379" y1="270" x2="560" y2="270" class="a"/>
+            <rect x="50" y="397" width="190" height="91" rx="10" class="b"/><text x="73" y="431" class="t">Vendor adapter</text><text x="73" y="455" class="s">safe-point observation</text><text x="73" y="476" class="s">not message injection</text>
+            <rect x="323" y="397" width="208" height="91" rx="10" class="g"/><text x="348" y="431" class="t">MCP consumer</text><text x="348" y="455" class="s">poll → claim → complete</text><text x="348" y="476" class="s">capability bound to agent</text>
+            <rect x="680" y="397" width="215" height="91" rx="10" class="n"/><text x="707" y="431" class="t">Agent safe point</text><text x="707" y="455" class="s">after tool / turn / resume</text><text x="707" y="476" class="s">bounded model context</text>
+            <line x1="755" y1="339" x2="755" y2="389" class="a"/><line x1="531" y1="442" x2="670" y2="442" class="a"/><line x1="240" y1="442" x2="313" y2="442" class="d"/>
+            <text x="43" y="525" class="s">User UI observes status outside the composer only. It does not own or proxy the broker channel.</text>
+          </svg>
+        </div>
+
+        <h3 style="margin-top:28px">Mailbox protocol</h3>
+        <table>
+          <thead><tr><th>Tool</th><th>Contract</th><th>Why it matters</th></tr></thead>
+          <tbody>
+            <tr><td><code>hive_mail_publish</code></td><td>Authenticated sender publishes typed envelope with <code>idempotencyKey</code>, lane, topic and TTL. Returns only after durable commit.</td><td>Sender retry is safe even if it loses the HTTP response.</td></tr>
+            <tr><td><code>hive_mail_poll</code></td><td>At a safe point, return at most one control item plus a bounded digest of normal work. Returns cursor and backlog counts, not unlimited bodies.</td><td>Models get a predictable, small attention budget.</td></tr>
+            <tr><td><code>hive_mail_claim</code></td><td>Atomically lease one item to recipient-generation + handler id. Lease expires; its receipt is persisted.</td><td>Crash after receipt produces redelivery, not loss or a wedged “in flight” row.</td></tr>
+            <tr><td><code>hive_mail_complete</code></td><td>Idempotently settle the claimed item with <code>completed</code>, <code>deferred</code>, or <code>rejected</code> and a bounded reason. Completion effect uses the same idempotency key.</td><td>Explicit settlement separates “read”, “acted on”, and “needs retry”.</td></tr>
+            <tr><td><code>hive_mail_status</code></td><td>Read-only mailbox age, counts, oldest item, lease expiry and DLQ summaries; never sends a model message.</td><td>Queen can diagnose without becoming another interrupt path.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Delivery semantics and overflow control</h2>
+        <div class="grid">
+          <article class="card"><h3>Control lane</h3><p>Typed, small, high-value instructions: ownership transfer, safety hold, reply-needed, shutdown outcome. Strict sequence per <code>recipient + task</code>; max one leased at a time. When full, reject non-critical publishes honestly instead of evicting the oldest.</p></article>
+          <article class="card"><h3>Work lane</h3><p>Status/progress updates merge by <code>recipient + sender + topic</code>. Keep last meaningful payload and count/summarize predecessors. A new update replaces stale progress; it does not create a 50-message “chat transcript.”</p></article>
+          <article class="card"><h3>Dead-letter lane</h3><p>After bounded retry attempts, schema failure, expired task generation, or explicit rejection, quarantine with reason and correlation IDs. One rate-limited queen alert names the queue; no repetitive notices.</p></article>
+          <article class="card"><h3>User lane</h3><p>Completely separate from machine mail. Workspace can show a non-modal badge or inbox panel outside the composer. User typing never creates an automation lease and automation never resolves a user draft.</p></article>
+        </div>
+        <h3 style="margin-top:28px">Qualitative assurance comparison (architecture, not a production benchmark)</h3>
+        <div class="chart" aria-label="Qualitative delivery assurance chart, 0 through 5">
+          <span>Terminal paste</span><div class="bar bad"><i style="width:18%"></i></div><b>1/5</b>
+          <span>Notice + manual inbox</span><div class="bar"><i style="width:42%"></i></div><b>2/5</b>
+          <span>Durable pull + ack</span><div class="bar"><i style="width:76%"></i></div><b>4/5</b>
+          <span>Pull + leases + DLQ + idempotent effects</span><div class="bar"><i style="width:96%"></i></div><b>5/5</b>
+        </div>
+        <p class="small">The final point is “exactly-once effect” rather than literal exactly-once network delivery. In distributed systems, a client can lose a success response; idempotency is how a retry has one effect.</p>
+      </section>
+
+      <section class="prototype" id="prototype">
+        <h2>Executable protocol proof</h2>
+        <p>This self-contained simulation is intentionally small. It exercises the core design properties—not vendor behavior—and contains no terminal, stdin, PTY, Escape, or composer operation. Run it locally in this document.</p>
+        <button id="run-proof">Run five invariant checks</button>
+        <pre id="proof" aria-live="polite">Not run yet.</pre>
+      </section>
+
+      <section>
+        <h2>Implementation plan for Hive</h2>
+        <ol>
+          <li><strong>Build the replacement behind an internal test seam.</strong> Create immutable <code>mail_events</code>, materialized <code>mail_items</code>, <code>mail_leases</code>, and <code>mail_dead_letters</code>. Implement the new broker and conformance fixtures without wiring a second production delivery route.</li>
+          <li><strong>Implement the five MCP tools and capability checks.</strong> Each request authenticates the recipient subject and agent generation. Validate payload size/type/topic before the transaction. Bind all result effects to <code>messageId</code>.</li>
+          <li><strong>Add safe-point adapters.</strong> Claude and Codex can use their rich hook/event streams; Kimi/OpenCode/Grok use the strongest observed lifecycle event. If an event is absent, polling happens at the next tool invocation or next user-originated turn—never by writing text into the pane.</li>
+          <li><strong>Perform one atomic cutover.</strong> Route <code>hive_send</code>, inbox reads, acknowledgements, escalation and queen traffic to the new broker in one change. If an already-released database must retain unacknowledged mail, copy those rows into <code>mail_items</code> inside the schema transaction and drop the old tables before commit. Do not retain a runtime compatibility reader.</li>
+          <li><strong>Delete the old system in the same change.</strong> Remove <code>SessionSender</code>-based message delivery, <code>flushQueued</code>/<code>flushUrgent</code> notice delivery, Escape dispatch, <code>formatNotice</code>, terminal message-attempt schemas/tables, <code>queued → notified → acknowledged</code> semantics, stuck-terminal retries, and every flag or branch that could reactivate them. Keep terminal input only where it serves an unrelated lifecycle function such as a vendor’s initial kickoff.</li>
+          <li><strong>Make the launch instructions explicit.</strong> Agents receive a small rule: check the bounded mailbox at safe points, claim only one control item, settle it before resuming work, and do not poll in a tight loop. This is behavior guidance; broker capacity limits are the actual safety net.</li>
+          <li><strong>Ship observability with the cutover.</strong> Per recipient: oldest unleased age, oldest leased age, backlog by lane, coalesced count, redeliveries and DLQ count. Queen receives one deduplicated alert only when an SLO breach begins. A build-time removal check prevents message-delivery code from importing the terminal-input layer.</li>
+        </ol>
+        <div class="callout warning"><strong>Do not use queue depth as a prompt to interrupt.</strong> It is a congestion signal. Coalesce/defer ordinary information, throttle noisy publishers, and surface health in a dashboard. Escalate only typed safety or ownership events, through an explicit control policy.</div>
+      </section>
+
+      <section>
+        <h2>Acceptance tests before production</h2>
+        <table>
+          <thead><tr><th>Test</th><th>Pass condition</th></tr></thead>
+          <tbody>
+            <tr><td>User actively has an unsent draft in every vendor pane</td><td>Publish/consume mail succeeds through MCP when an agent reaches a safe point; the draft bytes, focus, and terminal input-arbiter state do not change. Terminal-write metric remains zero.</td></tr>
+            <tr><td>Daemon crash after committing publish, before response</td><td>Sender retries same idempotency key and receives the original message ID; exactly one mailbox item exists.</td></tr>
+            <tr><td>Agent crashes after claim, before completion</td><td>Lease expires, same recipient generation (or approved successor) can claim again; completion effect is idempotent.</td></tr>
+            <tr><td>1,000 progress updates to a blocked recipient</td><td>Control lane remains bounded; work lane has bounded topic digests and counts; no 1,000-item prompt or UI notification burst occurs.</td></tr>
+            <tr><td>Vendor adapter loses hooks or updates</td><td>Mail remains durable and visible to <code>hive_mail_status</code>; next normal tool/safe point pulls it. Alert says “safe-point latency degraded,” not falsely “delivered.”</td></tr>
+            <tr><td>Poison or expired task-generation message</td><td>Bounded attempts move it to DLQ with reason; queen gets one deduplicated diagnostic; unrelated messages continue.</td></tr>
+            <tr><td>Multi-vendor conformance</td><td>Codex, Claude, Kimi, Grok and OpenCode each run the identical publish → poll → claim → complete contract fixture against the real installed CLI version.</td></tr>
+            <tr><td>Legacy-path removal audit</td><td>The compiled message service has no terminal/session input dependency, Escape path, notice formatter, old message-attempt table, compatibility reader, feature flag, or fallback. A repository check fails if any are reintroduced.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Source notes</h2>
+        <ul class="sources">
+          <li><a href="https://agentic-design.ai/patterns/multi-agent/message-queuing">Agentic Design — Message Queuing</a>. Used as the requested multi-agent pattern reference; its page was not machine-readable during this research, so no unverified detail from it drives the design.</li>
+          <li><a href="https://a2a-protocol.org/dev/specification/">Agent2Agent (A2A) Protocol</a> and <a href="https://microsoft.github.io/autogen/stable/user-guide/core-user-guide/framework/message-and-communication.html">Microsoft AutoGen Core messaging</a>. Used to separate task lifecycle / status notification from typed direct and pub-sub message semantics.</li>
+          <li><a href="https://modelcontextprotocol.io/specification/2025-06-18/basic/transports">Model Context Protocol — Transports</a>. Primary protocol source for stdio/Streamable HTTP, sessions, redelivery, and localhost security.</li>
+          <li><a href="https://developers.openai.com/codex/app-server/">OpenAI — Codex App Server</a> and <a href="https://openai.com/index/unlocking-the-codex-harness/">OpenAI engineering article</a>. Primary Codex evidence for durable threads, event streams, steering/interruption, and MCP surface.</li>
+          <li><a href="https://code.claude.com/docs/en/mcp">Anthropic — Claude Code MCP</a> and <a href="https://code.claude.com/docs/en/hooks">Hooks reference</a>. Primary Claude evidence for MCP transports, lifecycle hooks, and the existence of push channels—which this design intentionally does not use.</li>
+          <li><a href="https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html">Kimi Code — MCP</a> and <a href="https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html">Hooks</a>. Primary Kimi evidence for HTTP/stdio/SSE MCP and fail-open hook behavior.</li>
+          <li><a href="https://x.ai/cli">xAI — Grok Build</a> and <a href="https://x.ai/news/grok-build-cli">Introducing Grok Build</a>. Official evidence for CLI, MCP, hooks, plugins, ACP and headless orchestration. This report does not assume an undocumented native inbox API.</li>
+          <li><a href="https://opencode.ai/docs/plugins/">OpenCode — Plugins</a>, <a href="https://dev.opencode.ai/docs/cli/">CLI</a>, and <a href="https://opencode.ai/v2/docs/mcp-servers">V2 MCP servers</a>. Primary OpenCode evidence for events, plugins and MCP; V2 beta status is noted.</li>
+          <li><a href="https://docs.nats.io/nats-concepts/jetstream">NATS JetStream</a>, <a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html">AWS SQS visibility timeout</a>, and <a href="https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-message-loss-and-duplicates">Azure Service Bus settlement, dedupe, and idempotency</a>. Used for durable-queue mechanics, not as a suggestion to add those external services to Hive.</li>
+        </ul>
+      </section>
+      <p class="foot">Prepared from repository inspection plus official public documentation. “Reliable” here means evidence-backed durable acceptance, bounded redelivery, idempotent effects, and visible failure—not an unverifiable claim that a model has mentally processed a message.</p>
+    </main>
+    <script>
+      // A minimal reference broker. Its API intentionally has no terminal or vendor-input method.
+      class ProofBroker {
+        constructor() { this.items = []; this.byKey = new Map(); this.clock = 0; this.next = 1; }
+        publish({ recipient, lane = "work", topic = "general", key, body }) {
+          if (this.byKey.has(key)) return this.byKey.get(key);
+          if (lane === "work") {
+            const prior = this.items.find((x) => x.recipient === recipient && x.lane === lane && x.topic === topic && x.state === "available");
+            if (prior) { prior.body = body; prior.merged += 1; this.byKey.set(key, prior); return prior; }
+          }
+          const item = { id: `m${this.next++}`, recipient, lane, topic, body, state: "available", leaseUntil: 0, merged: 0, attempts: 0 };
+          this.items.push(item); this.byKey.set(key, item); return item;
+        }
+        poll(recipient) {
+          const control = this.items.find((x) => x.recipient === recipient && x.lane === "control" && x.state === "available");
+          const work = this.items.filter((x) => x.recipient === recipient && x.lane === "work" && x.state === "available");
+          return { control: control ?? null, workDigest: work.map((x) => ({ id:x.id, topic:x.topic, merged:x.merged })) };
+        }
+        claim(id, owner, lease = 10) { const item = this.items.find((x) => x.id === id); if (!item || item.state !== "available") return null; item.state = "leased"; item.owner = owner; item.leaseUntil = this.clock + lease; item.attempts += 1; return { id, owner, leaseUntil:item.leaseUntil }; }
+        complete(id, owner) { const item = this.items.find((x) => x.id === id); if (!item || item.state !== "leased" || item.owner !== owner) return false; item.state = "completed"; return true; }
+        tick(seconds) { this.clock += seconds; for (const item of this.items) if (item.state === "leased" && item.leaseUntil <= this.clock) { item.state = "available"; delete item.owner; } }
+      }
+      function assert(ok, text) { if (!ok) throw new Error(text); }
+      function runProof() {
+        const lines = []; const broker = new ProofBroker();
+        const first = broker.publish({recipient:"ada",lane:"control",topic:"handoff",key:"sender-1",body:"take task"});
+        const retry = broker.publish({recipient:"ada",lane:"control",topic:"handoff",key:"sender-1",body:"take task"});
+        assert(first.id === retry.id && broker.items.length === 1, "idempotent publish created more than one item"); lines.push("✓ durable publish retry resolves to one item");
+        const lease = broker.claim(first.id, "ada:g1"); assert(lease, "first claim failed"); broker.tick(11); const redelivery = broker.claim(first.id, "ada:g1"); assert(redelivery && broker.complete(first.id,"ada:g1"), "lease did not redeliver then settle"); lines.push("✓ crash-style lease expiry redelivers and then settles");
+        broker.publish({recipient:"ada",lane:"work",topic:"progress",key:"p1",body:"10%"}); for (let i=2;i<=100;i++) broker.publish({recipient:"ada",lane:"work",topic:"progress",key:`p${i}`,body:`${i}%`});
+        const poll = broker.poll("ada"); assert(poll.workDigest.length === 1 && poll.workDigest[0].merged === 99, "work updates were not coalesced"); lines.push("✓ 100 progress updates collapse into one bounded digest item");
+        const laterControl = broker.publish({recipient:"ada",lane:"control",topic:"hold",key:"c2",body:"hold writes"}); const prioritized = broker.poll("ada"); assert(prioritized.control.id === laterControl.id, "control item was not prioritized"); lines.push("✓ control lane is selected before normal-work digest");
+        assert(!Object.getOwnPropertyNames(ProofBroker.prototype).some((x) => /terminal|stdin|paste|escape|composer|inject/i.test(x)), "broker exposes an unsafe input operation"); lines.push("✓ broker surface contains no terminal-input operation");
+        return lines.join("\n") + "\n\nPASS — protocol invariants hold in the reference simulation.";
+      }
+      document.getElementById("run-proof").addEventListener("click", () => { const out = document.getElementById("proof"); try { out.textContent = runProof(); } catch (error) { out.textContent = `FAIL — ${error.message}`; } });
+    </script>
+  </body>
+</html>

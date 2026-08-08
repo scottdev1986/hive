@@ -1,0 +1,146 @@
+[
+  {
+    "label": "Provider measurement 00",
+    "state": "measured",
+    "value": 63,
+    "provenance": "provider API \u00b7 authoritative",
+    "observedAt": "2026-07-30T20:00:00Z",
+    "resetsAt": "2026-07-30T23:00:00Z",
+    "reason": null
+  },
+  {
+    "label": "Provider silent 01",
+    "state": "unknown",
+    "value": null,
+    "provenance": "probe returned no reading",
+    "observedAt": null,
+    "resetsAt": null,
+    "reason": "capacity could not be measured"
+  },
+  {
+    "label": "Last known value 02",
+    "state": "stale",
+    "value": 41,
+    "provenance": "provider API \u00b7 last successful probe",
+    "observedAt": "2026-07-29T20:00:00Z",
+    "resetsAt": "2026-07-31T00:00:00Z",
+    "reason": "refresh is overdue"
+  },
+  {
+    "label": "Unmetered plan 03",
+    "state": "unmetered",
+    "value": null,
+    "provenance": "provider plan metadata",
+    "observedAt": "2026-07-30T20:00:00Z",
+    "resetsAt": null,
+    "reason": "unconstrained, not free"
+  },
+  {
+    "label": "Local usage estimate 04",
+    "state": "estimated",
+    "value": 18,
+    "provenance": "Hive local ledger \u00b7 estimate",
+    "observedAt": "2026-07-30T20:01:00Z",
+    "resetsAt": null,
+    "reason": "provider total is unavailable"
+  },
+  {
+    "label": "Active reservation 05",
+    "state": "reserved",
+    "value": 12,
+    "provenance": "Hive reservation ledger",
+    "observedAt": "2026-07-30T20:01:30Z",
+    "resetsAt": "2026-07-30T20:31:30Z",
+    "reason": "capacity held by an active launch"
+  },
+  {
+    "label": "Provider hold 06",
+    "state": "hold",
+    "value": null,
+    "provenance": "provider control plane",
+    "observedAt": "2026-07-30T20:02:00Z",
+    "resetsAt": "2026-07-30T21:02:00Z",
+    "reason": "provider cooldown"
+  },
+  {
+    "label": "Proven exclusion 07",
+    "state": "excluded",
+    "value": null,
+    "provenance": "routing inspection \u00b7 pool-excluded",
+    "observedAt": "2026-07-30T20:02:00Z",
+    "resetsAt": "2026-07-30T21:00:00Z",
+    "reason": "quota pool is drained"
+  },
+  {
+    "label": "Provider measurement 08",
+    "state": "measured",
+    "value": 63,
+    "provenance": "provider API \u00b7 authoritative",
+    "observedAt": "2026-07-30T20:00:00Z",
+    "resetsAt": "2026-07-30T23:00:00Z",
+    "reason": null
+  },
+  {
+    "label": "Provider silent 09",
+    "state": "unknown",
+    "value": null,
+    "provenance": "probe returned no reading",
+    "observedAt": null,
+    "resetsAt": null,
+    "reason": "capacity could not be measured"
+  },
+  {
+    "label": "Last known value 10",
+    "state": "stale",
+    "value": 41,
+    "provenance": "provider API \u00b7 last successful probe",
+    "observedAt": "2026-07-29T20:00:00Z",
+    "resetsAt": "2026-07-31T00:00:00Z",
+    "reason": "refresh is overdue"
+  },
+  {
+    "label": "Unmetered plan 11",
+    "state": "unmetered",
+    "value": null,
+    "provenance": "provider plan metadata",
+    "observedAt": "2026-07-30T20:00:00Z",
+    "resetsAt": null,
+    "reason": "unconstrained, not free"
+  },
+  {
+    "label": "Local usage estimate 12",
+    "state": "estimated",
+    "value": 18,
+    "provenance": "Hive local ledger \u00b7 estimate",
+    "observedAt": "2026-07-30T20:01:00Z",
+    "resetsAt": null,
+    "reason": "provider total is unavailable"
+  },
+  {
+    "label": "Active reservation 13",
+    "state": "reserved",
+    "value": 12,
+    "provenance": "Hive reservation ledger",
+    "observedAt": "2026-07-30T20:01:30Z",
+    "resetsAt": "2026-07-30T20:31:30Z",
+    "reason": "capacity held by an active launch"
+  },
+  {
+    "label": "Provider hold 14",
+    "state": "hold",
+    "value": null,
+    "provenance": "provider control plane",
+    "observedAt": "2026-07-30T20:02:00Z",
+    "resetsAt": "2026-07-30T21:02:00Z",
+    "reason": "provider cooldown"
+  },
+  {
+    "label": "Proven exclusion 15",
+    "state": "excluded",
+    "value": null,
+    "provenance": "routing inspection \u00b7 pool-excluded",
+    "observedAt": "2026-07-30T20:02:00Z",
+    "resetsAt": "2026-07-30T21:00:00Z",
+    "reason": "quota pool is drained"
+  }
+]

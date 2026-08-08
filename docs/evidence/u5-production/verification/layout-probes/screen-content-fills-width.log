@@ -1,0 +1,32 @@
+Building for debugging...
+[0/15] Write sources
+[1/15] Write swift-version--58304C5D6DBC2206.txt
+[3/8] Compiling HiveWorkspace WorkspaceShellWindowController.swift
+[4/8] Compiling HiveWorkspace ShellAvailabilityPanel.swift
+[5/8] Emitting module HiveWorkspace
+[5/10] Write Objects.LinkFileList
+[6/10] Linking HiveWorkspace
+[7/10] Applying HiveWorkspace
+[9/11] Emitting module HiveWorkspaceTests
+[9/11] Write Objects.LinkFileList
+[10/11] Linking HiveWorkspacePackageTests
+Build complete! (2.06s)
+Test Suite 'Selected tests' started at 2026-08-01 22:14:48.863.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-08-01 22:14:48.864.
+Test Suite 'WorkspaceShellViewTests' started at 2026-08-01 22:14:48.864.
+Test Case '-[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenFillsEveryWindowWidthItIsGiven]' started.
+/Users/scottkellar/Projects/hive/.hive/worktrees/anna/workspace/Tests/HiveWorkspaceTests/WorkspaceShellViewTests.swift:359: error: -[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenFillsEveryWindowWidthItIsGiven] : XCTAssertGreaterThan failed: ("594.0") is not greater than ("651.0") - autonomy content must reach the right edge at 940.0
+/Users/scottkellar/Projects/hive/.hive/worktrees/anna/workspace/Tests/HiveWorkspaceTests/WorkspaceShellViewTests.swift:359: error: -[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenFillsEveryWindowWidthItIsGiven] : XCTAssertGreaterThan failed: ("594.0") is not greater than ("811.0") - autonomy content must reach the right edge at 1100.0
+/Users/scottkellar/Projects/hive/.hive/worktrees/anna/workspace/Tests/HiveWorkspaceTests/WorkspaceShellViewTests.swift:359: error: -[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenFillsEveryWindowWidthItIsGiven] : XCTAssertGreaterThan failed: ("594.0") is not greater than ("1439.0") - autonomy content must reach the right edge at 1728.0
+/Users/scottkellar/Projects/hive/.hive/worktrees/anna/workspace/Tests/HiveWorkspaceTests/WorkspaceShellViewTests.swift:359: error: -[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenFillsEveryWindowWidthItIsGiven] : XCTAssertGreaterThan failed: ("594.0") is not greater than ("2271.0") - autonomy content must reach the right edge at 2560.0
+Test Case '-[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenFillsEveryWindowWidthItIsGiven]' failed (2.431 seconds).
+Test Suite 'WorkspaceShellViewTests' failed at 2026-08-01 22:14:51.296.
+	 Executed 1 test, with 4 failures (0 unexpected) in 2.431 (2.431) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' failed at 2026-08-01 22:14:51.296.
+	 Executed 1 test, with 4 failures (0 unexpected) in 2.431 (2.432) seconds
+Test Suite 'Selected tests' failed at 2026-08-01 22:14:51.296.
+	 Executed 1 test, with 4 failures (0 unexpected) in 2.431 (2.432) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

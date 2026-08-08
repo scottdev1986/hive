@@ -1,20 +1,8 @@
 import {
-  OpencodeCapabilityProbe,
-  OpencodeCliCapabilityTransport,
-} from "../../daemon/capability-discovery";
-import { hiveInstanceSuffix } from "../../daemon/instance-identity";
-import { shellJoin } from "../../daemon/session-host/shell-session";
-import {
-  buildOpencodeResumeCommand,
-  buildOpencodeSpawnCommand,
-  OPENCODE_HIVE_AGENT,
-  type OpencodeSpawnOptions,
-  resolveWorkingOpencodeExecutable,
   writeOpencodeAgentConfig,
   writeOpencodeTurnPlugin,
 } from "./opencode-cli";
 import type { AgentAdapter } from "./provider-adapter";
-import { wrapSpawnWithCapabilityEnv } from "./shared/capability-env";
 
 export const opencodeAgentAdapter: AgentAdapter = {
   id: "opencode",
@@ -23,20 +11,17 @@ export const opencodeAgentAdapter: AgentAdapter = {
     eventSource: "hooks",
     nativeDelivery: false,
     toolBoundaryEvents: false,
-    // Opencode has no turn-start surface (session.idle maps to turn-end
-    // only, and sparsely). Claiming a turn stream makes every busy opencode
-    // agent read as deaf ("no turn events at all") and makes paste
-    // confirmation wait on a turn-start that never comes; judging it by
-    // lastEventAt is the honest surface.
+    // Opencode has no turn-start surface (session.idle maps to turn-end only, and sparsely). Claiming a turn stream makes every busy opencode agent read as deaf ("no turn events at all") and makes paste confirmation wait on a turn-start that never comes; judging it by lastEventAt is the honest surface.
     turnBoundaryEvents: false,
     transcriptReader: false,
     nativeCancel: false,
     conversationResume: true,
   },
-  async prepareSpawn(context) {
+  async prepareRuntime(context) {
     await writeOpencodeAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,
       readOnly: context.readOnly,
+      dangerous: context.dangerous,
       ...(context.graphifyUrl === undefined
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
@@ -53,38 +38,7 @@ export const opencodeAgentAdapter: AgentAdapter = {
         hiveCommand: context.hiveCommand,
       });
     }
-    const options: OpencodeSpawnOptions = {
-      model: context.model,
-      readOnly: context.readOnly,
-      dangerous: context.dangerous,
-      ...(context.executable === undefined
-        ? {}
-        : { executable: context.executable }),
-      ...(context.instructionPath === undefined
-        ? {}
-        : { agent: OPENCODE_HIVE_AGENT }),
-    };
-    const argv =
-      context.resumeSessionId === undefined
-        ? buildOpencodeSpawnCommand(options)
-        : buildOpencodeResumeCommand(options, context.resumeSessionId);
-    const command = shellJoin(
-      context.kickoff === undefined
-        ? argv
-        : [...argv, "--prompt", context.kickoff],
-    );
-    return {
-      argv,
-      command:
-        context.withCapability === true
-          ? wrapSpawnWithCapabilityEnv(command, context.name)
-          : command,
-    };
+    return { argv: [] };
   },
-  discover: (
-    executable = resolveWorkingOpencodeExecutable()?.path ?? "opencode",
-  ) =>
-    new OpencodeCapabilityProbe(
-      new OpencodeCliCapabilityTransport(executable),
-    ).read(),
 };
+import { hiveInstanceSuffix } from "../../hive-home/instance-identity";

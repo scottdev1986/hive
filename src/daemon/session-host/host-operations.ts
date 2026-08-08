@@ -1,20 +1,12 @@
 import { createHash } from "node:crypto";
+import { type Dirent, readdirSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
+import { sessiondRuntimeRoot } from "../../hive-home/instance-identity";
+import { resolveVariant } from "../../hive-home/variant";
 
-/**
- * Speaks the neutral host operation protocol directly to a terminal's own
- * socket, with no broker in between.
- *
- * Hive opens `host.sock` per request instead of routing frequent INSPECT polls
- * through a shared accept loop. This keeps one slow host from delaying other
- * terminals.
- *
- * NHOP is a private per-request protocol: connect, write one request, read one
- * response, close. There is no session, so a slow host delays only its own
- * caller.
- */
+/** Speaks the neutral host operation protocol directly to a terminal's own socket, with no broker in between. Hive opens `host.sock` per request instead of routing frequent INSPECT polls through a shared accept loop. This keeps one slow host from delaying other terminals. NHOP is a private per-request protocol: connect, write one request, read one response, close. There is no session, so a slow host delays only its own caller. */
 
 const REQUEST_MAGIC = "NHOP";
 const RESPONSE_MAGIC = "NHRS";
@@ -23,7 +15,6 @@ const RESPONSE_HEADER_BYTES = 9;
 const SCHEMA_VERSION = 1;
 const ADOPTION_SECRET_BYTES = 32;
 
-/** Operation accepted by the neutral host runtime. */
 export const HOST_OPERATIONS = {
   submitInput: 1,
   resize: 2,
@@ -45,7 +36,6 @@ export class HostOperationError extends Error {
   }
 }
 
-/** The host refused the request; its payload is the diagnostic, not a result. */
 export class HostOperationRefused extends Error {
   constructor(readonly diagnostic: string) {
     super(`host refused the operation: ${diagnostic}`);
@@ -53,8 +43,9 @@ export class HostOperationRefused extends Error {
   }
 }
 
+/** A host's own state directory: its adoption capability, recovery record, journal and checkpoints. Under `sessiondStateRoot`, which is where everything that must outlive the socket lives; only the socket itself stays in the short root that `sun_path` constrains. */
 export function hostDirectory(hiveHome: string, sessionId: string): string {
-  return join(hiveHome, "runtime", "sessiond", "hosts", sessionId);
+  return join(resolveVariant(hiveHome).sessiondStateRoot, "hosts", sessionId);
 }
 
 function lengthPrefix(value: number): Buffer {
@@ -63,38 +54,55 @@ function lengthPrefix(value: number): Buffer {
   return bytes;
 }
 
-/**
- * Where a host listens for neutral operations.
- *
- * This is NOT the launch record's directory: the neutral endpoint names its
- * own directory by hashing the session reference, so the path is derived here
- * exactly as `neutral_runtime.zig sessionDirectoryName` derives it — length
- * prefixes included, or two different sessions could collide.
- */
-export function neutralDirectory(
-  hiveHome: string,
-  session: HostSessionRef,
-): string {
+/** The name a socket takes under the socket root: eight hex digits of the identity digest that already names the session's state directory, so each side derives it from the session it holds rather than being told. Mirrors `socketName` in `security_helpers.zig`, which the host binds with — the two must spell one name or a peer dials a socket nobody bound. Every name is the same length, which is what lets one preflight bound both socket kinds. */
+function socketName(digest: Buffer): string {
+  return `${digest.subarray(0, 4).toString("hex")}.s`;
+}
+
+export function hostSocketName(sessionId: string): string {
+  return socketName(createHash("sha256").update(sessionId).digest());
+}
+
+export function neutralSocketName(session: HostSessionRef): string {
+  return socketName(neutralDigest(session));
+}
+
+/** The socket a session host accepts control connections on. */
+export function hostSocketPath(hiveHome: string, sessionId: string): string {
+  return join(sessiondRuntimeRoot(hiveHome), hostSocketName(sessionId));
+}
+
+/** The directory every host publishes its neutral endpoint's record and capability under. A sibling of the host subtree, not a child, because the two are keyed differently: a host directory is named by the Hive session id, a neutral one by a digest of the session reference. That is also why `adopt.cap` lives under `hosts/` and `control.cap` here — two secrets with two jobs, one authenticating the launch handshake and one authorising every operation after it. Tidying them into one directory would collapse a security boundary, not a layout. */
+export function neutralRoot(hiveHome: string): string {
+  return join(resolveVariant(hiveHome).sessiondStateRoot, "neutral");
+}
+
+function neutralDigest(session: HostSessionRef): Buffer {
   const key = Buffer.from(session.key, "utf8");
   const incarnation = Buffer.from(session.incarnation, "utf8");
-  const digest = createHash("sha256")
+  return createHash("sha256")
     .update(lengthPrefix(key.byteLength))
     .update(key)
     .update(lengthPrefix(incarnation.byteLength))
     .update(incarnation)
     .digest();
-  const name = `nh-${digest.toString("base64url")}`;
-  return join(hiveHome, "neutral", name);
+}
+
+export function neutralDirectory(
+  hiveHome: string,
+  session: HostSessionRef,
+): string {
+  const name = `nh-${neutralDigest(session).toString("base64url")}`;
+  return join(neutralRoot(hiveHome), name);
 }
 
 export function neutralSocketPath(
   hiveHome: string,
   session: HostSessionRef,
 ): string {
-  return join(neutralDirectory(hiveHome, session), "host.sock");
+  return join(sessiondRuntimeRoot(hiveHome), neutralSocketName(session));
 }
 
-/** The capability authorizing operations on this host. Not `adopt.cap`. */
 export async function readControlSecret(
   hiveHome: string,
   session: HostSessionRef,
@@ -104,19 +112,6 @@ export async function readControlSecret(
   );
   if (secret.byteLength !== ADOPTION_SECRET_BYTES) {
     throw new HostOperationError("host control capability is malformed");
-  }
-  return new Uint8Array(secret);
-}
-
-export async function readAdoptionSecret(
-  hiveHome: string,
-  sessionId: string,
-): Promise<Uint8Array> {
-  const secret = await readFile(
-    join(hostDirectory(hiveHome, sessionId), "adopt.cap"),
-  );
-  if (secret.byteLength !== ADOPTION_SECRET_BYTES) {
-    throw new HostOperationError("host adoption capability is malformed");
   }
   return new Uint8Array(secret);
 }
@@ -157,12 +152,7 @@ function encodeRequest(
   return bytes;
 }
 
-/**
- * One request, one response, one connection.
- *
- * The host answers a refusal as a typed payload rather than by closing, so a
- * refusal is returned to the caller instead of surfacing as a transport error.
- */
+/** One request, one response, one connection. The host answers a refusal as a typed payload rather than by closing, so a refusal is returned to the caller instead of surfacing as a transport error. */
 export async function callHost(options: {
   hiveHome: string;
   sessionId: string;
@@ -245,74 +235,16 @@ export async function callHost(options: {
   });
 }
 
-/**
- * Finds a live host's neutral endpoint: its session reference and the secret
- * that authorises operations on it.
- *
- * Neither is derivable. The incarnation is engine-assigned, not the locator's
- * generation; building a reference from the generation fails as NOT_FOUND. The
- * operation capability is `control.cap`, which is
- * a different secret from the launch-time `adopt.cap`. Both are published by
- * the host in its own directory, so both are read from there.
- */
-export async function resolveNeutralEndpoint(
-  hiveHome: string,
-  sessionId: string,
-): Promise<{ session: HostSessionRef; secret: Uint8Array }> {
-  const root = join(hiveHome, "neutral");
-  let names: string[];
-  try {
-    names = await readdir(root);
-  } catch (error) {
-    throw new HostOperationError("no neutral host endpoints exist", {
-      cause: error,
-    });
-  }
-  for (const name of names) {
-    if (!name.startsWith("nh-")) continue;
-    let record: { session?: { key?: string; incarnation?: string } };
-    try {
-      record = JSON.parse(
-        await readFile(join(root, name, "record.json"), "utf8"),
-      );
-    } catch {
-      continue;
-    }
-    const session = record.session;
-    if (session?.key !== sessionId) continue;
-    if (typeof session.incarnation !== "string") continue;
-    const secret = await readFile(join(root, name, "control.cap"));
-    if (secret.byteLength !== ADOPTION_SECRET_BYTES) {
-      throw new HostOperationError("host control capability is malformed");
-    }
-    return {
-      session: { key: session.key, incarnation: session.incarnation },
-      secret: new Uint8Array(secret),
-    };
-  }
-  throw new HostOperationError(
-    `no neutral host endpoint for session ${sessionId}`,
-  );
-}
-
-/**
- * Every neutral endpoint on this machine, read from the hosts' own published
- * records.
- *
- * The broker answered this from an in-memory registry it built by launching.
- * Hive no longer launches through it, so the registry cannot know these hosts;
- * the directory the hosts write to does.
- */
+/** Finds a live host's neutral endpoint: its session reference and the secret that authorises operations on it. Neither is derivable. The incarnation is engine-assigned, not the locator's generation; building a reference from the generation fails as NOT_FOUND. The operation capability is `control.cap`, which is a different secret from the launch-time `adopt.cap`. Both are published by the host in its own directory, so both are read from there. */
+/** Every neutral endpoint on this machine, read from the hosts' own published records. The broker answered this from an in-memory registry it built by launching. Hive no longer launches through it, so the registry cannot know these hosts; the directory the hosts write to does. */
 export async function listNeutralSessions(
   hiveHome: string,
 ): Promise<readonly HostSessionRef[]> {
-  const root = join(hiveHome, "neutral");
+  const root = neutralRoot(hiveHome);
   let names: string[];
   try {
     names = await readdir(root);
   } catch {
-    // No terminals have ever been created here. That is an empty list, not a
-    // failure to enumerate.
     return [];
   }
   const sessions: HostSessionRef[] = [];
@@ -326,9 +258,30 @@ export async function listNeutralSessions(
       if (typeof session?.key !== "string") continue;
       if (typeof session.incarnation !== "string") continue;
       sessions.push({ key: session.key, incarnation: session.incarnation });
-    } catch {
-      // A record being written right now is not an error for a reader.
-    }
+    } catch {}
   }
   return sessions;
+}
+
+/** The sweep threshold for the socket tree, in nodes. Past this many rendezvous nodes under the socket root, a sweep is due. This module counts so the threshold can be checked against a fact; the sweep itself is a different change and must never travel with the counting. */
+export const SOCKET_ROOT_SWEEP_THRESHOLD = 1000;
+
+/** The number of nodes under the resolved socket root. Every entry counts — socket, file or directory — and a directory's contents count with it, because the tree holds nothing but rendezvous nodes and the directories that carry them. An absent root reads as zero rather than failing: a daemon that has never launched a host has nothing to count, and zero is the honest answer to the threshold question there. The tree is live while it is walked, so a node unbound between listing and reading contributes nothing rather than failing the count. */
+export function countSocketRootNodes(hiveHome: string): number {
+  let count = 0;
+  const walk = (directory: string): void => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    for (const entry of entries) {
+      count += 1;
+      if (entry.isDirectory()) walk(join(directory, entry.name));
+    }
+  };
+  walk(sessiondRuntimeRoot(hiveHome));
+  return count;
 }

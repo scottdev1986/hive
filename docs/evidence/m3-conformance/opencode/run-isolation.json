@@ -1,0 +1,83 @@
+{
+  "vendor": "opencode",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.opencode/bin/opencode",
+  "binaryBefore": {
+    "version": "1.18.11",
+    "device": 16777234,
+    "inode": 277067580,
+    "size": 138608738,
+    "mtimeMs": 1785583238000
+  },
+  "operatorBefore": {
+    ".config/opencode": "756b3d107d8c2bd8263a62bae8731ea2c368a407b98cfb50e68a779e8de2c46a",
+    ".local/share/opencode": "8d79883ecebe10021b7c2b14321dbb9295bfccc14fb8065ed17d92eea0c0f6f7"
+  },
+  "borrowed": [
+    ".local/share/opencode/auth.json"
+  ],
+  "artifacts": [
+    {
+      "label": "auth.json",
+      "sourceMetadata": "761d24130277be35cf4ac33777f8a02e4c9931084a7d518ef5d402a27b15990a",
+      "destinationMetadata": "f26c486549399cebba48dc99dde171270079d4209bfba16a6a1e58d5a3ac601f",
+      "verification": {
+        "nodes": 1,
+        "files": 1,
+        "directories": 0
+      }
+    }
+  ],
+  "binaryAfter": {
+    "version": "1.18.11",
+    "device": 16777234,
+    "inode": 277067580,
+    "size": 138608738,
+    "mtimeMs": 1785583238000
+  },
+  "operatorAfter": {
+    ".config/opencode": "756b3d107d8c2bd8263a62bae8731ea2c368a407b98cfb50e68a779e8de2c46a",
+    ".local/share/opencode": "ee66f19e5b6bf38a91415b942dde5ac52e660be5657ac578928c1ef0cf89369e"
+  },
+  "changedOperatorPaths": [
+    ".local/share/opencode"
+  ],
+  "changedOperatorNodes": {
+    ".local/share/opencode": [
+      {
+        "relativePath": "opencode.db-wal",
+        "before": {
+          "relativePath": "opencode.db-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 136328171,
+          "mode": 420,
+          "size": 1602712,
+          "mtimeMs": 1785675609504.3103
+        },
+        "after": {
+          "relativePath": "opencode.db-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 136328171,
+          "mode": 420,
+          "size": 1862272,
+          "mtimeMs": 1785675787997.8135
+        }
+      }
+    ]
+  },
+  "artifactsAfter": [
+    {
+      "label": "auth.json",
+      "sourceMetadata": "761d24130277be35cf4ac33777f8a02e4c9931084a7d518ef5d402a27b15990a",
+      "destinationMetadata": "f26c486549399cebba48dc99dde171270079d4209bfba16a6a1e58d5a3ac601f",
+      "verification": {
+        "nodes": 1,
+        "files": 1,
+        "directories": 0
+      },
+      "error": null
+    }
+  ]
+}

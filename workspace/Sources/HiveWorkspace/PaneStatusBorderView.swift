@@ -1,9 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// A hit-test-transparent status overlay drawn above the pane background.
-/// Like PaneFocusRingView, this must be a sibling view rather than a sublayer
-/// of PaneView, whose opaque visual-effect subview would bury it.
+/// A hit-test-transparent status overlay drawn above the pane background. Like PaneFocusRingView, this must be a sibling view rather than a sublayer of PaneView, whose opaque visual-effect subview would bury it.
 final class PaneStatusBorderView: NSView {
 
     var statusAppearance = AgentActivity.unknown.appearance {

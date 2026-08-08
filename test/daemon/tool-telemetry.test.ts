@@ -1,633 +1,210 @@
-import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import {
-  countGraphifyCallLines,
+  countGraphifyFromProviderEvents,
+  isGraphifyToolName,
   lastCodexTurnCompleted,
   lastGrokTurnCompleted,
-  readClaudeTelemetry,
-  readCodexTelemetry,
-  readGraphifyCalls,
-  readGrokTelemetry,
-} from "../../src/daemon/tool-telemetry";
+  readNativeTurnCompleted,
+} from "../../src/daemon/observability/tool-telemetry";
+import { readGrokContextOccupancy } from "../../src/usage-service/context-occupancy";
+import type { AgentRecord } from "../../src/schemas/agent";
+import type { ProviderRun } from "../../src/schemas/provider-run";
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { tempRoot } from "../temp-root";
 
-const WORKTREE = "/repo/.hive/worktrees/maya";
+const at = "2026-08-02T12:00:00.000Z";
 
-function makeHome(): string {
-  return mkdtempSync(join(tmpdir(), "hive-telemetry-"));
-}
+const locator = {
+  schemaVersion: 1 as const,
+  instanceId: "instance-1",
+  subject: { kind: "agent" as const, agentId: "worker" },
+  generation: 1,
+  sessionId: "ses_018f4f5e-0000-7000-8000-000000000001",
+  hostKind: "sessiond" as const,
+  engineBuildId: "build-1",
+};
 
-function claudeProjectDir(home: string): string {
-  const munged = resolve(WORKTREE).replace(/[^A-Za-z0-9]/g, "-");
-  const directory = join(home, ".claude", "projects", munged);
-  mkdirSync(directory, { recursive: true });
-  return directory;
-}
-
-function transcriptLine(
-  usage: Record<string, unknown>,
-  sidechain = false,
-): string {
-  return JSON.stringify({
-    type: "assistant",
-    ...(sidechain ? { isSidechain: true } : {}),
-    message: { role: "assistant", usage },
-  });
-}
-
-describe("claude transcript telemetry", () => {
-  // The measured numerator: the last non-sidechain assistant turn's usage sum
-  // is the context resident right now, byte-identical to what Claude Code's
-  // own `context_window.current_usage` reports. No percentage appears here --
-  // the transcript records tokens but never the window they fill, so the
-  // division happens in the sweep against the statusline-observed window.
-  test("sums the last assistant turn's usage into contextTokens", async () => {
-    const home = makeHome();
-    const directory = claudeProjectDir(home);
-    writeFileSync(
-      join(directory, "session-1.jsonl"),
-      `${[
-        transcriptLine({ input_tokens: 8, cache_read_input_tokens: 30_000 }),
-        transcriptLine({
-          input_tokens: 8,
-          cache_read_input_tokens: 220_000,
-          cache_creation_input_tokens: 1_121,
-          output_tokens: 753,
-        }),
-      ].join("\n")}\n`,
-    );
-
-    const telemetry = await readClaudeTelemetry(WORKTREE, "session-1", home);
-    expect(telemetry.contextTokens).toEqual(8 + 220_000 + 1_121 + 753);
-    expect(telemetry.lastActivityAt).not.toEqual(null);
-  });
-
-  // A subagent's turns are interleaved into the same file but describe a
-  // different conversation's context; counting one would swing the reading to
-  // whatever the sidechain happened to carry.
-  test("skips sidechain turns and turns without usage", async () => {
-    const home = makeHome();
-    const directory = claudeProjectDir(home);
-    writeFileSync(
-      join(directory, "session-1.jsonl"),
-      `${[
-        transcriptLine({ input_tokens: 5, cache_read_input_tokens: 90_000 }),
-        JSON.stringify({ type: "user", message: { role: "user" } }),
-        transcriptLine({ input_tokens: 2, output_tokens: 9 }, true),
-      ].join("\n")}\n`,
-    );
-
-    const telemetry = await readClaudeTelemetry(WORKTREE, "session-1", home);
-    expect(telemetry.contextTokens).toEqual(90_005);
-  });
-
-  // Worktrees are reused across respawns, so the project directory holds every
-  // dead predecessor's transcript. The read is keyed to the agent's own
-  // session id: a fresh agent that has not spoken yet must read unknown, never
-  // its predecessor's number.
-  test("reads only the agent's own session, never a neighbouring transcript", async () => {
-    const home = makeHome();
-    const directory = claudeProjectDir(home);
-    writeFileSync(
-      join(directory, "dead-predecessor.jsonl"),
-      transcriptLine({ input_tokens: 8, cache_read_input_tokens: 400_000 }) +
-        "\n",
-    );
-
-    const fresh = await readClaudeTelemetry(WORKTREE, "fresh-session", home);
-    expect(fresh).toEqual({ contextTokens: null, lastActivityAt: null });
-
-    // And the reverse join: asked for the predecessor by id, it reads it.
-    const dead = await readClaudeTelemetry(WORKTREE, "dead-predecessor", home);
-    expect(dead.contextTokens).toEqual(400_008);
-  });
-
-  test("reports the keyed transcript's mtime as the activity signal", async () => {
-    const home = makeHome();
-    const directory = claudeProjectDir(home);
-    writeFileSync(
-      join(directory, "session-1.jsonl"),
-      `${transcriptLine({ input_tokens: 10 })}\n`,
-    );
-    utimesSync(
-      join(directory, "session-1.jsonl"),
-      new Date("2026-07-09T00:00:00Z"),
-      new Date("2026-07-09T00:00:00Z"),
-    );
-
-    const telemetry = await readClaudeTelemetry(WORKTREE, "session-1", home);
-    expect(telemetry.lastActivityAt).toEqual("2026-07-09T00:00:00.000Z");
-  });
-
-  test("reports nulls when there is no session id or no transcript", async () => {
-    const home = makeHome();
-    expect(await readClaudeTelemetry(WORKTREE, undefined, home)).toEqual({
-      contextTokens: null,
-      lastActivityAt: null,
-    });
-    expect(await readClaudeTelemetry(WORKTREE, "session-1", home)).toEqual({
-      contextTokens: null,
-      lastActivityAt: null,
-    });
+describe("isGraphifyToolName", () => {
+  test("accepts every vendor's graphify and graph_locate names", () => {
+    expect(isGraphifyToolName("graphify__query_graph")).toBe(true);
+    expect(isGraphifyToolName("graphify_query_graph")).toBe(true);
+    expect(isGraphifyToolName("mcp__graphify__query_graph")).toBe(true);
+    expect(isGraphifyToolName("hive__graph_locate")).toBe(true);
+    expect(isGraphifyToolName("mcp__hive__graph_locate")).toBe(true);
+    expect(isGraphifyToolName("hive_graph_locate")).toBe(true);
+    expect(isGraphifyToolName("hive__hive_mail_publish")).toBe(false);
+    expect(isGraphifyToolName("Read")).toBe(false);
   });
 });
 
-describe("codex rollout telemetry", () => {
-  function writeRollout(home: string, lines: string[]): string {
-    const directory = join(home, ".codex", "sessions", "2026", "07", "10");
-    mkdirSync(directory, { recursive: true });
-    const path = join(directory, "rollout-2026-07-10T10-00-00-abc.jsonl");
-    const meta = JSON.stringify({
-      type: "session_meta",
-      payload: { id: "thread-1", cwd: resolve(WORKTREE) },
-    });
-    writeFileSync(path, `${[meta, ...lines].join("\n")}\n`);
-    return path;
-  }
-
-  function tokenCount(
-    inputTokens: number,
-    outputTokens: number,
-    window: number,
-  ): string {
-    return JSON.stringify({
-      type: "event_msg",
-      payload: {
-        type: "token_count",
-        info: {
-          total_token_usage: {
-            input_tokens: 999_999,
-            output_tokens: 999_999,
-          },
-          last_token_usage: {
-            input_tokens: inputTokens,
-            output_tokens: outputTokens,
-          },
-          model_context_window: window,
-        },
-      },
-    });
-  }
-
-  test("reads context% from the last token_count against the recorded window", async () => {
-    const home = makeHome();
-    writeRollout(home, [
-      tokenCount(10_000, 100, 258_400),
-      JSON.stringify({ type: "response_item", payload: { type: "message" } }),
-      tokenCount(129_200, 0, 258_400),
-    ]);
-    const telemetry = await readCodexTelemetry(WORKTREE, "thread-1", home);
-    expect(telemetry.contextPct).toEqual(50);
-    expect(telemetry.lastActivityAt).not.toEqual(null);
-  });
-
-  test("reports nulls without a matching rollout and tolerates missing usage", async () => {
-    const home = makeHome();
-    expect(await readCodexTelemetry(WORKTREE, "thread-1", home)).toEqual({
+describe("countGraphifyFromProviderEvents", () => {
+  test("counts tool-started events on the active run; null without a run", () => {
+    const db = new HiveDatabase(":memory:");
+    const agent: AgentRecord = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "worker",
+      tool: "claude",
+      model: "claude-haiku",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "count tools",
+      worktreePath: "/tmp/wt",
+      branch: "hive/worker",
+      sessionLocator: locator,
       contextPct: null,
-      lastActivityAt: null,
-    });
-    writeRollout(home, [
-      JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }),
-    ]);
-    const telemetry = await readCodexTelemetry(WORKTREE, "thread-1", home);
-    expect(telemetry.contextPct).toEqual(null);
-    expect(telemetry.lastActivityAt).not.toEqual(null);
-  });
+      createdAt: at,
+      lastEventAt: at,
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+    };
+    db.insertAgent(agent);
+    expect(countGraphifyFromProviderEvents(db, agent)).toBe(null);
 
-  test("reads exact task boundaries for a hookless Codex orchestrator", () => {
-    const started = JSON.stringify({
-      type: "event_msg",
-      payload: { type: "task_started", turn_id: "turn-1" },
+    const runId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const run: ProviderRun = {
+      runId,
+      agentId: agent.id,
+      terminal: locator,
+      provider: "claude",
+      model: agent.model,
+      effort: null,
+      conversationId: "sess-1",
+      adapterChild: null,
+      protocolReceipt: null,
+      capabilityEpoch: 0,
+      launchGrantId: "grant-1",
+      startedAt: at,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    db.insertProviderRun(run);
+    db.insertProviderEvent({
+      eventId: "e1",
+      providerRunId: runId,
+      provider: "claude",
+      capabilityEpoch: 0,
+      conversationId: "sess-1",
+      kind: "tool-started",
+      occurredAt: "2026-08-02T12:00:01.000Z",
+      toolName: "graphify__query_graph",
+      inputDigest: null,
     });
-    const completed = JSON.stringify({
-      type: "event_msg",
-      payload: { type: "task_complete", turn_id: "turn-1" },
+    db.insertProviderEvent({
+      eventId: "e2",
+      providerRunId: runId,
+      provider: "claude",
+      capabilityEpoch: 0,
+      conversationId: "sess-1",
+      kind: "tool-started",
+      occurredAt: "2026-08-02T12:00:02.000Z",
+      toolName: "Read",
+      inputDigest: null,
     });
-    expect(lastCodexTurnCompleted(started)).toEqual(false);
-    expect(lastCodexTurnCompleted(`${started}\n${completed}\n`)).toEqual(true);
-    expect(lastCodexTurnCompleted('{"type":"session_meta"}\n')).toEqual(null);
+    db.insertProviderEvent({
+      eventId: "e3",
+      providerRunId: runId,
+      provider: "claude",
+      capabilityEpoch: 0,
+      conversationId: "sess-1",
+      kind: "tool-started",
+      occurredAt: "2026-08-02T12:00:03.000Z",
+      toolName: "hive__graph_locate",
+      inputDigest: null,
+    });
+    expect(countGraphifyFromProviderEvents(db, agent)).toBe(2);
   });
 });
 
-// Every record below is verbatim from a real Grok session (agent bridget,
-// session 019f5832-6c1a-7920-83f4-fb6cfc639fe2): the 16 tool_call records it
-// wrote and its terminal turn_completed. Its truth is known independently —
-// 6 graphify calls, contextWindowUsage 6, stop_reason end_turn — so these
-// tests measure the vendor's real shape rather than a shape we assumed. If the
-// vendor changes it, they fail, which is the entire point.
-const GROK_UPDATES = readFileSync(
-  join(import.meta.dir, "__fixtures__", "grok-updates-bridget.jsonl"),
-  "utf8",
-);
-const GROK_SIGNALS = readFileSync(
-  join(import.meta.dir, "__fixtures__", "grok-signals-bridget.json"),
-  "utf8",
-);
-
-function writeGrokSession(
-  home: string,
-  sessionId: string,
-  updates: string,
-  signals?: string,
-): string {
-  const directory = join(
-    home,
-    "sessions",
-    encodeURIComponent(resolve(WORKTREE)),
-    sessionId,
-  );
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(
-    join(directory, "summary.json"),
-    JSON.stringify({
-      info: { id: sessionId, cwd: resolve(WORKTREE) },
-      current_model_id: "grok-4.5",
-    }),
-  );
-  writeFileSync(join(directory, "updates.jsonl"), updates);
-  if (signals !== undefined) {
-    writeFileSync(join(directory, "signals.json"), signals);
-  }
-  return directory;
-}
-
-describe("grok session telemetry", () => {
-  test("reads the vendor's own context reading and the turn's end from real records", async () => {
-    const home = makeHome();
-    writeGrokSession(home, "session-1", GROK_UPDATES, GROK_SIGNALS);
-
-    const telemetry = await readGrokTelemetry(WORKTREE, "session-1", home);
-    // signals.json says contextWindowUsage 6 -- the vendor's number, not a
-    // division of our own against a window we guessed.
-    expect(telemetry.contextPct).toEqual(6);
-    // The last record is turn_completed, so the turn ended: this is the
-    // observable that settles a grok row to idle. Nothing else reports it --
-    // grok drives no control channel -- so without this read a grok row never
-    // leaves "spawning".
-    expect(telemetry.turnCompleted).toEqual(true);
-    expect(telemetry.lastActivityAt).not.toEqual(null);
-  });
-
-  test("a turn still streaming is working, not idle", async () => {
-    const home = makeHome();
-    // The same session with its terminal record not yet written.
-    const streaming = `${GROK_UPDATES.trimEnd().split("\n").slice(0, -1).join("\n")}\n`;
-    writeGrokSession(home, "session-1", streaming, GROK_SIGNALS);
-
-    const telemetry = await readGrokTelemetry(WORKTREE, "session-1", home);
-    expect(telemetry.turnCompleted).toEqual(false);
-    expect(lastGrokTurnCompleted(streaming)).toEqual(false);
-    expect(lastGrokTurnCompleted(GROK_UPDATES)).toEqual(true);
-  });
-
-  // A cancelled grok turn writes no signals.json at all, and an agent that has
-  // not finished a turn has none yet. Occupancy unknown must read null: a zero
-  // here would mark a full agent as empty and invite more work onto it.
-  test("no signals.json is unknown occupancy, never zero", async () => {
-    const home = makeHome();
-    writeGrokSession(home, "session-1", GROK_UPDATES);
-
-    const telemetry = await readGrokTelemetry(WORKTREE, "session-1", home);
-    expect(telemetry.contextPct).toEqual(null);
-    expect(telemetry.turnCompleted).toEqual(true);
-  });
-
-  test("a missing session id ignores a predecessor's session", async () => {
-    const home = makeHome();
-    writeGrokSession(home, "dead-predecessor", GROK_UPDATES, GROK_SIGNALS);
-    expect(await readGrokTelemetry(WORKTREE, undefined, home)).toEqual({
-      contextPct: null,
-      lastActivityAt: null,
-      turnCompleted: null,
-    });
-  });
-});
-
-// Every kimi record is verbatim from real sessions (agent john,
-// session_bfdf3cdf-…, plus one built-in call of agent david's) except the
-// three graph calls, which reuse john's real record shape with only name and
-// args changed: no kimi agent on this rig has called graphify yet — the very
-// gap this counter exists to measure. The graphify call names themselves are
-// real: the fixture's llm.tools_snapshot line is the model-facing declaration
-// kimi actually wrote, and it names every graphify tool with exactly the
-// string a call would carry.
-const KIMI_WIRE = readFileSync(
-  join(import.meta.dir, "__fixtures__", "kimi-wire-john.jsonl"),
-  "utf8",
-);
-
-function writeKimiSession(
-  home: string,
-  sessionId: string,
-  wire: string,
-): string {
-  const directory = join(
-    home,
-    "sessions",
-    "wd_maya_0123456789ab",
-    sessionId,
-    "agents",
-    "main",
-  );
-  mkdirSync(directory, { recursive: true });
-  const path = join(directory, "wire.jsonl");
-  writeFileSync(path, wire);
-  return path;
-}
-
-// Real part rows from the live opencode database (sarah's hive_hive_send, and
-// the one hive_graph_locate any opencode agent has actually made) plus a
-// graphify_query_graph part in the identical shape — no opencode agent has
-// called the graphify server yet. The `<server>_<tool>` naming is proven by
-// the real rows, and the text part proves the type filter.
-const OPENCODE_PARTS = readFileSync(
-  join(import.meta.dir, "__fixtures__", "opencode-parts-sarah.jsonl"),
-  "utf8",
-)
-  .trimEnd()
-  .split("\n");
-
-function writeOpencodeDatabase(
-  home: string,
-  sessionId: string,
-  parts: string[],
-): string {
-  const directory = join(home, ".local", "share", "opencode");
-  mkdirSync(directory, { recursive: true });
-  const path = join(directory, "opencode.db");
-  const db = new Database(path, { create: true });
-  db.run(
-    "CREATE TABLE IF NOT EXISTS session (id text PRIMARY KEY, " +
-      "directory text NOT NULL, time_created integer NOT NULL)",
-  );
-  db.run(
-    "CREATE TABLE IF NOT EXISTS part (id text PRIMARY KEY, " +
-      "message_id text NOT NULL, session_id text NOT NULL, " +
-      "time_created integer NOT NULL, time_updated integer NOT NULL, " +
-      "data text NOT NULL)",
-  );
-  db.run(
-    "INSERT OR REPLACE INTO session (id, directory, time_created) VALUES (?, ?, ?)",
-    [sessionId, resolve(WORKTREE), 1],
-  );
-  parts.forEach((data, index) => {
-    db.run(
-      "INSERT INTO part (id, message_id, session_id, time_created, " +
-        "time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
-      [`prt_${sessionId}_${index}`, "msg_1", sessionId, 1, 1, data],
-    );
-  });
-  db.close();
-  return path;
-}
-
-describe("graphify call counting", () => {
-  const toolUseLine = (name: string, sidechain = false): string =>
-    JSON.stringify({
-      type: "assistant",
-      ...(sidechain ? { isSidechain: true } : {}),
-      message: {
-        role: "assistant",
-        content: [
-          { type: "text", text: "using the graph" },
-          { type: "tool_use", id: "t1", name, input: {} },
-        ],
-      },
-    });
-
-  const mcpEndLine = (server: string): string =>
-    JSON.stringify({
-      type: "event_msg",
-      payload: {
-        type: "mcp_tool_call_end",
-        invocation: { server, tool: "query_graph", arguments: {} },
-      },
-    });
-
-  test("counts claude graphify tool_use entries, not sidechains or other servers", () => {
-    const slice = `${[
-      toolUseLine("mcp__graphify__query_graph"),
-      toolUseLine("mcp__graphify__get_node"),
-      toolUseLine("mcp__graphify__god_nodes", true),
-      toolUseLine("mcp__hive__hive_send"),
-      "not json at all",
-    ].join("\n")}\n`;
-    expect(countGraphifyCallLines(slice, "claude")).toEqual(2);
-  });
-
-  test("counts codex mcp_tool_call_end events for the graphify server only", () => {
-    const slice = `${[
-      mcpEndLine("graphify"),
-      mcpEndLine("hive"),
-      mcpEndLine("graphify"),
-    ].join("\n")}\n`;
-    expect(countGraphifyCallLines(slice, "codex")).toEqual(2);
-  });
-
-  test("cursors advance incrementally and never count a partial line", async () => {
-    const home = makeHome();
-    const directory = claudeProjectDir(home);
-    const path = join(directory, "session-g.jsonl");
-    const first = `${toolUseLine("mcp__graphify__query_graph")}\n`;
-    // A complete line plus the torn beginning of the next write.
-    writeFileSync(path, `${first}{"type":"assist`);
-    const one = await readGraphifyCalls(
-      "claude",
-      WORKTREE,
-      "session-g",
-      undefined,
+describe("readGrokContextOccupancy", () => {
+  test("reads the vendor's own occupancy percent; unknown without signals", async () => {
+    const home = tempRoot("hive-grok-occupancy-");
+    const worktree = join(home, "wt");
+    mkdirSync(worktree);
+    const sessionId = "session-1";
+    const directory = join(
       home,
+      ".grok",
+      "sessions",
+      encodeURIComponent(resolve(worktree)),
+      sessionId,
     );
-    expect(one?.count).toEqual(1);
-    expect(one?.offset).toEqual(Buffer.byteLength(first, "utf8"));
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, "signals.json"),
+      JSON.stringify({ contextWindowUsage: 42.6 }),
+    );
+    writeFileSync(
+      join(directory, "summary.json"),
+      JSON.stringify({
+        info: { id: sessionId, cwd: resolve(worktree) },
+        current_model_id: "grok-4.5-build",
+      }),
+    );
+    const grokHome = join(home, ".grok");
+    expect(await readGrokContextOccupancy(worktree, sessionId, grokHome)).toBe(
+      43,
+    );
+    expect(await readGrokContextOccupancy(worktree, undefined, grokHome)).toBe(
+      null,
+    );
+  });
+});
 
-    // The torn line completes and another call lands; only the delta is read.
+describe("native turn boundary readers", () => {
+  test("malformed JSONL records are skipped", () => {
+    const tail = [
+      "not JSON",
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "task_complete" },
+      }),
+    ].join("\n");
+    expect(lastCodexTurnCompleted(tail)).toBe(true);
+  });
+
+  test("codex task boundaries are newest-first", () => {
+    const tail = [
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "task_complete" },
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "task_started" },
+      }),
+    ].join("\n");
+    expect(lastCodexTurnCompleted(tail)).toBe(false);
+  });
+
+  test("grok turn_completed is idle", () => {
+    const tail = JSON.stringify({
+      params: { update: { sessionUpdate: "turn_completed" } },
+    });
+    expect(lastGrokTurnCompleted(tail)).toBe(true);
+  });
+
+  test("readNativeTurnCompleted reads a resolved path", async () => {
+    const dir = tempRoot("hive-native-turn-");
+    const path = join(dir, "updates.jsonl");
     writeFileSync(
       path,
-      first +
-        '{"type":"assistant"}\n' +
-        toolUseLine("mcp__graphify__graph_stats") +
-        "\n",
+      `${JSON.stringify({
+        params: { update: { sessionUpdate: "agent_message_chunk" } },
+      })}\n`,
     );
-    const two = await readGraphifyCalls(
-      "claude",
-      WORKTREE,
-      "session-g",
-      one ?? undefined,
-      home,
+    expect(await readNativeTurnCompleted(path, "grok")).toBe(false);
+    writeFileSync(
+      path,
+      `${JSON.stringify({
+        params: { update: { sessionUpdate: "turn_completed" } },
+      })}\n`,
     );
-    expect(two?.count).toEqual(2);
-  });
-
-  test("no session id means unknown, never zero", async () => {
-    const home = makeHome();
-    expect(
-      await readGraphifyCalls("claude", WORKTREE, undefined, undefined, home),
-    ).toBeNull();
-  });
-
-  // The calls this fixture really made: graph_locate x1, get_node x2,
-  // get_neighbors x2, query_graph x1. Grok wraps every MCP call in one native
-  // `use_tool`, so all 16 of these records are titled "use_tool" and the
-  // called tool's name lives at rawInput.tool_name. A counter keyed on the
-  // record's title reads zero against this very file, making a vendor that is
-  // using the graph look like one that never touched it.
-  test("counts grok use_tool records by rawInput.tool_name, not the record title", () => {
-    expect(countGraphifyCallLines(GROK_UPDATES, "grok")).toEqual(6);
-    expect(GROK_UPDATES).toContain('"title":"use_tool"');
-    expect(GROK_UPDATES).not.toContain('"title":"graphify__query_graph"');
-  });
-
-  test("counts grok calls off the session's real updates.jsonl", async () => {
-    const home = makeHome();
-    writeGrokSession(home, "session-1", GROK_UPDATES, GROK_SIGNALS);
-    const cursor = await readGraphifyCalls(
-      "grok",
-      WORKTREE,
-      "session-1",
-      undefined,
-      home,
-    );
-    expect(cursor?.count).toEqual(6);
-    expect(cursor?.path.endsWith("updates.jsonl")).toBe(true);
-  });
-
-  test("a missing session id clears stale cursors instead of reading a predecessor", async () => {
-    const home = makeHome();
-    writeGrokSession(home, "dead-predecessor", GROK_UPDATES, GROK_SIGNALS);
-    const stale = { path: "/dead/session.jsonl", offset: 10, count: 3 };
-    expect(
-      await readGraphifyCalls("codex", WORKTREE, undefined, stale, home),
-    ).toBeNull();
-    expect(
-      await readGraphifyCalls("grok", WORKTREE, undefined, stale, home),
-    ).toBeNull();
-  });
-
-  // The declaration trap is the load-bearing part of the kimi counter: the
-  // model-facing tools snapshot names every graphify tool with exactly the
-  // string a call carries, so a counter keyed on the name alone reads
-  // "adopted" off an agent that never touched the graph.
-  test("counts kimi tool.call events, never tool declarations", () => {
-    expect(countGraphifyCallLines(KIMI_WIRE, "kimi")).toEqual(3);
-    // The trap really is in the slice: the same call name appears once as a
-    // declaration and once as a call, and only the call may count.
-    expect(
-      KIMI_WIRE.split('"name":"mcp__graphify__query_graph"').length - 1,
-    ).toEqual(2);
-    // Neither a built-in call nor a non-graph MCP call counts.
-    expect(KIMI_WIRE).toContain('"name":"Grep"');
-    expect(KIMI_WIRE).toContain('"name":"mcp__hive__hive_send"');
-  });
-
-  test("counts kimi calls off the session's own wire.jsonl by session id", async () => {
-    const home = makeHome();
-    writeKimiSession(home, "session-1", KIMI_WIRE);
-    const cursor = await readGraphifyCalls(
-      "kimi",
-      WORKTREE,
-      "session-1",
-      undefined,
-      home,
-    );
-    expect(cursor?.count).toEqual(3);
-    expect(cursor?.path.endsWith(join("agents", "main", "wire.jsonl"))).toBe(
-      true,
-    );
-    // Nothing appended since: the cursor holds rather than recounting.
-    const again = await readGraphifyCalls(
-      "kimi",
-      WORKTREE,
-      "session-1",
-      cursor ?? undefined,
-      home,
-    );
-    expect(again).toEqual(cursor);
-  });
-
-  test("kimi without a session id or directory is unknown, never zero", async () => {
-    const home = makeHome();
-    expect(
-      await readGraphifyCalls("kimi", WORKTREE, undefined, undefined, home),
-    ).toBeNull();
-    // Session id known but nothing on disk yet: keep the measured cursor.
-    const stale = { path: "/dead/wire.jsonl", offset: 10, count: 3 };
-    expect(
-      await readGraphifyCalls("kimi", WORKTREE, "session-x", stale, home),
-    ).toEqual(stale);
-  });
-
-  test("counts opencode graph tool parts from the session database", async () => {
-    const home = makeHome();
-    writeOpencodeDatabase(home, "ses_1", OPENCODE_PARTS);
-    const cursor = await readGraphifyCalls(
-      "opencode",
-      WORKTREE,
-      "ses_1",
-      undefined,
-      home,
-    );
-    // hive_graph_locate + graphify_query_graph; hive_hive_send and the text
-    // part do not count.
-    expect(cursor?.count).toEqual(2);
-    expect(cursor?.path.endsWith("opencode.db")).toBe(true);
-  });
-
-  test("an opencode session the database has not seen is unknown, never zero", async () => {
-    const home = makeHome();
-    expect(
-      await readGraphifyCalls("opencode", WORKTREE, undefined, undefined, home),
-    ).toBeNull();
-    const stale = { path: "/dead/opencode.db", offset: 0, count: 2 };
-    // No database at all: keep the measured cursor.
-    expect(
-      await readGraphifyCalls("opencode", WORKTREE, "ses_1", stale, home),
-    ).toEqual(stale);
-    // The database exists but this agent's session is not in it yet: the CLI
-    // has not persisted the conversation, so there is still nothing measured.
-    writeOpencodeDatabase(home, "ses_other", OPENCODE_PARTS);
-    expect(
-      await readGraphifyCalls("opencode", WORKTREE, "ses_1", stale, home),
-    ).toEqual(stale);
-    // The session appears having made no graph calls: now zero is measured,
-    // not invented.
-    const sendOnly = OPENCODE_PARTS.filter((data) =>
-      data.includes('"hive_hive_send"'),
-    );
-    writeOpencodeDatabase(home, "ses_1", sendOnly);
-    const cursor = await readGraphifyCalls(
-      "opencode",
-      WORKTREE,
-      "ses_1",
-      stale,
-      home,
-    );
-    expect(cursor?.count).toEqual(0);
-  });
-
-  // The positive control that catches a regression to all-null: the vendors
-  // that already counted must keep counting. An all-null column reads
-  // as "nobody uses the graph" when it actually means "the reader is broken".
-  test("every vendor's counter still sees its own graph calls", () => {
-    expect(
-      countGraphifyCallLines(
-        `${toolUseLine("mcp__graphify__query_graph")}\n`,
-        "claude",
-      ),
-    ).toEqual(1);
-    expect(
-      countGraphifyCallLines(`${mcpEndLine("graphify")}\n`, "codex"),
-    ).toEqual(1);
-    expect(countGraphifyCallLines(GROK_UPDATES, "grok")).toBeGreaterThan(0);
-    expect(countGraphifyCallLines(KIMI_WIRE, "kimi")).toBeGreaterThan(0);
+    expect(await readNativeTurnCompleted(path, "grok")).toBe(true);
   });
 });

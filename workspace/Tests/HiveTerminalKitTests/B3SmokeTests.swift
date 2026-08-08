@@ -6,7 +6,7 @@ import XCTest
 /// B3 substrate smoke — the assertion half.
 ///
 /// Proves the sessiond + HiveTerminalKit substrate end to end. The driver
-/// half (`scripts/b3-smoke.sh`) stands the stack up, runs this, and tears
+/// half (`scripts/qa/b3-smoke.sh`) stands the stack up, runs this, and tears
 /// it down.
 ///
 /// Stage 3 proves bytes reached a RENDER-READY GRID — the terminal's semantic
@@ -18,11 +18,10 @@ import XCTest
 /// proof. Folding them in here would make this flaky and put an unlocked GUI
 /// session on the critical path of every run.
 ///
-/// ONE CLAIM, NO RETRY. A human input claim is never stolen: when a viewer
-/// drops it the arbiter orphans it, and the client has no release call (the
-/// `claimRelease` frame type exists but nothing sends it). This smoke
-/// attaches ONCE, claims ONCE, and must never retry an attach: a retry would
-/// not recover, it would burn the session.
+/// DIRECT INPUT, NO RECEIPT. Interactive bytes use USER_INPUT rather than a
+/// transaction. The session-unique split marker below proves those bytes took
+/// Hive's input path, were interpreted by the shell, and reached the grid.
+/// This smoke attaches once and never retries its one-use grant.
 ///
 /// Opt-in: requires `HIVE_B3_SMOKE_HOME`, set by the driver script.
 final class B3SmokeTests: XCTestCase {
@@ -31,15 +30,13 @@ final class B3SmokeTests: XCTestCase {
     private var transcript: [String] = []
 
     func testSessiondSubstrateSmoke() throws {
-        let (proof, home) = try loadProof()
+        let (proof, _) = try loadProof()
         defer { printTranscript() }
 
         // ── STAGE 1: session create ───────────────────────────────────────
         // The driver created the session; this asserts it is addressable and
         // that the descriptor names a real, live host directory.
-        let hostDir = URL(fileURLWithPath: home)
-            .appendingPathComponent("runtime/sessiond/hosts")
-            .appendingPathComponent(proof.locator.sessionId)
+        let hostDir = URL(fileURLWithPath: proof.hostDirectory, isDirectory: true)
         var isDirectory: ObjCBool = false
         let hostExists = FileManager.default.fileExists(
             atPath: hostDir.path,
@@ -56,8 +53,8 @@ final class B3SmokeTests: XCTestCase {
         XCTAssertEqual(grantLine.status, 0, "STAGE 2 attach: grant refused: \(grantLine.output)")
         let grant = try parseGrant(grantLine.output)
         XCTAssertTrue(
-            grant.operations.contains("human-input"),
-            "STAGE 2 attach: grant lacks human-input authority"
+            grant.operations.contains("user-input"),
+            "STAGE 2 attach: grant lacks user-input authority"
         )
 
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
@@ -82,9 +79,7 @@ final class B3SmokeTests: XCTestCase {
         stage(2, "attach", true, "attached at first correct frame")
         let binding = try XCTUnwrap(view.binding)
 
-        // ── STAGE 3 + 4: input applied, then bytes render-ready ───────────
-        // One claim covers both.
-        //
+        // ── STAGE 3: shell-interpreted input reaches the grid ─────────────
         // SPLIT MARKER: typed in a split form only a real shell will rejoin;
         // the assertion looks for the REJOINED form. Distinguishes "a shell
         // interpreted these bytes" from "the renderer echoed what I typed" —
@@ -102,7 +97,7 @@ final class B3SmokeTests: XCTestCase {
         // not submit unseen), and it means a smoke that types "cmd\n" through
         // insertText will hang forever waiting for output that cannot come.
         //
-        // A human types the text and then presses Return; the Return is a KEY
+        // A user types the text and then presses Return; the Return is a KEY
         // event, outside the paste, and that is what submits the line.
         view.insertText(
             "echo \(split)",
@@ -114,19 +109,15 @@ final class B3SmokeTests: XCTestCase {
         let marker = joined
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
-        var applied: (txn: String, stage: String)?
         var rendered = false
         let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
-            if applied == nil, case .applied(let txn, let st) = view.inputSubmissionState {
-                applied = (txn, st)
-            }
             if !rendered,
                let snapshot = surface.semanticSnapshot(),
                snapshot.text.contains(marker) {
                 rendered = true
             }
-            if applied != nil && rendered { break }
+            if rendered { break }
             do {
                 if let frame = try transport.receive(timeout: 0.5) {
                     view.pumpHostFrame(frame, frameBinding: binding)
@@ -137,16 +128,12 @@ final class B3SmokeTests: XCTestCase {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
 
-        // STAGE 4 first: the write boundary is what makes stage 3 attributable.
-        stage(4, "input-applied", applied?.stage == "written-to-terminal",
-              "input receipt stage=\(applied?.stage ?? "none") txn=\(applied?.txn ?? "none")")
-        XCTAssertEqual(
-            applied?.stage, "written-to-terminal",
-            "STAGE 4 input-applied: host did not report writing input to the terminal"
+        transcript.append(
+            "RETIRED STAGE 4 input receipt — interactive USER_INPUT has no transaction; "
+                + "the session-unique rejoined marker is now the delivery evidence"
         )
-
         stage(3, "render-ready", rendered,
-              "semantic snapshot contains rejoined \(marker) (GRID-ready, not pixels-drawn)")
+              "session-unique rejoined \(marker) proves Hive input reached the shell and grid")
         XCTAssertTrue(
             rendered,
             "STAGE 3 render-ready: the REJOINED marker \(marker) never reached the "
@@ -187,7 +174,7 @@ final class B3SmokeTests: XCTestCase {
         transcript.forEach { print($0) }
     }
 
-    /// A Return key event — the submit path a human uses. Not a newline in
+    /// A Return key event — the submit path a user uses. Not a newline in
     /// pasted text, which a bracketed-paste-aware shell will not execute.
     private static func returnKeyEvent() -> NSEvent {
         NSEvent.keyEvent(
@@ -217,6 +204,7 @@ final class B3SmokeTests: XCTestCase {
         let port: Int
         let agent: String
         let mode: String?
+        let hostDirectory: String
         let locator: ProofLocator
     }
 
@@ -246,7 +234,7 @@ final class B3SmokeTests: XCTestCase {
 
     private func loadProof() throws -> (Proof, String) {
         guard let home = ProcessInfo.processInfo.environment["HIVE_B3_SMOKE_HOME"] else {
-            throw XCTSkip("HIVE_B3_SMOKE_HOME not set — run scripts/b3-smoke.sh")
+            throw XCTSkip("HIVE_B3_SMOKE_HOME not set — run scripts/qa/b3-smoke.sh")
         }
         let descriptor = URL(fileURLWithPath: home).appendingPathComponent("b22-proof.json")
         let proof = try JSONDecoder().decode(Proof.self, from: Data(contentsOf: descriptor))

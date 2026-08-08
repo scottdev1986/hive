@@ -1,6 +1,6 @@
 name: promote release
 
-# Promotion is deliberately separate from the build. A human runs this only
+# Promotion is deliberately separate from the build. A user runs this only
 # after installing and accepting the candidate; it changes GitHub release state
 # without rebuilding, retagging, or replacing any tested artifact.
 on:

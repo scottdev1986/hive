@@ -1,8 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync, lstatSync } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   GRAPHIFY_IGNORE_MARKER,
   runCommand,
@@ -12,15 +19,20 @@ import {
   runUninstallRepo,
   type UninstallDeps,
 } from "../../src/cli/uninstall";
-import { getHiveHome } from "../../src/daemon/db";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
+import { getHiveHome } from "../../src/hive-home/home";
+import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { type HiveVariant, resolveVariant } from "../../src/hive-home/variant";
 import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
-import { projectStateDir } from "../../src/daemon/project-state";
+import { projectStateDir } from "../../src/daemon/project-identity-core/state";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 import { required } from "../required";
 
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
+const fixtureProcessIdentity = async (pid: number) => ({
+  state: "live" as const,
+  startedAt: `process-${pid}`,
+});
 
 beforeAll(async () => {
   hiveHome = await mkdtemp(join(tmpdir(), "hive-home-"));
@@ -78,6 +90,7 @@ function probe(
       stops.push(1);
     },
     currentInstanceOwnsProject: async () => true,
+    settleCurrentProject: async () => ({}),
     liveTeams: async () => [],
     stopInstances: async () => {},
     acquireLease: async (purpose) => {
@@ -149,7 +162,7 @@ describe("hive uninstall --repo", () => {
     }
   });
 
-  test("confirmed: removes everything Hive put in, keeps everything the human owns", async () => {
+  test("confirmed: removes everything Hive put in, keeps everything the user owns", async () => {
     const root = await gitRepo();
     try {
       // Hive's full repo footprint, laid down the way Hive lays it down.
@@ -217,7 +230,7 @@ describe("hive uninstall --repo", () => {
       expect(existsSync(join(root, ".claude", "skills", ours.name))).toBe(
         false,
       );
-      expect(existsSync(join(root, ".hive", "worktrees"))).toBe(false);
+      expect(existsSync(join(root, ".hive", "worktrees"))).toBe(true);
       expect(existsSync(join(root, "graphify-out"))).toBe(false);
       expect(existsSync(projectStateDir(root))).toBe(false);
       const branches = Bun.spawnSync([
@@ -228,7 +241,7 @@ describe("hive uninstall --repo", () => {
         "--list",
         "hive/*",
       ]);
-      expect(branches.stdout.toString().trim()).toBe("");
+      expect(branches.stdout.toString().trim()).toContain("hive/wt-task");
       const exclude = await readFile(
         join(root, ".git", "info", "exclude"),
         "utf8",
@@ -252,12 +265,13 @@ describe("hive uninstall --repo", () => {
         ),
       ).toContain("# my edits");
       expect(lines.join("\n")).toContain("differs from what Hive ships");
+      expect(lines.join("\n")).toContain("protected settlement item");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("removes only this instance's same-repo worktree and branch", async () => {
+  test("leaves every unproved worktree and branch protected", async () => {
     const root = await gitRepo();
     try {
       const ownPath = join(root, ".hive", "worktrees", "maya");
@@ -276,7 +290,7 @@ describe("hive uninstall --repo", () => {
       ]);
       const { deps, lines } = probe(true);
       expect(await runUninstallRepo(root, {}, deps)).toBe(0);
-      expect(existsSync(ownPath)).toBe(false);
+      expect(existsSync(ownPath)).toBe(true);
       expect(existsSync(siblingPath)).toBe(true);
       expect(
         Bun.spawnSync([
@@ -287,7 +301,7 @@ describe("hive uninstall --repo", () => {
           "--verify",
           "refs/heads/hive/maya-own",
         ]).exitCode,
-      ).not.toBe(0);
+      ).toBe(0);
       expect(
         Bun.spawnSync([
           "git",
@@ -298,16 +312,14 @@ describe("hive uninstall --repo", () => {
           "refs/heads/hive/david-sibling",
         ]).exitCode,
       ).toBe(0);
-      expect(lines.join("\n")).toContain("Left sibling-owned worktree");
-      expect(lines.join("\n")).toContain(
-        "Left sibling-owned branch hive/david-sibling",
-      );
+      expect(lines.join("\n")).toContain("Left protected settlement worktree");
+      expect(lines.join("\n")).toContain("Left protected settlement branch");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("reports an owned branch that Git refuses to delete", async () => {
+  test("never falls back to raw branch deletion", async () => {
     const root = await gitRepo();
     try {
       const worktree = join(root, ".hive", "worktrees", "maya");
@@ -328,7 +340,7 @@ describe("hive uninstall --repo", () => {
               }
             : runCommand(argv, options),
       });
-      expect(await runUninstallRepo(root, {}, deps)).toBe(1);
+      expect(await runUninstallRepo(root, {}, deps)).toBe(0);
       expect(
         Bun.spawnSync([
           "git",
@@ -339,8 +351,8 @@ describe("hive uninstall --repo", () => {
           "refs/heads/hive/maya-owned",
         ]).exitCode,
       ).toBe(0);
-      expect(lines.join("\n")).toContain("branch is locked");
-      expect(lines.join("\n")).not.toContain("Hive is removed from this repo");
+      expect(lines.join("\n")).not.toContain("branch is locked");
+      expect(lines.join("\n")).toContain("protected settlement item");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -437,11 +449,13 @@ describe("hive uninstall", () => {
       path: mutationPath,
       instanceId: "review",
       instanceHome: home,
+      processIdentity: fixtureProcessIdentity,
     });
     const uninstallCoordinator = new MachineMutationCoordinator({
       path: mutationPath,
       instanceId: "default",
       instanceHome: home,
+      processIdentity: fixtureProcessIdentity,
       instanceLiveness: async () => "live",
     });
     const operation = await operationCoordinator.beginOperation("spawn");
@@ -495,6 +509,7 @@ describe("hive uninstall", () => {
       path: join(root, "runtime", "mutation.db"),
       instanceId: "default",
       instanceHome: home,
+      processIdentity: fixtureProcessIdentity,
     });
     try {
       await mkdir(home);
@@ -636,6 +651,203 @@ describe("hive uninstall", () => {
       if (previous === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previous;
       await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+// What an uninstall keeps and what it takes is a function of the variant record and of nothing
+// else, so these cases build a whole scratch install — home, machine home, socket root — and read
+// the record for it rather than restating its rules. The socket root has to be redirected too: it
+// resolves under /tmp by default, where the test sandbox denies writes.
+const VARIANT_ENV = [
+  "HIVE_HOME",
+  "HIVE_DEFAULT_HOME",
+  "HIVE_SESSIOND_ROOT",
+  "HIVE_BUILD_VARIANT",
+] as const;
+
+function scratchInstall(
+  root: string,
+  home: string,
+  variant: HiveVariant | undefined,
+): () => void {
+  const saved = VARIANT_ENV.map((name) => [name, process.env[name]] as const);
+  process.env.HIVE_HOME = home;
+  process.env.HIVE_DEFAULT_HOME = join(root, "machine");
+  process.env.HIVE_SESSIOND_ROOT = join(root, "sock");
+  if (variant === undefined) delete process.env.HIVE_BUILD_VARIANT;
+  else process.env.HIVE_BUILD_VARIANT = variant;
+  return () => {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+}
+
+describe("uninstall retention follows the variant record", () => {
+  test("a prod uninstall keeps the artifact store: those files are the evidence the board cites", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-prod-"));
+    const home = join(root, "machine");
+    const restore = scratchInstall(root, home, undefined);
+    try {
+      const config = resolveVariant();
+      expect(config.variant).toBe("prod");
+      // The durable artifact root is a top-level entry of this home — with no named instance in
+      // play the machine home IS this home — so the sweep reaches it unless retention names it.
+      expect(config.retention).toEqual(["artifacts"]);
+      await mkdir(join(config.sessiondStateRoot, "ses_fixture"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(config.sessiondStateRoot, "ses_fixture", "record.json"),
+        "{}",
+      );
+      await mkdir(config.socketRoot, { recursive: true });
+      await writeFile(join(config.socketRoot, "registry.lock"), "");
+      await writeFile(join(home, "hive.db"), "");
+      const evidence = join(
+        home,
+        "artifacts",
+        "project-a",
+        "task_1",
+        "art_1.md",
+      );
+      await mkdir(dirname(evidence), { recursive: true });
+      await writeFile(evidence, "the evidence the board cites\n");
+
+      const { deps, lines } = probe(true);
+      expect(await runUninstallMachine({}, deps)).toBe(0);
+
+      expect(await readFile(evidence, "utf8")).toBe(
+        "the evidence the board cites\n",
+      );
+      // Everything else the sweep could reach went, and the home directory stays because
+      // something was kept — `rmdir` refusing a non-empty directory is the whole rule there.
+      expect(existsSync(join(home, "hive.db"))).toBe(false);
+      expect(existsSync(config.socketRoot)).toBe(false);
+      expect(existsSync(config.sessiondStateRoot)).toBe(false);
+      // A destructive plan names what it keeps before consent, or the consent is not informed.
+      expect(lines.join("\n")).toContain("keeping artifacts");
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the printed plan names the sibling instances it will take with it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-plan-"));
+    const home = join(root, "machine");
+    const restore = scratchInstall(root, home, undefined);
+    try {
+      const config = resolveVariant();
+      await mkdir(join(home, "instances", "dev-aaaaaaaaaa"), {
+        recursive: true,
+      });
+      await mkdir(join(home, "instances", "qa-bbbbbbbbbb"), {
+        recursive: true,
+      });
+      await writeFile(join(home, "hive.db"), "");
+
+      const { deps, lines } = probe(true);
+      expect(await runUninstallMachine({}, deps)).toBe(0);
+
+      const printed = lines.join("\n");
+      // A destructive plan that under-reports its own blast radius cannot be consented to.
+      expect(printed).toContain(join(home, "instances", "dev-aaaaaaaaaa"));
+      expect(printed).toContain(join(home, "instances", "qa-bbbbbbbbbb"));
+      expect(printed).toContain(config.socketRoot);
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a dev uninstall keeps its database, its artifact store, its memory links and its selections, and never reaches the user's own home", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-dev-"));
+    const machineHome = join(root, "machine");
+    const home = join(machineHome, "instances", "dev-fixture");
+    const restore = scratchInstall(root, home, "dev");
+    try {
+      const config = resolveVariant();
+      // Positive control for every "was kept" assertion below: this variant retains a non-empty set.
+      expect(config.retention).toContain("hive.db");
+
+      const userMemory = join(root, "user-memory");
+      const userTools = join(root, "user-tools");
+      await mkdir(userMemory, { recursive: true });
+      await mkdir(userTools, { recursive: true });
+      await writeFile(join(userMemory, "keep.md"), "lessons");
+      await writeFile(join(userTools, "keep.txt"), "tools");
+
+      await mkdir(join(home, "logs"), { recursive: true });
+      await mkdir(machineHome, { recursive: true });
+      await writeFile(join(machineHome, "hive.db"), "the user's own database");
+      const kept = [
+        "hive.db",
+        "hive.db-wal",
+        "hive.db-shm",
+        "quota.db",
+        "config.toml",
+        "quota.toml",
+        "billing-2026-08.json",
+      ];
+      for (const name of kept) await writeFile(join(home, name), name);
+      // The instance home's own artifact store is real bytes, not a link: artifacts written
+      // before the store moved to the machine-level home live here, and they are evidence.
+      const legacyEvidence = join(
+        home,
+        "artifacts",
+        "project-a",
+        "task_1",
+        "art_1.md",
+      );
+      await mkdir(dirname(legacyEvidence), { recursive: true });
+      await writeFile(legacyEvidence, "legacy artifact\n");
+      await writeFile(join(home, "daemon.pid"), "1");
+      await writeFile(join(home, "logs", "daemon.log"), "noise");
+      await mkdir(join(config.sessiondStateRoot, "ses_fixture"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(config.sessiondStateRoot, "ses_fixture", "record.json"),
+        "{}",
+      );
+      await symlink(userMemory, join(home, "memory"));
+      await symlink(userTools, join(home, "tools"));
+
+      const { deps } = probe(true);
+      expect(await runUninstallMachine({}, deps)).toBe(0);
+
+      for (const name of kept) {
+        expect(existsSync(join(home, name))).toBe(true);
+      }
+      expect(await readFile(legacyEvidence, "utf8")).toBe("legacy artifact\n");
+      expect(existsSync(join(home, "daemon.pid"))).toBe(false);
+      expect(existsSync(join(home, "logs"))).toBe(false);
+      // Sessiond's state tree is per-run and expendable, so a retaining uninstall drops it like any
+      // other runtime path. It is asserted rather than assumed because it is younger than the
+      // retention set it has to be absent from, and a set that is a list of what to KEEP is the only
+      // shape under which a directory nobody thought about is removed by default.
+      expect(existsSync(config.sessiondStateRoot)).toBe(false);
+
+      // Retaining memory means retaining a link. The bytes behind it are the user's either way, so
+      // the assertion that matters is on the target, not on the link.
+      expect(lstatSync(join(home, "memory")).isSymbolicLink()).toBe(true);
+      expect(await readFile(join(userMemory, "keep.md"), "utf8")).toBe(
+        "lessons",
+      );
+      // And a link that is not retained is unlinked, never followed: the directory it named survives.
+      expect(existsSync(join(home, "tools"))).toBe(false);
+      expect(await readFile(join(userTools, "keep.txt"), "utf8")).toBe("tools");
+
+      // A dev install is not the user's install and has no business deleting it.
+      expect(await readFile(join(machineHome, "hive.db"), "utf8")).toBe(
+        "the user's own database",
+      );
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
     }
   });
 });

@@ -1,7 +1,7 @@
 # Context degradation and agent recycling
 
 Updated: 2026-07-14
-Sources: Hive source tree, 2026-07-14; [SPEC decision 7](../../SPEC.md); linked research papers
+Sources: Hive source tree, 2026-07-14; linked research papers
 
 ## Summary
 
@@ -9,13 +9,13 @@ Hive used to describe agent reuse through a 65% context threshold, justified by 
 
 ## The 140K had no provenance
 
-The figure entered SPEC in the initial commit (`bc58715`) and was never derived from anything. Its most-repeated public attribution — that an engineer at Sourcegraph measured degradation at 147,000–152,000 tokens — is a **fabricated citation**: the post it names ([ghuntley.com/gutter](https://ghuntley.com/gutter/)) makes a qualitative "one task, one context" argument and contains no token numbers at all. The figure appears to have been invented by a secondary blog and propagated.
+The figure entered Hive's documentation in the initial commit (`bc58715`) and was never derived from anything. Its most-repeated public attribution — that an engineer at Sourcegraph measured degradation at 147,000–152,000 tokens — is a **fabricated citation**: the post it names ([ghuntley.com/gutter](https://ghuntley.com/gutter/)) makes a qualitative "one task, one context" argument and contains no token numbers at all. The figure appears to have been invented by a secondary blog and propagated.
 
 Its likeliest true origin is arithmetic, not measurement: 200,000 × 70% ≈ 140,000 — a *budget* observation about Claude Code's 200K window, retconned into a *quality* claim.
 
 Nothing in the published literature lands there. RULER's effective lengths are 16–64K; NoLiMa's are 2–8K; LOCA-bench's agentic decline is well underway by 32–64K; Databricks found RAG peaking and declining at 32–64K. The only figure in the neighbourhood is Fiction.liveBench's 60–120K band, which is a community leaderboard and sits *below* 140K.
 
-`SPEC.md:204` now preserves the 140K only as a rejected alternative, "because the way a fabricated constant survives is by nobody writing down that it was fabricated."
+The 140K survives here only as a rejected alternative, "because the way a fabricated constant survives is by nobody writing down that it was fabricated."
 
 ## The units error — the finding that matters most
 
@@ -77,7 +77,7 @@ Break-even, with restart cost `R ≈ $0.81` and per-turn carry at $0.50/MTok:
 
 Three mechanics that bind Hive's architecture:
 
-- **`/compact` is cheaper than respawn.** It shares the cached prefix and rebuilds only the conversation layer; a Hive recycle kills the session and re-pays the whole briefing at write rate. SPEC rejected `/compact` on *quality* grounds, which the constraint-pinning data below fully vindicates — but that was never a *cost* argument, and the two objections separate.
+- **`/compact` is cheaper than respawn.** It shares the cached prefix and rebuilds only the conversation layer; a Hive recycle kills the session and re-pays the whole briefing at write rate. Hive rejects `/compact` on *quality* grounds, which the constraint-pinning data below fully vindicates — but that was never a *cost* argument, and the two objections separate.
 - **Cache scope is per-directory.** The system prompt embeds the working directory and git branch, so **agents in different worktrees cannot share cache.** Hive runs every agent in `.hive/worktrees/*`. **N agents means N briefing writes, always.**
 - **Never switch a live agent's model or effort level.** It silently invalidates the entire prefix. Route the change to a new agent.
 
@@ -141,8 +141,8 @@ And the reasoning discipline that produced the rest of this article:
 
 - **Name what each direction of error actually costs before you call one of them safe.** Assuming that "conservative" meant "recycle early" is exactly what justified hardcoding a 200K denominator, on the reasoning that a larger window would merely read "conservatively high."
 - **A measurement beats an estimate; a label describes the number actually *published*, not the reading it was built from.**
-- **An honest `null` beats a confident wrong number** — a missing number stops a bad decision; a wrong one causes it. This is load-bearing in the code: `contextPct` is nullable end to end, null reads as *full, not free*, and an agent Hive cannot sense is an agent it will not reuse (`src/schemas/agent.ts:117`, `src/cli/orchestrator-brief.ts:3`, SPEC.md:198–232).
-- **Process or repository state never answers whether assigned work is complete.** Idle, landed, clean, reaped, killed, and recycled are activity or lifecycle facts. Only the exact holder's structured `reported_complete` followed by queen/operator `accepted` closes the durable assignment; recycling preserves the last truthful outcome.
+- **An honest `null` beats a confident wrong number** — a missing number stops a bad decision; a wrong one causes it. This is load-bearing in the code: `contextPct` is nullable end to end, null reads as *full, not free*, and an agent Hive cannot sense is an agent it will not reuse (`src/schemas/agent.ts:117`, `src/cli/queen-policy.ts`).
+- **Process or repository state never answers whether assigned work is complete.** Idle, landed, clean, reaped, killed, and recycled are activity or lifecycle facts. Only the exact holder's structured `reported_complete` followed by queen/user `accepted` closes the durable assignment; recycling preserves the last truthful outcome.
 
 ## The cost of being wrong, in each direction
 
@@ -156,13 +156,13 @@ And the reasoning discipline that produced the rest of this article:
 
 Verified against the tree on 2026-07-14, and it is a real, current gap.
 
-**There is no recycle actuator.** No token ceiling, no recycle threshold, no kill-on-depth path exists anywhere in `src/`. `HandoffSchema` (`src/schemas/handoff.ts:3-12`) *is* now live — but not as a recycle artifact: it is produced in the `hive_escalate` path (imported at `src/daemon/server.ts:48`, parsed at `src/daemon/server.ts:3671-3680`), where an agent claims its task exceeds its model and hands queen a goal/done/remaining/decisions/failedApproaches/branch envelope. Escalation, not recycling. So "recycled too late" remains **structurally unreachable**; the single live failure mode is spawn-churn.
+**There is no recycle actuator.** No token ceiling, no recycle threshold, no kill-on-depth path exists anywhere in `src/`. `HandoffSchema` (`src/schemas/handoff-schema.ts:3-12`) *is* now live — but not as a recycle artifact: it is produced in the `hive_escalate` path (imported at `src/daemon/server.ts:48`, parsed at `src/daemon/server.ts:3671-3680`), where an agent claims its task exceeds its model and hands queen a goal/done/remaining/decisions/failedApproaches/branch envelope. Escalation, not recycling. So "recycled too late" remains **structurally unreachable**; the single live failure mode is spawn-churn.
 
-The orchestrator brief no longer turns the percentage into an admission threshold. It prefers a same-scope live agent when the next task fits its remaining room, keeps unobserved `contextPct` ineligible, and says explicitly that SPEC decision 7 defines no numeric threshold until an absolute-token admission actuator exists (`src/cli/orchestrator-brief.ts:3`; `test/cli/orchestrator-brief.test.ts:256-276`). This is qualitative dispatch guidance, not automatic recycling.
+The queen policy no longer turns the percentage into an admission threshold. It prefers a same-scope live agent when the next task fits its remaining room, keeps unobserved `contextPct` ineligible, and says explicitly that Hive defines no numeric threshold until an absolute-token admission actuator exists (`src/cli/queen-policy.ts`; `test/cli/orchestrator-launch.test.ts`). This is qualitative dispatch guidance, not automatic recycling.
 
-Two structural commitments SPEC already ratified and the code has not yet expressed: the ceiling must be **absolute tokens, per model, tuned by measurement, and subordinate to the error-state trigger**; and **admit and retire must be two different lines**. One number doing both jobs means an agent can accept a task at 64% and be killed at 66% while still holding it. The gap between the lines is the room an agent needs to finish what it accepted.
+Two structural commitments already ratified and the code has not yet expressed: the ceiling must be **absolute tokens, per model, tuned by measurement, and subordinate to the error-state trigger**; and **admit and retire must be two different lines**. One number doing both jobs means an agent can accept a task at 64% and be killed at 66% while still holding it. The gap between the lines is the room an agent needs to finish what it accepted.
 
-The sensing layer has already been fixed the right way: `src/daemon/tool-telemetry.ts:90-109` reports the **numerator only** — resident tokens, summed from the transcript — because the model id cannot supply the window (the 1M upgrade is a property of the *account's plan*, so `claude-opus-4-8` is 200K on one plan and 1M on another with a byte-identical string). The sweep divides by the window the statusline payload actually measured, or reports unknown (`src/daemon/server.ts:1422-1428`). Sensing is correct and the brief now uses the same qualitative rule; the automatic actuator is the remaining gap.
+The sensing layer has already been fixed the right way: `src/daemon/observability/tool-telemetry.ts:90-109` reports the **numerator only** — resident tokens, summed from the transcript — because the model id cannot supply the window (the 1M upgrade is a property of the *account's plan*, so `claude-opus-4-8` is 200K on one plan and 1M on another with a byte-identical string). The sweep divides by the window the statusline payload actually measured, or reports unknown (`src/daemon/server.ts:1422-1428`). Sensing is correct and the brief now uses the same qualitative rule; the automatic actuator is the remaining gap.
 
 ## Open questions
 
@@ -178,4 +178,3 @@ The sensing layer has already been fixed the right way: `src/daemon/tool-telemet
 - [Rejected approaches](../routing/rejected-approaches.md) — measured token costs of what enters a spawn prompt
 - [Launch mechanics](../providers/launch-mechanics.md) — why per-worktree cache scope is unavoidable
 - [Database resilience](../daemon/database-resilience.md) — the sibling "absence is a finding" invariant
-- [SPEC.md decision 7](../../SPEC.md) — what happens when a context fills up

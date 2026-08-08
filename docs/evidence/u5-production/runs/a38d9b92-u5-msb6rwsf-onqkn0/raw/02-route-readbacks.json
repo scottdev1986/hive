@@ -1,0 +1,107 @@
+[
+  {
+    "provider": "claude",
+    "model": "claude-haiku-4-5-20251001",
+    "beforeRevision": 1,
+    "writtenRevision": 3,
+    "readbackRevision": 3,
+    "providerState": "enabled",
+    "route": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "claude",
+          "model": "claude-haiku-4-5-20251001",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "weight": 1
+        }
+      ]
+    }
+  },
+  {
+    "provider": "codex",
+    "model": "gpt-5.3-codex-spark",
+    "beforeRevision": 3,
+    "writtenRevision": 5,
+    "readbackRevision": 5,
+    "providerState": "enabled",
+    "route": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "codex",
+          "model": "gpt-5.3-codex-spark",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "weight": 1
+        }
+      ]
+    }
+  },
+  {
+    "provider": "opencode",
+    "model": "opencode/deepseek-v4-flash-free",
+    "beforeRevision": 5,
+    "writtenRevision": 7,
+    "readbackRevision": 7,
+    "providerState": "enabled",
+    "route": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "opencode",
+          "model": "opencode/deepseek-v4-flash-free",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "weight": 1
+        }
+      ]
+    }
+  },
+  {
+    "provider": "grok",
+    "model": "grok-4.5",
+    "beforeRevision": 7,
+    "writtenRevision": 9,
+    "readbackRevision": 9,
+    "providerState": "enabled",
+    "route": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "weight": 1
+        }
+      ]
+    }
+  },
+  {
+    "provider": "kimi",
+    "model": "kimi-code/k3",
+    "beforeRevision": 9,
+    "writtenRevision": 11,
+    "readbackRevision": 11,
+    "providerState": "enabled",
+    "route": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "kimi",
+          "model": "kimi-code/k3",
+          "effort": {
+            "mode": "provider-controlled"
+          },
+          "weight": 1
+        }
+      ]
+    }
+  }
+]

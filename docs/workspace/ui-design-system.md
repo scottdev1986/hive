@@ -21,7 +21,7 @@ What this doc owns is everything the code cannot say: why a rule exists, and whi
 4. **States are never color alone.** Every colored state carries a symbol or words (`CapsuleBadge` enforces this). Opacity alone is not a state either — dimmed content gets a caption saying *why*.
 5. **Honest data display.** A missing reading renders as a visibly distinct unknown, never as a zero and never as an empty bar. There is no code path that draws a determinate bar for missing data. Keep it that way everywhere numbers appear.
 6. **Motion is subtle and optional.** Durations from `Theme.Motion`; check `Theme.reduceMotion` first. An instant change beats a janky tween.
-7. **Terminal pixels are vendor-owned; the chrome around them is the job.** SwiftTerm plus the child TUI own every pixel inside a pane. Do not retheme a vendor's TUI from outside — its colors are its product. At most: outer pane chrome, and a non-interactive placeholder *before* first attach.
+7. **Terminal pixels are vendor-owned; the chrome around them is the job.** The terminal surface plus the child TUI own every pixel inside a pane. Do not retheme a vendor's TUI from outside — its colors are its product. At most: outer pane chrome, and a non-interactive placeholder *before* first attach.
 
 ## The AppKit invariants
 
@@ -40,12 +40,6 @@ The historical warning survives in the code at `workspace/Sources/HiveWorkspace/
 **A label whose compression resistance is ≥ `NSLayoutPriorityWindowSizeStayPut` (500) grows the WINDOW instead of truncating.** The AppKit default is **750**. So a perfectly ordinary "this long model id truncates with a tooltip" label, left at its defaults, silently instructed the layout pass to widen the window to fit — and the settings window opened absurdly wide (thousands of points, past the screen).
 
 Any soft "fill the available width" constraint must therefore sit **below 500**. The settings reading column is pinned at priority **490** (`workspace/Sources/HiveWorkspace/Settings/SettingsPageController.swift:49-54`), yielding to the hard 720 pt cap so narrow windows get margins and wide windows get a column, never a sprawl. Truncation + `toolTip` is the correct treatment; it just cannot be requested at a priority that outranks the window's right to stay put.
-
-### The SwiftTerm pin is load-bearing
-
-`workspace/Package.swift:20` pins SwiftTerm at **`exact: "1.11.2"`** — the newest release *without* the Metal GPU backend introduced in 1.12.0. Its `Shaders.metal` resource makes the universal release build (`swift build --arch arm64 --arch x86_64`) require the optional Metal toolchain component, which Xcode 26 machines and CI runners often lack or have version-mismatched. **1.12 breaks universal release builds.** The CPU/CoreGraphics renderer is all a TUI multiplexer needs. Do not bump this pin to chase a renderer the product does not use.
-
-The pin has a second consequence worth knowing: 1.11.2 misencodes no-button SGR motion as a button release, which is why the app filters that one packet at the PTY boundary. See [blueprint.md](blueprint.md).
 
 ## Honest state: the two rules that were bugs
 
@@ -101,4 +95,3 @@ The token ramp is still concentrated in the Model Control Center. Pane chrome us
 
 - [Workspace Blueprint](blueprint.md) — panes, feed contract, incidents, and rejected alternatives
 - [Model Control Center](../routing/model-control-center.md) — the Settings surface, this system's reference implementation
-- [SPEC.md](../../SPEC.md) — the shipping substrate the app renders

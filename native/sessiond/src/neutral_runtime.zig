@@ -1,15 +1,15 @@
 const std = @import("std");
+const generated = @import("session_protocol_generated");
 const contract = @import("neutral_contract");
+const security = @import("security_helpers");
 
 const c = @cImport({
     @cInclude("sys/socket.h");
     @cInclude("sys/stat.h");
-    @cInclude("sys/time.h");
     @cInclude("unistd.h");
 });
 
 const schema_version = contract.schema_version;
-const socket_relative_path = contract.socket_relative_path;
 const record_relative_path = contract.record_relative_path;
 const control_relative_path = contract.control_relative_path;
 const runtime_relative_path = contract.runtime_relative_path;
@@ -101,36 +101,43 @@ pub const TerminationReserveResult = union(enum) {
     replay: []const u8,
 };
 
-/// The opaque key is never interpreted as a path component. Length-prefixing
-/// makes the tuple encoding injective before hashing.
-pub fn sessionDirectoryName(session: SessionRef) [46]u8 {
+pub const WorkCounts = struct {
+    recordReads: usize = 0,
+    durableWrites: usize = 0,
+};
+
+pub const test_baseline_unchanged_writes = 1;
+
+/// The opaque key is never interpreted as a path component. Length-prefixing makes the tuple encoding injective before hashing.
+fn sessionDigest(session: SessionRef) [32]u8 {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     putLength(&hasher, session.key.len);
     hasher.update(session.key);
     putLength(&hasher, session.incarnation.len);
     hasher.update(session.incarnation);
-    const digest = hasher.finalResult();
+    return hasher.finalResult();
+}
+
+pub fn sessionDirectoryName(session: SessionRef) [46]u8 {
+    const digest = sessionDigest(session);
     var result: [46]u8 = undefined;
     @memcpy(result[0..3], "nh-");
     _ = std.base64.url_safe_no_pad.Encoder.encode(result[3..], &digest);
     return result;
 }
 
+/// The name this session's endpoint takes under the socket root. The same digest that names the state directory, so a peer holding the session reference derives the socket without being told it.
+pub fn sessionSocketName(session: SessionRef) [security.socket_name_length]u8 {
+    return security.socketName(sessionDigest(session));
+}
+
 fn requireOwnedDirectory(directory: std.fs.Dir) !void {
-    const stat = try std.posix.fstat(directory.fd);
-    if (stat.uid != std.posix.getuid() or
-        stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR)
-        return error.DirectorySubstitution;
-    try directory.chmod(0o700);
-    const secured = try std.posix.fstat(directory.fd);
-    if (secured.mode & 0o777 != 0o700) return error.DirectorySubstitution;
+    // Neutral private trees were always hardened (chmod 0700 + re-fstat).
+    try security.requireOwnedDirectory(directory, null, .harden);
 }
 
 fn requireOwnedRoot(directory: std.fs.Dir) !void {
-    const stat = try std.posix.fstat(directory.fd);
-    if (stat.uid != std.posix.getuid() or
-        stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR)
-        return error.DirectorySubstitution;
+    try security.requireOwnedRoot(directory);
 }
 
 fn openPrivateDirectory(parent: std.fs.Dir, name: []const u8) !std.fs.Dir {
@@ -160,58 +167,55 @@ fn openRegistryLock(directory: std.fs.Dir) !std.fs.File {
     var file: std.fs.File = .{ .handle = fd };
     errdefer file.close();
     try file.chmod(0o600);
-    const stat = try std.posix.fstat(fd);
-    if (stat.uid != std.posix.getuid() or
-        stat.mode & std.posix.S.IFMT != std.posix.S.IFREG or
-        stat.mode & 0o777 != 0o600)
-        return error.LockSubstitution;
+    try security.requireOwnedPrivateFile(fd, error.LockSubstitution);
     return file;
-}
-
-fn preflightSocketPath(allocator: std.mem.Allocator, canonical_root: []const u8) !void {
-    const longest_component: [46]u8 = @splat('x');
-    const socket_path = try std.fs.path.join(allocator, &.{
-        canonical_root,
-        runtime_relative_path,
-        &longest_component,
-        socket_relative_path,
-    });
-    defer allocator.free(socket_path);
-    _ = std.net.Address.initUnix(socket_path) catch |err| switch (err) {
-        error.NameTooLong => return error.SocketPathTooLong,
-        else => return err,
-    };
 }
 
 pub const Runtime = struct {
     allocator: std.mem.Allocator,
-    canonicalRoot: []u8,
+    canonicalStateRoot: []u8,
+    canonicalSocketRoot: []u8,
     directory: std.fs.Dir,
+    socketDirectory: std.fs.Dir,
     lockFile: std.fs.File,
 
-    pub fn open(allocator: std.mem.Allocator, root: []const u8) !Runtime {
-        const canonical = try std.fs.cwd().realpathAlloc(allocator, root);
-        errdefer allocator.free(canonical);
-        var root_directory = try std.fs.cwd().openDir(canonical, .{ .no_follow = true });
-        defer root_directory.close();
-        try requireOwnedRoot(root_directory);
-        try preflightSocketPath(allocator, canonical);
-        var directory = try openPrivateDirectory(root_directory, runtime_relative_path);
+    pub fn open(allocator: std.mem.Allocator, roots: security.Roots) !Runtime {
+        const canonical_state = try std.fs.cwd().realpathAlloc(allocator, roots.state);
+        errdefer allocator.free(canonical_state);
+        var state_root_directory = try std.fs.cwd().openDir(canonical_state, .{ .no_follow = true });
+        defer state_root_directory.close();
+        try requireOwnedRoot(state_root_directory);
+        const canonical_socket = try std.fs.cwd().realpathAlloc(allocator, roots.socket);
+        errdefer allocator.free(canonical_socket);
+        var socket_directory = try std.fs.cwd().openDir(canonical_socket, .{ .no_follow = true });
+        errdefer socket_directory.close();
+        try security.requireBindableSocketRoot(allocator, socket_directory, canonical_socket);
+        var directory = try openPrivateDirectory(state_root_directory, runtime_relative_path);
         errdefer directory.close();
         const lock_file = try openRegistryLock(directory);
         return .{
             .allocator = allocator,
-            .canonicalRoot = canonical,
+            .canonicalStateRoot = canonical_state,
+            .canonicalSocketRoot = canonical_socket,
             .directory = directory,
+            .socketDirectory = socket_directory,
             .lockFile = lock_file,
         };
     }
 
     pub fn deinit(self: *Runtime) void {
         self.lockFile.close();
+        self.socketDirectory.close();
         self.directory.close();
-        self.allocator.free(self.canonicalRoot);
+        self.allocator.free(self.canonicalSocketRoot);
+        self.allocator.free(self.canonicalStateRoot);
         self.* = undefined;
+    }
+
+    /// The address this session's endpoint binds. Public so a proof can dial it directly and show a refused takeover left the live socket alone.
+    pub fn socketPath(self: *Runtime, allocator: std.mem.Allocator, session: SessionRef) ![]u8 {
+        const name = sessionSocketName(session);
+        return std.fs.path.join(allocator, &.{ self.canonicalSocketRoot, &name });
     }
 
     fn openSessionDirectory(self: *Runtime, session: SessionRef) !std.fs.Dir {
@@ -225,27 +229,18 @@ pub const Runtime = struct {
         return result;
     }
 
-    fn sessionPath(self: *Runtime, allocator: std.mem.Allocator, session: SessionRef, leaf: []const u8) ![]u8 {
-        const name = sessionDirectoryName(session);
-        return std.fs.path.join(allocator, &.{ self.canonicalRoot, runtime_relative_path, &name, leaf });
-    }
 };
 
 const DiskProcessIdentity = struct { processId: i32, startToken: []const u8 };
-const DiskWindowSize = struct { columns: u32, rows: u32, widthPixels: u32, heightPixels: u32 };
+const DiskWindowSize = generated.TerminalHostWindowSize;
 const DiskOutputEvidence = struct { retainedStart: u64, retainedEndExclusive: u64, closed: bool };
 const DiskCheckpointEvidence = struct {
     retained: u32,
     newestThroughEventSequence: ?u64,
     newestThroughOutputOffset: ?u64,
 };
-const DiskExitStatus = struct { code: ?i32, signal: ?i32, observedAt: []const u8 };
-const DiskReapEvidence = struct {
-    authority: []const u8,
-    reaped: bool,
-    status: ?DiskExitStatus,
-    completeness: []const u8,
-};
+const DiskExitStatus = generated.TerminalHostExitStatus;
+const DiskReapEvidence = generated.TerminalHostReapEvidence;
 const DiskRecord = struct {
     schemaVersion: u8,
     session: struct { key: []const u8, incarnation: []const u8 },
@@ -274,7 +269,6 @@ const DiskRecord = struct {
     checkpoints: DiskCheckpointEvidence,
     exit: ?DiskExitStatus,
     reap: ?DiskReapEvidence,
-    socketRelativePath: []const u8,
 };
 
 fn diskExit(exit: ExitStatus) DiskExitStatus {
@@ -283,10 +277,10 @@ fn diskExit(exit: ExitStatus) DiskExitStatus {
 
 fn diskReap(reap: ReapEvidence) DiskReapEvidence {
     return .{
-        .authority = @tagName(reap.authority),
+        .authority = reap.authority,
         .reaped = reap.reaped,
         .status = if (reap.status) |status| diskExit(status) else null,
-        .completeness = @tagName(reap.completeness),
+        .completeness = reap.completeness,
     };
 }
 
@@ -338,7 +332,6 @@ fn diskRecord(record: Record, digest_hex: *const [64]u8) DiskRecord {
         },
         .exit = if (record.exit) |exit| diskExit(exit) else null,
         .reap = if (record.reap) |reap| diskReap(reap) else null,
-        .socketRelativePath = socket_relative_path,
     };
 }
 
@@ -383,11 +376,7 @@ fn readOwnedFileAt(allocator: std.mem.Allocator, directory: std.fs.Dir, name: []
     const fd = try std.posix.openat(directory.fd, name, .{ .NOFOLLOW = true, .CLOEXEC = true }, 0);
     const file: std.fs.File = .{ .handle = fd };
     defer file.close();
-    const stat = try std.posix.fstat(fd);
-    if (stat.uid != std.posix.getuid() or
-        stat.mode & std.posix.S.IFMT != std.posix.S.IFREG or
-        stat.mode & 0o777 != 0o600)
-        return error.FileSubstitution;
+    try security.requireOwnedPrivateFile(fd, error.FileSubstitution);
     return file.readToEndAlloc(allocator, max);
 }
 
@@ -490,11 +479,6 @@ const OwnedRecordUpdate = struct {
     }
 };
 
-fn parseCompleteness(value: []const u8) !@FieldType(ReapEvidence, "completeness") {
-    return std.meta.stringToEnum(@FieldType(ReapEvidence, "completeness"), value) orelse
-        error.InvalidRecord;
-}
-
 fn copyExit(allocator: std.mem.Allocator, value: DiskExitStatus) !ExitStatus {
     return .{
         .code = value.code,
@@ -505,7 +489,6 @@ fn copyExit(allocator: std.mem.Allocator, value: DiskExitStatus) !ExitStatus {
 
 fn recordFromDisk(allocator: std.mem.Allocator, value: DiskRecord) !Record {
     if (value.schemaVersion != schema_version or
-        !std.mem.eql(u8, value.socketRelativePath, socket_relative_path) or
         value.session.key.len == 0 or value.session.incarnation.len == 0 or
         value.createIdempotencyKey.len == 0 or value.requestSha256.len != 64)
         return error.InvalidRecord;
@@ -563,11 +546,10 @@ fn recordFromDisk(allocator: std.mem.Allocator, value: DiskRecord) !Record {
         },
         .exit = if (value.exit) |exit| try copyExit(allocator, exit) else null,
         .reap = if (value.reap) |reap| .{
-            .authority = std.meta.stringToEnum(@FieldType(ReapEvidence, "authority"), reap.authority) orelse
-                return error.InvalidRecord,
+            .authority = reap.authority,
             .reaped = reap.reaped,
             .status = if (reap.status) |status| try copyExit(allocator, status) else null,
-            .completeness = try parseCompleteness(reap.completeness),
+            .completeness = reap.completeness,
         } else null,
     };
     if (record.lifecycle == .reserved and (record.host != null or record.child != null))
@@ -579,10 +561,7 @@ fn recordFromDisk(allocator: std.mem.Allocator, value: DiskRecord) !Record {
     return record;
 }
 
-/// How long a read may reuse the previous rescan. Short enough that a spawn
-/// polling every 25 ms still sees a new foreground promptly, long enough that
-/// thirty-one concurrent pollers cost tens of rescans a second rather than
-/// thousands.
+/// How long a read may reuse the previous rescan. Short enough that a spawn polling every 25 ms still sees a new foreground promptly, long enough that thirty-one concurrent pollers cost tens of rescans a second rather than thousands.
 const recover_min_interval_ns: u64 = 100 * std.time.ns_per_ms;
 
 pub const Registry = struct {
@@ -591,8 +570,8 @@ pub const Registry = struct {
     arena: std.heap.ArenaAllocator,
     entries: std.ArrayList(Record) = .{},
     recoveryComplete: bool = true,
-    /// When the last read-path rescan ran, in the caller's monotonic clock.
     recovered_mono_ns: ?u64 = null,
+    work_counts: ?*WorkCounts = null,
 
     pub fn open(allocator: std.mem.Allocator, runtime: *Runtime) !Registry {
         var result: Registry = .{
@@ -615,20 +594,10 @@ pub const Registry = struct {
         try self.runtime.lockFile.lock(.exclusive);
         defer self.runtime.lockFile.unlock();
         try self.recoverUnlocked();
-        // The next read may rescan once more. Freshness is cheap to give up
-        // here and expensive to get wrong.
         self.recovered_mono_ns = null;
     }
 
-    /// A rescan re-reads and re-parses every session's record from disk under
-    /// an exclusive lock, and the broker holds its own state gate across the
-    /// whole call. Doing that per read is fine at one agent and ruinous under
-    /// a wide concurrent burst: establishing one provider's foreground
-    /// identity polls INSPECT many times, so unshared rescans serialize the
-    /// accept loop and can starve the daemon's next HELLO.
-    /// Reads therefore share one rescan across a short window. A caller that
-    /// acts on state — create, terminate — still calls `recover` directly and
-    /// gets a fresh one.
+    /// A rescan re-reads and re-parses every session's record from disk under an exclusive lock, and the broker holds its own state gate across the whole call. Doing that per read is fine at one agent and ruinous under a wide concurrent burst: establishing one provider's foreground identity polls INSPECT many times, so unshared rescans serialize the accept loop and can starve the daemon's next HELLO. Reads therefore share one rescan across a short window. A caller that acts on state — create, terminate — still calls `recover` directly and gets a fresh one.
     pub fn recoverIfStale(self: *Registry, now_ns: u64) !void {
         if (self.recovered_mono_ns) |recovered| {
             if (now_ns >= recovered and now_ns - recovered < recover_min_interval_ns)
@@ -680,6 +649,7 @@ pub const Registry = struct {
                     continue;
                 },
             };
+            if (self.work_counts) |counts| counts.recordReads += 1;
             const disk = std.json.parseFromSliceLeaky(
                 DiskRecord,
                 next_arena.allocator(),
@@ -723,15 +693,11 @@ pub const Registry = struct {
         old_arena.deinit();
     }
 
-    /// The returned record borrows registry storage until the next mutation
-    /// or explicit recovery.
     pub fn get(self: *Registry, session: SessionRef) ?Record {
         for (self.entries.items) |record| if (record.session.eql(session)) return record;
         return null;
     }
 
-    /// The returned slice and records borrow registry storage until the next
-    /// mutation or explicit recovery.
     pub fn list(self: *const Registry) []const Record {
         return self.entries.items;
     }
@@ -747,6 +713,7 @@ pub const Registry = struct {
         var directory = try self.runtime.openSessionDirectory(record.session);
         defer directory.close();
         try writeRecordAtomic(self.allocator, directory, record);
+        if (self.work_counts) |counts| counts.durableWrites += 1;
     }
 
     pub fn reserve(
@@ -878,7 +845,8 @@ pub const Registry = struct {
         defer self.runtime.lockFile.unlock();
         try self.recoverUnlocked();
         const index = self.indexOf(owned_session.value) orelse return error.SessionNotFound;
-        var record = self.entries.items[index];
+        const stored = self.entries.items[index];
+        var record = stored;
         if (owned_patch.value.lifecycle) |value| record.lifecycle = value;
         if (owned_patch.value.window) |value| record.window = value;
         if (owned_patch.value.windowRevision) |value| {
@@ -921,6 +889,33 @@ pub const Registry = struct {
                 .status = if (value.status) |status| try copyExit(a, diskExit(status)) else null,
                 .completeness = value.completeness,
             };
+        }
+        const digest_hex = std.fmt.bytesToHex(record.requestSha256, .lower);
+        const json = try std.json.Stringify.valueAlloc(
+            self.allocator,
+            diskRecord(record, &digest_hex),
+            .{},
+        );
+        defer self.allocator.free(json);
+        var directory = try self.runtime.openSessionDirectory(record.session);
+        defer directory.close();
+        var stored_file = try directory.openFile(record_relative_path, .{ .mode = .read_only });
+        defer stored_file.close();
+        try security.requireOwnedPrivateFile(stored_file.handle, error.FileSubstitution);
+        const stat = try stored_file.stat();
+        if (stat.size == json.len) {
+            var contents_match = true;
+            var offset: usize = 0;
+            var buffer: [4096]u8 = undefined;
+            while (offset < json.len) {
+                const count = try stored_file.read(&buffer);
+                if (count == 0 or !std.mem.eql(u8, buffer[0..count], json[offset..][0..count])) {
+                    contents_match = false;
+                    break;
+                }
+                offset += count;
+            }
+            if (contents_match and offset == json.len) return stored;
         }
         try self.persist(record);
         self.entries.items[index] = record;
@@ -1062,10 +1057,10 @@ const SocketEvidence = struct {
     mode: u16,
 };
 
-fn socketEvidenceAt(directory: std.fs.Dir) !SocketEvidence {
+fn socketEvidenceAt(directory: std.fs.Dir, name: []const u8) !SocketEvidence {
     const stat = try std.posix.fstatat(
         directory.fd,
-        socket_relative_path,
+        name,
         std.posix.AT.SYMLINK_NOFOLLOW,
     );
     if (stat.uid != std.posix.getuid() or
@@ -1087,11 +1082,7 @@ fn readControlSecret(directory: std.fs.Dir) ![32]u8 {
     }, 0);
     const file: std.fs.File = .{ .handle = fd };
     defer file.close();
-    const stat = try std.posix.fstat(fd);
-    if (stat.uid != std.posix.getuid() or
-        stat.mode & std.posix.S.IFMT != std.posix.S.IFREG or
-        stat.mode & 0o777 != 0o600)
-        return error.ControlSubstitution;
+    try security.requireOwnedPrivateFile(fd, error.ControlSubstitution);
     var result: [32]u8 = undefined;
     if (try file.readAll(&result) != result.len) return error.InvalidControlSecret;
     var extra: [1]u8 = undefined;
@@ -1103,27 +1094,14 @@ pub fn readExact(file: std.fs.File, bytes: []u8) !void {
     if (try file.readAll(bytes) != bytes.len) return error.TruncatedOperationFrame;
 }
 
-/// Transport bound applied to every accepted control connection, in the same
-/// idiom as session_host.zig's lease-bound SO_RCVTIMEO/SO_SNDTIMEO. The host
-/// serve loop is single-threaded and the pre-authentication read below is
-/// blocking, so a same-uid peer that connects and stalls (or drips a partial
-/// frame) must not freeze every later operation: a read or write that
-/// outlasts the bound fails WouldBlock, the caller drops that connection, and
-/// the host keeps serving. Fail-closed: if the bound itself cannot be
-/// installed the connection is refused rather than served without one.
+/// Transport bound applied to every accepted control connection, in the same idiom as session_host.zig's lease-bound SO_RCVTIMEO/SO_SNDTIMEO. The host serve loop is single-threaded and the pre-authentication read below is blocking, so a same-uid peer that connects and stalls (or drips a partial frame) must not freeze every later operation: a read or write that outlasts the bound fails WouldBlock, the caller drops that connection, and the host keeps serving. Fail-closed: if the bound itself cannot be installed the connection is refused rather than served without one.
 pub const connection_io_timeout_ms: u64 = 10 * std.time.ms_per_s;
 
 pub fn setConnectionTimeoutMs(fd: std.posix.fd_t, timeout_ms: u64) !void {
-    if (timeout_ms == 0) return error.InvalidConnectionTimeout;
-    const timeout: c.struct_timeval = .{
-        .tv_sec = @intCast(timeout_ms / std.time.ms_per_s),
-        .tv_usec = @intCast(
-            (timeout_ms % std.time.ms_per_s) * std.time.us_per_ms,
-        ),
+    security.setSocketTimeoutMs(fd, timeout_ms) catch |err| switch (err) {
+        error.InvalidSocketTimeout => return error.InvalidConnectionTimeout,
+        error.SocketTimeoutUnavailable => return error.ConnectionTimeoutUnavailable,
     };
-    if (c.setsockopt(fd, c.SOL_SOCKET, c.SO_RCVTIMEO, &timeout, @sizeOf(c.struct_timeval)) != 0 or
-        c.setsockopt(fd, c.SOL_SOCKET, c.SO_SNDTIMEO, &timeout, @sizeOf(c.struct_timeval)) != 0)
-        return error.ConnectionTimeoutUnavailable;
 }
 
 fn setConnectionTimeout(fd: std.posix.fd_t) !void {
@@ -1161,6 +1139,9 @@ pub const Client = struct {
     socketPath: []u8,
     secret: [32]u8,
     directory: std.fs.Dir,
+    /// Borrowed from the runtime that opened this client, and closed by it. Held as a descriptor so the substitution check below names the socket relative to a directory that was already proved owned, rather than walking the path again.
+    socketDirectory: std.fs.Dir,
+    socketName: [security.socket_name_length]u8,
 
     fn open(allocator: std.mem.Allocator, runtime: *Runtime, record: Record) !Client {
         var owned_session = try OwnedSessionRef.init(allocator, record.session);
@@ -1168,7 +1149,7 @@ pub const Client = struct {
         var directory = try runtime.openSessionDirectory(record.session);
         errdefer directory.close();
         const secret = try readControlSecret(directory);
-        const socket_path = try runtime.sessionPath(allocator, record.session, socket_relative_path);
+        const socket_path = try runtime.socketPath(allocator, record.session);
         errdefer allocator.free(socket_path);
         return .{
             .allocator = allocator,
@@ -1176,6 +1157,8 @@ pub const Client = struct {
             .socketPath = socket_path,
             .secret = secret,
             .directory = directory,
+            .socketDirectory = runtime.socketDirectory,
+            .socketName = sessionSocketName(record.session),
         };
     }
 
@@ -1195,21 +1178,17 @@ pub const Client = struct {
         idempotency_key: []const u8,
         payload: []const u8,
     ) !ClientResponse {
-        // The server rejects a request whose fields SUM to more than
-        // operation_payload_max_bytes (see serveAccepted), so the client must
-        // apply the same aggregate rule: a request the server will reject must
-        // fail here, before the bytes are written to a socket the server has
-        // already abandoned.
+        // The server rejects a request whose fields SUM to more than operation_payload_max_bytes (see serveAccepted), so the client must apply the same aggregate rule: a request the server will reject must fail here, before the bytes are written to a socket the server has already abandoned.
         const total = std.math.add(
             usize,
             try std.math.add(usize, self.session.key.len, self.session.incarnation.len),
             try std.math.add(usize, idempotency_key.len, payload.len),
         ) catch return error.OperationFrameTooLarge;
         if (total > operation_payload_max_bytes) return error.OperationFrameTooLarge;
-        const before = try socketEvidenceAt(self.directory);
+        const before = try socketEvidenceAt(self.socketDirectory, &self.socketName);
         const stream = try std.net.connectUnixSocket(self.socketPath);
         defer stream.close();
-        const after = try socketEvidenceAt(self.directory);
+        const after = try socketEvidenceAt(self.socketDirectory, &self.socketName);
         if (!std.meta.eql(before, after)) return error.SocketSubstitution;
         const file: std.fs.File = .{ .handle = stream.handle };
         var header: [request_header_bytes]u8 = @splat(0);
@@ -1250,6 +1229,9 @@ pub const HostEndpoint = struct {
     allocator: std.mem.Allocator,
     session: SessionRef,
     directory: std.fs.Dir,
+    /// Borrowed from the runtime that opened this endpoint, and closed by it.
+    socketDirectory: std.fs.Dir,
+    socketName: [security.socket_name_length]u8,
     socketPath: []u8,
     server: std.net.Server,
     socketEvidence: SocketEvidence,
@@ -1261,21 +1243,16 @@ pub const HostEndpoint = struct {
         var directory = try runtime.openSessionDirectory(session);
         errdefer directory.close();
         const secret = try readControlSecret(directory);
-        if (socketEvidenceAt(directory)) |_| {
-            return error.HostEndpointExists;
-        } else |err| switch (err) {
-            error.FileNotFound => {},
-            else => return err,
-        }
-        const socket_path = try runtime.sessionPath(allocator, session, socket_relative_path);
+        const socket_name = sessionSocketName(session);
+        const socket_path = try runtime.socketPath(allocator, session);
         errdefer allocator.free(socket_path);
+        // This name is derived from the session reference, so a recovered session asks for the same
+        // one. An existing inode used to be refused outright as HostEndpointExists, which is right
+        // when a host is really serving there and wrong when the previous one was killed — the
+        // session could then never be endpointed again. Connecting is what tells those two apart.
+        _ = try security.reclaimDeadSocket(runtime.socketDirectory, &socket_name, socket_path);
         const address = try std.net.Address.initUnix(socket_path);
-        // Bind under a restrictive umask so the socket node is never group- or
-        // world-accessible, not even in the window between bind and the chmod
-        // below. The chmod and the socketEvidenceAt readback stay: they are
-        // the durable mode evidence (0o600) every later open is checked
-        // against. umask is process-wide, so save and restore it around the
-        // listen rather than leaving the host's umask tightened.
+        // Bind under a restrictive umask so the socket node is never group- or world-accessible, not even in the window between bind and the chmod below. The chmod and the socketEvidenceAt readback stay: they are the durable mode evidence (0o600) every later open is checked against. umask is process-wide, so save and restore it around the listen rather than leaving the host's umask tightened.
         const previous_umask = c.umask(0o077);
         var server = address.listen(.{}) catch |err| {
             _ = c.umask(previous_umask);
@@ -1290,18 +1267,20 @@ pub const HostEndpoint = struct {
             .allocator = allocator,
             .session = owned_session.value,
             .directory = directory,
+            .socketDirectory = runtime.socketDirectory,
+            .socketName = socket_name,
             .socketPath = socket_path,
             .server = server,
-            .socketEvidence = try socketEvidenceAt(directory),
+            .socketEvidence = try socketEvidenceAt(runtime.socketDirectory, &socket_name),
             .secret = secret,
         };
     }
 
     pub fn deinit(self: *HostEndpoint) void {
         self.server.deinit();
-        if (socketEvidenceAt(self.directory)) |observed| {
+        if (socketEvidenceAt(self.socketDirectory, &self.socketName)) |observed| {
             if (std.meta.eql(observed, self.socketEvidence))
-                self.directory.deleteFile(socket_relative_path) catch {};
+                self.socketDirectory.deleteFile(&self.socketName) catch {};
         } else |_| {}
         self.directory.close();
         self.allocator.free(self.socketPath);
@@ -1312,23 +1291,23 @@ pub const HostEndpoint = struct {
     }
 
     pub fn serveOne(self: *HostEndpoint, handler: OperationHandler) !void {
-        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
+        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.socketDirectory, &self.socketName)))
             return error.SocketSubstitution;
         const connection = try self.server.accept();
         defer connection.stream.close();
-        // Install the transport bound before any byte is read: the header
-        // read below is pre-authentication, so an unbounded block here would
-        // let any same-uid peer freeze the single-threaded host.
-        try setConnectionTimeout(connection.stream.handle);
+        // Per-connection setup that fails is a bad CONNECTION, not a bad host: setsockopt on a peer
+        // that has already gone away returns an error, and propagating it out of here tears down a
+        // terminal that is serving perfectly well. Drop the connection and keep serving. The host
+        // path learned this already — host_runtime.acceptedConnectionReady says so in as many
+        // words — and this loop is where the same lesson was missing, which is why a liveness probe
+        // that connects and leaves could kill the session it was asking about.
+        setConnectionTimeout(connection.stream.handle) catch return;
         try self.serveAccepted(connection.stream, handler);
     }
 
-    /// Returns one ready connection without changing serveOne's blocking
-    /// contract. The returned stream already carries the endpoint's
-    /// fail-closed recv/send bound (connection_io_timeout_ms); the caller
-    /// owns the stream and may tighten, but never loosen, that deadline.
+    /// Returns one ready connection without changing serveOne's blocking contract. The returned stream already carries the endpoint's fail-closed recv/send bound (connection_io_timeout_ms); the caller owns the stream and may tighten, but never loosen, that deadline.
     pub fn acceptIfReady(self: *HostEndpoint) !?std.net.Stream {
-        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
+        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.socketDirectory, &self.socketName)))
             return error.SocketSubstitution;
         var poll_fds = [_]std.posix.pollfd{.{
             .fd = self.server.stream.handle,
@@ -1341,7 +1320,7 @@ pub const HostEndpoint = struct {
         const connection = try self.server.accept();
         errdefer connection.stream.close();
         try setConnectionTimeout(connection.stream.handle);
-        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
+        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.socketDirectory, &self.socketName)))
             return error.SocketSubstitution;
         return connection.stream;
     }
@@ -1351,11 +1330,19 @@ pub const HostEndpoint = struct {
         stream: std.net.Stream,
         handler: OperationHandler,
     ) !void {
-        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
+        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.socketDirectory, &self.socketName)))
             return error.SocketSubstitution;
         const file: std.fs.File = .{ .handle = stream.handle };
         var header: [request_header_bytes]u8 = undefined;
-        try readExact(file, &header);
+        // A peer that connects and leaves without sending a byte has asked nothing, so there is
+        // nothing to answer and nothing has gone wrong. This is not a courtesy: an error here
+        // leaves serveOne, and serveOne's callers treat that as fatal, so any bare connect would
+        // tear down a working terminal. The liveness probe that reclaims a dead socket is exactly
+        // such a connect — it has to reach a live host to learn that it IS live, and learning that
+        // must not kill it. A PARTIAL frame is still a protocol violation and still fails below.
+        const first = try file.readAll(&header);
+        if (first == 0) return;
+        if (first != header.len) return error.TruncatedOperationFrame;
         if (!std.mem.eql(u8, header[0..4], request_magic) or header[4] != schema_version)
             return error.InvalidOperationRequest;
         const operation = std.meta.intToEnum(Operation, header[5]) catch

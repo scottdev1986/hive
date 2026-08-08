@@ -1,12 +1,4 @@
-//! Process-inspection and termination algorithm — standalone module.
-//! Snapshot a verified root + descendants (proc_listchildpids / proc_pidinfo)
-//! until two consecutive passes match or a 250 ms deadline expires. Record
-//! PID / start-token / parent / pgid / session / executable. Graceful and
-//! immediate termination signal deepest-first, re-validating each start token
-//! at signal time (snapshot tokens are up to 250 ms stale; PID reuse in that
-//! window must never be signalled), with positive wait/absence readback.
-//! NEVER report terminated without wait/absence evidence.
-//! Timeouts: 250 ms inspection, TERM-after-2s, KILL-after-2s.
+// ! Process-inspection and termination algorithm — standalone module. ! Snapshot a verified root + descendants (proc_listchildpids / proc_pidinfo) ! until two consecutive passes match or a 250 ms deadline expires. Record ! PID / start-token / parent / pgid / session / executable. Graceful and ! immediate termination signal deepest-first, re-validating each start token ! at signal time (snapshot tokens are up to 250 ms stale; PID reuse in that ! window must never be signalled), with positive wait/absence readback. ! NEVER report terminated without wait/absence evidence. ! Timeouts: 250 ms inspection, TERM-after-2s, KILL-after-2s.
 
 const std = @import("std");
 const posix = std.posix;
@@ -21,18 +13,13 @@ const c = @cImport({
     @cInclude("errno.h");
 });
 
-/// inspection deadline.
 pub const inspection_deadline_ns: u64 = 250 * std.time.ns_per_ms;
-/// graceful: TERM verified members deepest-first, wait 2 seconds…
 pub const graceful_term_wait_ns: u64 = 2 * std.time.ns_per_s;
 /// …then KILL verified survivors after another 2 seconds.
 pub const graceful_kill_wait_ns: u64 = 2 * std.time.ns_per_s;
 /// Immediate-stop settle bound (positive readback window after KILL).
 pub const immediate_kill_wait_ns: u64 = 2 * std.time.ns_per_s;
-/// Pass-count bound for the snapshot loop. If the monotonic clock is stuck
-/// (RealPlatform.monoNow returns 0 forever when Instant.now fails), the 250 ms
-/// deadline can never fire — bound total passes so inspection fails closed
-/// with UNKNOWN instead of looping forever (fail closed).
+/// Pass-count bound for the snapshot loop. If the monotonic clock is stuck (RealPlatform.monoNow returns 0 forever when Instant.now fails), the 250 ms deadline can never fire — bound total passes so inspection fails closed with UNKNOWN instead of looping forever (fail closed).
 pub const snapshot_max_passes: u32 = 250;
 
 pub const StartToken = struct {
@@ -65,16 +52,12 @@ pub const ProcessIdentity = struct {
     start_token: StartToken,
     parent: i32,
     pgid: i32,
-    /// Session id. Meaningful ONLY when session_known is true: getsid
-    /// failure is "unknown", and unknown must never be stored as a sentinel
-    /// (-1) that session_members kill targeting could mistake for a real id.
+    /// Session id. Meaningful ONLY when session_known is true: getsid failure is "unknown", and unknown must never be stored as a sentinel (-1) that session_members kill targeting could mistake for a real id.
     session: i32,
-    /// False when getsid failed at observation time — `session` is unknown,
-    /// not a real id. Kill targeting requires a known session.
+    /// False when getsid failed at observation time — `session` is unknown, not a real id. Kill targeting requires a known session.
     session_known: bool,
     executable: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined,
     executable_len: usize = 0,
-    /// Depth from the verified root (0 = root). Used for deepest-first order.
     depth: u32 = 0,
 
     pub fn executablePath(self: *const ProcessIdentity) []const u8 {
@@ -87,19 +70,14 @@ pub const ProcessIdentity = struct {
 };
 
 pub const SnapshotStatus = enum {
-    /// Two consecutive passes matched within the deadline.
     stable,
-    /// Tree changed or was incomplete through the deadline — explicit UNKNOWN.
     unknown,
 };
 
 pub const Snapshot = struct {
     status: SnapshotStatus,
-    /// Members observed on the last complete pass (may be partial when unknown).
     members: []ProcessIdentity,
-    /// True when the verified root itself could not be observed (absent or unobservable).
     root_missing: bool = false,
-    /// True when the tree walk was incomplete or consecutive passes disagreed (L2: not root_missing).
     incomplete: bool = false,
 
     pub fn deinit(self: *Snapshot, allocator: std.mem.Allocator) void {
@@ -111,7 +89,6 @@ pub const Snapshot = struct {
 /// Observation result — ESRCH/absence is not the same as EPERM/unobservable (fail closed).
 pub const ObserveResult = union(enum) {
     present: ProcessIdentity,
-    /// Positive absence: ESRCH / process does not exist.
     absent,
     /// Alive-or-unknown but not readable (EPERM, short buffer, etc.). Fail closed.
     unobservable,
@@ -134,7 +111,6 @@ pub const TerminationTarget = union(enum) {
 };
 
 pub const MemberFate = enum {
-    /// wait/absence evidence confirmed the exact PID+start-token is gone.
     terminated,
     /// Still alive with matching start token after the full stop policy.
     survivor,
@@ -157,7 +133,6 @@ pub const TerminationState = enum {
 pub const TerminationResult = struct {
     state: TerminationState,
     members: []MemberResult,
-    /// Snapshot completeness at capture time.
     snapshot_status: SnapshotStatus,
     deadline_expired: bool = false,
 
@@ -173,19 +148,14 @@ pub const Error = error{
     OutOfMemory,
 };
 
-/// Injected clocks / signals for unit tests. Production uses RealPlatform.
 pub const Platform = struct {
     context: *anyopaque,
     monoNowFn: *const fn (context: *anyopaque) u64,
     sleepFn: *const fn (context: *anyopaque, ns: u64) void,
-    /// Signal one process. Returns true if the signal was delivered or the
-    /// process was already absent (ESRCH).
     killFn: *const fn (context: *anyopaque, pid: i32, sig: i32) bool,
-    /// Typed observation: absent (ESRCH) ≠ unobservable (EPERM/other).
     observeFn: *const fn (context: *anyopaque, pid: i32) ObserveResult,
     /// waitpid(WNOHANG) for a direct child. true = reaped (wait evidence).
     waitNoHangFn: *const fn (context: *anyopaque, pid: i32) bool,
-    /// List direct children of pid. Caller owns the returned slice.
     listChildrenFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, pid: i32) anyerror![]i32,
 
     pub fn monoNow(self: Platform) u64 {
@@ -210,7 +180,6 @@ pub const Platform = struct {
 
 /// Production macOS platform: real proc_listchildpids / proc_pidinfo / kill / wait.
 pub const RealPlatform = struct {
-    /// Monotonic base for monoNow (std.time.Instant — not wall clock; ).
     started: std.time.Instant = undefined,
     started_ok: bool = false,
 
@@ -241,7 +210,6 @@ pub const RealPlatform = struct {
         const self: *RealPlatform = @ptrCast(@alignCast(ctx));
         if (!self.started_ok) return 0;
         const now = std.time.Instant.now() catch return 0;
-        // Instant.since returns u64 ns; no wall-clock NTP jump.
         return now.since(self.started);
     }
 
@@ -253,8 +221,6 @@ pub const RealPlatform = struct {
         if (pid <= 1) return false;
         const rc = c.kill(pid, sig);
         if (rc == 0) return true;
-        // ESRCH: already gone — counts as delivered for acting purposes, but
-        // fate still requires wait/absence readback.
         return std.posix.errno(rc) == .SRCH;
     }
 
@@ -266,8 +232,6 @@ pub const RealPlatform = struct {
         if (pid <= 1) return false;
         var status: c_int = 0;
         const rc = c.waitpid(pid, &status, c.WNOHANG);
-        // rc == pid: reaped — real wait evidence.
-        // rc == 0: still running. rc < 0: not our child / error — not wait evidence.
         return rc == pid;
     }
 
@@ -276,8 +240,6 @@ pub const RealPlatform = struct {
     }
 };
 
-/// Observe a process with errno discrimination (B1).
-/// ESRCH →.absent (real absence). EPERM/other shortfall →.unobservable.
 pub fn observeProcess(pid: i32) ObserveResult {
     if (pid <= 0) return .absent;
     var info: c.struct_proc_bsdinfo = std.mem.zeroes(c.struct_proc_bsdinfo);
@@ -285,19 +247,13 @@ pub fn observeProcess(pid: i32) ObserveResult {
     std.c._errno().* = 0;
     const info_len = c.proc_pidinfo(pid, c.PROC_PIDTBSDINFO, 0, &info, @sizeOf(c.struct_proc_bsdinfo));
     if (info_len != @sizeOf(c.struct_proc_bsdinfo)) {
-        // Compare the raw errno int: @enumFromInt on an errno not declared in
-        // std.posix.E is illegal behavior in ReleaseFast.
         const raw_errno = std.c._errno().*;
-        // ESRCH: no such process.
         if (raw_errno == @intFromEnum(std.posix.E.SRCH)) return .absent;
-        // Cross-uid / CHECK_SAME_USER → EPERM: alive-but-unreadable → UNKNOWN.
-        // Any other shortfall is also fail-closed unobservable.
+        // Cross-uid / CHECK_SAME_USER → EPERM: alive-but-unreadable → UNKNOWN. Any other shortfall is also fail-closed unobservable.
         return .unobservable;
     }
 
-    // getsid failure returns -1: that is "unknown", never a real session id.
-    // Record it behind session_known so session_members kill targeting can
-    // never match the sentinel (fail closed).
+    // getsid failure returns -1: that is "unknown", never a real session id. Record it behind session_known so session_members kill targeting can never match the sentinel (fail closed).
     const sid = c.getsid(pid);
     var result: ProcessIdentity = .{
         .pid = pid,
@@ -314,14 +270,11 @@ pub fn observeProcess(pid: i32) ObserveResult {
     if (path_len > 0) {
         result.executable_len = @intCast(path_len);
     } else {
-        // Executable path unavailable is not absence; identity is still usable
-        // for termination tracking (token/pid/pgid recorded).
         result.executable_len = 0;
     }
     return .{ .present = result };
 }
 
-/// Convenience for call sites that only need a present identity.
 pub fn observeProcessPresent(pid: i32) ?ProcessIdentity {
     return switch (observeProcess(pid)) {
         .present => |id| id,
@@ -329,16 +282,10 @@ pub fn observeProcessPresent(pid: i32) ?ProcessIdentity {
     };
 }
 
-/// Bound on child-pid enumeration growth (entries). A parent with more direct
-/// children than this fails closed (InspectionFailed → incomplete tree walk)
-/// rather than silently truncating the walk.
+/// Bound on child-pid enumeration growth (entries). A parent with more direct children than this fails closed (InspectionFailed → incomplete tree walk) rather than silently truncating the walk.
 pub const max_child_pids: usize = 1 << 20;
 
 fn listChildPids(allocator: std.mem.Allocator, pid: i32) ![]i32 {
-    // macOS libproc: proc_listchildpids writes pid_t entries and returns the
-    // NUMBER OF PIDS written. Treating the
-    // return as a byte count silently drops every tree (divTrunc(1, 4) == 0).
-    // The nested-tree unit test is the positive control for that bug.
     var stack_buf: [4096]c.pid_t = undefined;
     var buf: []c.pid_t = &stack_buf;
     var heap_buf: ?[]c.pid_t = null;
@@ -353,9 +300,7 @@ fn listChildPids(allocator: std.mem.Allocator, pid: i32) ![]i32 {
             for (buf[0..n], 0..) |child, i| out[i] = @intCast(child);
             return out;
         }
-        // An exactly-full buffer is indistinguishable from silent truncation
-        // grow and re-enumerate so a truncated walk can never miss children
-        // and yield a false.terminated verdict (fail closed).
+        // An exactly-full buffer is indistinguishable from silent truncation grow and re-enumerate so a truncated walk can never miss children and yield a false.terminated verdict (fail closed).
         const grown = std.math.mul(usize, buf.len, 2) catch return error.InspectionFailed;
         if (grown > max_child_pids) return error.InspectionFailed;
         heap_buf = try allocator.alloc(c.pid_t, grown);
@@ -371,8 +316,6 @@ fn identityLess(a: ProcessIdentity, b: ProcessIdentity) bool {
 }
 
 fn sortIdentities(slice: []ProcessIdentity) void {
-    // Insertion sort: ProcessIdentity holds a 4 KiB path buffer; std.mem.sort's
-    // SIMD path overflows on that element size (Zig 0.15.2).
     var i: usize = 1;
     while (i < slice.len) : (i += 1) {
         var j = i;
@@ -396,7 +339,6 @@ fn identitiesMatch(a: []const ProcessIdentity, b: []const ProcessIdentity) bool 
     return true;
 }
 
-/// Walk descendants of `root_pid` (must be live and match `root_token` if set).
 fn collectTree(
     platform: Platform,
     allocator: std.mem.Allocator,
@@ -406,7 +348,6 @@ fn collectTree(
     const root_result = platform.observe(root_pid);
     const root_obs: ProcessIdentity = switch (root_result) {
         .present => |id| id,
-        // Absent root: missing, not "incomplete tree walk".
         .absent => return .{
             .members = try allocator.alloc(ProcessIdentity, 0),
             .root_missing = true,
@@ -421,7 +362,6 @@ fn collectTree(
     };
     if (expected_root_token) |tok| {
         if (!root_obs.start_token.eql(tok)) {
-            // PID reuse at root: original identity is gone.
             return .{
                 .members = try allocator.alloc(ProcessIdentity, 0),
                 .root_missing = true,
@@ -437,7 +377,6 @@ fn collectTree(
     root.depth = 0;
     try members.append(allocator, root);
 
-    // BFS for depth assignment.
     var queue: std.ArrayList(usize) = .{};
     defer queue.deinit(allocator);
     try queue.append(allocator, 0);
@@ -469,7 +408,6 @@ fn collectTree(
                     try members.append(allocator, child);
                     try queue.append(allocator, members.items.len - 1);
                 },
-                // Child vanished between list and observe: tree is changing.
                 .absent => incomplete = true,
                 // Child exists but unreadable: fail closed incomplete.
                 .unobservable => incomplete = true,
@@ -484,8 +422,6 @@ fn collectTree(
     };
 }
 
-/// snapshot verified root + descendants until two consecutive passes match
-/// or the 250 ms inspection deadline expires.
 pub fn snapshotTree(
     platform: Platform,
     allocator: std.mem.Allocator,
@@ -493,22 +429,6 @@ pub fn snapshotTree(
     expected_root_token: ?StartToken,
 ) Error!Snapshot {
     return snapshotTreeBefore(platform, allocator, root_pid, expected_root_token, null);
-}
-
-pub fn snapshotTreeUntil(
-    platform: Platform,
-    allocator: std.mem.Allocator,
-    root_pid: i32,
-    expected_root_token: ?StartToken,
-    operation_deadline_ns: u64,
-) Error!Snapshot {
-    return snapshotTreeBefore(
-        platform,
-        allocator,
-        root_pid,
-        expected_root_token,
-        operation_deadline_ns,
-    );
 }
 
 fn snapshotTreeBefore(
@@ -530,7 +450,6 @@ fn snapshotTreeBefore(
 
     var last_incomplete = false;
     var last_root_missing = false;
-    // Previous pass was clean root_missing (for stable-absence detection; ).
     var prev_clean_absent = false;
     var passes: u32 = 0;
 
@@ -543,7 +462,6 @@ fn snapshotTreeBefore(
         sortIdentities(pass.members);
 
         if (prev) |p| {
-            // Stable live tree: two complete matching passes.
             if (!pass.root_missing and !pass.incomplete and identitiesMatch(p, pass.members)) {
                 allocator.free(p);
                 prev = null;
@@ -554,9 +472,7 @@ fn snapshotTreeBefore(
                     .incomplete = false,
                 };
             }
-            // stable absence — two consecutive clean root_missing passes.
-            // (Must not require !root_missing on the live path; otherwise
-            // stable root absence can never be represented.)
+            // stable absence — two consecutive clean root_missing passes. (Must not require !root_missing on the live path; otherwise stable root absence can never be represented.)
             if (pass.root_missing and !pass.incomplete and prev_clean_absent and
                 p.len == 0 and pass.members.len == 0)
             {
@@ -575,15 +491,13 @@ fn snapshotTreeBefore(
         prev = pass.members;
 
         if (platform.monoNow() >= deadline) break;
-        // Stuck-clock guard: with a broken monotonic clock the deadline above
-        // never fires; fail closed to UNKNOWN after a bounded number of passes.
+        // Stuck-clock guard: with a broken monotonic clock the deadline above never fires; fail closed to UNKNOWN after a bounded number of passes.
         if (passes >= snapshot_max_passes) break;
         // Brief yield so the tree can settle; still bounded by the deadline.
         platform.sleep(5 * std.time.ns_per_ms);
     }
 
-    // Deadline expired without two matching complete passes → explicit UNKNOWN.
-    // (A changing-but-complete tree lands here: incomplete=false, status=unknown.)
+    // Deadline expired without two matching complete passes → explicit UNKNOWN. (A changing-but-complete tree lands here: incomplete=false, status=unknown.)
     const members = prev orelse try allocator.alloc(ProcessIdentity, 0);
     prev = null;
     return .{
@@ -595,7 +509,6 @@ fn snapshotTreeBefore(
 }
 
 fn deepestFirstLess(a: ProcessIdentity, b: ProcessIdentity) bool {
-    // Higher depth first; PTY/root (depth 0) last. Stable by pid within depth.
     if (a.depth != b.depth) return a.depth > b.depth;
     return a.pid < b.pid;
 }
@@ -617,14 +530,8 @@ const RevalidateOutcome = struct {
     reason: []const u8,
 };
 
-/// Positive readback for one verified member (B1).
-/// waitpid reaped → terminated ("wait-or-absence")
-/// observe absent (ESRCH) → terminated ("wait-or-absence")
-/// observe unobservable (EPERM/…) → unknown (never terminated)
-/// present + token mismatch → unknown (PID reuse)
-/// present + matching token → survivor
+/// Positive readback for one verified member (B1). waitpid reaped → terminated ("wait-or-absence") observe absent (ESRCH) → terminated ("wait-or-absence") observe unobservable (EPERM/…) → unknown (never terminated) present + token mismatch → unknown (PID reuse) present + matching token → survivor
 fn revalidate(platform: Platform, expected: ProcessIdentity) RevalidateOutcome {
-    // Real wait evidence for children we own (WNOHANG).
     if (platform.waitNoHang(expected.pid)) {
         return .{ .fate = .terminated, .reason = "wait-or-absence" };
     }
@@ -641,28 +548,20 @@ fn revalidate(platform: Platform, expected: ProcessIdentity) RevalidateOutcome {
     };
 }
 
-/// Re-validate the start token immediately before signalling (TOCTOU)
-/// the snapshot verified tokens up to 250 ms ago, and a pid that exited and
-/// was reused in that window now belongs to an unrelated same-uid process
-/// that must NOT be signalled. Re-observation failure or a token mismatch
-/// skips the signal — fail safe; the member's fate is still decided by the
-/// post-signal wait/absence readback (never report terminated without it).
+/// Re-validate the start token immediately before signalling (TOCTOU) the snapshot verified tokens up to 250 ms ago, and a pid that exited and was reused in that window now belongs to an unrelated same-uid process that must NOT be signalled. Re-observation failure or a token mismatch skips the signal — fail safe; the member's fate is still decided by the post-signal wait/absence readback (never report terminated without it).
 fn signalVerified(platform: Platform, member: ProcessIdentity, sig: i32) bool {
     switch (platform.observe(member.pid)) {
         .present => |obs| {
             // PID reuse: the original identity is gone — never signal the new one.
             if (!obs.start_token.eql(member.start_token)) return false;
         },
-        // Absent: nothing to signal (positive absence). Unobservable: cannot
-        // rule out reuse — fail closed rather than signal an unverified pid.
+        // Absent: nothing to signal (positive absence). Unobservable: cannot rule out reuse — fail closed rather than signal an unverified pid.
         .absent, .unobservable => return false,
     }
     return platform.kill(member.pid, sig);
 }
 
-/// Signal every known verified member deepest-first (per-pid, NOT process-group
-/// kill — a pgid signal would reach escapees outside the verified tree; L4),
-/// then positively read back with wait/absence evidence only.
+/// Signal every known verified member deepest-first (per-pid, NOT process-group kill — a pgid signal would reach escapees outside the verified tree; L4), then positively read back with wait/absence evidence only.
 pub fn terminateTree(
     platform: Platform,
     allocator: std.mem.Allocator,
@@ -758,8 +657,7 @@ fn terminateTreeBefore(
     );
     defer snap.deinit(allocator);
 
-    // Never signal outside the verified child tree. Narrower targets filter
-    // that contained snapshot by
+    // Never signal outside the verified child tree. Narrower targets filter that contained snapshot by
     var selected: std.ArrayList(ProcessIdentity) = .{};
     defer selected.deinit(allocator);
     for (snap.members) |member| {
@@ -771,8 +669,7 @@ fn terminateTreeBefore(
 
     switch (mode) {
         .graceful => {
-            // Provider-side graceful action is the host's job; here we
-            // TERM each verified member deepest-first, wait 2s, then KILL survivors.
+            // Provider-side graceful action is the host's job; here we TERM each verified member deepest-first, wait 2s, then KILL survivors.
             if (!deadlineReached(platform, operation_deadline_ns)) {
                 for (ordered) |m| {
                     _ = signalVerified(platform, m, c.SIGTERM);
@@ -802,8 +699,7 @@ fn terminateTreeBefore(
     errdefer results.deinit(allocator);
 
     var any_survivor = false;
-    // incomplete OR never-stabilized snapshot (status=.unknown) forces
-    // overall unknown — a changing-but-complete tree must not report terminated.
+    // incomplete OR never-stabilized snapshot (status=.unknown) forces overall unknown — a changing-but-complete tree must not report terminated.
     var any_unknown = snap.incomplete or snap.status == .unknown;
 
     for (ordered) |m| {
@@ -820,18 +716,13 @@ fn terminateTreeBefore(
     const state: TerminationState = blk: {
         if (any_survivor) break :blk .survivors;
         if (any_unknown) break :blk .unknown;
-        // macOS exposes neither containment nor a process-event stream here.
-        // A child can fork and reparent between observations, so a complete
-        // current snapshot cannot prove that every owned descendant is known.
-        // Keep the verified per-member fates, but never promote process-tree
-        // teardown to aggregate success from snapshot evidence alone.
+        // macOS exposes neither containment nor a process-event stream here. A child can fork and reparent between observations, so a complete current snapshot cannot prove that every owned descendant is known. Keep the verified per-member fates, but never promote process-tree teardown to aggregate success from snapshot evidence alone.
         switch (target) {
             .process_tree => break :blk .unknown,
             .foreground_group, .session_members => {},
         }
         if (ordered.len == 0) {
-            // An empty stable narrowed target is complete. The full-tree case
-            // is rejected above because escaped ownership is unprovable.
+            // An empty stable narrowed target is complete. The full-tree case is rejected above because escaped ownership is unprovable.
             break :blk switch (target) {
                 .process_tree => unreachable,
                 .foreground_group, .session_members => .terminated,
@@ -848,13 +739,9 @@ fn terminateTreeBefore(
     };
 }
 
-// ── Unit tests: real child process trees ────────────────────────────────────
-
 const testing = std.testing;
 
-// do not add a realPlatform helper that returns Platform with context
-// pointing at a stack-local RealPlatform — that is use-after-return. Call sites
-// must use `var rp = RealPlatform.init; rp.platform`.
+// do not add a realPlatform helper that returns Platform with context pointing at a stack-local RealPlatform — that is use-after-return. Call sites must use `var rp = RealPlatform.init; rp.platform`.
 
 /// Spawn `sleep 60` in a new session; returns pid. Caller must reap/kill.
 fn spawnSleepChild() !i32 {
@@ -869,7 +756,6 @@ fn spawnSleepChild() !i32 {
     return pid;
 }
 
-/// Spawn a parent that itself spawns a child sleep (2-level tree).
 fn spawnNestedTree() !i32 {
     const pipe_fds = try posix.pipe();
     errdefer {
@@ -1067,7 +953,6 @@ test "immediate process-tree stop preserves member absence evidence" {
     var result = try terminateTree(rp.platform(), testing.allocator, root, token, .immediate);
     defer result.deinit(testing.allocator);
 
-    // waitNoHang may already have reaped during terminateTree.
     reapIgnoreEchild(root);
 
     try testing.expectEqual(TerminationState.unknown, result.state);
@@ -1270,15 +1155,12 @@ test "PID reuse yields unknown not terminated for the new process" {
     try testing.expect(result.state == .unknown or result.state == .survivors);
 }
 
-// B1 POSITIVE CONTROL: observe failure with EPERM-class unobservable MUST
-// report.unknown, never.terminated. This test fails if revalidate maps
-// unobservable → terminated (the pre-fix bug).
+// B1 POSITIVE CONTROL: observe failure with EPERM-class unobservable MUST report.unknown, never.terminated. This test fails if revalidate maps unobservable → terminated (the pre-fix bug).
 test "B1 positive control: EPERM unobservable is unknown not terminated" {
     const EpermPlatform = struct {
         original: ProcessIdentity,
         now: u64 = 0,
-        /// After the stop policy signals, observation fails with EPERM-class
-        /// unobservable while the process is still "alive" (no wait, no ESRCH).
+        /// After the stop policy signals, observation fails with EPERM-class unobservable while the process is still "alive" (no wait, no ESRCH).
         signaled: bool = false,
 
         fn platform(self: *@This()) Platform {
@@ -1346,9 +1228,6 @@ test "B1 positive control: EPERM unobservable is unknown not terminated" {
     defer result.deinit(testing.allocator);
 
     try testing.expect(result.members.len >= 1);
-    // THE ASSERTION THAT FAILS AGAINST UNFIXED CODE
-    // unfixed revalidate: observe failure →.terminated
-    // fixed:.unobservable →.unknown
     try testing.expectEqual(MemberFate.unknown, result.members[0].fate);
     try testing.expectEqualStrings("permission-or-unobservable", result.members[0].reason);
     try testing.expectEqual(TerminationState.unknown, result.state);
@@ -1569,10 +1448,7 @@ test "M1: absent root with empty process tree remains unknown" {
     try testing.expectEqual(@as(usize, 0), result.members.len);
 }
 
-// POSITIVE CONTROL: a changing-but-complete tree (root live, every pass
-// complete, membership differs between passes) MUST report.unknown — never
-// .terminated. Against the regression (`any_unknown = snap.incomplete` only)
-// this yields.terminated and FAIL.
+// POSITIVE CONTROL: a changing-but-complete tree (root live, every pass complete, membership differs between passes) MUST report.unknown — never .terminated. Against the regression (`any_unknown = snap.incomplete` only) this yields.terminated and FAIL.
 test "N1 positive control: changing-but-complete tree is unknown not terminated" {
     const ChangingTree = struct {
         root: ProcessIdentity,
@@ -1610,14 +1486,12 @@ test "N1 positive control: changing-but-complete tree is unknown not terminated"
             return .absent;
         }
         fn waitNoHang(_: *anyopaque, _: i32) bool {
-            // Pretend reaped after kill so members look terminated — the overall
-            // state must STILL be unknown because the snapshot never stabilized.
+            // Pretend reaped after kill so members look terminated — the overall state must STILL be unknown because the snapshot never stabilized.
             return true;
         }
         fn listChildren(ctx: *anyopaque, allocator: std.mem.Allocator, pid: i32) ![]i32 {
             const self: *@This() = @ptrCast(@alignCast(ctx));
             if (pid != self.root.pid) return try allocator.alloc(i32, 0);
-            // Alternate membership each list call so consecutive full passes differ.
             self.pass += 1;
             const out = try allocator.alloc(i32, 1);
             out[0] = if (self.pass % 2 == 1) self.child_a.pid else self.child_b.pid;
@@ -1666,13 +1540,10 @@ test "N1 positive control: changing-but-complete tree is unknown not terminated"
 
     // Snapshot never stabilized → status unknown.
     try testing.expectEqual(SnapshotStatus.unknown, result.snapshot_status);
-    // THE ASSERTION THAT FAILS AGAINST THE REGRESSION
     try testing.expectEqual(TerminationState.unknown, result.state);
     try testing.expect(result.state != .terminated);
 }
 
-// B1 real errno branch: launchd (pid 1) is not same-user readable → unobservable.
-// Must assert.unobservable (not merely "not absent") so the EPERM/other leg is closed.
 test "observeProcess pid 1 is unobservable not absent (real errno branch)" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
     const result = observeProcess(1);
@@ -1688,10 +1559,7 @@ test "inspection constants match grace and deadline bounds" {
     try testing.expectEqual(@as(u64, 2 * std.time.ns_per_s), graceful_kill_wait_ns);
 }
 
-// TOCTOU POSITIVE CONTROL: a pid reused between snapshot and signal must NOT
-// be signalled. The snapshot's start token is up to 250 ms stale at kill time;
-// unfixed kill loops signal the bare snapshot pid and would deliver SIGKILL to
-// the unrelated same-uid process now holding it (sim.signals would be 1).
+// TOCTOU POSITIVE CONTROL: a pid reused between snapshot and signal must NOT be signalled. The snapshot's start token is up to 250 ms stale at kill time; unfixed kill loops signal the bare snapshot pid and would deliver SIGKILL to the unrelated same-uid process now holding it (sim.signals would be 1).
 test "signal-time token revalidation skips a reused pid (TOCTOU)" {
     const ReuseAtSignal = struct {
         original: ProcessIdentity,
@@ -1726,8 +1594,6 @@ test "signal-time token revalidation skips a reused pid (TOCTOU)" {
             if (pid != self.original.pid) return .absent;
             self.observations += 1;
             var id = self.original;
-            // The first two observations are the two matching snapshot passes;
-            // afterwards the pid has been reused by an unrelated process.
             if (self.observations > 2) id.start_token.seconds += 1000;
             return .{ .present = id };
         }
@@ -1759,8 +1625,7 @@ test "signal-time token revalidation skips a reused pid (TOCTOU)" {
     );
     defer result.deinit(testing.allocator);
 
-    // THE ASSERTION THAT FAILS AGAINST UNFIXED CODE: the reused pid must never
-    // be signalled.
+    // THE ASSERTION THAT FAILS AGAINST UNFIXED CODE: the reused pid must never be signalled.
     try testing.expectEqual(@as(usize, 0), sim.signals);
     try testing.expect(result.members.len >= 1);
     try testing.expectEqual(MemberFate.unknown, result.members[0].fate);
@@ -1768,9 +1633,7 @@ test "signal-time token revalidation skips a reused pid (TOCTOU)" {
     try testing.expectEqual(TerminationState.unknown, result.state);
 }
 
-// Stuck-clock positive control: RealPlatform.monoNow returns 0 forever when
-// Instant.now fails, so the 250 ms deadline can never fire. The pass cap must
-// bound the loop and fail closed UNKNOWN — unfixed code hangs here forever.
+// Stuck-clock positive control: RealPlatform.monoNow returns 0 forever when Instant.now fails, so the 250 ms deadline can never fire. The pass cap must bound the loop and fail closed UNKNOWN — unfixed code hangs here forever.
 test "stuck monotonic clock: snapshot bounded by pass cap, fails closed unknown" {
     const StuckClock = struct {
         root: ProcessIdentity,
@@ -1856,8 +1719,7 @@ test "stuck monotonic clock: snapshot bounded by pass cap, fails closed unknown"
     try testing.expect(sim.lists <= snapshot_max_passes);
 }
 
-// getsid failure is UNKNOWN, never a real session id: session_members kill
-// targeting must not match an unknown session — not even against a -1 target.
+// getsid failure is UNKNOWN, never a real session id: session_members kill targeting must not match an unknown session — not even against a -1 target.
 test "session target never matches an unknown session id" {
     const unknown_session: ProcessIdentity = .{
         .pid = 1234,

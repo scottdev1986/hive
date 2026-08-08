@@ -1,0 +1,31 @@
+{
+  "vendor": "kimi",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.kimi-code/bin/kimi",
+  "binaryBefore": {
+    "version": "0.31.1",
+    "device": 16777234,
+    "inode": 270670450,
+    "size": 161389504,
+    "mtimeMs": 1785506649108.469
+  },
+  "operatorBefore": {
+    ".kimi-code": "a5bf135952a43738b8b9f098f6a1dbbe39806b607692caf5b280a66a7265597f"
+  },
+  "borrowed": [],
+  "operatorAdjustments": [],
+  "artifacts": [],
+  "binaryAfter": {
+    "version": "0.31.1",
+    "device": 16777234,
+    "inode": 270670450,
+    "size": 161389504,
+    "mtimeMs": 1785506649108.469
+  },
+  "operatorAfter": {
+    ".kimi-code": "a5bf135952a43738b8b9f098f6a1dbbe39806b607692caf5b280a66a7265597f"
+  },
+  "changedOperatorPaths": [],
+  "changedOperatorNodes": {},
+  "artifactsAfter": []
+}

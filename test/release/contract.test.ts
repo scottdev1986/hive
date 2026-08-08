@@ -40,13 +40,13 @@ describe("the version has exactly one source", () => {
     expect(JSON.parse(read("package.json")).version).toEqual("0.0.0");
   });
 
-  test("src/version.ts falls back to a dev version, never a release one", () => {
-    expect(read("src/version.ts")).toContain('"0.0.0-dev"');
+  test("src/shared/version.ts falls back to a dev version, never a release one", () => {
+    expect(read("src/shared/version.ts")).toContain('"0.0.0-dev"');
   });
 
-  test("no module outside src/version.ts declares its own version constant", () => {
+  test("no module outside src/shared/version.ts declares its own version constant", () => {
     const offenders = sourceFiles(join(repoRoot, "src"))
-      .filter((file) => !file.endsWith("src/version.ts"))
+      .filter((file) => !file.endsWith("src/shared/version.ts"))
       .filter((file) => !file.endsWith(".test.ts"))
       .filter((file) =>
         /\bHIVE_VERSION\s*=\s*["']/.test(readFileSync(file, "utf8")),
@@ -90,7 +90,7 @@ describe("the release workflow", () => {
   });
 
   test("calls the tested planner rather than reimplementing the bump in shell", () => {
-    expect(workflow).toContain("src/release/plan-cli.ts");
+    expect(workflow).toContain("scripts/release/plan-cli.ts");
     expect(workflow).not.toMatch(/git tag[^\n]*sort[^\n]*tail/);
   });
 
@@ -102,7 +102,7 @@ describe("the release workflow", () => {
   });
 
   test("gates typecheck and tests ahead of any release step", () => {
-    const tests = workflow.indexOf("bun test");
+    const tests = workflow.indexOf("run: bun run test");
     expect(tests).toBeGreaterThan(0);
     expect(workflow.indexOf("Plan the release")).toBeGreaterThan(tests);
   });
@@ -111,7 +111,9 @@ describe("the release workflow", () => {
     const download = workflow.indexOf(
       "xcodebuild -downloadComponent MetalToolchain",
     );
-    const preflight = workflow.indexOf("scripts/provision-native-toolchain.sh");
+    const preflight = workflow.indexOf(
+      "scripts/native/provision-native-toolchain.sh",
+    );
     expect(download).toBeGreaterThan(0);
     expect(preflight).toBeGreaterThan(download);
   });
@@ -125,7 +127,7 @@ describe("the release workflow", () => {
 
   test("stages the qualified native artifact where SwiftPM consumes it", () => {
     const nativeBuild = workflow.indexOf(
-      "scripts/build-ghosttykit.sh --production",
+      "scripts/native/build-ghosttykit.sh --production",
     );
     const stage = workflow.indexOf(
       '/usr/bin/ditto "$artifact/GhosttyKit.xcframework" workspace/Vendor/GhosttyKit.xcframework',
@@ -142,6 +144,13 @@ describe("the release workflow", () => {
     const pinned = /bun-version:\s*"([^"]+)"/.exec(workflow)?.[1];
     const declared = JSON.parse(read("package.json")).packageManager;
     expect(declared).toEqual(`bun@${pinned}`);
+  });
+
+  test("installs native dependencies for both CLI architectures", () => {
+    const crossArchInstall =
+      "bun install --frozen-lockfile --os=darwin --cpu='*'";
+    expect(workflow).toContain(crossArchInstall);
+    expect(read("Makefile")).toContain(crossArchInstall);
   });
 
   test("publishes every executable a fresh install requires", () => {
@@ -207,6 +216,7 @@ describe("the Graphify runtime workflow", () => {
   test("a combined release waits for the signed runtime channel", () => {
     expect(release).toContain("scripts/graphify/wait-channel.ts");
     // The wait polls faster than the anonymous API budget allows.
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions syntax is asserted verbatim.
     expect(release).toContain("GITHUB_TOKEN: ${{ github.token }}");
   });
 });

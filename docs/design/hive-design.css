@@ -175,7 +175,7 @@ html.doc-terminal .arch-node p { margin: 0; color: var(--muted); font-size: 13px
 html.doc-terminal .arrow { display: grid; place-items: center; color: var(--green); font-size: 28px; font-weight: 900; }
 html.doc-terminal .state-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 22px; }
 html.doc-terminal .state { padding: 18px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; }
-html.doc-terminal .state.human { background: var(--amber-2); border-color: var(--amber); }
+html.doc-terminal .state.user { background: var(--amber-2); border-color: var(--amber); }
 html.doc-terminal .state strong { display: block; margin-bottom: 6px; font: 850 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
 html.doc-terminal .state p { margin: 0; color: var(--muted); font-size: 12px; }
 html.doc-terminal .table-wrap { margin-top: 22px; overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }

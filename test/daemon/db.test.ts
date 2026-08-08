@@ -3,11 +3,9 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  type Approval,
-  getDatabaseIdentityPath,
-  HiveDatabase,
-} from "../../src/daemon/db";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { databaseIdentityPath } from "../../src/hive-home/instance-identity";
+import type { Approval } from "../../src/schemas/approval";
 import {
   type HiveTerminalBinding,
   TerminalHostBindingConflictError,
@@ -16,19 +14,16 @@ import {
   deleteAgentRow,
   deleteApprovalRow,
   deleteEventRows,
-  deleteMessageRow,
   listAgentsNamed,
-} from "../../src/daemon/testing";
-import type {
-  AgentRecord,
-  HandoffBundle,
-  HookEvent,
-  ProviderRun,
-} from "../../src/schemas";
-import { type AgentMessage, AgentMessageSchema } from "../../src/schemas";
+} from "../support/daemon-test-support";
+import type { AgentRecord } from "../../src/schemas/agent";
+import type { HandoffBundle } from "../../src/schemas/handoff-schema";
+import type { HookEvent } from "../../src/schemas/event";
+import type { ProviderRun } from "../../src/schemas/provider-run";
 import { required } from "../required";
+import { tempRoot } from "../temp-root";
 
-const home = mkdtempSync(join(tmpdir(), "hive-db-test-"));
+const home = tempRoot("hive-db-test-");
 process.env.HIVE_HOME = home;
 
 const timestamp = "2026-07-09T12:00:00.000Z";
@@ -47,7 +42,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 12,
     createdAt: timestamp,
     lastEventAt: timestamp,
-    recoveryAttempts: 0,
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
@@ -101,6 +95,7 @@ describe("HiveDatabase", () => {
     };
 
     expect(db.insertHandoff(bundle)).toEqual(bundle);
+    expect(db.getRunOutcome(bundle.sourceRunId)).toEqual(bundle.runOutcome);
     expect(db.getHandoffForSourceRun(bundle.sourceRunId)).toEqual({
       bundle,
       pickup: null,
@@ -152,9 +147,8 @@ describe("HiveDatabase", () => {
       model: "gpt-5-codex",
       effort: "high",
       conversationId: "thread-fixture",
-      pid: 4_200,
-      startToken: "4200:1",
-      foregroundProcessGroupId: 4_200,
+      adapterChild: null,
+      protocolReceipt: null,
       capabilityEpoch: 3,
       launchGrantId: "grant-fixture",
       startedAt: "2026-07-24T17:00:00.000Z",
@@ -170,6 +164,72 @@ describe("HiveDatabase", () => {
     try {
       expect(db.getProviderRun(run.runId)).toEqual(run);
       expect(db.getActiveProviderRunByTerminal(terminal)).toEqual(run);
+      const identity = {
+        pid: 4_200,
+        startToken: "4200:1",
+        processGroupId: 4_200,
+        observedAt: "2026-07-24T17:00:00.000Z",
+      };
+      const bound = db.bindProviderRunAdapterChild(
+        run.runId,
+        required(run.agentId),
+        run.capabilityEpoch,
+        identity,
+      );
+      expect(bound?.adapterChild).toEqual(identity);
+      expect(
+        db.bindProviderRunAdapterChild(
+          run.runId,
+          required(run.agentId),
+          run.capabilityEpoch,
+          identity,
+        ),
+      ).toEqual(bound);
+      expect(
+        db.bindProviderRunAdapterChild(
+          run.runId,
+          required(run.agentId),
+          run.capabilityEpoch,
+          { ...identity, startToken: "4200:stale" },
+        ),
+      ).toBeNull();
+      expect(
+        db.bindProviderRunAdapterChild(
+          run.runId,
+          required(run.agentId),
+          run.capabilityEpoch + 1,
+          identity,
+        ),
+      ).toBeNull();
+      const receipt = {
+        clientInputId: "018f1e90-7b5a-7cc0-8000-000000000194",
+        outcome: "accepted" as const,
+        turnId: "turn-fixture",
+        reportedAt: "2026-07-24T17:01:00.000Z",
+      };
+      const received = db.recordProviderRunProtocolReceipt(
+        run.runId,
+        required(run.agentId),
+        run.capabilityEpoch,
+        receipt,
+      );
+      expect(received?.protocolReceipt).toEqual(receipt);
+      expect(
+        db.recordProviderRunProtocolReceipt(
+          run.runId,
+          required(run.agentId),
+          run.capabilityEpoch,
+          { ...receipt, reportedAt: "2026-07-24T17:02:00.000Z" },
+        ),
+      ).toEqual(received);
+      expect(
+        db.recordProviderRunProtocolReceipt(
+          run.runId,
+          required(run.agentId),
+          run.capabilityEpoch,
+          { ...receipt, outcome: "rejected" },
+        ),
+      ).toBeNull();
       expect(() =>
         db.insertProviderRun({
           ...run,
@@ -209,53 +269,56 @@ describe("HiveDatabase", () => {
     }
   });
 
-  test("preserves a timed-out message attempt even if a late success arrives", () => {
-    const db = new HiveDatabase(":memory:");
-    const message = AgentMessageSchema.parse({
-      id: "message-attempt-fixture",
-      from: "queen",
-      to: "maya",
-      body: "begin",
-      createdAt: timestamp,
-      notifiedAt: null,
-    });
-    db.insertMessage(message);
-    const attempt = db.beginMessageAttempt({
-      attemptId: "018f1e90-7b5a-7cc0-8000-000000000193",
-      messageId: message.id,
-      expectedProviderRunId: "018f1e90-7b5a-7cc0-8000-000000000191",
-      terminalGeneration: 1,
-      expectedForeground: {
-        pid: 4_200,
-        startToken: "4200:1",
-        processGroupId: 4_200,
-      },
-      attemptedAt: "2026-07-24T17:01:00.000Z",
-    });
-    expect(attempt.outcome).toBe("pending");
-
-    const timedOut = db.finishMessageAttempt(attempt.attemptId, {
-      outcome: "timeout",
-      terminalReceipt: null,
-    });
-    expect(timedOut.outcome).toBe("timeout");
-    expect(
-      db.finishMessageAttempt(attempt.attemptId, {
-        outcome: "written",
-        terminalReceipt: {
-          transactionId: message.id,
-          stage: "written-to-terminal",
-          byteRange: { start: "0", endExclusive: "5" },
-          orderedAt: "5",
-          availableCreditBytes: 1_024,
-          consumedByProcess: "not-claimed",
-          completeness: "complete",
-          diagnostic: null,
-        },
-      }),
-    ).toEqual(timedOut);
-    expect(db.listMessageAttempts(message.id)).toEqual([timedOut]);
+  test("loads old terminal identity fields as unknown frontend state", () => {
+    const path = join(home, "legacy-provider-runs.db");
+    const terminal = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-legacy-provider-run",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000195",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-provider-run",
+    };
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000196",
+      agentId: "agent-maya",
+      terminal,
+      provider: "codex",
+      model: "gpt-5-codex",
+      effort: null,
+      conversationId: null,
+      adapterChild: null,
+      protocolReceipt: null,
+      capabilityEpoch: 3,
+      launchGrantId: "grant-fixture",
+      startedAt: "2026-07-24T17:00:00.000Z",
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    let db = new HiveDatabase(path);
+    db.insertProviderRun(run);
     db.close();
+
+    const legacy = { ...run } as Record<string, unknown>;
+    delete legacy.adapterChild;
+    delete legacy.protocolReceipt;
+    legacy.pid = 4_200;
+    legacy.startToken = "4200:1";
+    legacy.foregroundProcessGroupId = 4_200;
+    const raw = new Database(path);
+    raw
+      .query("UPDATE provider_runs SET recordJson = ? WHERE runId = ?")
+      .run(JSON.stringify(legacy), run.runId);
+    raw.close();
+
+    db = new HiveDatabase(path);
+    try {
+      expect(db.getProviderRun(run.runId)).toEqual(run);
+    } finally {
+      db.close();
+    }
   });
 
   test("persists terminal policy binding by the exact Hive locator", () => {
@@ -321,12 +384,11 @@ describe("HiveDatabase", () => {
             binding.locator.subject.kind === "agent"
               ? binding.locator.subject.agentId
               : "agent-maya",
-          status: "failed",
+          status: "dead",
           sessionLocator: binding.locator,
-          failedAt: timestamp,
         }),
       );
-      expect(db.discardFailedSpawn("agent-maya", "never-created")).toBe(false);
+      expect(db.discardSpawn("agent-maya", "never-created")).toBe(false);
       expect(db.getAgentById("agent-maya")).not.toBeNull();
       expect(deleteAgentRow(db, "agent-maya")).toBe(true);
       expect(
@@ -390,15 +452,13 @@ describe("HiveDatabase", () => {
       db.insertAgent(
         agent({
           id: locator.subject.agentId,
-          status: "failed",
+          status: "dead",
           sessionLocator: locator,
-          failureReason: "typed capacity refusal",
-          failedAt: timestamp,
         }),
       );
-      expect(
-        db.discardFailedSpawn(locator.subject.agentId, "never-created"),
-      ).toBe(true);
+      expect(db.discardSpawn(locator.subject.agentId, "never-created")).toBe(
+        true,
+      );
       expect(db.getAgentById(locator.subject.agentId)).toBeNull();
       expect(db.getTerminalHostBindingByLocator(locator)).toBeNull();
     } finally {
@@ -545,10 +605,9 @@ describe("HiveDatabase", () => {
       const updated = {
         ...inserted,
         ...agent({
-          status: "failed",
+          status: "dead",
           contextPct: 28,
-          failureReason: "Error: model not supported",
-          failedAt: "2026-07-09T12:01:00.000Z",
+          lastEventAt: "2026-07-09T12:01:00.000Z",
           executionIdentity: {
             tool: "codex",
             model: "gpt-5-codex",
@@ -557,10 +616,10 @@ describe("HiveDatabase", () => {
           controlMessageId: "control-1",
           controlQuotaReservationId: "quota-control-1",
           toolSessionId: "0189-session",
-          recoveryAttempts: 2,
+          landedCommit: "a".repeat(40),
+          landedAt: "2026-07-09T12:01:00.000Z",
         }),
       };
-      // Reaching a terminal status stamps closure durably, from failedAt.
       const closed = { ...updated, closedAt: "2026-07-09T12:01:00.000Z" };
       expect(db.upsertAgent(updated)).toEqual(closed);
       expect(db.listAgents()).toEqual([closed]);
@@ -626,7 +685,6 @@ describe("HiveDatabase", () => {
       // A later write that keeps the agent closed must not slide the instant.
       const rewritten = db.upsertAgent({
         ...required(dead),
-        failureReason: "killed by orchestrator",
         lastEventAt: "2026-07-09T12:30:00.000Z",
       });
       expect(rewritten.closedAt).toEqual("2026-07-09T12:02:00.000Z");
@@ -704,7 +762,7 @@ describe("HiveDatabase", () => {
       db.insertAgent(
         agent({
           id: "agent-maya-2",
-          status: "failed",
+          status: "dead",
           createdAt: "2026-07-09T13:00:00.000Z",
           closedAt: "2026-07-09T13:05:00.000Z",
         }),
@@ -773,37 +831,6 @@ describe("HiveDatabase", () => {
     }
   });
 
-  test("marking dead records a failure reason and preserves an existing one", () => {
-    const db = new HiveDatabase(join(home, "dead-reasons.db"));
-    try {
-      db.upsertAgent(agent());
-      const reconciled = db.markAgentDead(
-        "agent-maya",
-        "2026-07-09T13:00:00.000Z",
-        "terminal session missing (reconciled)",
-      );
-      expect(reconciled?.failureReason).toEqual(
-        "terminal session missing (reconciled)",
-      );
-
-      db.upsertAgent(
-        agent({
-          id: "agent-david",
-          name: "david",
-          status: "stuck",
-          failureReason: "earlier reason",
-        }),
-      );
-      const preserved = db.markAgentDead(
-        "agent-david",
-        "2026-07-09T13:00:00.000Z",
-      );
-      expect(preserved?.failureReason).toEqual("earlier reason");
-    } finally {
-      db.close();
-    }
-  });
-
   test("migrates legacy agent rows and omits retired viewer state", () => {
     const path = join(home, "legacy-agents.db");
     const legacy = new Database(path, { create: true });
@@ -857,7 +884,6 @@ describe("HiveDatabase", () => {
         ...value,
         status: "dead",
         contextPct: null,
-        failureReason: "terminal session retired during host migration",
       });
       expect(migrated.sessionLocator).toMatchObject({
         schemaVersion: 1,
@@ -883,6 +909,13 @@ describe("HiveDatabase", () => {
               (column as { name: string }).name === retiredViewerColumn,
           ),
       ).toEqual(false);
+      const agentColumns = db.database
+        .query("PRAGMA table_info(agents)")
+        .all()
+        .map((column) => (column as { name: string }).name);
+      for (const retired of ["failureReason", "failedAt", "recoveryAttempts"]) {
+        expect(agentColumns).not.toContain(retired);
+      }
       for (const name of [
         "executionIdentity",
         "controlMessageId",
@@ -909,35 +942,50 @@ describe("HiveDatabase", () => {
     }
   });
 
-  test("round-trips messages and delivery updates", () => {
-    const db = new HiveDatabase(join(home, "messages.db"));
-    const message: AgentMessage = {
-      id: "message-1",
-      from: "sam",
-      to: "maya",
-      body: "The interface is ready.",
-      createdAt: timestamp,
-      priority: "normal",
-      state: "queued",
-      notifiedAt: null,
-      acknowledgedAt: null,
-      sequence: 1,
-      idempotencyKey: null,
-    };
+  test("removes retired failure fields from persisted tasks", () => {
+    const path = join(home, "legacy-task-failures.db");
+    const legacy = new HiveDatabase(path);
+    legacy.database.exec(`
+      CREATE TABLE hierarchy_records (
+        kind TEXT NOT NULL,
+        id TEXT NOT NULL,
+        runId TEXT NOT NULL,
+        revision TEXT,
+        capabilityEpoch INTEGER,
+        document TEXT NOT NULL,
+        PRIMARY KEY (kind, id)
+      )
+    `);
+    legacy.database
+      .query(`
+        INSERT INTO hierarchy_records (kind, id, runId, revision, document)
+        VALUES ('task', 'task-legacy', 'run-legacy', '2', ?)
+      `)
+      .run(
+        JSON.stringify({
+          taskId: "task-legacy",
+          revision: "2",
+          terminationReason: "provider failed",
+          retryCount: 3,
+          recoveryCount: 1,
+        }),
+      );
+    legacy.close();
+
+    const migrated = new HiveDatabase(path);
     try {
-      expect(db.insertMessage(message)).toEqual(message);
-      expect(db.getUnacknowledgedMessages("maya")).toEqual([message]);
-      expect(
-        db.transitionMessage(
-          message.id,
-          "notified",
-          "2026-07-09T12:01:00.000Z",
-        ),
-      ).toMatchObject({ state: "notified" });
-      expect(db.getUnacknowledgedMessages("maya")).toHaveLength(1);
-      expect(deleteMessageRow(db, message.id)).toEqual(true);
+      const row = migrated.database
+        .query(
+          "SELECT document FROM hierarchy_records WHERE kind = 'task' AND id = 'task-legacy'",
+        )
+        .get() as { document: string };
+      const document = JSON.parse(row.document) as Record<string, unknown>;
+      expect(document.taskId).toBe("task-legacy");
+      expect(document).not.toHaveProperty("terminationReason");
+      expect(document).not.toHaveProperty("retryCount");
+      expect(document).not.toHaveProperty("recoveryCount");
     } finally {
-      db.close();
+      migrated.close();
     }
   });
 
@@ -945,25 +993,9 @@ describe("HiveDatabase", () => {
     const db = new HiveDatabase(join(home, "prune.db"));
     const old = "2026-06-01T00:00:00.000Z";
     const now = "2026-07-09T12:00:00.000Z";
-    const message = (overrides: Partial<AgentMessage>): AgentMessage => ({
-      id: "message-old",
-      from: "sam",
-      to: "maya",
-      body: "history",
-      createdAt: old,
-      priority: "normal",
-      state: "queued",
-      notifiedAt: null,
-      acknowledgedAt: null,
-      sequence: 1,
-      idempotencyKey: null,
-      ...overrides,
-    });
     try {
       db.insertEvent({ kind: "turn-start", agentName: "maya", timestamp: old });
       db.insertEvent({ kind: "turn-start", agentName: "maya", timestamp: now });
-      db.insertMessage(message({ id: "old-applied", state: "acknowledged" }));
-      db.insertMessage(message({ id: "old-queued", sequence: 2 }));
       db.insertApproval({
         id: "old-approved",
         agentName: "maya",
@@ -981,14 +1013,8 @@ describe("HiveDatabase", () => {
         resolvedAt: null,
       });
 
-      expect(db.pruneHistory(now)).toEqual({
-        events: 1,
-        messages: 1,
-        approvals: 1,
-      });
+      expect(db.pruneHistory(now)).toMatchObject({ events: 1, approvals: 1 });
       expect(db.listEvents("maya")).toHaveLength(1);
-      expect(db.getMessage("old-queued")).not.toBeNull();
-      expect(db.getMessage("old-applied")).toBeNull();
       expect(db.getApproval("old-pending")).not.toBeNull();
       expect(db.getApproval("old-approved")).toBeNull();
     } finally {
@@ -1211,7 +1237,7 @@ describe("HiveDatabase", () => {
     const db = new HiveDatabase();
     db.close();
     try {
-      expect(existsSync(getDatabaseIdentityPath())).toBe(true);
+      expect(existsSync(databaseIdentityPath())).toBe(true);
       rmSync(path, { force: true });
       rmSync(`${path}-wal`, { force: true });
       rmSync(`${path}-shm`, { force: true });
@@ -1235,12 +1261,12 @@ describe("HiveDatabase", () => {
         "A read-only command will not create or seed it",
       );
       expect(existsSync(path)).toBe(false);
-      expect(existsSync(getDatabaseIdentityPath())).toBe(false);
+      expect(existsSync(databaseIdentityPath())).toBe(false);
 
       const initialized = new HiveDatabase();
       initialized.close();
       expect(existsSync(path)).toBe(true);
-      expect(existsSync(getDatabaseIdentityPath())).toBe(true);
+      expect(existsSync(databaseIdentityPath())).toBe(true);
 
       rmSync(path, { force: true });
       rmSync(`${path}-wal`, { force: true });
@@ -1271,10 +1297,10 @@ describe("HiveDatabase", () => {
       .all();
     legacy.close();
     try {
-      expect(existsSync(getDatabaseIdentityPath())).toBe(false);
+      expect(existsSync(databaseIdentityPath())).toBe(false);
       const readonly = HiveDatabase.openReadonly();
       readonly.close();
-      expect(existsSync(getDatabaseIdentityPath())).toBe(false);
+      expect(existsSync(databaseIdentityPath())).toBe(false);
 
       const observed = new Database(path, { readonly: true });
       try {

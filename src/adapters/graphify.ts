@@ -1,22 +1,4 @@
-/**
- * Graphify: Hive's repo-local code knowledge graph.
- *
- * Four rules hold this module together, and every one of them exists to keep
- * a third-party tool from reaching the network, the user's global config, or
- * their git history on Hive's behalf:
- *
- *   - Installed as a Hive-built frozen bundle: fetched from Hive's signed
- *     runtime channel and unpacked only after its size and SHA-256 match the
- *     signed manifest. No uv, Python, or PyPI on a user's machine.
- *   - Every graphify invocation runs keyless from a scrubbed allowlist
- *     environment with `--code-only`, so the LLM-enrichment paths fail
- *     closed instead of sending repo content anywhere.
- *   - Invocation is by absolute path into Hive's own bundle dir; nothing
- *     lands on PATH and upstream's `graphify install` (which writes the
- *     user's global assistant configs) is never run.
- *   - `hive init` keeps graphify's generated files out of git through the
- *     repository's tracked `.gitignore`.
- */
+/** Graphify: Hive's repo-local code knowledge graph. Four rules hold this module together, and every one of them exists to keep a third-party tool from reaching the network, the user's global config, or their git history on Hive's behalf: - Installed as a Hive-built frozen bundle: fetched from Hive's signed runtime channel and unpacked only after its size and SHA-256 match the signed manifest. No uv, Python, or PyPI on a user's machine. - Every graphify invocation runs keyless from a scrubbed allowlist environment with `--code-only`, so the LLM-enrichment paths fail closed instead of sending repo content anywhere. - Invocation is by absolute path into Hive's own bundle dir; nothing lands on PATH and upstream's `graphify install` (which writes the user's global assistant configs) is never run. - `hive init` keeps graphify's generated files out of git through the repository's tracked `.gitignore`. */
 import { existsSync } from "node:fs";
 import {
   copyFile,
@@ -31,12 +13,13 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
-import { machineHiveHome } from "../daemon/instances";
-import { projectStateDir } from "../daemon/project-state";
+import { projectStateDir } from "../daemon/project-identity-core/state";
+import { machineHiveHome } from "../hive-home/home";
 import { fetchGraphifyRelease, type GraphifyRelease } from "./graphify-channel";
+import { errorMessage } from "../shared/error-message";
+import { withFileLock } from "./file-lock";
 
-/** The source pin CI and local development build. Runtime clients follow the
- * signed channel instead, so publishing Graphify never edits Hive source. */
+/** The source pin CI and local development build. Runtime clients follow the signed channel instead, so publishing Graphify never edits Hive source. */
 export function graphifyPin(): string {
   const match = graphifyLock.match(/^graphifyy(?:\[[^\]]*\])?==(\S+?)\s*\\?$/m);
   if (match === null) {
@@ -49,8 +32,7 @@ export function graphifyToolsDir(): string {
   return join(machineHiveHome(), "tools", "graphify");
 }
 
-/** One immutable bundle dir per pin, so a pin bump can never layer onto a
- * stale install: the new pin is simply a new directory. */
+/** One immutable bundle dir per pin, so a pin bump can never layer onto a stale install: the new pin is simply a new directory. */
 function legacyBundleDir(): string {
   return join(graphifyToolsDir(), graphifyPin());
 }
@@ -75,11 +57,7 @@ export function graphJsonPath(root: string): string {
   return join(graphOutDir(root), "graph.json");
 }
 
-/** The environment every graphify process gets: an allowlist, not a scrub of
- * known key names, so a provider key Hive has never heard of still cannot
- * leak. HOME points into Hive's tools dir so upstream's `~/.graphify` global
- * state is never read or written. Enrichment without a key errors upstream —
- * that error is the fail-closed backstop the design relies on. */
+/** The environment every graphify process gets: an allowlist, not a scrub of known key names, so a provider key Hive has never heard of still cannot leak. HOME points into Hive's tools dir so upstream's `~/.graphify` global state is never read or written. Enrichment without a key errors upstream — that error is the fail-closed backstop the design relies on. */
 export function scrubbedGraphifyEnv(): Record<string, string> {
   const env: Record<string, string> = {
     PATH: "/usr/bin:/bin",
@@ -102,8 +80,6 @@ export type CommandRunner = (
   options: { cwd?: string; env?: Record<string, string>; timeoutMs: number },
 ) => Promise<RunResult>;
 
-/** Run in a dedicated process group: a timed-out graphify may have spawned
- * children, and killing only its parent leaves them running outside Hive. */
 export const runCommand: CommandRunner = async (argv, options) => {
   const proc = Bun.spawn(argv, {
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -155,8 +131,7 @@ export type GraphifyOutcome =
   | { ok: true; detail: string; changed?: boolean }
   | { ok: false; reason: string };
 
-/** Probe both entry points of an unpacked bundle; a bundle that unpacked but
- * cannot run is a failed install, not a shrug. */
+/** Probe both entry points of an unpacked bundle; a bundle that unpacked but cannot run is a failed install, not a shrug. */
 async function probeBundle(
   directory: string,
   run: CommandRunner,
@@ -184,17 +159,7 @@ async function probeBundle(
   return { ok: true, detail: `Graphify runtime in ${directory}` };
 }
 
-/**
- * Point `current` at a bundle, atomically.
- *
- * `symlink` refuses to replace an existing name, so the switch is made by
- * creating the link under a private name and renaming it over `current` —
- * rename being the only swap the filesystem performs in one step. An agent
- * resolving `current` during an upgrade therefore sees the old bundle or the
- * new one, never a missing link, which is what unlink-then-symlink would give
- * it. The private name carries this process's pid so two Hives upgrading at
- * once do not stage over each other.
- */
+/** Point `current` at a bundle, atomically. `symlink` refuses to replace an existing name, so the switch is made by creating the link under a private name and renaming it over `current` — rename being the only swap the filesystem performs in one step. An agent resolving `current` during an upgrade therefore sees the old bundle or the new one, never a missing link, which is what unlink-then-symlink would give it. The private name carries this process's pid so two Hives upgrading at once do not stage over each other. */
 async function activateBundle(tools: string, directory: string): Promise<void> {
   const temporary = join(tools, `.current-${process.pid}`);
   await rm(temporary, { force: true });
@@ -225,24 +190,43 @@ export async function installGraphify(
   try {
     release = await deps.resolveRelease();
   } catch (error) {
-    const current = dirname(graphifyBin());
-    if (existsSync(graphifyBin())) {
-      const cached = await probeBundle(current, deps.run);
-      if (cached.ok) {
-        return {
-          ok: true,
-          detail: `${cached.detail} (channel unavailable: ${
-            error instanceof Error ? error.message : String(error)
-          })`,
-        };
+    return withGraphifyInstallLock(async () => {
+      const current = dirname(graphifyBin());
+      if (existsSync(graphifyBin())) {
+        const cached = await probeBundle(current, deps.run);
+        if (cached.ok) {
+          return {
+            ok: true,
+            detail: `${cached.detail} (channel unavailable: ${errorMessage(
+              error,
+            )})`,
+          };
+        }
       }
-    }
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
+      return {
+        ok: false,
+        reason: errorMessage(error),
+      };
+    });
   }
 
+  return withGraphifyInstallLock(() => installGraphifyLocked(release, deps));
+}
+
+async function withGraphifyInstallLock(
+  operation: () => Promise<GraphifyOutcome>,
+): Promise<GraphifyOutcome> {
+  const tools = graphifyToolsDir();
+  await mkdir(dirname(tools), { recursive: true });
+  return withFileLock(`${tools}.install.lock`, operation, {
+    deadlineMs: 600_000,
+  });
+}
+
+async function installGraphifyLocked(
+  release: GraphifyRelease,
+  deps: GraphifyInstallDeps,
+): Promise<GraphifyOutcome> {
   const artifact = release.artifact;
   const tools = graphifyToolsDir();
   const releaseId = `${release.manifest.graphifyVersion}-hive.${release.manifest.hiveBuild}`;
@@ -278,9 +262,9 @@ export async function installGraphify(
   } catch (error) {
     return {
       ok: false,
-      reason: `could not download the graphify bundle (${artifact.url}): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      reason: `could not download the graphify bundle (${artifact.url}): ${errorMessage(
+        error,
+      )}`,
     };
   }
   if (!response.ok) {
@@ -349,15 +333,10 @@ export async function installGraphify(
   };
 }
 
-/** Full extraction into `<root>/graphify-out/`. Local AST only: `--code-only`
- * is the pinned CLI's own zero-LLM switch, and the scrubbed environment makes
- * any upstream drift toward an LLM call fail loudly instead of egressing. */
 export async function buildGraph(
   root: string,
   run: CommandRunner = runCommand,
 ): Promise<GraphifyOutcome> {
-  // Regenerated before every build so new gitignore rules keep taking effect,
-  // and folded into the detail so what was excluded is said out loud.
   const ignore = await writeGraphifyIgnore(root, run);
   const result = await run([graphifyBin(), "extract", root, "--code-only"], {
     cwd: root,
@@ -379,16 +358,10 @@ export async function buildGraph(
   };
 }
 
-/** Incremental re-extraction after HEAD moved (`graphify update`: code files
- * only, no LLM, per the pinned CLI). `--force` because landings legitimately
- * delete code and a shrinking graph must still apply; the caller only reloads
- * the server on exit 0, so a failed update leaves the old graph serving. */
 export async function updateGraph(
   root: string,
   run: CommandRunner = runCommand,
 ): Promise<GraphifyOutcome> {
-  // Same regeneration as buildGraph: a landing can introduce gitignore rules,
-  // and the incremental walk honours the ignore file for changed files.
   await writeGraphifyIgnore(root, run);
   const result = await run([graphifyBin(), "update", root, "--force"], {
     cwd: root,
@@ -411,13 +384,10 @@ const GRAPH_BRIEF_PREAMBLE =
   "knowledge graph. It is a hint for orientation — upstream accuracy is 45-76% — so " +
   "verify anything load-bearing against the source before building on it.";
 
-/** Keeps the digest a hint-sized fraction of the prompt: ~1500 tokens with
- * the preamble. */
 const GRAPH_BRIEF_MAX_CHARS = 6_000;
 const GRAPH_BRIEF_TIMEOUT_MS = 3_000;
 
-/** The serializer emits every node before any edge, so the query budget must
- * reach provenance-bearing edges. `selectGraphBrief` bounds prompt cost. */
+/** The serializer emits every node before any edge, so the query budget must reach provenance-bearing edges. `selectGraphBrief` bounds prompt cost. */
 const GRAPH_QUERY_BUDGET = 40_000;
 const GRAPH_BRIEF_HEADER_MAX_CHARS = 800;
 const GRAPH_BRIEF_NODE_MAX_CHARS = 2_000;
@@ -425,8 +395,7 @@ const GRAPH_BRIEF_NODE_MAX_CHARS = 2_000;
 const BRIEF_SEED_FILES = 5;
 const BRIEF_EXPANSION_FILES = 8;
 const BRIEF_SYMBOLS_PER_FILE = 3;
-/** A hub file touching many weakly matched symbols stops accumulating here,
- * so `db.ts`-shaped files cannot crowd out precise leads. */
+/** A hub file touching many weakly matched symbols stops accumulating here, so `db.ts`-shaped files cannot crowd out precise leads. */
 const BRIEF_SYMBOL_BONUS_CAP = 25;
 
 interface BriefNode {
@@ -489,8 +458,7 @@ function briefTokens(text: string): Set<string> {
   return out;
 }
 
-/** Test and doc files are legitimate leads but must not outrank the code
- * that answers; the dampening is a rank nudge, not an exclusion. */
+/** Test and doc files are legitimate leads but must not outrank the code that answers; the dampening is a rank nudge, not an exclusion. */
 function briefDamp(file: string): number {
   let damp = 1.0;
   if (file.toLowerCase().includes("test")) damp *= 0.3;
@@ -498,9 +466,7 @@ function briefDamp(file: string): number {
   return damp;
 }
 
-/** Locate from task-matched seeds plus one normalized structural hop. Output
- * retains the binary's cited NODE/EDGE grammar; invalid or matchless graphs
- * return null for the bounded binary fallback. */
+/** Locate from task-matched seeds plus one normalized structural hop. Output retains the binary's cited NODE/EDGE grammar; invalid or matchless graphs return null for the bounded binary fallback. */
 export function buildTargetedGraphBrief(
   graph: unknown,
   task: string,
@@ -543,7 +509,6 @@ export function buildTargetedGraphBrief(
   }
   if (fileLabelTokens.size === 0) return null;
 
-  // Document frequency over files, for IDF weighting.
   const documentFrequency = new Map<string, number>();
   for (const [file, labelTokens] of fileLabelTokens) {
     const all = new Set([...labelTokens, ...briefTokens(file)]);
@@ -594,7 +559,6 @@ export function buildTargetedGraphBrief(
     }
   }
 
-  // 1. Seeds.
   const taskTokens = briefTokens(task);
   const fileScore = new Map<string, number>();
   for (const [file, labelTokens] of fileLabelTokens) {
@@ -615,7 +579,6 @@ export function buildTargetedGraphBrief(
     .slice(0, BRIEF_SEED_FILES);
   const seedSet = new Set(seeds);
 
-  // 2. Structural expansion, hub-normalized.
   const neighborScore = new Map<string, number>();
   for (const seed of seeds) {
     for (const [neighbor, count] of fileLinkCounts.get(seed) ?? []) {
@@ -634,7 +597,6 @@ export function buildTargetedGraphBrief(
       );
     }
   }
-  // 3. Matched-symbol expansion, deduped per (symbol, file) and capped.
   const symbolBonus = new Map<string, number>();
   const seenSymbol = new Set<string>();
   for (const link of links) {
@@ -677,8 +639,6 @@ export function buildTargetedGraphBrief(
   const selected = [...seeds, ...expansion];
   const selectedSet = new Set(selected);
 
-  // Emission: per file its module node plus best-matching symbols, then the
-  // inter-file edges among the selection, matched-endpoint edges first.
   const nodeLines: string[] = [];
   for (const file of selected) {
     const own = fileNodes.get(file) ?? [];
@@ -718,9 +678,7 @@ export function buildTargetedGraphBrief(
     for (const t of n.tokens) if (taskTokens.has(t)) return true;
     return false;
   };
-  // Module↔module edges first: the import skeleton BETWEEN the selected
-  // files is the relational answer ("what attaches to what"). Task-matched
-  // symbol edges next; everything else fills whatever budget remains.
+  // Module↔module edges first: the import skeleton BETWEEN the selected files is the relational answer ("what attaches to what"). Task-matched symbol edges next; everything else fills whatever budget remains.
   const isModule = (n: BriefNode): boolean =>
     n.label === (n.file.split("/").at(-1) ?? "");
   const edgePass = (link: BriefLink): number =>
@@ -759,16 +717,10 @@ export function buildTargetedGraphBrief(
 }
 
 export interface GraphLocateResult {
-  /** False only when there is no usable graph; a graph with no matches is
-   * available:true with an honest no-leads answer, because "the graph has
-   * nothing for this wording" is an answer, not an outage. */
   available: boolean;
   answer: string;
 }
 
-/** One parsed graph per (path, mtime, size): interactive calls repeat, the
- * graph changes only on rebuild, and re-parsing megabytes of JSON per
- * question would stall the daemon's event loop for nothing. */
 let locateCache: { key: string; graph: unknown } | null = null;
 
 const LOCATE_NO_LEADS =
@@ -780,16 +732,13 @@ const LOCATE_NO_LEADS =
 const LOCATE_VERIFY_FOOTER =
   "\n\nLeads, not authority: verify in source before building on any of this.";
 
-/** Mid-task locate over the same mechanisms and output grammar as the spawn
- * brief — exposed so the graph-first mandate stays true after spawn, not only
- * at it. Reads the serving snapshot first (the file rebuilds never mutate;
- * the live graph.json is rewritten in place by every post-landing rebuild)
- * and degrades every failure — absent, oversized, corrupt — to an honest
- * unavailable answer. Never throws, never blocks on a subprocess. */
+/** Mid-task locate over the same mechanisms and output grammar as the spawn brief — exposed so the graph-first mandate stays true after spawn, not only at it. Reads the serving snapshot first (the file rebuilds never mutate; the live graph.json is rewritten in place by every post-landing rebuild) and degrades every failure — absent, oversized, corrupt — to an honest unavailable answer. Never throws, never blocks on a subprocess. */
 export async function graphLocate(
   root: string,
   question: string,
+  signal?: AbortSignal,
 ): Promise<GraphLocateResult> {
+  signal?.throwIfAborted();
   const candidates = [servingGraphPath(root), graphJsonPath(root)];
   const path = candidates.find((p) => existsSync(p));
   if (path === undefined) {
@@ -801,6 +750,7 @@ export async function graphLocate(
   let graph: unknown;
   try {
     const stats = await stat(path);
+    signal?.throwIfAborted();
     if (stats.size > TARGETED_BRIEF_MAX_GRAPH_BYTES) {
       return {
         available: false,
@@ -811,22 +761,24 @@ export async function graphLocate(
     if (locateCache?.key === key) {
       graph = locateCache.graph;
     } else {
-      graph = JSON.parse(await readFile(path, "utf8"));
+      graph = JSON.parse(await readFile(path, { encoding: "utf8", signal }));
+      signal?.throwIfAborted();
       locateCache = { key, graph };
     }
   } catch {
+    signal?.throwIfAborted();
     return {
       available: false,
       answer: "Graph unreadable (corrupt or mid-write); use grep/rg/Glob.",
     };
   }
+  signal?.throwIfAborted();
   const brief = buildTargetedGraphBrief(graph, question);
   if (brief === null) return { available: true, answer: LOCATE_NO_LEADS };
   return { available: true, answer: `${brief}${LOCATE_VERIFY_FOOTER}` };
 }
 
-/** Preserve edges and their cited endpoint nodes when reducing node-first query
- * output. A head slice would discard every edge. */
+/** Preserve edges and their cited endpoint nodes when reducing node-first query output. A head slice would discard every edge. */
 export function selectGraphBrief(output: string): string {
   const lines = output.split("\n");
   const headerLines: string[] = [];
@@ -855,9 +807,6 @@ export function selectGraphBrief(output: string): string {
     edgeChars += line.length + 1;
   }
 
-  // `EDGE <a> --relation [TAG …]--> <b>`: a node cited in a kept edge earns
-  // its NODE line (that is where the file:line lives) ahead of the rest, in
-  // the order the edges cite it — the head edges are the traversal's closest.
   const endpointRank = new Map<string, number>();
   for (const line of keptEdges) {
     const match = line.match(/^EDGE (.*?) --.*?--> (.*)$/);
@@ -887,8 +836,6 @@ export function selectGraphBrief(output: string): string {
     nodeChars += line.length + 1;
   }
 
-  // Truncation must be visible: an elided section that looks complete reads
-  // as "the graph had nothing else", which is the absent-is-unknown bug.
   const summary =
     `[graph brief: kept ${keptNodes.length}/${nodeLines.length} nodes, ` +
     `${keptEdges.length}/${edgeLines.length} edges]`;
@@ -897,14 +844,9 @@ export function selectGraphBrief(output: string): string {
     .join("\n\n");
 }
 
-/** Above this, JSON-parsing the graph would stall the daemon's event loop;
- * the subprocess query path handles the outliers. */
 const TARGETED_BRIEF_MAX_GRAPH_BYTES = 50 * 1024 * 1024;
 
-/** The task-scoped spawn digest. Failures are explicit so absence cannot
- * masquerade as an empty graph.
- * Hive locates from explicit seed nodes because the binary query cannot accept
- * them; its bounded query remains the oversized or matchless fallback. */
+/** The task-scoped spawn digest. Failures are explicit so absence cannot masquerade as an empty graph. Hive locates from explicit seed nodes because the binary query cannot accept them; its bounded query remains the oversized or matchless fallback. */
 export async function buildGraphBrief(
   root: string,
   task: string,
@@ -922,10 +864,7 @@ export async function buildGraphBrief(
       const targeted = buildTargetedGraphBrief(graph, task);
       if (targeted !== null) return `${GRAPH_BRIEF_PREAMBLE}\n\n${targeted}`;
     }
-  } catch {
-    // Unreadable or unparseable graph: the subprocess path below reports
-    // through its own loud-line degradation.
-  }
+  } catch {}
   const result = await run(
     [
       graphifyBin(),
@@ -954,14 +893,11 @@ export async function buildGraphBrief(
   return `${GRAPH_BRIEF_PREAMBLE}\n\n${selectGraphBrief(output)}`;
 }
 
-/** Serve an immutable project-state snapshot because graphify rewrites its live
- * graph in place and the server reopens it for every query. */
 export function servingGraphPath(root: string): string {
   return join(projectStateDir(root), "graphify-serving", "graph.json");
 }
 
-/** Refresh the serving snapshot from the freshly built graph. The copy lands
- * via tmp+rename so even the snapshot itself is never half-written. */
+/** Refresh the serving snapshot from the freshly built graph. The copy lands via tmp+rename so even the snapshot itself is never half-written. */
 export async function snapshotGraphForServing(
   root: string,
 ): Promise<GraphifyOutcome> {
@@ -974,33 +910,23 @@ export async function snapshotGraphForServing(
   } catch (error) {
     return {
       ok: false,
-      reason: `could not snapshot graph for serving: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      reason: `could not snapshot graph for serving: ${errorMessage(error)}`,
     };
   }
-  // Display-only annotation sidecar, read from the served graph's directory;
-  // absent upstream degrades to un-annotated output, so best-effort is right.
   try {
     await copyFile(
       join(graphOutDir(root), ".graphify_learning.json"),
       join(dirname(target), ".graphify_learning.json"),
     );
-  } catch {
-    // No sidecar to carry over.
-  }
+  } catch {}
   return { ok: true, detail: target };
 }
 
-/** First line of a Hive-generated `.graphifyignore`. A file without it is the
- * user's own and is never rewritten or removed. */
+/** First line of a Hive-generated `.graphifyignore`. A file without it is the user's own and is never rewritten or removed. */
 export const GRAPHIFY_IGNORE_MARKER =
   "# Generated by Hive from this repo's own gitignore rules.";
 
-/** Vendored-dependency dirs that are commonly *committed*, so no gitignore
- * rule ever names them. Everything gitignored is handled by the derived
- * section instead — this floor is deliberately short, because a hand-kept
- * ecosystem list is always one ecosystem behind. */
+/** Vendored-dependency dirs that are commonly *committed*, so no gitignore rule ever names them. Everything gitignored is handled by the derived section instead — this floor is deliberately short, because a hand-kept ecosystem list is always one ecosystem behind. */
 const VENDORED_DIR_FLOOR = [
   ".build/",
   ".swiftpm/",
@@ -1013,13 +939,10 @@ const VENDORED_DIR_FLOOR = [
   ".gradle/",
 ];
 
-/** Keep the pattern list bounded: extraction evaluates every pattern against
- * every file, and a monorepo can gitignore thousands of directories. */
+/** Keep the pattern list bounded: extraction evaluates every pattern against every file, and a monorepo can gitignore thousands of directories. */
 const GITIGNORED_DIR_CAP = 400;
 
-/** Materialize nested Git ignore rules at the scan root because graphify reads
- * only root-level rules. Never replace a user-owned `.graphifyignore`; silent
- * over-exclusion is worse than retaining extra nodes. */
+/** Materialize nested Git ignore rules at the scan root because graphify reads only root-level rules. Never replace a user-owned `.graphifyignore`; silent over-exclusion is worse than retaining extra nodes. */
 export async function writeGraphifyIgnore(
   root: string,
   run: CommandRunner = runCommand,
@@ -1028,9 +951,7 @@ export async function writeGraphifyIgnore(
   let existing: string | null = null;
   try {
     existing = await readFile(path, "utf8");
-  } catch {
-    // Absent: generate below.
-  }
+  } catch {}
   if (existing !== null && !existing.startsWith(GRAPHIFY_IGNORE_MARKER)) {
     return {
       ok: true,
@@ -1038,8 +959,6 @@ export async function writeGraphifyIgnore(
     };
   }
 
-  // Everything the repo's own gitignore machinery (root, nested, and
-  // .git/info/exclude) already excludes, collapsed to directories.
   const ignored = await run(
     [
       "git",
@@ -1076,18 +995,22 @@ export async function writeGraphifyIgnore(
       : []),
     "",
   ];
-  // Never let ignore hygiene block a build: an unwritable root degrades to
-  // extraction without exclusions, reported through the build detail.
+  // Never let ignore hygiene block a build: an unwritable root degrades to extraction without exclusions, reported through the build detail.
   try {
-    const temporary = `${path}.${process.pid}.tmp`;
+    // Staged inside graphify-out/ rather than beside the file it replaces:
+    // `.graphifyignore.<pid>.tmp` at the scan root is an untracked path to
+    // anything reading `git status`, because the root gitignore names
+    // `.graphifyignore` exactly and does not cover a suffixed name. Same
+    // filesystem either way, so the rename is still the atomic swap.
+    const staging = graphOutDir(root);
+    await mkdir(staging, { recursive: true });
+    const temporary = join(staging, `.graphifyignore.${process.pid}.tmp`);
     await writeFile(temporary, lines.join("\n"));
     await rename(temporary, path);
   } catch (error) {
     return {
       ok: false,
-      reason: `could not write .graphifyignore: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      reason: `could not write .graphifyignore: ${errorMessage(error)}`,
     };
   }
   return {

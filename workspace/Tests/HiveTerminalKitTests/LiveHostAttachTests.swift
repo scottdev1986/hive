@@ -7,7 +7,7 @@ import XCTest
 /// against a REAL sessiond host serving a live session.
 ///
 /// Skipped unless `HIVE_B22_PROOF_HOME` names a home prepared by
-/// `scripts/b22-live-attach-proof.ts` (which writes `b22-proof.json`). The
+/// `scripts/qa/b22-live-attach-proof.ts` (which writes `b22-proof.json`). The
 /// Most legs use a fake engine; the geometry leg uses a real Ghostty surface.
 /// Pixels-on-glass acceptance remains the recorded Workspace session.
 final class LiveHostAttachTests: XCTestCase {
@@ -44,6 +44,7 @@ final class LiveHostAttachTests: XCTestCase {
         let port: Int
         let agent: String
         let mode: String?
+        let hostDirectory: String
         let locator: ProofLocator
     }
 
@@ -224,7 +225,7 @@ final class LiveHostAttachTests: XCTestCase {
     /// and the first connection is superseded. Finally a wrong-generation
     /// grant request is refused before any transport exists.
     func testLiveAttachReplayReconnectAndFence() throws {
-        let (proof, home) = try loadProof()
+        let (proof, _) = try loadProof()
 
         // Attach A from zero: checkpoint/replay + live push.
         let grantLine = try issueGrant(proof, viewerId: "b22-live-test")
@@ -264,9 +265,7 @@ final class LiveHostAttachTests: XCTestCase {
 
         // Ordered-output digest: the bytes the surface applied must be exactly
         // the journal's leading bytes on disk (16-byte header + raw journal).
-        let journalURL = URL(fileURLWithPath: home)
-            .appendingPathComponent("runtime/sessiond/hosts")
-            .appendingPathComponent(proof.locator.sessionId)
+        let journalURL = URL(fileURLWithPath: proof.hostDirectory, isDirectory: true)
             .appendingPathComponent("journal.bin")
         let journal = try Data(contentsOf: journalURL)
         XCTAssertGreaterThanOrEqual(journal.count, 16 + fedBytes.count)
@@ -402,13 +401,13 @@ final class LiveHostAttachTests: XCTestCase {
 
     /// B2.3 opt-in headless proof through the production Swift attach socket:
     /// a Gate 8 NSTextInputClient commit is held for CLAIM_RESULT, submitted as
-    /// INPUT_SUBMIT, written to the live PTY, and returned as ordered OUTPUT.
+    /// USER_INPUT, interpreted by the live shell, and returned as ordered OUTPUT.
     func testLiveGate8InputRoundTrip() throws {
         let (proof, _) = try loadProof()
         let grantLine = try issueGrant(proof, viewerId: "b23-live-input")
         XCTAssertEqual(grantLine.status, 0, "input grant refused: \(grantLine.output)")
         let grant = try parseGrant(grantLine.output)
-        XCTAssertTrue(grant.operations.contains("human-input"))
+        XCTAssertTrue(grant.operations.contains("user-input"))
 
         let engine = FakeManualSurface()
         let view = HiveTerminalView(frame: .zero, engine: engine, viewerId: "b23-live-input")
@@ -453,16 +452,11 @@ final class LiveHostAttachTests: XCTestCase {
             applied.range(of: expectedResponse),
             "byte-exact PTY response did not return over OUTPUT"
         )
-        guard case .applied(_, let stage) = view.inputSubmissionState else {
-            transport.close()
-            return XCTFail("input did not receive correlated APPLIED: \(view.inputSubmissionState)")
-        }
-        XCTAssertEqual(stage, "written-to-terminal")
         transport.close()
     }
 
     /// B2.4 pinned-vttest path through the real sessiond PTY and authenticated
-    /// human-input claim. The harness command must be run-pinned-vttest-b24.sh.
+    /// authenticated user input. The harness command must be scripts/qa/run-pinned-vttest-b24.sh.
     /// Output is retained in this process as it arrives; the rolling sessiond
     /// journal is not read later as though it were unbounded history.
     func testLivePinnedVttestAlternateScreenPath() throws {
@@ -562,11 +556,6 @@ final class LiveHostAttachTests: XCTestCase {
                 view.keyDown(with: event)
             }
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-            XCTAssertNotEqual(
-                view.inputSubmissionState,
-                .idle,
-                "positive control: Ghostty key encoding must reach the claim-bound write callback"
-            )
         }
 
         // main 11 → non-VT100 8 → XTERM 7 → alternate-screen 5 (1049).
@@ -574,25 +563,25 @@ final class LiveHostAttachTests: XCTestCase {
         guard try pump(until: {
             surface.semanticSnapshot()?.text.contains("Non-VT100 Tests") == true
         }) else {
-            return XCTFail("vttest did not enter non-VT100 menu; input=\(view.inputSubmissionState)")
+            return XCTFail("vttest did not enter non-VT100 menu")
         }
         try submit("8\n")
         guard try pump(until: {
             surface.semanticSnapshot()?.text.contains("XTERM special features") == true
         }) else {
-            return XCTFail("vttest did not enter XTERM menu; input=\(view.inputSubmissionState)")
+            return XCTFail("vttest did not enter XTERM menu")
         }
         try submit("7\n")
         guard try pump(until: {
             surface.semanticSnapshot()?.text.contains("XTERM Alternate-Screen features") == true
         }) else {
-            return XCTFail("vttest did not enter alternate-screen menu; input=\(view.inputSubmissionState)")
+            return XCTFail("vttest did not enter alternate-screen menu")
         }
         try submit("5\n")
         guard try pump(until: {
             surface.semanticSnapshot()?.text.contains("The next screen will be filled with E's") == true
         }) else {
-            return XCTFail("vttest did not enter 1049 test; input=\(view.inputSubmissionState)")
+            return XCTFail("vttest did not enter 1049 test")
         }
 
         try submit("\n")
@@ -600,7 +589,7 @@ final class LiveHostAttachTests: XCTestCase {
             let text = surface.semanticSnapshot()?.text ?? ""
             return text.filter { $0 == "E" }.count > 1_000
         }) else {
-            return XCTFail("vttest did not fill alternate screen; input=\(view.inputSubmissionState)")
+            return XCTFail("vttest did not fill alternate screen")
         }
         let alternateSnapshot = try XCTUnwrap(surface.semanticSnapshot())
         let alternateECount = alternateSnapshot.text.filter { $0 == "E" }.count
@@ -619,14 +608,10 @@ final class LiveHostAttachTests: XCTestCase {
                 "The original screen should be restored except for this line."
             ) == true
         }) else {
-            return XCTFail("vttest did not restore primary screen; input=\(view.inputSubmissionState)")
+            return XCTFail("vttest did not restore primary screen")
         }
         XCTAssertNotNil(returnedOutput.range(of: Data("\u{1B}[?1049h".utf8)))
         XCTAssertNotNil(returnedOutput.range(of: Data("\u{1B}[?1049l".utf8)))
-        guard case .applied(_, let inputStage) = view.inputSubmissionState else {
-            return XCTFail("vttest input did not receive correlated APPLIED: \(view.inputSubmissionState)")
-        }
-        XCTAssertEqual(inputStage, "written-to-terminal")
         try returnedOutput.write(to: URL(fileURLWithPath: bytesPath), options: .atomic)
 
         let evidence = """
@@ -636,8 +621,8 @@ final class LiveHostAttachTests: XCTestCase {
         launch_geometry=24x80.80
         rendered_geometry=\(alternateSnapshot.geometry.rows)x\(alternateSnapshot.geometry.columns)
         menu_path=11/8/7/5 (non-VT100/XTERM/alternate-screen/1049)
-        input_path=authenticated human claim + INPUT_SUBMIT/APPLIED
-        input_receipt=\(view.inputSubmissionState)
+        input_path=authenticated USER_INPUT
+        input_evidence=interpreted vttest menu progression and returned PTY output
         launch_termios_handoff=stty sane (canonical CR-to-NL state normally inherited from an interactive shell)
         alternate_e_count=\(alternateECount)
         decset_1049=observed
@@ -650,22 +635,19 @@ final class LiveHostAttachTests: XCTestCase {
         try (evidence + "\n").write(toFile: transcriptPath, atomically: true, encoding: .utf8)
     }
 
-    /// Unclean transport drop orphans the human claim; a returning human
-    /// viewer re-acquires via the sanctioned resume path and can type again.
-    /// Clean CLAIM_RELEASE (cancel) is covered unit-side.
-    func testLiveClaimUncleanDropThenHumanResumeTypes() throws {
+    /// A returning viewer can type after the earlier viewer drops its transport uncleanly.
+    func testLiveUncleanDropThenReturningViewerTypes() throws {
         let (proof, _) = try loadProof()
         guard proof.mode == "shell" else {
-            throw XCTSkip("claim drop-reattach requires HIVE_B22_REAL_SHELL=1 shell home")
+            throw XCTSkip("drop-reattach requires HIVE_B22_REAL_SHELL=1 shell home")
         }
 
-        // Unique viewer ids so host input-replay idempotency keys do not collide
-        // across test re-runs against a long-lived shell session.
+        // Unique viewer ids and markers keep repeated runs against one long-lived shell attributable.
         let runId = String(UInt32.random(in: 100_000...999_999))
-        let viewerAId = "claim-drop-a-\(runId)"
-        let viewerBId = "claim-drop-b-\(runId)"
+        let viewerAId = "viewer-drop-a-\(runId)"
+        let viewerBId = "viewer-drop-b-\(runId)"
 
-        // --- Viewer A: acquire claim and land one INPUT_SUBMIT ---
+        // --- Viewer A: type through USER_INPUT, then drop the socket. ---
         let grantALine = try issueGrant(proof, viewerId: viewerAId)
         XCTAssertEqual(grantALine.status, 0, "viewer-a grant refused: \(grantALine.output)")
         let grantA = try parseGrant(grantALine.output)
@@ -683,16 +665,17 @@ final class LiveHostAttachTests: XCTestCase {
             return XCTFail("viewer-a attach failed: \(outcomeA)")
         }
         let bindingA = try XCTUnwrap(viewA.binding)
-        let markerA = "hive-claim-a-\(runId)"
+        let markerA = "hive-input-a-\(runId)"
         viewA.insertText(
-            "echo \(markerA)\n",
+            "echo hive-in''put-a-\(runId)\n",
             replacementRange: NSRange(location: NSNotFound, length: 0),
             associatedEvent: nil
         )
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         let deadlineA = Date().addingTimeInterval(10)
         while Date() < deadlineA {
-            if case .applied = viewA.inputSubmissionState { break }
+            let output = engineA.appliedRanges.reduce(Data()) { $0 + $1.bytes }
+            if output.range(of: Data(markerA.utf8)) != nil { break }
             do {
                 guard let frame = try transportA.receive(timeout: 1.0) else { break }
                 viewA.pumpHostFrame(frame, frameBinding: bindingA)
@@ -700,15 +683,16 @@ final class LiveHostAttachTests: XCTestCase {
                 continue
             }
         }
-        guard case .applied = viewA.inputSubmissionState else {
-            transportA.close()
-            return XCTFail("viewer-a never got APPLIED: \(viewA.inputSubmissionState)")
-        }
-        // Unclean drop: tear the socket without CLAIM_RELEASE.
+        let appliedA = engineA.appliedRanges.reduce(Data()) { $0 + $1.bytes }
+        XCTAssertNotNil(
+            appliedA.range(of: Data(markerA.utf8)),
+            "viewer-a input was not interpreted before the unclean drop"
+        )
+        // Unclean drop: tear down the viewer socket without a closing exchange.
         transportA.close()
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
 
-        // --- Viewer B: returning human must resume and type ---
+        // --- Viewer B: returning user must resume and type ---
         let grantBLine = try issueGrant(proof, viewerId: viewerBId)
         XCTAssertEqual(grantBLine.status, 0, "viewer-b grant refused: \(grantBLine.output)")
         let grantB = try parseGrant(grantBLine.output)
@@ -716,9 +700,8 @@ final class LiveHostAttachTests: XCTestCase {
         let viewB = HiveTerminalView(frame: .zero, engine: engineB, viewerId: viewerBId)
         let transportB = try UdsHostTransport.connect(endpoint: grantB.endpoint)
         defer { transportB.close() }
-        // Full journal replay on reattach (afterSeq=0): avoids REBASE_REQUIRED
-        // when the dropped viewer and host high-water race; the claim path is
-        // independent of the output cursor.
+        // Full journal replay on reattach (afterSeq=0) avoids REBASE_REQUIRED
+        // when the dropped viewer and host high-water race.
         let outcomeB = try viewB.attach(
             grant: grantB,
             geometry: geometry,
@@ -729,16 +712,17 @@ final class LiveHostAttachTests: XCTestCase {
             return XCTFail("viewer-b attach failed: \(outcomeB) (viewer-a hw was \(hwA))")
         }
         let bindingB = try XCTUnwrap(viewB.binding)
-        let markerB = "hive-claim-b-\(runId)"
+        let markerB = "hive-input-b-\(runId)"
         viewB.insertText(
-            "echo \(markerB)\n",
+            "echo hive-in''put-b-\(runId)\n",
             replacementRange: NSRange(location: NSNotFound, length: 0),
             associatedEvent: nil
         )
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         let deadlineB = Date().addingTimeInterval(10)
         while Date() < deadlineB {
-            if case .applied = viewB.inputSubmissionState { break }
+            let output = engineB.appliedRanges.reduce(Data()) { $0 + $1.bytes }
+            if output.range(of: Data(markerB.utf8)) != nil { break }
             do {
                 guard let frame = try transportB.receive(timeout: 1.0) else { break }
                 viewB.pumpHostFrame(frame, frameBinding: bindingB)
@@ -746,33 +730,11 @@ final class LiveHostAttachTests: XCTestCase {
                 continue
             }
         }
-        guard case .applied(_, let stage) = viewB.inputSubmissionState else {
-            return XCTFail(
-                "viewer-b did not resume/type after unclean drop: \(viewB.inputSubmissionState)"
-            )
-        }
-        XCTAssertEqual(stage, "written-to-terminal")
-        // Drain a few more OUTPUT frames for the echo (best-effort observability).
-        let drainDeadline = Date().addingTimeInterval(3)
-        while Date() < drainDeadline {
-            let appliedB = engineB.appliedRanges.reduce(Data()) { $0 + $1.bytes }
-            if appliedB.range(of: Data(markerB.utf8)) != nil { break }
-            do {
-                guard let frame = try transportB.receive(timeout: 0.5) else { break }
-                viewB.pumpHostFrame(frame, frameBinding: bindingB)
-            } catch WireError.receiveTimeout {
-                continue
-            }
-        }
         let appliedB = engineB.appliedRanges.reduce(Data()) { $0 + $1.bytes }
-        // Claim resume + INPUT applied is the contract; echo is corroboration.
-        if appliedB.range(of: Data(markerB.utf8)) == nil {
-            NSLog(
-                "hive claim live: marker echo not observed in OUTPUT (applied=%@ stage=%@) — claim resume still GREEN",
-                String(describing: viewB.inputSubmissionState),
-                stage
-            )
-        }
+        XCTAssertNotNil(
+            appliedB.range(of: Data(markerB.utf8)),
+            "returning viewer input was not interpreted after the unclean drop"
+        )
     }
 
     /// B2.4 opt-in live geometry proof: the real Ghostty grid, not the session
@@ -952,8 +914,8 @@ final class LiveHostAttachTests: XCTestCase {
         }
         pump.name = "live-resize-input-pump"
         pump.start()
-        let inputSubmitsBeforeResize = transport.sent.filter { $0.type == .inputSubmit }.count
-        XCTAssertEqual(inputSubmitsBeforeResize, 0)
+        let userInputBeforeResize = transport.sent.filter { $0.type == .userInput }.count
+        XCTAssertEqual(userInputBeforeResize, 0)
 
         let beforeResize = try XCTUnwrap(view.reportedGeometry)
         let resizeFramesBefore = view.resizeFramesSent
@@ -988,10 +950,10 @@ final class LiveHostAttachTests: XCTestCase {
         let sentFrames = transport.sent.map { "\($0.type):\($0.requestId)" }
         let receivedFrames = transport.received.map { "\($0.type):\($0.requestId)" }
         XCTAssertGreaterThan(
-            transport.sent.filter { $0.type == .inputSubmit }.count,
-            inputSubmitsBeforeResize,
-            "post-resize NSEvents never produced INPUT_SUBMIT; sent=\(sentFrames) " +
-                "received=\(receivedFrames) state=\(view.inputSubmissionState)"
+            transport.sent.filter { $0.type == .userInput }.count,
+            userInputBeforeResize,
+            "post-resize NSEvents never produced USER_INPUT; sent=\(sentFrames) " +
+                "received=\(receivedFrames)"
         )
         XCTAssertNotNil(
             returnedOutput.range(of: marker),

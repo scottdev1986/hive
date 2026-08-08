@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "instanceId": "instance-duplicate-fixture",
+  "seq": "1",
+  "entities": [
+    {
+      "kind": "hierarchy-future-state",
+      "id": "duplicate-id",
+      "entityRevision": "1",
+      "projection": {
+        "wireLabel": "duplicate identity fixture"
+      }
+    },
+    {
+      "kind": "hierarchy-future-state",
+      "id": "duplicate-id",
+      "entityRevision": "1",
+      "projection": {
+        "wireLabel": "duplicate identity fixture"
+      }
+    }
+  ],
+  "createdAt": "2026-08-02T00:00:00.000Z",
+  "contentSha256": "5fd4e43b9e13ca90f3f3195016a76b980074cc65527c724b6684f31fef8b180b"
+}

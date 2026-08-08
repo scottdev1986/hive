@@ -1,0 +1,38 @@
+{
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "51f864cdfa",
+    "subject": {
+      "kind": "agent",
+      "agentId": "7c498b77-ba6a-447a-8a3c-9fe3a6018d98"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc29b-9106-7ddf-8feb-bdcea808183d",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "outputSeq": "42156",
+  "columns": 80,
+  "rows": 24,
+  "rowStart": 0,
+  "screen": "primary",
+  "cursor": {
+    "row": 21,
+    "column": 2,
+    "visible": true
+  },
+  "text": "\n⚠ MCP startup interrupted. The following servers were not initialized: hive\n\n• Starting now: I’ll first check the available Hive coordination tools, then\n  poll the control mailbox and report to the orchestrator before taking any code\n  action.\n\n• Next I’m polling the mailbox for any pending control task details, then I’ll\n  claim and resolve only the highest-priority control message if present.\n\n• Called hive.hive_mail_poll({\"recipient\":\"maya\"})\n  └ {\"recipient\": \"maya\", \"control\": {\"itemId\": \"mit_019fc29b-99a8-7000-a020-\n        b7b3c48188eb\", \"sender\": \"queen\", \"topic\": \"qa\", \"addressedGeneration\":\n        null, \"seq\": 1, \"attempts\": 0, \"body\": \"busy delivery probe\n        1785676402183\"}, \"workDigest\": [], \"cursor\": null, \"backlog\":\n        {\"controlAvailable\": 2, \"controlLeased\": 0, \"workAvailable\": 0,\n        \"workLeased\": 0, \"deadLettered\": 0}}\n\n• Working (0s • esc to interrupt)\n\n\n› Write tests for @filename\n\n  gpt-5.3-codex-spark high · ~/project/.hive/worktrees/maya",
+  "styledText": "\r\n\u001b[0m\u001b[38;5;3m⚠ MCP startup interrupted. The following servers were not initialized: hive\u001b[0m\r\n\r\n\u001b[0m\u001b[2m• \u001b[0mStarting now: I’ll first check the available Hive coordination tools, then\r\n  poll the control mailbox and report to the orchestrator before taking any code\r\n  action.\r\n\r\n\u001b[0m\u001b[2m• \u001b[0mNext I’m polling the mailbox for any pending control task details, then I’ll\r\n  claim and resolve only the highest-priority control message if present.\r\n\r\n\u001b[0m\u001b[1m\u001b[38;5;2m•\u001b[0m \u001b[0m\u001b[1mCalled\u001b[0m \u001b[0m\u001b[38;5;6mhive\u001b[0m.\u001b[0m\u001b[38;5;6mhive_mail_poll\u001b[0m(\u001b[0m\u001b[2m{\"recipient\":\"maya\"}\u001b[0m)\r\n\u001b[0m\u001b[2m  └ {\"recipient\": \"maya\", \"control\": {\"itemId\": \"mit_019fc29b-99a8-7000-a020-\u001b[0m\r\n        \u001b[0m\u001b[2mb7b3c48188eb\", \"sender\": \"queen\", \"topic\": \"qa\", \"addressedGeneration\":\u001b[0m\r\n        \u001b[0m\u001b[2mnull, \"seq\": 1, \"attempts\": 0, \"body\": \"busy delivery probe\u001b[0m\r\n        \u001b[0m\u001b[2m1785676402183\"}, \"workDigest\": [], \"cursor\": null, \"backlog\":\u001b[0m\r\n        \u001b[0m\u001b[2m{\"controlAvailable\": 2, \"controlLeased\": 0, \"workAvailable\": 0,\u001b[0m\r\n        \u001b[0m\u001b[2m\"workLeased\": 0, \"deadLettered\": 0}}\u001b[0m\r\n\r\n• \u001b[0m\u001b[2mWorkin\u001b[0mg \u001b[0m\u001b[2m(0s • esc to interrupt)\u001b[0m\r\n\r\n\r\n\u001b[0m\u001b[1m› \u001b[0m\u001b[2mWrite tests for @filename\u001b[0m\r\n\r\n  \u001b[0m\u001b[38;2;246;226;183mgpt-5.3-codex-spark high\u001b[0m\u001b[2m · \u001b[0m\u001b[38;2;171;223;167m~/project/.hive/worktrees/maya\u001b[0m",
+  "truncated": false,
+  "sha256": "497f845ff86e98ca33d963a6e03bc13c7fb6a8b18d8ec9dd0eefea544611a1eb",
+  "composer": {
+    "profile": "codex",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  }
+}

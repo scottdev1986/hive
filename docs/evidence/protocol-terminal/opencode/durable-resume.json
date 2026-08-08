@@ -1,0 +1,40 @@
+{
+  "vendor": "opencode",
+  "version": "1.18.11",
+  "transport": "acp",
+  "proof": "durable provider resume (§12 replacement)",
+  "capturedAt": "2026-08-02T20:07:54.401Z",
+  "passphrase": "HIVE-OPENCODE-4529",
+  "steps": {
+    "1-first-start-has-no-stored-ref": "pass",
+    "2-ref-recorded-at-creation": "pass",
+    "3-fact-planted": "pass",
+    "4-session-closed": "pass",
+    "5-resume-decided-from-the-record": "pass",
+    "6-resumed-the-same-conversation": "pass",
+    "7-history-survived-the-crash": "pass",
+    "8-version-mismatch-refuses": "pass",
+    "9-refusal-starts-a-new-conversation": "pass",
+    "10-runtime-version-is-known": "pass: 1.18.11"
+  },
+  "created": {
+    "schemaVersion": 1,
+    "identity": {
+      "provider": "opencode",
+      "transport": "acp",
+      "version": "1.18.11",
+      "cwd": "/Users/scottkellar/Projects/hive/.dev/tmp/hive-durable-opencode-4529"
+    },
+    "session": {
+      "vendorSessionId": "ses_03be90cd2ffeakfJkCfEe6TFCn",
+      "replayedHistory": false
+    },
+    "recordedAt": "2026-08-02T20:07:46.230Z"
+  },
+  "resumedVendorSessionId": "ses_03be90cd2ffeakfJkCfEe6TFCn",
+  "refusalReason": "stored session was created on version 0.0.0-not-installed; the connected runtime reports 1.18.11",
+  "notes": [
+    "resume goes through ProviderSession.resumeSession (session/load)",
+    "the resumed id came from the recorded ref, not from a scan"
+  ]
+}

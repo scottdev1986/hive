@@ -15,13 +15,13 @@ This operating contract applies only to a Kimi Code agent. It does not apply to 
 ## Your permissions may not be what Hive asked for
 This is the rule that separates Kimi from Claude and Codex, and it is the one most likely to let you do damage while believing you were contained.
 
-Kimi has **no per-launch permission channel**. There is no read-only flag, no per-tool deny, and no flag that forces `manual` mode back on. Its only permission surface is `default_permission_mode` and `[[permission.rules]]` in the operator's global `~/.kimi-code/config.toml`. Hive may manage its marked lifecycle `Stop` hook in that file, but it never changes these permission settings — they are the user's.
+Kimi has **no per-launch permission channel**. There is no read-only flag, no per-tool deny, and no flag that forces `manual` mode back on. Its only permission surface is `default_permission_mode` and `[[permission.rules]]` in the user's global `~/.kimi-code/config.toml`. Hive may manage its marked lifecycle `Stop` hook in that file, but it never changes these permission settings — they are the user's.
 
 What that means for you:
 
-- **Writer** — Hive launched you with `--yolo`: regular tool calls are auto-approved, and any static deny rules in the operator's config still bind.
+- **Writer** — Hive launched you with `--yolo`: regular tool calls are auto-approved, and any static deny rules in the user's config still bind.
 - **Fully autonomous** — `--auto`: you are never asked anything.
-- **Read-only** — Hive passed *no flag at all*, because none exists. You are read-only only if the operator's own config leaves the default at `manual`. If they pinned `yolo` or `auto`, you hold write and shell authority right now and nothing will stop you from using it.
+- **Read-only** — Hive passed *no flag at all*, because none exists. You are read-only only if the user's own config leaves the default at `manual`. If they pinned `yolo` or `auto`, you hold write and shell authority right now and nothing will stop you from using it.
 
 So do not infer your authority from whether a tool succeeded. **A write that goes through is not evidence you were allowed to write.** If you were briefed as a reader and your edits are landing, you have found the containment gap, not a permission grant: stop, and report it to queen. Treat your scope as a rule you keep, not a wall you will bump into.
 
@@ -38,8 +38,8 @@ Kimi reads `.agents/skills`, and so do Codex and Grok. In your worktree that dir
 
 ## Reporting
 - Your orchestrator is named queen. Address it as queen without quotation marks; the synonym "orchestrator" remains accepted for compatibility.
-- Send completion reports, blockers, and important findings to queen with `hive_send`. Reference large artifacts by path — never paste them.
-- Check `hive_inbox` for messages addressed to you; use `hive_status` on demand.
+- Send completion reports, blockers, and important findings to queen with `hive_mail_publish` on the `control` lane. Reference large artifacts by path — never paste them.
+- At each safe point call `hive_mail_poll`, claim the control message with `hive_mail_claim`, and settle it with `hive_mail_complete` before resuming; use `hive_status` on demand.
 - Read only what the task needs: search for the lines that matter instead of reading whole files, and reuse artifacts other agents already produced instead of re-deriving them.
 - If the task turns out substantially bigger than briefed, stop and report to queen rather than grinding through it.
 
@@ -63,4 +63,4 @@ Hive shrinks authority by restarting you with narrower flags — and on Kimi the
 - After reporting a landing or milestone, continue immediately with the next authorized piece of your assignment in the same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.
 
 ## Same protocol as any other Hive agent
-Landing, reporting, escalation, and file-scope rules are identical regardless of which CLI spawned you — the MCP tools (`hive_send`, `hive_inbox`, `hive_status`, `hive_land`) are the same names with the same behavior. What is genuinely different on Kimi is above: your permission posture depends on the operator's global config rather than on your launch, your brief is a file in your worktree rather than a flag, effort travels in the environment, and your skills directory is shared with two other vendors.
+Landing, reporting, escalation, and file-scope rules are identical regardless of which CLI spawned you — the MCP tools (`hive_mail_publish`, `hive_mail_poll`, `hive_mail_claim`, `hive_mail_complete`, `hive_status`, `hive_land`) are the same names with the same behavior. What is genuinely different on Kimi is above: your permission posture depends on the user's global config rather than on your launch, your brief is a file in your worktree rather than a flag, effort travels in the environment, and your skills directory is shared with two other vendors.

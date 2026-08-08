@@ -1,14 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
-/**
- * The narrow hv1 authorization vocabulary used by terminal observation. This
- * is deliberately not a general policy language: unknown constraint keys are
- * rejected and absence never grants access.
- */
+/** Unknown constraints are rejected; absence never grants terminal observation. */
 export const Hv1CapabilityConstraintsSchema = z.strictObject({
   content: z.literal(true).optional(),
-  scope: z.literal("operator").optional(),
+  scope: z.literal("user").optional(),
 });
 export type Hv1CapabilityConstraints = z.infer<
   typeof Hv1CapabilityConstraintsSchema
@@ -17,7 +13,7 @@ export type Hv1CapabilityConstraints = z.infer<
 const Hv1CapabilityCommonShape = {
   id: z.string().uuid(),
   subject: z.string().min(1),
-  role: z.enum(["operator", "orchestrator", "writer", "reader"]),
+  role: z.enum(["user", "orchestrator", "writer", "reader"]),
   epoch: z.number().int().nonnegative(),
   issuedAt: z.iso.datetime({ offset: true }),
   expiresAt: z.iso.datetime({ offset: true }),
@@ -35,7 +31,7 @@ export const Hv1CapabilityRecordSchema = z.union([
     ...Hv1CapabilityCommonShape,
     constraints: z.strictObject({
       content: z.literal(true).optional(),
-      scope: z.literal("operator"),
+      scope: z.literal("user"),
     }),
     subjects: z.array(z.string().min(1)).min(1),
   }),
@@ -46,30 +42,6 @@ export const HV1_CAPABILITY_WIRE_SCHEMAS = {
   hv1CapabilityRecord: Hv1CapabilityRecordSchema,
 } as const;
 
-/**
- * Capability records: what the providers themselves say about the models an
- * account can launch.
- *
- * A record holds only discovered facts, read from a signed-in CLI at runtime for
- * free. Nothing here is judgment: no record says which model should carry a
- * coding tier, how good a model is, or what a turn will cost. That is the
- * manifest's job, and keeping the two apart is the point of this file.
- *
- * **Presence is positive evidence; absence is unknown.** Claude's menu omits
- * aliases that launch fine (`best`, bare `claude-opus-4-8`), so no absence
- * anywhere is proof of impossibility. A field the provider did not send is
- * `unknown`, never `false` and never a shipped default.
- *
- * **Vendor-hidden entries are not Hive's to route.** An entry the vendor flags
- * hidden is excluded from automatic selection even when a stale manifest still
- * lists it.
- *
- * **A model name is three facts, not one.** The record keeps the launch token
- * (what `--model` receives), the canonical id (the join key for quota pools and
- * the manifest), and the variant (`[1m]` names a context-window entitlement the
- * CLI appends and the launch flag must never receive).
- */
-
 export const CapabilityProviderSchema = z.enum([
   "claude",
   "codex",
@@ -79,17 +51,8 @@ export const CapabilityProviderSchema = z.enum([
 ]);
 export type CapabilityProvider = z.infer<typeof CapabilityProviderSchema>;
 
-/** Every vendor Hive knows, as a value: a record that must cover all of them is
- * built from this list rather than from a hardcoded pair. */
 export const CAPABILITY_PROVIDERS = CapabilityProviderSchema.options;
 
-/**
- * A vendor Hive has no branch for. Every vendor dispatch ends in a `default`
- * that calls this: the `never` parameter turns a new vendor into a compile
- * error at each such site, and the throw turns a value that slipped past the
- * types into a loud failure rather than a plausible codex answer — the wrong
- * transcript parsed, the wrong resume flags, the wrong quota pool.
- */
 export function unknownVendor(vendor: never, site: string): never {
   throw new Error(
     `${site}: unknown vendor ${JSON.stringify(vendor)}; Hive knows ${CAPABILITY_PROVIDERS.join(
@@ -98,18 +61,7 @@ export function unknownVendor(vendor: never, site: string): never {
   );
 }
 
-/**
- * The vendors a provider-keyed record must render: every member of the union,
- * in declaration order, then any key the record carries that the union does
- * not know yet (a snapshot written by a newer build, or a test's synthetic
- * vendor), sorted. This is the ONE legal way to enumerate such a record for
- * display or reporting — a hand-typed list is how a vendor stops existing: it
- * is not rejected and not marked unavailable, it silently never appears. A
- * union member missing from the record is still returned, so the caller must
- * render it as unreadable rather than skip it; the extras are cast to
- * `CapabilityProvider` because dropping them would be the same erasure from
- * the other side.
- */
+/** Enumerate every known provider plus sorted snapshot extras; never erase either. */
 export function providersOf<T>(
   record: Partial<Record<CapabilityProvider, T>>,
 ): CapabilityProvider[] {
@@ -120,8 +72,94 @@ export function providersOf<T>(
   return [...CAPABILITY_PROVIDERS, ...(extras as CapabilityProvider[])];
 }
 
-/** Read something per vendor, for every vendor. Returns a total record, so a
- * new vendor is discovered rather than silently absent. */
+export const ProviderTransportSchema = z.enum([
+  "acp",
+  "codex-app-server",
+  "claude-stream-json",
+  "fake",
+]);
+export type ProviderTransport = z.infer<typeof ProviderTransportSchema>;
+
+export const ResolvedRuntimeSchema = z
+  .strictObject({
+    executable: z.string().min(1),
+    version: z.string().min(1),
+    transport: ProviderTransportSchema,
+    workingDirectory: z.string().min(1),
+    accountFingerprint: z.string().min(1).optional(),
+  })
+  .readonly();
+export type ResolvedRuntime = z.infer<typeof ResolvedRuntimeSchema>;
+
+export const BASELINE_CAPABILITIES = [
+  "newSession",
+  "prompt",
+  "cancel",
+  "permissions",
+  "streamingText",
+  "toolLifecycle",
+  "sessionRecovery",
+] as const;
+
+export const OPTIONAL_CAPABILITIES = [
+  "questions",
+  "commandCatalog",
+  "modelCatalog",
+  "modeCatalog",
+  "contextUsage",
+  "fork",
+  "compact",
+  "steering",
+] as const;
+
+export type BaselineCapability = (typeof BASELINE_CAPABILITIES)[number];
+export type OptionalCapability = (typeof OPTIONAL_CAPABILITIES)[number];
+
+export const CapabilityNameSchema = z.enum([
+  ...BASELINE_CAPABILITIES,
+  ...OPTIONAL_CAPABILITIES,
+]);
+export type CapabilityName = z.infer<typeof CapabilityNameSchema>;
+
+export const CapabilitySupportSchema = z.enum([
+  "supported",
+  "unsupported",
+  "unknown",
+]);
+export type CapabilitySupport = z.infer<typeof CapabilitySupportSchema>;
+
+export const CapabilityMeasurementsSchema = z.partialRecord(
+  CapabilityNameSchema,
+  CapabilitySupportSchema,
+);
+export type CapabilityMeasurements = z.infer<
+  typeof CapabilityMeasurementsSchema
+>;
+
+/** Proven absence carries evidence so a surface can distinguish it from ignorance. */
+export const ProvenAbsenceSchema = z.strictObject({
+  reason: z.string().min(1),
+  citation: z.string().min(1),
+});
+export type ProvenAbsence = z.infer<typeof ProvenAbsenceSchema>;
+
+export const CapabilityAbsencesSchema = z.partialRecord(
+  CapabilityNameSchema,
+  ProvenAbsenceSchema,
+);
+export type CapabilityAbsences = z.infer<typeof CapabilityAbsencesSchema>;
+
+export const MeasuredProviderCapabilitiesSchema = z.strictObject({
+  provider: CapabilityProviderSchema,
+  runtime: ResolvedRuntimeSchema,
+  absences: CapabilityAbsencesSchema.optional(),
+  measured: CapabilityMeasurementsSchema,
+  handshake: z.unknown(),
+});
+export type MeasuredProviderCapabilities = z.infer<
+  typeof MeasuredProviderCapabilitiesSchema
+>;
+
 export async function forEachProvider<T>(
   read: (provider: CapabilityProvider) => Promise<T>,
 ): Promise<Record<CapabilityProvider, T>> {
@@ -133,85 +171,29 @@ export async function forEachProvider<T>(
   return Object.fromEntries(entries) as Record<CapabilityProvider, T>;
 }
 
-/**
- * The exact surface a fact was read from. Provenance is per field, not per
- * record, because one record is assembled from more than one read and the two
- * providers do not answer the same questions: merging them into an
- * undifferentiated "model record" is how an API price ends up masquerading as
- * subscription burn.
- */
 export const CapabilitySurfaceSchema = z.enum([
-  /** Claude Code's stream-json control `initialize` response, `models[]`. */
   "claude.initialize",
-  /** The Codex app-server's `model/list` reply. */
   "codex.model/list",
-  /**
-   * The Codex app-server's `config/read` reply: the *effective* layered config,
-   * which is the only surface that answers what an unflagged launch runs. The
-   * catalog's `isDefault` is a different fact and is not a substitute for it —
-   * `model/list` flags `gpt-5.5` while `config/read` reports this machine's
-   * unflagged launch as `gpt-5.6-sol` at `xhigh`.
-   */
   "codex.config/read",
-  /** `grok models` stdout: the live catalog and effective default marker. */
+  "grok.acp",
+  "kimi.acp",
+  "opencode.acp",
   "grok.models",
-  /** `kimi provider list --json`: the configured provider/model catalog. */
   "kimi.provider/list",
-  /**
-   * `$KIMI_CODE_HOME/config.toml`: `default_model` and `thinking.effort` —
-   * the only surface that answers what an unflagged kimi launch runs, since
-   * `kimi provider list` prints the catalog but never the default.
-   */
   "kimi.config",
-  /** `opencode models` stdout: the configured providers' model catalog. */
   "opencode.models",
-  /**
-   * `~/.config/opencode/opencode.json[ c]`: the `model` key — the only
-   * surface that answers what an unflagged opencode launch runs.
-   */
   "opencode.config",
-  /** `~/.grok/models_cache.json`: structured per-model capability facts. */
   "grok.models_cache",
-  /** Grok ACP's subscription tier and rolling reset boundary. */
   "grok._x.ai/billing",
-  /** Grok's append-only per-session update stream. */
   "grok.updates.jsonl",
-  /** Grok ACP's connected-session context snapshot. */
   "grok._x.ai/session/info",
-  /**
-   * Claude's `get_usage` control response — the same free frame quota discovery
-   * already drives. It carries the account's usage-credit state (`extra_usage`,
-   * `spend`) and the per-model plan ceilings, which is what makes "would this
-   * spawn cost real money" a measurement instead of a guess about a date.
-   */
   "claude.get_usage",
-  /**
-   * Codex app-server `account/rateLimits/read`. It carries both plan windows
-   * and the credits snapshot that may pay after those windows are exhausted.
-   */
   "codex.account/rateLimits/read",
-  /**
-   * The endpoint used by Kimi's own usage panel: the account's weekly quota and rolling
-   * 300-minute rate window, read with the CLI's OAuth credential.
-   */
   "kimi.usages",
 ]);
 export type CapabilitySurface = z.infer<typeof CapabilitySurfaceSchema>;
 
-/**
- * Why a fact has no value. These are three different things and are never
- * collapsed into one null:
- *
- * - `field-absent` — the surface answered for this model and simply did not
- *   carry the field. Claude's Haiku entry omits every effort field. Omission may
- *   mean unsupported, rollout-gated, or missing from this protocol version, and
- *   the record must not choose between those on the provider's behalf.
- * - `surface-silent` — this surface carries the field for *no* model, so its
- *   absence says nothing about this one. Claude's menu has no `hidden` flag at
- *   all; Codex's `model/list` has no `supportsEffort` boolean at all.
- * - `malformed` — the field was present but not the shape the protocol
- *   documents. A payload we cannot parse is not a payload that said `false`.
- */
+/** Missing, silent, and malformed facts are distinct states, never one null. */
 export const CapabilityUnknownReasonSchema = z.enum([
   "field-absent",
   "surface-silent",
@@ -221,12 +203,6 @@ export type CapabilityUnknownReason = z.infer<
   typeof CapabilityUnknownReasonSchema
 >;
 
-/**
- * One discovered fact, carrying where it came from and when. A consumer must
- * branch on `state` to read a value, so there is no way to accidentally treat an
- * undiscovered field as a real one — the type makes the guess impossible rather
- * than merely discouraged.
- */
 export type Discovered<T> =
   | {
       state: "known";
@@ -269,14 +245,7 @@ export const unknown = <T>(
   observedAt: string,
 ): Discovered<T> => ({ state: "unknown", reason, surface, observedAt });
 
-/**
- * Effort levels are stored as the raw strings the vendor sent, never as a Hive
- * enum. A strict enum at the ingestion boundary recreates the release dependency
- * this whole design exists to remove: codex 0.144.1 already advertises `max` and
- * `ultra`, which Hive's shipped schemas do not know, while no live model
- * advertises Hive's `minimal`. An unknown future string must survive ingestion
- * and persistence intact so a critical restart can replay it.
- */
+/** Raw vendor effort strings preserve future values across ingestion and restart. */
 export const EffortLevelSchema = z
   .string()
   .min(1)
@@ -284,73 +253,27 @@ export const EffortLevelSchema = z
   .regex(/^[a-z0-9-]+$/);
 
 export const CapabilityRecordSchema = z.strictObject({
-  // --- Identity. Together these form the record's key. ---
   provider: CapabilityProviderSchema,
-  /**
-   * A non-PII hash of the signed-in account. Entitlement and the alias menu are
-   * facts about an account, not about a model, so the account belongs in the
-   * key — but the raw handshake carries the user's email and organization, which
-   * a routing store has no business retaining.
-   */
+  /** Account-scoped facts use a non-PII hash, never raw handshake identity. */
   accountFingerprint: z.string().min(1),
-  /**
-   * The CLI build the catalog was read from. A catalog read from claude 2.1.207
-   * is not a claim about 2.2's, and an upgrade must not silently overwrite the
-   * pre-upgrade truth it will be compared against.
-   */
   cliVersion: z.string().min(1),
-  /** The stable id: the join key for quota pools and for the manifest. */
   canonicalId: z.string().min(1),
-  /**
-   * A context-window entitlement the CLI appends to a name (`1m` from
-   * `claude-opus-4-8[1m]`). It is a real fact about what the account gets, so it
-   * is stored — and it is never launched, because `--model` rejects it.
-   */
+  /** Stored context entitlement suffixes never reach `--model`. */
   variant: z.string().min(1).nullable(),
-  /** What `--model` actually receives. Never carries the variant. */
   launchToken: z.string().min(1),
-  /** Every other name this model answers to on this account's menu. */
   aliases: z.array(z.string().min(1)),
 
-  // --- Discovered facts, each stamped with its own surface and time. ---
-  /**
-   * The vendor's own display name ("Fable"). It is the only key `get_usage`
-   * gives a per-model plan pool under
-   * (`model_scoped[].display_name`), so without it "would this model spend real
-   * money" cannot be joined to the model at all. Null when the menu omits it.
-   */
   displayName: z.string().min(1).nullable(),
-  /**
-   * That the account can use this model. Derived from presence in an
-   * account-scoped catalog, which is the only evidence either vendor offers:
-   * neither returns an entitlement boolean. It is therefore never `known: false`
-   * — a model the account cannot use is absent from the menu, and absence
-   * produces no record at all rather than a record saying "not entitled".
-   */
   entitled: discovered(z.boolean()),
-  /** The vendor's own "internal, do not offer this" flag. */
   hidden: discovered(z.boolean()),
-  /**
-   * The vendor's `supportsEffort` boolean and its list of levels are stored as
-   * the two separate fields the vendor sent, never merged into one. A merged
-   * field collapses "advertised unsupported", "field omitted", and "malformed
-   * payload" into a single null, and those are three different facts.
-   */
   supportsEffort: discovered(z.boolean()),
   supportedEffortLevels: discovered(z.array(EffortLevelSchema)),
-  /** The effort the vendor recommends for this model. */
   defaultEffort: discovered(EffortLevelSchema),
 
-  /** When the catalog this record was built from was read. */
   observedAt: z.iso.datetime({ offset: true }),
 });
 export type CapabilityRecord = z.infer<typeof CapabilityRecordSchema>;
 
-/**
- * The record's identity: provider, account, CLI build, and the model's canonical
- * id *with* its variant. The variant is part of the key because a 1M-context
- * entitlement is a different thing to route than the 200k one of the same name.
- */
 export const capabilityKey = (
   record: Pick<
     CapabilityRecord,
@@ -366,12 +289,6 @@ export const capabilityKey = (
       : `${record.canonicalId}[${record.variant}]`,
   ].join("\0");
 
-/**
- * A stable, non-reversible account key. The raw identifiers (email, org) are
- * hashed and never stored: Hive needs to tell two accounts apart, not to know
- * who they are. The provider is mixed in so the same address on two vendors does
- * not collide.
- */
 export const fingerprintAccount = (
   provider: CapabilityProvider,
   identifiers: readonly (string | null | undefined)[],
@@ -388,11 +305,6 @@ export const fingerprintAccount = (
     .slice(0, 16);
 };
 
-/**
- * The CLI appends `[1m]` to name a context-window variant. It can appear on the
- * menu's `value`, on its `resolvedModel`, or on both — Claude 2.1.207 sends
- * `opus[1m]` → `claude-opus-4-8[1m]` but `claude-fable-5[1m]` → `claude-fable-5`.
- */
 const VARIANT_PATTERN = /\[([^\]]+)\]$/;
 
 export const splitVariant = (
@@ -406,21 +318,7 @@ export const splitVariant = (
     : { base: name.slice(0, match.index), variant };
 };
 
-/**
- * What this account launches when Hive passes no model flag at all.
- *
- * This is an account fact, not a model fact, so it does not live on a record. It
- * is the fallback ladder's second rung, and it is *effective*, never the vendor's
- * catalog recommendation: a launch with no flags runs whatever this machine's
- * layered configuration resolves to, which on Codex is `config/read` and is not
- * the entry `model/list` marks `isDefault`.
- *
- * Both fields are `Discovered` because both are genuinely missing on real
- * machines: a Codex install that never pinned a model reports `null`, and Claude
- * publishes no effort in its discovery menu. Claude's effective value becomes
- * observable only after launch through `statusLine`; it remains `unknown` here
- * rather than acquiring a shipped constant before the session reports it.
- */
+/** Account-level effective default, never a catalog recommendation or shipped fallback. */
 export const EffectiveDefaultSchema = z.strictObject({
   provider: CapabilityProviderSchema,
   model: discovered(z.string().min(1)),
@@ -428,6 +326,19 @@ export const EffectiveDefaultSchema = z.strictObject({
 });
 export type EffectiveDefault = z.infer<typeof EffectiveDefaultSchema>;
 
-// Validation does not gate on freshness: a stale record is still the best
-// evidence Hive has about what a model accepts. Refusing a launch over an old
-// catalog turns a discovery hiccup into an outage.
+export const CapabilityDiscoveryResultSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("ok"),
+    records: z.array(CapabilityRecordSchema),
+    effectiveDefault: EffectiveDefaultSchema,
+  }),
+  z.strictObject({
+    status: z.literal("unavailable"),
+    reason: z.string().min(1),
+  }),
+]);
+export type CapabilityDiscoveryResult = z.infer<
+  typeof CapabilityDiscoveryResultSchema
+>;
+
+// Stale discovery is still better evidence than turning a discovery hiccup into an outage.

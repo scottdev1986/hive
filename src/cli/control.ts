@@ -1,8 +1,5 @@
 import { readFileSync } from "node:fs";
-import { factVerificationFlag } from "../adapters/memory";
 import { type Autonomy, isAutonomy } from "../config/autonomy";
-import { getHiveHome } from "../daemon/db";
-import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import {
   cleanupLifecycleFiles,
   type DaemonInstanceLiveness,
@@ -11,14 +8,15 @@ import {
   getPidFilePath,
   macProcessIdentity,
   readDaemonPort,
-} from "../daemon/lifecycle";
-import type {
-  MemoryScope,
-  MemoryWriteInput,
-  QuotaObservationInput,
-  SessionLocator,
-} from "../schemas";
-import { operatorFetch, operatorHeaders } from "./credential";
+} from "../daemon/lifecycle/daemon-lifecycle";
+import { isDaemonPort } from "../shared/daemon-port";
+import { getHiveHome } from "../hive-home/home";
+import { hiveInstanceSuffix } from "../hive-home/instance-identity";
+import { factVerificationFlag } from "../memory-service/memory-store";
+import { AutonomyEnvelopeSchema } from "../schemas/config-schema";
+import type { MemoryScope, MemoryWriteInput } from "../schemas/memory";
+import type { QuotaObservationInput } from "../schemas/quota";
+import type { SessionLocator } from "../schemas/session-protocol";
 import {
   captureInvokerIdentity,
   formatInvokerOrigin,
@@ -35,11 +33,16 @@ import {
   searchMemory,
   writeMemory,
 } from "./mcp";
+import {
+  daemonErrorDetail,
+  decodeJson,
+  UserDaemonClient,
+} from "./user-daemon-client";
 import { type ConfirmFn, confirmOnTty } from "./prompt";
 import { formatQuotaStatus, formatStatusTable } from "./status";
 export function requireDaemonPort(explicitPort?: number): number {
   const port = explicitPort ?? readDaemonPort();
-  if (port === null || port <= 0 || port > 65_535) {
+  if (port === null || !isDaemonPort(port)) {
     throw new Error(
       "no daemon is running\nFix: run `hive` in the project first",
     );
@@ -56,27 +59,8 @@ function readDaemonPid(): number | null {
   }
 }
 
-/**
- * `hive kill <agent>` — close an agent and everything it started.
- *
- * This is what the Workspace's pane X shells out to, and it is deliberately the
- * same daemon path `hive_kill` takes: the daemon owns the kill, because only
- * the daemon knows the agent's process tree, its quota reservation and its
- * unlanded work. A UI that killed only the terminal itself would leave the
- * vendor CLI, the Codex host and the MCP children running — that is the exact
- * leak this command exists to close.
- *
- * Immediate and unconditional: no confirmation, no prompt. Unlanded work is not
- * discarded by that — the daemon preserves the branch and tells the
- * orchestrator — so the caller has nothing to ask the user about.
- */
-/**
- * Request a one-use viewer attach grant for a pane's EXACT sessiond session.
- * The Workspace's HiveTerminalView shells out to this and connects
- * directly to the returned host endpoint; a stale or superseded generation is
- * refused by the daemon before the broker is contacted. Prints the grant as
- * JSON on stdout — machine-readable, nothing else.
- */
+/** `hive kill <agent>` — close an agent and everything it started. This is what the Workspace's pane X shells out to, and it is deliberately the same daemon path `hive_kill` takes: the daemon owns the kill, because only the daemon knows the agent's process tree, its quota reservation and its unlanded work. A UI that killed only the terminal itself would leave the vendor CLI, the Codex host and the MCP children running — that is the exact leak this command exists to close. Immediate and unconditional: no confirmation, no prompt. Unlanded work is not discarded by that — the daemon preserves the branch and tells the orchestrator — so the caller has nothing to ask the user about. */
+/** Request a one-use viewer attach grant for a pane's EXACT sessiond session. The Workspace's HiveTerminalView shells out to this and connects directly to the returned host endpoint; a stale or superseded generation is refused by the daemon before the broker is contacted. Prints the grant as JSON on stdout — machine-readable, nothing else. */
 export async function attachGrantCli(
   name: string,
   locator: SessionLocator,
@@ -91,19 +75,19 @@ export async function attachGrantCli(
   },
   port: number = requireDaemonPort(),
 ): Promise<void> {
-  const response = await operatorFetch(
-    `http://127.0.0.1:${port}/agents/${encodeURIComponent(name)}/attach-grant`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionLocator: locator,
-        viewerId,
-        geometry,
-        operations: ["view", "human-input", "resize"],
-      }),
-    },
-  );
+  const response = await new UserDaemonClient({
+    port,
+    verifyIdentity: !isTestRunnerEnv(),
+  }).request(`/agents/${encodeURIComponent(name)}/attach-grant`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionLocator: locator,
+      viewerId,
+      geometry,
+      operations: ["view", "user-input", "resize"],
+    }),
+  });
   const body = (await response.json().catch(() => null)) as {
     state?: string;
     grant?: unknown;
@@ -111,20 +95,18 @@ export async function attachGrantCli(
     reason?: string;
   } | null;
   if (!response.ok || body?.state !== "granted" || body.grant === undefined) {
-    const reason = body?.reason === undefined ? "" : ` [${body.reason}]`;
+    const error = daemonErrorDetail(
+      body,
+      `attach grant failed (HTTP ${response.status})`,
+    );
     throw new Error(
-      (body?.error ?? `attach grant failed (HTTP ${response.status})`) + reason,
+      error.message + (error.reason === undefined ? "" : ` [${error.reason}]`),
     );
   }
   console.log(JSON.stringify(body.grant));
 }
 
-/** The provenance string a kill carries to the daemon's audit log:
- * full invoker identity — pid, parent chain with process names, argv, cwd and
- * the agent-worktree flag. Captured at the origin because the audit row is
- * the only record that survives the teardown cascade — the 2026-07-20 fleet
- * kills were audited as a bare `ppid=<gone> argv=[]` and needed a full
- * forensic reconstruction to attribute. */
+/** The provenance string a kill carries to the daemon's audit log: full invoker identity — pid, parent chain with process names, argv, cwd and the agent-worktree flag. Captured at the origin because the audit row is the only record that survives the teardown cascade — the 2026-07-20 fleet kills were audited as a bare `ppid=<gone> argv=[]` and needed a full forensic reconstruction to attribute. */
 export function killOrigin(
   subcommand: "kill" | "stop",
   invoker: InvokerIdentity = captureInvokerIdentity(),
@@ -145,17 +127,17 @@ export async function killAgentCli(
   if (locator === undefined) {
     throw new Error(`Hive agent ${name} has no exact session locator`);
   }
-  const response = await operatorFetch(
-    `http://127.0.0.1:${port}/agents/${encodeURIComponent(name)}/kill`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionLocator: locator,
-        ...(origin === undefined ? {} : { origin }),
-      }),
-    },
-  );
+  const response = await new UserDaemonClient({
+    port,
+    verifyIdentity: !isTestRunnerEnv(),
+  }).request(`/agents/${encodeURIComponent(name)}/kill`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sessionLocator: locator,
+      ...(origin === undefined ? {} : { origin }),
+    }),
+  });
   const body = (await response.json().catch(() => null)) as {
     error?: string;
     reason?: string;
@@ -167,9 +149,12 @@ export async function killAgentCli(
     };
   } | null;
   if (!response.ok) {
-    const reason = body?.reason === undefined ? "" : ` [${body.reason}]`;
+    const error = daemonErrorDetail(
+      body,
+      `kill failed (HTTP ${response.status})`,
+    );
     throw new Error(
-      (body?.error ?? `kill failed (HTTP ${response.status})`) + reason,
+      error.message + (error.reason === undefined ? "" : ` [${error.reason}]`),
     );
   }
   if (body?.alreadyDead === true) {
@@ -183,8 +168,7 @@ export async function killAgentCli(
       `  unlanded work preserved: ${body.preserved.branch} at ${body.preserved.ref}`,
     );
   }
-  // Survivors are a failed kill. Say so on stderr and exit non-zero: the whole
-  // point of this command is that "I sent the signal" is not "it is dead".
+  // Survivors are a failed kill. Say so on stderr and exit non-zero: the whole point of this command is that "I sent the signal" is not "it is dead".
   const survivors = body?.reaped?.survivors ?? [];
   if (survivors.length > 0) {
     throw new Error(
@@ -212,10 +196,7 @@ const AUTONOMY_MEANING: Record<Autonomy, string> = {
     "agents run with permission prompts off; writers also use unrestricted vendor mode",
 };
 
-/** `hive autonomy [mode]` — read or set the daemon's live autonomy dial.
- * Both directions go through the daemon, never the config file directly:
- * what this prints is what the next spawn will actually use, and a set is
- * confirmed by the daemon's answer, not assumed from a clean exit. */
+/** `hive autonomy [mode]` — read or set the daemon's live autonomy dial. Both directions go through the daemon, never the config file directly: what this prints is what the next spawn will actually use, and a set is confirmed by the daemon's answer, not assumed from a clean exit. */
 export async function autonomyCli(
   mode?: string,
   port: number = requireDaemonPort(),
@@ -223,28 +204,27 @@ export async function autonomyCli(
   if (mode !== undefined && !isAutonomy(mode)) {
     throw new Error('autonomy must be "sandboxed" or "dangerous"');
   }
-  const response = await operatorFetch(`http://127.0.0.1:${port}/autonomy`, {
-    ...(mode === undefined
-      ? {}
-      : {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ autonomy: mode }),
-        }),
-  });
-  const body = (await response.json().catch(() => null)) as {
-    autonomy?: unknown;
-    error?: string;
-  } | null;
-  if (!response.ok) {
-    throw new Error(
-      body?.error ?? `autonomy request failed (HTTP ${response.status})`,
-    );
-  }
-  const value = body?.autonomy;
-  if (!isAutonomy(value)) {
+  const body = (await new UserDaemonClient({
+    port,
+    verifyIdentity: !isTestRunnerEnv(),
+  }).json(
+    "/autonomy",
+    {
+      ...(mode === undefined
+        ? {}
+        : {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ autonomy: mode }),
+          }),
+    },
+    "throw",
+  )) as unknown;
+  const parsed = AutonomyEnvelopeSchema.safeParse(body);
+  if (!parsed.success) {
     throw new Error("the daemon reported no autonomy setting");
   }
+  const value = parsed.data.autonomy;
   console.log(
     mode === undefined
       ? `${value} — ${AUTONOMY_MEANING[value]}`
@@ -280,9 +260,6 @@ export async function searchMemoryCli(
   }
 }
 
-/** The one-line CLI rendering of a write's embedding outcome (defect D2):
- * quiet on the happy path ("indexed" or a daemon too old to say), one loud
- * line otherwise. */
 export function memoryEmbeddingNotice(
   embedding: string | undefined,
 ): string | null {
@@ -326,9 +303,6 @@ export async function readMemoryCli(
   id: string,
 ): Promise<void> {
   const fact = await readMemory(requireDaemonPort(), scope, id);
-  // Provenance surfaces on read, where the load-bearing check happens: show
-  // source and verification, and flag a fact whose
-  // concrete claims must be re-checked against the repo before acting.
   const flag = factVerificationFlag(fact);
   const provenance = [
     `date: ${fact.date}`,
@@ -372,21 +346,21 @@ export async function reindexMemoryCli(): Promise<void> {
 
 export interface RecoveryOutcomeView {
   agent: string;
-  action: "resumed" | "marked-dead" | "skipped";
-  sessionId?: string;
+  action: "reported" | "skipped";
   reason?: string;
 }
 
 export async function recoverAgentsCli(name?: string): Promise<void> {
   const port = requireDaemonPort();
-  const response = await fetch(`http://127.0.0.1:${port}/recover`, {
+  const response = await new UserDaemonClient({
+    port,
+    verifyIdentity: !isTestRunnerEnv(),
+  }).request("/recover", {
     method: "POST",
-    headers: { "content-type": "application/json", ...operatorHeaders() },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify(name === undefined ? {} : { agent: name }),
   });
-  // A daemon that fails before its JSON handler (proxy page, empty body)
-  // must still surface as the HTTP failure it is, not as a parse error.
-  const body = (await response.json().catch(() => ({}))) as {
+  const body = ((await decodeJson(response)) ?? {}) as {
     outcomes?: RecoveryOutcomeView[];
     error?: string;
   };
@@ -399,10 +373,8 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
     return;
   }
   for (const outcome of outcomes) {
-    if (outcome.action === "resumed") {
-      console.log(`resumed ${outcome.agent} (session ${outcome.sessionId})`);
-    } else if (outcome.action === "marked-dead") {
-      console.log(`marked ${outcome.agent} dead: ${outcome.reason}`);
+    if (outcome.action === "reported") {
+      console.log(`reported ${outcome.agent} as dead: ${outcome.reason}`);
     } else {
       console.log(`skipped ${outcome.agent}: ${outcome.reason}`);
     }
@@ -432,22 +404,18 @@ export type StopResponseBody =
 
 const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 30_000;
 
-/** POST /stop — the daemon's own atomic-or-abortive shutdown. One
- * request; every gate (agent-worktree invoker and unlanded work) is evaluated
- * daemon-side before anything dies, and past the
- * commit point the daemon drives kills and its own exit to completion whether
- * or not this client survives to see the answer. */
+/** POST /stop — the daemon's own atomic-or-abortive shutdown. One request; every gate (agent-worktree invoker and unlanded work) is evaluated daemon-side before anything dies, and past the commit point the daemon drives kills and its own exit to completion whether or not this client survives to see the answer. */
 async function defaultRequestStop(
   body: StopRequestBody,
 ): Promise<StopResponseBody> {
-  const response = await operatorFetch(
-    `http://127.0.0.1:${requireDaemonPort()}/stop`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
+  const response = await new UserDaemonClient({
+    port: requireDaemonPort(),
+    verifyIdentity: !isTestRunnerEnv(),
+  }).request("/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   const parsed = (await response.json().catch(() => null)) as
     | (Partial<StopResponseBody> & { error?: string })
     | null;
@@ -468,20 +436,12 @@ export interface StopHiveDependencies {
   readonly processIdentity?: (pid: number) => DaemonProcessIdentity;
   readonly killDaemon?: (pid: number) => void;
   readonly log?: (message: string) => void;
-  /** Captured once per invocation; injectable for tests. */
   readonly invoker?: InvokerIdentity;
   /** `hive stop --force`: skip the unlanded-work confirmation. */
   readonly force?: boolean;
-  /** TTY confirmation for the unlanded-work gate; defaults to asking the
-   * terminal (default no), refusing outright without one. */
+  /** TTY confirmation for the unlanded-work gate; defaults to asking the terminal (default no), refusing outright without one. */
   readonly confirm?: ConfirmFn;
-  /** The daemon `/stop` transport. This is the only lethal dependency.
-   * Under a test runner it must be injected explicitly because a defaulted
-   * transport can reach the live fleet through ambient HIVE_HOME. */
   readonly requestStop?: (body: StopRequestBody) => Promise<StopResponseBody>;
-  /** Set only by the `hive stop` CLI action: a real CLI subprocess is a
-   * process boundary, not an in-process test caller, even when the test
-   * runner's NODE_ENV=test leaks into its environment (e2e suites). */
   readonly invokedViaCli?: boolean;
 }
 
@@ -498,8 +458,7 @@ function formatUnlanded(unlanded: readonly StopUnlandedAgent[]): string {
 
 export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
   const invoker = deps.invoker ?? captureInvokerIdentity();
-  // An agent worktree shell carries no fleet-kill authority. Refuse before
-  // touching anything, daemon contacted or not.
+  // An agent worktree shell carries no fleet-kill authority. Refuse before touching anything, daemon contacted or not.
   if (invoker.agentWorktree) {
     throw new Error(
       "Hive refused `hive stop`: it was invoked from inside an agent worktree " +
@@ -522,9 +481,7 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
   }
   const daemonWasLive = state === "live";
   if (daemonWasLive) {
-    // Inside a test-runner process, the stop transport must be an explicit
-    // injection. A defaulted transport would resolve the ambient HIVE_HOME's
-    // daemon port and operator credential and could kill the live fleet.
+    // Inside a test-runner process, the stop transport must be an explicit injection. A defaulted transport would resolve the ambient HIVE_HOME's daemon port and user credential and could kill the live fleet.
     if (
       isTestRunnerEnv() &&
       deps.requestStop === undefined &&
@@ -547,10 +504,7 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     let daemonIdentity: DaemonProcessIdentity | null = null;
     try {
       daemonIdentity = processIdentity(pid);
-    } catch {
-      // A normal stop is still safe if exact inspection races daemon exit.
-      // Forced escalation below remains disabled without an exact identity.
-    }
+    } catch {}
     const requestStop = deps.requestStop ?? defaultRequestStop;
     const body: StopRequestBody = {
       origin: killOrigin("stop", invoker),
@@ -559,8 +513,7 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     };
     let response = await requestStop(body);
     if (response.state === "refused-unlanded") {
-      // Unlanded work stops the stop. Name the agents and their state, ask a
-      // real terminal, and refuse everywhere else.
+      // Unlanded work stops the stop. Name the agents and their state, ask a real terminal, and refuse everywhere else.
       const summary = formatUnlanded(response.unlanded);
       const confirm = deps.confirm ?? confirmOnTty;
       (deps.log ?? console.log)(
@@ -575,7 +528,7 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
           `Hive refused shutdown: ${response.unlanded.length} agent(s) hold ` +
             `unlanded work: ${summary}\n` +
             "No agent was killed and the daemon was not signalled. " +
-            "Fix: land or discard their work, or rerun `hive stop --force`.",
+            "Fix: resolve their settlement cases, or rerun `hive stop --force` without discarding work.",
         );
       }
       response = await requestStop({ ...body, confirmUnlanded: true });
@@ -613,9 +566,7 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
       let currentIdentity: DaemonProcessIdentity | null = null;
       try {
         currentIdentity = processIdentity(pid);
-      } catch {
-        // The daemon exited between the liveness read and exact observation.
-      }
+      } catch {}
       if (
         daemonIdentity !== null &&
         currentIdentity !== null &&

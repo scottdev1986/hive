@@ -1,34 +1,34 @@
 import Foundation
 import CoreGraphics
+import HiveTerminalKit
 
-/// Everything one workspace window shows for one pane. The pane content is a
-/// real terminal (the AppKit layer owns that); this is the metadata around it:
-/// identity, daemon-reported status, and exact terminal locator.
 public struct PaneState: Equatable {
     public let id: PaneID
     public let kind: PaneKind
     public var title: String
     public var tool: String?
     public var model: String?
-    /// Raw daemon status word ("working", "awaiting-approval", …) for headers.
-    /// `status` below is the semantic mapping that drives color and attention.
     public var feedStatus: String
+    public var headerDetail: String
     public var status: PaneStatus
+    public var activity: AgentActivity
+    public var attentionPresentation: FeedAttentionPresentation?
     public var taskDescription: String?
     public var contextPct: Double?
     public var agentID: String?
     public var sessionLocator: AgentSessionLocator?
-    public var terminalHostState: String?
-    /// True once the feed reported `closedAt` (or dropped the agent): the pane
-    /// is in its grace window and the UI will close it shortly.
+    public var terminalVisibilityState: WorkspaceTerminalVisibilityState?
     public var closePending: Bool
 
     public init(id: PaneID, kind: PaneKind, title: String, tool: String? = nil,
                 model: String? = nil, feedStatus: String, status: PaneStatus,
+                headerDetail: String,
                 taskDescription: String? = nil,
                 contextPct: Double? = nil, agentID: String? = nil,
                 sessionLocator: AgentSessionLocator? = nil,
-                terminalHostState: String? = nil,
+                terminalVisibilityState: WorkspaceTerminalVisibilityState? = nil,
+                activity: AgentActivity = .unknown,
+                attentionPresentation: FeedAttentionPresentation? = nil,
                 closePending: Bool = false) {
         self.id = id
         self.kind = kind
@@ -36,42 +36,36 @@ public struct PaneState: Equatable {
         self.tool = tool
         self.model = model
         self.feedStatus = feedStatus
+        self.headerDetail = headerDetail
         self.status = status
+        self.activity = activity
+        self.attentionPresentation = attentionPresentation
         self.taskDescription = taskDescription
         self.contextPct = contextPct
         self.agentID = agentID
         self.sessionLocator = sessionLocator
-        self.terminalHostState = terminalHostState
+        self.terminalVisibilityState = terminalVisibilityState
         self.closePending = closePending
     }
 
-    /// Live header detail. The title label renders the agent name separately,
-    /// so this contains each remaining field exactly once. `feedStatus` is the
-    /// current activity from hook events; `taskDescription` is the immutable
-    /// assignment and deliberately does not masquerade as live activity.
+    /// Live header detail. The title label renders the agent name separately, so this contains each remaining field exactly once. `headerDetail` is backend presentation; `taskDescription` is the immutable assignment and deliberately does not masquerade as live activity.
     public var headerDescription: String {
         var parts: [String] = []
         if let tool { parts.append(tool) }
         if let model { parts.append(model) }
-        parts.append(feedStatus)
+        parts.append(headerDetail)
         if let contextPct {
             parts.append("ctx \(Int(contextPct.rounded()))%")
         }
         return parts.joined(separator: " · ")
     }
 
-    /// Human status line for accessibility values and fallback attention text.
     public var statusDescription: String { headerDescription }
 }
 
-/// State changes the UI layer reacts to. One reducer emits these for every
-/// input surface, which is what keeps mouse/keyboard/menu/accessibility in
-/// agreement.
 public enum StateChange: Equatable {
     case paneAdded(PaneID)
     case paneRemoved(PaneID)
-    /// The feed closed this agent; the UI shows the final status border for
-    /// `PaneCloseGrace.seconds`, then dispatches `.closePane`.
     case paneClosePending(PaneID)
     case layoutChanged
     case focusChanged(PaneID?)
@@ -79,11 +73,6 @@ public enum StateChange: Equatable {
     case attentionChanged
 }
 
-/// The reducer for one project workspace: owns the layout tree, pane states,
-/// focus, and this project's attention items. Pure Swift — the AppKit layer
-/// observes `StateChange`s and renders. Pane metadata is reconciled from
-/// `hive workspace-feed` snapshots; pane content is a live terminal the UI
-/// layer owns.
 public final class ProjectState {
     public let projectID: ProjectID
     public let displayName: String
@@ -93,28 +82,14 @@ public final class ProjectState {
     public private(set) var orchestratorPane: PaneID?
     public private(set) var attention = AttentionQueue()
 
-    /// Geometry used for deterministic insertion decisions. The window keeps
-    /// this current; tests set it directly.
     public var layoutBounds: CGRect
 
-    /// Acknowledged is UI-local state: the feed keeps reporting "done"/"failed"
-    /// after the user has seen it, so the flag must survive re-application of
-    /// identical snapshots and reset only when the status word changes.
+    /// Acknowledged is UI-local state: the feed keeps reporting completed/failed after the user has seen it, so the flag survives identical backend presentations and resets only when that presentation changes.
     private var acknowledged: Set<PaneID> = []
-    /// Agents the user closed, whose kill the daemon has not finished yet. The
-    /// feed goes on listing a live agent until it is actually dead, so without
-    /// this the snapshot that lands a second after the X rebuilds the pane the
-    /// user just closed.
+    /// Agents the user closed, whose kill the daemon has not finished yet. The feed goes on listing a live agent until it is actually dead, so without this the snapshot that lands a second after the X rebuilds the pane the user just closed.
     private var userClosed: Set<PaneID> = []
-    /// Close removal is scheduled only after a full feed confirms teardown.
-    /// A user's close request is visible as `closing` while the provider still
-    /// exists, but cannot remove its own visibility authority prematurely.
+    /// Close removal is scheduled only after a full feed confirms teardown. A user's close request is visible as `closing` while the provider still exists, but cannot remove its own visibility authority prematurely.
     private var closeRemovalScheduled: Set<PaneID> = []
-    /// A terminated root terminal is direct process evidence. Once observed,
-    /// a delayed feed snapshot must not paint the dead root healthy again.
-    /// A new ProjectState is created for every Workspace relaunch, so this
-    /// latch naturally resets when a new root process is started.
-    private var orchestratorChildExited = false
     private var nextVisibilityRevision: UInt64 = 1
 
     public init(projectID: ProjectID, displayName: String,
@@ -130,9 +105,7 @@ public final class ProjectState {
         layout.frames(in: bounds)
     }
 
-    /// Stable pane identity for a feed agent. Namespaced so an agent that
-    /// happens to be named "orchestrator" can never collide with the local
-    /// orchestrator pane.
+    /// Stable pane identity for a feed agent. Namespaced so an agent that happens to be named "orchestrator" can never collide with the local orchestrator pane.
     public static func paneID(forAgent name: String) -> PaneID {
         PaneID("agent:\(name)")
     }
@@ -141,25 +114,14 @@ public final class ProjectState {
     public static let orchestratorVisibilityID = "root"
     public static let orchestratorRecipient = "queen"
 
-    // MARK: Orchestrator pane (local, not feed-driven)
-
-    /// The master pane is the selected orchestrator terminal, created by the
-    /// window at open — the feed's `agents` array only describes worker agents.
-    ///
-    /// It is seeded "unknown", which is not a status word of its own. Do not
-    /// seed a concrete word here: ANY constant is a fabrication, and one outside
-    /// the daemon's vocabulary is degraded to gray by the dot's unknown-word
-    /// rule — permanently marking the root, alive by definition whenever this app
-    /// runs, as a gray "unknown". The real status arrives on the feed's
-    /// `orchestrator` field and is applied below; until the first snapshot lands,
-    /// "unknown" is the honest word, and gray is the honest colour.
+    /// The master pane is the selected orchestrator terminal, created by the window at open — the feed's `agents` array only describes worker agents. It is seeded "unknown", which is not a status word of its own. Do not seed a concrete word here: ANY constant is a fabrication, and one outside the daemon's vocabulary is degraded to gray by the dot's unknown-word rule — permanently marking the root, alive by definition whenever this app runs, as a gray "unknown". The real status arrives on the feed's `orchestrator` field and is applied below; until the first snapshot lands, "unknown" is the honest word, and gray is the honest colour.
     @discardableResult
     public func addOrchestrator(title: String = "Queen") -> [StateChange] {
         let paneID = ProjectState.orchestratorPaneID
         guard panes[paneID] == nil else { return [] }
         panes[paneID] = PaneState(
             id: paneID, kind: .orchestrator, title: title,
-            feedStatus: "unknown", status: .running)
+            feedStatus: "unknown", status: .unknown, headerDetail: "unknown")
         layout.insert(paneID, in: layoutBounds)
         orchestratorPane = paneID
         var changes: [StateChange] = [.paneAdded(paneID), .layoutChanged]
@@ -170,41 +132,10 @@ public final class ProjectState {
         return changes
     }
 
-    /// The Workspace's root child exited while its window was still open.
-    /// This is stronger evidence than the last turn boundary: the provider is
-    /// no longer attached, regardless of whether its last measured turn was
-    /// idle or working. Keep the raw word explicit for the header and the
-    /// semantic status disconnected for the shared visual legend.
-    @discardableResult
-    public func markOrchestratorExited(exitCode: Int32?) -> [StateChange] {
-        let paneID = ProjectState.orchestratorPaneID
-        guard var pane = panes[paneID] else { return [] }
-        orchestratorChildExited = true
-        let word = exitCode.map { "exited (code \($0))" } ?? "exited"
-        guard pane.feedStatus != word || !isDisconnected(pane.status) else { return [] }
-        pane.status = .disconnected(
-            reason: word,
-            lastConfirmed: pane.feedStatus)
-        pane.feedStatus = word
-        panes[paneID] = pane
-        return [.statusChanged(paneID)]
-    }
-
-    // MARK: Feed reconciliation
-
-    /// Reconciles one feed snapshot against the pane set:
-    /// - unknown live agent → pane inserted (least-disruptive split)
-    /// - known agent → metadata/status refreshed, attention transitions applied
-    /// - `closedAt` present, or agent vanished from the snapshot → the pane is
-    ///   marked close-pending exactly once; the UI closes it after the grace.
-    /// - agents already closed (or "dead") that never had a pane are ignored.
-    /// - the root's status (a separate field, since the root has no AgentRecord)
-    ///   updates the orchestrator pane; nil means the daemon could not honestly
-    ///   say, so the pane goes back to "unknown" rather than keeping a stale word.
+    /// Reconciles one feed snapshot against the pane set: - unknown live agent → pane inserted (least-disruptive split) - known agent → metadata/status refreshed, attention transitions applied - `closedAt` present, or agent vanished from the snapshot → the pane is marked close-pending exactly once; the UI closes it after the grace. - agents already closed (or "dead") that never had a pane are ignored. - the root's status (a separate field, since the root has no AgentRecord) updates the orchestrator pane; nil means the daemon could not honestly say, so the pane goes back to "unknown" rather than keeping a stale word.
     @discardableResult
     public func apply(feed agents: [AgentSnapshot],
-                      orchestrator: OrchestratorSnapshot? = nil,
-                      now: TimeInterval = Date().timeIntervalSince1970) -> [StateChange] {
+                      orchestrator: OrchestratorSnapshot? = nil) -> [StateChange] {
         var changes: [StateChange] = []
         var seen: Set<PaneID> = []
 
@@ -214,54 +145,39 @@ public final class ProjectState {
             let paneID = ProjectState.paneID(forAgent: agent.name)
             seen.insert(paneID)
 
-            if agent.closedAt != nil {
+            if agent.closedAt != nil || !agent.presentation.shouldDisplayPane {
                 changes.append(contentsOf: markClosePending(paneID))
                 userClosed.remove(paneID)
                 continue
             }
-            // The user closed this agent's pane; a pane close never kills the
-            // agent, so the feed still lists it as live. Do not rebuild its pane
-            // here: it would reappear a second after the user dismissed it.
+            // The user closed this agent's pane; a pane close never kills the agent, so the feed still lists it as live. Do not rebuild its pane here: it would reappear a second after the user dismissed it.
             if userClosed.contains(paneID) { continue }
             if var pane = panes[paneID] {
-                changes.append(contentsOf: update(pane: &pane, from: agent, now: now))
+                changes.append(contentsOf: update(pane: &pane, from: agent))
                 panes[paneID] = pane
-            } else if agent.status != "dead" {
-                // A dead agent's session is gone; attaching would fail,
-                // so a pane is only ever created for attachable agents.
-                changes.append(contentsOf: insertPane(for: agent, now: now))
+            } else {
+                changes.append(contentsOf: insertPane(for: agent))
             }
         }
 
-        // An agent that vanished without closedAt is treated as closed: the
-        // snapshot is the full set of live agents.
         for (paneID, pane) in panes
         where pane.kind != .orchestrator && !seen.contains(paneID) {
             changes.append(contentsOf: markClosePending(paneID))
         }
-        // An agent the daemon no longer reports is really gone: stop suppressing
-        // it, so the set never grows without bound and a name that comes back
-        // later (a new agent) gets its pane.
+        // An agent the daemon no longer reports is really gone: stop suppressing it, so the set never grows without bound and a name that comes back later (a new agent) gets its pane.
         userClosed.formIntersection(seen)
         return changes
     }
 
-    /// The user closed this pane (the pane X, ⇧⌘W, or the accessibility
-    /// action). Closing a pane never touches the agent: it keeps running
-    /// headless, so the feed keeps listing it live — and its pane must not be
-    /// rebuilt from those snapshots while it does. The suppression clears when
-    /// the daemon stops reporting the agent, so a later agent reusing the name
-    /// gets a pane again.
+    /// The user closed this pane (the pane X, ⇧⌘W, or the accessibility action). Closing a pane never touches the agent: it keeps running headless, so the feed keeps listing it live — and its pane must not be rebuilt from those snapshots while it does. The suppression clears when the daemon stops reporting the agent, so a later agent reusing the name gets a pane again.
     @discardableResult
     public func markUserClosed(_ paneID: PaneID) -> [StateChange] {
         userClosed.insert(paneID)
         return markClosePending(paneID, scheduleRemoval: false)
     }
 
-    /** Full Workspace-owned terminal inventory. Every publication advances the
-     revision, including unchanged heartbeat re-attestations after reconnect. */
     public func visibilityInventory(
-        geometries: [PaneID: WorkspaceTerminalGeometry] = [:]
+        geometries: [PaneID: TerminalGeometry] = [:]
     ) -> WorkspaceVisibilityInventory {
         let terminals = panes.values.compactMap { pane -> WorkspaceVisibleTerminal? in
             guard let locator = pane.sessionLocator,
@@ -283,25 +199,12 @@ public final class ProjectState {
                 agentName = ProjectState.orchestratorRecipient
             }
             let visibilityState: WorkspaceTerminalVisibilityState
-            if pane.kind == .orchestrator {
-                switch pane.terminalHostState {
-                case "running": visibilityState = .live
-                case "exited": visibilityState = .exited
-                case "failed": visibilityState = .failed
-                default: visibilityState = .pending
-                }
-            } else if pane.closePending {
+            if pane.closePending {
                 visibilityState = .closing
-            } else if pane.feedStatus == "spawning" {
-                visibilityState = .pending
-            } else if pane.feedStatus == "dead" {
-                visibilityState = .exited
-            } else if case .failed = pane.status {
-                visibilityState = .failed
-            } else if case .disconnected = pane.status {
-                visibilityState = .reconnecting
+            } else if let presented = pane.terminalVisibilityState {
+                visibilityState = presented
             } else {
-                visibilityState = .live
+                return nil
             }
             return WorkspaceVisibleTerminal(
                 agentId: agentID,
@@ -321,28 +224,18 @@ public final class ProjectState {
         return inventory
     }
 
-    /// The root's status word from one snapshot. A nil snapshot is the daemon
-    /// saying it does not know (no turn events, or a self-contradicting record
-    /// that means the root's hooks are not reaching it) — so the pane reverts to
-    /// "unknown" and its dot goes gray. Reverting matters: holding the last known
-    /// word would turn a lost signal into a confident stale claim, which is the
-    /// exact failure this whole change exists to remove. It does not clear an
-    /// already measured terminal locator; missing turn state is not host exit.
+    /// The root's status word from one snapshot. A nil snapshot is the daemon saying it does not know (no turn events, or a self-contradicting record that means the root's hooks are not reaching it) — so the pane reverts to "unknown" and its dot goes gray. Reverting matters: holding the last known word would turn a lost signal into a confident stale claim, which is the exact failure this whole change exists to remove. It does not clear an already measured terminal locator; missing turn state is not host exit.
     private func applyOrchestrator(_ snapshot: OrchestratorSnapshot?) -> [StateChange] {
         let paneID = ProjectState.orchestratorPaneID
         guard var pane = panes[paneID] else { return [] }
-        guard !orchestratorChildExited else { return [] }
-        let word = snapshot?.status ?? "unknown"
         let previous = pane
-        pane.feedStatus = word
-        pane.status = FeedStatusMap.paneStatus(for: word)
+        pane.feedStatus = snapshot?.status ?? "unknown"
+        pane.headerDetail = snapshot?.presentation.headerDetail ?? "unknown"
+        pane.status = snapshot?.presentation.paneStatus.paneStatus() ?? .unknown
+        pane.activity = snapshot?.presentation.renderedActivity ?? .unknown
+        pane.terminalVisibilityState = snapshot?.presentation.renderedTerminalState
         if let host = snapshot?.host {
             pane.sessionLocator = host == "sessiond" ? snapshot?.sessionLocator : nil
-            pane.terminalHostState = host == "sessiond" ? snapshot?.hostState : nil
-            if host == "sessiond", snapshot?.hostState == "failed" {
-                pane.feedStatus = "failed"
-                pane.status = .failed(acknowledged: false)
-            }
         }
         guard pane != previous else { return [] }
         panes[paneID] = pane
@@ -354,65 +247,68 @@ public final class ProjectState {
         return false
     }
 
-    /// The feed process died: statuses can no longer be trusted, so every pane
-    /// turns gray dashed (disconnected). Terminals stay attached — only the
-    /// metadata stream is gone.
-    ///
-    /// The orchestrator is included, and must not be exempted: its status word is
-    /// measured, so a dead feed makes it exactly as untrustworthy as any agent's
-    /// — the root may have started or finished ten turns since the last line we
-    /// read. Its terminal is still live and still attached; what we have lost is
-    /// not the root, only our knowledge of it, and those are different things to
-    /// say.
+    /// The feed process died: statuses can no longer be trusted, so every pane turns gray dashed (disconnected). Terminals stay attached — only the metadata stream is gone. The orchestrator is included, and must not be exempted: its status word is measured, so a dead feed makes it exactly as untrustworthy as any agent's — the root may have started or finished ten turns since the last line we read. Its terminal is still live and still attached; what we have lost is not the root, only our knowledge of it, and those are different things to say.
     @discardableResult
     public func markFeedLost(reason: String = "workspace feed exited") -> [StateChange] {
         var changes: [StateChange] = []
         for (paneID, var pane) in panes {
             if case .disconnected = pane.status { continue }
             pane.status = .disconnected(reason: reason, lastConfirmed: pane.feedStatus)
+            pane.activity = .disconnected
+            pane.terminalVisibilityState = .reconnecting
             pane.feedStatus = "unknown"
+            pane.headerDetail = reason
             panes[paneID] = pane
             changes.append(.statusChanged(paneID))
         }
         return changes
     }
 
-    private func insertPane(for agent: AgentSnapshot, now: TimeInterval) -> [StateChange] {
+    private func insertPane(for agent: AgentSnapshot) -> [StateChange] {
         let paneID = ProjectState.paneID(forAgent: agent.name)
         let pane = PaneState(
             id: paneID, kind: .agent, title: agent.name,
             tool: agent.tool, model: agent.model,
             feedStatus: agent.status,
-            status: FeedStatusMap.paneStatus(for: agent.status),
+            status: agent.presentation.paneStatus.paneStatus(),
+            headerDetail: agent.presentation.headerDetail,
             taskDescription: agent.taskDescription,
             contextPct: agent.contextPct,
             agentID: agent.id,
-            sessionLocator: agent.sessionLocator)
+            sessionLocator: agent.sessionLocator,
+            terminalVisibilityState: agent.presentation.renderedTerminalState,
+            activity: agent.presentation.renderedActivity,
+            attentionPresentation: agent.presentation.attention)
         var changes: [StateChange] = []
         panes[paneID] = pane
         layout.insert(paneID, in: layoutBounds)
         changes.append(.paneAdded(paneID))
         changes.append(.layoutChanged)
-        // Creation never steals focus; the very first pane is the exception
-        // because an empty workspace has nothing focused.
+        // Creation never steals focus; the very first pane is the exception because an empty workspace has nothing focused.
         if focusedPane == nil {
             focusedPane = paneID
             changes.append(.focusChanged(paneID))
         }
-        changes.append(contentsOf: raiseAttention(for: pane, now: now))
+        changes.append(contentsOf: raiseAttention(for: pane))
         return changes
     }
 
-    private func update(pane: inout PaneState, from agent: AgentSnapshot,
-                        now: TimeInterval) -> [StateChange] {
+    private func update(pane: inout PaneState, from agent: AgentSnapshot) -> [StateChange] {
         var changes: [StateChange] = []
         let statusWordChanged = pane.feedStatus != agent.status
-        let headerChanged = statusWordChanged
+        let headerDetailChanged = pane.headerDetail != agent.presentation.headerDetail
+        let presentationChanged = pane.activity != agent.presentation.renderedActivity
+            || pane.attentionPresentation != agent.presentation.attention
+            || pane.status != agent.presentation.paneStatus.paneStatus(
+                acknowledged: acknowledged.contains(pane.id))
+        let headerChanged = statusWordChanged || headerDetailChanged
+            || presentationChanged
             || pane.tool != agent.tool
             || pane.model != agent.model
             || pane.taskDescription != agent.taskDescription
             || pane.contextPct != agent.contextPct
             || pane.sessionLocator != agent.sessionLocator
+            || pane.terminalVisibilityState != agent.presentation.renderedTerminalState
             || pane.closePending
 
         pane.tool = agent.tool
@@ -421,19 +317,23 @@ public final class ProjectState {
         pane.contextPct = agent.contextPct
         pane.agentID = agent.id
         pane.sessionLocator = agent.sessionLocator
+        pane.terminalVisibilityState = agent.presentation.renderedTerminalState
+        pane.feedStatus = agent.status
+        pane.headerDetail = agent.presentation.headerDetail
         if pane.closePending {
             closeRemovalScheduled.remove(pane.id)
         }
         pane.closePending = false // a live snapshot revives a pending close
 
-        if statusWordChanged {
+        if presentationChanged {
             acknowledged.remove(pane.id)
-            pane.feedStatus = agent.status
-            pane.status = FeedStatusMap.paneStatus(for: agent.status)
-            // Old attention is stale the moment the daemon reports a new
-            // status; re-raise for the new one if it warrants attention.
+            pane.status = agent.presentation.paneStatus.paneStatus(
+                acknowledged: acknowledged.contains(pane.id))
+            pane.activity = agent.presentation.renderedActivity
+            pane.attentionPresentation = agent.presentation.attention
+            // Old attention is stale the moment the daemon reports a new status; re-raise for the new one if it warrants attention.
             attention.resolveAll(paneID: pane.id, projectID: projectID)
-            changes.append(contentsOf: raiseAttention(for: pane, now: now))
+            changes.append(contentsOf: raiseAttention(for: pane))
             changes.append(.attentionChanged)
         }
         if headerChanged {
@@ -442,14 +342,15 @@ public final class ProjectState {
         return changes
     }
 
-    private func raiseAttention(for pane: PaneState, now: TimeInterval) -> [StateChange] {
-        guard let severity = FeedStatusMap.attentionSeverity(for: pane.feedStatus) else {
+    private func raiseAttention(for pane: PaneState) -> [StateChange] {
+        guard let presented = pane.attentionPresentation,
+              let severity = presented.renderedSeverity else {
             return []
         }
         attention.raise(AttentionItem(
-            id: "status-\(pane.id.raw)", projectID: projectID, paneID: pane.id,
-            severity: severity, title: "\(pane.title) \(pane.feedStatus)",
-            detail: pane.taskDescription ?? pane.statusDescription, raisedAt: now))
+            id: presented.id, projectID: projectID, paneID: pane.id,
+            severity: severity, title: presented.title,
+            detail: presented.detail, raisedAt: presented.raisedAt))
         return [.attentionChanged]
     }
 
@@ -470,9 +371,6 @@ public final class ProjectState {
         return changes
     }
 
-    // MARK: Sanitized switcher card
-
-    /// Sanitized card data for the project switcher: no terminal content.
     public struct SwitcherCard: Equatable {
         public let projectID: ProjectID
         public let displayName: String
@@ -495,8 +393,6 @@ public final class ProjectState {
             failedCount: statuses.filter { if case .failed(false) = $0 { return true } else { return false } }.count
         )
     }
-
-    // MARK: Command dispatch (the one shared command model)
 
     @discardableResult
     public func apply(_ command: WorkspaceCommand) -> [StateChange] {

@@ -97,7 +97,14 @@ describe("hive init command boundary", () => {
     const commandEnv: Record<string, string | undefined> = {
       ...process.env,
       HOME: home,
+      // This test proves Graphify and repository setup, not embedding setup.
+      // Inheriting the developer runtime spent 7,164 ms copying it, then an
+      // unbounded model probe hit the test's 15-second kill before Graphify.
+      HIVE_EMBEDDINGS_SOURCE: join(home, "missing-embedding-source"),
       HIVE_GRAPHIFY_MANIFEST: manifest,
+      FORCE_COLOR: "0",
+      NO_COLOR: "1",
+      TERM: "dumb",
     };
     delete commandEnv.HIVE_HOME;
     const child = Bun.spawn([process.execPath, CLI, "init"], {
@@ -148,7 +155,7 @@ describe("hive init command boundary", () => {
 
     const startModule = join(import.meta.dir, "../../src/cli/start.ts");
     const initModule = join(import.meta.dir, "../../src/cli/init.ts");
-    const dbModule = join(import.meta.dir, "../../src/daemon/db.ts");
+    const pathsModule = join(import.meta.dir, "../../src/hive-home/home.ts");
     const launch = Bun.spawn(
       [
         process.execPath,
@@ -156,7 +163,7 @@ describe("hive init command boundary", () => {
         `
       const { startSession } = await import(${JSON.stringify(startModule)});
       const { isRepoInitialized } = await import(${JSON.stringify(initModule)});
-      const { getHiveHome } = await import(${JSON.stringify(dbModule)});
+      const { getHiveHome } = await import(${JSON.stringify(pathsModule)});
       const session = await startSession({
         cwd: ${JSON.stringify(repo)},
         checkUpdate: async () => { throw new Error("offline"); },
@@ -197,5 +204,5 @@ describe("hive init command boundary", () => {
     ).toBe(true);
     expect(selected.initialized).toBe(true);
     expect(selected.session).toEqual({ cwd: repo, port: 45123 });
-  });
+  }, 15_000);
 });

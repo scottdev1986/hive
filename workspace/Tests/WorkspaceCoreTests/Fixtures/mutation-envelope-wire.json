@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "intents": [
+    {
+      "schemaVersion": 1,
+      "intentId": "intent-revision",
+      "expected": {
+        "kind": "revision",
+        "revision": "7"
+      },
+      "idempotencyKey": "retry-revision",
+      "body": {
+        "operation": "example"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "intentId": "intent-epoch",
+      "expected": {
+        "kind": "epoch",
+        "epoch": "3"
+      },
+      "idempotencyKey": "retry-epoch",
+      "body": {
+        "operation": "example"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "intentId": "intent-revision-and-epoch",
+      "expected": {
+        "kind": "revision-and-epoch",
+        "revision": "7",
+        "epoch": "3"
+      },
+      "idempotencyKey": "retry-revision-and-epoch",
+      "body": {
+        "operation": "example"
+      }
+    }
+  ],
+  "results": [
+    {
+      "schemaVersion": 1,
+      "intentId": "intent-accepted",
+      "operationId": "operation-accepted",
+      "postStateToken": {
+        "kind": "revision",
+        "revision": "8"
+      },
+      "outcome": {
+        "status": "accepted"
+      },
+      "observedPostState": {
+        "revision": "8",
+        "state": "enabled"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "intentId": "intent-rejected",
+      "operationId": "operation-rejected",
+      "postStateToken": {
+        "kind": "revision",
+        "revision": "8"
+      },
+      "outcome": {
+        "status": "rejected",
+        "failure": {
+          "code": "revision-conflict",
+          "message": "expected revision 7; observed 8"
+        }
+      },
+      "observedPostState": {
+        "revision": "8",
+        "state": "enabled"
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "runId": "u5-msb6rwsf-onqkn0",
+  "sourceSha": "a38d9b92e7e8ae4657d2b141011b1db9b6948be0",
+  "provider": "claude",
+  "outcome": "pending-attestation",
+  "attemptOrdinal": 1,
+  "attemptedAt": "2026-08-02T02:33:47.667Z",
+  "retryAttempted": false,
+  "phase": "stable-composer",
+  "spawnRequested": true,
+  "admissionId": "7ef7febe-5224-4dad-86f4-824a0a54960f",
+  "name": "maya",
+  "configuredModel": "claude-haiku-4-5-20251001",
+  "status": "working",
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "87f653c084",
+    "subject": {
+      "kind": "agent",
+      "agentId": "7ef7febe-5224-4dad-86f4-824a0a54960f"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc052-05e2-7092-879e-adbe30b43b57",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "composer": {
+    "profile": "claude",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  },
+  "captureSha256": "976eeccb27693eee87e4d84c2582d72c2d1d352ea8b7b12040748df4af314e52"
+}

@@ -1,6 +1,5 @@
 import Foundation
 
-/// Local wire protocol v1 — 32-byte frame header, network byte order.
 public enum FrameType: UInt16, CaseIterable, Sendable {
     case hello = 0x0001
     case welcome = 0x0002
@@ -20,7 +19,7 @@ public enum FrameType: UInt16, CaseIterable, Sendable {
     case attachReady = 0x020a
     case claimAcquire = 0x0300
     case claimResult = 0x0301
-    case humanInput = 0x0302
+    case userInput = 0x0302
     case claimRelease = 0x0303
     case gestureInput = 0x0304
     case inputSubmit = 0x0305
@@ -31,7 +30,6 @@ public struct FrameFlags: OptionSet, Sendable {
     public init(rawValue: UInt16) { self.rawValue = rawValue }
     public static let response = FrameFlags(rawValue: 1 << 0)
     public static let final = FrameFlags(rawValue: 1 << 1)
-    public static let error = FrameFlags(rawValue: 1 << 2)
     public static let contentSensitive = FrameFlags(rawValue: 1 << 3)
     public static let allowedMask: UInt16 = 0x000f
 }
@@ -97,7 +95,7 @@ public enum FrameCodec {
     public static let optionalTypeBit: UInt16 = 0x8000
 
     private static let rawByteTypes: Set<FrameType> = [
-        .snapshotBytes, .output, .humanInput,
+        .snapshotBytes, .output, .userInput,
     ]
 
     public static func encode(_ frame: WireFrame) throws -> Data {
@@ -200,8 +198,6 @@ public enum FrameCodec {
         }
         return object
     }
-
-    // MARK: - Network-endian helpers
 
     private static func writeUInt16(_ value: UInt16, into data: inout Data, at offset: Int) {
         data[offset] = UInt8((value >> 8) & 0xff)

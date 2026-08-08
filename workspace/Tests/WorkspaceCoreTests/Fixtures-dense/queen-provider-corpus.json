@@ -1,0 +1,261 @@
+[
+  {
+    "schemaVersion": 1,
+    "availability": "current",
+    "freshness": "current",
+    "source": {
+      "revision": "18446744073709551615",
+      "generation": null
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "root": {
+        "name": "queen",
+        "instanceId": "instance-fixture"
+      },
+      "liveProvider": "claude",
+      "health": "working",
+      "contradicted": false,
+      "vendors": {
+        "claude": {
+          "available": true
+        },
+        "codex": {
+          "available": true
+        },
+        "grok": {
+          "available": true
+        },
+        "kimi": {
+          "available": false
+        },
+        "opencode": {
+          "available": false
+        }
+      },
+      "change": {
+        "state": "idle",
+        "revision": "18446744073709551615",
+        "failure": null
+      },
+      "observedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "availability": "unknown",
+    "freshness": "unknown",
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "availability": "stale",
+    "freshness": "stale",
+    "source": {
+      "revision": "7",
+      "generation": null
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "root": {
+        "name": "queen",
+        "instanceId": "instance-fixture"
+      },
+      "liveProvider": "grok",
+      "health": null,
+      "contradicted": true,
+      "vendors": {
+        "claude": {
+          "available": true
+        },
+        "codex": {
+          "available": true
+        },
+        "grok": {
+          "available": true
+        },
+        "kimi": {
+          "available": false
+        },
+        "opencode": {
+          "available": false
+        }
+      },
+      "change": {
+        "state": "idle",
+        "revision": "7",
+        "failure": null
+      },
+      "observedAt": "2026-07-29T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "availability": "disconnected",
+    "freshness": "stale",
+    "source": {
+      "revision": "8",
+      "generation": null
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "root": {
+        "name": "queen",
+        "instanceId": "instance-fixture"
+      },
+      "liveProvider": "claude",
+      "health": "spawning",
+      "contradicted": false,
+      "vendors": {
+        "claude": {
+          "available": true
+        },
+        "codex": {
+          "available": true
+        },
+        "grok": {
+          "available": false
+        },
+        "kimi": {
+          "available": false
+        },
+        "opencode": {
+          "available": false
+        }
+      },
+      "change": {
+        "state": "pending",
+        "revision": "8",
+        "failure": null
+      },
+      "observedAt": "2026-07-29T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "availability": "unauthorized",
+    "freshness": "unknown",
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "queen-provider-read-denied"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "availability": "conflicting",
+    "freshness": "current",
+    "source": {
+      "revision": "9",
+      "generation": null
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "10"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "root": {
+        "name": "queen",
+        "instanceId": "instance-fixture"
+      },
+      "liveProvider": null,
+      "health": "exited",
+      "contradicted": false,
+      "vendors": {
+        "claude": {
+          "available": true
+        },
+        "codex": {
+          "available": true
+        },
+        "grok": {
+          "available": true
+        },
+        "kimi": {
+          "available": true
+        },
+        "opencode": {
+          "available": false
+        }
+      },
+      "change": {
+        "state": "pending",
+        "revision": "9",
+        "failure": null
+      },
+      "observedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "availability": "replaced",
+    "freshness": "current",
+    "source": {
+      "revision": "11",
+      "generation": null
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "12",
+        "generation": null
+      }
+    },
+    "value": {
+      "schemaVersion": 1,
+      "root": {
+        "name": "queen",
+        "instanceId": "instance-fixture"
+      },
+      "liveProvider": "codex",
+      "health": "idle",
+      "contradicted": false,
+      "vendors": {
+        "claude": {
+          "available": false
+        },
+        "codex": {
+          "available": true
+        },
+        "grok": {
+          "available": true
+        },
+        "kimi": {
+          "available": true
+        },
+        "opencode": {
+          "available": true
+        }
+      },
+      "change": {
+        "state": "failed",
+        "revision": "11",
+        "failure": "kimi could not launch a queen: the CLI exited 1 before any turn began. The prior provider was preserved."
+      },
+      "observedAt": "2026-07-30T20:00:00.000Z"
+    }
+  }
+]

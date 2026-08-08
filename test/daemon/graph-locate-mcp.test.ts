@@ -2,14 +2,23 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { graphJsonPath, servingGraphPath } from "../../src/adapters/graphify";
-import { HiveDatabase } from "../../src/daemon/db";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import {
+  graphJsonPath,
+  graphLocate,
+  servingGraphPath,
+} from "../../src/adapters/graphify";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
-import { actingAs } from "../../src/daemon/testing";
-import type { AgentRecord } from "../../src/schemas";
+import type {
+  Spawner,
+  SpawnRequest,
+} from "../../src/daemon/spawn/spawn-service";
+import { actingAs } from "../support/daemon-test-support";
+import type { AgentRecord } from "../../src/schemas/agent";
 
 const tempRoots: string[] = [];
 const previousHome = process.env.HIVE_HOME;
@@ -50,7 +59,7 @@ async function bootDaemon(): Promise<{ daemon: HiveDaemon; repoRoot: string }> {
 async function connectedClient(daemon: HiveDaemon): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
-    { fetch: actingAs(daemon, "operator", "operator") },
+    { fetch: actingAs(daemon, "user", "user") },
   );
   const client = new Client({
     name: "hive-graph-locate-test",
@@ -122,6 +131,18 @@ const SYNTHETIC_GRAPH = JSON.stringify({
 });
 
 describe("graph_locate over the daemon's real MCP interface", () => {
+  test("an already-cancelled locate never starts filesystem work", async () => {
+    await makeHome();
+    const repoRoot = await mkdtemp(join(tmpdir(), "hive-graph-cancel-repo-"));
+    tempRoots.push(repoRoot);
+    const controller = new AbortController();
+    controller.abort(new Error("locate cancelled"));
+
+    await expect(
+      graphLocate(repoRoot, "where is auth handled", controller.signal),
+    ).rejects.toThrow("locate cancelled");
+  });
+
   test("answers a locate-question with cited nodes, edges, and the verify footer", async () => {
     await makeHome();
     const { daemon, repoRoot } = await bootDaemon();

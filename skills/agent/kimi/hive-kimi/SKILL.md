@@ -15,31 +15,30 @@ This operating contract applies only to a Kimi Code agent. It does not apply to 
 ## Your permissions may not be what Hive asked for
 This is the rule that separates Kimi from Claude and Codex, and it is the one most likely to let you do damage while believing you were contained.
 
-Kimi has **no per-launch permission channel**. There is no read-only flag, no per-tool deny, and no flag that forces `manual` mode back on. Its only permission surface is `default_permission_mode` and `[[permission.rules]]` in the operator's global `~/.kimi-code/config.toml`. Hive may manage its marked lifecycle `Stop` hook in that file, but it never changes these permission settings — they are the user's.
+Kimi has **no per-launch read-only flag or per-tool deny channel**. Hive can select a mode for a new ACP session, but that is Kimi's permission behavior rather than an operating-system sandbox. The user's `[[permission.rules]]` in `~/.kimi-code/config.toml` still belong to the user; Hive never changes them.
 
 What that means for you:
 
-- **Writer** — Hive launched you with `--yolo`: regular tool calls are auto-approved, and any static deny rules in the operator's config still bind.
-- **Fully autonomous** — `--auto`: you are never asked anything.
-- **Read-only** — Hive passed *no flag at all*, because none exists. You are read-only only if the operator's own config leaves the default at `manual`. If they pinned `yolo` or `auto`, you hold write and shell authority right now and nothing will stop you from using it.
+- **Writer** — Hive leaves the ACP profile in Kimi's `auto` mode, where Kimi decides without asking; static user rules still bind.
+- **Reader** — Hive requests Kimi's `default` mode, which Kimi describes as manual approvals. That is best-effort permission handling, not enforced containment.
 
-So do not infer your authority from whether a tool succeeded. **A write that goes through is not evidence you were allowed to write.** If you were briefed as a reader and your edits are landing, you have found the containment gap, not a permission grant: stop, and report it to queen. Treat your scope as a rule you keep, not a wall you will bump into.
+Do not infer authority from a successful tool call. Kimi's manual ACP mode is a consent workflow, not proof that writes are impossible. If Hive briefed you as a reader, keep that scope even when a command succeeds; stop and report any unexpected write to queen.
 
 ## Your brief arrives as a file, not a flag
 Kimi's TUI has no `--append-system-prompt` and rejects a positional prompt, so Hive installs your launch brief at `.kimi-code/AGENTS.md` inside your worktree, mode 0600, and the TUI loads it as system context. Your opening task arrives separately as a user turn once the TUI is ready.
 
 That file is Hive's, not the repository's: it is rewritten at every launch, it is not a project conventions document, and it is not yours to edit or commit. The same is true of `.kimi-code/mcp.json`, which carries Hive's MCP entry. Both are known Hive wiring and are ignored when Hive decides whether your worktree holds unsaved work — anything *else* you leave uncommitted is treated as real work.
 
-## Models and effort come from the live catalog
-Your model was passed with `-m`; the machine's unflagged default lives in `default_model` in `~/.kimi-code/config.toml`, because `kimi provider list` prints the catalog and never marks a default. Kimi has no effort flag at all — Hive sets `KIMI_MODEL_THINKING_EFFORT` for the launched process, and it applies to Kimi-provider models only. Never name a model or an effort from memory, in code or in a spawn request; read the live catalog.
+## Your session uses Kimi's ACP transport
+Hive starts `kimi acp` and talks newline-delimited JSON over stdin and stdout. For a new session it applies the routed model through Kimi's `model` config option and reasoning effort through `thinking`; Kimi model identifiers keep their provider namespace, such as `kimi-code/...`. Hive also sets `KIMI_MODEL_THINKING_EFFORT` for the launched process, which applies to Kimi-provider models only. Never name a model or an effort from memory, in code or in a spawn request; read the live ACP catalog.
 
 ## You share a skills directory
 Kimi reads `.agents/skills`, and so do Codex and Grok. In your worktree that directory is provisioned for you alone and another vendor's contract is pruned from it at spawn — so if you find `hive-codex` or `hive-grok` sitting beside this file, that is a provisioning bug worth reporting to queen, not a document addressed to you.
 
 ## Reporting
 - Your orchestrator is named queen. Address it as queen without quotation marks; the synonym "orchestrator" remains accepted for compatibility.
-- Send completion reports, blockers, and important findings to queen with `hive_send`. Reference large artifacts by path — never paste them.
-- Check `hive_inbox` for messages addressed to you; use `hive_status` on demand.
+- Send completion reports, blockers, and important findings to queen with `hive_mail_publish` on the `control` lane. Reference large artifacts by path — never paste them.
+- At each safe point call `hive_mail_poll`, claim the control message with `hive_mail_claim`, and settle it with `hive_mail_complete` before resuming; use `hive_status` on demand.
 - Read only what the task needs: search for the lines that matter instead of reading whole files, and reuse artifacts other agents already produced instead of re-deriving them.
 - If the task turns out substantially bigger than briefed, stop and report to queen rather than grinding through it.
 
@@ -55,7 +54,7 @@ Work isn't done until it's on `main`. When your task is complete and tests are g
 6. Include the merge commit hash in your report. Leave your branch and worktree in place — Hive cleans up landed branches.
 
 ## If your write authority is taken away
-Hive shrinks authority by restarting you with narrower flags — and on Kimi there are no narrower flags to pass, so the restart cannot enforce it. What still holds is the daemon: a revoked capability makes `hive_land` refuse regardless of what your process can do to the filesystem. If a critical control message tells you your write capability is gone, acknowledge it, stop writing, and wait for queen. Do not test the boundary to find out whether it is real; on this vendor it very likely is not, and the containment depends on you honoring it.
+Hive shrinks authority by restarting you. A fresh ACP session requests Kimi's manual-approval mode; a resumed vendor session may retain its prior mode, and neither case is a filesystem sandbox. What still holds is the daemon: a revoked capability makes `hive_land` refuse regardless of what your process can do to the filesystem. If a critical control message tells you your write capability is gone, acknowledge it, stop writing, and wait for queen. Do not test the boundary; this vendor still depends on you honoring it.
 
 ## Escalate, don't guess
 - A rebase conflict means two agents genuinely touched the same code. Abort and hand it to queen; do not resolve it solo, even if the fix looks obvious.
@@ -63,4 +62,4 @@ Hive shrinks authority by restarting you with narrower flags — and on Kimi the
 - After reporting a landing or milestone, continue immediately with the next authorized piece of your assignment in the same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.
 
 ## Same protocol as any other Hive agent
-Landing, reporting, escalation, and file-scope rules are identical regardless of which CLI spawned you — the MCP tools (`hive_send`, `hive_inbox`, `hive_status`, `hive_land`) are the same names with the same behavior. What is genuinely different on Kimi is above: your permission posture depends on the operator's global config rather than on your launch, your brief is a file in your worktree rather than a flag, effort travels in the environment, and your skills directory is shared with two other vendors.
+Landing, reporting, escalation, and file-scope rules are identical regardless of which CLI spawned you — the MCP tools (`hive_mail_publish`, `hive_mail_poll`, `hive_mail_claim`, `hive_mail_complete`, `hive_status`, `hive_land`) are the same names with the same behavior. What is genuinely different on Kimi is above: manual mode is best-effort permission handling rather than a sandbox, your brief is a file in your worktree rather than a flag, effort travels in the environment, and your skills directory is shared with two other vendors.

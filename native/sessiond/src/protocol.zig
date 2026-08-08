@@ -83,10 +83,6 @@ fn knownType(type_code: u16) bool {
         generated.frame_type.@"error",
         generated.frame_type.ping,
         generated.frame_type.pong,
-        generated.frame_type.create_begin,
-        generated.frame_type.create_input,
-        generated.frame_type.create_commit,
-        generated.frame_type.created,
         generated.frame_type.list,
         generated.frame_type.listed,
         generated.frame_type.inspect,
@@ -110,7 +106,7 @@ fn knownType(type_code: u16) bool {
         generated.frame_type.attach_ready,
         generated.frame_type.claim_acquire,
         generated.frame_type.claim_result,
-        generated.frame_type.human_input,
+        generated.frame_type.user_input,
         generated.frame_type.claim_release,
         generated.frame_type.gesture_input,
         generated.frame_type.input_submit,
@@ -122,6 +118,8 @@ fn knownType(type_code: u16) bool {
         generated.frame_type.host_register,
         generated.frame_type.host_adopt,
         generated.frame_type.grant_register,
+        generated.frame_type.host_capture,
+        generated.frame_type.host_captured,
         => true,
         else => false,
     };
@@ -136,10 +134,9 @@ comptime {
 
 fn rawByteType(type_code: u16) bool {
     return switch (type_code) {
-        generated.frame_type.create_input,
         generated.frame_type.snapshot_bytes,
         generated.frame_type.output,
-        generated.frame_type.human_input,
+        generated.frame_type.user_input,
         generated.frame_type.automation_chunk,
         => true,
         else => false,
@@ -147,7 +144,9 @@ fn rawByteType(type_code: u16) bool {
 }
 
 fn unsolicitedType(type_code: u16) bool {
-    return type_code == generated.frame_type.event or type_code == generated.frame_type.output;
+    return type_code == generated.frame_type.event or
+        type_code == generated.frame_type.output or
+        type_code == generated.frame_type.user_input;
 }
 
 pub fn validateHeaderForRange(
@@ -265,8 +264,7 @@ fn discard(reader: anytype, count: usize) !void {
     }
 }
 
-/// Reads exactly one fixed header, validates it, and only then allocates.
-/// Validation failures consume no payload and never scan for a later magic.
+/// Reads exactly one fixed header, validates it, and only then allocates. Validation failures consume no payload and never scan for a later magic.
 pub fn readFrameForRange(
     allocator: std.mem.Allocator,
     reader: anytype,
@@ -380,10 +378,7 @@ pub fn decodePingPong(allocator: std.mem.Allocator, payload: []const u8) ?u64 {
     return std.fmt.parseInt(u64, parsed.value.monoNanos, 10) catch null;
 }
 
-/// The ~325 KB schema fixture parses ONCE per process (broker and host are
-/// separate processes — each caches its own tree) instead of on every frame
-/// validation. The tree is read-only after parse; page_allocator is deliberate
-/// because the cache is process-lifetime and never freed.
+/// The ~325 KB schema fixture parses ONCE per process (broker and host are separate processes — each caches its own tree) instead of on every frame validation. The tree is read-only after parse; page_allocator is deliberate because the cache is process-lifetime and never freed.
 var schema_document: ?std.json.Parsed(std.json.Value) = null;
 var schema_document_once = std.once(parseSchemaFixtureOnce);
 
@@ -520,20 +515,13 @@ fn validateSchema(value: std.json.Value, schema: std.json.Value) bool {
                 if ((numberAsF64(minimum) orelse return false) > (numberAsF64(maximum) orelse return false))
                     return false;
             };
-            // Event retention is released between its watermarks, so the
-            // low-water may not exceed the high-water: that would put the
-            // release threshold above the bound that triggers it, leaving it
-            // unreachable from above.
             if (object.get("x-hive-ordered-event-watermarks")) |ordered| if (ordered == .bool and ordered.bool) {
                 const low = value_object.get("unacknowledgedEventLowWater") orelse return false;
                 const high = value_object.get("unacknowledgedEventHighWater") orelse return false;
                 if ((numberAsF64(low) orelse return false) > (numberAsF64(high) orelse return false))
                     return false;
             };
-            // A visibility lease is active only BETWEEN its timestamps, so the
-            // deadline must follow the issue instant strictly. Both stamps are
-            // UTC with fixed millisecond precision and no offset (validated as
-            // format date-time), so byte order IS chronological order here.
+            // A visibility lease is active only BETWEEN its timestamps, so the deadline must follow the issue instant strictly. Both stamps are UTC with fixed millisecond precision and no offset (validated as format date-time), so byte order IS chronological order here.
             if (object.get("x-hive-ordered-lease-window")) |ordered| if (ordered == .bool and ordered.bool) {
                 const issued = value_object.get("issuedAt") orelse return false;
                 const expires = value_object.get("expiresAt") orelse return false;
@@ -613,10 +601,7 @@ fn validateString(string: []const u8, schema: std.json.ObjectMap) bool {
     const codepoints = std.unicode.utf8CountCodepoints(string) catch return false;
     if (schema.get("minLength")) |minimum| if (codepoints < (numberAsUsize(minimum) orelse return false)) return false;
     if (schema.get("maxLength")) |maximum| if (codepoints > (numberAsUsize(maximum) orelse return false)) return false;
-    // date-time is the only format whose check is a strict subset of its Zod patterns;
-    // only it may skip an unknown pattern. The hive-uint64-decimal FORMAT check is
-    // weaker than its patterns (parseInt accepts "0"/"007"), so an unknown uint64
-    // pattern must never skip; the known pattern below rejects the leading zero.
+    // date-time is the only format whose check is a strict subset of its Zod patterns; only it may skip an unknown pattern. The hive-uint64-decimal FORMAT check is weaker than its patterns (parseInt accepts "0"/"007"), so an unknown uint64 pattern must never skip; the known pattern below rejects the leading zero.
     var date_time_format = false;
     if (schema.get("format")) |format_value| switch (format_value) {
         .string => |format| {
@@ -650,8 +635,6 @@ fn knownStringFormat(format: []const u8) bool {
         std.mem.eql(u8, format, "uuid");
 }
 
-/// Whether the validator recognizes this pattern (whitelist hit), or may skip it
-/// only under format date-time (narrow skip rule).
 fn stringConstraintRecognized(format: ?[]const u8, pattern: ?[]const u8) bool {
     if (format) |name| if (!knownStringFormat(name)) return false;
     if (pattern) |value| {
@@ -713,7 +696,6 @@ fn jsonEqual(left: std.json.Value, right: std.json.Value) bool {
     };
 }
 
-/// Returns null when the pattern is not in the native whitelist.
 fn matchesKnownPattern(string: []const u8, pattern: []const u8) ?bool {
     if (std.mem.eql(u8, pattern, "^[0-9a-f]{64}$")) return lowercaseHex(string, 64);
     if (std.mem.eql(u8, pattern, "^sha256:[0-9a-f]{64}$"))
@@ -726,18 +708,13 @@ fn matchesKnownPattern(string: []const u8, pattern: []const u8) ?bool {
         const prefix = pattern[1 .. separator + 1];
         return taggedUuidV7(string, prefix);
     }
-    // Zod z.string.uuid pattern (unprefixed, versions 1-8 plus nil/max).
     if (std.mem.indexOf(u8, pattern, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8]") != null)
         return standardUuid(string);
     if (std.mem.eql(u8, pattern, "^\\/.*")) return std.mem.startsWith(u8, string, "/");
-    // Non-negative decimal uint64 (allows 0). From DecimalUint64Schema. The
-    // pattern permits "0" and no other leading zero; parseInt alone accepts
-    // "007", which is how this validator and the schema silently disagreed.
     if (std.mem.startsWith(u8, pattern, "^(?:0|[1-9]")) {
         if (string.len > 1 and string[0] == '0') return false;
         return std.fmt.parseInt(u64, string, 10) catch null != null;
     }
-    // Positive decimal uint64 (rejects 0 / leading zeros). From PositiveDecimalUint64Schema (status spine).
     if (std.mem.eql(u8, pattern, "^(?:[1-9][0-9]{0,19})$")) {
         if (string.len == 0 or string[0] == '0') return false;
         return std.fmt.parseInt(u64, string, 10) catch null != null;
@@ -975,8 +952,6 @@ test "schema fixture parses once and serves repeated validations" {
     const hello =
         \\{"schemaVersion":1,"clientRole":"viewer","buildId":"build","instanceId":"hive","protocol":{"major":1,"minMinor":0,"maxMinor":0},"grantToken":"token"}
     ;
-    // First call populates the process-lifetime cache; later calls reuse it
-    // with identical verdicts (the 325 KB fixture is not re-parsed per call).
     try std.testing.expect(validateControlPayload(std.testing.allocator, generated.wire_schema.hello_payload, hello));
     try std.testing.expect(schema_document != null);
     for (0..8) |_| {
@@ -1017,8 +992,6 @@ test "every generated control payload corpus case agrees with the canonical sche
 }
 
 test "every schema format and pattern is recognized by the native validator" {
-    // Positive control for validator-vs-schema drift: a new Zod pattern that the
-    // Zig whitelist does not know must fail here, not silently at corpus time.
     const allocator = std.testing.allocator;
     var document = try std.json.parseFromSlice(std.json.Value, allocator, generated.schema_fixture, .{});
     defer document.deinit();

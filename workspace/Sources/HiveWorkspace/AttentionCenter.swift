@@ -1,10 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// Aggregates every project's attention queue into one severity+time ordered
-/// list, and shows it as a native panel. Selecting an item activates its
-/// project and pane — activation is focus only and never approves, dismisses,
-/// or clears the item.
+/// Aggregates every project's attention queue into one severity+time ordered list, and shows it as a native panel. Selecting an item activates its project and pane — activation is focus only and never approves, dismisses, or clears the item.
 final class AttentionCenter: NSObject {
 
     private var states: [ProjectState] = []

@@ -3,6 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { persistAutonomy, upsertAutonomy } from "../../src/config/autonomy";
+import { hiveConfigPath } from "../../src/config/load";
 
 describe("upsertAutonomy", () => {
   test("an empty file becomes exactly the assignment", () => {
@@ -94,5 +95,25 @@ describe("persistAutonomy", () => {
     >;
     expect(parsed.autonomy).toBe("sandboxed");
     expect(await readdir(root)).toEqual(["config.toml"]);
+  });
+
+  test("with no path given, persists to hiveConfigPath() — not its own reconstruction of it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-autonomy-default-"));
+    roots.push(root);
+    const original = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = root;
+    try {
+      await persistAutonomy("dangerous");
+      const parsed = Bun.TOML.parse(
+        await readFile(hiveConfigPath(), "utf8"),
+      ) as Record<string, unknown>;
+      expect(parsed.autonomy).toEqual("dangerous");
+    } finally {
+      if (original === undefined) {
+        delete process.env.HIVE_HOME;
+      } else {
+        process.env.HIVE_HOME = original;
+      }
+    }
   });
 });

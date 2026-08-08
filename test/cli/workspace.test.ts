@@ -1,5 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,11 +15,13 @@ import {
   runWorkspace,
   WorkspaceNotInstalledError,
   workspaceOpenArguments,
+  workspaceOrchestratorArguments,
 } from "../../src/cli/workspace";
-import { getHiveHome } from "../../src/daemon/db";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
+import { getHiveHome } from "../../src/hive-home/home";
+import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 
 let root: string;
+const testProjectIdentity = () => ({ id: "project-uuid", name: "root" });
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "hive-workspace-"));
 });
@@ -111,6 +119,7 @@ describe("hive opens the installed release Workspace", () => {
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
       root,
+      startOrchestrator: async () => {},
       open: async (_app, args) => {
         argLists.push(args);
         return 0;
@@ -124,16 +133,27 @@ describe("hive opens the installed release Workspace", () => {
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
       root,
+      startOrchestrator: async () => {},
       open: async (_app, args) => {
         argLists.push(args);
         return 0;
       },
-      session: { cwd: "/tmp/proj", port: 4567, hivePath: "/opt/hive/bin/hive" },
+      session: {
+        cwd: "/tmp/proj",
+        port: 4567,
+        projectId: "project-uuid",
+        projectName: "proj",
+        hivePath: "/opt/hive/bin/hive",
+      },
     });
     expect(argLists).toEqual([
       [
         "--project",
         "/tmp/proj",
+        "--project-id",
+        "project-uuid",
+        "--project-name",
+        "proj",
         "--port",
         "4567",
         "--instance-id",
@@ -146,11 +166,15 @@ describe("hive opens the installed release Workspace", () => {
     ]);
   });
 
-  test("hands an explicit orchestrator selection to the app", async () => {
+  test("starts the selected orchestrator outside the app", async () => {
     install("0.0.7");
     const argLists: (readonly string[])[] = [];
+    const starts: NonNullable<LaunchDeps["session"]>[] = [];
     await launchWorkspace({
       root,
+      startOrchestrator: async (session) => {
+        starts.push(session);
+      },
       open: async (_app, args) => {
         argLists.push(args);
         return 0;
@@ -158,6 +182,8 @@ describe("hive opens the installed release Workspace", () => {
       session: {
         cwd: "/tmp/proj",
         port: 4567,
+        projectId: "project-uuid",
+        projectName: "proj",
         hivePath: "/opt/hive/bin/hive",
         orchestrator: "codex",
       },
@@ -166,6 +192,10 @@ describe("hive opens the installed release Workspace", () => {
       [
         "--project",
         "/tmp/proj",
+        "--project-id",
+        "project-uuid",
+        "--project-name",
+        "proj",
         "--port",
         "4567",
         "--instance-id",
@@ -174,10 +204,37 @@ describe("hive opens the installed release Workspace", () => {
         getHiveHome(),
         "--hive",
         "/opt/hive/bin/hive",
-        "--orchestrator",
-        "codex",
       ],
     ]);
+    expect(starts.map((session) => session.orchestrator)).toEqual(["codex"]);
+  });
+
+  test("the backend launch boundary owns all five provider spellings", () => {
+    for (const orchestrator of [
+      "claude",
+      "codex",
+      "grok",
+      "kimi",
+      "opencode",
+    ] as const) {
+      expect(
+        workspaceOrchestratorArguments({
+          cwd: "/repo",
+          port: 4483,
+          projectId: "project-uuid",
+          projectName: "repo",
+          orchestrator,
+        }),
+      ).toContain(orchestrator);
+    }
+    expect(
+      workspaceOrchestratorArguments({
+        cwd: "/repo",
+        port: 4483,
+        projectId: "project-uuid",
+        projectName: "repo",
+      }),
+    ).toContain("claude");
   });
 
   test("--hive defaults to this very process, never PATH lookup", async () => {
@@ -185,16 +242,26 @@ describe("hive opens the installed release Workspace", () => {
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
       root,
+      startOrchestrator: async () => {},
       open: async (_app, args) => {
         argLists.push(args);
         return 0;
       },
-      session: { cwd: "/tmp/proj", port: 4567 },
+      session: {
+        cwd: "/tmp/proj",
+        port: 4567,
+        projectId: "project-uuid",
+        projectName: "proj",
+      },
     });
     expect(argLists).toEqual([
       [
         "--project",
         "/tmp/proj",
+        "--project-id",
+        "project-uuid",
+        "--project-name",
+        "proj",
         "--port",
         "4567",
         "--instance-id",
@@ -252,6 +319,7 @@ describe("bare hive opens the project you're in", () => {
         return "/repo/root";
       },
       isInitialized: () => true,
+      projectIdentity: testProjectIdentity,
       start: async (deps) => {
         started.push(deps.cwd);
         return { port: 4483, cwd: "/repo/root" };
@@ -268,15 +336,26 @@ describe("bare hive opens the project you're in", () => {
     });
     expect(resolved).toEqual(["/repo/root/some/subdir"]);
     expect(started).toEqual(["/repo/root"]);
-    expect(launches).toEqual([{ session: { cwd: "/repo/root", port: 4483 } }]);
+    expect(launches).toEqual([
+      {
+        session: {
+          cwd: "/repo/root",
+          port: 4483,
+          projectId: "project-uuid",
+          projectName: "root",
+        },
+      },
+    ]);
   });
 
-  test("hive, hive claude, hive codex, and hive grok share one session boundary", async () => {
+  test("hive and all five vendor commands share one session boundary", async () => {
     for (const orchestrator of [
       undefined,
       "claude",
       "codex",
       "grok",
+      "kimi",
+      "opencode",
     ] as const) {
       const launches: LaunchDeps[] = [];
       let starts = 0;
@@ -285,6 +364,7 @@ describe("bare hive opens the project you're in", () => {
         cwd: "/repo/root/subdir",
         resolveRoot: () => "/repo/root",
         isInitialized: () => true,
+        projectIdentity: testProjectIdentity,
         start: async () => {
           starts += 1;
           return { port: 4483, cwd: "/repo/root" };
@@ -300,6 +380,8 @@ describe("bare hive opens the project you're in", () => {
           session: {
             cwd: "/repo/root",
             port: 4483,
+            projectId: "project-uuid",
+            projectName: "root",
             ...(orchestrator === undefined ? {} : { orchestrator }),
           },
         },
@@ -315,6 +397,7 @@ describe("bare hive opens the project you're in", () => {
       cwd: "/repo/root",
       resolveRoot: () => "/repo/root",
       isInitialized: () => false,
+      projectIdentity: testProjectIdentity,
       init: async (root) => {
         inits.push(root);
         order.push("init");
@@ -338,6 +421,7 @@ describe("bare hive opens the project you're in", () => {
       cwd: "/repo/root",
       resolveRoot: () => "/repo/root",
       isInitialized: () => false,
+      projectIdentity: testProjectIdentity,
       init: async () => {
         throw new Error("disk full");
       },
@@ -390,5 +474,79 @@ describe("bare hive opens the project you're in", () => {
     });
     expect(lines).toEqual([]);
     expect(launched).toEqual(true);
+  });
+
+  test("outside a repo a resolved 'could not check' now announces, unlike a thrown error", async () => {
+    // The pair with the test above is the point: a THROWN checkUpdate still
+    // launches silent (never-block, preserved). A RESOLVED unavailable state
+    // is not a thrown error — it is checkForUpdate's honest "I looked and
+    // could not tell", and this path now says so out loud, same as the
+    // in-repo path's start notice already does. Pinning this is what stops a
+    // future revert of the printStartNotice delegation from going unnoticed:
+    // no other test asserted this state used to be silent here.
+    let launched = false;
+    const lines: string[] = [];
+    await runWorkspace({
+      resolveRoot: () => null,
+      checkUpdate: async () => ({
+        state: "unavailable",
+        current: "0.0.3",
+        reason: "offline",
+      }),
+      write: (line) => lines.push(line),
+      launch: async () => {
+        launched = true;
+        return 0;
+      },
+    });
+    expect(lines.join("\n")).toContain("could not check for updates (offline)");
+    expect(launched).toEqual(true);
+  });
+
+  test("outside a repo, a staged native download says so — not just 'available'", async () => {
+    // `detectInstallMethod` keys off `process.execPath`, which a test runner
+    // can never point inside a staged version directory; the "native"
+    // install method is the one leg of this notice no dependency injection
+    // reaches, so this is the one test in the suite that swaps the module.
+    const paths = await import("../../src/update-service/paths");
+    const originalDetectInstallMethod = paths.detectInstallMethod;
+    mock.module("../../src/update-service/paths", () => ({
+      ...paths,
+      detectInstallMethod: () => "native" as const,
+    }));
+    const installRootDir = mkdtempSync(
+      join(tmpdir(), "hive-workspace-staged-"),
+    );
+    const originalInstallRoot = process.env.HIVE_INSTALL_ROOT;
+    process.env.HIVE_INSTALL_ROOT = installRootDir;
+    mkdirSync(join(installRootDir, "versions", "0.0.4"), { recursive: true });
+    writeFileSync(join(installRootDir, "versions", "0.0.4", "hive"), "");
+    const lines: string[] = [];
+    try {
+      await runWorkspace({
+        resolveRoot: () => null,
+        checkUpdate: async () => ({
+          state: "update-available",
+          current: "0.0.3",
+          latest: "0.0.4",
+          securityCritical: false,
+          stale: false,
+        }),
+        write: (line) => lines.push(line),
+        launch: async () => 0,
+      });
+    } finally {
+      if (originalInstallRoot === undefined) {
+        delete process.env.HIVE_INSTALL_ROOT;
+      } else {
+        process.env.HIVE_INSTALL_ROOT = originalInstallRoot;
+      }
+      rmSync(installRootDir, { recursive: true, force: true });
+      mock.module("../../src/update-service/paths", () => ({
+        ...paths,
+        detectInstallMethod: originalDetectInstallMethod,
+      }));
+    }
+    expect(lines.join("\n")).toContain("downloaded");
   });
 });

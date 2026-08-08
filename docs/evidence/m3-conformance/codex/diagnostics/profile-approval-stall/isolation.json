@@ -1,0 +1,405 @@
+{
+  "vendor": "codex",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex",
+  "binaryBefore": {
+    "version": "codex-cli 0.146.0",
+    "device": 16777234,
+    "inode": 245118397,
+    "size": 271056976,
+    "mtimeMs": 1785288494573.023
+  },
+  "operatorBefore": {
+    ".codex": "cb6c1c861842f86c2fd2f8df206cc14a5a39792025195e395bc1a8b937a87804"
+  },
+  "borrowed": [
+    ".codex/auth.json"
+  ],
+  "artifacts": [
+    {
+      "label": "auth.json",
+      "sourceMetadata": "53f0f9b605d22d4eb209ce6b20e834319f8a6903ae9114b80ede94236fcf036e",
+      "destinationMetadata": "10c9395ab15bec926d8a984c4c07cf88e4678be3c36be98f2600578db7a97f99",
+      "verification": {
+        "nodes": 1,
+        "files": 1,
+        "directories": 0
+      }
+    }
+  ],
+  "binaryAfter": {
+    "version": "codex-cli 0.146.0",
+    "device": 16777234,
+    "inode": 245118397,
+    "size": 271056976,
+    "mtimeMs": 1785288494573.023
+  },
+  "operatorAfter": {
+    ".codex": "d9de25a619918c91b96102f916ba651a4c2578d8f6edbc543ffff9db92d0d373"
+  },
+  "changedOperatorPaths": [
+    ".codex"
+  ],
+  "changedOperatorNodes": {
+    ".codex": [
+      {
+        "relativePath": ".",
+        "before": {
+          "relativePath": ".",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119298973,
+          "mode": 493,
+          "size": 9568,
+          "mtimeMs": 1785675303533.2476
+        },
+        "after": {
+          "relativePath": ".",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119298973,
+          "mode": 493,
+          "size": 9504,
+          "mtimeMs": 1785675849819.4067
+        }
+      },
+      {
+        "relativePath": "logs_2.sqlite",
+        "before": {
+          "relativePath": "logs_2.sqlite",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119359521,
+          "mode": 420,
+          "size": 1331970048,
+          "mtimeMs": 1785675615825.7007
+        },
+        "after": {
+          "relativePath": "logs_2.sqlite",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119359521,
+          "mode": 420,
+          "size": 1331970048,
+          "mtimeMs": 1785676045836.5132
+        }
+      },
+      {
+        "relativePath": "logs_2.sqlite-wal",
+        "before": {
+          "relativePath": "logs_2.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284488351,
+          "mode": 420,
+          "size": 4260112,
+          "mtimeMs": 1785675691824.8533
+        },
+        "after": {
+          "relativePath": "logs_2.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284488351,
+          "mode": 420,
+          "size": 4260112,
+          "mtimeMs": 1785676075824.1357
+        }
+      },
+      {
+        "relativePath": "memories_1.sqlite",
+        "before": {
+          "relativePath": "memories_1.sqlite",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119359531,
+          "mode": 420,
+          "size": 40960,
+          "mtimeMs": 1785674446899.8608
+        },
+        "after": {
+          "relativePath": "memories_1.sqlite",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119359531,
+          "mode": 420,
+          "size": 40960,
+          "mtimeMs": 1785675849819.1072
+        }
+      },
+      {
+        "relativePath": "memories_1.sqlite-shm",
+        "before": {
+          "relativePath": "memories_1.sqlite-shm",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284484528,
+          "mode": 420,
+          "size": 32768,
+          "mtimeMs": 1785675249815.4417
+        },
+        "after": null
+      },
+      {
+        "relativePath": "memories_1.sqlite-wal",
+        "before": {
+          "relativePath": "memories_1.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284484527,
+          "mode": 420,
+          "size": 37112,
+          "mtimeMs": 1785675328711.6096
+        },
+        "after": null
+      },
+      {
+        "relativePath": "models_cache.json",
+        "before": {
+          "relativePath": "models_cache.json",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119369888,
+          "mode": 420,
+          "size": 314039,
+          "mtimeMs": 1785675645457.12
+        },
+        "after": {
+          "relativePath": "models_cache.json",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119369888,
+          "mode": 420,
+          "size": 314039,
+          "mtimeMs": 1785676067898.6465
+        }
+      },
+      {
+        "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+        "before": {
+          "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284511752,
+          "mode": 420,
+          "size": 805380,
+          "mtimeMs": 1785675691697.0444
+        },
+        "after": {
+          "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284511752,
+          "mode": 420,
+          "size": 970423,
+          "mtimeMs": 1785676073521.8687
+        }
+      },
+      {
+        "relativePath": "state_5.sqlite",
+        "before": {
+          "relativePath": "state_5.sqlite",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119359516,
+          "mode": 420,
+          "size": 23871488,
+          "mtimeMs": 1785675452622.1926
+        },
+        "after": {
+          "relativePath": "state_5.sqlite",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119359516,
+          "mode": 420,
+          "size": 23871488,
+          "mtimeMs": 1785675800620.6702
+        }
+      },
+      {
+        "relativePath": "state_5.sqlite-wal",
+        "before": {
+          "relativePath": "state_5.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 283668170,
+          "mode": 420,
+          "size": 4173592,
+          "mtimeMs": 1785675691697.4243
+        },
+        "after": {
+          "relativePath": "state_5.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 283668170,
+          "mode": 420,
+          "size": 4173592,
+          "mtimeMs": 1785676073522.2214
+        }
+      },
+      {
+        "relativePath": "tmp/arg0",
+        "before": {
+          "relativePath": "tmp/arg0",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119298999,
+          "mode": 448,
+          "size": 192,
+          "mtimeMs": 1785675616050.671
+        },
+        "after": {
+          "relativePath": "tmp/arg0",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119298999,
+          "mode": 448,
+          "size": 192,
+          "mtimeMs": 1785676076843.013
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 284753016,
+          "mode": 493,
+          "size": 192,
+          "mtimeMs": 1785676076843.1267
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj/.lock",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj/.lock",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284753017,
+          "mode": 420,
+          "size": 0,
+          "mtimeMs": 1785676076843.0442
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj/apply_patch",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj/apply_patch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284753018,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676076843.074
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj/applypatch",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj/applypatch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284753019,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676076843.0996
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj/codex-execve-wrapper",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj/codex-execve-wrapper",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284753020,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676076843.1245
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0a0naNb",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0a0naNb",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 284607230,
+          "mode": 493,
+          "size": 192,
+          "mtimeMs": 1785675616050.7905
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0a0naNb/.lock",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0a0naNb/.lock",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284607231,
+          "mode": 420,
+          "size": 0,
+          "mtimeMs": 1785675616050.705
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0a0naNb/apply_patch",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0a0naNb/apply_patch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284607232,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785675616050.736
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0a0naNb/applypatch",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0a0naNb/applypatch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284607233,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785675616050.7634
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0a0naNb/codex-execve-wrapper",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0a0naNb/codex-execve-wrapper",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284607234,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785675616050.7883
+        },
+        "after": null
+      }
+    ]
+  },
+  "artifactsAfter": [
+    {
+      "label": "auth.json",
+      "sourceMetadata": "53f0f9b605d22d4eb209ce6b20e834319f8a6903ae9114b80ede94236fcf036e",
+      "destinationMetadata": "10c9395ab15bec926d8a984c4c07cf88e4678be3c36be98f2600578db7a97f99",
+      "verification": {
+        "nodes": 1,
+        "files": 1,
+        "directories": 0
+      },
+      "error": null
+    }
+  ]
+}

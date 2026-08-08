@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   TOKEN_USAGE_ROLES,
   TokenUsageSnapshotSchema,
-} from "../../src/schemas/token-usage";
+} from "../../src/schemas/token-usage-schema";
 
 /**
  * THE DAEMON HALF OF THE TOKEN-USAGE WIRE CONTRACT.

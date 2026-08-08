@@ -7,7 +7,7 @@ Raw: `../../raw/grok/grok-spend-sensitivity-experiment.md`, `../../raw/grok/grok
 ## Summary
 
 **Quota no longer selects anything.** Selection belongs to the router
-(`src/daemon/router.ts`), which distributes by the user's own weights with
+(`src/daemon/routing-service/router.ts`), which distributes by the user's own weights with
 smooth weighted round-robin. Quota's contract narrowed to facts and booking:
 it observes provider usage, reports proven drains and launch-health cooldowns,
 names the pools governing a candidate, and books an already-selected launch.
@@ -35,10 +35,10 @@ anywhere.
 
 ## The narrowed contract
 
-`QuotaService` (`src/daemon/quota.ts`). `routeAndReserve` is **gone** — there is
+`QuotaService` (`src/usage-service/usage-quota.ts`). `routeAndReserve` is **gone** — there is
 no quota-owned selection, no `spread`/`strict` dispatch mode, and the
 `quota_fair_dispatch` history table is dropped on ledger startup
-(`DROP TABLE IF EXISTS quota_fair_dispatch`, `src/daemon/quota-ledger.ts`).
+(`DROP TABLE IF EXISTS quota_fair_dispatch`, `src/usage-service/quota-ledger.ts`).
 What remains is exactly what the router and the drain handler consume:
 
 - **Observations.** `refreshFromProviders` polls each provider's usage surface and folds
@@ -89,7 +89,7 @@ real dispatch: *unknown headroom scored as exactly 15%*. It was a genuine
 disagreement between two defensible positions, and both are worth preserving
 because the shape recurs.
 
-**The defense** (the constant's own deleted comment, last at `5b565ae:src/daemon/quota.ts:59-63`):
+**The defense** (the constant's own deleted comment, last at `5b565ae:src/usage/quota.ts` as `UNKNOWN_HEADROOM_SCORE`):
 
 > The fixed, deliberately modest headroom an UNMEASURED pool competes with:
 > present enough to catch work when measured pools are nearly spent, never enough
@@ -118,7 +118,7 @@ Five-valued in policy (`EffortTargetSchema`, `src/schemas/routing-policy.ts`);
 a route candidate carries the four launchable values (`CandidateEffortSchema` —
 `never-configured` is a model-row state, not a launchable intent). Resolution is
 per candidate in the router's launch gate (`linkEffort`,
-`src/daemon/spawner-impl.ts`). An explicit `request.effort` outranks the
+`src/daemon/spawn/spawner-impl.ts`). An explicit `request.effort` outranks the
 candidate. `exact` is validated against the model's own record; `none` means the
 vendor stated there is no effort axis; `never-configured` on a model row makes
 `provider-controlled` resolution refuse rather than guess.
@@ -130,7 +130,7 @@ the vendor's honest default: Claude passes no flag; Grok and Codex take their
 `"medium"` — the one remaining invented value, scoped to a CLI that will not
 start without one.
 
-**`hive-decides`** is built (`resolveAutoEffort`, `src/daemon/effort.ts`) and is
+**`hive-decides`** is built (`resolveAutoEffort`, `src/daemon/spawn/effort.ts`) and is
 *not* the same thing: it picks an exact advertised level and records it. Hive
 orders the model's **advertised** levels using `PROVED_EFFORT_ORDER` —
 per-provider ordering semantics proved from vendor documentation, not model
@@ -144,7 +144,7 @@ contract.)
 
 The orchestrator classifies, because it sees the request, decomposition, file scope,
 and expected proof; the daemon sees a task descriptor and deliberately does not grow a
-second, weaker classifier (SPEC §6). The rubric is about **task demands, never model
+second, weaker classifier. The rubric is about **task demands, never model
 names**:
 
 - **Simple** — mechanical and local: tightly specified, one small surface, obvious
@@ -197,7 +197,7 @@ is low."* Leaning on a vendor whenever other meters are low is not distribution;
 recreates the load-concentration bug this router exists to remove.
 
 `usageSurface` in `src/cli/model-control.ts` classifies the metered providers;
-`src/daemon/quota-sources.ts` reads the gauge while keeping the money rails in
+`src/usage-service/quota-sources.ts` reads the gauge while keeping the money rails in
 the schema *specifically so parsers cannot confuse them with it*. Deeper wire facts live
 in [../providers/quota-surfaces.md](../providers/quota-surfaces.md).
 

@@ -28,12 +28,8 @@ export const HiveTerminalTerminationAuditSchema = z
     reason: TerminationRequestSchema.unwrap().shape.reason,
     requestId: TerminationRequestSchema.unwrap().shape.requestId,
     requestedAt: SessionInspectionSchema.unwrap().shape.evidenceAt,
-    /** Who ended the session. Absent means `operator` for compatibility and for
-     * every operator writer. Recovery treats an operator audit as a deliberate kill and stops
-     * resuming the agent; `visibility-expiry` is infrastructure protecting an
-     * invariant, not operator intent, so it records the cause without
-     * suppressing recovery. */
-    origin: z.enum(["operator", "visibility-expiry"]).optional(),
+    /** Who ended the session. Absent means `user` for compatibility and for every user writer. Recovery treats a user audit as a deliberate kill and stops resuming the agent; `visibility-expiry` is infrastructure protecting an invariant, not user intent, so it records the cause without suppressing recovery. */
+    origin: z.enum(["user", "visibility-expiry"]).optional(),
   })
   .readonly();
 
@@ -57,8 +53,7 @@ export type HiveTerminalBinding = z.infer<typeof HiveTerminalBindingSchema>;
 
 export interface TerminalHostBindingStore {
   bindTerminalHostSession(binding: HiveTerminalBinding): HiveTerminalBinding;
-  /** Remove only a binding that never acquired create evidence. Used when the
-   * host returns a typed pre-launch refusal, so a failed spawn is atomic. */
+  /** Remove only a binding that never acquired create evidence. Used when the host returns a typed pre-launch refusal, so a failed spawn is atomic. */
   releaseUncreatedTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
   ): boolean;

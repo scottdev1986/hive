@@ -2,7 +2,7 @@ import CryptoKit
 import CoreFoundation
 import Foundation
 
-public enum WorkspaceJSONValue: Codable, Equatable {
+public enum WorkspaceJSONValue: Codable, Equatable, Sendable {
     case null
     case boolean(Bool)
     case integer(Int64)
@@ -94,6 +94,40 @@ public struct WorkspaceStatusEvent: Codable, Equatable {
         self.source = source
         self.data = data
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case eventId
+        case seq
+        case entity
+        case entityRevision
+        case occurredAt
+        case kind
+        case source
+        case data
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == 2 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .schemaVersion,
+                in: container,
+                debugDescription:
+                    "unsupported workspace status event schemaVersion \(schemaVersion)")
+        }
+        eventId = try container.decode(String.self, forKey: .eventId)
+        seq = try container.decode(String.self, forKey: .seq)
+        entity = try container.decode(Entity.self, forKey: .entity)
+        entityRevision = try container.decode(String.self, forKey: .entityRevision)
+        occurredAt = try container.decode(String.self, forKey: .occurredAt)
+        kind = try container.decode(String.self, forKey: .kind)
+        source = try container.decode(Source.self, forKey: .source)
+        data = try container.decode(
+            [String: WorkspaceJSONValue].self,
+            forKey: .data)
+    }
 }
 
 public struct WorkspaceStatusProjection: Codable, Equatable {
@@ -166,13 +200,56 @@ public struct WorkspaceStatusSnapshot: Codable, Equatable {
         self.createdAt = createdAt
         self.contentSha256 = contentSha256
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case instanceId
+        case seq
+        case entities
+        case createdAt
+        case contentSha256
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == 2 else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .schemaVersion,
+                in: container,
+                debugDescription:
+                    "unsupported workspace status snapshot schemaVersion \(schemaVersion)")
+        }
+        instanceId = try container.decode(String.self, forKey: .instanceId)
+        seq = try container.decode(String.self, forKey: .seq)
+        entities = try container.decode([Entity].self, forKey: .entities)
+        createdAt = try container.decode(String.self, forKey: .createdAt)
+        contentSha256 = try container.decode(String.self, forKey: .contentSha256)
+    }
 }
 
-public enum WorkspaceStatusReducerError: Error, Equatable {
+public enum WorkspaceStatusReducerError: LocalizedError, Equatable {
     case invalidUnsignedInteger
     case invalidSnapshotSchema
     case snapshotDigestMismatch
     case snapshotHighWaterRegressed
+    case duplicateEntityIdentities([String])
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidUnsignedInteger:
+            return "workspace status sequence is not an unsigned integer"
+        case .invalidSnapshotSchema:
+            return "workspace snapshot schema is not supported"
+        case .snapshotDigestMismatch:
+            return "workspace snapshot digest does not match its entities"
+        case .snapshotHighWaterRegressed:
+            return "workspace snapshot sequence regressed"
+        case .duplicateEntityIdentities(let keys):
+            return "workspace snapshot contains duplicate entity identities: "
+                + keys.joined(separator: ", ")
+        }
+    }
 }
 
 private func workspaceJSONScalar(_ value: Any) throws -> String {
@@ -195,8 +272,6 @@ private func workspaceCanonicalValue(_ value: Any) throws -> String {
         return "[" + (try array.map(workspaceCanonicalValue)).joined(separator: ",") + "]"
     }
     if let object = value as? [String: Any] {
-        // Load-bearing: String < uses canonical-equivalence ordering and can
-        // diverge on non-BMP keys while an ASCII-only corpus still passes.
         let keys = object.keys.sorted {
             $0.utf16.lexicographicallyPrecedes($1.utf16)
         }
@@ -295,116 +370,25 @@ public enum WorkspaceStatusReducer {
         guard digest == snapshot.contentSha256 else {
             throw WorkspaceStatusReducerError.snapshotDigestMismatch
         }
+        let keyedEntities: [(String, WorkspaceJSONValue)] = snapshot.entities.map { entity in
+            let key = workspaceEntityKey(
+                kind: entity.kind,
+                id: entity.id,
+                generation: entity.generation)
+            return (key, .object(entity.projection.merging([
+                "entityRevision": .string(entity.entityRevision),
+            ]) { _, envelope in envelope }))
+        }
+        var seenEntityKeys = Set<String>()
+        let duplicateEntityKeys = Set(keyedEntities.compactMap { key, _ in
+            seenEntityKeys.insert(key).inserted ? nil : key
+        }).sorted()
+        guard duplicateEntityKeys.isEmpty else {
+            throw WorkspaceStatusReducerError.duplicateEntityIdentities(
+                duplicateEntityKeys)
+        }
         return WorkspaceStatusProjection(
             highWaterSeq: snapshot.seq,
-            entities: Dictionary(uniqueKeysWithValues: snapshot.entities.map { entity in
-                let key = workspaceEntityKey(
-                    kind: entity.kind,
-                    id: entity.id,
-                    generation: entity.generation)
-                return (key, .object(entity.projection.merging([
-                    "entityRevision": .string(entity.entityRevision),
-                ]) { _, envelope in envelope }))
-            }))
-    }
-}
-
-public enum WorkspaceStatusFreshness: String, Codable, Equatable {
-    case fresh
-    case stale
-    case unknown
-}
-
-public enum WorkspaceStatusAttention: String, Codable, Equatable {
-    case none
-    case info
-    case action
-    case approval
-    case failure
-}
-
-public enum WorkspaceStatusAttentionReducer {
-    public static func unresolved(
-        in events: [WorkspaceStatusEvent]
-    ) -> WorkspaceStatusAttention? {
-        let resolved = Set(events.compactMap { event -> String? in
-            guard event.kind == "status.attention-resolved",
-                  case .string(let eventId)? = event.data["causeEventId"] else { return nil }
-            return eventId
-        })
-        let severity: [WorkspaceStatusAttention: Int] = [
-            .none: 0, .info: 1, .action: 2, .approval: 3, .failure: 4,
-        ]
-        return events.compactMap { event -> WorkspaceStatusAttention? in
-            guard event.kind == "status.attention", !resolved.contains(event.eventId),
-                  event.data["resolved"] != .boolean(true),
-                  case .string(let raw)? = event.data["value"] else { return nil }
-            return WorkspaceStatusAttention(rawValue: raw)
-        }.filter { $0 != .none }.max {
-            severity[$0, default: 0] < severity[$1, default: 0]
-        }
-    }
-}
-
-public struct WorkspaceStatusReportView: Equatable {
-    public let phase: String
-    public let summary: String
-    public let progress: Int?
-    public let freshness: WorkspaceStatusFreshness
-
-    public init(phase: String, summary: String, progress: Int?, freshness: WorkspaceStatusFreshness) {
-        self.phase = phase
-        self.summary = summary
-        self.progress = progress
-        self.freshness = freshness
-    }
-}
-
-public struct WorkspaceStatusLifecycleView: Equatable {
-    public let value: String
-    public let freshness: WorkspaceStatusFreshness
-
-    public init(value: String, freshness: WorkspaceStatusFreshness) {
-        self.value = value
-        self.freshness = freshness
-    }
-}
-
-public struct WorkspaceVisibleStatus: Equatable {
-    public let primaryLabel: String
-    public let progress: Int?
-    public let attention: WorkspaceStatusAttention
-    public let sourceStack: [String]
-    public let conflicts: [String]
-}
-
-public enum WorkspaceVisibleStatusComposer {
-    public static func compose(
-        report: WorkspaceStatusReportView?,
-        providerLifecycle: WorkspaceStatusLifecycleView?,
-        terminalHealth: String?,
-        unresolvedTypedAttention: WorkspaceStatusAttention?,
-        sourceStack: [String],
-        conflicts: [String]
-    ) -> WorkspaceVisibleStatus {
-        let label: String
-        let progress: Int?
-        if let report, report.freshness == .fresh {
-            label = "\(report.phase): \(report.summary)"
-            progress = report.progress
-        } else if let lifecycle = providerLifecycle {
-            let marker = lifecycle.freshness == .fresh ? "" : " (\(lifecycle.freshness.rawValue))"
-            label = lifecycle.value + marker
-            progress = nil
-        } else {
-            label = terminalHealth ?? "unknown"
-            progress = nil
-        }
-        return WorkspaceVisibleStatus(
-            primaryLabel: label,
-            progress: progress,
-            attention: unresolvedTypedAttention ?? .none,
-            sourceStack: sourceStack,
-            conflicts: conflicts)
+            entities: Dictionary(uniqueKeysWithValues: keyedEntities))
     }
 }

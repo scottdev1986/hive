@@ -1,19 +1,17 @@
 const std = @import("std");
-const broker = @import("broker");
 const final_evidence = @import("final_evidence");
 const generated = @import("session_protocol_generated");
 const host_record = @import("host_record");
 const host_registration = @import("host_registration");
 const input_arbiter = @import("input_arbiter");
-const neutral_control_plane = @import("neutral_control_plane");
-const neutral_host = @import("neutral_host");
 const process_inspector = @import("process_inspector");
 const protocol = @import("protocol");
 const pty_host = @import("pty_host");
+const session_types = @import("session_types");
 const terminal_state = @import("terminal_state");
 const wall_clock = @import("wall_clock");
 const VisibilityLease = @import("visibility_lease").VisibilityLease;
-
+const neutral_evidence = @import("neutral_evidence");
 const WireLocator = host_record.WireLocator;
 const WireGeometry = host_record.WireGeometry;
 const HostRegistration = host_record.HostRegistration;
@@ -70,12 +68,6 @@ const WireVisibilityRenew = struct {
     openTerminalRevision: []const u8,
 };
 
-const WireOrphanDiscard = struct {
-    schemaVersion: u8,
-    locator: WireLocator,
-    mode: []const u8,
-};
-
 const WireTerminalSessionRef = struct {
     key: []const u8,
     incarnation: []const u8,
@@ -88,25 +80,6 @@ const WireTerminate = struct {
     target: []const u8,
     deadline: []const u8,
     idempotencyKey: []const u8,
-};
-
-const WireClaimAcquire = struct {
-    schemaVersion: u8,
-    session: WireTerminalSessionRef,
-    writer: []const u8,
-    kind: []const u8,
-    leaseMilliseconds: u64,
-    idempotencyKey: []const u8,
-};
-
-/// CLAIM_RELEASE has a frame type but no frozen payload schema yet — host
-/// accepts this minimal shape (token + submit|cancel). Encoded release bytes
-/// for submit are optional; cancel uses empty encoding (arbiter accepts).
-const WireClaimRelease = struct {
-    schemaVersion: u8,
-    session: WireTerminalSessionRef,
-    claimToken: []const u8,
-    kind: []const u8,
 };
 
 const WireInputOperation = struct {
@@ -124,19 +97,17 @@ const WireExpectedForeground = struct {
 const WireInputSubmit = struct {
     schemaVersion: u8,
     session: WireTerminalSessionRef,
-    claimToken: []const u8,
+    provenance: []const u8,
+    action: []const u8,
     transactionId: []const u8,
     idempotencyKey: []const u8,
     expectedForeground: ?WireExpectedForeground = null,
     operation: WireInputOperation,
 };
 
-const WireTerminalWindow = struct {
-    columns: u32,
-    rows: u32,
-    widthPixels: u32,
-    heightPixels: u32,
-};
+const WireInputProvenance = generated.InputProvenance;
+const WireInputAction = generated.InputAction;
+const WireTerminalWindow = generated.TerminalHostWindowSize;
 
 const WireResize = struct {
     schemaVersion: u8,
@@ -148,7 +119,7 @@ const WireResize = struct {
 
 pub const GrantOperations = packed struct {
     view: bool = false,
-    human_input: bool = false,
+    user_input: bool = false,
     resize: bool = false,
 };
 
@@ -156,7 +127,7 @@ const GrantEntry = struct {
     hash: [32]u8,
     viewer_id: []u8,
     operations: GrantOperations,
-    geometry: broker.Geometry,
+    geometry: session_types.Geometry,
     expires_mono_ns: u64,
 
     fn deinit(self: *GrantEntry, allocator: std.mem.Allocator) void {
@@ -169,7 +140,7 @@ const GrantEntry = struct {
 pub const ViewerAuthorization = struct {
     viewer_id: []u8,
     operations: GrantOperations,
-    geometry: broker.Geometry,
+    geometry: session_types.Geometry,
     after_seq: u64,
 
     pub fn deinit(self: *ViewerAuthorization, allocator: std.mem.Allocator) void {
@@ -178,7 +149,7 @@ pub const ViewerAuthorization = struct {
     }
 };
 
-fn sameGeometry(left: broker.Geometry, right: WireGeometry) bool {
+fn sameGeometry(left: session_types.Geometry, right: WireGeometry) bool {
     return left.columns == right.columns and
         left.rows == right.rows and
         left.width_px == right.widthPx and
@@ -187,12 +158,29 @@ fn sameGeometry(left: broker.Geometry, right: WireGeometry) bool {
         left.cell_height_px == right.cellHeightPx;
 }
 
+/// Stringifies a built control-response object and validates it against its
+/// wire schema; an invalid payload fails with the caller's error.
+fn stringifyValidatedPayload(
+    allocator: std.mem.Allocator,
+    root: std.json.ObjectMap,
+    schema_name: []const u8,
+    comptime invalid: anyerror,
+) ![]u8 {
+    const payload = try std.json.Stringify.valueAlloc(
+        allocator,
+        std.json.Value{ .object = root },
+        .{},
+    );
+    errdefer allocator.free(payload);
+    if (!protocol.validateControlPayload(allocator, schema_name, payload)) return invalid;
+    return payload;
+}
+
 pub const TerminationBinding = struct {
     pty: *pty_host.PtyHost,
     directory: std.fs.Dir,
     arbiter: ?*input_arbiter.InputArbiter = null,
-    /// Optional provider-adapter bytes. No current SessionSpec supplies them;
-    /// absence intentionally degrades to TERM-first rather than fabrication.
+    /// Optional provider-adapter bytes. No current SessionSpec supplies them; absence intentionally degrades to TERM-first rather than fabrication.
     graceful_action: ?[]const u8 = null,
 };
 
@@ -208,8 +196,7 @@ const ProviderTermination = struct {
     }
 };
 
-/// Routes root-child waits through PtyHost so tree termination cannot consume
-/// the wait status without recording it in the terminal-host exit evidence.
+/// Routes root-child waits through PtyHost so tree termination cannot consume the wait status without recording it in the terminal-host exit evidence.
 const ProviderTerminationPlatform = struct {
     delegate: process_inspector.Platform,
     pty: *pty_host.PtyHost,
@@ -302,20 +289,14 @@ pub fn deliverGracefulAction(binding: TerminationBinding) !void {
 fn terminateProvider(
     allocator: std.mem.Allocator,
     binding: TerminationBinding,
-    root: broker.ProcessRoot,
+    root: session_types.ProcessRoot,
     mode: process_inspector.TerminationMode,
-    visibility_expired: bool,
 ) !ProviderTermination {
     var arbiter_error: ?[]const u8 = null;
     if (binding.arbiter) |arbiter| {
-        if (visibility_expired)
-            arbiter.onVisibilityLeaseExpired() catch |err| {
-                arbiter_error = @errorName(err);
-            }
-        else
-            arbiter.terminate() catch |err| {
-                arbiter_error = @errorName(err);
-            };
+        arbiter.terminate() catch |err| {
+            arbiter_error = @errorName(err);
+        };
     }
     var graceful_action_error: ?[]const u8 = null;
     if (mode == .graceful and binding.graceful_action != null) {
@@ -347,51 +328,14 @@ fn terminateProvider(
     };
 }
 
-const ActiveInputClaim = struct {
-    token: []u8,
-    writer: []u8,
-    kind: []u8,
-    idempotency_key: []u8,
-    owner_viewer_id: []u8,
-    lease_expires_at: []u8,
-    /// `lease_expires_at` is a wall-clock string for the wire; this is the same
-    /// deadline on the host's monotonic clock, so the gate can compare it to
-    /// `now_ns` without a wall-clock conversion.
-    expires_mono_ns: u64,
-    next_sequence: u64,
-
-    fn deinit(self: *ActiveInputClaim, allocator: std.mem.Allocator) void {
-        allocator.free(self.token);
-        allocator.free(self.writer);
-        allocator.free(self.kind);
-        allocator.free(self.idempotency_key);
-        allocator.free(self.owner_viewer_id);
-        allocator.free(self.lease_expires_at);
-        self.* = undefined;
-    }
-};
-
 const InputOperationKind = enum { bytes, canonical_eof, hangup };
 
-/// Replay ledgers are bounded FIFOs, sized like the file's other
-/// generated-limits-style caps: past the cap the oldest entry evicts before
-/// the new one reserves, so unique client-chosen idempotency keys can never
-/// grow the host without limit. Eviction only forfeits dedup of ancient keys
-/// a replayed recent key still hits, a re-submitted ancient key simply
-/// re-derives its outcome under a fresh ledger entry.
+/// Replay ledgers are bounded FIFOs, sized like the file's other generated-limits-style caps: past the cap the oldest entry evicts before the new one reserves, so unique client-chosen idempotency keys can never grow the host without limit. Eviction only forfeits dedup of ancient keys a replayed recent key still hits, a re-submitted ancient key simply re-derives its outcome under a fresh ledger entry.
 pub const max_replay_entries: usize = 256;
 
 const InputReplay = struct {
     idempotency_key: []u8,
-    /// The WRITER, not the claim. A claim token is minted fresh by every
-    /// CLAIM_ACQUIRE that finds no live claim, and a writer releases its claim
-    /// at the end of each submit cycle — so a byte-identical resend always
-    /// arrives under a brand-new token. Matching on the token therefore called
-    /// every retry "different input", permanently: each further attempt minted
-    /// another token, so the key could never be replayed and the message could
-    /// never land. The writer id is stable across attach cycles, and keeping it
-    /// in the identity is what still stops one viewer from reading back another
-    /// viewer's receipt by guessing its key.
+    /// A writer may replay its own byte-identical operation, but another viewer cannot read that receipt by guessing the idempotency key.
     owner_viewer_id: []u8,
     transaction_id: []u8,
     operation_kind: InputOperationKind,
@@ -454,25 +398,10 @@ const InputReceiptData = struct {
     diagnostic: ?[]const u8,
 };
 
-const ClaimResponse = union(enum) {
-    granted: *const ActiveInputClaim,
-    denied: struct { owner: ?*const ActiveInputClaim, diagnostic: []const u8 },
-    unknown: []const u8,
-};
-
-/// A terminal is alive if and only if its process is alive, and its right to
-/// live is OBSERVED here rather than MAINTAINED by a message arriving on time.
-/// The message form is what a wide spawn burst starves: renewals queue behind
-/// the creates that made them necessary, and the fleet dies at its busiest
-/// moment. `kill(pid, 0)` cannot be starved.
-/// The grace window exists for exactly one case: a daemon restart hands these
-/// hosts to a NEW broker, which adopts them off disk. Until that adoption
-/// lands the old supervisor is genuinely gone, and a host that died the
-/// instant it noticed could never be recovered.
+/// A terminal is alive if and only if its process is alive, and its right to live is OBSERVED here rather than MAINTAINED by a message arriving on time. The message form is what a wide spawn burst starves: renewals queue behind the creates that made them necessary, and the fleet dies at its busiest moment. `kill(pid, 0)` cannot be starved. The grace window exists for exactly one case: a daemon restart hands these hosts to a NEW broker, which adopts them off disk. Until that adoption lands the old supervisor is genuinely gone, and a host that died the instant it noticed could never be recovered.
 pub const SupervisorWatch = struct {
     pid: i32,
     start_token: process_inspector.StartToken,
-    /// First observation of absence; cleared by any later live observation.
     lost_since_ns: ?u64 = null,
 
     pub fn of(pid: i32) ?SupervisorWatch {
@@ -480,8 +409,7 @@ pub const SupervisorWatch = struct {
         return .{ .pid = pid, .start_token = identity.start_token };
     }
 
-    /// A new broker proved the 32-byte adoption secret, so it is this host's
-    /// supervisor now. Clears any absence recorded against its predecessor.
+    /// A new broker proved the 32-byte adoption secret, so it is this host's supervisor now. Clears any absence recorded against its predecessor.
     pub fn adoptedBy(self: *SupervisorWatch, pid: i32) void {
         const identity = process_inspector.observeProcessPresent(pid) orelse return;
         self.pid = pid;
@@ -489,15 +417,11 @@ pub const SupervisorWatch = struct {
         self.lost_since_ns = null;
     }
 
-    /// True once the supervisor has been continuously absent for the whole
-    /// grace window. `unobservable` is NOT absence: an unreadable process is
-    /// unknown, and unknown must never be read as permission to kill an
-    /// agent's work.
+    /// True once the supervisor has been continuously absent for the whole grace window. `unobservable` is NOT absence: an unreadable process is unknown, and unknown must never be read as permission to kill an agent's work.
     pub fn lost(self: *SupervisorWatch, now_ns: u64) bool {
         const observed = process_inspector.observeProcess(self.pid);
         const present = switch (observed) {
             .present => |identity| identity.start_token.eql(self.start_token),
-            // A pid reused by an unrelated process is the same as absence.
             .absent => false,
             .unobservable => {
                 self.lost_since_ns = null;
@@ -517,15 +441,7 @@ pub const SupervisorWatch = struct {
     }
 };
 
-/// How long a host outlives an observably dead supervisor.
-/// This is the window a restarting broker has to recover this host off disk
-/// and prove the adoption secret. A short grace does not scale with fleet
-/// width: a broker that dies mid-burst must re-adopt every host it had, one
-/// IPC each, and a tight window kills working agents before adoption finishes.
-/// The cost of being generous is only that a genuinely orphaned host lingers
-/// longer before reaping itself, and that is the backstop path — the daemon's
-/// explicit terminate and the broker's `terminateAll` on observed owner death
-/// both act immediately. Being ungenerous costs agents' work.
+/// How long a host outlives an observably dead supervisor. This is the window a restarting broker has to recover this host off disk and prove the adoption secret. A short grace does not scale with fleet width: a broker that dies mid-burst must re-adopt every host it had, one IPC each, and a tight window kills working agents before adoption finishes. The cost of being generous is only that a genuinely orphaned host lingers longer before reaping itself, and that is the backstop path — the daemon's explicit terminate and the broker's `terminateAll` on observed owner death both act immediately. Being ungenerous costs agents' work.
 pub const supervisor_grace_ns: u64 = 90 * std.time.ns_per_s;
 
 pub const HostCore = struct {
@@ -535,20 +451,9 @@ pub const HostCore = struct {
     host_executable: []const u8,
     broker_build_id: []const u8,
     lease: VisibilityLease,
-    /// Bound by the production host role once it knows which broker launched
-    /// it. Null in harnesses that drive a core directly: nothing observes a
-    /// supervisor there, so nothing may kill on its absence either.
+    /// Bound by the production host role once it knows which broker launched it. Null in harnesses that drive a core directly: nothing observes a supervisor there, so nothing may kill on its absence either.
     supervisor: ?SupervisorWatch = null,
     grants: std.ArrayList(GrantEntry) = .{},
-    active_claim: ?ActiveInputClaim = null,
-    /// Last human claim orphaned by an unclean viewer drop. Retained only
-    /// so inspection can still name the input owner of record while the arbiter
-    /// holds HUMAN_ORPHANED — never consulted for authorization. Cleared on the
-    /// next grant or clean release.
-    orphaned_claim: ?ActiveInputClaim = null,
-    /// Monotonic host evidence, set when the viewer disconnects and cleared
-    /// only when the orphan is resolved. Delivery never invents this clock.
-    orphaned_since_mono_ns: ?u64 = null,
     input_replays: std.ArrayList(InputReplay) = .{},
     resize_replays: std.ArrayList(ResizeReplay) = .{},
     termination: ?TerminationBinding = null,
@@ -580,8 +485,6 @@ pub const HostCore = struct {
     pub fn deinit(self: *HostCore) void {
         for (self.grants.items) |*grant| grant.deinit(self.allocator);
         self.grants.deinit(self.allocator);
-        if (self.active_claim) |*claim| claim.deinit(self.allocator);
-        if (self.orphaned_claim) |*claim| claim.deinit(self.allocator);
         for (self.input_replays.items) |*replay| replay.deinit(self.allocator);
         self.input_replays.deinit(self.allocator);
         for (self.resize_replays.items) |*replay| replay.deinit(self.allocator);
@@ -598,9 +501,7 @@ pub const HostCore = struct {
         self.supervisor = watch;
     }
 
-    /// The peer that just proved the adoption secret is this host's supervisor
-    /// from now on. Without this a recovered host would keep watching the dead
-    /// broker that launched it and terminate mid-recovery.
+    /// The peer that just proved the adoption secret is this host's supervisor from now on. Without this a recovered host would keep watching the dead broker that launched it and terminate mid-recovery.
     pub fn supervisorAdoptedBy(self: *HostCore, pid: i32) void {
         if (self.supervisor == null) return;
         self.supervisor.?.adoptedBy(pid);
@@ -615,286 +516,6 @@ pub const HostCore = struct {
         ) catch return false;
         return std.mem.eql(u8, session.key, self.registration.record.locator.session_id) and
             std.mem.eql(u8, session.incarnation, generation);
-    }
-
-    fn inputClaimValue(
-        allocator: std.mem.Allocator,
-        claim: *const ActiveInputClaim,
-    ) !std.json.Value {
-        var value = std.json.ObjectMap.init(allocator);
-        try value.put("token", .{ .string = claim.token });
-        try value.put("writer", .{ .string = claim.writer });
-        try value.put("kind", .{ .string = claim.kind });
-        try value.put("leaseExpiresAt", .{ .string = claim.lease_expires_at });
-        return .{ .object = value };
-    }
-
-    fn encodeClaimResult(self: *HostCore, response: ClaimResponse) ![]u8 {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        const a = arena.allocator();
-        var result = std.json.ObjectMap.init(a);
-        switch (response) {
-            .granted => |claim| {
-                try result.put("state", .{ .string = "granted" });
-                try result.put("claim", try inputClaimValue(a, claim));
-            },
-            .denied => |denied| {
-                try result.put("state", .{ .string = "denied" });
-                try result.put("owner", if (denied.owner) |owner|
-                    try inputClaimValue(a, owner)
-                else
-                    .null);
-                try result.put("diagnostic", .{ .string = denied.diagnostic });
-            },
-            .unknown => |diagnostic| {
-                try result.put("state", .{ .string = "unknown" });
-                try result.put("diagnostic", .{ .string = diagnostic });
-            },
-        }
-        var root = std.json.ObjectMap.init(a);
-        try root.put("schemaVersion", .{ .integer = 1 });
-        try root.put("result", .{ .object = result });
-        const payload = try std.json.Stringify.valueAlloc(
-            self.allocator,
-            std.json.Value{ .object = root },
-            .{},
-        );
-        errdefer self.allocator.free(payload);
-        if (!protocol.validateControlPayload(
-            self.allocator,
-            generated.wire_schema.claim_result_payload,
-            payload,
-        )) return error.InvalidClaimResult;
-        return payload;
-    }
-
-    pub fn claimInput(
-        self: *HostCore,
-        payload: []const u8,
-        viewer_id: []const u8,
-        now_ns: u64,
-    ) ![]u8 {
-        if (!protocol.validateControlPayload(
-            self.allocator,
-            generated.wire_schema.claim_acquire_payload,
-            payload,
-        )) return error.InvalidClaimAcquire;
-        var parsed = try std.json.parseFromSlice(WireClaimAcquire, self.allocator, payload, .{});
-        defer parsed.deinit();
-        const request = parsed.value;
-        if (request.schemaVersion != 1 or !self.terminalSessionMatches(request.session))
-            return error.GenerationMismatch;
-        if (self.active_claim) |*claim| {
-            if (std.mem.eql(u8, claim.idempotency_key, request.idempotencyKey) and
-                std.mem.eql(u8, claim.writer, request.writer) and
-                std.mem.eql(u8, claim.kind, request.kind) and
-                std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
-            {
-                return self.encodeClaimResult(.{ .granted = claim });
-            }
-            // A recorded claim holds input only while its lease is current.
-            // Asking "is a claim recorded?" instead of "is a human still
-            // holding it?" is what blocked delivery for nineteen minutes past
-            // an expired lease: the denial printed the very expiry it refused
-            // to honour. Past expiry the claim is not held, so fall through to
-            // the ordinary acquire below. A live lease is still never taken.
-            if (now_ns < claim.expires_mono_ns) {
-                return self.encodeClaimResult(.{ .denied = .{
-                    .owner = claim,
-                    .diagnostic = "input already claimed",
-                } });
-            }
-            self.releaseExpiredClaim();
-        }
-        const binding = self.termination orelse
-            return self.encodeClaimResult(.{ .unknown = "input binding unavailable" });
-        const arbiter = binding.arbiter orelse
-            return self.encodeClaimResult(.{ .unknown = "input arbiter unavailable" });
-        if (self.lease.expired(now_ns))
-            return self.encodeClaimResult(.{ .unknown = "visibility lease expired" });
-        const remaining_ms = (self.lease.expires_mono_ns - now_ns) / std.time.ns_per_ms;
-        const duration_ms = @min(request.leaseMilliseconds, remaining_ms);
-        if (duration_ms == 0)
-            return self.encodeClaimResult(.{ .unknown = "claim lease unavailable" });
-
-        var random_token: [32]u8 = undefined;
-        std.crypto.random.bytes(&random_token);
-        defer std.crypto.secureZero(u8, &random_token);
-        const token_hex = std.fmt.bytesToHex(random_token, .lower);
-        var claim: ActiveInputClaim = .{
-            .token = try std.fmt.allocPrint(self.allocator, "claim_{s}", .{token_hex}),
-            .writer = undefined,
-            .kind = undefined,
-            .idempotency_key = undefined,
-            .owner_viewer_id = undefined,
-            .lease_expires_at = undefined,
-            .expires_mono_ns = now_ns + duration_ms * std.time.ns_per_ms,
-            .next_sequence = 0,
-        };
-        var initialized_fields: usize = 1;
-        errdefer {
-            if (initialized_fields >= 1) self.allocator.free(claim.token);
-            if (initialized_fields >= 2) self.allocator.free(claim.writer);
-            if (initialized_fields >= 3) self.allocator.free(claim.kind);
-            if (initialized_fields >= 4) self.allocator.free(claim.idempotency_key);
-            if (initialized_fields >= 5) self.allocator.free(claim.owner_viewer_id);
-            if (initialized_fields >= 6) self.allocator.free(claim.lease_expires_at);
-        }
-        claim.writer = try self.allocator.dupe(u8, request.writer);
-        initialized_fields = 2;
-        claim.kind = try self.allocator.dupe(u8, request.kind);
-        initialized_fields = 3;
-        claim.idempotency_key = try self.allocator.dupe(u8, request.idempotencyKey);
-        initialized_fields = 4;
-        claim.owner_viewer_id = try self.allocator.dupe(u8, viewer_id);
-        initialized_fields = 5;
-        var expiry_storage: [24]u8 = undefined;
-        const expiry = try broker.wallDeadline(&expiry_storage, duration_ms);
-        claim.lease_expires_at = try self.allocator.dupe(u8, expiry);
-        initialized_fields = 6;
-
-        // Returning human after unclean drop: arbiter is HUMAN_ORPHANED until
-        // operatorResume (never-steal still blocks concurrent HUMAN_OWNED).
-        // Automation must not reclaim an orphaned human lease (invariant).
-        // Kind enforcement is by-construction inside operatorResume(kind=…);
-        // the early host compare is a diagnostic shortcut only.
-        if (arbiter.currentState() == .human_orphaned) {
-            if (!std.mem.eql(u8, request.kind, "human")) {
-                claim.deinit(self.allocator);
-                initialized_fields = 0;
-                return self.encodeClaimResult(.{ .denied = .{
-                    .owner = null,
-                    .diagnostic = "HumanOrphaned",
-                } });
-            }
-            const resumed = arbiter.operatorResume(viewer_id, claim.token, request.kind) catch |err| {
-                claim.deinit(self.allocator);
-                initialized_fields = 0;
-                return switch (err) {
-                    error.HumanOwned, error.HumanOrphaned, error.InputBusy, error.NotReady => self.encodeClaimResult(.{ .denied = .{
-                        .owner = null,
-                        .diagnostic = @errorName(err),
-                    } }),
-                    else => self.encodeClaimResult(.{ .unknown = @errorName(err) }),
-                };
-            };
-            claim.next_sequence = resumed.next_sequence;
-            self.clearOrphanedClaim();
-            self.active_claim = claim;
-            initialized_fields = 0;
-            return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
-        }
-
-        const granted = arbiter.claimAcquire(viewer_id, claim.token) catch |err| {
-            claim.deinit(self.allocator);
-            initialized_fields = 0;
-            return switch (err) {
-                error.HumanOwned, error.HumanOrphaned, error.InputBusy => self.encodeClaimResult(.{ .denied = .{
-                    .owner = null,
-                    .diagnostic = @errorName(err),
-                } }),
-                else => self.encodeClaimResult(.{ .unknown = @errorName(err) }),
-            };
-        };
-        claim.next_sequence = granted.next_sequence;
-        self.clearOrphanedClaim();
-        self.active_claim = claim;
-        initialized_fields = 0;
-        return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
-    }
-
-    /// An expired human claim is not held, so hand the arbiter back to FREE
-    /// through its existing escape hatch and drop the host record. If the
-    /// arbiter refuses, the claim stays with it and the acquire above denies on
-    /// the arbiter's own answer — never a fabricated grant.
-    fn releaseExpiredClaim(self: *HostCore) void {
-        if (self.termination) |binding| {
-            if (binding.arbiter) |arbiter| {
-                if (arbiter.currentState() == .human_owned)
-                    _ = arbiter.operatorPreempt() catch {};
-            }
-        }
-        if (self.active_claim) |*claim| claim.deinit(self.allocator);
-        self.active_claim = null;
-    }
-
-    /// Unclean viewer drop: orphan the arbiter claim (lease current) and clear
-    /// the host `active_claim` so a returning human can re-enter. The
-    /// dropped claim moves to `orphaned_claim` so inspection still reports the
-    /// input owner of record while HUMAN_ORPHANED holds; if the arbiter did
-    /// not orphan (expired lease → Closed), the claim is dropped for real.
-    pub fn onViewerDetached(self: *HostCore, viewer_id: []const u8, now_ns: u64) void {
-        const claim = if (self.active_claim) |*active| active else return;
-        if (!std.mem.eql(u8, claim.owner_viewer_id, viewer_id)) return;
-        var orphaned = false;
-        if (self.termination) |binding| {
-            if (binding.arbiter) |arbiter| {
-                arbiter.viewerDisconnect() catch {};
-                orphaned = arbiter.currentState() == .human_orphaned;
-            }
-        }
-        if (orphaned) {
-            if (self.orphaned_claim) |*stale| stale.deinit(self.allocator);
-            self.orphaned_claim = self.active_claim;
-            self.orphaned_since_mono_ns = now_ns;
-        } else {
-            claim.deinit(self.allocator);
-        }
-        self.active_claim = null;
-    }
-
-    /// Ownership resolved (grant or clean release): the retained orphan no
-    /// longer names the input owner of record.
-    fn clearOrphanedClaim(self: *HostCore) void {
-        if (self.orphaned_claim) |*claim| claim.deinit(self.allocator);
-        self.orphaned_claim = null;
-        self.orphaned_since_mono_ns = null;
-    }
-
-    /// Clean CLAIM_RELEASE → FREE + clear host claim (no orphan).
-    pub fn releaseInput(
-        self: *HostCore,
-        payload: []const u8,
-        viewer_id: []const u8,
-        now_ns: u64,
-    ) ![]u8 {
-        _ = now_ns;
-        var parsed = try std.json.parseFromSlice(WireClaimRelease, self.allocator, payload, .{
-            .ignore_unknown_fields = true,
-        });
-        defer parsed.deinit();
-        const request = parsed.value;
-        if (request.schemaVersion != 1 or !self.terminalSessionMatches(request.session))
-            return error.GenerationMismatch;
-        const claim = if (self.active_claim) |*active| active else return error.InvalidClaimAcquire;
-        if (!std.mem.eql(u8, claim.token, request.claimToken) or
-            !std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
-            return error.InvalidClaimAcquire;
-        const kind: input_arbiter.ReleaseKind = if (std.mem.eql(u8, request.kind, "submit"))
-            .submit
-        else if (std.mem.eql(u8, request.kind, "cancel"))
-            .cancel
-        else
-            return error.InvalidClaimAcquire;
-        const binding = self.termination orelse return error.InvalidClaimAcquire;
-        const arbiter = binding.arbiter orelse return error.InvalidClaimAcquire;
-        _ = arbiter.claimRelease(viewer_id, claim.token, kind, "") catch |err| return switch (err) {
-            error.HumanOrphaned, error.HumanOwned, error.NotReady, error.InputBusy => error.InvalidClaimAcquire,
-            else => error.OutOfMemory,
-        };
-        claim.deinit(self.allocator);
-        self.active_claim = null;
-        self.clearOrphanedClaim();
-        return self.encodeInputApplied(.{
-            .transaction_id = "claim-release",
-            .stage = "accepted",
-            .byte_range = null,
-            .ordered_at = null,
-            .available_credit_bytes = 0,
-            .completeness = "complete",
-            .diagnostic = null,
-        });
     }
 
     fn encodeInputApplied(self: *HostCore, receipt: InputReceiptData) ![]u8 {
@@ -925,18 +546,12 @@ pub const HostCore = struct {
         try root.put("schemaVersion", .{ .integer = 1 });
         try root.put("resultKind", .{ .string = "input" });
         try root.put("receipt", .{ .object = receipt_value });
-        const payload = try std.json.Stringify.valueAlloc(
+        return stringifyValidatedPayload(
             self.allocator,
-            std.json.Value{ .object = root },
-            .{},
-        );
-        errdefer self.allocator.free(payload);
-        if (!protocol.validateControlPayload(
-            self.allocator,
+            root,
             generated.wire_schema.applied_payload,
-            payload,
-        )) return error.InvalidAppliedResult;
-        return payload;
+            error.InvalidAppliedResult,
+        );
     }
 
     fn reserveInputReplay(
@@ -1001,6 +616,9 @@ pub const HostCore = struct {
         const request = parsed.value;
         if (request.schemaVersion != 1 or !self.terminalSessionMatches(request.session))
             return error.GenerationMismatch;
+        if (std.meta.stringToEnum(WireInputProvenance, request.provenance) == null or
+            std.meta.stringToEnum(WireInputAction, request.action) == null)
+            return error.InvalidInputSubmit;
 
         var decoded: ?[]u8 = null;
         defer if (decoded) |bytes| {
@@ -1028,6 +646,10 @@ pub const HostCore = struct {
             return error.InvalidInputSubmit;
         var digest_hasher = std.crypto.hash.sha2.Sha256.init(.{});
         digest_hasher.update(@tagName(kind));
+        digest_hasher.update(&[_]u8{0});
+        digest_hasher.update(request.provenance);
+        digest_hasher.update(&[_]u8{0});
+        digest_hasher.update(request.action);
         digest_hasher.update(&[_]u8{0});
         if (decoded) |bytes| digest_hasher.update(bytes);
         if (request.expectedForeground) |expected| {
@@ -1072,17 +694,6 @@ pub const HostCore = struct {
             };
             return self.encodeInputApplied(replay.receipt.?);
         };
-        const claim = if (self.active_claim) |*active| active else {
-            replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim unavailable");
-            return self.encodeInputApplied(replay.receipt.?);
-        };
-        if (!std.mem.eql(u8, claim.token, request.claimToken) or
-            !std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
-        {
-            replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim fenced");
-            return self.encodeInputApplied(replay.receipt.?);
-        }
-
         if (kind == .hangup) {
             const ordered_at = binding.pty.hangup() catch |err| {
                 replay.receipt = .{
@@ -1141,8 +752,6 @@ pub const HostCore = struct {
             };
             break :blk &eof_storage;
         };
-        var input_digest: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(input_bytes, &input_digest, .{});
         if (request.expectedForeground) |expected| {
             const foreground_group = binding.pty.foregroundProcessGroupId() catch {
                 replay.receipt = rejectedInputReceipt(
@@ -1172,13 +781,7 @@ pub const HostCore = struct {
                 return self.encodeInputApplied(replay.receipt.?);
             }
         }
-        const accepted = arbiter.humanInput(
-            viewer_id,
-            claim.token,
-            claim.next_sequence,
-            input_digest,
-            input_bytes,
-        ) catch |err| {
+        const accepted = arbiter.submit(input_bytes) catch |err| {
             replay.receipt = if (err == error.Internal or err == error.SinkWriteFailed)
                 .{
                     .transaction_id = replay.transaction_id,
@@ -1193,14 +796,9 @@ pub const HostCore = struct {
                 rejectedInputReceipt(replay.transaction_id, @errorName(err));
             return self.encodeInputApplied(replay.receipt.?);
         };
-        claim.next_sequence = std.math.add(u64, claim.next_sequence, 1) catch
-            return error.InputSequenceOverflow;
         const ordered_at = binding.pty.operationSequence();
         binding.pty.writeDrainAll() catch |err| {
-            // DrainStalled: the child stopped reading and the bounded drain
-            // gave up, but the bytes are still queued and the host loop keeps
-            // draining — receipt "queued"/"partial" (never "unknown", which
-            // would permanently fence client input).
+            // DrainStalled: the child stopped reading and the bounded drain gave up, but the bytes are still queued and the host loop keeps draining — receipt "queued"/"partial" (never "unknown", which would permanently fence client input).
             replay.receipt = .{
                 .transaction_id = replay.transaction_id,
                 .stage = if (err == error.DrainStalled) "queued" else "unknown",
@@ -1228,6 +826,22 @@ pub const HostCore = struct {
             .diagnostic = null,
         };
         return self.encodeInputApplied(replay.receipt.?);
+    }
+
+    /// Queues authenticated interactive bytes and makes one nonblocking PTY
+    /// write attempt. The host loop drains any remainder; a slow child must not
+    /// turn one keystroke into a synchronous retry loop.
+    pub fn submitRawInput(self: *HostCore, bytes: []const u8) !void {
+        if (bytes.len == 0) return;
+        if (bytes.len > input_arbiter.user_input_max_bytes)
+            return error.InputPayloadTooLarge;
+        const binding = self.termination orelse return error.InputBindingUnavailable;
+        const arbiter = binding.arbiter orelse return error.InputArbiterUnavailable;
+        _ = try arbiter.submit(bytes);
+        _ = binding.pty.writeDrain() catch |err| switch (err) {
+            error.Closed => return,
+            else => return err,
+        };
     }
 
     fn encodeResizeApplied(self: *HostCore, result: StoredResizeResult) ![]u8 {
@@ -1261,18 +875,12 @@ pub const HostCore = struct {
         try root.put("schemaVersion", .{ .integer = 1 });
         try root.put("resultKind", .{ .string = "resize" });
         try root.put("result", .{ .object = result_value });
-        const payload = try std.json.Stringify.valueAlloc(
+        return stringifyValidatedPayload(
             self.allocator,
-            std.json.Value{ .object = root },
-            .{},
-        );
-        errdefer self.allocator.free(payload);
-        if (!protocol.validateControlPayload(
-            self.allocator,
+            root,
             generated.wire_schema.applied_payload,
-            payload,
-        )) return error.InvalidAppliedResult;
-        return payload;
+            error.InvalidAppliedResult,
+        );
     }
 
     pub fn reserveResizeReplay(
@@ -1423,8 +1031,7 @@ pub const HostCore = struct {
         try root.put("protocol", try protocolValue(a, record.protocol_major, record.protocol_minor));
         try root.put("processRoot", try processRootValue(a, record.process_root));
         try root.put("outputSeq", .{ .string = try a.dupe(u8, output) });
-        // A3: registration.record.checkpoint_seq was populated through
-        // checkpointWireSeq, never by an unchecked TerminalState read.
+        // A3: registration.record.checkpoint_seq was populated through checkpointWireSeq, never by an unchecked TerminalState read.
         try root.put("checkpointSeq", .{ .string = try a.dupe(u8, checkpoint) });
         try root.put("visibility", try visibilityValue(a, record.visibility, expires_at));
         const json = try std.json.Stringify.valueAlloc(
@@ -1453,7 +1060,7 @@ pub const HostCore = struct {
             remaining_ns,
             std.time.ns_per_ms,
         ) catch return error.InvalidTimestamp;
-        return broker.wallDeadline(storage, remaining_ms);
+        return wall_clock.deadline(storage, remaining_ms);
     }
 
     fn removeExpiredGrants(self: *HostCore, now_ns: u64) void {
@@ -1502,8 +1109,8 @@ pub const HostCore = struct {
         for (parsed.value.operations) |operation| {
             if (std.mem.eql(u8, operation, "view"))
                 operations.view = true
-            else if (std.mem.eql(u8, operation, "human-input"))
-                operations.human_input = true
+            else if (std.mem.eql(u8, operation, "user-input"))
+                operations.user_input = true
             else if (std.mem.eql(u8, operation, "resize"))
                 operations.resize = true
             else
@@ -1538,9 +1145,7 @@ pub const HostCore = struct {
         return response;
     }
 
-    /// Validates and consumes one viewer capability. Streaming begins only
-    /// after the caller has established the generated SNAPSHOT/OUTPUT wire
-    /// contract; this method does not invent a HOST_ATTACH response shape.
+    /// Validates and consumes one viewer capability. Streaming begins only after the caller has established the generated SNAPSHOT/OUTPUT wire contract; this method does not invent a HOST_ATTACH response shape.
     pub fn authorizeViewerAttach(
         self: *HostCore,
         payload: []const u8,
@@ -1641,142 +1246,12 @@ pub const HostCore = struct {
         try root.put("state", .{ .string = "active" });
         try root.put("expiresAt", .{ .string = expires_at });
         try root.put("openTerminalRevision", .{ .string = try arena.allocator().dupe(u8, revision_text) });
-        const response = try std.json.Stringify.valueAlloc(
+        return stringifyValidatedPayload(
             self.allocator,
-            std.json.Value{ .object = root },
-            .{},
-        );
-        errdefer self.allocator.free(response);
-        if (!protocol.validateControlPayload(
-            self.allocator,
+            root,
             generated.wire_schema.renewed_payload,
-            response,
-        )) return error.InvalidVisibilityResponse;
-        return response;
-    }
-
-    fn encodeOrphanDiscarded(
-        self: *HostCore,
-        state: enum { discarded, preempted, refused },
-        prior_owner_viewer_id: ?[]const u8,
-        prior_claim_id: ?[]const u8,
-        orphan_age_ms: ?u64,
-        diagnostic: []const u8,
-    ) ![]u8 {
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        const a = arena.allocator();
-        var root = std.json.ObjectMap.init(a);
-        try root.put("schemaVersion", .{ .integer = 1 });
-        try root.put("state", .{ .string = @tagName(state) });
-        try root.put("priorOwnerViewerId", if (prior_owner_viewer_id) |value|
-            .{ .string = value }
-        else
-            .null);
-        try root.put("priorClaimId", if (prior_claim_id) |value|
-            .{ .string = value }
-        else
-            .null);
-        try root.put("orphanAgeMilliseconds", if (orphan_age_ms) |value|
-            .{ .string = try std.fmt.allocPrint(a, "{d}", .{value}) }
-        else
-            .null);
-        try root.put("diagnostic", .{ .string = diagnostic });
-        const payload = try std.json.Stringify.valueAlloc(
-            self.allocator,
-            std.json.Value{ .object = root },
-            .{},
+            error.InvalidVisibilityResponse,
         );
-        errdefer self.allocator.free(payload);
-        if (!protocol.validateControlPayload(
-            self.allocator,
-            generated.wire_schema.orphan_discarded_payload,
-            payload,
-        )) return error.InvalidOrphanDiscardResponse;
-        return payload;
-    }
-
-    /// INPUT_ORPHAN_DISCARD resolves a human claim on the authenticated
-    /// broker path. `orphaned` can cancel only an abandoned draft; `held` is
-    /// the user-authorized preemption, reported as its own typed result.
-    pub fn discardInputOrphan(self: *HostCore, payload: []const u8, now_ns: u64) ![]u8 {
-        if (!protocol.validateControlPayload(
-            self.allocator,
-            generated.wire_schema.orphan_discard_payload,
-            payload,
-        )) return error.InvalidOrphanDiscard;
-        var parsed = try std.json.parseFromSlice(WireOrphanDiscard, self.allocator, payload, .{
-            .ignore_unknown_fields = true,
-        });
-        defer parsed.deinit();
-        if (parsed.value.schemaVersion != 1) return error.InvalidOrphanDiscard;
-        const mode = std.meta.stringToEnum(enum { orphaned, held }, parsed.value.mode) orelse
-            return error.InvalidOrphanDiscard;
-        var locator_arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer locator_arena.deinit();
-        const locator = try parseLocator(locator_arena.allocator(), parsed.value.locator);
-        if (!locator.eql(self.registration.record.locator))
-            return error.InvalidOrphanDiscard;
-
-        const binding = self.termination orelse
-            return self.encodeOrphanDiscarded(.refused, null, null, null, "input arbiter not bound");
-        const arbiter = binding.arbiter orelse
-            return self.encodeOrphanDiscarded(.refused, null, null, null, "input arbiter not bound");
-        const state = arbiter.currentState();
-        switch (mode) {
-            .orphaned => {
-                if (state != .human_orphaned)
-                    return self.encodeOrphanDiscarded(.refused, null, null, null, @tagName(state));
-                const claim = if (self.orphaned_claim) |*value| value else return self.encodeOrphanDiscarded(.refused, null, null, null, "orphan owner unavailable");
-                const age_ms = if (self.orphaned_since_mono_ns) |since|
-                    (now_ns -| since) / std.time.ns_per_ms
-                else
-                    0;
-                _ = arbiter.operatorDiscard() catch |err| {
-                    return self.encodeOrphanDiscarded(
-                        .refused,
-                        claim.owner_viewer_id,
-                        claim.token,
-                        age_ms,
-                        @errorName(err),
-                    );
-                };
-                const response = try self.encodeOrphanDiscarded(
-                    .discarded,
-                    claim.owner_viewer_id,
-                    claim.token,
-                    age_ms,
-                    "orphaned human claim discarded",
-                );
-                self.clearOrphanedClaim();
-                return response;
-            },
-            .held => {
-                if (state != .human_owned)
-                    return self.encodeOrphanDiscarded(.refused, null, null, null, @tagName(state));
-                const claim = if (self.active_claim) |*value| value else return self.encodeOrphanDiscarded(.refused, null, null, null, "held owner unavailable");
-                _ = arbiter.operatorPreempt() catch |err| {
-                    return self.encodeOrphanDiscarded(
-                        .refused,
-                        claim.owner_viewer_id,
-                        claim.token,
-                        null,
-                        @errorName(err),
-                    );
-                };
-                const response = try self.encodeOrphanDiscarded(
-                    .preempted,
-                    claim.owner_viewer_id,
-                    claim.token,
-                    null,
-                    "held human claim preempted for delivery",
-                );
-                claim.deinit(self.allocator);
-                self.active_claim = null;
-                self.clearOrphanedClaim();
-                return response;
-            },
-        }
     }
 
     pub fn terminate(self: *HostCore, payload: []const u8) ![]u8 {
@@ -1811,10 +1286,7 @@ pub const HostCore = struct {
         return self.terminateBound(mode, null);
     }
 
-    /// Crash invariant enforcement. The caller invokes this from the host
-    /// lifecycle clock even when no broker transport is connected: a host whose
-    /// supervisor is gone would otherwise reparent to launchd and keep burning
-    /// a vendor's tokens forever.
+    /// Crash invariant enforcement. The caller invokes this from the host lifecycle clock even when no broker transport is connected: a host whose supervisor is gone would otherwise reparent to launchd and keep burning a vendor's tokens forever.
     pub fn enforceSupervisorLoss(self: *HostCore, now_ns: u64) !bool {
         if (self.terminated) return true;
         if (self.supervisor == null) return false;
@@ -1836,7 +1308,6 @@ pub const HostCore = struct {
             binding,
             self.registration.record.process_root,
             mode,
-            failure_code != null,
         );
         defer outcome.deinit(self.allocator);
 
@@ -1891,7 +1362,7 @@ pub const HostCore = struct {
 
         var exit_value: std.json.Value = .null;
         var observed_storage: [24]u8 = undefined;
-        const observed_at = try broker.wallDeadline(&observed_storage, 0);
+        const observed_at = try wall_clock.deadline(&observed_storage, 0);
         if (outcome.exit.reaped) {
             var exit = std.json.ObjectMap.init(a);
             try exit.put("code", if (outcome.exit.exit_code) |code|
@@ -1940,17 +1411,13 @@ pub const HostCore = struct {
         try root.put("survivors", .{ .array = survivors_json });
         try root.put("completeness", .{ .string = completeness });
         try root.put("diagnostics", .{ .array = diagnostics });
-        const response = try std.json.Stringify.valueAlloc(
+        const response = try stringifyValidatedPayload(
             self.allocator,
-            std.json.Value{ .object = root },
-            .{},
+            root,
+            generated.wire_schema.terminated_payload,
+            error.InvalidTerminationResponse,
         );
         errdefer self.allocator.free(response);
-        if (!protocol.validateControlPayload(
-            self.allocator,
-            generated.wire_schema.terminated_payload,
-            response,
-        )) return error.InvalidTerminationResponse;
 
         var output_storage: [32]u8 = undefined;
         var checkpoint_storage: [32]u8 = undefined;
@@ -2065,7 +1532,7 @@ pub const HostCore = struct {
 
     pub fn acceptNeutralInspection(self: *HostCore, payload: []const u8) !void {
         var parsed = try std.json.parseFromSlice(
-            neutral_control_plane.WireInspectionPayload,
+            neutral_evidence.WireInspectionPayload,
             self.allocator,
             payload,
             .{},
@@ -2094,7 +1561,7 @@ pub const HostCore = struct {
             payload,
         )) return error.InvalidTerminationResponse;
         var parsed = try std.json.parseFromSlice(
-            neutral_control_plane.WireTerminationPayload,
+            neutral_evidence.WireTerminationPayload,
             self.allocator,
             payload,
             .{},

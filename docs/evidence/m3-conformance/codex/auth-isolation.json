@@ -1,0 +1,270 @@
+{
+  "vendor": "codex",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex",
+  "binaryBefore": {
+    "version": "codex-cli 0.146.0",
+    "device": 16777234,
+    "inode": 245118397,
+    "size": 271056976,
+    "mtimeMs": 1785288494573.023
+  },
+  "operatorBefore": {
+    ".codex": "7ebb70f6573331b2da1990c2bc8242e020c875e406480cad4b18afb2daa65828"
+  },
+  "borrowed": [],
+  "artifacts": [],
+  "binaryAfter": {
+    "version": "codex-cli 0.146.0",
+    "device": 16777234,
+    "inode": 245118397,
+    "size": 271056976,
+    "mtimeMs": 1785288494573.023
+  },
+  "operatorAfter": {
+    ".codex": "96d0a12c999f09bac408c70ea089a3cb39026a12c585b65ac05f7c19317d72e1"
+  },
+  "changedOperatorPaths": [
+    ".codex"
+  ],
+  "changedOperatorNodes": {
+    ".codex": [
+      {
+        "relativePath": "logs_2.sqlite-wal",
+        "before": {
+          "relativePath": "logs_2.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284488351,
+          "mode": 420,
+          "size": 4260112,
+          "mtimeMs": 1785676229826.4524
+        },
+        "after": {
+          "relativePath": "logs_2.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284488351,
+          "mode": 420,
+          "size": 4260112,
+          "mtimeMs": 1785676239824.8003
+        }
+      },
+      {
+        "relativePath": "models_cache.json",
+        "before": {
+          "relativePath": "models_cache.json",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119369888,
+          "mode": 420,
+          "size": 314039,
+          "mtimeMs": 1785676222575.9592
+        },
+        "after": {
+          "relativePath": "models_cache.json",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119369888,
+          "mode": 420,
+          "size": 314039,
+          "mtimeMs": 1785676240901.8564
+        }
+      },
+      {
+        "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+        "before": {
+          "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284511752,
+          "mode": 420,
+          "size": 1072896,
+          "mtimeMs": 1785676229890.6152
+        },
+        "after": {
+          "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284511752,
+          "mode": 420,
+          "size": 1074068,
+          "mtimeMs": 1785676240895.8623
+        }
+      },
+      {
+        "relativePath": "state_5.sqlite-wal",
+        "before": {
+          "relativePath": "state_5.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 283668170,
+          "mode": 420,
+          "size": 4173592,
+          "mtimeMs": 1785676229893.4717
+        },
+        "after": {
+          "relativePath": "state_5.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 283668170,
+          "mode": 420,
+          "size": 4173592,
+          "mtimeMs": 1785676240896.1265
+        }
+      },
+      {
+        "relativePath": "tmp/arg0",
+        "before": {
+          "relativePath": "tmp/arg0",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119298999,
+          "mode": 448,
+          "size": 192,
+          "mtimeMs": 1785676076843.013
+        },
+        "after": {
+          "relativePath": "tmp/arg0",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119298999,
+          "mode": 448,
+          "size": 192,
+          "mtimeMs": 1785676240731.8242
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 284753016,
+          "mode": 493,
+          "size": 192,
+          "mtimeMs": 1785676076843.1267
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj/.lock",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj/.lock",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284753017,
+          "mode": 420,
+          "size": 0,
+          "mtimeMs": 1785676076843.0442
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj/apply_patch",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj/apply_patch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284753018,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676076843.074
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj/applypatch",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj/applypatch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284753019,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676076843.0996
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg09sdCqj/codex-execve-wrapper",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg09sdCqj/codex-execve-wrapper",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284753020,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676076843.1245
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0iVExUM",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0iVExUM",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 284773865,
+          "mode": 493,
+          "size": 192,
+          "mtimeMs": 1785676240731.9417
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0iVExUM/.lock",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0iVExUM/.lock",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284773866,
+          "mode": 420,
+          "size": 0,
+          "mtimeMs": 1785676240731.8555
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0iVExUM/apply_patch",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0iVExUM/apply_patch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284773867,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676240731.8857
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0iVExUM/applypatch",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0iVExUM/applypatch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284773868,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676240731.913
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0iVExUM/codex-execve-wrapper",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0iVExUM/codex-execve-wrapper",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284773869,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676240731.9395
+        }
+      }
+    ]
+  },
+  "artifactsAfter": []
+}

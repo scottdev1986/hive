@@ -1,0 +1,10 @@
+{
+  "sessions": [
+    {
+      "sessionId": "session_00000000-0000-4000-8000-000000000001",
+      "cwd": "/home/user/project",
+      "title": "Use your shell tool to run exactly: echo hive-fixture-capture",
+      "updatedAt": "2026-08-02T18:06:29.551Z"
+    }
+  ]
+}

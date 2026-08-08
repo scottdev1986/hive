@@ -1,0 +1,11 @@
+212 |     changedOperatorNodes,
+213 |     artifactsAfter: artifacts,
+214 |   });
+215 |   assertIdentityUnchanged(prepared.binaryBefore, binaryAfter);
+216 |   if (artifactErrors.length > 0) throw new Error(artifactErrors.join("; "));
+217 |   if (changedOperatorPaths.length > 0) throw new Error("ISOLATION_BREACH");
+                                                       ^
+error: ISOLATION_BREACH
+      at /Users/scottkellar/Projects/hive/.hive/worktrees/sam/qa/mail-vendor-isolation.ts:217:50
+
+Bun v1.3.14 (macOS arm64)

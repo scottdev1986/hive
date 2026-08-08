@@ -1,28 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
-  configuredOrchestratorHost,
   mintRootSessiondLocator,
   RootSessiondLocatorSchema,
   rootSessionIdForLaunchRequest,
-} from "../../src/daemon/orchestrator-host";
+} from "../../src/daemon/orchestrator-host/orchestrator-host-contract";
 import {
   mintSessionLocator,
   mintSessionRequestId,
 } from "../../src/daemon/session-host/locators";
 import type { HiveTerminalBinding } from "../../src/daemon/session-host/terminal-host-binding";
-
-describe("orchestrator host selection", () => {
-  test("production has one host and no environment selector can restore tmux", () => {
-    const previous = process.env.HIVE_ORCHESTRATOR_HOST;
-    try {
-      process.env.HIVE_ORCHESTRATOR_HOST = "tmux";
-      expect(configuredOrchestratorHost()).toBe("sessiond");
-    } finally {
-      if (previous === undefined) delete process.env.HIVE_ORCHESTRATOR_HOST;
-      else process.env.HIVE_ORCHESTRATOR_HOST = previous;
-    }
-  });
-});
 
 describe("root sessiond locator", () => {
   test("is stable across launch retries and advances only for a new request", () => {

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { UpdateCheck } from "../../src/update/check";
+import type { UpdateCheck } from "../../src/update-service/check";
 import {
   plain,
   renderStartNotice,
   renderUpdateNotice,
-} from "../../src/update/notice";
+} from "../../src/update-service/notice";
 
 const available = (
   over: Partial<Extract<UpdateCheck, { state: "update-available" }>> = {},

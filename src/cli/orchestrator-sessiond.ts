@@ -1,22 +1,32 @@
-import { hiveInstanceSuffix } from "../daemon/instance-identity";
+import { hiveInstanceSuffix } from "../hive-home/instance-identity";
 import {
   type RootSessiondLocator,
   rootSessionIdForLaunchRequest,
-} from "../daemon/orchestrator-host";
+} from "../daemon/orchestrator-host/orchestrator-host-contract";
 import {
   type OrchestratorSessiondLaunch,
   type OrchestratorSessiondSnapshot,
   OrchestratorSessiondSnapshotSchema,
-} from "../daemon/orchestrator-sessiond";
+} from "../daemon/orchestrator-host/sessiond-controller";
 import { sameSessionLocator } from "../daemon/session-host/locators";
-import { operatorFetch } from "./credential";
+import { isTestRunnerEnv } from "./invoker";
+import {
+  daemonErrorDetail,
+  decodeJson,
+  UserDaemonClient,
+} from "./user-daemon-client";
+import { errorMessage } from "../shared/error-message";
 
 export interface OrchestratorSessiondControl {
   start(
     request: OrchestratorSessiondLaunch,
   ): Promise<OrchestratorSessiondSnapshot>;
-  inspect(requestId: string): Promise<OrchestratorSessiondSnapshot | null>;
+  waitForTerminal(requestId: string): Promise<OrchestratorSessiondWaitResult>;
 }
+
+export type OrchestratorSessiondWaitResult =
+  | Readonly<{ kind: "snapshot"; snapshot: OrchestratorSessiondSnapshot }>
+  | Readonly<{ kind: "missing" }>;
 
 export class OrchestratorLaunchFailedError extends Error {
   readonly code = "ORCHESTRATOR_LAUNCH_FAILED" as const;
@@ -32,9 +42,7 @@ function typedLaunchFailure(
   error: unknown,
 ): OrchestratorLaunchFailedError {
   if (error instanceof OrchestratorLaunchFailedError) return error;
-  return new OrchestratorLaunchFailedError(
-    `${action}: ${error instanceof Error ? error.message : String(error)}`,
-  );
+  return new OrchestratorLaunchFailedError(`${action}: ${errorMessage(error)}`);
 }
 
 type AuthorizedFetch = (
@@ -45,22 +53,26 @@ type AuthorizedFetch = (
 async function responseError(
   response: Response,
 ): Promise<OrchestratorLaunchFailedError> {
-  const body = (await response.json().catch(() => null)) as {
-    error?: string;
-  } | null;
   return new OrchestratorLaunchFailedError(
-    body?.error ?? `queen session request failed with HTTP ${response.status}`,
+    daemonErrorDetail(
+      await decodeJson(response),
+      `queen session request failed with HTTP ${response.status}`,
+    ).message,
   );
 }
 
 export function daemonOrchestratorSessiondControl(
   port: number,
-  request: AuthorizedFetch = operatorFetch,
+  request?: AuthorizedFetch,
 ): OrchestratorSessiondControl {
-  const endpoint = `http://127.0.0.1:${port}/orchestrator-session`;
+  const daemon = new UserDaemonClient({
+    port,
+    ...(request === undefined ? {} : { fetch: request }),
+    verifyIdentity: request === undefined && !isTestRunnerEnv(),
+  });
   return {
     start: async (launch) => {
-      const response = await request(endpoint, {
+      const response = await daemon.request("/orchestrator-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(launch),
@@ -68,13 +80,18 @@ export function daemonOrchestratorSessiondControl(
       if (!response.ok) throw await responseError(response);
       return OrchestratorSessiondSnapshotSchema.parse(await response.json());
     },
-    inspect: async (requestId) => {
-      const response = await request(
-        `${endpoint}?requestId=${encodeURIComponent(requestId)}`,
+    waitForTerminal: async (requestId) => {
+      const response = await daemon.request(
+        `/orchestrator-session?requestId=${encodeURIComponent(requestId)}`,
       );
-      if (response.status === 404) return null;
+      if (response.status === 404) return { kind: "missing" };
       if (!response.ok) throw await responseError(response);
-      return OrchestratorSessiondSnapshotSchema.parse(await response.json());
+      return {
+        kind: "snapshot",
+        snapshot: OrchestratorSessiondSnapshotSchema.parse(
+          await response.json(),
+        ),
+      };
     },
   };
 }
@@ -102,14 +119,10 @@ function requireExactRootGeneration(
   return locator;
 }
 
-/** Wait for one exact root generation. A missing snapshot means the daemon
- * restarted; retrying the same request reconstructs the same locator instead
- * of launching a second queen. */
+/** Wait for one exact root generation. A missing result means the daemon no longer holds that request; replaying the same idempotent start reconstructs its durable locator instead of launching a second queen. */
 export async function runOrchestratorSessiondLaunch(
   launch: OrchestratorSessiondLaunch,
   control: OrchestratorSessiondControl,
-  sleep: (milliseconds: number) => Promise<void> = (milliseconds) =>
-    Bun.sleep(milliseconds),
 ): Promise<number> {
   const start = async (): Promise<OrchestratorSessiondSnapshot> => {
     try {
@@ -118,11 +131,11 @@ export async function runOrchestratorSessiondLaunch(
       throw typedLaunchFailure("sessiond queen start request failed", error);
     }
   };
-  const inspect = async (): Promise<OrchestratorSessiondSnapshot | null> => {
+  const waitForTerminal = async (): Promise<OrchestratorSessiondWaitResult> => {
     try {
-      return await control.inspect(launch.requestId);
+      return await control.waitForTerminal(launch.requestId);
     } catch (error) {
-      throw typedLaunchFailure("sessiond queen inspection failed", error);
+      throw typedLaunchFailure("sessiond queen wait failed", error);
     }
   };
   let snapshot = await start();
@@ -130,6 +143,9 @@ export async function runOrchestratorSessiondLaunch(
   while (true) {
     switch (snapshot.state) {
       case "exited":
+        if ((snapshot.exitCode ?? 1) !== 0 && snapshot.diagnostic !== null) {
+          throw new OrchestratorLaunchFailedError(snapshot.diagnostic);
+        }
         return snapshot.exitCode ?? 1;
       case "failed":
         throw new OrchestratorLaunchFailedError(
@@ -138,11 +154,10 @@ export async function runOrchestratorSessiondLaunch(
         );
       case "awaiting-visibility":
       case "running":
-        await sleep(250);
         break;
     }
-    const inspected = await inspect();
-    snapshot = inspected ?? (await start());
+    const waited = await waitForTerminal();
+    snapshot = waited.kind === "missing" ? await start() : waited.snapshot;
     locator = requireExactRootGeneration(launch, snapshot, locator);
   }
 }

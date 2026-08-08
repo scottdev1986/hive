@@ -90,6 +90,6 @@ Every neutral case has a mutation control: injecting that case's semantic violat
 
 ## Design and external basis
 
-- The request/lease split, distinct lifecycle channel, full-snapshot freshness, pending-record admission, renewal, and source-death expiry requirements come from the [M1-B2 story](../../planning/story-m1-b2-hive-terminal-view.md)'s “A/Workspace-visibility interlock” and B2.1 build-increment sections.
+- The request/lease split keeps admission separate from continued authority. A distinct lifecycle channel supplies full-snapshot freshness, renewal requires the represented session to remain present, and source death expires the lease.
 - Apple's [`getpeereid(3)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/getpeereid.3.html) documents kernel-supplied effective credentials for a connected UNIX-domain peer. These credentials can authenticate the local channel but do not replace exact process identity.
 - Apple's XNU [`proc_bsdinfo`](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info.h) exposes the process PID and start-time seconds/microseconds. A production Darwin adapter can derive and re-read an exact start token from operating-system process data; this contract deliberately keeps that mechanism out of its vocabulary.

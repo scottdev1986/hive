@@ -3,14 +3,13 @@ import {
   AuthorizedLaunch,
   type LaunchGateChecks,
   requireAuthorizedLaunch,
-} from "../../src/daemon/authorized-launch";
+} from "../../src/daemon/routing-service/authorized-launch";
 
 const pass = async (): Promise<string | null> => null;
 const passingChecks = (): LaunchGateChecks => ({
   resolution: pass,
   enablement: pass,
   availability: pass,
-  capabilityFloor: pass,
   effort: async (candidate) => ({ effort: candidate.effort, refusal: null }),
 });
 
@@ -24,12 +23,7 @@ describe("AuthorizedLaunch", () => {
   test("only the complete ordered gate can mint a launch", async () => {
     const order: string[] = [];
     const checks = passingChecks();
-    for (const key of [
-      "resolution",
-      "enablement",
-      "availability",
-      "capabilityFloor",
-    ] as const) {
+    for (const key of ["resolution", "enablement", "availability"] as const) {
       checks[key] = async () => {
         order.push(key);
         return null;
@@ -49,7 +43,6 @@ describe("AuthorizedLaunch", () => {
       "resolution",
       "enablement",
       "availability",
-      "capabilityFloor",
       "effort",
     ]);
   });
@@ -58,7 +51,6 @@ describe("AuthorizedLaunch", () => {
     ["resolution", "resolution"],
     ["enablement", "enablement"],
     ["availability", "availability"],
-    ["capabilityFloor", "capability-floor"],
   ] as const)("%s refusal names its reason", async (guard, reason) => {
     const checks = passingChecks();
     checks[guard] = async () => `${reason} says no`;

@@ -2,19 +2,8 @@ import AppKit
 import XCTest
 @testable import HiveTerminalKit
 
-/// The human write path must never become permanently unavailable while a
-/// pane stays attached.
-///
-/// The freeze these rows pin is a viewer-side latch: a single transient host
-/// "no" ends typing for the life of the attach. Host answers are routinely
-/// transient: the arbiter returns `InputBusy` mid-automation (every
-/// queen→agent inject), `HumanOrphaned` after an unclean viewer drop, and
-/// `NotReady` before the visibility lease is current. The host readmits a
-/// returning human, so the viewer must keep the original bytes queued and
-/// re-acquire internally.
-///
-/// Never-steal is untouched: every retry is another CLAIM_ACQUIRE the host is
-/// free to deny again.
+/// Human keystrokes remain writable because they are raw terminal input, not a
+/// viewer-side transaction that can be fenced by claim state or receipts.
 final class InputNeverFrozenTests: XCTestCase {
     private let geometry = TerminalGeometry(
         columns: 80,
@@ -25,99 +14,30 @@ final class InputNeverFrozenTests: XCTestCase {
         cellHeightPx: 20
     )
 
-    /// The key event that collides with an automation inject is itself retained
-    /// and submitted. The user must not have to type a second key to retry, and
-    /// no refusal state may be published while the host arbitrates the ordered
-    /// writers.
-    func testInProcessKeyEventDuringInjectRetriesAndLandsWithoutRefusal() throws {
+    func testInProcessKeyEventSendsGhosttyBytesDirectly() throws {
         _ = NSApplication.shared
-        let host = FakeHost(connectionId: "never-refused-inject-race")
+        let host = FakeHost(connectionId: "direct-key-input")
         let engine = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
         defer { engine.free() }
         let view = try attachView(host: host, engine: engine, snapshotPayload: nil)
-        let binding = try XCTUnwrap(view.binding)
-        var states: [InputSubmissionState] = []
-        view.onInputSubmissionStateChange = { states.append($0) }
 
         view.keyDown(with: Self.shiftEnterEvent())
-        try waitForFrames(host, type: .claimAcquire, count: 1)
-        // Ghostty's key encoder drains on its IO thread. Let its write callback
-        // reach the main queue before the host answers the claim.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        try waitForFrames(host, type: .userInput, count: 1)
 
-        let firstClaim = try XCTUnwrap(
-            host.receivedFromViewer.last { $0.type == .claimAcquire })
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: firstClaim.requestId,
-                payload: try FrameCodec.jsonPayload([
-                    "schemaVersion": 1,
-                    "result": ["state": "denied", "diagnostic": "InputBusy"],
-                ])
-            ),
-            frameBinding: binding
-        )
-
-        try waitForFrames(host, type: .claimAcquire, count: 2)
-        let retryWhileBusy = try XCTUnwrap(
-            host.receivedFromViewer.last { $0.type == .claimAcquire })
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: retryWhileBusy.requestId,
-                payload: try FrameCodec.jsonPayload([
-                    "schemaVersion": 1,
-                    "result": ["state": "unknown", "diagnostic": "NotReady"],
-                ])
-            ),
-            frameBinding: binding
-        )
-
-        try waitForFrames(host, type: .claimAcquire, count: 3)
-        let retry = try XCTUnwrap(
-            host.receivedFromViewer.last { $0.type == .claimAcquire })
-        view.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: retry.requestId,
-                payload: try grantedClaimPayload(token: "claim-after-inject")
-            ),
-            frameBinding: binding
-        )
-        try waitForFrames(host, type: .inputSubmit, count: 1)
-
-        let submit = try XCTUnwrap(
-            host.receivedFromViewer.last { $0.type == .inputSubmit })
-        let object = try FrameCodec.parseJSONObject(submit.payload)
-        let operation = try XCTUnwrap(object["operation"] as? [String: Any])
+        let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .userInput })
         XCTAssertEqual(
-            Data(base64Encoded: try XCTUnwrap(operation["bytes"] as? String)),
+            input.payload,
             Data("\u{1B}[27;2;13~".utf8),
-            "the original in-process NSEvent was lost or reordered during claim arbitration"
+            "the raw frame must contain Ghostty's exact encoded bytes"
         )
-        XCTAssertTrue(
-            states.contains(.waitingForClaim),
-            "the queued input never exposed its internal wait state: \(states)")
+        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimAcquire })
+        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .inputSubmit })
     }
 
-    /// Types before and after a host answer and reports whether the second
-    /// keystroke can still acquire a claim. The orphan and fencing control use
-    /// the same reader.
-    private func secondKeystroke(
+    private func inputAroundLegacyHostFrame(
         connectionId: String,
-        firstClaimAnswer: (HiveTerminalView, SurfaceBinding, WireFrame) throws -> Void
-    ) throws -> (
-        view: HiveTerminalView,
-        host: FakeHost,
-        binding: SurfaceBinding,
-        stateAfterAnswer: InputSubmissionState,
-        claimsBefore: Int,
-        claimsAfter: Int
-    ) {
+        makeFrame: () throws -> WireFrame
+    ) throws -> [WireFrame] {
         let host = FakeHost(connectionId: connectionId)
         let view = try attachView(host: host, engine: FakeManualSurface())
         let binding = try XCTUnwrap(view.binding)
@@ -129,12 +49,7 @@ final class InputNeverFrozenTests: XCTestCase {
         )
         drainMainQueue()
         try host.harvestViewerFrames()
-        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
-
-        try firstClaimAnswer(view, binding, claim)
-        try host.harvestViewerFrames()
-        let stateAfterAnswer = view.inputSubmissionState
-        let claimsBefore = host.receivedFromViewer.filter { $0.type == .claimAcquire }.count
+        view.pumpHostFrame(try makeFrame(), frameBinding: binding)
 
         view.insertText(
             "second\n",
@@ -143,80 +58,35 @@ final class InputNeverFrozenTests: XCTestCase {
         )
         drainMainQueue()
         try host.harvestViewerFrames()
-        let claimsAfter = host.receivedFromViewer.filter { $0.type == .claimAcquire }.count
-
-        return (view, host, binding, stateAfterAnswer, claimsBefore, claimsAfter)
+        return host.receivedFromViewer.filter { $0.type == .userInput }
     }
 
-    /// The other transient state: the host orphaned this viewer's own claim.
-    /// operatorResume readmits a returning human, so the next keystroke must
-    /// re-acquire rather than find input fenced.
-    func testOrphanedClaimKeepsTheHumanWritePathArmed() throws {
-        let result = try secondKeystroke(connectionId: "never-frozen-orphan") { view, binding, claim in
-            view.pumpHostFrame(
-                WireFrame(
-                    type: .claimResult,
-                    flags: [.response, .final],
-                    requestId: claim.requestId,
-                    payload: try self.grantedClaimPayload(token: "claim-before-orphan")
-                ),
-                frameBinding: binding
-            )
-            view.pumpHostFrame(
-                WireFrame(
-                    type: .event,
-                    payload: try FrameCodec.jsonPayload([
-                        "schemaVersion": 1,
-                        "kind": "HUMAN_ORPHANED",
-                        "claimId": "claim-before-orphan",
-                    ])
-                ),
-                frameBinding: binding
+    func testLegacyOrphanEventCannotFenceHumanInput() throws {
+        let frames = try inputAroundLegacyHostFrame(connectionId: "never-frozen-orphan") {
+            WireFrame(
+                type: .event,
+                payload: try FrameCodec.jsonPayload([
+                    "schemaVersion": 1,
+                    "kind": "USER_ORPHANED",
+                    "claimId": "retired-claim",
+                ])
             )
         }
 
-        XCTAssertEqual(result.stateAfterAnswer, .idle)
-        XCTAssertGreaterThan(
-            result.claimsAfter, result.claimsBefore,
-            "typing after an orphan event minted no new CLAIM_ACQUIRE: the human write path is frozen"
-        )
+        XCTAssertEqual(frames.map(\.payload), [Data("first\n".utf8), Data("second\n".utf8)])
     }
 
-    func testMalformedClaimResultKeepsInputQueuedForAnotherClaim() throws {
-        let result = try secondKeystroke(connectionId: "never-frozen-control") { view, binding, claim in
-            view.pumpHostFrame(
-                WireFrame(
-                    type: .claimResult,
-                    flags: [.response, .final],
-                    requestId: claim.requestId,
-                    payload: try FrameCodec.jsonPayload(["schemaVersion": 1, "result": [:]])
-                ),
-                frameBinding: binding
+    func testMalformedLegacyClaimResultCannotFenceHumanInput() throws {
+        let frames = try inputAroundLegacyHostFrame(connectionId: "never-frozen-control") {
+            WireFrame(
+                type: .claimResult,
+                flags: [.response, .final],
+                requestId: 998,
+                payload: try FrameCodec.jsonPayload(["schemaVersion": 1, "result": [:]])
             )
         }
 
-        XCTAssertEqual(result.stateAfterAnswer, .waitingForClaim)
-        XCTAssertGreaterThanOrEqual(
-            result.claimsBefore, 2,
-            "a malformed reply did not trigger replacement claim acquisition")
-        XCTAssertEqual(
-            result.claimsAfter, result.claimsBefore,
-            "later input opened a competing claim instead of joining the existing queue")
-    }
-
-    private func grantedClaimPayload(token: String) throws -> Data {
-        try FrameCodec.jsonPayload([
-            "schemaVersion": 1,
-            "result": [
-                "state": "granted",
-                "claim": [
-                    "token": token,
-                    "writer": "input-viewer",
-                    "kind": "human",
-                    "leaseExpiresAt": "2099-01-01T00:00:00.000Z",
-                ],
-            ],
-        ])
+        XCTAssertEqual(frames.map(\.payload), [Data("first\n".utf8), Data("second\n".utf8)])
     }
 
     private func attachView(

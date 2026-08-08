@@ -9,27 +9,41 @@
 // Nothing in this file touches live work: an in-memory database, a stub
 // spawner that launches nothing, and a stub landBranch that runs no git.
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { buildNormalMessageBatchProjection } from "../../src/daemon/context-projection";
 import {
-  credentialPath,
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import {
   readCredential,
   writeCredential,
-} from "../../src/daemon/credentials";
-import { HiveDatabase } from "../../src/daemon/db";
-import type { LandReadiness } from "../../src/daemon/landing";
+} from "../../src/daemon/authorization/credentials";
+import { credentialPath } from "../../src/hive-home/home";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import type { LandReadiness } from "../../src/daemon/landing/landing-service";
+import type { MainHealthMonitorHandle } from "../../src/daemon/landing/main-health-monitor";
+import {
+  runProjectGate,
+  type ProjectGate,
+} from "../../src/daemon/landing/project-gate";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "../../src/daemon/server";
-import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
-import { deleteAgentRow, listAuditEntries } from "../../src/daemon/testing";
-import type { AgentRecord } from "../../src/schemas";
+import type {
+  Spawner,
+  SpawnRequest,
+} from "../../src/daemon/spawn/spawn-service";
+import {
+  deleteAgentRow,
+  listAuditEntries,
+} from "../support/daemon-test-support";
+import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
+import { bindRootSession, mailbox } from "../mail-test-support";
 import { required } from "../required";
+import { tempRoot } from "../temp-root";
+import { callHiveTool } from "../../src/cli/mcp";
 
-const home = mkdtempSync(join(tmpdir(), "hive-auth-test-"));
+const home = tempRoot("hive-auth-test-");
 process.env.HIVE_HOME = home;
 
 const timestamp = "2026-07-10T12:00:00.000Z";
@@ -48,7 +62,6 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 3,
     createdAt: timestamp,
     lastEventAt: timestamp,
-    recoveryAttempts: 0,
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
@@ -60,7 +73,7 @@ class StubSpawner implements Spawner {
   readonly requests: SpawnRequest[] = [];
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
     this.requests.push(request);
-    const name = request.name ?? "spawned";
+    const name = `spawned-${this.requests.length}`;
     return agentRecord({ id: `agent-${name}`, name });
   }
 }
@@ -74,7 +87,14 @@ interface Harness {
 }
 
 function harness(
-  options: { landFailsTimes?: number; readiness?: LandReadiness } = {},
+  options: {
+    landFailsTimes?: number;
+    readiness?: LandReadiness;
+    refreshModelControl?: () => Promise<void>;
+    projectGate?: ProjectGate;
+    mainHealthMonitor?: MainHealthMonitorHandle;
+    repoRoot?: string;
+  } = {},
 ): Harness {
   const db = new HiveDatabase(":memory:");
   const spawner = new StubSpawner();
@@ -87,42 +107,41 @@ function harness(
   const readiness: LandReadiness = options.readiness ?? {
     pending: null,
     rebased: null,
+    targetBranch: null,
+    targetHead: null,
+    baseSha: null,
   };
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner,
-    repoRoot: "/tmp/hive-auth-noop",
-    sessiondInput: {
-      async writeAutomated() {
-        return { outcome: "declined" as const, reason: "not used" };
-      },
-      async injectKeys(_agent, _keys, input) {
-        return {
-          outcome: "injected" as const,
-          receipt: {
-            transactionId: input.transactionId,
-            stage: "written-to-terminal" as const,
-            byteRange: { start: "0", endExclusive: "1" },
-            orderedAt: "1",
-            availableCreditBytes: 4096,
-            consumedByProcess: "not-claimed" as const,
-            completeness: "complete" as const,
-            diagnostic: null,
-          },
-        };
-      },
-    },
+    repoRoot: options.repoRoot ?? join(tmpdir(), "hive-auth-noop"),
     landBranch: async (_root, branch) => {
       if (landFailures.count > 0) {
         landFailures.count -= 1;
         throw new Error("Not possible to fast-forward, aborting.");
       }
       landed.push(branch);
-      return { commit: "c0ffee".padEnd(40, "0") };
+      return {
+        commit: "c0ffee".padEnd(40, "0"),
+        landedCommits: ["c0ffee".padEnd(40, "0")],
+      };
     },
+    projectGate: options.projectGate ?? (async () => {}),
+    ...(options.mainHealthMonitor === undefined
+      ? {}
+      : { mainHealthMonitor: options.mainHealthMonitor }),
     readLandReadiness: async () => readiness,
+    listSettlementBranches: async () => [],
+    reconcileOrphanedWorktrees: async () => ({
+      worktrees: [],
+      preservedRefs: { releasable: [], kept: [] },
+    }),
+    ...(options.refreshModelControl === undefined
+      ? {}
+      : { refreshModelControl: options.refreshModelControl }),
   });
+  bindRootSession(db);
   return { daemon, db, spawner, landed, landFailures };
 }
 
@@ -132,6 +151,7 @@ const authorized =
     // Headers must be merged through the Headers API: spreading a Headers
     // instance yields {} and would strip the MCP client's Accept header.
     const headers = new Headers(init?.headers);
+    headers.set("Host", "127.0.0.1");
     if (token !== null) headers.set("Authorization", `Bearer ${token}`);
     return daemon.fetch(new Request(input, { ...init, headers }));
   };
@@ -184,7 +204,12 @@ describe("an unauthenticated process cannot mutate anything", () => {
         { kind: "notification", agentName: "maya", timestamp },
       ],
       ["/recover", "POST", { agent: "maya" }],
-      ["/statusline", "POST", { agent: "maya" }],
+      ["/token-usage/protocol-session-facts", "POST", { agent: "maya" }],
+      [
+        "/provider-permission/settled",
+        "POST",
+        { requestId: "permission-1", outcome: "deny" },
+      ],
     ];
     for (const [path, method, body] of routes) {
       const response = await authorized(daemon, null)(`http://hive${path}`, {
@@ -240,9 +265,41 @@ describe("an unauthenticated process cannot mutate anything", () => {
 
   test("/health stays public and authorizes nothing", async () => {
     const { daemon } = harness();
+    await daemon.runMaintenance();
     const response = await daemon.fetch(new Request("http://hive/health"));
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true });
+    await daemon.stop();
+  });
+
+  test("/health refuses readiness until maintenance succeeds and exposes isolated failures", async () => {
+    const { daemon } = harness({
+      refreshModelControl: () =>
+        Promise.reject(new Error("provider inventory unavailable")),
+    });
+
+    const before = await daemon.fetch(new Request("http://hive/health"));
+    expect(before.status).toBe(503);
+    expect(await before.json()).toMatchObject({
+      ok: false,
+      maintenance: { status: "unknown" },
+    });
+
+    await daemon.runMaintenance();
+    const after = await daemon.fetch(new Request("http://hive/health"));
+    expect(after.status).toBe(503);
+    expect(await after.json()).toMatchObject({
+      ok: false,
+      maintenance: {
+        status: "degraded",
+        failures: [
+          {
+            component: "model-control refresh",
+            error: "provider inventory unavailable",
+          },
+        ],
+      },
+    });
     await daemon.stop();
   });
 });
@@ -266,17 +323,20 @@ describe("a foreign agent cannot act on another tenant", () => {
       ).ok,
     ).toBe(false);
     expect(
-      (await callTool(daemon, token, "hive_inbox", { agent: "zara" })).ok,
+      (await callTool(daemon, token, "hive_mail_poll", { recipient: "zara" }))
+        .ok,
     ).toBe(false);
     expect(
       (await callTool(daemon, token, "hive_kill", { name: "zara" })).ok,
     ).toBe(false);
     expect(
       (
-        await callTool(daemon, token, "hive_send", {
+        await callTool(daemon, token, "hive_mail_publish", {
           from: "zara",
           to: "orchestrator",
+          lane: "control",
           body: "spoofed",
+          idempotencyKey: "spoofed-1",
         })
       ).ok,
     ).toBe(false);
@@ -313,78 +373,6 @@ describe("a foreign agent cannot act on another tenant", () => {
     await daemon.stop();
   });
 
-  test("a worker retrieves only an exact message addressed to itself", async () => {
-    const { daemon, db } = harness();
-    db.upsertAgent(agentRecord());
-    db.upsertAgent(
-      agentRecord({
-        id: "agent-zara",
-        name: "zara",
-        worktreePath: "/tmp/hive-zara",
-        branch: "hive/zara-work",
-      }),
-    );
-    const own = await daemon.delivery.send("queen", "maya", "exact body");
-    const foreign = await daemon.delivery.send("queen", "zara", "foreign body");
-    const root = await daemon.delivery.send("maya", "queen", "agent report");
-
-    for (const role of ["writer", "reader"] as const) {
-      const token = daemon.capabilities.mint("maya", role).token;
-      expect(
-        (await callTool(daemon, token, "hive_read_message", { id: own.id })).ok,
-      ).toBe(true);
-      expect(
-        (await callTool(daemon, token, "hive_read_message", { id: foreign.id }))
-          .ok,
-      ).toBe(false);
-      expect(
-        (await callTool(daemon, token, "hive_read_message", { id: root.id }))
-          .ok,
-      ).toBe(false);
-    }
-    await daemon.stop();
-  });
-
-  test("an omitted multibyte preview retrieves the byte-identical durable body", async () => {
-    const { daemon, db } = harness();
-    db.upsertAgent(agentRecord());
-    const full = `begin-${"é".repeat(12_000)}-end`;
-    const message = await daemon.delivery.send("queen", "maya", full);
-    const projection = buildNormalMessageBatchProjection(
-      [message],
-      "018f1e90-7b5a-7cc0-8000-000000000701",
-    );
-    const projectedBody = projection.body.split(
-      `message ${message.id} from queen:\n`,
-    )[1]!;
-    const marker =
-      /\n…\[(\d+) bytes omitted; sha256=([0-9a-f]{64});[^\]]+\]…\n/.exec(
-        projectedBody,
-      );
-    expect(marker).not.toBeNull();
-    expect(
-      Buffer.byteLength(projectedBody.replace(marker![0], ""), "utf8") +
-        Number(marker![1]),
-    ).toBe(Buffer.byteLength(full, "utf8"));
-    expect(marker![2]).toBe(projection.sourceDigests[0]);
-
-    const token = daemon.capabilities.mint("maya", "writer").token;
-    const retrieved = await callTool(
-      daemon,
-      token,
-      "hive_read_message",
-      projection.sourceRefs[0]!.retrieval.arguments,
-    );
-    expect(retrieved.ok).toBe(true);
-    const first = (retrieved.content as Array<{ text?: string }>)[0];
-    const body = JSON.parse(first?.text ?? "{}").body;
-    expect(Buffer.from(body, "utf8")).toEqual(Buffer.from(full, "utf8"));
-    expect(createHash("sha256").update(body, "utf8").digest("hex")).toBe(
-      required(projection.sourceDigests[0]),
-    );
-    await daemon.stop();
-  });
-
   test("a writer can compile memory but never delete it", async () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord());
@@ -398,9 +386,9 @@ describe("a foreign agent cannot act on another tenant", () => {
     expect(denied.error).toContain("may not memory:delete");
     expect(denials(daemon)).toContain("capability.forbidden-action");
 
-    // The roots keep the right: the operator and the orchestrator delete.
+    // The roots keep the right: the user and the orchestrator delete.
     for (const [subject, role] of [
-      ["operator", "operator"],
+      ["user", "user"],
       ["queen", "orchestrator"],
     ] as const) {
       const root = daemon.capabilities.mint(subject, role).token;
@@ -473,12 +461,36 @@ describe("a revoked epoch invalidates a capability", () => {
     await daemon.stop();
   });
 
+  test("a stale landing argument is refused and the live epoch can retry", async () => {
+    const { daemon, db, landed } = harness();
+    db.upsertAgent(agentRecord({ capabilityEpoch: 4 }));
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 4 });
+
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 3,
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain(
+      "capabilityEpoch passed (3) is not maya's current epoch (4)",
+    );
+    expect(landed).toEqual([]);
+
+    const retried = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 4,
+    });
+    expect(retried.ok).toBe(true);
+    expect(landed).toEqual(["hive/maya-work"]);
+    await daemon.stop();
+  });
+
   test("a critical control revokes write and landing authority for the live token", async () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
-    // This is exactly what `hive_send --priority critical` calls.
+    // This is exactly what a critical control publish calls.
     db.revokeAgentCapabilities("maya", timestamp);
 
     expect(
@@ -504,10 +516,12 @@ describe("a revoked epoch invalidates a capability", () => {
     // The paused agent can still speak, which is the whole point of a pause.
     expect(
       (
-        await callTool(daemon, token, "hive_send", {
+        await callTool(daemon, token, "hive_mail_publish", {
           from: "maya",
           to: "orchestrator",
+          lane: "control",
           body: "paused",
+          idempotencyKey: "maya-paused-1",
         })
       ).ok,
     ).toBe(true);
@@ -518,11 +532,11 @@ describe("a revoked epoch invalidates a capability", () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer");
-    const operator = daemon.capabilities.mint("operator", "operator").token;
+    const user = daemon.capabilities.mint("user", "user").token;
 
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(true);
     expect(
-      (await callTool(daemon, operator, "hive_kill", { name: "maya" })).ok,
+      (await callTool(daemon, user, "hive_kill", { name: "maya" })).ok,
     ).toBe(true);
     // A surviving descendant of the killed process holds a dead credential.
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(false);
@@ -563,13 +577,13 @@ describe("an agent-bound capability requires a live authority record", () => {
 });
 
 describe("the codex root token endpoint", () => {
-  test("mints a session-lived orchestrator capability for the operator", async () => {
+  test("mints a session-lived orchestrator capability for the user", async () => {
     const { daemon } = harness();
-    const operator = daemon.capabilities.mint("operator", "operator", {
+    const user = daemon.capabilities.mint("user", "user", {
       epoch: 0,
     });
 
-    const response = await authorized(daemon, operator.token)(
+    const response = await authorized(daemon, user.token)(
       "http://hive/codex-root-token",
       { method: "POST" },
     );
@@ -603,9 +617,163 @@ describe("the codex root token endpoint", () => {
     expect(anonymous.status).toEqual(401);
     await daemon.stop();
   });
+
+  test("a fresh mint revokes the predecessor and persists the queen credential", async () => {
+    const { daemon } = harness();
+    const user = daemon.capabilities.mint("user", "user", {
+      epoch: 0,
+    });
+    const mint = async () => {
+      const response = await authorized(daemon, user.token)(
+        "http://hive/codex-root-token",
+        { method: "POST" },
+      );
+      expect(response.status).toEqual(200);
+      return ((await response.json()) as { token: string }).token;
+    };
+
+    const predecessor = await mint();
+    expect((await callTool(daemon, predecessor, "hive_status")).ok).toBe(true);
+    const successor = await mint();
+    // The predecessor's token is dead: only the current root's credential
+    // may act, and the store holds exactly that one.
+    expect((await callTool(daemon, predecessor, "hive_status")).ok).toBe(false);
+    expect((await callTool(daemon, successor, "hive_status")).ok).toBe(true);
+    expect(readCredential(ORCHESTRATOR_NAME)).toEqual(successor);
+    await daemon.stop();
+  });
+
+  test("launcher mint grants content:true; startup issueCredential does not", async () => {
+    // Root self-observe requires content:true (capabilities.ts self path).
+    // Production must not diverge from that fixture: only POST /codex-root-token
+    // (the launcher mint that replaces queen.cap) grants it. Generic startup
+    // issueCredential stays unconstrained so the pre-launch token is not widened.
+    const { daemon, db } = harness();
+    const startupToken = daemon.issueCredential(
+      ORCHESTRATOR_NAME,
+      "orchestrator",
+      0,
+    );
+    const startupId = required(startupToken.split(".")[1]);
+    const startupRow = required(db.getCapability(startupId));
+    expect(startupRow.capability.constraints?.content).not.toBe(true);
+
+    const user = daemon.capabilities.mint("user", "user", {
+      epoch: 0,
+    });
+    const response = await authorized(daemon, user.token)(
+      "http://hive/codex-root-token",
+      { method: "POST" },
+    );
+    expect(response.status).toEqual(200);
+    const launcherToken = ((await response.json()) as { token: string }).token;
+    const launcherId = required(launcherToken.split(".")[1]);
+    const launcherRow = required(db.getCapability(launcherId));
+    expect(launcherRow.capability.constraints).toEqual({ content: true });
+    await daemon.stop();
+  });
 });
 
 describe("a one-shot landing grant cannot be replayed", () => {
+  test("the project gate catches a type error in the candidate worktree", async () => {
+    const primaryRoot = tempRoot("hive-primary-green-");
+    const candidateRoot = tempRoot("hive-candidate-red-");
+    const tscExecutable = Bun.which("tsc");
+    if (tscExecutable === null) throw new Error("test requires tsc on PATH");
+    writeFileSync(
+      join(primaryRoot, "package.json"),
+      JSON.stringify({
+        scripts: { "format:check": "exit 0", typecheck: "exit 0" },
+      }),
+    );
+    writeFileSync(
+      join(candidateRoot, "package.json"),
+      JSON.stringify({
+        scripts: {
+          "format:check": "exit 0",
+          typecheck: `${JSON.stringify(tscExecutable)} --noEmit --pretty false`,
+        },
+      }),
+    );
+    writeFileSync(
+      join(candidateRoot, "tsconfig.json"),
+      JSON.stringify({ include: ["broken.ts"] }),
+    );
+    writeFileSync(
+      join(candidateRoot, "broken.ts"),
+      'const value: number = "not a number";\n',
+    );
+    const { daemon, db, landed } = harness({
+      repoRoot: primaryRoot,
+      projectGate: runProjectGate,
+    });
+    db.upsertAgent(agentRecord({ worktreePath: candidateRoot }));
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    try {
+      const result = await callTool(daemon, token, "hive_land", {
+        agent: "maya",
+        capabilityEpoch: 0,
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Project typecheck blocked landing");
+      expect(result.error).toContain("Type 'string' is not assignable");
+      expect(landed).toEqual([]);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  test("a project gate refusal blocks the merge", async () => {
+    let calls = 0;
+    const { daemon, db, landed } = harness({
+      projectGate: async () => {
+        calls += 1;
+        throw new Error(
+          "Project format:check blocked landing: deliberate regression",
+        );
+      },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    const result = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("deliberate regression");
+    expect(calls).toBe(1);
+    expect(landed).toEqual([]);
+    await daemon.stop();
+  });
+
+  test("a successful land asks the out-of-band main monitor to check now", async () => {
+    let checks = 0;
+    const { daemon, db } = harness({
+      mainHealthMonitor: {
+        start: () => {},
+        checkNow: async () => {
+          checks += 1;
+        },
+        stop: async () => {},
+      },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    const result = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(checks).toBe(1);
+    await daemon.stop();
+  });
+
   test("the second land with the same capability is denied", async () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());
@@ -636,7 +804,7 @@ describe("a one-shot landing grant cannot be replayed", () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
-    const operator = daemon.capabilities.mint("operator", "operator", {
+    const user = daemon.capabilities.mint("user", "user", {
       epoch: 0,
     });
 
@@ -676,20 +844,18 @@ describe("a one-shot landing grant cannot be replayed", () => {
 
     // Approval re-arms exactly one landing: the next land succeeds, the one
     // after is refused again.
-    const approved = await callTool(daemon, operator.token, "hive_approve", {
+    const approved = await callTool(daemon, user.token, "hive_approve", {
       id: pending[0]?.id,
       decision: "approve",
     });
     expect(approved.ok).toBe(true);
 
     // Nothing tells a waiting agent its re-arm resolved unless the daemon
-    // says so itself — this is the notification that replaces the human
+    // says so itself — this is the notification that replaces the user
     // having to prod it with an urgent message.
-    const notice = db
-      .listMessages()
-      .find(
-        (message) => message.from === "hive-approvals" && message.to === "maya",
-      );
+    const notice = mailbox(daemon.mail, "maya").find(
+      (item) => item.sender === "hive-approvals",
+    );
     expect(notice?.body).toContain(pending[0]?.description);
     expect(notice?.body).toContain("approved");
     expect(notice?.body).toContain("retry hive_land now");
@@ -718,7 +884,7 @@ describe("a one-shot landing grant cannot be replayed", () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
-    const operator = daemon.capabilities.mint("operator", "operator", {
+    const user = daemon.capabilities.mint("user", "user", {
       epoch: 0,
     });
 
@@ -744,7 +910,7 @@ describe("a one-shot landing grant cannot be replayed", () => {
     expect(pending).toHaveLength(1);
     expect(
       (
-        await callTool(daemon, operator.token, "hive_approve", {
+        await callTool(daemon, user.token, "hive_approve", {
           id: pending[0]?.id,
           decision: "deny",
         })
@@ -753,11 +919,9 @@ describe("a one-shot landing grant cannot be replayed", () => {
 
     // A denial must not leave the agent waiting or guessing: it is told
     // explicitly, so it reports back instead of retrying blindly.
-    const notice = db
-      .listMessages()
-      .find(
-        (message) => message.from === "hive-approvals" && message.to === "maya",
-      );
+    const notice = mailbox(daemon.mail, "maya").find(
+      (item) => item.sender === "hive-approvals",
+    );
     expect(notice?.body).toContain(pending[0]?.description);
     expect(notice?.body).toContain("denied");
     expect(notice?.body).toContain("report back");
@@ -771,6 +935,38 @@ describe("a one-shot landing grant cannot be replayed", () => {
       ).ok,
     ).toBe(false);
     expect(landed).toEqual(["hive/maya-work"]);
+    await daemon.stop();
+  });
+
+  test("an MCP delivery failure reaches the CLI with its reason", async () => {
+    const { daemon } = harness();
+    const token = daemon.capabilities.mint(
+      "orchestrator",
+      "orchestrator",
+    ).token;
+    const approvalId = daemon.queueProviderApproval(
+      "maya",
+      "detached-provider-request",
+      "run a command",
+    );
+    const approvalOwner = daemon as unknown as {
+      approvalService: {
+        providerPermissionRequests: Map<string, unknown>;
+      };
+    };
+    approvalOwner.approvalService.providerPermissionRequests.delete(approvalId);
+
+    await expect(
+      callHiveTool(
+        4483,
+        "hive_approve",
+        { id: approvalId, decision: "approve" },
+        "approval",
+        authorized(daemon, token),
+      ),
+    ).rejects.toThrow(
+      "hive_approve failed: the provider permission is not attached to a live frontend",
+    );
     await daemon.stop();
   });
 
@@ -900,9 +1096,13 @@ describe("legitimate workflows keep working", () => {
       model: maya.model,
       effort: null,
       conversationId: null,
-      pid: 4_200,
-      startToken: "4200:1",
-      foregroundProcessGroupId: 4_200,
+      adapterChild: {
+        pid: 4_200,
+        startToken: "4200:1",
+        processGroupId: 4_200,
+        observedAt: timestamp,
+      },
+      protocolReceipt: null,
       capabilityEpoch: maya.capabilityEpoch,
       launchGrantId: "grant-auth-workflow",
       startedAt: timestamp,
@@ -911,6 +1111,17 @@ describe("legitimate workflows keep working", () => {
       exitReason: null,
     });
     const { token } = daemon.capabilities.mint("orchestrator", "orchestrator");
+
+    expect(
+      (
+        await callTool(daemon, token, "hive_spawn", {
+          name: "alex",
+          task: "try to choose an identity",
+          category: "simple_coding",
+        })
+      ).ok,
+    ).toBe(false);
+    expect(spawner.requests).toHaveLength(0);
 
     expect(
       (
@@ -927,12 +1138,10 @@ describe("legitimate workflows keep working", () => {
         await callTool(daemon, token, "hive_spawn_many", {
           requests: [
             {
-              name: "alex",
               task: "do the first thing",
               category: "simple_coding",
             },
             {
-              name: "nina",
               task: "do the second thing",
               category: "debugging",
             },
@@ -942,7 +1151,11 @@ describe("legitimate workflows keep working", () => {
     ).toBe(true);
     expect(spawner.requests).toHaveLength(3);
 
-    const approvalId = await daemon.queueCodexApproval("maya", "run a command");
+    const approvalId = daemon.queueProviderApproval(
+      "maya",
+      "provider-request-1",
+      "run a command",
+    );
     expect((await callTool(daemon, token, "hive_approvals")).ok).toBe(true);
     expect(
       (
@@ -953,12 +1166,99 @@ describe("legitimate workflows keep working", () => {
       ).ok,
     ).toBe(true);
     expect(db.getApproval(approvalId)?.status).toBe("approved");
+    const mayaToken = daemon.capabilities.mint("maya", "writer").token;
+    const decisionsResponse = await authorized(
+      daemon,
+      mayaToken,
+    )("http://localhost/provider-permission/decisions");
+    expect(decisionsResponse.status).toBe(200);
+    expect(await decisionsResponse.json()).toEqual({
+      decisions: [
+        {
+          approvalId,
+          requestId: "provider-request-1",
+          outcome: "allow",
+        },
+      ],
+    });
+    const ackResponse = await authorized(daemon, mayaToken)(
+      "http://localhost/provider-permission/ack",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approvalId }),
+      },
+    );
+    expect(ackResponse.status).toBe(200);
 
     expect(
-      (await callTool(daemon, token, "hive_inbox", { agent: "orchestrator" }))
-        .ok,
+      (
+        await callTool(daemon, token, "hive_mail_poll", {
+          recipient: "orchestrator",
+        })
+      ).ok,
     ).toBe(true);
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(true);
+    await daemon.stop();
+  });
+
+  test("a pane settlement retires pending and already-queued provider approvals", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent(agentRecord({ status: "awaiting-approval" }));
+    const mayaToken = daemon.capabilities.mint("maya", "writer").token;
+    const user = daemon.capabilities.mint("orchestrator", "orchestrator").token;
+
+    const localApproval = daemon.queueProviderApproval(
+      "maya",
+      "provider-local",
+      "run local command",
+    );
+    const localSettlement = await authorized(daemon, mayaToken)(
+      "http://localhost/provider-permission/settled",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: "provider-local",
+          outcome: "deny",
+        }),
+      },
+    );
+    expect(localSettlement.status).toBe(200);
+    expect(db.getApproval(localApproval)?.status).toBe("denied");
+
+    const queuedApproval = daemon.queueProviderApproval(
+      "maya",
+      "provider-queued",
+      "run queued command",
+    );
+    expect(
+      (
+        await callTool(daemon, user, "hive_approve", {
+          id: queuedApproval,
+          decision: "approve",
+        })
+      ).ok,
+    ).toBe(true);
+    const queuedSettlement = await authorized(daemon, mayaToken)(
+      "http://localhost/provider-permission/settled",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: "provider-queued",
+          outcome: "allow",
+        }),
+      },
+    );
+    expect(queuedSettlement.status).toBe(200);
+    expect(await queuedSettlement.json()).toEqual({ settled: 1 });
+    const decisions = await authorized(
+      daemon,
+      mayaToken,
+    )("http://localhost/provider-permission/decisions");
+    expect(await decisions.json()).toEqual({ decisions: [] });
+
     await daemon.stop();
   });
 
@@ -973,30 +1273,52 @@ describe("legitimate workflows keep working", () => {
     ).token;
 
     expect(
-      (await callTool(daemon, asQueen, "hive_inbox", { agent: "orchestrator" }))
-        .ok,
-    ).toBe(true);
-    expect(
-      (await callTool(daemon, asQueen, "hive_inbox", { agent: "Orchestrator" }))
-        .ok,
-    ).toBe(true);
-    expect(
-      (await callTool(daemon, asQueen, "hive_inbox", { agent: "queen" })).ok,
-    ).toBe(true);
-    expect(
-      (await callTool(daemon, asQueen, "hive_inbox", { agent: "Queen" })).ok,
-    ).toBe(true);
-
-    expect(
-      (await callTool(daemon, asSynonym, "hive_inbox", { agent: "queen" })).ok,
-    ).toBe(true);
-    expect(
-      (await callTool(daemon, asSynonym, "hive_inbox", { agent: "Queen" })).ok,
+      (
+        await callTool(daemon, asQueen, "hive_mail_poll", {
+          recipient: "orchestrator",
+        })
+      ).ok,
     ).toBe(true);
     expect(
       (
-        await callTool(daemon, asSynonym, "hive_inbox", {
-          agent: "orchestrator",
+        await callTool(daemon, asQueen, "hive_mail_poll", {
+          recipient: "Orchestrator",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(daemon, asQueen, "hive_mail_poll", {
+          recipient: "queen",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(daemon, asQueen, "hive_mail_poll", {
+          recipient: "Queen",
+        })
+      ).ok,
+    ).toBe(true);
+
+    expect(
+      (
+        await callTool(daemon, asSynonym, "hive_mail_poll", {
+          recipient: "queen",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(daemon, asSynonym, "hive_mail_poll", {
+          recipient: "Queen",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(daemon, asSynonym, "hive_mail_poll", {
+          recipient: "orchestrator",
         })
       ).ok,
     ).toBe(true);
@@ -1004,7 +1326,8 @@ describe("legitimate workflows keep working", () => {
     // Foreign root-style subject from a worker is still denied.
     const worker = daemon.capabilities.mint("maya", "writer").token;
     expect(
-      (await callTool(daemon, worker, "hive_inbox", { agent: "queen" })).ok,
+      (await callTool(daemon, worker, "hive_mail_poll", { recipient: "queen" }))
+        .ok,
     ).toBe(false);
     await daemon.stop();
   });
@@ -1027,15 +1350,18 @@ describe("legitimate workflows keep working", () => {
 
     expect(
       (
-        await callTool(daemon, token, "hive_send", {
+        await callTool(daemon, token, "hive_mail_publish", {
           from: "maya",
           to: "orchestrator",
+          lane: "control",
           body: "report",
+          idempotencyKey: "maya-report-1",
         })
       ).ok,
     ).toBe(true);
     expect(
-      (await callTool(daemon, token, "hive_inbox", { agent: "maya" })).ok,
+      (await callTool(daemon, token, "hive_mail_poll", { recipient: "maya" }))
+        .ok,
     ).toBe(true);
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(true);
     expect(
@@ -1054,10 +1380,10 @@ describe("legitimate workflows keep working", () => {
     await daemon.stop();
   });
 
-  test("the operator drives recovery", async () => {
+  test("the user drives recovery", async () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord({ status: "dead" }));
-    const { token } = daemon.capabilities.mint("operator", "operator");
+    const { token } = daemon.capabilities.mint("user", "user");
 
     const recover = await authorized(daemon, token)("http://hive/recover", {
       method: "POST",
@@ -1138,10 +1464,10 @@ describe("audit", () => {
   });
 });
 
-// The re-arm is where Hive spends humans. Two things it must never do: ask for
+// The re-arm is where Hive spends users. Two things it must never do: ask for
 // an approval that grants nothing (the branch is already merged), and grant one
 // on evidence it does not have.
-describe("a spent land grant is measured before a human is asked", () => {
+describe("a spent land grant is measured before a user is asked", () => {
   const pendingRearms = (db: HiveDatabase): number =>
     db
       .listApprovals("pending")
@@ -1155,9 +1481,15 @@ describe("a spent land grant is measured before a human is asked", () => {
 
   test("an already-landed branch files no re-arm approval at all", async () => {
     // main..branch is empty: there is nothing to merge, so there is nothing to
-    // grant, and asking a human costs them a decline for no change at all.
+    // grant, and asking a user costs them a decline for no change at all.
     const { daemon, db, landed } = harness({
-      readiness: { pending: 0, rebased: true },
+      readiness: {
+        pending: 0,
+        rebased: true,
+        targetBranch: "main",
+        targetHead: null,
+        baseSha: null,
+      },
     });
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
@@ -1185,13 +1517,19 @@ describe("a spent land grant is measured before a human is asked", () => {
 
   test("real work on a rebased branch re-arms itself, up to the budget", async () => {
     const { daemon, db, landed } = harness({
-      readiness: { pending: 2, rebased: true },
+      readiness: {
+        pending: 2,
+        rebased: true,
+        targetBranch: "main",
+        targetHead: null,
+        baseSha: null,
+      },
     });
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
     // The granted landing plus AUTO_REARM_BUDGET re-armed ones, none of which
-    // touches a human.
+    // touches a user.
     for (let attempt = 0; attempt <= AUTO_REARM_BUDGET; attempt += 1) {
       const result = await callTool(daemon, token, "hive_land", {
         agent: "maya",
@@ -1203,13 +1541,15 @@ describe("a spent land grant is measured before a human is asked", () => {
     expect(autoRearms(daemon)).toBe(AUTO_REARM_BUDGET);
     expect(pendingRearms(db)).toBe(0);
 
-    // The budget is a bound, not a bypass: the next landing asks.
+    // The budget is a bound, not a bypass: the next landing asks, and the
+    // refusal says the budget is why.
     const refused = await callTool(daemon, token, "hive_land", {
       agent: "maya",
       capabilityEpoch: 0,
     });
     expect(refused.ok).toBe(false);
     expect(refused.error).toContain("already spent");
+    expect(refused.error).toContain("re-arm budget is exhausted");
     expect(pendingRearms(db)).toBe(1);
     expect(landed).toHaveLength(AUTO_REARM_BUDGET + 1);
     await daemon.stop();
@@ -1219,7 +1559,13 @@ describe("a spent land grant is measured before a human is asked", () => {
     // Not a fast-forward: the merge Hive would be granting cannot even happen,
     // and the agent has to rebase and re-run its tests first.
     const { daemon, db, landed } = harness({
-      readiness: { pending: 2, rebased: false },
+      readiness: {
+        pending: 2,
+        rebased: false,
+        targetBranch: "main",
+        targetHead: "f".repeat(40),
+        baseSha: "e".repeat(40),
+      },
     });
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
@@ -1237,17 +1583,31 @@ describe("a spent land grant is measured before a human is asked", () => {
       capabilityEpoch: 0,
     });
     expect(refused.ok).toBe(false);
+    // Both true conditions are named: the grant IS spent, AND the target has
+    // moved — the forty-minute loss was the message reporting only the first
+    // and sending the agent to wait on a user when its next step was a rebase.
+    expect(refused.error).toContain("already spent");
+    expect(refused.error).toContain("has also moved");
+    expect(refused.error).toContain("f".repeat(40));
+    expect(refused.error).toContain("e".repeat(40));
+    expect(refused.error).toContain("rebase");
     expect(autoRearms(daemon)).toBe(0);
     expect(pendingRearms(db)).toBe(1);
     expect(landed).toEqual(["hive/maya-work"]);
     await daemon.stop();
   });
 
-  test("a branch Hive cannot measure asks a human — unknown is never a yes", async () => {
+  test("a branch Hive cannot measure asks a user — unknown is never a yes", async () => {
     // The whole guard: a reader that returns null returns NO EVIDENCE, and no
     // evidence may not be converted into a grant.
     const { daemon, db, landed } = harness({
-      readiness: { pending: null, rebased: null },
+      readiness: {
+        pending: null,
+        rebased: null,
+        targetBranch: null,
+        targetHead: null,
+        baseSha: null,
+      },
     });
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
@@ -1266,6 +1626,9 @@ describe("a spent land grant is measured before a human is asked", () => {
     });
     expect(refused.ok).toBe(false);
     expect(refused.error).toContain("already spent");
+    // The refusal admits the measurement failed rather than blaming the grant
+    // alone — unknown is a reason to ask, and the agent is told that.
+    expect(refused.error).toContain("could not measure");
     expect(refused.error).not.toContain("Nothing to land");
     expect(autoRearms(daemon)).toBe(0);
     expect(pendingRearms(db)).toBe(1);
@@ -1277,7 +1640,13 @@ describe("a spent land grant is measured before a human is asked", () => {
     // The auto re-arm sits behind authorization, not in front of it: it is only
     // ever reached by a caller whose *only* failing check was the spent grant.
     const { daemon, db, landed } = harness({
-      readiness: { pending: 2, rebased: true },
+      readiness: {
+        pending: 2,
+        rebased: true,
+        targetBranch: "main",
+        targetHead: null,
+        baseSha: null,
+      },
     });
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
@@ -1299,6 +1668,105 @@ describe("a spent land grant is measured before a human is asked", () => {
     expect(refused.error).toContain("revoked");
     expect(autoRearms(daemon)).toBe(0);
     expect(landed).toEqual(["hive/maya-work"]);
+    await daemon.stop();
+  });
+
+  test("a spent grant on a detached primary names the detachment, never a branch to rebase onto", async () => {
+    // The 2026-08-13 khalid refusal: the primary was detached at another
+    // agent's unlanded tip, and the text answered "rebase onto the primary
+    // checkout's current branch" — a branch that did not exist.
+    const { daemon, db, landed } = harness({
+      readiness: {
+        pending: 2,
+        rebased: false,
+        targetBranch: null,
+        targetHead: "f".repeat(40),
+        baseSha: "e".repeat(40),
+      },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("already spent");
+    expect(refused.error).toContain("detached");
+    expect(refused.error).toContain("f".repeat(40));
+    // No remedy may aim a rebase at the detached position.
+    expect(refused.error).not.toContain("rebase onto the primary checkout");
+    expect(refused.error).not.toContain("git rebase HEAD");
+    // A detachment is not measurable, so no auto re-arm is spent against it.
+    expect(autoRearms(daemon)).toBe(0);
+    expect(landed).toEqual(["hive/maya-work"]);
+    await daemon.stop();
+  });
+
+  test("a detached primary never reports 'nothing to land'", async () => {
+    // pending: 0 measured against a detached position means "contained in a
+    // commit", not "on main" — reporting it would declare unlanded work done.
+    const { daemon, db } = harness({
+      readiness: {
+        pending: 0,
+        rebased: true,
+        targetBranch: null,
+        targetHead: "f".repeat(40),
+        baseSha: "e".repeat(40),
+      },
+    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("detached");
+    expect(refused.error).not.toContain("Nothing to land");
+    await daemon.stop();
+  });
+
+  test("a landed branch writes a receipt naming every commit that landed", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+
+    const landed = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
+    expect(landed.ok).toBe(true);
+    expect(JSON.stringify(landed.content)).toContain("landedCommits");
+
+    const receipts = listAuditEntries(db, 50).filter((entry) =>
+      entry.reason?.startsWith("receipt: landed "),
+    );
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]?.decision).toBe("allow");
+    expect(receipts[0]?.callerSubject).toBe("maya");
+    expect(receipts[0]?.reason).toContain(
+      "landed 1 commit from hive/maya-work",
+    );
+    expect(receipts[0]?.reason).toContain("c0ffee");
     await daemon.stop();
   });
 

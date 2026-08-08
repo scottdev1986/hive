@@ -1,0 +1,28 @@
+Building for debugging...
+[0/15] Write sources
+[1/15] Write swift-version--58304C5D6DBC2206.txt
+[3/7] Compiling HiveWorkspace WorkspaceShellWindowController.swift
+[4/7] Emitting module HiveWorkspace
+[4/9] Write Objects.LinkFileList
+[5/9] Linking HiveWorkspace
+[6/9] Applying HiveWorkspace
+[8/10] Emitting module HiveWorkspaceTests
+[8/10] Write Objects.LinkFileList
+[9/10] Linking HiveWorkspacePackageTests
+Build complete! (1.86s)
+Test Suite 'Selected tests' started at 2026-08-01 22:14:28.302.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-08-01 22:14:28.303.
+Test Suite 'WorkspaceShellViewTests' started at 2026-08-01 22:14:28.303.
+Test Case '-[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenScrollsInsideTheRequestedWindowSize]' started.
+/Users/scottkellar/Projects/hive/.hive/worktrees/anna/workspace/Tests/HiveWorkspaceTests/WorkspaceShellViewTests.swift:269: error: -[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenScrollsInsideTheRequestedWindowSize] : XCTAssertEqualWithAccuracy failed: ("479.0") is not equal to ("508.0") +/- ("1.0")
+Test Case '-[HiveWorkspaceTests.WorkspaceShellViewTests testDenseScreenScrollsInsideTheRequestedWindowSize]' failed (1.175 seconds).
+Test Suite 'WorkspaceShellViewTests' failed at 2026-08-01 22:14:29.479.
+	 Executed 1 test, with 1 failure (0 unexpected) in 1.175 (1.176) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' failed at 2026-08-01 22:14:29.479.
+	 Executed 1 test, with 1 failure (0 unexpected) in 1.175 (1.176) seconds
+Test Suite 'Selected tests' failed at 2026-08-01 22:14:29.479.
+	 Executed 1 test, with 1 failure (0 unexpected) in 1.175 (1.176) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

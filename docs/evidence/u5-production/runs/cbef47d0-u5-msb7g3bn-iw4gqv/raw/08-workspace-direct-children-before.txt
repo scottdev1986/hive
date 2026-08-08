@@ -1,0 +1,2 @@
+65543 65327 bun run /Users/scottkellar/Projects/hive/.hive/worktrees/anna/qa/u5-workspace-feed-bridge.ts --port 56177 --instance-id fba75ed1ad --workspace-session-id workspace-shell-8D1490BC-17EA-41AB-969E-EFB70F68562B
+66289 65327 (bun)

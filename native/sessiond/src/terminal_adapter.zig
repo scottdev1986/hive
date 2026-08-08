@@ -19,8 +19,28 @@ const ghostty_c = c_api;
 /// Hive's canonical non-image terminal-state budget.
 pub const canonical_scrollback_bytes: usize = 48 * 1024 * 1024;
 
-/// Contract A5: bridge/C-owned exports never escape to TerminalState. The
-/// adapter copies into the exact Zig allocator that TerminalState later frees.
+pub const TerminalCapture = struct {
+    allocator: std.mem.Allocator,
+    columns: u16,
+    rows: u16,
+    row_start: u16,
+    screen: enum { primary, alternate },
+    cursor: struct {
+        row: u16,
+        column: u16,
+        visible: bool,
+    },
+    text: ?[]u8,
+    styled_text: ?[]u8,
+
+    pub fn deinit(self: *TerminalCapture) void {
+        if (self.text) |text| self.allocator.free(text);
+        if (self.styled_text) |text| self.allocator.free(text);
+        self.* = undefined;
+    }
+};
+
+/// Contract A5: bridge/C-owned exports never escape to TerminalState. The adapter copies into the exact Zig allocator that TerminalState later frees.
 pub const BridgeExport = struct {
     context: *anyopaque,
     exportFn: *const fn (*anyopaque, *?[*]u8, *usize) anyerror!void,
@@ -45,8 +65,6 @@ const BridgeBytes = struct {
     length: usize,
 };
 
-/// Production libghostty-vt adapter. TerminalState owns the returned VtEngine
-/// and is the sole caller of its deinit callback.
 pub const RealVtEngine = struct {
     allocator: std.mem.Allocator,
     terminal: ghostty_c.GhosttyTerminal,
@@ -54,22 +72,15 @@ pub const RealVtEngine = struct {
     effects: std.ArrayList(u8) = .{},
     effect_failed: bool = false,
     digest_value: [32]u8 = @splat(0),
-    /// PTY output has landed since `digest_value` was measured. The digest is a
-    /// full checkpoint export, so measuring it per write made sustained output
-    /// cost O(terminal state) per chunk; only `digestCb` actually reads it.
     digest_dirty: bool = false,
-    /// Checkpoint exports performed by this engine, so the "not once per
-    /// written chunk" bound above is assertable rather than merely intended.
+    /// Checkpoint exports performed by this engine, so the "not once per written chunk" bound above is assertable rather than merely intended.
     bridge_exports: usize = 0,
     last_bridge_address: usize = 0,
     last_copy_address: usize = 0,
-    /// Live grid + cell pixel geometry, updated by resize; drives XTWINOPS
-    /// size reports (CSI 14/16/18 t).
     columns: u32,
     rows: u32,
     cell_width_px: u32 = 0,
     cell_height_px: u32 = 0,
-    /// XTVERSION reply text ("ghostty <version>"), built once at create.
     xtversion_buf: [80]u8 = undefined,
     xtversion_len: usize = 0,
 
@@ -96,9 +107,6 @@ pub const RealVtEngine = struct {
             .columns = columns,
             .rows = rows,
         };
-        // XTVERSION identifies as the pinned Ghostty engine build (claude's
-        // detection requires the reply to start with "ghostty"); the default
-        // "libghostty" string fails that check.
         const fallback = "ghostty libghostty-vt";
         var version: ghostty_c.GhosttyString = .{ .ptr = null, .len = 0 };
         if (ghostty_c.ghostty_build_info(
@@ -128,8 +136,6 @@ pub const RealVtEngine = struct {
             ghostty_c.GHOSTTY_TERMINAL_OPT_WRITE_PTY,
             @ptrCast(&writePtyCallback),
         ) != ghostty_c.GHOSTTY_SUCCESS) return error.EngineCreateFailed;
-        // Startup probes (claude et al.): answer DA / XTVERSION / XTWINOPS the
-        // way ghostty-the-app does, or the client stalls waiting on replies.
         if (ghostty_c.ghostty_terminal_set(
             terminal,
             ghostty_c.GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES,
@@ -197,6 +203,128 @@ pub const RealVtEngine = struct {
         var result: [32]u8 = undefined;
         _ = try std.fmt.hexToBytes(&result, value);
         return result;
+    }
+
+    pub fn capture(
+        self: *RealVtEngine,
+        allocator: std.mem.Allocator,
+        max_rows: u16,
+        include_text: bool,
+    ) !TerminalCapture {
+        if (max_rows == 0) return error.InvalidCaptureRows;
+        var columns: u16 = 0;
+        var rows: u16 = 0;
+        var cursor_column: u16 = 0;
+        var cursor_row: u16 = 0;
+        var cursor_visible = false;
+        var active_screen: ghostty_c.GhosttyTerminalScreen = undefined;
+        inline for (.{
+            .{ ghostty_c.GHOSTTY_TERMINAL_DATA_COLS, &columns },
+            .{ ghostty_c.GHOSTTY_TERMINAL_DATA_ROWS, &rows },
+            .{ ghostty_c.GHOSTTY_TERMINAL_DATA_CURSOR_X, &cursor_column },
+            .{ ghostty_c.GHOSTTY_TERMINAL_DATA_CURSOR_Y, &cursor_row },
+            .{ ghostty_c.GHOSTTY_TERMINAL_DATA_CURSOR_VISIBLE, &cursor_visible },
+            .{ ghostty_c.GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &active_screen },
+        }) |query| {
+            if (ghostty_c.ghostty_terminal_get(self.terminal, query[0], query[1]) !=
+                ghostty_c.GHOSTTY_SUCCESS) return error.CaptureFailed;
+        }
+        if (columns == 0 or rows == 0) return error.CaptureFailed;
+
+        const retained_rows = @min(rows, max_rows);
+        const row_start = rows - retained_rows;
+        var text: ?[]u8 = null;
+        errdefer if (text) |bytes| allocator.free(bytes);
+        var styled_text: ?[]u8 = null;
+        errdefer if (styled_text) |bytes| allocator.free(bytes);
+        if (include_text) {
+            var start_ref: ghostty_c.GhosttyGridRef = std.mem.zeroes(ghostty_c.GhosttyGridRef);
+            start_ref.size = @sizeOf(ghostty_c.GhosttyGridRef);
+            var end_ref: ghostty_c.GhosttyGridRef = std.mem.zeroes(ghostty_c.GhosttyGridRef);
+            end_ref.size = @sizeOf(ghostty_c.GhosttyGridRef);
+            const start_point: ghostty_c.GhosttyPoint = .{
+                .tag = ghostty_c.GHOSTTY_POINT_TAG_ACTIVE,
+                .value = .{ .coordinate = .{ .x = 0, .y = row_start } },
+            };
+            const end_point: ghostty_c.GhosttyPoint = .{
+                .tag = ghostty_c.GHOSTTY_POINT_TAG_ACTIVE,
+                .value = .{ .coordinate = .{ .x = columns - 1, .y = rows - 1 } },
+            };
+            if (ghostty_c.ghostty_terminal_grid_ref(self.terminal, start_point, &start_ref) !=
+                ghostty_c.GHOSTTY_SUCCESS or
+                ghostty_c.ghostty_terminal_grid_ref(self.terminal, end_point, &end_ref) !=
+                    ghostty_c.GHOSTTY_SUCCESS) return error.CaptureFailed;
+            var selection: ghostty_c.GhosttySelection = std.mem.zeroes(ghostty_c.GhosttySelection);
+            selection.size = @sizeOf(ghostty_c.GhosttySelection);
+            selection.start = start_ref;
+            selection.end = end_ref;
+            selection.rectangle = false;
+            text = try formatSelection(self.terminal, allocator, &selection, .plain);
+            styled_text = try formatSelection(self.terminal, allocator, &selection, .vt);
+        }
+        return .{
+            .allocator = allocator,
+            .columns = columns,
+            .rows = rows,
+            .row_start = row_start,
+            .screen = switch (active_screen) {
+                ghostty_c.GHOSTTY_TERMINAL_SCREEN_PRIMARY => .primary,
+                ghostty_c.GHOSTTY_TERMINAL_SCREEN_ALTERNATE => .alternate,
+                else => return error.CaptureFailed,
+            },
+            .cursor = .{
+                .row = cursor_row,
+                .column = cursor_column,
+                .visible = cursor_visible and cursor_row >= row_start,
+            },
+            .text = text,
+            .styled_text = styled_text,
+        };
+    }
+
+    fn formatSelection(
+        terminal: ghostty_c.GhosttyTerminal,
+        allocator: std.mem.Allocator,
+        selection: *const ghostty_c.GhosttySelection,
+        emit: enum { plain, vt },
+    ) ![]u8 {
+        var options: ghostty_c.GhosttyFormatterTerminalOptions =
+            std.mem.zeroes(ghostty_c.GhosttyFormatterTerminalOptions);
+        options.size = @sizeOf(ghostty_c.GhosttyFormatterTerminalOptions);
+        options.emit = switch (emit) {
+            .plain => ghostty_c.GHOSTTY_FORMATTER_FORMAT_PLAIN,
+            .vt => ghostty_c.GHOSTTY_FORMATTER_FORMAT_VT,
+        };
+        options.extra.size = @sizeOf(ghostty_c.GhosttyFormatterTerminalExtra);
+        options.extra.screen.size = @sizeOf(ghostty_c.GhosttyFormatterScreenExtra);
+        options.selection = selection;
+        var formatter: ghostty_c.GhosttyFormatter = null;
+        if (ghostty_c.ghostty_formatter_terminal_new(null, &formatter, terminal, options) !=
+            ghostty_c.GHOSTTY_SUCCESS) return error.CaptureFailed;
+        defer ghostty_c.ghostty_formatter_free(formatter);
+
+        var required: usize = 0;
+        const measured = ghostty_c.ghostty_formatter_format_buf(
+            formatter,
+            null,
+            0,
+            &required,
+        );
+        if (measured != ghostty_c.GHOSTTY_OUT_OF_SPACE and
+            !(measured == ghostty_c.GHOSTTY_SUCCESS and required == 0))
+            return error.CaptureFailed;
+        const output = try allocator.alloc(u8, required);
+        errdefer allocator.free(output);
+        if (required == 0) return output;
+        var written: usize = 0;
+        if (ghostty_c.ghostty_formatter_format_buf(
+            formatter,
+            output.ptr,
+            output.len,
+            &written,
+        ) != ghostty_c.GHOSTTY_SUCCESS or written != output.len)
+            return error.CaptureFailed;
+        return output;
     }
 
     fn deinitCb(context: *anyopaque) void {
@@ -309,10 +437,7 @@ pub const RealVtEngine = struct {
         const self: *RealVtEngine = @ptrCast(@alignCast(context));
         if (!self.digest_dirty) return self.digest_value;
         self.updateDigest() catch {
-            // forbids claiming a clean restore from state that was never
-            // verified, so an unmeasurable digest must never compare equal to
-            // another engine's. The live and the fresh verify engine are alive
-            // at the same moment, so their addresses cannot collide.
+            // forbids claiming a clean restore from state that was never verified, so an unmeasurable digest must never compare equal to another engine's. The live and the fresh verify engine are alive at the same moment, so their addresses cannot collide.
             self.digest_value = @splat(0);
             std.mem.writeInt(usize, self.digest_value[0..@sizeOf(usize)], @intFromPtr(self), .little);
             return self.digest_value;
@@ -345,11 +470,7 @@ pub const RealVtEngine = struct {
             };
             return;
         }
-        // Fresh verification engines retain effects for TG2 comparison. The
-        // live engine delivers them directly to the bounded PTY queue instead
-        // of retaining a second, session-lifetime copy. Retention stays under
-        // the journal ceiling; a null-sink engine that would grow past it
-        // fails closed rather than pinning unbounded client-driven bytes.
+        // Fresh verification engines retain effects for TG2 comparison. The live engine delivers them directly to the bounded PTY queue instead of retaining a second, session-lifetime copy. Retention stays under the journal ceiling; a null-sink engine that would grow past it fails closed rather than pinning unbounded client-driven bytes.
         const retained = std.math.add(usize, self.effects.items.len, bytes.len) catch {
             self.effect_failed = true;
             return;
@@ -363,8 +484,6 @@ pub const RealVtEngine = struct {
         };
     }
 
-    /// keep the shadow VT grid/pixel geometry in lockstep with the host's
-    /// applied window so checkpoints and XTWINOPS replies carry the real size.
     pub fn resize(
         self: *RealVtEngine,
         columns: u32,
@@ -400,9 +519,6 @@ pub const RealVtEngine = struct {
         try self.resize(columns, rows, cell_width_px, cell_height_px);
     }
 
-    /// DA1/DA2/DA3 answers mirror ghostty-the-app (apprt/embedded.zig
-    /// deviceAttributes): VT220 level-2 conformance + ANSI color (no clipboard
-    /// 52 — clipboard writes are denied), DA2 firmware 10, DA3 unit 0.
     fn deviceAttributesCallback(
         _: ghostty_c.GhosttyTerminal,
         userdata: ?*anyopaque,
@@ -494,7 +610,6 @@ pub const RealVtEngine = struct {
 
 var real_factory_context: u8 = 0;
 
-/// Single writer used by both the arbiter and libghostty-vt PTY effects.
 pub const PtyQueueSink = struct {
     pty: *pty_host.PtyHost,
 
@@ -517,131 +632,21 @@ pub const PtyQueueSink = struct {
     }
 };
 
-/// Production automation/cancel encoder: safe paste uses the live terminal's
-/// bracketed-paste mode, and submit/cancel are separate real Ghostty key events.
-pub const RealInputEncoder = struct {
-    allocator: std.mem.Allocator,
-    vt: *RealVtEngine,
-    key_encoder: ghostty_c.GhosttyKeyEncoder,
-    key_event: ghostty_c.GhosttyKeyEvent,
+test "real terminal capture reads the selected libghostty grid and attributes" {
+    const engine = try RealVtEngine.create(std.testing.allocator, 8, 3, null);
+    defer engine.engine().deinit();
+    try engine.engine().write("first\r\n\x1b[1msecond\x1b[0m");
 
-    pub fn create(
-        allocator: std.mem.Allocator,
-        vt: *RealVtEngine,
-    ) !*RealInputEncoder {
-        const self = try allocator.create(RealInputEncoder);
-        errdefer allocator.destroy(self);
-        var key_encoder: ghostty_c.GhosttyKeyEncoder = null;
-        if (ghostty_c.ghostty_key_encoder_new(null, &key_encoder) != ghostty_c.GHOSTTY_SUCCESS)
-            return error.EncoderCreateFailed;
-        errdefer ghostty_c.ghostty_key_encoder_free(key_encoder);
-        var key_event: ghostty_c.GhosttyKeyEvent = null;
-        if (ghostty_c.ghostty_key_event_new(null, &key_event) != ghostty_c.GHOSTTY_SUCCESS)
-            return error.EncoderCreateFailed;
-        self.* = .{
-            .allocator = allocator,
-            .vt = vt,
-            .key_encoder = key_encoder,
-            .key_event = key_event,
-        };
-        return self;
-    }
-
-    pub fn deinit(self: *RealInputEncoder) void {
-        ghostty_c.ghostty_key_event_free(self.key_event);
-        ghostty_c.ghostty_key_encoder_free(self.key_encoder);
-        const allocator = self.allocator;
-        self.* = undefined;
-        allocator.destroy(self);
-    }
-
-    pub fn encoder(self: *RealInputEncoder) input_arbiter.Encoder {
-        return .{ .context = self, .encodeFn = encodeCb };
-    }
-
-    pub fn cancelEncoder(self: *RealInputEncoder) input_arbiter.CancelEncoder {
-        return .{ .context = self, .encodeFn = cancelCb };
-    }
-
-    fn encodeCb(
-        context: *anyopaque,
-        allocator: std.mem.Allocator,
-        body: []const u8,
-        submit: input_arbiter.SubmitAction,
-        out: *std.ArrayList(u8),
-    ) anyerror!void {
-        const self: *RealInputEncoder = @ptrCast(@alignCast(context));
-        if (out.items.len != 0 or out.capacity == 0) return error.InvalidEncodeBuffer;
-        var bracketed = false;
-        if (ghostty_c.ghostty_terminal_mode_get(
-            self.vt.terminal,
-            ghostty_c.ghostty_mode_new(2004, false),
-            &bracketed,
-        ) != ghostty_c.GHOSTTY_SUCCESS) return error.EncodeFailed;
-        const mutable = try allocator.dupe(u8, body);
-        defer {
-            std.crypto.secureZero(u8, mutable);
-            allocator.free(mutable);
-        }
-        var written: usize = 0;
-        if (ghostty_c.ghostty_paste_encode(
-            mutable.ptr,
-            mutable.len,
-            bracketed,
-            out.allocatedSlice().ptr,
-            out.capacity,
-            &written,
-        ) != ghostty_c.GHOSTTY_SUCCESS) return error.EncodeFailed;
-        // `written` arrives across the FFI boundary; never trust it past the
-        // buffer that was handed over. Fail closed before slicing.
-        if (written > out.capacity) return error.EncodeFailed;
-        out.items = out.allocatedSlice()[0..written];
-        switch (submit) {
-            .none => {},
-            .@"return" => try self.appendKey(out, ghostty_c.GHOSTTY_KEY_ENTER, 0),
-            .control_enter => try self.appendKey(
-                out,
-                ghostty_c.GHOSTTY_KEY_ENTER,
-                ghostty_c.GHOSTTY_MODS_CTRL,
-            ),
-        }
-    }
-
-    fn cancelCb(
-        context: *anyopaque,
-        _: std.mem.Allocator,
-        out: *std.ArrayList(u8),
-    ) anyerror!void {
-        const self: *RealInputEncoder = @ptrCast(@alignCast(context));
-        if (out.items.len != 0 or out.capacity == 0) return error.InvalidEncodeBuffer;
-        try self.appendKey(out, ghostty_c.GHOSTTY_KEY_C, ghostty_c.GHOSTTY_MODS_CTRL);
-    }
-
-    fn appendKey(
-        self: *RealInputEncoder,
-        out: *std.ArrayList(u8),
-        key: ghostty_c.GhosttyKey,
-        mods: ghostty_c.GhosttyMods,
-    ) !void {
-        ghostty_c.ghostty_key_encoder_setopt_from_terminal(self.key_encoder, self.vt.terminal);
-        ghostty_c.ghostty_key_event_set_action(self.key_event, ghostty_c.GHOSTTY_KEY_ACTION_PRESS);
-        ghostty_c.ghostty_key_event_set_key(self.key_event, key);
-        ghostty_c.ghostty_key_event_set_mods(self.key_event, mods);
-        ghostty_c.ghostty_key_event_set_consumed_mods(self.key_event, 0);
-        ghostty_c.ghostty_key_event_set_composing(self.key_event, false);
-        const old_len = out.items.len;
-        const allocation = out.allocatedSlice();
-        var written: usize = 0;
-        if (ghostty_c.ghostty_key_encoder_encode(
-            self.key_encoder,
-            self.key_event,
-            allocation[old_len..].ptr,
-            allocation.len - old_len,
-            &written,
-        ) != ghostty_c.GHOSTTY_SUCCESS) return error.EncodeFailed;
-        // Same FFI distrust as encodeCb: clamp the reported byte count to the
-        // remaining capacity before extending the slice.
-        if (written > allocation.len - old_len) return error.EncodeFailed;
-        out.items = allocation[0 .. old_len + written];
-    }
-};
+    var capture = try engine.capture(std.testing.allocator, 2, true);
+    defer capture.deinit();
+    try std.testing.expectEqual(@as(u16, 8), capture.columns);
+    try std.testing.expectEqual(@as(u16, 3), capture.rows);
+    try std.testing.expectEqual(@as(u16, 1), capture.row_start);
+    try std.testing.expectEqual(.primary, capture.screen);
+    try std.testing.expectEqual(@as(u16, 1), capture.cursor.row);
+    try std.testing.expectEqual(@as(u16, 6), capture.cursor.column);
+    try std.testing.expect(capture.cursor.visible);
+    try std.testing.expect(std.mem.indexOf(u8, capture.text.?, "second") != null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.text.?, "first") == null);
+    try std.testing.expect(std.mem.indexOf(u8, capture.styled_text.?, "\x1b[1m") != null);
+}

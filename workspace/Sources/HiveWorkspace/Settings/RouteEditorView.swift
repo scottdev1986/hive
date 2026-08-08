@@ -1,15 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// One task category's weighted route — or the Global route, which is the
-/// same editor wearing a distinct header.
-///
-/// A route is an UNORDERED candidate set: there is no rank, no reordering,
-/// and no fallback language anywhere. The controls are membership (add /
-/// remove), the split mode (weighted vs equal), a per-candidate weight in
-/// weighted mode, and an expected-share preview per candidate. An empty
-/// category is informational (it uses the Global route); a route whose every
-/// candidate is off or unavailable refuses — there is no quiet widening.
+/// One task category's weighted route — or the Global route, which is the same editor wearing a distinct header. A route is an UNORDERED candidate set: there is no rank, no reordering, and no fallback language anywhere. Swift edits membership, mode, and weights; effective shares and candidate eligibility come only from daemon projections.
 final class RouteSectionView: NSView {
 
     enum Kind {
@@ -25,8 +17,7 @@ final class RouteSectionView: NSView {
         self.dataSource = dataSource
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        // Sections keep their fitting height; a stretched card must never
-        // pad out a section with dead space.
+        // Sections keep their fitting height; a stretched card must never pad out a section with dead space.
         setContentHuggingPriority(.required, for: .vertical)
         rebuild()
     }
@@ -83,12 +74,11 @@ final class RouteSectionView: NSView {
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
-        guard let snapshot = dataSource.snapshot, dataSource.policyLoaded else {
+        guard dataSource.view != nil, dataSource.policyLoaded else {
             return
         }
 
-        // A stored route this build cannot read gets its reason, not controls
-        // whose writes would rewrite what the user actually configured.
+        // A stored route this build cannot read gets its reason, not controls whose writes would rewrite what the user actually configured.
         if let reason = dataSource.routeUnreadableReason(category) {
             let note = NSTextField(wrappingLabelWithString: reason)
             note.font = Theme.Font.caption
@@ -102,8 +92,7 @@ final class RouteSectionView: NSView {
         guard let route else {
             switch kind {
             case .category:
-                // Informational, not an error: it resolves to the user's
-                // Global route, and never "any enabled model".
+                // Informational, not an error: it resolves to the user's Global route, and never "any enabled model".
                 let empty = NSTextField(labelWithString: MCCCopy.routeEmptyUsesGlobal)
                 empty.font = Theme.Font.caption
                 empty.textColor = .secondaryLabelColor
@@ -126,9 +115,13 @@ final class RouteSectionView: NSView {
         for (index, candidate) in route.candidates.enumerated() {
             let row = RouteCandidateRowView(
                 candidate: candidate,
-                sharePercent: Self.percent(route.expectedShare(of: candidate)),
-                weightEditable: route.mode == .userWeighted,
-                status: statuses[index], snapshot: snapshot,
+                weightEditable: dataSource.routingMode(route.mode)?.weightEditable ?? false,
+                weightRange: dataSource.routingWeightRange,
+                status: statuses[index],
+                presentation: dataSource.providerPresentation(
+                    ProviderID(candidate.provider))?.models.first {
+                        $0.canonicalId == candidate.model
+                    },
                 struck: allIneffective,
                 onWeight: { [weak self] weight in
                     guard let self, var next = self.route else { return }
@@ -149,18 +142,6 @@ final class RouteSectionView: NSView {
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
-        if let aggregate = providerAggregateText(route) {
-            let caption = NSTextField(labelWithString: aggregate)
-            caption.font = Theme.Font.caption
-            caption.textColor = .tertiaryLabelColor
-            caption.lineBreakMode = .byTruncatingTail
-            caption.toolTip = aggregate
-            caption.setContentCompressionResistancePriority(.init(440), for: .horizontal)
-            stack.addArrangedSubview(caption)
-            caption.widthAnchor.constraint(
-                lessThanOrEqualTo: stack.widthAnchor).isActive = true
-        }
-
         if allIneffective {
             let note = NSTextField(wrappingLabelWithString: MCCCopy.routeAllIneffective)
             note.font = Theme.Font.callout
@@ -173,27 +154,6 @@ final class RouteSectionView: NSView {
         stack.addArrangedSubview(makeAddButton())
     }
 
-    static func percent(_ share: Double) -> Int {
-        Int((share * 100).rounded())
-    }
-
-    /// The per-vendor sum of expected shares — shown only when some provider
-    /// holds more than one candidate, where the per-row numbers stop being
-    /// the per-vendor answer.
-    private func providerAggregateText(_ route: RoutePolicy) -> String? {
-        var counts: [String: Int] = [:]
-        for candidate in route.candidates {
-            counts[candidate.provider, default: 0] += 1
-        }
-        guard counts.values.contains(where: { $0 > 1 }) else { return nil }
-        let shares = route.providerShares
-            .sorted { ProviderID($0.key) < ProviderID($1.key) }
-            .map { (ProviderBranding.title(for: ProviderID($0.key)), Self.percent($0.value)) }
-        return MCCCopy.providerShares(shares.map { (title: $0.0, percent: $0.1) })
-    }
-
-    // MARK: Mode
-
     private func makeModeRow(_ route: RoutePolicy) -> NSView {
         let label = NSTextField(labelWithString: MCCCopy.modeControlLabel)
         label.font = Theme.Font.caption
@@ -203,19 +163,23 @@ final class RouteSectionView: NSView {
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
         popup.font = NSFont.systemFont(ofSize: 11)
-        for mode in RouterMode.allCases {
-            popup.addItem(withTitle: MCCCopy.modeTitle(mode))
+        let modes = dataSource.routingModes.compactMap { presentation in
+            RouterMode(rawValue: presentation.id).map { (presentation, $0) }
         }
-        popup.selectItem(at: RouterMode.allCases.firstIndex(of: route.mode) ?? 0)
+        for (presentation, _) in modes {
+            popup.addItem(withTitle: presentation.label)
+        }
+        popup.selectItem(at: modes.firstIndex { $0.1 == route.mode } ?? 0)
         popup.target = self
         popup.action = #selector(modeChanged(_:))
         popup.setAccessibilityLabel("How this route splits spawns")
 
-        let caption = NSTextField(labelWithString: MCCCopy.modeCaption(route.mode))
+        let modeCaption = dataSource.routingMode(route.mode)?.caption ?? ""
+        let caption = NSTextField(labelWithString: modeCaption)
         caption.font = Theme.Font.caption
         caption.textColor = .tertiaryLabelColor
         caption.lineBreakMode = .byTruncatingTail
-        caption.toolTip = MCCCopy.modeCaption(route.mode)
+        caption.toolTip = modeCaption
         caption.setContentCompressionResistancePriority(.init(440), for: .horizontal)
 
         let row = NSStackView(views: [label, popup, caption])
@@ -226,22 +190,15 @@ final class RouteSectionView: NSView {
     }
 
     @objc private func modeChanged(_ sender: NSPopUpButton) {
+        let modes = dataSource.routingModes.compactMap {
+            RouterMode(rawValue: $0.id)
+        }
         guard var next = route,
-              RouterMode.allCases.indices.contains(sender.indexOfSelectedItem) else { return }
-        next.mode = RouterMode.allCases[sender.indexOfSelectedItem]
+              modes.indices.contains(sender.indexOfSelectedItem) else { return }
+        next.mode = modes[sender.indexOfSelectedItem]
         writeRoute(next)
     }
 
-    // MARK: Add
-
-    /// The add picker. THE ATOM IS A (MODEL, EFFORT) PAIR: each model opens a
-    /// submenu of its advertised efforts, so adding fable-5@low is one
-    /// action and every advertised combination is reachable. Every item names
-    /// an EXACT model — there is no vendor-default candidate and no "default"
-    /// anywhere; the user chooses specific models. A model whose vendor
-    /// states there is no effort axis adds directly (nothing to pick); one
-    /// whose effort surface is unreadable adds with the flag omitted and the
-    /// measured reason in its tooltip.
     private func makeAddButton() -> NSView {
         let popup = NSPopUpButton(frame: .zero, pullsDown: true)
         popup.controlSize = .small
@@ -249,54 +206,53 @@ final class RouteSectionView: NSView {
         popup.addItem(withTitle: "Add model…")
         popup.setAccessibilityLabel("Add a model and effort to this route")
 
-        guard let snapshot = dataSource.snapshot else { return popup }
-        for providerID in snapshot.providerIDs {
-            guard case .available(let models, _)? =
-                snapshot.providers[providerID.rawValue] else { continue }
+        guard let defaultWeight = dataSource.routingWeightRange?.defaultValue else {
+            popup.isEnabled = false
+            return popup
+        }
+
+        let catalog = Dictionary(grouping: dataSource.routingCatalog, by: \.provider)
+        for providerID in dataSource.providerIDs {
+            guard let models = catalog[providerID.rawValue], !models.isEmpty else { continue }
             let providerTitle = ProviderBranding.title(for: providerID)
             let header = NSMenuItem(title: providerTitle, action: nil, keyEquivalent: "")
             header.isEnabled = false
             popup.menu?.addItem(header)
             for model in models {
-                let name = model.humanName
+                guard let presentation = dataSource.providerPresentation(providerID)?
+                    .model(canonicalID: model.model) else { continue }
+                let name = presentation.name
                 let item = NSMenuItem(title: "  \(name)", action: nil, keyEquivalent: "")
-                item.toolTip = model.displayId
-                switch EffortAxis.derive(from: model) {
-                case .known(let levels, let defaultLevel):
+                item.toolTip = presentation.displayId
+                let options = model.addEffortOptions
+                if options.count > 1 {
                     let submenu = NSMenu(title: name)
-                    for level in levels {
-                        let suffix = level == defaultLevel ? "  (vendor recommends)" : ""
+                    for option in options {
                         let levelItem = NSMenuItem(
-                            title: "\(level)\(suffix)",
+                            title: option.label,
                             action: #selector(addCandidate(_:)), keyEquivalent: "")
                         levelItem.target = self
                         levelItem.representedObject = RouteCandidateBox(
                             candidate: RouteCandidate(
                                 provider: providerID.rawValue,
-                                model: model.canonicalId,
-                                effort: .exact(level)))
+                                model: model.model,
+                                effort: option.effort.asEffortTarget,
+                                weight: defaultWeight))
                         submenu.addItem(levelItem)
                     }
                     item.submenu = submenu
-                case .none:
-                    item.title = "  \(name)  —  no effort setting"
+                } else if let option = options.first {
+                    item.title = "  \(name)  —  \(option.label)"
                     item.action = #selector(addCandidate(_:))
                     item.target = self
                     item.representedObject = RouteCandidateBox(
                         candidate: RouteCandidate(
                             provider: providerID.rawValue,
-                            model: model.canonicalId,
-                            effort: EffortTarget.none))
-                case .unknown(let reason):
-                    item.title = "  \(name)  —  effort unknown"
-                    item.toolTip = MCCCopy.effortUnknown(reason)
-                    item.action = #selector(addCandidate(_:))
-                    item.target = self
-                    item.representedObject = RouteCandidateBox(
-                        candidate: RouteCandidate(
-                            provider: providerID.rawValue,
-                            model: model.canonicalId,
-                            effort: .providerControlled))
+                            model: model.model,
+                            effort: option.effort.asEffortTarget,
+                            weight: defaultWeight))
+                } else {
+                    item.isEnabled = false
                 }
                 popup.menu?.addItem(item)
             }
@@ -305,8 +261,9 @@ final class RouteSectionView: NSView {
     }
 
     @objc private func addCandidate(_ sender: NSMenuItem) {
-        guard let box = sender.representedObject as? RouteCandidateBox else { return }
-        let current = route ?? RoutePolicy(mode: .hiveEqual, candidates: [])
+        guard let box = sender.representedObject as? RouteCandidateBox,
+              let defaultMode = dataSource.defaultRoutingMode else { return }
+        let current = route ?? RoutePolicy(mode: defaultMode, candidates: [])
         guard !current.candidates.contains(where: {
             $0.targetKey == box.candidate.targetKey
         }) else { return }
@@ -316,28 +273,26 @@ final class RouteSectionView: NSView {
     }
 }
 
-/// NSMenuItem.representedObject needs a class.
 private final class RouteCandidateBox {
     let candidate: RouteCandidate
     init(candidate: RouteCandidate) { self.candidate = candidate }
 }
 
-/// One route candidate: vendor mark, target description, expected-share
-/// preview, per-candidate effort and weight, a remove control, and the honest
-/// status badge when the candidate cannot run.
+/// One route candidate: vendor mark, target description, expected-share preview, per-candidate effort and weight, a remove control, and the honest status badge when the candidate cannot run.
 final class RouteCandidateRowView: NSView {
 
     init(
         candidate: RouteCandidate,
-        sharePercent: Int,
         weightEditable: Bool,
+        weightRange: WorkspaceRoutingWeightRange?,
         status: RouteCandidateStatus,
-        snapshot: ModelControlSnapshot,
+        presentation: WorkspaceModelPresentation?,
         struck: Bool,
         onWeight: @escaping (Int) -> Void,
         onRemove: @escaping () -> Void,
         onEffort: @escaping (EffortTarget) -> Void
     ) {
+        self.weightRange = weightRange
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         self.onRemove = onRemove
@@ -347,23 +302,14 @@ final class RouteCandidateRowView: NSView {
         let mark = ProviderMarkView(
             provider: providerID, size: Theme.Metric.chainMarkSize)
 
-        // Resolve the exact target against the live catalog for display: the
-        // vendor's own model name, with the launch identity in the tooltip so
-        // there is never ambiguity about what will run.
-        var resolvedModel: DiscoveredModel?
         let providerTitle = ProviderBranding.title(for: providerID)
-        if case .available(let models, _)? = snapshot.providers[candidate.provider] {
-            resolvedModel = models.first {
-                $0.canonicalId == candidate.model
-            }
-        }
-        let name = resolvedModel?.humanName ?? candidate.model
+        let name = presentation?.name ?? candidate.model
         let text = "\(providerTitle) · \(name)"
 
         let label = NSTextField(labelWithString: text)
         label.font = Theme.Font.body
         label.lineBreakMode = .byTruncatingTail
-        label.toolTip = resolvedModel?.displayId ?? candidate.model
+        label.toolTip = presentation?.displayId ?? candidate.model
         label.setContentCompressionResistancePriority(.init(465), for: .horizontal)
         if struck {
             label.attributedStringValue = NSAttributedString(
@@ -374,12 +320,6 @@ final class RouteCandidateRowView: NSView {
                     .font: Theme.Font.body,
                 ])
         }
-
-        let share = NSTextField(labelWithString: MCCCopy.expectedShare(sharePercent))
-        share.font = Theme.Font.caption
-        share.textColor = .secondaryLabelColor
-        share.toolTip = MCCCopy.expectedShareTooltip(sharePercent)
-        share.setContentHuggingPriority(.required, for: .horizontal)
 
         var badge: CapsuleBadge?
         switch status {
@@ -400,8 +340,8 @@ final class RouteCandidateRowView: NSView {
                 symbol: "questionmark.diamond", style: .warning)
         }
 
-        let effortAxis: EffortAxis = resolvedModel.map(EffortAxis.derive) ??
-            .unknown(reason: "model not in the live catalog")
+        let effortAxis = presentation?.effortAxis.rendered
+            ?? EffortAxis.unknown(reason: "model not in the live catalog")
         let effort = EffortControlView(
             axis: effortAxis, selection: candidate.effort, enabled: status == .effective)
         effort.onSelect = onEffort
@@ -411,10 +351,9 @@ final class RouteCandidateRowView: NSView {
         if let badge { views.append(badge) }
         views.append(NSView.spacer())
         views.append(effort)
-        if weightEditable {
+        if weightEditable && weightRange != nil {
             views.append(makeWeightControl(candidate.weight, model: text))
         }
-        views.append(share)
         views.append(makeRemoveButton())
         let row = NSStackView(views: views)
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -438,19 +377,19 @@ final class RouteCandidateRowView: NSView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityLabel(MCCCopy.a11yRouteCandidate(text, sharePercent))
+        setAccessibilityLabel("\(text), weight \(candidate.weight)")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     private var onRemove: (() -> Void)?
     private var onWeight: ((Int) -> Void)?
+    private let weightRange: WorkspaceRoutingWeightRange?
     private let weightField = NSTextField()
     private let weightStepper = NSStepper()
 
-    /// Weight 1–100, typed or stepped. Committed values are clamped; the
-    /// route rewrite happens on commit, not per keystroke.
     private func makeWeightControl(_ weight: Int, model: String) -> NSView {
+        guard let weightRange else { return NSView() }
         weightField.translatesAutoresizingMaskIntoConstraints = false
         weightField.controlSize = .small
         weightField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
@@ -463,8 +402,8 @@ final class RouteCandidateRowView: NSView {
 
         weightStepper.translatesAutoresizingMaskIntoConstraints = false
         weightStepper.controlSize = .small
-        weightStepper.minValue = 1
-        weightStepper.maxValue = 100
+        weightStepper.minValue = Double(weightRange.minimum)
+        weightStepper.maxValue = Double(weightRange.maximum)
         weightStepper.increment = 1
         weightStepper.integerValue = weight
         weightStepper.target = self
@@ -479,7 +418,8 @@ final class RouteCandidateRowView: NSView {
     }
 
     @objc private func weightTyped(_ sender: NSTextField) {
-        let clamped = min(100, max(1, sender.integerValue))
+        guard let weightRange else { return }
+        let clamped = min(weightRange.maximum, max(weightRange.minimum, sender.integerValue))
         sender.stringValue = String(clamped)
         weightStepper.integerValue = clamped
         onWeight?(clamped)

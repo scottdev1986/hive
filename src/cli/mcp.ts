@@ -1,9 +1,16 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { z } from "zod";
+import { daemonMcpUrl } from "../adapters/providers/shared/mcp-scope";
+import { HIVE_MCP_VERSION_NEGOTIATION } from "../shared/mcp-protocol";
 import {
   type AgentRecord,
   AgentRecordSchema,
+  ORCHESTRATOR_NAME,
+} from "../schemas/agent";
+import {
   type MemoryFact,
   MemoryFactSchema,
   type MemoryScope,
@@ -13,21 +20,26 @@ import {
   type MemoryWriteInput,
   type MemoryWriteResult,
   MemoryWriteResultSchema,
-  ORCHESTRATOR_NAME,
+} from "../schemas/memory";
+import {
+  type MemoryRecallEnvelope,
+  MemoryRecallEnvelopeSchema,
+} from "../schemas/memory-projections";
+import {
   type QuotaObservation,
   type QuotaObservationInput,
   QuotaObservationSchema,
   type QuotaStatus,
-} from "../schemas";
-import { HIVE_VERSION } from "../version";
-import { operatorFetch } from "./credential";
+} from "../schemas/quota";
+import { HIVE_VERSION } from "../shared/version";
+import { userFetch } from "./credential";
 
 export type McpFetcher = (
   input: string | URL,
   init?: RequestInit,
 ) => Promise<Response>;
 
-function textToolValue(content: unknown, toolName: string): unknown {
+function textToolContent(content: unknown, toolName: string): string {
   const items = z
     .array(
       z.object({
@@ -42,10 +54,94 @@ function textToolValue(content: unknown, toolName: string): unknown {
   if (item?.text === undefined) {
     throw new Error(`${toolName} returned no text content`);
   }
-  return JSON.parse(item.text) as unknown;
+  return item.text;
 }
 
-async function callHiveTool(
+function textToolValue(content: unknown, toolName: string): unknown {
+  return JSON.parse(textToolContent(content, toolName)) as unknown;
+}
+
+export function toolErrorReason(content: unknown, toolName: string): string {
+  const text = textToolContent(content, toolName);
+  try {
+    const value = JSON.parse(text) as unknown;
+    const parsed = z.object({ reason: z.string() }).safeParse(value);
+    return parsed.success ? parsed.data.reason : text;
+  } catch {
+    return text;
+  }
+}
+
+/** One MCP client session, held open across as many tool calls as the caller makes. Connecting is the expensive half of a call — a transport, a client, a handshake round trip and a teardown — so a caller that reads the daemon repeatedly pays it once instead of per read. A call on a session that was already open may fail because that session is gone (the daemon restarted, or the transport was closed under it); that reconnects once and retries, so a held session outlives a daemon restart. A session's first call never retries: a fresh session's failure is the daemon's answer, not a stale connection.
+ *
+ * One caller, one call at a time. Connecting is not guarded against concurrent entry: two calls that both find no client would each build a transport, and the second would overwrite the first, orphaning a live connection. Every caller today is sequential — hold a session per concurrent reader, or serialize the calls. */
+export class HiveMcpSession {
+  private client: Client | null = null;
+
+  constructor(
+    private readonly port: number,
+    private readonly fetcher?: McpFetcher,
+  ) {}
+
+  async call(
+    name: string,
+    args: Record<string, unknown>,
+    key: string,
+    errorLabel = name,
+  ): Promise<unknown> {
+    const reused = this.client !== null;
+    const client = await this.connected();
+    let result: Awaited<ReturnType<Client["callTool"]>>;
+    try {
+      result = await client.callTool({ name, arguments: args });
+    } catch (error) {
+      if (!reused) throw error;
+      await this.close();
+      result = await (await this.connected()).callTool({
+        name,
+        arguments: args,
+      });
+    }
+    if (result.isError === true) {
+      const structured = z
+        .object({ error: z.object({ reason: z.string() }) })
+        .safeParse(result.structuredContent);
+      const reason = structured.success
+        ? structured.data.error.reason
+        : toolErrorReason(result.content, name);
+      throw new Error(`${errorLabel} failed: ${reason}`);
+    }
+    const structured = z
+      .record(z.string(), z.unknown())
+      .optional()
+      .parse(result.structuredContent);
+    return structured?.[key] ?? textToolValue(result.content, name);
+  }
+
+  async close(): Promise<void> {
+    const client = this.client;
+    this.client = null;
+    await client?.close().catch(() => undefined);
+  }
+
+  private async connected(): Promise<Client> {
+    if (this.client !== null) return this.client;
+    const transport = new StreamableHTTPClientTransport(
+      new URL(daemonMcpUrl(this.port)),
+      { fetch: this.fetcher ?? userFetch },
+    );
+    const client = new Client(
+      { name: "hive-cli", version: HIVE_VERSION },
+      { versionNegotiation: HIVE_MCP_VERSION_NEGOTIATION },
+    );
+    await client.connect(transport);
+    this.client = client;
+    return client;
+  }
+}
+
+/** One tool call on a session of its own. For a caller that speaks to the daemon once; a caller that polls holds a `HiveMcpSession` instead. */
+export async function callHiveTool(
   port: number,
   name: string,
   args: Record<string, unknown>,
@@ -53,38 +149,40 @@ async function callHiveTool(
   fetcher?: McpFetcher,
   errorLabel = name,
 ): Promise<unknown> {
-  const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${port}/mcp`),
-    { fetch: fetcher ?? operatorFetch },
-  );
-  const client = new Client({ name: "hive-cli", version: HIVE_VERSION });
+  const session = new HiveMcpSession(port, fetcher);
   try {
-    await client.connect(transport);
-    const result = await client.callTool({ name, arguments: args });
-    if (result.isError === true) throw new Error(`${errorLabel} failed`);
-    const structured = z
-      .record(z.string(), z.unknown())
-      .optional()
-      .parse(result.structuredContent);
-    return structured?.[key] ?? textToolValue(result.content, name);
+    return await session.call(name, args, key, errorLabel);
   } finally {
-    await client.close().catch(() => undefined);
+    await session.close();
   }
+}
+
+/** The full agent roster over a caller-held session. */
+export async function readAgentStatus(
+  session: HiveMcpSession,
+): Promise<AgentRecord[]> {
+  return AgentRecordSchema.array().parse(
+    await session.call("hive_status", { detail: "full" }, "agents"),
+  );
 }
 
 export async function fetchAgentStatus(
   port: number,
   fetcher?: McpFetcher,
 ): Promise<AgentRecord[]> {
-  return AgentRecordSchema.array().parse(
-    await callHiveTool(
-      port,
-      "hive_status",
-      { detail: "full" },
-      "agents",
-      fetcher,
-    ),
-  );
+  const session = new HiveMcpSession(port, fetcher);
+  try {
+    return await readAgentStatus(session);
+  } finally {
+    await session.close();
+  }
+}
+
+export async function requestSettlementSweep(
+  port: number,
+  fetcher?: McpFetcher,
+): Promise<unknown> {
+  return callHiveTool(port, "hive_settlement_sweep", {}, "settlement", fetcher);
 }
 
 export async function sendOrchestratorMessage(
@@ -95,11 +193,19 @@ export async function sendOrchestratorMessage(
 ): Promise<void> {
   await callHiveTool(
     port,
-    "hive_send",
-    { from: ORCHESTRATOR_NAME, to, body },
-    "message",
+    "hive_mail_publish",
+    {
+      from: ORCHESTRATOR_NAME,
+      to,
+      body,
+      // A recovery ping is an instruction to act on, so it takes the lane where each message is handled once rather than merging into the next ping.
+      lane: "control",
+      topic: "supervisor",
+      idempotencyKey: `supervisor-ping:${to}:${Bun.randomUUIDv7()}`,
+    },
+    "mail",
     fetcher,
-    `hive_send to ${to}`,
+    `hive_mail_publish to ${to}`,
   );
 }
 
@@ -223,8 +329,6 @@ export type MemoryEmbeddingsStatus = z.infer<
   typeof MemoryEmbeddingsStatusSchema
 >;
 
-/** The memory.embeddings section of the hive_status structuredContent
- * (defect D2): provider, model, one-word state, vector counts, runtime dir. */
 export async function fetchMemoryEmbeddingsStatus(
   port: number,
   fetcher?: McpFetcher,
@@ -234,31 +338,6 @@ export async function fetchMemoryEmbeddingsStatus(
     .parse(await callHiveTool(port, "hive_status", {}, "memory", fetcher));
   return memory.embeddings;
 }
-
-const MemoryRecallRowSchema = z.object({
-  scope: z.string(),
-  id: z.string(),
-  title: z.string(),
-  pitfall: z.boolean(),
-});
-
-const MemoryRecallEnvelopeSchema = z.object({
-  state: z.string(),
-  /** "hybrid" | "disabled" | "degraded:<state>" (defect D2). */
-  semantic: z.string(),
-  warning: z.string().optional(),
-  /** Rows the server's recall token ceiling cut from the ranked bundle. A
-   * caller that looks for a specific row must read these: an absent row can
-   * mean "cut by the budget", not "never ranked". */
-  truncated: z.boolean().optional(),
-  omitted: z.number().optional(),
-  /** Which side the ceiling cut, so starvation is visible directly. */
-  omittedPitfalls: z.number().optional(),
-  omittedArticles: z.number().optional(),
-  pitfalls: z.array(MemoryRecallRowSchema),
-  articles: z.array(MemoryRecallRowSchema),
-});
-export type MemoryRecallEnvelope = z.infer<typeof MemoryRecallEnvelopeSchema>;
 
 export async function recallMemory(
   port: number,
@@ -274,78 +353,6 @@ export async function recallMemory(
       "results",
       fetcher,
     ),
-  );
-}
-
-const MemoryNoteResultSchema = z.object({
-  state: z.string(),
-  detail: z.string().optional(),
-  /** "indexed" | "queued" | "unavailable:<state>" (defect D2). */
-  embedding: z.string().optional(),
-  fact: z.object({ id: z.string() }).optional(),
-});
-export type MemoryNoteResult = z.infer<typeof MemoryNoteResultSchema>;
-
-export async function noteMemory(
-  port: number,
-  input: {
-    topic: string;
-    title: string;
-    body: string;
-    confidence?: number;
-    validAt?: string;
-  },
-  fetcher?: McpFetcher,
-): Promise<MemoryNoteResult> {
-  return MemoryNoteResultSchema.parse(
-    await callHiveTool(port, "memory_note", input, "fact", fetcher),
-  );
-}
-
-const MemoryQueryEnvelopeSchema = z.object({
-  state: z.string(),
-  detail: z.string().nullable().optional(),
-  results: z.array(z.record(z.string(), z.unknown())),
-});
-export type MemoryQueryEnvelope = z.infer<typeof MemoryQueryEnvelopeSchema>;
-
-export async function queryMemory(
-  port: number,
-  input: {
-    class: string;
-    query?: string;
-    agent?: string;
-    since?: string;
-    budget?: number;
-  },
-  fetcher?: McpFetcher,
-): Promise<MemoryQueryEnvelope> {
-  return MemoryQueryEnvelopeSchema.parse(
-    await callHiveTool(port, "memory_query", input, "result", fetcher),
-  );
-}
-
-const MemoryDigestEnvelopeSchema = z.object({
-  state: z.string(),
-  detail: z.string().nullable().optional(),
-  digest: z.unknown().nullable().optional(),
-  events: z.array(z.unknown()).optional(),
-});
-export type MemoryDigestEnvelope = z.infer<typeof MemoryDigestEnvelopeSchema>;
-
-export async function digestMemory(
-  port: number,
-  input: {
-    agent?: string;
-    sessionId?: string;
-    digestId?: number;
-    eventId?: number;
-    budget?: number;
-  },
-  fetcher?: McpFetcher,
-): Promise<MemoryDigestEnvelope> {
-  return MemoryDigestEnvelopeSchema.parse(
-    await callHiveTool(port, "memory_digest", input, "result", fetcher),
   );
 }
 

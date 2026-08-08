@@ -1,0 +1,33 @@
+{
+  "vendor": "codex",
+  "token": "QPROBE-sam-c63e",
+  "control": {
+    "itemId": "mit_019fc28c-eda5-7000-81ca-3f0959508847",
+    "handlerId": "sam-m3-live-probe",
+    "ownerGeneration": 1,
+    "attempt": 1,
+    "leaseUntil": "2026-08-02T12:59:55.084Z"
+  },
+  "completion": {
+    "disposition": "completed",
+    "settledAt": "2026-08-02T12:58:01.577Z",
+    "replayed": false
+  },
+  "reply": {
+    "itemId": "mit_019fc28d-8271-7000-82f6-e507398bd412",
+    "lane": "work",
+    "topic": "m3-probe",
+    "outcome": "published",
+    "seq": 4,
+    "mergedCount": 0,
+    "acceptedAt": "2026-08-02T12:58:01.713Z"
+  },
+  "statusAfter": {
+    "observedAt": "2026-08-02T13:00:45.100Z",
+    "controlAvailable": 0,
+    "controlLeased": 0,
+    "workAvailable": 0,
+    "workLeased": 0,
+    "deadLettered": 0
+  }
+}

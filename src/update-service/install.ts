@@ -1,0 +1,643 @@
+/** Download, verify, stage, activate, and — when the new binary cannot prove it works — put the old one back. The ordering is the safety property. Nothing is executed before its SHA-256 matches the manifest. Nothing is activated before the staged binary reports its own expected version when asked (Bun's updater does exactly this, and it catches the truncated-download and wrong-architecture cases that a hash alone would also catch but a corrupted *manifest* would not). Nothing is retained as active before it survives a health check, and the previous version directory is kept until it does. Activation is one `rename(2)` over the `current` symlink. A rename of a symlink is atomic on macOS, so there is no instant at which `current` names a half-installed tree. It also does not disturb the running daemon: a Unix process keeps executing its already-open image after the link moves, which is useful while staging and exactly why the daemon must be restarted explicitly. */
+import { randomUUID } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmod, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { z } from "zod";
+import {
+  artifactMatches,
+  type HiveArch,
+  parseReleaseManifest,
+  type ReleaseArtifact,
+  type ReleaseManifest,
+  selectArtifact,
+  verifyManifest,
+} from "../release/manifest";
+import { HIVE_ARCH, HIVE_RELEASE_PUBLIC_KEY } from "../shared/version";
+import {
+  binLink,
+  cliPath,
+  currentLink,
+  installRoot,
+  sessiondPath,
+  stagingDir,
+  stateFile,
+  versionDir,
+  versionsDir,
+  workspaceAppPath,
+} from "./paths";
+import type { ProgressCallback, ProgressReporter } from "./progress";
+import { errorMessage } from "../shared/error-message";
+
+const StateSchema = z.object({
+  active: z.string().nullable().default(null),
+  previous: z.string().nullable().default(null),
+});
+export type InstallState = z.infer<typeof StateSchema>;
+
+const VerificationMaterialSchema = z
+  .object({
+    schema: z.literal(1),
+    manifestBase64: z.string(),
+    signature: z.string().min(1),
+  })
+  .strict();
+
+const VERIFICATION_MATERIAL_FILE = "release-verification.json";
+
+function verificationMaterialPath(directory: string): string {
+  return join(directory, VERIFICATION_MATERIAL_FILE);
+}
+
+async function writeVerificationMaterial(
+  directory: string,
+  manifestBytes: Uint8Array,
+  signature: string,
+): Promise<void> {
+  const path = verificationMaterialPath(directory);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(
+      temporary,
+      `${JSON.stringify(
+        {
+          schema: 1,
+          manifestBase64: Buffer.from(manifestBytes).toString("base64"),
+          signature,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+export function readInstallState(root = installRoot()): InstallState {
+  try {
+    return StateSchema.parse(JSON.parse(readFileSync(stateFile(root), "utf8")));
+  } catch {
+    return { active: null, previous: null };
+  }
+}
+
+export function writeInstallState(
+  state: InstallState,
+  root = installRoot(),
+): void {
+  writeFileSync(stateFile(root), `${JSON.stringify(state, null, 2)}\n`);
+}
+
+export function isStaged(version: string, root = installRoot()): boolean {
+  return existsSync(cliPath(versionDir(version, root)));
+}
+
+export interface StageDeps {
+  readonly manifest: ReleaseManifest;
+  readonly manifestBytes: Uint8Array;
+  readonly signature: string | null;
+  readonly arch: HiveArch;
+  readonly root?: string;
+  readonly download: (
+    assetName: string,
+    onProgress?: ProgressCallback,
+  ) => Promise<Uint8Array>;
+  readonly probeVersion: (binaryPath: string) => Promise<string>;
+  readonly unpackApp?: (tarball: string, into: string) => Promise<void>;
+  readonly publicKey?: string | null;
+  readonly progress?: (artifact: ReleaseArtifact) => ProgressReporter;
+}
+
+export class UpdateError extends Error {}
+
+function manifestFromSignedBytes(deps: StageDeps): ReleaseManifest {
+  let manifest: ReleaseManifest;
+  let supplied: ReleaseManifest;
+  try {
+    manifest = parseReleaseManifest(
+      JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(deps.manifestBytes),
+      ),
+    );
+    supplied = parseReleaseManifest(deps.manifest);
+  } catch {
+    throw new UpdateError("Refusing update: release manifest is invalid");
+  }
+  if (JSON.stringify(manifest) !== JSON.stringify(supplied)) {
+    throw new UpdateError(
+      "Refusing update: parsed release metadata does not match the signed manifest bytes",
+    );
+  }
+  return manifest;
+}
+
+export interface StageResult {
+  readonly version: string;
+  readonly directory: string;
+}
+
+export async function stageRelease(deps: StageDeps): Promise<StageResult> {
+  const root = deps.root ?? installRoot();
+  const publicKey =
+    deps.publicKey === undefined ? HIVE_RELEASE_PUBLIC_KEY : deps.publicKey;
+
+  const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
+  if (!trust.verified)
+    throw new UpdateError(`Refusing update: ${trust.reason}`);
+  const signature = deps.signature;
+  if (!trust.signed || signature === null) {
+    throw new UpdateError(
+      "Refusing update: manifest is not signed by an embedded Hive release key",
+    );
+  }
+
+  const manifest = manifestFromSignedBytes(deps);
+
+  const cli = selectArtifact(manifest, "cli", deps.arch);
+  if (cli === null) {
+    throw new UpdateError(
+      `Release ${manifest.version} has no CLI build for darwin-${deps.arch}`,
+    );
+  }
+  const sessiond = selectArtifact(manifest, "sessiond", deps.arch);
+  if (sessiond === null) {
+    throw new UpdateError(
+      `Release ${manifest.version} has no sessiond build for darwin-${deps.arch}`,
+    );
+  }
+  const app = selectArtifact(manifest, "workspace", deps.arch);
+
+  const version = manifest.version;
+  const staging = join(stagingDir(root), version);
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+
+  /** Fetch one artifact, show it arriving, and refuse it if the bytes are not the bytes the signed manifest named. The digest check is the gate every byte passes through; the progress display is what makes the wait honest. */
+  const fetchArtifact = async (
+    artifact: ReleaseArtifact,
+  ): Promise<Uint8Array> => {
+    const reporter = deps.progress?.(artifact);
+    let downloaded: Uint8Array;
+    try {
+      downloaded = await deps.download(artifact.name, reporter?.onProgress);
+    } catch (error) {
+      // Retire the bar before the error reaches a terminal, or the message lands on top of a half-drawn line.
+      reporter?.finish();
+      await rm(staging, { recursive: true, force: true });
+      throw error;
+    }
+    reporter?.finish();
+    if (!artifactMatches(artifact, downloaded)) {
+      await rm(staging, { recursive: true, force: true });
+      throw new UpdateError(
+        `Refusing update: ${artifact.name} does not match the SHA-256 in the manifest`,
+      );
+    }
+    return downloaded;
+  };
+
+  const cliBytes = await fetchArtifact(cli);
+  const stagedCli = cliPath(staging);
+  await writeFile(stagedCli, cliBytes);
+  await chmod(stagedCli, 0o755);
+
+  const reported = await deps
+    .probeVersion(stagedCli)
+    .catch(async (error: unknown) => {
+      await rm(staging, { recursive: true, force: true });
+      throw new UpdateError(
+        `Refusing update: staged hive ${version} did not run (${errorMessage(
+          error,
+        )})`,
+      );
+    });
+  if (!reported.includes(version)) {
+    await rm(staging, { recursive: true, force: true });
+    throw new UpdateError(
+      `Refusing update: staged binary reported "${reported.trim()}", expected ${version}`,
+    );
+  }
+
+  // Sessiond is a native Mach-O the daemon spawns; stage it next to `hive` so `dirname(process.execPath)/hive-sessiond` resolves in a native install.
+  const sessiondBytes = await fetchArtifact(sessiond);
+  const stagedSessiond = sessiondPath(staging);
+  await writeFile(stagedSessiond, sessiondBytes);
+  await chmod(stagedSessiond, 0o755);
+
+  if (app !== null && deps.unpackApp !== undefined) {
+    const appBytes = await fetchArtifact(app);
+    const tarball = join(staging, app.name);
+    await writeFile(tarball, appBytes);
+    await deps.unpackApp(tarball, staging);
+    await rm(tarball, { force: true });
+  }
+
+  await writeVerificationMaterial(staging, deps.manifestBytes, signature);
+
+  const target = versionDir(version, root);
+  await mkdir(versionsDir(root), { recursive: true });
+  await rm(target, { recursive: true, force: true });
+  await rename(staging, target);
+
+  return {
+    version,
+    directory: target,
+  };
+}
+
+export interface StageOutcome extends StageResult {
+  /** True when the bytes were already on disk and were re-proved rather than refetched. */
+  readonly reused: boolean;
+}
+
+/** Re-prove a version that is already on disk, using the same gates a fresh download passes: the digest the signed manifest names, and the binary stating its own version when asked. "It is already staged" is not evidence. The bytes could have been put there by an older build that had no release key, left behind by a run that crashed between download and activation, or edited on disk afterwards. Trusting them because a directory exists would make the whole fail-closed chain conditional on nothing having gone wrong earlier, which is exactly the assumption an updater is not allowed to make. Re-hashing 65 MB costs a fraction of a second; activating an unverified binary costs the machine. */
+async function proveStaged(
+  deps: StageDeps,
+  manifest: ReleaseManifest,
+  cli: ReleaseArtifact,
+  sessiond: ReleaseArtifact,
+  root: string,
+  signature: string,
+): Promise<StageOutcome> {
+  const version = manifest.version;
+  const staged = cliPath(versionDir(version, root));
+
+  const bytes = new Uint8Array(readFileSync(staged));
+  if (!artifactMatches(cli, bytes)) {
+    throw new UpdateError(
+      `Refusing update: the staged copy of hive ${version} at ${staged} does not ` +
+        "match the SHA-256 in the signed manifest",
+    );
+  }
+
+  const reported = await deps.probeVersion(staged).catch((error: unknown) => {
+    throw new UpdateError(
+      `Refusing update: the staged hive ${version} did not run (${errorMessage(
+        error,
+      )})`,
+    );
+  });
+  if (!reported.includes(version)) {
+    throw new UpdateError(
+      `Refusing update: the staged binary reported "${reported.trim()}", expected ${version}`,
+    );
+  }
+
+  const stagedSessiond = sessiondPath(versionDir(version, root));
+  let sessiondBytes: Uint8Array;
+  try {
+    sessiondBytes = new Uint8Array(readFileSync(stagedSessiond));
+  } catch {
+    throw new UpdateError(
+      `Refusing update: staged hive ${version} is missing hive-sessiond at ${stagedSessiond}`,
+    );
+  }
+  if (!artifactMatches(sessiond, sessiondBytes)) {
+    throw new UpdateError(
+      `Refusing update: the staged hive-sessiond for ${version} at ${stagedSessiond} ` +
+        "does not match the SHA-256 in the signed manifest",
+    );
+  }
+
+  await writeVerificationMaterial(
+    versionDir(version, root),
+    deps.manifestBytes,
+    signature,
+  );
+
+  return {
+    version,
+    directory: versionDir(version, root),
+    reused: true,
+  };
+}
+
+/** The one way in. Produce a version directory that has passed every gate — whether that means downloading it or re-proving what is already there. Do not treat `isStaged()` as proof: that skips the manifest signature, digest, and probe checks, so a crash between download and activation could bypass the fail-closed path. Routing both cases through here ensures no prior state can yield an activation without verification. */
+export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
+  const root = deps.root ?? installRoot();
+  const publicKey =
+    deps.publicKey === undefined ? HIVE_RELEASE_PUBLIC_KEY : deps.publicKey;
+
+  const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
+  if (!trust.verified)
+    throw new UpdateError(`Refusing update: ${trust.reason}`);
+  const signature = deps.signature;
+  if (!trust.signed || signature === null) {
+    throw new UpdateError(
+      "Refusing update: manifest is not signed by an embedded Hive release key",
+    );
+  }
+  const manifest = manifestFromSignedBytes(deps);
+  const version = manifest.version;
+  const cli = selectArtifact(manifest, "cli", deps.arch);
+  if (cli === null) {
+    throw new UpdateError(
+      `Release ${version} has no CLI build for darwin-${deps.arch}`,
+    );
+  }
+  const sessiond = selectArtifact(manifest, "sessiond", deps.arch);
+  if (sessiond === null) {
+    throw new UpdateError(
+      `Release ${version} has no sessiond build for darwin-${deps.arch}`,
+    );
+  }
+
+  if (isStaged(version, root)) {
+    try {
+      return await proveStaged(deps, manifest, cli, sessiond, root, signature);
+    } catch (error) {
+      // The staged copy is not what the signed manifest describes. Discarding and refetching is safe *unless* it is the version currently running: deleting the active install to recover from a bad staging would trade a refused update for a broken one. There we refuse and say what to remove.
+      if (readInstallState(root).active === version) throw error;
+      await rm(versionDir(version, root), { recursive: true, force: true });
+    }
+  }
+
+  return { ...(await stageRelease(deps)), reused: false };
+}
+
+/** Atomically point `current` at a staged version directory. */
+export async function activate(
+  version: string,
+  root = installRoot(),
+): Promise<void> {
+  const target = versionDir(version, root);
+  if (!existsSync(cliPath(target))) {
+    throw new UpdateError(`hive ${version} is not staged at ${target}`);
+  }
+  const link = currentLink(root);
+  const temporary = `${link}.tmp`;
+  await rm(temporary, { force: true });
+  await symlink(join("versions", version), temporary);
+  await rename(temporary, link);
+}
+
+export async function ensureBinLink(root = installRoot()): Promise<void> {
+  const link = binLink();
+  await mkdir(dirname(link), { recursive: true });
+  const temporary = `${link}.tmp`;
+  await rm(temporary, { force: true });
+  await symlink(cliPath(currentLink(root)), temporary);
+  await rename(temporary, link);
+}
+
+function patchNumber(version: string): number {
+  const match = /^\d+\.\d+\.(\d+)$/.exec(version);
+  return match?.[1] === undefined ? -1 : Number.parseInt(match[1], 10);
+}
+
+function installedVersions(root: string): string[] {
+  try {
+    return readdirSync(versionsDir(root), { withFileTypes: true })
+      .filter(
+        (entry) => entry.isDirectory() && /^\d+\.\d+\.\d+$/.test(entry.name),
+      )
+      .map((entry) => entry.name)
+      .sort((a, b) => patchNumber(b) - patchNumber(a));
+  } catch {
+    return [];
+  }
+}
+
+/** Staged versions outside the retention budget: the active version, the rollback target, and the next most recent — three by default, fewer only when fewer than three are staged. `active` and `previous` are never in the result, whether or not they are actually present on disk. */
+export function versionsToPrune(
+  root: string,
+  active: string | null,
+  previous: string | null,
+): string[] {
+  const installed = installedVersions(root);
+  const keep = new Set<string>();
+  if (active !== null) keep.add(active);
+  if (previous !== null) keep.add(previous);
+  for (const version of installed) {
+    if (keep.size >= 3) break;
+    keep.add(version);
+  }
+  return installed.filter((version) => !keep.has(version));
+}
+
+export interface PruneDeps {
+  readonly root?: string;
+  readonly log?: (message: string) => void;
+  readonly remove?: (dir: string) => Promise<void>;
+}
+
+/** Remove staged versions past the retention budget so `versions/` does not grow forever. Never throws: pruning is disk hygiene, not part of the update's success, so a removal error is logged and swallowed rather than surfaced as a failed update. */
+export async function pruneOldVersions(
+  active: string | null,
+  previous: string | null,
+  deps: PruneDeps = {},
+): Promise<readonly string[]> {
+  const root = deps.root ?? installRoot();
+  const log = deps.log ?? ((message: string) => console.log(message));
+  const remove =
+    deps.remove ?? ((dir: string) => rm(dir, { recursive: true, force: true }));
+
+  const pruned: string[] = [];
+  for (const version of versionsToPrune(root, active, previous)) {
+    try {
+      await remove(versionDir(version, root));
+      pruned.push(version);
+      log(
+        `hive update: pruned hive ${version} (retaining the active version, the rollback target, and the next most recent)`,
+      );
+    } catch (error) {
+      log(
+        `hive update: could not prune hive ${version}: ${errorMessage(error)}`,
+      );
+    }
+  }
+  return pruned;
+}
+
+export interface ActivationDeps {
+  readonly root?: string;
+  /** Bounded proof that the activated binary works. */
+  readonly healthCheck: (binaryPath: string) => Promise<boolean>;
+  readonly log?: (message: string) => void;
+}
+
+export interface RollbackDeps extends ActivationDeps {
+  readonly arch?: HiveArch;
+  readonly publicKey?: string | null;
+}
+
+export type ActivationOutcome =
+  | { activated: true; version: string; previous: string | null }
+  | {
+      activated: false;
+      version: string;
+      revertedTo: string | null;
+      reason: string;
+    };
+
+/** Activate, then prove it. On failure, put `current` back and keep the staged version on disk for diagnosis rather than deleting the evidence. Hive reverts after a failed post-activation health check because a broken control plane strands a team rather than merely failing one command. */
+export async function activateWithHealthCheck(
+  version: string,
+  deps: ActivationDeps,
+): Promise<ActivationOutcome> {
+  const root = deps.root ?? installRoot();
+  const state = readInstallState(root);
+  const previous = state.active;
+
+  await activate(version, root);
+  const healthy = await deps
+    .healthCheck(cliPath(currentLink(root)))
+    .catch(() => false);
+
+  if (healthy) {
+    writeInstallState({ active: version, previous }, root);
+    await pruneOldVersions(version, previous, { root, log: deps.log });
+    return { activated: true, version, previous };
+  }
+
+  if (previous !== null && isStaged(previous, root)) {
+    await activate(previous, root);
+    writeInstallState(state, root);
+    return {
+      activated: false,
+      version,
+      revertedTo: previous,
+      reason: `hive ${version} failed its health check`,
+    };
+  }
+  // Nothing to revert to. Leave `current` pointing at the new version rather than at nothing; a broken hive beats an absent one, and the message says so.
+  return {
+    activated: false,
+    version,
+    revertedTo: null,
+    reason:
+      `hive ${version} failed its health check and there is no retained ` +
+      "previous version to revert to",
+  };
+}
+
+function rollbackVerificationError(
+  version: string,
+  reason: string,
+): UpdateError {
+  return new UpdateError(
+    `Refusing rollback: retained hive ${version} ${reason}. ` +
+      `Reinstall it with \`hive update ${version}\`, then retry.`,
+  );
+}
+
+function verifyRollbackTarget(
+  version: string,
+  deps: RollbackDeps,
+  root: string,
+): void {
+  let material: z.infer<typeof VerificationMaterialSchema>;
+  try {
+    material = VerificationMaterialSchema.parse(
+      JSON.parse(
+        readFileSync(
+          verificationMaterialPath(versionDir(version, root)),
+          "utf8",
+        ),
+      ),
+    );
+  } catch {
+    throw rollbackVerificationError(
+      version,
+      "has no valid signed rollback verification material",
+    );
+  }
+
+  const manifestBytes = Buffer.from(material.manifestBase64, "base64");
+  if (manifestBytes.toString("base64") !== material.manifestBase64) {
+    throw rollbackVerificationError(
+      version,
+      "has invalid verification material",
+    );
+  }
+
+  const publicKey =
+    deps.publicKey === undefined ? HIVE_RELEASE_PUBLIC_KEY : deps.publicKey;
+  const trust = verifyManifest(manifestBytes, material.signature, publicKey);
+  if (!trust.verified || !trust.signed) {
+    const reason = trust.verified
+      ? "cannot be verified because this Hive build has no embedded release key"
+      : `has invalid verification material (${trust.reason})`;
+    throw rollbackVerificationError(version, reason);
+  }
+
+  let manifest: ReleaseManifest;
+  try {
+    manifest = parseReleaseManifest(
+      JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(manifestBytes),
+      ),
+    );
+  } catch {
+    throw rollbackVerificationError(
+      version,
+      "has an invalid signed release manifest",
+    );
+  }
+  if (manifest.version !== version) {
+    throw rollbackVerificationError(
+      version,
+      `has verification material for hive ${manifest.version}`,
+    );
+  }
+
+  const arch: HiveArch = deps.arch ?? (HIVE_ARCH === "arm64" ? "arm64" : "x64");
+  const artifact = selectArtifact(manifest, "cli", arch);
+  if (artifact === null) {
+    throw rollbackVerificationError(
+      version,
+      `has no signed CLI artifact for darwin-${arch}`,
+    );
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(readFileSync(cliPath(versionDir(version, root))));
+  } catch {
+    throw rollbackVerificationError(version, "has no readable CLI to verify");
+  }
+  if (!artifactMatches(artifact, bytes)) {
+    throw rollbackVerificationError(
+      version,
+      "does not match its signed release manifest",
+    );
+  }
+}
+
+export async function rollback(deps: RollbackDeps): Promise<ActivationOutcome> {
+  const root = deps.root ?? installRoot();
+  const state = readInstallState(root);
+  if (state.previous === null) {
+    throw new UpdateError("No retained previous version to roll back to");
+  }
+  if (!isStaged(state.previous, root)) {
+    throw new UpdateError(
+      `Retained version ${state.previous} is missing from ${versionsDir(root)}`,
+    );
+  }
+  const target = state.previous;
+  verifyRollbackTarget(target, deps, root);
+  await activate(target, root);
+  const healthy = await deps
+    .healthCheck(cliPath(currentLink(root)))
+    .catch(() => false);
+  if (!healthy) {
+    // Symmetric with activateWithHealthCheck: never leave `current` pointing at a binary that just failed its own health check, rollback included. The version we came from got here by having already passed a health check (its own activation or an earlier rollback), so it is the thing to trust.
+    const canRevert = state.active !== null && isStaged(state.active, root);
+    if (canRevert) {
+      await activate(state.active as string, root);
+    }
+    return {
+      activated: false,
+      version: target,
+      revertedTo: canRevert ? state.active : null,
+      reason: `hive ${target} failed its health check`,
+    };
+  }
+  writeInstallState({ active: target, previous: state.active }, root);
+  await pruneOldVersions(target, state.active, { root, log: deps.log });
+  return { activated: true, version: target, previous: state.active };
+}
+
+export { workspaceAppPath };

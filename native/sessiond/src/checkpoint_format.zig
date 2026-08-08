@@ -2,10 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const generated = @import("session_protocol_generated");
 
-/// Maximum opaque checkpoint payload accepted by the streamed producer and
-/// the contiguous importer. The contiguous path stays at
-/// `checkpoint_contiguous_max_bytes`; larger checkpoints must use the bounded
-/// streaming path.
+/// Maximum opaque checkpoint payload accepted by the streamed producer and the contiguous importer. The contiguous path stays at `checkpoint_contiguous_max_bytes`; larger checkpoints must use the bounded streaming path.
 pub const checkpoint_max_bytes: usize = 512 * 1024 * 1024;
 pub const checkpoint_contiguous_max_bytes: usize = 64 * 1024 * 1024;
 pub const checkpoint_stream_chunk_bytes: usize = 64 * 1024;
@@ -29,17 +26,13 @@ pub const legacy_engine_build_id: [32]u8 = switch (builtin.target.cpu.arch) {
 };
 
 pub fn acceptsEngineBuildId(candidate: *const [32]u8, current: *const [32]u8) bool {
-    // DELIBERATELY coarse outer-envelope gate: sessiond does not know the
-    // engine's c_abi/runtime-safety build configuration. The inner HVGCP001
-    // decoder applies that precise second gate before reading engine state.
+    // DELIBERATELY coarse outer-envelope gate: sessiond does not know the engine's c_abi/runtime-safety build configuration. The inner HVGCP001 decoder applies that precise second gate before reading engine state.
     if (std.mem.eql(u8, candidate, current)) return true;
     return switch (builtin.target.cpu.arch) {
         .aarch64, .x86_64 => std.mem.eql(u8, candidate, &legacy_engine_build_id),
         else => false,
     };
 }
-
-// ── HVTCP001 envelope (116 bytes, network byte order) ───────────────────────
 
 pub const header_bytes: usize = generated.checkpoint.header_bytes;
 pub const magic = generated.checkpoint.magic;
@@ -48,9 +41,6 @@ pub const flags_v1: u32 = generated.checkpoint.flags;
 pub const engine_build_id_bytes: usize = generated.checkpoint.engine_build_id_bytes;
 pub const payload_sha256_bytes: usize = generated.checkpoint.payload_sha256_bytes;
 
-// HVTCP001 field offsets (network layout / CHECKPOINT_HEADER.offsets).
-// Local table is dual-sourced against generated.checkpoint.offset: if the
-// generator re-emits a moved boundary and this table is not updated, comptime fails.
 pub const off = struct {
     pub const magic: usize = 0;
     pub const version: usize = 8;
@@ -76,7 +66,6 @@ comptime {
     if (payload_sha256_bytes != 32) @compileError("payloadSha256 must be 32 bytes");
     if (off.payload_sha256 + payload_sha256_bytes != header_bytes)
         @compileError("payload_sha256 offset + width must equal header_bytes");
-    // F4 drift guard: every interior offset must match the generated projection.
     if (off.magic != generated.checkpoint.offset.magic)
         @compileError("checkpoint offset magic drifted from generated");
     if (off.version != generated.checkpoint.offset.version)
@@ -103,22 +92,18 @@ comptime {
         @compileError("checkpoint offset payload_length drifted from generated");
     if (off.payload_sha256 != generated.checkpoint.offset.payload_sha256)
         @compileError("checkpoint offset payload_sha256 drifted from generated");
-    // Width lock: last field still covers the full header when widths move alone.
     if (generated.checkpoint.width.payload_sha256 != payload_sha256_bytes)
         @compileError("checkpoint width payload_sha256 drifted from generated size");
     if (off.payload_sha256 + generated.checkpoint.width.payload_sha256 != header_bytes)
         @compileError("generated payload_sha256 offset + width must equal header_bytes");
 }
 
-/// Decoded / to-encode HVTCP001 header fields (excluding the trailing opaque payload).
 pub const CheckpointHeader = struct {
     through_seq: u64,
     created_mono_nanos: u64,
     columns: u32,
     rows: u32,
-    /// Unsigned fixed-point 16.16 cell width in pixels; 0 when unknown.
     cell_width_px_16_16: u32,
-    /// Unsigned fixed-point 16.16 cell height in pixels; 0 when unknown.
     cell_height_px_16_16: u32,
     engine_build_id: [32]u8,
     payload_length: u32,
@@ -147,9 +132,6 @@ pub const Error = error{
     Closed,
 } || EnvelopeError || std.mem.Allocator.Error;
 
-// ── Envelope encode / decode ────────────────────────────────────────────────
-
-/// Encode the 116-byte HVTCP001 header into `out`. Network byte order.
 pub fn encodeHeader(header: CheckpointHeader, out: *[header_bytes]u8) void {
     @memset(out, 0);
     @memcpy(out[off.magic..][0..8], magic);
@@ -167,7 +149,6 @@ pub fn encodeHeader(header: CheckpointHeader, out: *[header_bytes]u8) void {
     @memcpy(out[off.payload_sha256..][0..32], &header.payload_sha256);
 }
 
-/// Decode and validate fixed fields of a 116-byte header. Does not check payload.
 pub fn decodeHeader(bytes: *const [header_bytes]u8) EnvelopeError!CheckpointHeader {
     if (!std.mem.eql(u8, bytes[off.magic..][0..8], magic)) return error.WrongMagic;
     const ver = std.mem.readInt(u16, bytes[off.version..][0..2], .big);
@@ -195,7 +176,6 @@ pub fn decodeHeader(bytes: *const [header_bytes]u8) EnvelopeError!CheckpointHead
     };
 }
 
-/// Assemble header + opaque payload into an owned file image. Computes payload SHA-256.
 pub const CheckpointFields = struct {
     through_seq: u64,
     created_mono_nanos: u64,
@@ -239,8 +219,6 @@ pub fn assembleEnvelope(
     return out;
 }
 
-/// Parse an assembled checkpoint file: validate header + payload length + sha256.
-/// On success returns header; caller slices payload as `file[header_bytes..][0..header.payload_length]`.
 pub fn parseEnvelope(file: []const u8) EnvelopeError!CheckpointHeader {
     if (file.len < header_bytes) return error.Truncated;
     const header = try decodeHeader(file[0..header_bytes]);
@@ -254,7 +232,6 @@ pub fn parseEnvelope(file: []const u8) EnvelopeError!CheckpointHeader {
     return header;
 }
 
-/// Verify payload bytes alone against a header's length + digest (import path).
 pub fn verifyPayload(header: CheckpointHeader, payload: []const u8) EnvelopeError!void {
     if (payload.len != header.payload_length) return error.PayloadLengthMismatch;
     if (payload.len > checkpoint_max_bytes) return error.PayloadTooLarge;

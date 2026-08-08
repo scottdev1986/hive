@@ -1,156 +1,118 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { claudeProjectDirectory } from "../../src/adapters/providers/claude-cli";
-import { HiveDatabase } from "../../src/daemon/db";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
-import {
-  defaultTokenUsageAdapters,
-  type TokenUsageAdapter,
-  TokenUsageStore,
-} from "../../src/daemon/token-usage";
+import type { TokenUsageEventIngest } from "../../src/schemas/token-usage-schema";
+import { TokenUsageStore } from "../../src/usage-service/token-usage";
 import { required } from "../required";
+import { tempRoot } from "../temp-root";
 
 const at = "2026-07-13T12:00:00.000Z";
 
+function reading(
+  key: string,
+  counts: TokenUsageEventIngest["counts"],
+  options: { cumulative?: boolean; observedAt?: string; source?: string } = {},
+): TokenUsageEventIngest {
+  return {
+    key,
+    counts,
+    observedAt: options.observedAt ?? at,
+    source: options.source ?? "protocol-test",
+    ...(options.cumulative === true ? { cumulative: true } : {}),
+  };
+}
+
 describe("TokenUsageStore", () => {
-  test("normalizes real Claude, Codex, and Grok artifact shapes without double counting", async () => {
-    const home = mkdtempSync(join(tmpdir(), "hive-token-usage-"));
+  test("attributes protocol readings from Claude, Codex, and Grok without double counting", async () => {
+    const home = tempRoot("hive-token-usage-");
     const repo = join(home, "repo");
     mkdirSync(repo);
-    const store = new TokenUsageStore(
-      new HiveDatabase(":memory:"),
-      defaultTokenUsageAdapters(home),
-    );
+    const store = new TokenUsageStore(new HiveDatabase(":memory:"));
     const session = await store.startSession(repo, at);
 
-    const codexDirectory = join(home, ".codex", "sessions", "2026", "07", "13");
-    mkdirSync(codexDirectory, { recursive: true });
-    const codexPath = join(codexDirectory, "rollout-test.jsonl");
-    writeFileSync(
-      codexPath,
-      `${[
-        JSON.stringify({
-          type: "session_meta",
-          payload: { id: "codex-session", cwd: resolve(repo) },
-        }),
-        JSON.stringify({
-          timestamp: at,
-          payload: {
-            type: "token_count",
-            info: {
-              total_token_usage: {
-                input_tokens: 100,
-                cached_input_tokens: 70,
-                output_tokens: 20,
-                reasoning_output_tokens: 5,
-              },
-            },
-          },
-        }),
-      ].join("\n")}\n`,
-    );
     const codex = store.startOrchestrator(session, "codex", repo, at);
-    store.registerOrchestratorProviderSession("codex-session", repo);
-    await store.refreshSubject(codex);
-    appendFileSync(
-      codexPath,
-      `${JSON.stringify({
-        timestamp: "2026-07-13T12:01:00.000Z",
-        payload: {
-          type: "token_count",
-          info: {
-            total_token_usage: {
-              input_tokens: 150,
-              cached_input_tokens: 90,
-              output_tokens: 30,
-              reasoning_output_tokens: 8,
-            },
-          },
+    store.recordProtocolUsage(codex, [
+      reading(
+        "cumulative",
+        {
+          inputTokens: 100,
+          cachedInputTokens: 70,
+          cacheCreationInputTokens: null,
+          outputTokens: 20,
+          reasoningTokens: 5,
         },
-      })}\n`,
-    );
+        { cumulative: true, source: "codex-app-server" },
+      ),
+    ]);
+    // A later cumulative reading replaces the earlier total, not adds to it.
+    store.recordProtocolUsage(codex, [
+      reading(
+        "cumulative",
+        {
+          inputTokens: 150,
+          cachedInputTokens: 90,
+          cacheCreationInputTokens: null,
+          outputTokens: 30,
+          reasoningTokens: 8,
+        },
+        {
+          cumulative: true,
+          observedAt: "2026-07-13T12:01:00.000Z",
+          source: "codex-app-server",
+        },
+      ),
+    ]);
     await store.endSubject(codex);
 
-    const claudeDirectory = claudeProjectDirectory(repo, home);
-    mkdirSync(claudeDirectory, { recursive: true });
-    const claudePath = join(claudeDirectory, "claude-session.jsonl");
-    writeFileSync(
-      claudePath,
-      `${JSON.stringify({
-        type: "assistant",
-        uuid: "entry-1",
-        timestamp: at,
-        message: {
-          id: "message-1",
-          usage: {
-            input_tokens: 10,
-            cache_creation_input_tokens: 20,
-            cache_read_input_tokens: 30,
-            output_tokens: 4,
-          },
-        },
-      })}\n`,
-    );
     const claude = store.startOrchestrator(session, "claude", repo, at);
-    store.registerOrchestratorProviderSession("claude-session", repo);
-    await store.refreshSubject(claude);
-    appendFileSync(
-      claudePath,
-      `${JSON.stringify({
-        type: "assistant",
-        uuid: "entry-2",
-        timestamp: "2026-07-13T12:02:00.000Z",
-        message: {
-          id: "message-1",
-          usage: {
-            input_tokens: 10,
-            cache_creation_input_tokens: 20,
-            cache_read_input_tokens: 30,
-            output_tokens: 6,
-          },
+    store.recordProtocolUsage(claude, [
+      reading(
+        "message:message-1",
+        {
+          inputTokens: 60,
+          cachedInputTokens: 30,
+          cacheCreationInputTokens: 20,
+          outputTokens: 6,
+          reasoningTokens: null,
         },
-      })}\n`,
-    );
+        { source: "claude-stream-json" },
+      ),
+    ]);
+    // Replaying the same key is a reconnect — totals must not grow.
+    store.recordProtocolUsage(claude, [
+      reading(
+        "message:message-1",
+        {
+          inputTokens: 60,
+          cachedInputTokens: 30,
+          cacheCreationInputTokens: 20,
+          outputTokens: 6,
+          reasoningTokens: null,
+        },
+        {
+          observedAt: "2026-07-13T12:02:00.000Z",
+          source: "claude-stream-json",
+        },
+      ),
+    ]);
     await store.endSubject(claude);
 
-    const grokSession = "grok-session";
-    const grokDirectory = join(
-      home,
-      ".grok",
-      "sessions",
-      encodeURIComponent(resolve(repo)),
-      grokSession,
-    );
-    mkdirSync(grokDirectory, { recursive: true });
-    writeFileSync(
-      join(grokDirectory, "summary.json"),
-      JSON.stringify({
-        info: { id: grokSession, cwd: resolve(repo) },
-        current_model_id: "grok-code-fast-1",
-      }),
-    );
-    writeFileSync(
-      join(grokDirectory, "updates.jsonl"),
-      `${JSON.stringify({
-        timestamp: 1_752_408_000,
-        params: {
-          update: {
-            sessionUpdate: "turn_completed",
-            prompt_id: "prompt-1",
-            usage: {
-              inputTokens: 40,
-              cachedReadTokens: 25,
-              outputTokens: 9,
-              reasoningTokens: 3,
-            },
-          },
-        },
-      })}\n`,
-    );
     const grok = store.startOrchestrator(session, "grok", repo, at);
-    store.registerOrchestratorProviderSession(grokSession, repo);
+    store.recordProtocolUsage(grok, [
+      reading(
+        "turn:prompt-1",
+        {
+          inputTokens: 40,
+          cachedInputTokens: 25,
+          cacheCreationInputTokens: null,
+          outputTokens: 9,
+          reasoningTokens: 3,
+        },
+        { source: "grok-acp" },
+      ),
+    ]);
     await store.endSubject(grok);
 
     const snapshot = await store.snapshot(repo);
@@ -178,88 +140,36 @@ describe("TokenUsageStore", () => {
     ]);
   });
 
-  test("a missing provider session id never aliases a predecessor's tokens", async () => {
-    const home = mkdtempSync(join(tmpdir(), "hive-token-alias-"));
+  test("without a protocol reading the subject stays unknown, never zero", async () => {
+    const home = tempRoot("hive-token-unknown-");
     const repo = join(home, "repo");
     mkdirSync(repo);
-    const directory = claudeProjectDirectory(repo, home);
-    mkdirSync(directory, { recursive: true });
-    const assistant = (id: string, input: number, output: number) =>
-      `${JSON.stringify({
-        type: "assistant",
-        uuid: id,
-        timestamp: at,
-        message: {
-          id,
-          usage: {
-            input_tokens: input,
-            cache_creation_input_tokens: 0,
-            cache_read_input_tokens: 0,
-            output_tokens: output,
-          },
-        },
-      })}\n`;
-    writeFileSync(
-      join(directory, "dead-predecessor.jsonl"),
-      assistant("predecessor-message", 1_000, 100),
-    );
-
-    const store = new TokenUsageStore(
-      new HiveDatabase(":memory:"),
-      defaultTokenUsageAdapters(home),
-    );
+    const store = new TokenUsageStore(new HiveDatabase(":memory:"));
     const session = await store.startSession(repo, at);
-    const subject = store.startOrchestrator(session, "claude", repo, at);
+    store.startOrchestrator(session, "claude", repo, at);
 
-    await store.refreshSubject(subject);
-    let reading = (await store.snapshot(repo)).sessions[0]?.subjects[0]
+    const readingState = (await store.snapshot(repo)).sessions[0]?.subjects[0]
       ?.reading;
-    expect(reading).toEqual({
+    expect(readingState).toEqual({
       state: "unknown",
-      reason: "claude provider session id has not been observed",
+      reason: "No provider token reading has been observed",
     });
-
-    writeFileSync(
-      join(directory, "current-session.jsonl"),
-      assistant("current-message", 6, 1),
-    );
-    store.registerOrchestratorProviderSession("current-session", repo);
-    await store.refreshSubject(subject);
-    reading = (await store.snapshot(repo)).sessions[0]?.subjects[0]?.reading;
-    reading = required(reading);
-    expect(reading.state).toBe("measured");
-    if (reading.state === "measured") {
-      expect(reading.counts.totalTokens).toBe(7);
-    }
   });
 
-  test("a new CLI is one adapter, not a ledger or wire-schema change", async () => {
-    const adapter: TokenUsageAdapter = {
-      provider: "opencode",
-      discover: async () => ({ paths: ["virtual://opencode/session"] }),
-      read: async () => ({
-        cursorBytes: 1,
-        events: [
-          {
-            key: "turn-1",
-            counts: {
-              inputTokens: 12,
-              cachedInputTokens: null,
-              cacheCreationInputTokens: null,
-              outputTokens: 3,
-              reasoningTokens: null,
-            },
-            observedAt: at,
-            source: "opencode-test",
-          },
-        ],
-      }),
-    };
+  test("protocol ingestion is the only write path — any provider shape works", async () => {
     const repo = "/tmp/hive-opencode-token-test";
-    const store = new TokenUsageStore(new HiveDatabase(":memory:"), [adapter]);
+    const store = new TokenUsageStore(new HiveDatabase(":memory:"));
     const session = await store.startSession(repo, at);
-    store.startOrchestrator(session, "opencode", repo, at);
-    store.registerOrchestratorProviderSession("opencode-session", repo);
+    const subject = store.startOrchestrator(session, "opencode", repo, at);
+    store.recordProtocolUsage(subject, [
+      reading("turn-1", {
+        inputTokens: 12,
+        cachedInputTokens: null,
+        cacheCreationInputTokens: null,
+        outputTokens: 3,
+        reasoningTokens: null,
+      }),
+    ]);
 
     const snapshot = await store.snapshot(repo);
     expect(snapshot.sessions[0]?.subjects[0]?.provider).toBe("opencode");
@@ -267,37 +177,44 @@ describe("TokenUsageStore", () => {
   });
 
   test("backup orchestrators and workers stay in one fleet session with separate buckets", async () => {
-    const adapter: TokenUsageAdapter = {
-      provider: "codex",
-      discover: async (subject) => ({ paths: [`virtual://${subject.id}`] }),
-      read: async () => ({
-        cursorBytes: 1,
-        events: [
-          {
-            key: "cumulative",
-            cumulative: true,
-            counts: {
-              inputTokens: 10,
-              cachedInputTokens: 5,
-              cacheCreationInputTokens: null,
-              outputTokens: 2,
-              reasoningTokens: 1,
-            },
-            observedAt: at,
-            source: "codex-test",
-          },
-        ],
-      }),
-    };
     const db = new HiveDatabase(":memory:");
     const repo = "/tmp/hive-generation-token-test";
-    const store = new TokenUsageStore(db, [adapter]);
+    const store = new TokenUsageStore(db);
     const session = await store.startSession(repo, at);
     const first = store.startOrchestrator(session, "codex", repo, at);
-    store.registerOrchestratorProviderSession("first-codex-session", repo);
+    store.recordProtocolUsage(first, [
+      reading(
+        "cumulative",
+        {
+          inputTokens: 10,
+          cachedInputTokens: 5,
+          cacheCreationInputTokens: null,
+          outputTokens: 2,
+          reasoningTokens: 1,
+        },
+        { cumulative: true },
+      ),
+    ]);
     await store.endSubject(first, "2026-07-13T12:01:00.000Z");
-    store.startOrchestrator(session, "codex", repo, "2026-07-13T12:01:01.000Z");
-    store.registerOrchestratorProviderSession("second-codex-session", repo);
+    const second = store.startOrchestrator(
+      session,
+      "codex",
+      repo,
+      "2026-07-13T12:01:01.000Z",
+    );
+    store.recordProtocolUsage(second, [
+      reading(
+        "cumulative",
+        {
+          inputTokens: 10,
+          cachedInputTokens: 5,
+          cacheCreationInputTokens: null,
+          outputTokens: 2,
+          reasoningTokens: 1,
+        },
+        { cumulative: true },
+      ),
+    ]);
     db.insertAgent({
       id: "agent-maya",
       name: "maya",
@@ -311,12 +228,26 @@ describe("TokenUsageStore", () => {
       contextPct: 1,
       createdAt: "2026-07-13T12:00:30.000Z",
       lastEventAt: "2026-07-13T12:00:30.000Z",
-      recoveryAttempts: 0,
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
       toolSessionId: "worker-codex-session",
     });
+    await store.refreshSession(session);
+    const workerId = required(store.subjectIdForAgent("agent-maya", repo));
+    store.recordProtocolUsage(workerId, [
+      reading(
+        "cumulative",
+        {
+          inputTokens: 10,
+          cachedInputTokens: 5,
+          cacheCreationInputTokens: null,
+          outputTokens: 2,
+          reasoningTokens: 1,
+        },
+        { cumulative: true },
+      ),
+    ]);
 
     const snapshot = await store.snapshot(repo);
     const current = required(snapshot.sessions[0]);
@@ -330,17 +261,11 @@ describe("TokenUsageStore", () => {
     expect(current.fleet.counts?.totalTokens).toBe(36);
   });
 
-  test("missing provider evidence is unknown and never fabricated as zero", async () => {
-    const adapter: TokenUsageAdapter = {
-      provider: "quiet-cli",
-      discover: async () => ({ paths: [] }),
-      read: async () => ({ cursorBytes: 0, events: [] }),
-    };
+  test("missing protocol evidence is unknown and never fabricated as zero", async () => {
     const repo = "/tmp/hive-quiet-token-test";
-    const store = new TokenUsageStore(new HiveDatabase(":memory:"), [adapter]);
+    const store = new TokenUsageStore(new HiveDatabase(":memory:"));
     const session = await store.startSession(repo, at);
     store.startOrchestrator(session, "quiet-cli", repo, at);
-    store.registerOrchestratorProviderSession("quiet-session", repo);
 
     const snapshot = await store.snapshot(repo);
     expect(snapshot.sessions[0]?.complete).toBe(false);
@@ -350,56 +275,13 @@ describe("TokenUsageStore", () => {
     ]);
     expect(snapshot.sessions[0]?.subjects[0]?.reading).toEqual({
       state: "unknown",
-      reason: "quiet-cli has not produced a token artifact for this session",
-    });
-  });
-
-  test("a failed refresh does not present an older subtotal as complete", async () => {
-    let readable = true;
-    const adapter: TokenUsageAdapter = {
-      provider: "flaky-cli",
-      discover: async () => ({ paths: ["virtual://flaky/session"] }),
-      read: async () => {
-        if (!readable) throw new Error("artifact disappeared");
-        return {
-          cursorBytes: 1,
-          events: [
-            {
-              key: "turn",
-              counts: {
-                inputTokens: 4,
-                cachedInputTokens: null,
-                cacheCreationInputTokens: null,
-                outputTokens: 1,
-                reasoningTokens: null,
-              },
-              observedAt: at,
-              source: "flaky-test",
-            },
-          ],
-        };
-      },
-    };
-    const repo = "/tmp/hive-flaky-token-test";
-    const store = new TokenUsageStore(new HiveDatabase(":memory:"), [adapter]);
-    const session = await store.startSession(repo, at);
-    const subject = store.startOrchestrator(session, "flaky-cli", repo, at);
-    store.registerOrchestratorProviderSession("flaky-session", repo);
-    await store.refreshSubject(subject);
-    readable = false;
-
-    const snapshot = await store.snapshot(repo);
-    expect(snapshot.sessions[0]?.complete).toBe(false);
-    expect(snapshot.sessions[0]?.fleet.counts).toBeNull();
-    expect(snapshot.sessions[0]?.subjects[0]?.reading).toEqual({
-      state: "unknown",
-      reason: "Could not read flaky-cli token artifact: artifact disappeared",
+      reason: "No provider token reading has been observed",
     });
   });
 
   test("the daemon lifecycle and read API are capability gated", async () => {
     const db = new HiveDatabase(":memory:");
-    const tokenUsage = new TokenUsageStore(db, []);
+    const tokenUsage = new TokenUsageStore(db);
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
@@ -411,7 +293,7 @@ describe("TokenUsageStore", () => {
         },
       },
     });
-    const operator = daemon.capabilities.mint("operator-test", "operator", {
+    const user = daemon.capabilities.mint("user-test", "user", {
       epoch: 0,
     }).token;
     const orchestrator = daemon.capabilities.mint(
@@ -436,14 +318,14 @@ describe("TokenUsageStore", () => {
     });
     expect(denied.status).toBe(403);
 
-    const started = await request("/token-usage/sessions", operator, {
+    const started = await request("/token-usage/sessions", user, {
       repoRoot: "/tmp/hive-token-api",
     });
     expect(started.status).toBe(200);
     const sessionId = ((await started.json()) as { sessionId: string })
       .sessionId;
     const read = await request(
-      "/token-usage?repoRoot=%2Ftmp%2Fhive-token-api",
+      `/token-usage?repoRoot=${encodeURIComponent("/tmp/hive-token-api")}`,
       orchestrator,
     );
     expect(read.status).toBe(200);
@@ -458,8 +340,6 @@ describe("TokenUsageStore", () => {
     const sessionId = "11111111-1111-4111-8111-111111111111";
     const legacyId = "22222222-2222-4222-8222-222222222222";
     const profilerId = "33333333-3333-4333-8333-333333333333";
-    // The profiling-era schema: the wide role CHECK, the profileRunId column, and
-    // the one-profiler-per-run index.
     db.database.exec(`
       CREATE TABLE token_usage_sessions (
         id TEXT PRIMARY KEY, repoRoot TEXT NOT NULL, startedAt TEXT NOT NULL, endedAt TEXT
@@ -498,26 +378,23 @@ describe("TokenUsageStore", () => {
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
         providerSessionId, profileRunId, startedAt, endedAt, unknownReason
-      ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', 'codex', NULL, ?, NULL, NULL, ?, NULL, NULL)
+      ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', 'claude', NULL, ?, NULL, NULL, ?, NULL, NULL)
     `)
       .run(legacyId, sessionId, repo, at);
-    // A profiler subject from the removed surface, keyed by a profileRunId.
     db.database
       .query(`
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
         providerSessionId, profileRunId, startedAt, endedAt, unknownReason
-      ) VALUES (?, ?, NULL, 'profile-run-1', 'profiler', 'codex', NULL, ?, NULL, 'run-1', ?, NULL, NULL)
+      ) VALUES (?, ?, NULL, 'Profiler', 'profiler', 'claude', NULL, ?, NULL, 'run-1', ?, NULL, NULL)
     `)
       .run(profilerId, sessionId, repo, at);
-    // A child event on each: the legacy one proves the rebuild preserves
-    // foreign-key-referenced rows; the profiler's proves its children are cleaned.
     db.database
       .query(`
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
-      ) VALUES (?, 'e1', 1, 10, 5, NULL, 2, NULL, ?, 'legacy')
+      ) VALUES (?, 'legacy', 0, 10, NULL, NULL, 2, NULL, ?, 'legacy')
     `)
       .run(legacyId, at);
     db.database
@@ -525,64 +402,19 @@ describe("TokenUsageStore", () => {
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
-      ) VALUES (?, 'p1', 1, 400, 250, NULL, 60, 20, ?, 'codex-rollout')
+      ) VALUES (?, 'profiler', 0, 99, NULL, NULL, 1, NULL, ?, 'profiler')
     `)
       .run(profilerId, at);
 
-    // Constructing the store runs the migration.
-    new TokenUsageStore(db, []);
+    new TokenUsageStore(db);
 
-    // The profileRunId column is gone.
-    const columns = db.database
-      .query("PRAGMA table_info(token_usage_subjects)")
-      .all() as { name: string }[];
-    expect(columns.some((c) => c.name === "profileRunId")).toBe(false);
-    // The legacy orchestrator and its event survive untouched.
-    expect(
-      db.database
-        .query("SELECT name, role FROM token_usage_subjects WHERE id = ?")
-        .get(legacyId),
-    ).toEqual({ name: "Orchestrator", role: "orchestrator" });
-    expect(
-      db.database
-        .query(
-          "SELECT COUNT(*) AS n FROM token_usage_events WHERE subjectId = ?",
-        )
-        .get(legacyId),
-    ).toEqual({ n: 1 });
-    // The profiler subject and its event are gone.
-    expect(
-      db.database
-        .query(
-          "SELECT COUNT(*) AS n FROM token_usage_subjects WHERE role = 'profiler'",
-        )
-        .get(),
-    ).toEqual({ n: 0 });
-    expect(
-      db.database
-        .query(
-          "SELECT COUNT(*) AS n FROM token_usage_events WHERE subjectId = ?",
-        )
-        .get(profilerId),
-    ).toEqual({ n: 0 });
-    // The narrowed CHECK now rejects a profiler insert.
-    expect(() =>
-      db.database
-        .query(`
-        INSERT INTO token_usage_subjects (
-          id, sessionId, agentId, name, role, provider, model, cwd,
-          providerSessionId, startedAt, endedAt, unknownReason
-        ) VALUES (?, ?, NULL, 'x', 'profiler', 'codex', NULL, ?, NULL, ?, NULL, NULL)
-      `)
-        .run("44444444-4444-4444-8444-444444444444", sessionId, repo, at),
-    ).toThrow();
-    // Foreign-key enforcement is restored after the rebuild.
-    expect(
-      (
-        db.database.query("PRAGMA foreign_keys").all() as {
-          foreign_keys: number;
-        }[]
-      )[0]?.foreign_keys,
-    ).toBe(1);
+    const roles = db.database
+      .query("SELECT role FROM token_usage_subjects ORDER BY name")
+      .all() as Array<{ role: string }>;
+    expect(roles).toEqual([{ role: "orchestrator" }]);
+    const events = db.database
+      .query("SELECT subjectId FROM token_usage_events")
+      .all() as Array<{ subjectId: string }>;
+    expect(events).toEqual([{ subjectId: legacyId }]);
   });
 });

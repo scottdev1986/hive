@@ -14,23 +14,19 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { grokAgentAdapter } from "../../../src/adapters/providers/grok-adapter";
 import {
-  buildGrokResumeCommand,
   buildGrokSpawnCommand,
-  discoverGrokRecoverySessionId,
   findLatestGrokSessionId,
   GROK_COMPATIBILITY_ENV,
   grokHookFilename,
   inspectGrokProjectTrust,
   parseGrokCliVersion,
   probeGrokCliVersion,
-  readLiveGrokModel,
   removeGrokAgentConfig,
   seedGrokRepositoryTrust,
   wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
 } from "../../../src/adapters/providers/grok-cli";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
 
 /** The path grok's trust store is keyed by: /tmp is a symlink on macOS. */
 const resolveReal = (path: string): Promise<string> =>
@@ -74,31 +70,6 @@ describe("Grok adapter", () => {
   // disk belongs to this agent, and a respawn into a reused worktree reads its
   // dead predecessor's. Measured against the real CLI: --session-id accepts a
   // v4 crypto.randomUUID() and creates the session directory under that id.
-  test("names a new session on argv, and never on a resume", () => {
-    const sessionId = "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f";
-    expect(buildGrokSpawnCommand({ ...writer, sessionId })).toEqual([
-      "grok",
-      "--no-auto-update",
-      "-m",
-      "catalog-model",
-      "--always-approve",
-      "--session-id",
-      sessionId,
-    ]);
-    // The CLI rejects --session-id on resume (it names a NEW conversation), so
-    // the resume path carries -r and nothing else.
-    expect(buildGrokResumeCommand({ ...writer, sessionId }, sessionId)).toEqual(
-      [
-        "grok",
-        "--no-auto-update",
-        "-r",
-        sessionId,
-        "-m",
-        "catalog-model",
-        "--always-approve",
-      ],
-    );
-  });
 
   test("uses the cross-model reader barrier", () => {
     expect(buildGrokSpawnCommand({ ...writer, readOnly: true })).toEqual([
@@ -119,20 +90,6 @@ describe("Grok adapter", () => {
       "--allow",
       "Grep",
     ]);
-  });
-
-  test("resume uses -r and replays current process flags, never --session-id", () => {
-    const command = buildGrokResumeCommand(writer, "019f-session");
-    expect(command).toEqual([
-      "grok",
-      "--no-auto-update",
-      "-r",
-      "019f-session",
-      "-m",
-      "catalog-model",
-      "--always-approve",
-    ]);
-    expect(command).not.toContain("--session-id");
   });
 
   test("sets every compatibility import switch to false", () => {
@@ -389,7 +346,7 @@ describe("Grok adapter", () => {
     const warning = spyOn(console, "warn").mockImplementation(() => {});
     try {
       const refusal = await grokAgentAdapter
-        .prepareSpawn({
+        .prepareRuntime({
           name: "maya",
           model: "grok-4",
           worktreePath: root,
@@ -427,7 +384,7 @@ describe("Grok adapter", () => {
         executable,
         "#!/bin/sh\nprintf '%s\\n' 'Project trusted: yes'\n",
       );
-      await grokAgentAdapter.prepareSpawn({
+      await grokAgentAdapter.prepareRuntime({
         name: "maya",
         model: "grok-4",
         worktreePath: root,
@@ -463,7 +420,7 @@ describe("Grok adapter", () => {
 
     expect(await seedGrokRepositoryTrust(repository, home)).toBe("seeded");
     const seeded = await readFile(store, "utf8");
-    // The operator's own decisions are not collateral. Losing one would revoke
+    // The user's own decisions are not collateral. Losing one would revoke
     // trust they granted for a repository Hive has nothing to do with.
     expect(seeded).toContain("/Users/someone/Projects/theirs");
     expect(seeded).toContain(await resolveReal(repository));
@@ -512,8 +469,6 @@ describe("Grok adapter", () => {
     ).toContain("trusted = true");
   });
 
-  test.todo("trusted Grok 0.2.112 fires the written hook after quota resets 2026-07-26T17:18Z", () => {});
-
   test("resolves encoded and long-path sessions only by summary cwd", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-grok-home-"));
     roots.push(home);
@@ -540,9 +495,6 @@ describe("Grok adapter", () => {
     const summary = join(long, "new", "summary.json");
     await writeFile(summary, await readFile(summary, "utf8"));
     expect(await findLatestGrokSessionId(worktree, home)).toBe("new-id");
-    expect(await readLiveGrokModel(worktree, "new-id", home)).toBe(
-      "observed-model",
-    );
 
     await writeFile(
       summary,
@@ -570,85 +522,5 @@ describe("Grok adapter", () => {
     expect(findLatestGrokSessionId(worktree, home)).rejects.toThrow(
       "Invalid Grok summary",
     );
-  });
-
-  test("recovery discovery uses summary creation evidence and refuses ambiguity", async () => {
-    const home = await mkdtemp(join(tmpdir(), "hive-grok-recovery-home-"));
-    roots.push(home);
-    const worktree = resolve(join(home, "worktree"));
-    const project = join(home, "sessions", encodeURIComponent(worktree));
-    const summary = async (
-      directory: string,
-      id: string,
-      timestampKey: string,
-      timestamp: string,
-    ) => {
-      await mkdir(join(project, directory), { recursive: true });
-      await writeFile(
-        join(project, directory, "summary.json"),
-        JSON.stringify({
-          info: { id, cwd: worktree },
-          [timestampKey]: timestamp,
-        }),
-      );
-    };
-    await summary(
-      "predecessor",
-      "predecessor",
-      "created_at",
-      "2026-07-13T11:59:59.000Z",
-    );
-
-    expect(
-      await discoverGrokRecoverySessionId(
-        worktree,
-        "2026-07-13T12:00:00.000Z",
-        home,
-      ),
-    ).toBeNull();
-    await summary(
-      "current",
-      "current",
-      "created_at",
-      "2026-07-13T12:00:01.000Z",
-    );
-    await summary(
-      "predecessor",
-      "predecessor",
-      "created_at",
-      "2026-07-13T11:59:59.000Z",
-    );
-
-    expect(
-      await discoverGrokRecoverySessionId(
-        worktree,
-        "2026-07-13T12:00:00.000Z",
-        home,
-      ),
-    ).toBe("current");
-
-    await summary(
-      "second-current",
-      "second-current",
-      "created_at",
-      "2026-07-13T12:00:02.000Z",
-    );
-    expect(
-      discoverGrokRecoverySessionId(worktree, "2026-07-13T12:00:00.000Z", home),
-    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
-    await rm(join(project, "second-current"), { recursive: true });
-
-    await summary(
-      "unknown-evidence",
-      "unknown-evidence",
-      "createdAt",
-      "2026-07-13T12:00:03.000Z",
-    );
-    expect(
-      discoverGrokRecoverySessionId(worktree, "2026-07-13T12:00:00.000Z", home),
-    ).rejects.toMatchObject({
-      name: "RecoverySessionDiscoveryError",
-      reason: "invalid-evidence",
-    });
   });
 });

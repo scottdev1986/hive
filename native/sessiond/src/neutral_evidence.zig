@@ -1,8 +1,9 @@
 const std = @import("std");
 const generated = @import("session_protocol_generated");
-const neutral_host = @import("neutral_host");
 const process_inspector = @import("process_inspector");
 const wall_clock = @import("wall_clock");
+const neutral_contract = @import("neutral_contract");
+const neutral_runtime = @import("neutral_runtime");
 
 const c = @cImport({
     @cInclude("sys/wait.h");
@@ -11,45 +12,12 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 
-pub const Completeness = enum { complete, partial, unavailable, unknown };
-
-pub const WireProcessIdentity = struct {
-    processId: i32,
-    startToken: []const u8,
-};
-
-pub const WireWindowSize = struct {
-    columns: u32,
-    rows: u32,
-    widthPixels: u32,
-    heightPixels: u32,
-};
-
-pub const WireJobControlEvidence = struct {
-    sessionLeader: bool,
-    controllingTerminal: bool,
-    standardStreamsShareTerminal: bool,
-    childSessionId: i32,
-    childProcessGroupId: i32,
-    foregroundProcessGroupId: i32,
-    terminalIdentity: []const u8,
-    initialProfileAppliedBeforeExec: bool,
-    initialWindowAppliedBeforeExec: bool,
-    completeness: Completeness,
-};
-
-pub const WireExitStatus = struct {
-    code: ?i32,
-    signal: ?i32,
-    observedAt: []const u8,
-};
-
-pub const WireReapEvidence = struct {
-    authority: enum { @"direct-parent", @"durable-parent-record", unavailable },
-    reaped: bool,
-    status: ?WireExitStatus,
-    completeness: Completeness,
-};
+pub const Completeness = generated.TerminalHostCompleteness;
+pub const WireProcessIdentity = generated.TerminalHostProcessIdentity;
+pub const WireWindowSize = generated.TerminalHostWindowSize;
+pub const WireJobControlEvidence = generated.TerminalHostJobControlEvidence;
+pub const WireExitStatus = generated.TerminalHostExitStatus;
+pub const WireReapEvidence = generated.TerminalHostReapEvidence;
 
 pub const WireCheckpoint = struct {
     contentType: []const u8,
@@ -64,7 +32,7 @@ pub const WireCheckpoint = struct {
 pub const WireInputClaim = struct {
     token: []const u8,
     writer: []const u8,
-    kind: enum { human, automation },
+    kind: enum { user, automation },
     leaseExpiresAt: []const u8,
 };
 
@@ -74,7 +42,7 @@ pub const WireSurvivor = struct {
 };
 
 pub const WireInspection = struct {
-    session: neutral_host.SessionRef,
+    session: neutral_contract.SessionRef,
     lifecycle: enum { creating, running, exited, lost, unknown },
     completeness: Completeness,
     host: ?WireProcessIdentity,
@@ -97,7 +65,7 @@ pub const WireInspection = struct {
 
 pub const WireInspectionPayload = struct {
     schemaVersion: u8 = 1,
-    session: neutral_host.SessionRef,
+    session: neutral_contract.SessionRef,
     lifecycle: @FieldType(WireInspection, "lifecycle"),
     completeness: Completeness,
     host: ?WireProcessIdentity,
@@ -116,22 +84,16 @@ pub const WireInspectionPayload = struct {
 };
 
 pub const ListRequest = struct { schemaVersion: u8 };
-pub const InspectRequest = struct { schemaVersion: u8, session: neutral_host.SessionRef };
+pub const InspectRequest = struct { schemaVersion: u8, session: neutral_contract.SessionRef };
 pub const ResizeRequest = struct {
     schemaVersion: u8,
-    session: neutral_host.SessionRef,
+    session: neutral_contract.SessionRef,
     window: WireWindowSize,
     revision: []const u8,
     idempotencyKey: []const u8,
 };
 
-/// outcomes. Each carries `schemaVersion` on top of the frozen result shape,
-/// exactly as the termination payload carries it on top of its result. The
-/// applied variant reports the geometry read back from the terminal AFTER the
-/// set, and has deliberately no field claiming the foreground application
-/// handled its notification: the host cannot observe that, so the projection
-/// cannot say it. A superseded revision is `stale` and names the revision that
-/// superseded it, so a caller learns where the order actually is.
+/// outcomes. Each carries `schemaVersion` on top of the frozen result shape, exactly as the termination payload carries it on top of its result. The applied variant reports the geometry read back from the terminal AFTER the set, and has deliberately no field claiming the foreground application handled its notification: the host cannot observe that, so the projection cannot say it. A superseded revision is `stale` and names the revision that superseded it, so a caller learns where the order actually is.
 pub const WireAppliedResizePayload = struct {
     schemaVersion: u8 = 1,
     state: enum { applied } = .applied,
@@ -156,7 +118,7 @@ pub const WireUnknownResizePayload = struct {
 pub fn staleResize(
     allocator: std.mem.Allocator,
     current_revision: u64,
-) !neutral_host.OperationResponse {
+) !neutral_runtime.OperationResponse {
     return .{ .payload = try std.json.Stringify.valueAlloc(allocator, WireStaleResizePayload{
         .currentRevision = try decimal(allocator, current_revision),
     }, .{}) };
@@ -165,42 +127,31 @@ pub fn staleResize(
 pub fn unknownResize(
     allocator: std.mem.Allocator,
     diagnostic: []const u8,
-) !neutral_host.OperationResponse {
+) !neutral_runtime.OperationResponse {
     return .{ .payload = try std.json.Stringify.valueAlloc(allocator, WireUnknownResizePayload{
         .diagnostic = diagnostic,
     }, .{}) };
 }
 
-/// applied evidence from the terminal the control plane does not own.
 pub const AppliedResize = struct {
     revision: u64,
     orderedAt: u64,
-    readback: neutral_host.WindowSize,
+    readback: neutral_contract.WindowSize,
 };
 
-/// What the terminal says when it will not apply a revision. It reports the
-/// order IT is in, because the durable record is not authoritative here: a set
-/// that succeeded before its commit failed leaves the record behind the
-/// terminal, and answering from the record would name a revision that is in
-/// force nowhere. `current` is the state that revision left behind, so a caller
-/// retrying the revision the terminal already holds can be answered with the
-/// receipt it should have received the first time.
 pub const TerminalResize = union(enum) {
     applied: AppliedResize,
     superseded: AppliedResize,
 };
 
-/// Host-side seam for ordered terminal mutation. Inspection reads evidence
-/// through EvidenceProvider; a mutation needs the terminal itself, which this
-/// control plane deliberately does not own. Optional-null on HostOperations for
-/// the same reason Controller.host is: only the mutating operation needs it.
+/// Host-side seam for ordered terminal mutation. Inspection reads evidence through EvidenceProvider; a mutation needs the terminal itself, which this control plane deliberately does not own. Optional-null on HostOperations for the same reason Controller.host is: only the mutating operation needs it.
 pub const TerminalProvider = struct {
     context: *anyopaque,
-    resizeFn: *const fn (*anyopaque, neutral_host.WindowSize, u64) anyerror!TerminalResize,
+    resizeFn: *const fn (*anyopaque, neutral_contract.WindowSize, u64) anyerror!TerminalResize,
 
     pub fn resize(
         self: TerminalProvider,
-        window: neutral_host.WindowSize,
+        window: neutral_contract.WindowSize,
         revision: u64,
     ) !TerminalResize {
         return self.resizeFn(self.context, window, revision);
@@ -209,7 +160,7 @@ pub const TerminalProvider = struct {
 pub const HostInspectRequest = struct { schemaVersion: u8, includeCheckpoint: bool };
 pub const TerminateRequest = struct {
     schemaVersion: u8,
-    session: neutral_host.SessionRef,
+    session: neutral_contract.SessionRef,
     mode: enum { graceful, immediate },
     target: enum { @"foreground-group", @"session-members", @"process-tree" },
     deadline: []const u8,
@@ -272,22 +223,7 @@ pub const EvidenceClock = struct {
     }
 
     fn systemNow(_: *anyopaque, output: []u8) ![]const u8 {
-        const now_ms = std.time.milliTimestamp();
-        if (now_ms < 0) return error.InvalidTimestamp;
-        const millis: u64 = @intCast(now_ms);
-        const epoch_seconds: std.time.epoch.EpochSeconds = .{ .secs = millis / std.time.ms_per_s };
-        const year_day = epoch_seconds.getEpochDay().calculateYearDay();
-        const month_day = year_day.calculateMonthDay();
-        const day_seconds = epoch_seconds.getDaySeconds();
-        return std.fmt.bufPrint(output, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z", .{
-            year_day.year,
-            month_day.month.numeric(),
-            month_day.day_index + 1,
-            day_seconds.getHoursIntoDay(),
-            day_seconds.getMinutesIntoHour(),
-            day_seconds.getSecondsIntoMinute(),
-            millis % std.time.ms_per_s,
-        });
+        return wall_clock.deadline(output, 0);
     }
 };
 
@@ -300,7 +236,7 @@ pub fn positiveProcessId(value: ?i32) ?i32 {
     return if (present > 0) present else null;
 }
 
-pub fn wireWindow(value: neutral_host.WindowSize) WireWindowSize {
+pub fn wireWindow(value: neutral_contract.WindowSize) WireWindowSize {
     return .{
         .columns = value.columns,
         .rows = value.rows,
@@ -309,19 +245,19 @@ pub fn wireWindow(value: neutral_host.WindowSize) WireWindowSize {
     };
 }
 
-fn wireProcess(value: neutral_host.ProcessIdentity) WireProcessIdentity {
+fn wireProcess(value: neutral_contract.ProcessIdentity) WireProcessIdentity {
     return .{ .processId = value.processId, .startToken = value.startToken };
 }
 
-pub fn validProcessIdentity(value: neutral_host.ProcessIdentity) bool {
+pub fn validProcessIdentity(value: neutral_contract.ProcessIdentity) bool {
     return value.processId > 0 and value.startToken.len > 0;
 }
 
-fn wireExit(value: neutral_host.ExitStatus) WireExitStatus {
+fn wireExit(value: neutral_contract.ExitStatus) WireExitStatus {
     return .{ .code = value.code, .signal = value.signal, .observedAt = value.observedAt };
 }
 
-fn wireReap(value: neutral_host.ReapEvidence) WireReapEvidence {
+fn wireReap(value: neutral_contract.ReapEvidence) WireReapEvidence {
     return .{
         .authority = switch (value.authority) {
             .@"direct-parent" => .@"direct-parent",
@@ -362,7 +298,7 @@ fn appendDiagnostic(
 
 pub fn makeCheckpoint(
     allocator: std.mem.Allocator,
-    record: neutral_host.Record,
+    record: neutral_runtime.Record,
     live: ?LiveEvidence,
     include_checkpoint: bool,
     diagnostics: *std.ArrayList([]const u8),
@@ -415,7 +351,7 @@ pub fn makeCheckpoint(
 
 pub fn buildInspection(
     allocator: std.mem.Allocator,
-    record: neutral_host.Record,
+    record: neutral_runtime.Record,
     platform: process_inspector.Platform,
     live: ?LiveEvidence,
     evidence_at: []const u8,
@@ -762,7 +698,7 @@ pub const RootReapPlatform = struct {
 
 pub fn durableTermination(
     allocator: std.mem.Allocator,
-    record: neutral_host.Record,
+    record: neutral_runtime.Record,
     diagnostic: []const u8,
 ) !WireTerminationResult {
     const reap = if (record.reap) |value| wireReap(value) else WireReapEvidence{
@@ -837,7 +773,7 @@ pub fn terminationFromTree(
 
 pub fn measureDirectChildReap(
     allocator: std.mem.Allocator,
-    record: neutral_host.Record,
+    record: neutral_runtime.Record,
     clock: EvidenceClock,
 ) !?WireReapEvidence {
     if (record.lifecycle != .live) return null;
@@ -870,8 +806,6 @@ pub fn measureDirectChildReap(
         .authority = .@"direct-parent",
         .reaped = true,
         .status = exit,
-        // A passive inspect can prove the direct child was reaped, but it did
-        // not capture/contain the pre-exit descendant set.
         .completeness = .partial,
     };
 }

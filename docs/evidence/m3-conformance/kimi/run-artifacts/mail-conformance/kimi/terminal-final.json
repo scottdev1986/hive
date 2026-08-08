@@ -1,0 +1,38 @@
+{
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "7316881bde",
+    "subject": {
+      "kind": "agent",
+      "agentId": "7a8caa8d-920a-46cf-8a0a-f3a509cfe0d5"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc2e0-d12c-71d6-83db-71bf0c5274c4",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "outputSeq": "235911",
+  "columns": 80,
+  "rows": 24,
+  "rowStart": 0,
+  "screen": "primary",
+  "cursor": {
+    "row": 20,
+    "column": 5,
+    "visible": false
+  },
+  "text": "     mit_019fc2e1-0572-7000-8af7-60c0252081e1 (m3-work, mergedCount 1); backlog\n     1 control + 1 work available                                              \n   • hive_mail_claim m3-safe-point: both items claimed, attempt 1, leases until\n     14:31:51Z                                                                 \n   • hive_mail_claim m3-competing (expected refusals): MAIL_ITEM_NOT_CLAIMABLE \n     on both items                                                             \n   • hive_mail_complete (first): both completed, replayed:false, settledAt     \n     14:30:13.868Z / .873Z                                                     \n   • hive_mail_complete (replay): both completed, replayed:true, identical     \n     settledAt — idempotent replay confirmed                                   \n   • hive_mail_status (david): control 0 available / 0 leased, work 0 available\n     / 0 leased, deadLetters total 0                                           \n   • Report to queen: published on control lane,                               \n     mit_019fc2e2-8ea3-7000-a1c1-a987bcfa8545; final status update shows       \n     mailBacklog=0                                                             \n                                                                               \n   Mailbox is empty, no dead letters, and the replay/competing-claim semantics \n   behaved as expected. No further authorized work in the assignment.          \n \n ╭────────────────────────────────────────────────────────────────────────────╮\n │ >                                                                          │\n ╰────────────────────────────────────────────────────────────────────────────╯\n yolo  K3 thinking: high  …/.hive/worktrees/david  hive/david-at-the-first-saf…\n                                                         context: 5% (45.6k/1M)",
+  "styledText": "     mit_019fc2e1-0572-7000-8af7-60c0252081e1 (m3-work, mergedCount 1); backlog\r\n     1 control + 1 work available                                              \r\n   • hive_mail_claim m3-safe-point: both items claimed, attempt 1, leases until\r\n     14:31:51Z                                                                 \r\n   • hive_mail_claim m3-competing (expected refusals): MAIL_ITEM_NOT_CLAIMABLE \r\n     on both items                                                             \r\n   • hive_mail_complete (first): both completed, replayed:false, settledAt     \r\n     14:30:13.868Z / .873Z                                                     \r\n   • hive_mail_complete (replay): both completed, replayed:true, identical     \r\n     settledAt — idempotent replay confirmed                                   \r\n   • hive_mail_status (david): control 0 available / 0 leased, work 0 available\r\n     / 0 leased, deadLetters total 0                                           \r\n   • Report to queen: published on control lane,                               \r\n     mit_019fc2e2-8ea3-7000-a1c1-a987bcfa8545; final status update shows       \r\n     mailBacklog=0                                                             \r\n                                                                               \r\n   Mailbox is empty, no dead letters, and the replay/competing-claim semantics \r\n   behaved as expected. No further authorized work in the assignment.          \r\n \r\n ╭────────────────────────────────────────────────────────────────────────────╮\r\n │ > \u001b[0m\u001b[7m \u001b[0m                                                                        │\r\n ╰────────────────────────────────────────────────────────────────────────────╯\r\n yolo  K3 thinking: high  …/.hive/worktrees/david  hive/david-at-the-first-saf…\r\n                                                         context: 5% (45.6k/1M)",
+  "truncated": false,
+  "sha256": "25ea36f701fffb2005e939b6b13ea88436c0a9ce9cd9bf9fa3c3833c4b8131c7",
+  "composer": {
+    "profile": "kimi",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "logicalViewerId": "u5-workbench-surface-u5-msb6rwsf-onqkn0",
+  "connectionPolicy": "one locator-fixed connection at a time",
+  "switches": [
+    {
+      "ordinal": 1,
+      "viewerId": "u5-workbench-surface-u5-msb6rwsf-onqkn0",
+      "fromLocator": null,
+      "toLocator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "7ef7febe-5224-4dad-86f4-824a0a54960f"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc052-05e2-7092-879e-adbe30b43b57",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "grant": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "87f653c084",
+          "subject": {
+            "kind": "agent",
+            "agentId": "7ef7febe-5224-4dad-86f4-824a0a54960f"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc052-05e2-7092-879e-adbe30b43b57",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1",
+        "expiresAt": "2026-08-02T02:36:02.778Z",
+        "checkpointSeq": "0",
+        "outputSeq": "0",
+        "operations": [
+          "view"
+        ]
+      },
+      "replay": {
+        "completeness": "complete",
+        "outputThrough": "12169",
+        "screenSha256": "34217f431bb472d9ad304668dda6656ed64f38c97d77ef579bb456c346a3a453",
+        "screen": "│                    ▘▘ ▝▝                    │ Added Claude Opus 5 (`claude-… │\n│                                             │ Added `sandbox.network.strict… │\n│       Haiku 4.5 · Claude Max · Scott        │ /release-notes for more        │\n│   /private/tmp/u5p-e/.hive/worktrees/maya   │                                │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n\n❯ Begin the assigned task.\n\n⏺ I'm maya, a Hive read-only agent. My task is to wait quietly for live terminal\n  proof. Reading the Hive contract now.\n\n⏺ Skill(hive-claude)\n  ⎿  Successfully loaded skill\n\n⏺ Standing by. Session open, ready for live terminal proof.\n\n✻ Cooked for 9s\n\n────────────────────────────────────────────────────────────────────────────────\n❯\n────────────────────────────────────────────────────────────────────────────────\n  🐝  maya · 5h 13% · 7d 18%\n  ⏸ manual mode on · ← 1 agent"
+      },
+      "detachedAt": "2026-08-02T02:35:32.910Z",
+      "postDetach": {
+        "agentId": "7ef7febe-5224-4dad-86f4-824a0a54960f",
+        "status": "idle",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "87f653c084",
+          "subject": {
+            "kind": "agent",
+            "agentId": "7ef7febe-5224-4dad-86f4-824a0a54960f"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc052-05e2-7092-879e-adbe30b43b57",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "captureSha256": "0c3ca63cd6cecfc294ba6aecf6cde974ebe9b8b9df0adbfc83130f16a4a38143",
+        "composer": {
+          "profile": "claude",
+          "present": true,
+          "nonempty": false,
+          "stable": true,
+          "userEditSinceEmpty": false,
+          "userOperationInFlight": false,
+          "claim": false,
+          "invariant": "ok"
+        },
+        "stableComposerObserved": true
+      }
+    }
+  ]
+}

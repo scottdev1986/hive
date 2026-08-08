@@ -2,55 +2,35 @@ import AppKit
 import HiveTerminalKit
 import WorkspaceCore
 
-/// One project's workspace window: owns the pane views (real terminals),
-/// applies reducer changes, and is the single dispatch point for the shared
-/// command model. Menu items and shortcuts reach it through the responder
-/// chain, so the key window owns routing exactly as the blueprint requires.
 final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     let state: ProjectState
     private let attentionCenter: AttentionCenter
-    private let projectDirectory: String
     private let hivePath: String
     private let daemonPort: Int
-    private let orchestrator: String
-    private let instanceID: String
     private let instanceHome: String
-    private var orchestratorSupervisor: Process?
     private let container = LayoutContainerView()
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
     private var pendingCloses: Set<PaneID> = []
-    /// Panes the reducer has created but whose views have not been built yet.
-    /// See `admitPane(_:)`.
     private var pendingAdmissions: [PaneID] = []
     private var admissionDrainScheduled = false
-    /// Panes built in the current main-queue turn; reset on every entry to the
-    /// reducer's change loop and on every drain slice.
     private var admittedThisTurn = 0
     private var feedFailureWindow: NSWindow?
     private var isClosing = false
 
-    /// Set by the app delegate to tear the feed down with the window (the
-    /// app usually quits on last-window-close, but a floating panel can keep
-    /// it alive, and the status reader must not outlive its project surface).
+    /// Set by the app delegate to tear the feed down with the window (the app usually quits on last-window-close, but a floating panel can keep it alive, and the status reader must not outlive its project surface).
     var onWindowWillClose: (() -> Void)?
     var onStateChange: (() -> Void)?
-    var onComposerInput: ((String, ComposerInputAction) -> Void)?
 
     var paneViewCount: Int { paneViews.count }
 
     init(state: ProjectState, attentionCenter: AttentionCenter,
-         projectDirectory: String, hivePath: String, daemonPort: Int,
-         orchestrator: String,
-         instanceID: String, instanceHome: String) {
+         hivePath: String, daemonPort: Int, instanceHome: String) {
         self.state = state
         self.attentionCenter = attentionCenter
-        self.projectDirectory = projectDirectory
         self.hivePath = hivePath
         self.daemonPort = daemonPort
-        self.orchestrator = orchestrator
-        self.instanceID = instanceID
         self.instanceHome = instanceHome
 
         let window = WorkspaceWindow(
@@ -63,11 +43,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
         super.init(window: window)
         window.delegate = self
-        // AppKit posts no notification when the first responder moves, so the
-        // window tells us itself. This is the signal the indicator rides on:
-        // clicks, ⌃⌘-arrow focus moves, a closed pane handing focus back, and
-        // the terminal grabbing the keyboard on mouseDown all pass through
-        // makeFirstResponder — and only through makeFirstResponder.
         window.onFirstResponderChange = { [weak self] in
             self?.refreshFocusIndicators()
         }
@@ -90,60 +65,17 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         container.onBoundsChanged = { [weak self] in
             guard let self else { return }
             self.state.layoutBounds = self.container.bounds
-            // Window resize commits immediately; the animated path is for
-            // tree changes, not live window resizing.
             self.applyLayout(animated: false)
         }
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    // MARK: Entry points
-
-    /// Creates the master pane and starts the orchestrator terminal.
-    func bootstrapOrchestrator() {
+    func prepareInitialLayout() {
         react(to: state.addOrchestrator(title: state.displayName))
-        startOrchestratorSupervisor()
     }
 
-    private func startOrchestratorSupervisor() {
-        guard orchestratorSupervisor == nil else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: hivePath)
-        process.arguments = [
-            "workspace-orchestrator",
-            "--tool", orchestrator,
-            "--port", String(daemonPort),
-            "--instance-id", instanceID,
-        ]
-        process.currentDirectoryURL = URL(fileURLWithPath: projectDirectory)
-        var environment = ProcessInfo.processInfo.environment
-        environment["HIVE_HOME"] = instanceHome
-        process.environment = environment
-        process.terminationHandler = { [weak self, weak process] _ in
-            DispatchQueue.main.async {
-                guard let self, self.orchestratorSupervisor === process else { return }
-                self.orchestratorSupervisor = nil
-                guard !self.isClosing else { return }
-                self.react(to: self.state.markOrchestratorExited(
-                    exitCode: process?.terminationStatus))
-            }
-        }
-        orchestratorSupervisor = process
-        do {
-            try process.run()
-        } catch {
-            if orchestratorSupervisor === process {
-                orchestratorSupervisor = nil
-            }
-            react(to: state.markOrchestratorExited(exitCode: nil))
-        }
-    }
-
-    /// Commits the first real window geometry after presentation. Bootstrap
-    /// happens before `showWindow`, when the container may still be 0×0; do
-    /// not rely on AppKit subsequently reporting a bounds change to launch the
-    /// terminal surface. A snapped layout here gives it settled dimensions.
+    /// Commits the first real window geometry after presentation. Bootstrap happens before `showWindow`, when the container may still be 0×0; do not rely on AppKit subsequently reporting a bounds change to launch the terminal surface. A snapped layout here gives it settled dimensions.
     func commitInitialGeometry() {
         window?.contentView?.layoutSubtreeIfNeeded()
         window?.layoutIfNeeded()
@@ -152,25 +84,16 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         applyLayout(animated: false)
     }
 
-    /// One feed snapshot in, pane set reconciled.
     func applyFeed(_ agents: [AgentSnapshot], orchestrator: OrchestratorSnapshot? = nil) {
         react(to: state.apply(feed: agents, orchestrator: orchestrator))
     }
 
-    /// The feed process exited: agent statuses can no longer be trusted.
     func feedLost() {
         react(to: state.markFeedLost())
     }
 
-    /// The one shared command entry: menu items, keyboard shortcuts, clicks,
-    /// double-clicks, and accessibility actions all end here.
     func dispatch(_ command: WorkspaceCommand) {
-        // Never kill an agent when closing its pane: terminal lifecycle is
-        // decoupled from agent lifecycle, so the view goes away and the agent
-        // runs on headless. The userClosed suppression keeps the feed from
-        // rebuilding the pane while that agent is still listed live — ending
-        // an agent is the daemon's job, reached through hive_kill or
-        // `hive kill`, never through a pane or window close.
+        // Never kill an agent when closing its pane: terminal lifecycle is decoupled from agent lifecycle, so the view goes away and the agent runs on headless. The userClosed suppression keeps the feed from rebuilding the pane while that agent is still listed live — ending an agent is the daemon's job, reached through hive_kill or `hive kill`, never through a pane or window close.
         if case .closePane(let paneID) = command,
            let pane = state.panes[paneID], pane.kind == .agent {
             _ = state.markUserClosed(paneID)
@@ -178,9 +101,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         react(to: state.apply(command))
     }
 
-    /// The pane goes away because the agent is already gone (the feed said so),
-    /// so this close must NOT kill anything — it is the reducer's bookkeeping,
-    /// not the user's command.
+    /// The pane goes away because the agent is already gone (the feed said so), so this close must NOT kill anything — it is the reducer's bookkeeping, not the user's command.
     private func removeClosedPane(_ paneID: PaneID) {
         react(to: state.apply(.closePane(paneID)))
     }
@@ -227,28 +148,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         onStateChange?()
     }
 
-    // MARK: Pane management
-
-    /// One feed snapshot can announce every agent at once — a fan-out spawn
-    /// reports thirty-two in a single line. Building all of them here would run
-    /// thirty-two `PaneView` constructions and thirty-two Ghostty surface
-    /// creations back to back inside ONE main-queue turn, and every click,
-    /// keystroke and pane redraw queues behind that turn.
-    ///
-    /// Measured with the real UI on real sessiond sessions
-    /// (prototypes/workspace-fanout): thirty-two agents arriving in one snapshot
-    /// stalled the main queue for ~400 ms, about two seconds after the snapshot
-    /// landed. Spreading the identical work across turns is what removes it —
-    /// the same total work, just never all in one turn.
-    ///
-    /// Panes are admitted in arrival order, so the workspace fills in the order
-    /// the daemon reported the agents rather than in an order the run loop
-    /// happened to produce.
-    /// The first slice of a snapshot is built INLINE, so a workspace that
-    /// gains one or two agents — every ordinary case, and every case the pane
-    /// contract tests assert — still has its views the moment `applyFeed`
-    /// returns. Only the surplus of an unusually wide snapshot is deferred,
-    /// because that case exceeds one turn's budget.
+    /// One feed snapshot can announce every agent at once — a fan-out spawn reports thirty-two in a single line. Building all of them here would run thirty-two `PaneView` constructions and thirty-two Ghostty surface creations back to back inside ONE main-queue turn, and every click, keystroke and pane redraw queues behind that turn. Measured with the real UI on real sessiond sessions (prototypes/workspace-fanout): thirty-two agents arriving in one snapshot stalled the main queue for ~400 ms, about two seconds after the snapshot landed. Spreading the identical work across turns is what removes it — the same total work, just never all in one turn. Panes are admitted in arrival order, so the workspace fills in the order the daemon reported the agents rather than in an order the run loop happened to produce. The first slice of a snapshot is built INLINE, so a workspace that gains one or two agents — every ordinary case, and every case the pane contract tests assert — still has its views the moment `applyFeed` returns. Only the surplus of an unusually wide snapshot is deferred, because that case exceeds one turn's budget.
     private func admitPane(_ paneID: PaneID) {
         guard pendingAdmissions.isEmpty, admittedThisTurn < Self.paneAdmissionsPerTurn else {
             pendingAdmissions.append(paneID)
@@ -274,20 +174,14 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         for _ in 0 ..< Self.paneAdmissionsPerTurn where !pendingAdmissions.isEmpty {
             addPaneView(for: pendingAdmissions.removeFirst())
         }
-        // The reducer's own `.layoutChanged` already fired for these panes, at a
-        // point when their views did not exist yet, so the solved frames have to
-        // be applied again now that they do.
         applyLayout(animated: true)
         onStateChange?()
         scheduleAdmissionDrain()
     }
 
-    /// Small enough that one turn stays well inside a frame, large enough that a
-    /// full workspace still fills in promptly.
     private static let paneAdmissionsPerTurn = 4
 
     private func addPaneView(for paneID: PaneID) {
-        // A pane can be closed while it is still queued behind an earlier slice.
         guard state.panes[paneID] != nil else { return }
         guard let pane = state.panes[paneID] else { return }
         let view = PaneView(
@@ -299,8 +193,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         paneViews[paneID] = view
         installSessiondTerminalIfNeeded(for: paneID)
         container.addSubview(view)
-        // New panes appear at their final slot's center and grow into place;
-        // creation must be visible but never steal focus.
+        // New panes appear at their final slot's center and grow into place; creation must be visible but never steal focus.
         if let target = state.frames(in: container.bounds)[paneID] {
             view.frame = CGRect(x: target.midX, y: target.midY, width: 0, height: 0)
         }
@@ -320,44 +213,14 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
                 hivePath: hivePath,
                 daemonPort: daemonPort,
                 instanceHome: instanceHome))
-        view.sessiondTerminal?.view?.onUserInput = {
-            [weak self] characters, command, control in
-            self?.handleComposerInput(
-                recipient: recipient,
-                characters: characters,
-                command: command,
-                control: control)
-        }
     }
 
-    private func handleComposerInput(
-        recipient: String,
-        characters: String,
-        command: Bool,
-        control: Bool
-    ) {
-        let action = classifyComposerInput(
-            characters: characters,
-            command: command,
-            control: control)
-        if action == .editing {
-            onComposerInput?(recipient, action)
-        } else if action == .submitted || action == .cancelled {
-            DispatchQueue.main.async { [weak self] in
-                self?.onComposerInput?(recipient, action)
-            }
-        }
-    }
-
-    /// A closed agent keeps its pane (final status border) for the grace
-    /// window, then the close flows through the same command model as ⇧⌘W.
     private func scheduleGracefulClose(_ paneID: PaneID) {
         guard !pendingCloses.contains(paneID) else { return }
         pendingCloses.insert(paneID)
         DispatchQueue.main.asyncAfter(deadline: .now() + PaneCloseGrace.seconds) { [weak self] in
             guard let self, self.pendingCloses.contains(paneID) else { return }
             self.pendingCloses.remove(paneID)
-            // A live snapshot may have revived the agent during the grace.
             guard self.state.panes[paneID]?.closePending == true else { return }
             self.removeClosedPane(paneID)
         }
@@ -376,22 +239,12 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     private func applyFocus(_ paneID: PaneID?) {
         if let paneID, let view = paneViews[paneID] {
-            // Keystrokes go to the pane's pty — that is the product's
-            // message-sending path (typing into the native TUIs). Making the
-            // terminal first responder is what moves the indicator: the ring
-            // follows the keyboard, not this call.
             view.focusTerminal()
         }
         refreshFocusIndicators()
     }
 
-    /// The one place the active-pane indicator is computed, and it is computed
-    /// from the window itself: which pane owns the first responder, and whether
-    /// the window is key. Never from the last click — a ring that says "you are
-    /// typing here" while the keystrokes go elsewhere is worse than no ring.
-    ///
-    /// Called on every first-responder change (`WorkspaceWindow` below) and
-    /// whenever the window takes or loses key.
+    /// The one place the active-pane indicator is computed, and it is computed from the window itself: which pane owns the first responder, and whether the window is key. Never from the last click — a ring that says "you are typing here" while the keystrokes go elsewhere is worse than no ring. Called on every first-responder change (`WorkspaceWindow` below) and whenever the window takes or loses key.
     private func refreshFocusIndicators() {
         let windowIsKey = window?.isKeyWindow ?? false
         let responderPane = paneOwningFirstResponder()
@@ -399,10 +252,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             view.setFocusIndicator(paneFocusIndicator(
                 pane: id, firstResponderPane: responderPane, windowIsKey: windowIsKey))
         }
-        // Keep the model honest too: the terminal takes first responder on its own
-        // mouseDown, so the keyboard can land in a pane the reducer has not been
-        // told about. Menu commands ("Close Focused Pane") must act on the pane
-        // the user is actually typing into.
         if let responderPane, responderPane != state.focusedPane {
             dispatch(.focusPane(responderPane))
         }
@@ -413,8 +262,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         return paneViews.first { responder.isDescendant(of: $0.value) }?.key
     }
 
-    // A non-key window still has a first responder; the pane keeps its ring, but
-    // the ring goes quiet, because nothing is being typed into it.
     func windowDidBecomeKey(_ notification: Notification) {
         refreshFocusIndicators()
     }
@@ -423,24 +270,18 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         refreshFocusIndicators()
     }
 
-    /// Detaches every renderer without closing its session.
     func terminateAllTerminals() {
         for view in paneViews.values {
             view.sessiondTerminal?.detach()
         }
-        orchestratorSupervisor?.terminate()
-        orchestratorSupervisor = nil
     }
 
     func windowWillClose(_ notification: Notification) {
         isClosing = true
-        // Nothing queued may build a terminal for a window that is going away.
         pendingAdmissions.removeAll()
         terminateAllTerminals()
         onWindowWillClose?()
     }
-
-    // MARK: Smoke-test introspection
 
     func currentPaneFrames() -> [PaneID: CGRect] {
         state.frames(in: container.bounds)
@@ -456,8 +297,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             replacementRange: NSRange(location: NSNotFound, length: 0))
     }
 
-    /// Delivers a wheel event to the running terminal pane through the same
-    /// routing method as the AppKit event monitor.
     @discardableResult
     func postScrollWheel(deltaY: CGFloat, pane: PaneID) -> Bool {
         guard let terminalView = paneViews[pane]?.sessiondTerminal?.view else { return false }
@@ -486,24 +325,15 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         paneViews[pane]?.sessiondTerminal?.hasStarted ?? false
     }
 
-    func visibilityGeometries() -> [PaneID: WorkspaceTerminalGeometry] {
+    func visibilityGeometries() -> [PaneID: TerminalGeometry] {
         Dictionary(uniqueKeysWithValues: paneViews.compactMap { paneID, paneView in
             guard let geometry = paneView.sessiondTerminal?.view?.reportedGeometry else {
                 return nil
             }
-            return (paneID, WorkspaceTerminalGeometry(
-                columns: geometry.columns,
-                rows: geometry.rows,
-                widthPx: geometry.widthPx,
-                heightPx: geometry.heightPx,
-                cellWidthPx: geometry.cellWidthPx,
-                cellHeightPx: geometry.cellHeightPx))
+            return (paneID, geometry)
         })
     }
 
-    /// Delivers a real left-click at the pane's center through the window's own
-    /// event dispatch — the same path a user's click takes: hit-testing, the
-    /// pane's click recognizer, and the terminal taking first responder itself.
     @discardableResult
     func postClick(pane: PaneID) -> Bool {
         guard let view = paneViews[pane], let window else { return false }
@@ -521,18 +351,14 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         return true
     }
 
-    /// What the pane is actually showing — read back from the view, not from the
-    /// reducer, so a test cannot pass on intent alone.
+    /// What the pane is actually showing — read back from the view, not from the reducer, so a test cannot pass on intent alone.
     func focusIndicator(pane: PaneID) -> PaneFocusIndicator {
         paneViews[pane]?.currentFocusIndicator ?? .none
     }
 
-    /// Which pane really owns the keyboard right now.
     func firstResponderPane() -> PaneID? {
         paneOwningFirstResponder()
     }
-
-    // MARK: Menu actions (responder chain; same command model)
 
     @objc func promoteFocusedPane(_ sender: Any?) {
         guard let focused = state.focusedPane else { return }
@@ -563,10 +389,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     @objc func moveFocusDown(_ sender: Any?) { dispatch(.moveFocus(.down)) }
 }
 
-/// The project window. Its one addition to NSWindow is honesty about focus:
-/// `makeFirstResponder` is the single funnel every focus change in AppKit goes
-/// through, so overriding it is how the app learns where the keyboard actually
-/// went — including the moves it never asked for.
+/// The project window. Its one addition to NSWindow is honesty about focus: `makeFirstResponder` is the single funnel every focus change in AppKit goes through, so overriding it is how the app learns where the keyboard actually went — including the moves it never asked for.
 final class WorkspaceWindow: NSWindow {
 
     var onFirstResponderChange: (() -> Void)?

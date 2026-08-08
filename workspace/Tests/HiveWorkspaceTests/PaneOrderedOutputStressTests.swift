@@ -250,15 +250,12 @@ final class PaneOrderedOutputStressTests: XCTestCase {
         let controller = ProjectWindowController(
             state: ProjectState(projectID: "b25-stress", displayName: "B2.5 Stress"),
             attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp",
             hivePath: "/usr/bin/false",
             daemonPort: 43_145,
-            orchestrator: "claude",
-            instanceID: "b25-stress-instance",
             instanceHome: "/tmp/hb25-stress"
         )
         controller.window?.isReleasedWhenClosed = false
-        controller.bootstrapOrchestrator()
+        controller.prepareInitialLayout()
 
         let engineBuildID = HiveTerminalEngineIdentity.current.buildId
         let locator = AgentSessionLocator(

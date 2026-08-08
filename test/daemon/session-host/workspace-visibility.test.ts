@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HiveDatabase } from "../../../src/daemon/db";
+import { HiveDatabase } from "../../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../../src/daemon/server";
 import { mintSessionLocator } from "../../../src/daemon/session-host/locators";
 import {

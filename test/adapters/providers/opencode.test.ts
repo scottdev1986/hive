@@ -1,28 +1,15 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
-  buildOpencodeResumeCommand,
   buildOpencodeSpawnCommand,
-  discoverOpencodeRecoverySessionId,
   OPENCODE_HIVE_AGENT,
-  probeOpencodeDefaultModel,
   writeOpencodeAgentConfig,
   writeOpencodeTurnPlugin,
 } from "../../../src/adapters/providers/opencode-cli";
 import { getAgentAdapter } from "../../../src/adapters/providers/provider-registry";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
-import { credentialPath } from "../../../src/daemon/credentials";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -53,6 +40,18 @@ describe("opencode adapter", () => {
     expect(
       buildOpencodeSpawnCommand({ ...writer, executable: "/opt/opencode" }),
     ).toEqual(["/opt/opencode", "-m", "openai/gpt-5.5"]);
+  });
+
+  test("a null model launches bare: opencode applies its own config default", () => {
+    // The root queen's path on a machine whose opencode config pins no
+    // model — proven live, where a probe-and-refuse gate blocked any
+    // opencode queen. No -m flag, and no throw.
+    expect(buildOpencodeSpawnCommand({ ...writer, model: null })).toEqual([
+      "opencode",
+    ]);
+    expect(
+      buildOpencodeSpawnCommand({ ...writer, model: null, agent: "hive" }),
+    ).toEqual(["opencode", "--agent", "hive"]);
   });
 
   test("the read-only barrier lives in config; dangerous is --auto on argv", () => {
@@ -95,34 +94,6 @@ describe("opencode adapter", () => {
     expect(source).toContain('"--provider-run-id"');
   });
 
-  test("resume uses -s and replays current process flags", () => {
-    expect(
-      buildOpencodeResumeCommand(
-        { ...writer, agent: OPENCODE_HIVE_AGENT },
-        "ses_abc",
-      ),
-    ).toEqual([
-      "opencode",
-      "-s",
-      "ses_abc",
-      "-m",
-      "openai/gpt-5.5",
-      "--agent",
-      "hive",
-    ]);
-    expect(buildOpencodeSpawnCommand(writer)).not.toContain("-s");
-  });
-
-  test("reads the effective default only from the global config model key", async () => {
-    const directory = await worktree();
-    expect(probeOpencodeDefaultModel(directory)).toBeNull();
-    await writeFile(
-      join(directory, "opencode.jsonc"),
-      '// comment\n{ "model": "openai/gpt-5.5" }\n',
-    );
-    expect(probeOpencodeDefaultModel(directory)).toBe("openai/gpt-5.5");
-  });
-
   test("writes project config with capability auth, the brief agent, and the barrier", async () => {
     const root = await worktree();
     await writeFile(
@@ -140,6 +111,7 @@ describe("opencode adapter", () => {
     });
     const path = join(root, "opencode.json");
     const written = JSON.parse(await readFile(path, "utf8")) as {
+      default_agent: string;
       agent: Record<string, Record<string, unknown>>;
       mcp: Record<string, Record<string, unknown>>;
       permission: Record<string, unknown>;
@@ -168,6 +140,7 @@ describe("opencode adapter", () => {
       url: "http://127.0.0.1:7799/mcp",
       enabled: true,
     });
+    expect(written.default_agent).toBe(OPENCODE_HIVE_AGENT);
     expect(written.agent.hive).toEqual({
       description: "Hive-managed agent carrying the launch brief",
       mode: "primary",
@@ -196,6 +169,7 @@ describe("opencode adapter", () => {
     // graphify URL removes the stale endpoint.
     await writeOpencodeAgentConfig(root, { daemonPort: 4400 });
     const respawned = JSON.parse(await readFile(path, "utf8")) as {
+      default_agent: string;
       agent: Record<string, Record<string, unknown>>;
       mcp: Record<string, Record<string, unknown>>;
     };
@@ -211,6 +185,7 @@ describe("opencode adapter", () => {
       },
     });
     expect(respawned.mcp.graphify).toBeUndefined();
+    expect(respawned.default_agent).toBe(OPENCODE_HIVE_AGENT);
     expect(respawned.agent.hive).toEqual(written.agent.hive);
     // No graphify means no gate: both the script and its plugin are removed
     // rather than leaving a plugin shelling out to a deleted script.
@@ -220,27 +195,35 @@ describe("opencode adapter", () => {
     ).rejects.toThrow();
   });
 
-  test("the written gate plugin declines once, then passes graph-first work", async () => {
+  test("the written gate plugin relays only an explicit deny", async () => {
     const root = await worktree();
-    // The script only gates when the graphify endpoint answers like a live
-    // MCP server, so the test serves one.
-    const server = Bun.serve({
-      hostname: "127.0.0.1",
-      port: 0,
-      fetch: () =>
-        Response.json(
-          {
-            jsonrpc: "2.0",
-            error: { message: "Bad Request: Missing session ID" },
-          },
-          { status: 400, headers: { Connection: "close" } },
-        ),
+    await writeOpencodeAgentConfig(root, {
+      daemonPort: 4317,
+      graphifyUrl: "http://127.0.0.1:7799/mcp",
     });
+    const responses = [
+      JSON.stringify({
+        hookSpecificOutput: {
+          permissionDecision: "deny",
+          permissionDecisionReason: "Graphify gate",
+        },
+      }),
+      "{}",
+      "{}",
+    ];
+    const inputs: string[] = [];
+    const spawn = spyOn(Bun, "spawn").mockImplementation(
+      () =>
+        ({
+          stdin: {
+            write: (input: string) => inputs.push(input),
+            end: () => {},
+          },
+          stdout: new Blob([responses.shift() ?? "{}"]).stream(),
+          exited: Promise.resolve(0),
+        }) as never,
+    );
     try {
-      await writeOpencodeAgentConfig(root, {
-        daemonPort: 4317,
-        graphifyUrl: `http://127.0.0.1:${server.port}/mcp`,
-      });
       const { HiveGraphifyGate } = (await import(
         join(root, ".opencode", "plugins", "hive-graphify-gate.ts")
       )) as {
@@ -256,16 +239,18 @@ describe("opencode adapter", () => {
       };
       const before = (await HiveGraphifyGate())["tool.execute.before"];
       if (before === undefined) throw new Error("hook missing");
-      // The first structural search is declined with the gate message…
       await expect(
         before({ tool: "grep" }, { args: { pattern: "reserveQuota" } }),
       ).rejects.toThrow("Graphify gate");
-      // …and the identical retry runs: the decline is spent.
       await before({ tool: "grep" }, { args: { pattern: "reserveQuota" } });
-      // Non-structural calls pass silently either way.
       await before({ tool: "hive_hive_send" }, { args: { to: "queen" } });
+      expect(inputs.map((input) => JSON.parse(input))).toEqual([
+        { tool_name: "grep", tool_input: { pattern: "reserveQuota" } },
+        { tool_name: "grep", tool_input: { pattern: "reserveQuota" } },
+        { tool_name: "hive_hive_send", tool_input: { to: "queen" } },
+      ]);
     } finally {
-      server.stop(true);
+      spawn.mockRestore();
     }
   });
 
@@ -285,35 +270,72 @@ describe("opencode adapter", () => {
     expect(written.agent.hive).not.toHaveProperty("permission");
   });
 
-  test("prepareSpawn keeps the token out of argv and passes the kickoff as --prompt", async () => {
+  test("dangerous mode makes the Hive agent native-ACP autonomous", async () => {
     const root = await worktree();
-    const prepared = await getAgentAdapter("opencode").prepareSpawn({
+    await writeOpencodeAgentConfig(root, {
+      daemonPort: 4317,
+      instructionPath: "/tmp/prompt.txt",
+      dangerous: true,
+    });
+    const written = JSON.parse(
+      await readFile(join(root, "opencode.json"), "utf8"),
+    ) as { agent: Record<string, Record<string, unknown>> };
+    expect(written.agent.hive?.permission).toEqual({
+      doom_loop: "allow",
+      external_directory: "allow",
+      read: { "*.env": "allow", "*.env.*": "allow" },
+    });
+  });
+
+  test("an autonomous reader keeps its read-only barrier", async () => {
+    const root = await worktree();
+    await writeOpencodeAgentConfig(root, {
+      daemonPort: 4317,
+      instructionPath: "/tmp/prompt.txt",
+      readOnly: true,
+      dangerous: true,
+    });
+    const written = JSON.parse(
+      await readFile(join(root, "opencode.json"), "utf8"),
+    ) as {
+      agent: Record<string, Record<string, unknown>>;
+      permission: Record<string, unknown>;
+    };
+    expect(written.agent.hive?.permission).toEqual({
+      doom_loop: "allow",
+      external_directory: "allow",
+      read: { "*.env": "allow", "*.env.*": "allow" },
+      edit: "deny",
+      bash: "deny",
+    });
+    expect(written.permission).toEqual({ edit: "deny", bash: "deny" });
+  });
+
+  test("protocol runtime preparation writes token-free config and instructions", async () => {
+    const root = await worktree();
+    const prepared = await getAgentAdapter("opencode").prepareRuntime({
       name: "maya",
       model: "openai/gpt-5.5",
       worktreePath: root,
       daemonPort: 41000,
       readOnly: false,
-      dangerous: false,
+      dangerous: true,
       withCapability: true,
       instructionPath: "/tmp/prompt.txt",
-      kickoff: "Begin the assigned task.",
     });
-    expect(prepared.argv).toEqual([
-      "opencode",
-      "-m",
-      "openai/gpt-5.5",
-      "--agent",
-      "hive",
-    ]);
-    expect(prepared.command).toBe(
-      `${HIVE_CAPABILITY_TOKEN_ENV}="$(cat '${credentialPath("maya")}')" ` +
-        `${prepared.argv.map((token) => `'${token}'`).join(" ")} '--prompt' 'Begin the assigned task.'`,
-    );
-    expect(prepared.command).not.toContain("secret-token");
+    expect(prepared.argv).toEqual([]);
     const config = await readFile(join(root, "opencode.json"), "utf8");
     expect(config).not.toContain("secret-token");
     expect(config).toContain(`Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}`);
     expect(config).toContain("{file:/tmp/prompt.txt}");
+    const written = JSON.parse(config) as {
+      agent: Record<string, Record<string, unknown>>;
+    };
+    expect(written.agent.hive?.permission).toEqual({
+      doom_loop: "allow",
+      external_directory: "allow",
+      read: { "*.env": "allow", "*.env.*": "allow" },
+    });
   });
 
   test("the orchestrator role replaces the read-only barrier with scoped grants", async () => {
@@ -331,109 +353,15 @@ describe("opencode adapter", () => {
       mode: "primary",
       prompt: "{file:/tmp/prompt.txt}",
       permission: {
-        edit: { "*": "deny", ".hive/**": "allow", "planning/**": "allow" },
+        edit: { "*": "deny", ".hive/**": "allow" },
         bash: { "*": "ask", "gh *": "allow" },
       },
     });
-  });
-
-  test("recovery discovery matches the session's own directory and refuses ambiguity", async () => {
-    const home = await worktree();
-    const target = resolve(join(home, "worktree"));
-    await mkdir(target, { recursive: true });
-    // A fake opencode CLI answering `session list --format json`.
-    const sessions: Array<Record<string, unknown>> = [];
-    const fake = join(home, "opencode-fake");
-    await writeFile(
-      fake,
-      ["#!/bin/sh", `printf '%s' '${JSON.stringify(sessions)}'`, ""].join("\n"),
-    );
-    await chmod(fake, 0o755);
-    expect(
-      await discoverOpencodeRecoverySessionId(
-        target,
-        "2026-07-13T12:00:00.000Z",
-        fake,
-      ),
-    ).toBeNull();
-
-    const writeSessions = async (entries: Array<Record<string, unknown>>) =>
-      writeFile(
-        fake,
-        ["#!/bin/sh", `printf '%s' '${JSON.stringify(entries)}'`, ""].join(
-          "\n",
-        ),
-      );
-    // A session for another directory is never a candidate.
-    await writeSessions([
-      {
-        id: "ses_other",
-        created: 1783952059000,
-        directory: join(home, "other"),
-      },
-      {
-        id: "ses_old",
-        created: Date.parse("2026-07-13T11:59:59.000Z"),
-        directory: target,
-      },
-    ]);
-    expect(
-      await discoverOpencodeRecoverySessionId(
-        target,
-        "2026-07-13T12:00:00.000Z",
-        fake,
-      ),
-    ).toBeNull();
-
-    await writeSessions([
-      {
-        id: "ses_old",
-        created: Date.parse("2026-07-13T11:59:59.000Z"),
-        directory: target,
-      },
-      {
-        id: "ses_current",
-        created: Date.parse("2026-07-13T12:00:01.000Z"),
-        directory: target,
-      },
-    ]);
-    expect(
-      await discoverOpencodeRecoverySessionId(
-        target,
-        "2026-07-13T12:00:00.000Z",
-        fake,
-      ),
-    ).toBe("ses_current");
-
-    await writeSessions([
-      {
-        id: "ses_a",
-        created: Date.parse("2026-07-13T12:00:01.000Z"),
-        directory: target,
-      },
-      {
-        id: "ses_b",
-        created: Date.parse("2026-07-13T12:00:02.000Z"),
-        directory: target,
-      },
-    ]);
-    expect(
-      discoverOpencodeRecoverySessionId(
-        target,
-        "2026-07-13T12:00:00.000Z",
-        fake,
-      ),
-    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
-
-    // A CLI that cannot answer at all is no candidates, never an error.
-    await writeFile(fake, "#!/bin/sh\nexit 1\n");
-    await chmod(fake, 0o755);
-    expect(
-      await discoverOpencodeRecoverySessionId(
-        target,
-        "2026-07-13T12:00:00.000Z",
-        fake,
-      ),
-    ).toBeNull();
+    // Positive lock: memory stays granted; planning/ is not a writable home.
+    const permission = written.agent.hive?.permission as {
+      edit: Record<string, string>;
+    };
+    expect(permission.edit[".hive/**"]).toBe("allow");
+    expect(permission.edit["planning/**"]).toBeUndefined();
   });
 });

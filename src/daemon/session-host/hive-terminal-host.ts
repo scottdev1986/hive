@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
-import type { AgentRecord, ProviderRun } from "../../schemas";
-import { macProcessIdentity } from "../lifecycle";
+import type {
+  AdapterChildIdentity,
+  ProviderRun,
+} from "../../schemas/provider-run";
+import type { AgentRecord } from "../../schemas/agent";
+import { systemClock } from "../../shared/clock";
+import { macProcessIdentity } from "../lifecycle/daemon-lifecycle";
 import type {
   AttachGrant,
   AttachRequest,
@@ -11,7 +16,7 @@ import type {
   SessionSpec,
   TerminationRequest,
   TerminationResult,
-} from "./contract";
+} from "./session-host-contract";
 import { sameSessionLocator } from "./locators";
 import { TERMINAL_SHELL } from "./shell-session";
 import {
@@ -28,9 +33,9 @@ import type {
   SessionRef,
   TerminalHost,
 } from "./terminal-host-contract";
+import type { HostExitWaiter, HostExitWaitResult } from "./sessiond-host";
 
-/** Death of the verified zsh root is terminal death. Foreground provider
- * lifecycle is separate and must never strengthen this evidence. */
+/** Death of the verified zsh root is terminal death. Foreground provider lifecycle is separate and must never strengthen this evidence. */
 export function sessiondTerminalIsDead(
   inspection: Pick<SessionInspection, "presence" | "diagnosticIds">,
 ): boolean {
@@ -38,20 +43,6 @@ export function sessiondTerminalIsDead(
     inspection.presence === "exited" ||
     inspection.presence === "lost" ||
     inspection.diagnosticIds.includes("SESSIOND_EXECUTABLE_EVIDENCE_STALE")
-  );
-}
-
-/** The foreground job ended while its zsh may still be alive. An unmanaged
- * command is alive, but it is not evidence for any agent run. */
-export function sessiondForegroundJobIsDead(
-  inspection: Pick<
-    SessionInspection,
-    "presence" | "diagnosticIds" | "foreground"
-  >,
-): boolean {
-  return (
-    sessiondTerminalIsDead(inspection) ||
-    inspection.foreground.state === "shell-idle"
   );
 }
 
@@ -65,10 +56,7 @@ export function sessiondAgentProviderRunIsDead(
   return sessiondTerminalIsDead(inspection) || activeRun === null;
 }
 
-/**
- * Keep locator validation here, above the frozen neutral host. The backend
- * never learns agent IDs, Hive instances, generations, or visibility policy.
- */
+/** Keep locator validation here, above the frozen neutral host. The backend never learns agent IDs, Hive instances, generations, or visibility policy. */
 export function requireSessiondAgentLocator(
   agent: Pick<AgentRecord, "id" | "sessionLocator">,
 ): HiveTerminalBinding["locator"] {
@@ -103,7 +91,8 @@ type TerminalLifecycleHost = Pick<
   TerminalHost,
   "claimInput" | "submitInput" | "resize" | "inspect" | "list" | "terminate"
 > &
-  Pick<SessionHost, "create" | "issueAttach">;
+  Pick<SessionHost, "create" | "issueAttach"> &
+  HostExitWaiter;
 
 export type HiveTerminalPolicy = Pick<
   HiveTerminalBinding,
@@ -116,6 +105,9 @@ export interface HiveTerminalHostAdapterOptions {
   processState?: (
     pid: number,
   ) => Promise<"running" | "stopped" | "gone" | "unknown">;
+  processGroupState?: (
+    processGroupId: number,
+  ) => "running" | "gone" | "unknown";
   signalProcessGroup?: (
     processGroupId: number,
     signal: "SIGSTOP" | "SIGCONT" | "SIGTERM" | "SIGKILL",
@@ -197,7 +189,6 @@ function terminationIdempotencyKey(
     .digest("hex");
 }
 
-/** Hive policy adapter over the project-neutral frozen TerminalHost contract. */
 export class HiveTerminalHostAdapter {
   constructor(
     private readonly host: TerminalLifecycleHost,
@@ -205,7 +196,7 @@ export class HiveTerminalHostAdapter {
     private readonly instanceId: string,
     options: HiveTerminalHostAdapterOptions,
   ) {
-    this.now = options.now ?? (() => new Date());
+    this.now = options.now ?? systemClock;
     this.processIdentity = options.processIdentity ?? macProcessIdentity;
     this.processState =
       options.processState ??
@@ -222,6 +213,19 @@ export class HiveTerminalHostAdapter {
     this.signalProcessGroup =
       options.signalProcessGroup ??
       ((processGroupId, signal) => process.kill(-processGroupId, signal));
+    this.processGroupState =
+      options.processGroupState ??
+      ((processGroupId) => {
+        try {
+          process.kill(-processGroupId, 0);
+          return "running";
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "ESRCH") return "gone";
+          if (code === "EPERM") return "running";
+          return "unknown";
+        }
+      });
     this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
     this.providerRuns = options.providerRuns;
   }
@@ -233,6 +237,9 @@ export class HiveTerminalHostAdapter {
   >;
   private readonly signalProcessGroup: NonNullable<
     HiveTerminalHostAdapterOptions["signalProcessGroup"]
+  >;
+  private readonly processGroupState: NonNullable<
+    HiveTerminalHostAdapterOptions["processGroupState"]
   >;
   private readonly sleep: NonNullable<HiveTerminalHostAdapterOptions["sleep"]>;
   private readonly providerRuns: ProviderRunStore;
@@ -259,14 +266,30 @@ export class HiveTerminalHostAdapter {
     locator: SessionLocator,
     expected: ProviderRun,
   ): Promise<boolean> {
+    const child = expected.adapterChild;
+    if (child === null) return false;
     if (!(await this.signalVerifiedGroup(locator, expected, "SIGTERM"))) {
       return this.waitForProviderStopped(locator, expected);
     }
     if (await this.waitForProviderStopped(locator, expected)) return true;
-    if (!(await this.signalVerifiedGroup(locator, expected, "SIGKILL"))) {
+    try {
+      this.signalProcessGroup(child.processGroupId, "SIGKILL");
+    } catch {
       return this.waitForProviderStopped(locator, expected);
     }
     return this.waitForProviderStopped(locator, expected);
+  }
+
+  verifyAdapterChildIdentity(identity: AdapterChildIdentity): boolean {
+    try {
+      return (
+        identity.pid === identity.processGroupId &&
+        this.processIdentity(identity.pid).startToken === identity.startToken &&
+        this.processGroupState(identity.processGroupId) === "running"
+      );
+    } catch {
+      return false;
+    }
   }
 
   private async signalVerifiedGroup(
@@ -274,42 +297,29 @@ export class HiveTerminalHostAdapter {
     expected: ProviderRun,
     signal: "SIGSTOP" | "SIGCONT" | "SIGTERM" | "SIGKILL",
   ): Promise<boolean> {
-    if (!(await this.providerForegroundMatches(locator, expected)))
-      return false;
+    if (!this.providerChildMatches(locator, expected)) return false;
+    const child = expected.adapterChild;
+    if (child === null) return false;
     try {
-      // Unlike C1 input, this read and signal cannot be one sessiond commit.
-      // Re-check the exact leader token immediately before the group signal.
-      // ESRCH is honest provider exit; token drift defeats pgid recycling.
-      if (this.processIdentity(expected.pid).startToken !== expected.startToken)
-        return false;
-      this.signalProcessGroup(expected.foregroundProcessGroupId, signal);
+      this.signalProcessGroup(child.processGroupId, signal);
       return true;
     } catch {
       return false;
     }
   }
 
-  private async providerForegroundMatches(
+  private providerChildMatches(
     locator: SessionLocator,
     expected: ProviderRun,
-  ): Promise<boolean> {
+  ): boolean {
     if (
       expected.state !== "running" ||
-      !sameSessionLocator(expected.terminal, locator)
+      !sameSessionLocator(expected.terminal, locator) ||
+      expected.adapterChild === null
     ) {
       return false;
     }
-    const inspection = await this.inspect(locator);
-    return (
-      inspection.presence === "present" &&
-      inspection.shellRoot !== null &&
-      inspection.foreground.state === "managed" &&
-      inspection.foreground.runId === expected.runId &&
-      inspection.foreground.pid === expected.pid &&
-      inspection.foreground.startToken === expected.startToken &&
-      inspection.foreground.foregroundProcessGroupId ===
-        expected.foregroundProcessGroupId
-    );
+    return this.verifyAdapterChildIdentity(expected.adapterChild);
   }
 
   private async waitForProviderState(
@@ -317,29 +327,23 @@ export class HiveTerminalHostAdapter {
     expected: ProviderRun,
     wanted: "running" | "stopped",
   ): Promise<boolean> {
+    const child = expected.adapterChild;
+    if (child === null) return false;
     for (let attempt = 0; attempt < CONTROL_READBACK_ATTEMPTS; attempt += 1) {
-      if (!(await this.providerForegroundMatches(locator, expected)))
-        return false;
-      if ((await this.processState(expected.pid)) === wanted) return true;
+      if (!this.providerChildMatches(locator, expected)) return false;
+      if ((await this.processState(child.pid)) === wanted) return true;
       await this.sleep(CONTROL_READBACK_INTERVAL_MS);
     }
     return false;
   }
 
   private async providerStopped(
-    locator: SessionLocator,
+    _locator: SessionLocator,
     expected: ProviderRun,
   ): Promise<boolean> {
-    const state = await this.processState(expected.pid);
-    if (state !== "gone") return false;
-    const inspection = await this.inspect(locator);
-    if (
-      inspection.presence !== "present" ||
-      inspection.shellRoot === null ||
-      inspection.foreground.state !== "shell-idle"
-    ) {
-      return false;
-    }
+    const child = expected.adapterChild;
+    if (child === null) return false;
+    if (this.processGroupState(child.processGroupId) !== "gone") return false;
     this.providerRuns.endProviderRun(
       expected.runId,
       this.now().toISOString(),
@@ -359,17 +363,18 @@ export class HiveTerminalHostAdapter {
     return false;
   }
 
-  /** Lifecycle reconciliation is explicit and measured. Inspection stays
-   * read-only, while callers that own lifecycle policy may close a run only
-   * after its exact pid/start-token identity disappears. */
   reconcileProviderRun(locator: SessionLocator): ProviderRun | null {
     const active = this.providerRuns.getActiveProviderRunByTerminal(locator);
     if (active === null) return null;
+    if (active.adapterChild === null) return active;
     try {
-      if (this.processIdentity(active.pid).startToken === active.startToken) {
+      if (this.verifyAdapterChildIdentity(active.adapterChild)) {
         return active;
       }
     } catch {
+      return active;
+    }
+    if (this.processGroupState(active.adapterChild.processGroupId) !== "gone") {
       return active;
     }
     this.providerRuns.endProviderRun(
@@ -380,9 +385,16 @@ export class HiveTerminalHostAdapter {
     return null;
   }
 
+  async waitForExit(
+    locator: SessionLocator,
+    signal: AbortSignal,
+  ): Promise<HostExitWaitResult> {
+    this.requireBinding(locator);
+    return await this.host.waitForHostExit(locator.sessionId, signal);
+  }
+
   async create(
     spec: SessionSpec,
-    initialInput: Uint8Array,
     policy: HiveTerminalPolicy,
   ): Promise<CreateResult> {
     if (policy.locator.instanceId !== this.instanceId) {
@@ -395,7 +407,7 @@ export class HiveTerminalHostAdapter {
       throw new TerminalHostBindingMismatchError();
     }
     this.bindings.bindTerminalHostSession(policy);
-    const result = await this.host.create(spec, initialInput);
+    const result = await this.host.create(spec);
     if (
       !sameSessionLocator(result.locator, policy.locator) ||
       !sameSessionLocator(result.inspection.locator, policy.locator) ||
@@ -469,10 +481,7 @@ export class HiveTerminalHostAdapter {
     return this.host.resize({ ...request, session });
   }
 
-  /** terminal-stack-transition.html#visibility one-use viewer attach, fenced by
-   * the exact completed binding:
-   * an unknown or incomplete locator never reaches the broker, and a grant
-   * whose locator or engine drifted from the binding is refused here. */
+  /** terminal-stack-transition.html#visibility one-use viewer attach, fenced by the exact completed binding: an unknown or incomplete locator never reaches the broker, and a grant whose locator or engine drifted from the binding is refused here. */
   async issueAttach(
     locator: HiveTerminalBinding["locator"],
     request: AttachRequest,
@@ -494,12 +503,6 @@ export class HiveTerminalHostAdapter {
   async inspect(
     locator: HiveTerminalBinding["locator"],
   ): Promise<SessionInspection> {
-    // A host this instance owns but can no longer see is gone, and its absence
-    // is the answer to the question inspect was asked, not a failure to answer
-    // it. terminate already reports this case instead of failing closed;
-    // inspect throwing would mean a caller could observe a dead terminal only
-    // through the operation that kills it. Ownership is still enforced, so
-    // another instance's locator is still refused.
     const binding = this.requireBinding(locator);
     const session = await this.findLiveSession(locator);
     if (session === null) return this.projectAbsentInspection(binding);
@@ -514,12 +517,7 @@ export class HiveTerminalHostAdapter {
     locator: HiveTerminalBinding["locator"],
     request: TerminationRequest,
   ): Promise<TerminationResult> {
-    // A host this instance owns but can no longer see is already terminated,
-    // and saying so is the only answer that leaves a way out. Requiring a LIVE
-    // host to close a session would make both close paths depend on the thing
-    // whose absence they are called to clean up. Fail-closed is right for a host that
-    // might still be running; absence is not that case. Ownership is still
-    // enforced, so another instance's locator is still refused.
+    // A host this instance owns but can no longer see is already terminated, and saying so is the only answer that leaves a way out. Requiring a LIVE host to close a session would make both close paths depend on the thing whose absence they are called to clean up. Fail-closed is right for a host that might still be running; absence is not that case. Ownership is still enforced, so another instance's locator is still refused.
     this.requireBinding(locator);
     const session = await this.findLiveSession(locator);
     const requestedAt = this.now();
@@ -540,8 +538,6 @@ export class HiveTerminalHostAdapter {
       return {
         locator,
         state: "terminated",
-        // Absence is not an observed exit, and reporting one would be a
-        // fabrication: nobody watched this host leave.
         exit: null,
         survivors: [],
         errors: [
@@ -581,10 +577,6 @@ export class HiveTerminalHostAdapter {
     return projected;
   }
 
-  /** An owned host that is no longer listed. Nobody watched this one leave, so
-   * every field that would describe how it left stays empty instead of
-   * carrying a value nothing measured — the same rule terminate follows when
-   * it reports SESSIOND_HOST_ALREADY_ABSENT with a null exit. */
   private projectAbsentInspection(
     binding: HiveTerminalBinding,
   ): SessionInspection {
@@ -593,7 +585,6 @@ export class HiveTerminalHostAdapter {
     return {
       schemaVersion: 1,
       locator: binding.locator,
-      // Not "exited": an exit is something observed, and this one was not.
       presence: "lost",
       complete: false,
       hostPid: null,
@@ -609,8 +600,7 @@ export class HiveTerminalHostAdapter {
       viewerCount: 0,
       geometry: created.geometry,
       resources: {},
-      // A lease outlives the host it was granted for, so the expiry answer
-      // comes from the clock rather than from a host that is not there.
+      // A lease outlives the host it was granted for, so the expiry answer comes from the clock rather than from a host that is not there.
       visibility:
         Date.parse(created.visibility.expiresAt) <= this.now().getTime()
           ? { ...created.visibility, state: "expired" as const }
@@ -618,8 +608,7 @@ export class HiveTerminalHostAdapter {
       exit: null,
       survivors: [],
       evidenceAt: this.now().toISOString(),
-      // The zeroes above are placeholders for readings no live host supplied,
-      // and these say so rather than letting them read as measurements.
+      // The zeroes above are placeholders for readings no live host supplied, and these say so rather than letting them read as measurements.
       diagnosticIds: [
         "SESSIOND_HOST_ALREADY_ABSENT",
         VIEWER_COUNT_DIAGNOSTIC,
@@ -689,7 +678,7 @@ export class HiveTerminalHostAdapter {
       Date.parse(created.visibility.expiresAt) <= this.now().getTime()
         ? { ...created.visibility, state: "expired" as const }
         : created.visibility;
-    const foreground = this.projectForeground(binding, inspection, shellRoot);
+    const foreground = this.projectForeground(inspection, shellRoot);
 
     return {
       schemaVersion: 1,
@@ -738,13 +727,9 @@ export class HiveTerminalHostAdapter {
   }
 
   private projectForeground(
-    binding: HiveTerminalBinding,
     inspection: NeutralSessionInspection,
     shellRoot: SessionInspection["shellRoot"],
   ): SessionInspection["foreground"] {
-    const active = this.providerRuns.getActiveProviderRunByTerminal(
-      binding.locator,
-    );
     if (inspection.lifecycle === "exited") {
       return { state: "unknown", runId: null };
     }
@@ -771,16 +756,6 @@ export class HiveTerminalHostAdapter {
       startToken,
       foregroundProcessGroupId,
     };
-    // pid and foregroundProcessGroupId coincide by construction here; the
-    // start token is the independent identity evidence that defeats PID reuse.
-    if (
-      active !== null &&
-      active.pid === measured.pid &&
-      active.startToken === measured.startToken &&
-      active.foregroundProcessGroupId === measured.foregroundProcessGroupId
-    ) {
-      return { state: "managed", runId: active.runId, ...measured };
-    }
     return { state: "unmanaged", runId: null, ...measured };
   }
 
@@ -833,7 +808,6 @@ export class HiveTerminalHostAdapter {
     return { binding, session };
   }
 
-  /** The session's ref if a host is still listed for it, else null. */
   private async findLiveSession(
     locator: HiveTerminalBinding["locator"],
   ): Promise<SessionRef | null> {

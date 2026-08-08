@@ -1,48 +1,32 @@
 import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import type { DatabaseHost } from "../shared/database-host";
 import {
   CAPABILITY_PROVIDERS,
-  type CandidateEffort,
   type CapabilityProvider,
+} from "../schemas/capability";
+import {
+  type CandidateEffort,
   emptyRoutingPolicy,
   type ModelEnablementDecision,
   modelPolicyState,
   ROUTING_CATEGORIES,
+  type RoutePolicy,
   type RoutingCategory,
   RoutingCategorySchema,
-  type RoutePolicy,
   type RoutingPolicy,
   type RoutingPolicyMutation,
   RoutingPolicyMutationSchema,
   RoutingPolicySchema,
-} from "../schemas";
-import type { HiveDatabase } from "./db";
+} from "../schemas/routing-policy";
+import { errorMessage } from "../shared/error-message";
 
-/**
- * The policy store: one revisioned document in hive.db, the daemon its sole
- * writer. SQLite provides compare-and-set policy writes
- * need compare-and-set plus an audit trail, and Hive already runs this
- * database; the document is stored whole — one row, canonical JSON — because
- * every reader and writer handles the whole policy, and a whole-document
- * schema parse on every read is what makes corruption LOUD instead of
- * permissive.
- *
- * THIS IS THE CONSENT RECORD, not a preferences blob: with the approval
- * model enablement is the
- * user's standing authorization to spend on it. Every write path below is a
- * safety surface.
- *
- * FAIL-CLOSED: a store with no policy row reads as the empty revision-0
- * document — nothing configured, and not-configured never means allowed. A
- * row that exists but does not parse THROWS; it never degrades to the empty
- * document, because "I could not read your policy" and "you have no policy"
- * are different facts and only one of them may be answered with defaults
- * without granting permission.
- */
+type RoutingPolicyDatabase = Pick<DatabaseHost, "database">;
 
-/** A write raced another writer: the caller's revision is stale. The current
- * revision rides along so the client can reload and re-apply. */
+/** The policy store: one revisioned document in the MACHINE DEFAULT home's hive.db, shared by every instance on the machine rather than copied into each one — a per-run home is a cache that gets rebuilt, and the user's standing authorization must outlive it. `machineModelControlDatabase` resolves that home. SQLite provides compare-and-set policy writes need compare-and-set plus an audit trail, and Hive already runs this database; the document is stored whole — one row, canonical JSON — because every reader and writer handles the whole policy, and a whole-document schema parse on every read is what makes corruption LOUD instead of permissive. THIS IS THE CONSENT RECORD, not a preferences blob: with the approval model enablement is the user's standing authorization to spend on it. Every write path below is a safety surface. FAIL-CLOSED: a store with no policy row reads as the empty revision-0 document — nothing configured, and not-configured never means allowed. A row that exists but does not parse THROWS; it never degrades to the empty document, because "I could not read your policy" and "you have no policy" are different facts and only one of them may be answered with defaults without granting permission. */
+
+/** A write raced another writer: the caller's revision is stale. The current revision rides along so the client can reload and re-apply. */
 export class RoutingPolicyConflictError extends Error {
   constructor(readonly currentRevision: number) {
     super(`revision conflict: policy is at revision ${currentRevision}`);
@@ -50,9 +34,7 @@ export class RoutingPolicyConflictError extends Error {
   }
 }
 
-/** The stored policy exists but cannot be trusted. Deliberately NOT recovered
- * from: an unreadable policy must stop policy-dependent work, not silently
- * become an empty (permissive-looking) one. */
+/** The stored policy exists but cannot be trusted. Deliberately NOT recovered from: an unreadable policy must stop policy-dependent work, not silently become an empty (permissive-looking) one. */
 export class RoutingPolicyCorruptError extends Error {
   constructor(detail: string) {
     super(
@@ -64,7 +46,7 @@ export class RoutingPolicyCorruptError extends Error {
 }
 
 export class RoutingPolicyStore {
-  constructor(private readonly db: HiveDatabase) {
+  constructor(private readonly db: RoutingPolicyDatabase) {
     this.db.database.exec(`
       CREATE TABLE IF NOT EXISTS routing_policy (
         id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -85,15 +67,7 @@ export class RoutingPolicyStore {
     this.migrateStoredV2();
   }
 
-  /**
-   * One-shot V2 → V3: ordered chains become unordered hive-equal routes over
-   * the same exact candidates (weight 1 each), and the `default` chain becomes
-   * the global route. Rank order is dropped rather than converted — Hive must
-   * not invent how much more "first" meant than "second"; the user assigns
-   * real weights through set-route whenever they want user-weighted mode.
-   * Enablement copies through untouched: no new consent is created. Anything
-   * that is not a V2 document is left alone for the corrupt-row path.
-   */
+  /** One-shot V2 → V3: ordered chains become unordered hive-equal routes over the same exact candidates (weight 1 each), and the `default` chain becomes the global route. Rank order is dropped rather than converted — Hive must not invent how much more "first" meant than "second"; the user assigns real weights through set-route whenever they want user-weighted mode. Enablement copies through untouched: no new consent is created. Anything that is not a V2 document is left alone for the corrupt-row path. */
   private migrateStoredV2(now: Date = new Date()): void {
     const row = this.db.database
       .query("SELECT document FROM routing_policy WHERE id = 1")
@@ -119,13 +93,13 @@ export class RoutingPolicyStore {
               .object({
                 provider: z.string(),
                 model: z.string(),
-                effort: z.object({ mode: z.string() }).passthrough(),
+                effort: z.object({ mode: z.string() }).loose(),
               })
-              .passthrough(),
+              .loose(),
           ),
         ),
       })
-      .passthrough()
+      .loose()
       .safeParse(decoded);
     if (!legacy.success) return;
 
@@ -135,8 +109,7 @@ export class RoutingPolicyStore {
       const candidates = entries.map((entry) => ({
         provider: entry.provider as CapabilityProvider,
         model: entry.model,
-        // never-configured effort is a model-row state, not a launchable
-        // intent; the vendor's own choice is the only non-invented answer.
+        // never-configured effort is a model-row state, not a launchable intent; the vendor's own choice is the only non-invented answer.
         effort: (entry.effort.mode === "never-configured"
           ? { mode: "provider-controlled" }
           : entry.effort) as CandidateEffort,
@@ -186,51 +159,37 @@ export class RoutingPolicyStore {
       .immediate();
   }
 
-  /** The whole policy. No row → the empty revision-0 document (nothing
-   * configured). An unparseable row → RoutingPolicyCorruptError, never a
-   * quiet empty. */
+  /** The whole policy. No row → the empty revision-0 document (nothing configured). An unparseable row → RoutingPolicyCorruptError, never a quiet empty. */
   read(now: Date = new Date()): RoutingPolicy {
     return readRoutingPolicyDatabase(this.db, now);
   }
 
-  /**
-   * Apply one validated mutation with compare-and-set. The transaction
-   * re-reads the live revision, so a concurrent write loses loudly
-   * (RoutingPolicyConflictError names the revision to reload) instead of
-   * clobbering. Every accepted write appends a routing_policy_events row and
-   * clears `provisional` — the document stops being Hive's suggestion the
-   * moment a human edits it.
-   */
+  /** Apply one validated mutation with compare-and-set. The transaction is IMMEDIATE, which matters now that instances share one machine database: it takes the write lock before the re-read, so two processes are ordered and the second sees the first's revision. Deferred, both could read the same revision and the loser would surface a raw SQLITE_BUSY_SNAPSHOT from the driver instead of a conflict anyone can act on. The re-read then makes a concurrent write lose loudly — RoutingPolicyConflictError names the revision to reload — instead of clobbering. Every accepted write appends a routing_policy_events row and clears `provisional`: the document stops being Hive's suggestion the moment a user edits it. */
   apply(
     mutation: RoutingPolicyMutation,
     actor: string,
     now: Date = new Date(),
   ): RoutingPolicy {
     const validated = RoutingPolicyMutationSchema.parse(mutation);
-    return this.db.database.transaction(() => {
-      const current = this.read(now);
-      if (validated.expectedRevision !== current.revision) {
-        throw new RoutingPolicyConflictError(current.revision);
-      }
-      const next = RoutingPolicySchema.parse({
-        ...applyMutation(current, validated),
-        revision: current.revision + 1,
-        updatedAt: now.toISOString(),
-        provisional: false,
-      });
-      this.write(next, current, validated.op, actor, now);
-      return next;
-    })();
+    return this.db.database
+      .transaction(() => {
+        const current = this.read(now);
+        if (validated.expectedRevision !== current.revision) {
+          throw new RoutingPolicyConflictError(current.revision);
+        }
+        const next = RoutingPolicySchema.parse({
+          ...applyMutation(current, validated),
+          revision: current.revision + 1,
+          updatedAt: now.toISOString(),
+          provisional: false,
+        });
+        this.write(next, current, validated.op, actor, now);
+        return next;
+      })
+      .immediate();
   }
 
-  /**
-   * Copy a complete policy from another instance while preserving this
-   * database's own revision history. The caller reads the target revision
-   * before invoking this method; a change in between is a conflict, never a
-   * clobber. This is deliberately separate from `importDefaultPolicy`, whose
-   * one-way ownership rules are for first boot rather than an explicit human
-   * promotion.
-   */
+  /** Copy a complete policy from another instance while preserving this database's own revision history. The caller reads the target revision before invoking this method; a change in between is a conflict, never a clobber. Instances now share the machine policy, so this remains only for an explicit user promotion out of a home that has its own document. */
   promote(
     source: RoutingPolicy,
     expectedRevision: number,
@@ -248,23 +207,23 @@ export class RoutingPolicyStore {
         "Refusing to promote Model Control: the source still has Hive's provisional baseline; edit Model Control before promoting.",
       );
     }
-    return this.db.database.transaction(() => {
-      const current = this.read(now);
-      if (expectedRevision !== current.revision) {
-        throw new RoutingPolicyConflictError(current.revision);
-      }
-      const next = RoutingPolicySchema.parse({
-        ...validated,
-        revision: current.revision + 1,
-        updatedAt: now.toISOString(),
-      });
-      this.write(next, current, "promote-instance-model-control", actor, now);
-      return next;
-    })();
+    return this.db.database
+      .transaction(() => {
+        const current = this.read(now);
+        if (expectedRevision !== current.revision) {
+          throw new RoutingPolicyConflictError(current.revision);
+        }
+        const next = RoutingPolicySchema.parse({
+          ...validated,
+          revision: current.revision + 1,
+          updatedAt: now.toISOString(),
+        });
+        this.write(next, current, "promote-instance-model-control", actor, now);
+        return next;
+      })
+      .immediate();
   }
 
-  /** Whether any policy has ever been written. Callers use this to decide
-   * whether first-boot seeding (and its billing probes) are worth running. */
   isEmpty(): boolean {
     return (
       this.db.database
@@ -273,72 +232,26 @@ export class RoutingPolicyStore {
     );
   }
 
-  /**
-   * First-boot seeding: when NO policy row exists, write one provisional
-   * GLOBAL route — hive-equal over each vendor's current default model AS
-   * READ FROM ITS LIVE CATALOG by the caller — frozen here as a specific id,
-   * never re-resolved, never a training-memory guess. A vendor whose catalog
-   * could not be read is simply absent (skipped, not invented). Efforts seed
-   * provider-controlled — never invented either. No per-category routes are
-   * seeded: equal-weight sets are identical per category, and a category
-   * without a route resolves to global.
-   *
-   * ENABLEMENT IS CONSENT, so the seed writes no provider or model enablement
-   * at all. It may suggest a candidate set, but only the user's own click can
-   * make a provider launchable. A store that already has a policy — even
-   * revision 1 from an earlier boot — is left exactly alone.
-   */
+  /** First-boot seeding: when NO policy row exists, write one provisional GLOBAL route — hive-equal over each vendor's current default model AS READ FROM ITS LIVE CATALOG by the caller — frozen here as a specific id, never re-resolved, never a training-memory guess. A vendor whose catalog could not be read is simply absent (skipped, not invented). Efforts seed provider-controlled — never invented either. No per-category routes are seeded: equal-weight sets are identical per category, and a category without a route resolves to global. ENABLEMENT IS CONSENT, so the seed writes no provider or model enablement at all. It may suggest a candidate set, but only the user's own click can make a provider launchable. A store that already has a policy — even revision 1 from an earlier boot — is left exactly alone. */
   seedProvisionalBaseline(
     facts: {
       vendorDefaults: Partial<Record<CapabilityProvider, string>>;
     },
     now: Date = new Date(),
   ): { seeded: boolean; policy: RoutingPolicy } {
-    return this.db.database.transaction(() => {
-      if (!this.isEmpty()) return { seeded: false, policy: this.read(now) };
-      const policy = RoutingPolicySchema.parse({
-        ...emptyRoutingPolicy(now.toISOString()),
-        revision: 1,
-        provisional: true,
-        global: provisionalBaselineRoute(facts.vendorDefaults),
-      });
-      this.write(policy, null, "seed-provisional-baseline", "hive", now);
-      return { seeded: true, policy };
-    })();
-  }
-
-  /**
-   * A named instance gets a COPY of the default instance's user-authored
-   * Model Control settings on first boot. Runtime state remains isolated and
-   * later edits diverge normally. A local human edit always wins; only an
-   * empty store or Hive's untouched provisional suggestions may be replaced.
-   * Provisional source policy carries no consent and is never imported.
-   */
-  importDefaultPolicy(
-    source: RoutingPolicy,
-    now: Date = new Date(),
-  ): { imported: boolean; policy: RoutingPolicy } {
-    return this.db.database.transaction(() => {
-      const current = this.isEmpty() ? null : this.read(now);
-      if (
-        source.revision === 0 ||
-        source.provisional ||
-        (current !== null && !current.provisional)
-      ) {
-        return {
-          imported: false,
-          policy: current ?? this.read(now),
-        };
-      }
-      const next = RoutingPolicySchema.parse({
-        ...source,
-        revision: (current?.revision ?? 0) + 1,
-        updatedAt: now.toISOString(),
-        provisional: false,
-      });
-      this.write(next, current, "import-default-policy", "hive", now);
-      return { imported: true, policy: next };
-    })();
+    return this.db.database
+      .transaction(() => {
+        if (!this.isEmpty()) return { seeded: false, policy: this.read(now) };
+        const policy = RoutingPolicySchema.parse({
+          ...emptyRoutingPolicy(now.toISOString()),
+          revision: 1,
+          provisional: true,
+          global: provisionalBaselineRoute(facts.vendorDefaults),
+        });
+        this.write(policy, null, "seed-provisional-baseline", "hive", now);
+        return { seeded: true, policy };
+      })
+      .immediate();
   }
 
   private write(
@@ -373,10 +286,8 @@ export class RoutingPolicyStore {
   }
 }
 
-/** Read without constructing a store, so a named daemon can inspect the live
- * default database through a genuinely read-only connection. */
 export function readRoutingPolicyDatabase(
-  db: HiveDatabase,
+  db: RoutingPolicyDatabase,
   now: Date = new Date(),
 ): RoutingPolicy {
   const table = db.database
@@ -394,9 +305,7 @@ export function readRoutingPolicyDatabase(
   try {
     decoded = JSON.parse(row.document);
   } catch (error) {
-    throw new RoutingPolicyCorruptError(
-      error instanceof Error ? error.message : String(error),
-    );
+    throw new RoutingPolicyCorruptError(errorMessage(error));
   }
   const parsed = RoutingPolicySchema.safeParse(decoded);
   if (!parsed.success) {
@@ -405,9 +314,7 @@ export function readRoutingPolicyDatabase(
   return parsed.data;
 }
 
-/** Pure mutation semantics, shared by the store and its tests. "unset"
- * returns to explicit never-configured intent, never to an invented AUTO.
- * Model consent and effort remain independent fields. */
+/** Pure mutation semantics, shared by the store and its tests. "unset" returns to explicit never-configured intent, never to an invented AUTO. Model consent and effort remain independent fields. */
 function applyMutation(
   policy: RoutingPolicy,
   mutation: RoutingPolicyMutation,
@@ -481,8 +388,6 @@ function applyMutation(
               ),
             };
       if (mutation.route === null) return next;
-      // Keep an explicit enabled row for the UI's per-model preference. The
-      // provider master switch remains the launch authority.
       let models = [...policy.models];
       for (const candidate of mutation.route.candidates) {
         const existing = models.find(
@@ -536,11 +441,6 @@ const withoutModelRow = (
     (row) => !(row.provider === provider && row.model === model),
   );
 
-/**
- * The provisional baseline: one hive-equal global route over each vendor's
- * own current default model, read live at seed time and frozen. Equal weight
- * is the only non-invented rating; no outcome data backs anything else.
- */
 function provisionalBaselineRoute(
   vendorDefaults: Partial<Record<CapabilityProvider, string>>,
 ): RoutePolicy | null {
@@ -560,12 +460,7 @@ function provisionalBaselineRoute(
   return candidates.length === 0 ? null : { mode: "hive-equal", candidates };
 }
 
-/**
- * Deterministic serialization keeps policy exports inspectable.
- * Key order is fixed (providers in union order, models sorted, categories in
- * category order; candidates sorted by target), so identical policy is
- * byte-identical output and two exports diff cleanly.
- */
+/** Deterministic serialization keeps policy exports inspectable. Key order is fixed (providers in union order, models sorted, categories in category order; candidates sorted by target), so identical policy is byte-identical output and two exports diff cleanly. */
 export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
   const providers: Record<string, string> = {};
   for (const provider of CAPABILITY_PROVIDERS) {
@@ -613,24 +508,7 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
   )}\n`;
 }
 
-/**
- * The spawner's enablement dependency (`HiveSpawnerDependencies.
- * isModelEnabled`), answered from the policy store — THE JOIN between the
- * consent record and the AuthorizedLaunch gate. The contract, verbatim from
- * the dependency's declaration: true = enabled (the user's consent); false =
- * explicitly disabled; null = unreadable/missing; a structured refusal names
- * a known policy reason. The gate refuses anything that is not exactly true,
- * so absence stays fail-closed on both sides. A corrupt store THROWS out of
- * here deliberately: the gate turns that into its "policy unreadable" refusal
- * instead of this adapter guessing.
- *
- * Identity: policy rows are keyed by canonical id, which every vendor's
- * discovery currently sets identical to the launch token the gate passes in
- * (capability-discovery.ts). An alias-shaped explicit request therefore reads
- * unconfigured — refused with the Control Center remedy, never silently
- * enabled; alias-aware matching belongs to the wiring PR that hands the gate
- * canonical identities.
- */
+/** The spawner's enablement dependency (`HiveSpawnerDependencies. isModelEnabled`), answered from the policy store — THE JOIN between the consent record and the AuthorizedLaunch gate. The contract, verbatim from the dependency's declaration: true = enabled (the user's consent); false = explicitly disabled; null = unreadable/missing; a structured refusal names a known policy reason. The gate refuses anything that is not exactly true, so absence stays fail-closed on both sides. A corrupt store THROWS out of here deliberately: the gate turns that into its "policy unreadable" refusal instead of this adapter guessing. Identity: policy rows are keyed by canonical id, which every vendor's discovery currently sets identical to the launch token the gate passes in (provider-capabilities/discovery.ts). An alias-shaped explicit request therefore reads unconfigured — refused with the Control Center remedy, never silently enabled; alias-aware matching belongs to the wiring PR that hands the gate canonical identities. */
 export function policyModelEnablement(
   store: RoutingPolicyStore,
 ): (
@@ -649,10 +527,6 @@ export function policyModelEnablement(
   };
 }
 
-/**
- * Rename an existing routing.toml aside instead of deleting user data. Nothing
- * reads the renamed file or interprets its contents as policy.
- */
 export function retireLegacyRoutingToml(hiveHome: string): string | null {
   const source = join(hiveHome, "routing.toml");
   if (!existsSync(source)) return null;

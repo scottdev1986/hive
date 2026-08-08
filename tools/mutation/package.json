@@ -1,0 +1,9 @@
+{
+  "name": "hive-mutation-toolchain",
+  "private": true,
+  "description": "Stryker toolchain for hive's mutation score, kept out of the repo's bun dependencies. Stryker's sandbox reads tsconfig.json through the TypeScript 5 compiler API, which TypeScript 7 removed, so it pins its own typescript rather than sharing the repo's.",
+  "dependencies": {
+    "@stryker-mutator/core": "9.6.1",
+    "typescript": "5.9.3"
+  }
+}

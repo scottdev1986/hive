@@ -8,7 +8,7 @@ CLIs inside the Model Control Center.
 
 | File | Vendor | Source fetched from |
 | --- | --- | --- |
-| `anthropic.svg` | Anthropic | Simple Icons CDN (`cdn.simpleicons.org/anthropic`), the official Anthropic logogram |
+| `claude-code.svg` | Claude Code | Claude Spark from Anthropic's official press kit |
 | `openai.svg` | OpenAI | svgl brand library (`svgl.app/library/openai.svg`), the official OpenAI blossom |
 | `xai.svg` | xAI | Wikimedia Commons `XAI-Logo.svg`, the official xAI mark |
 

@@ -1,41 +1,15 @@
 import {
-  GrokCapabilityProbe,
-  GrokCliCapabilityTransport,
-} from "../../daemon/capability-discovery";
-import { wrapGrokWithRulesFile } from "../../daemon/launch-prompt";
-import { shellJoin } from "../../daemon/session-host/shell-session";
-import {
-  buildGrokResumeCommand,
-  buildGrokSpawnCommand,
-  type GrokSpawnOptions,
   grokUntrustedWorktreeRefusal,
   inspectGrokProjectTrust,
   repositoryRootForWorktree,
-  resolveWorkingGrokExecutable,
   seedGrokRepositoryTrust,
-  wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
 } from "./grok-cli";
 import type { AgentAdapter } from "./provider-adapter";
-import { wrapSpawnWithCapabilityEnv } from "./shared/capability-env";
 
 export const grokAgentAdapter: AgentAdapter = {
   id: "grok",
-  // Project hooks cover session, turn, tool, failure, and compaction events,
-  // but only fire once the user trusts the worktree — that is Grok's own
-  // behaviour, not a gate Hive applies. Hive writes the config unconditionally
-  // and only REPORTS what trust it observed; it never writes grok's trust
-  // store, which is the user's.
-  //
-  // Trust does NOT only cost evidence, though, and treating it as if it did is
-  // what made every grok spawn into an untrusted repository die 30 seconds in.
-  // The same decision governs repo-local MCP servers, and Hive's own MCP server
-  // is one — so an untrusted worktree cannot reach the daemon at all, and the
-  // spawn is refused (see prepareSpawn). Degrading is only available where
-  // there is something left to run on; here there is not.
-  //
-  // updates.jsonl remains the only structured interrupted source, and
-  // approval-waiting remains terminal-only.
+  // Project hooks cover session, turn, tool, failure, and compaction events, but only fire once the user trusts the worktree — that is Grok's own behaviour, not a gate Hive applies. Hive writes the config unconditionally and only REPORTS what trust it observed; it never writes grok's trust store, which is the user's. Trust does NOT only cost evidence, though, and treating it as if it did is what made every grok spawn into an untrusted repository die 30 seconds in. The same decision governs repo-local MCP servers, and Hive's own MCP server is one — so an untrusted worktree cannot reach the daemon at all, and the spawn is refused (see prepareRuntime). Degrading is only available where there is something left to run on; here there is not. updates.jsonl remains the only structured interrupted source, and approval-waiting remains terminal-only.
   communication: {
     provider: "grok",
     eventSource: "hooks",
@@ -46,17 +20,7 @@ export const grokAgentAdapter: AgentAdapter = {
     nativeCancel: false,
     conversationResume: true,
   },
-  /**
-   * Opening Hive on a repository IS the trust decision, so record it in grok's
-   * own store before the config write that would otherwise make the worktree
-   * untrusted. Grok ignores an entry keyed to a nested git root, so the grant
-   * has to name the repository — see `seedGrokRepositoryTrust`, which spells
-   * out what that widens.
-   *
-   * Best-effort by construction: a store Hive cannot write leaves the spawn to
-   * the trust check in `prepareSpawn`, which refuses with the manual remedy
-   * rather than launching an agent that cannot report.
-   */
+  /** Opening Hive on a repository IS the trust decision, so record it in grok's own store before the config write that would otherwise make the worktree untrusted. Grok ignores an entry keyed to a nested git root, so the grant has to name the repository — see `seedGrokRepositoryTrust`, which spells out what that widens. Best-effort by construction: a store Hive cannot write leaves the spawn to the trust check in `prepareRuntime`, which refuses with the manual remedy rather than launching an agent that cannot report. */
   async prepareWorktree(worktreePath) {
     const repositoryRoot = repositoryRootForWorktree(worktreePath);
     if (repositoryRoot === null) return;
@@ -70,9 +34,7 @@ export const grokAgentAdapter: AgentAdapter = {
           "~/.grok/trusted_folders.toml to undo it.",
       );
     } else if (outcome === "unwritable") {
-      // Say so. A silent failure here surfaces later as a refusal naming a
-      // repository Hive believes it just trusted, which reads as a bug in the
-      // refusal rather than in the write that never happened.
+      // Say so. A silent failure here surfaces later as a refusal naming a repository Hive believes it just trusted, which reads as a bug in the refusal rather than in the write that never happened.
       console.warn(
         `Hive could not record ${repositoryRoot} in Grok's trust store; the ` +
           "spawn will refuse with the manual remedy if Grok still reports the " +
@@ -80,7 +42,7 @@ export const grokAgentAdapter: AgentAdapter = {
       );
     }
   },
-  async prepareSpawn(context) {
+  async prepareRuntime(context) {
     if (context.providerRunId === undefined) {
       throw new Error("Grok launch requires a provider run id");
     }
@@ -96,21 +58,13 @@ export const grokAgentAdapter: AgentAdapter = {
         : { graphifyUrl: context.graphifyUrl }),
     });
     if (context.executable !== undefined) {
-      // AFTER the config write, deliberately. The write is what puts a
-      // repo-local MCP table in the folder, and that is the capability grok's
-      // trust decision governs: a fresh worktree reads `trusted` before it and
-      // `untrusted` after, unless an ancestor already carries a decision.
-      // Inspecting first would always answer `trusted` and prove nothing.
+      // AFTER the config write, deliberately. The write is what puts a repo-local MCP table in the folder, and that is the capability grok's trust decision governs: a fresh worktree reads `trusted` before it and `untrusted` after, unless an ancestor already carries a decision. Inspecting first would always answer `trusted` and prove nothing.
       const trust = inspectGrokProjectTrust(
         context.worktreePath,
         context.executable,
       );
       if (trust === "untrusted") {
-        // Not a warning. Trust withholds the MCP server, not just the hooks —
-        // and an agent that cannot reach Hive's MCP surface is refused anyway
-        // after a launch that already looked
-        // alive. Refusing here costs a spawn that was never going to work and
-        // reports the gate instead of the symptom.
+        // Not a warning. Trust withholds the MCP server, not just the hooks — and an agent that cannot reach Hive's MCP surface is refused anyway after a launch that already looked alive. Refusing here costs a spawn that was never going to work and reports the gate instead of the symptom.
         throw new Error(
           grokUntrustedWorktreeRefusal(
             context.name,
@@ -121,9 +75,7 @@ export const grokAgentAdapter: AgentAdapter = {
       }
       if (trust === "trusted") {
         console.warn(
-          // Name settings.local.json first: it is the file that actually exists
-          // in a Hive worktree (see the worktree wiring list), so warning only
-          // about settings.json named the file least likely to fire.
+          // Name settings.local.json first: it is the file that actually exists in a Hive worktree (see the worktree wiring list), so warning only about settings.json named the file least likely to fire.
           `Grok reads project .claude/settings.local.json and .claude/settings.json ` +
             `hooks in trusted worktrees; any such hooks in ${context.worktreePath} ` +
             "are user-owned and may also fire.",
@@ -135,38 +87,6 @@ export const grokAgentAdapter: AgentAdapter = {
         );
       }
     }
-    const options: GrokSpawnOptions = {
-      model: context.model,
-      ...(context.effort === undefined ? {} : { effort: context.effort }),
-      worktreePath: context.worktreePath,
-      readOnly: context.readOnly,
-      ...(context.executable === undefined
-        ? {}
-        : { executable: context.executable }),
-    };
-    const argv =
-      context.resumeSessionId !== undefined
-        ? buildGrokResumeCommand(options, context.resumeSessionId)
-        : buildGrokSpawnCommand({
-            ...options,
-            ...(context.newVendorSessionId === undefined
-              ? {}
-              : { sessionId: context.newVendorSessionId }),
-          });
-    let command = shellJoin(argv);
-    if (context.instructionPath !== undefined) {
-      command = wrapGrokWithRulesFile(
-        command,
-        context.instructionPath,
-        context.kickoff,
-      );
-    }
-    command = wrapGrokSpawnWithCompatibilityEnv(command);
-    if (context.withCapability === true) {
-      command = wrapSpawnWithCapabilityEnv(command, context.name);
-    }
-    return { argv, command };
+    return { argv: [] };
   },
-  discover: (executable = resolveWorkingGrokExecutable()?.path ?? "grok") =>
-    new GrokCapabilityProbe(new GrokCliCapabilityTransport(executable)).read(),
 };

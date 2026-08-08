@@ -95,7 +95,7 @@ public struct SurfaceBinding: Equatable, Sendable, Hashable {
 }
 
 /// Terminal pixel/cell geometry — never 0×0 for attached terminals.
-public struct TerminalGeometry: Equatable, Sendable {
+public struct TerminalGeometry: Equatable, Sendable, Encodable {
     public var columns: Int
     public var rows: Int
     public var widthPx: Int
@@ -134,32 +134,8 @@ public struct TerminalGeometry: Equatable, Sendable {
         ]
     }
 
-    public static func parse(_ object: [String: Any]) throws -> TerminalGeometry {
-        guard let columns = object["columns"] as? Int,
-              let rows = object["rows"] as? Int,
-              let widthPx = object["widthPx"] as? Int,
-              let heightPx = object["heightPx"] as? Int
-        else {
-            throw WireError.malformedPayload("TerminalGeometry")
-        }
-        let cellWidthPx = (object["cellWidthPx"] as? Double)
-            ?? (object["cellWidthPx"] as? NSNumber)?.doubleValue
-            ?? 0
-        let cellHeightPx = (object["cellHeightPx"] as? Double)
-            ?? (object["cellHeightPx"] as? NSNumber)?.doubleValue
-            ?? 0
-        return TerminalGeometry(
-            columns: columns,
-            rows: rows,
-            widthPx: widthPx,
-            heightPx: heightPx,
-            cellWidthPx: cellWidthPx,
-            cellHeightPx: cellHeightPx
-        )
-    }
 }
 
-/// Attach grant from the host (strict wire projection).
 public struct AttachGrant: Equatable, Sendable {
     public var locator: SessionLocator
     public var endpoint: String
@@ -217,7 +193,6 @@ public struct AttachGrant: Equatable, Sendable {
     }
 }
 
-/// Surface failure/lifecycle states — distinct typed states with evidence.
 public enum TerminalSurfaceState: Equatable, Sendable {
     case starting
     case attaching
@@ -241,14 +216,10 @@ public enum TerminalSurfaceState: Equatable, Sendable {
     }
 }
 
-/// Human-claim states the UI surfaces.
 public enum InputClaimPresentation: Equatable, Sendable {
     case free
-    case humanOwned(viewerId: String, claimId: String)
-    case humanOrphaned(viewerId: String, claimId: String)
 }
 
-/// Viewer-visible state of the frozen INPUT_SUBMIT / APPLIED transaction.
 public enum InputSubmissionState: Equatable, Sendable {
     case idle
     case waitingForClaim

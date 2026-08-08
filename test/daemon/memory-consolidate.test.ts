@@ -9,18 +9,21 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readMemoryFact, writeMemoryFact } from "../../src/adapters/memory";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
 import {
   countConsolidationCandidates,
   runMemoryConsolidation,
-} from "../../src/daemon/memory-consolidate";
+} from "../../src/memory-service/consolidate";
 import {
   type MemoryEmbedder,
   MemoryEmbeddingService,
-} from "../../src/daemon/memory-embeddings";
-import { runRetentionSweep } from "../../src/daemon/memory-retention";
-import type { MemoryRetentionConfig } from "../../src/schemas";
+} from "../../src/memory-service/embeddings";
+import { EpisodicStore } from "../../src/memory-service/episodic";
+import { runRetentionSweep } from "../../src/memory-service/retention";
+import {
+  readMemoryFact,
+  writeMemoryFact,
+} from "../../src/memory-service/memory-store";
+import type { MemoryRetentionConfig } from "../../src/schemas/config-schema";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
@@ -148,11 +151,62 @@ async function plantArticles(repo: string): Promise<Map<string, number[]>> {
   return vectors;
 }
 
+function seedStoredArticleVectors(store: EpisodicStore): void {
+  for (const [article, vector] of [
+    [IDENTICAL_OLDER, V_IDENTICAL],
+    [IDENTICAL_NEWER, V_IDENTICAL],
+    [SIMILAR_OLDER, V_SIMILAR_OLDER],
+    [SIMILAR_NEWER, V_SIMILAR_NEWER],
+    [LONER, V_LONER],
+  ] as const) {
+    store.upsertMemoryEmbedding({
+      kind: "article",
+      scope: "repo",
+      sourceId: article.id,
+      model: "mock-consolidation",
+      vector: Float32Array.from(vector),
+    });
+  }
+}
+
 describe("runMemoryConsolidation — report mode", () => {
+  test("leaves missing vectors untouched while apply fills them", async () => {
+    const { repo, store } = await makeFixture();
+    try {
+      const vectors = await plantArticles(repo);
+      const service = mockService(mockEmbedder(vectors));
+      const before = store.memoryEmbeddings({ kind: "article" }).length;
+
+      const report = await runMemoryConsolidation({
+        repoRoot: repo,
+        episodic: store,
+        service,
+      });
+
+      expect(report.embedded).toBe(0);
+      expect(store.memoryEmbeddings({ kind: "article" })).toHaveLength(before);
+
+      const applied = await runMemoryConsolidation({
+        repoRoot: repo,
+        episodic: store,
+        service,
+        apply: true,
+      });
+
+      expect(applied.embedded).toBe(5);
+      expect(
+        store.memoryEmbeddings({ kind: "article" }).length,
+      ).toBeGreaterThan(before);
+    } finally {
+      store.close();
+    }
+  });
+
   test("buckets pairs at the D1 thresholds and modifies nothing", async () => {
     const { repo, store } = await makeFixture();
     try {
       const vectors = await plantArticles(repo);
+      seedStoredArticleVectors(store);
       const before = await readMemoryFact(repo, "repo", IDENTICAL_OLDER.id);
 
       const report = await runMemoryConsolidation({
@@ -161,7 +215,7 @@ describe("runMemoryConsolidation — report mode", () => {
         service: mockService(mockEmbedder(vectors)),
       });
 
-      expect(report.embedded).toBe(5);
+      expect(report.embedded).toBe(0);
       expect(report.scanned).toBe(5);
       expect(report.identical).toHaveLength(1);
       expect(report.identical[0]?.olderId).toBe(IDENTICAL_OLDER.id);
@@ -263,51 +317,6 @@ describe("runMemoryConsolidation — apply mode", () => {
       store.close();
     }
   });
-
-  test("invalidates the older episodic fact with a supersededBy pointer", async () => {
-    const { repo, store } = await makeFixture();
-    try {
-      const older = store.recordFact({
-        topic: "testing",
-        title: "Wake budget is 300 tokens",
-        body: "The wake-delta injection budget defaults to 300 tokens.",
-        source: "test",
-        confidence: 0.9,
-      });
-      await Bun.sleep(2);
-      const newer = store.recordFact({
-        topic: "testing",
-        title: "Wake budget defaults to 300 tokens",
-        body: "The wake-delta injection budget defaults to 300 tokens.",
-        source: "test",
-        confidence: 0.9,
-      });
-      const vectors = new Map<string, number[]>([
-        [`${older.title}\n${older.body}`, V_IDENTICAL],
-        [`${newer.title}\n${newer.body}`, V_IDENTICAL],
-      ]);
-
-      const report = await runMemoryConsolidation({
-        repoRoot: repo,
-        episodic: store,
-        service: mockService(mockEmbedder(vectors)),
-        apply: true,
-      });
-
-      expect(report.failures).toHaveLength(0);
-      expect(report.applied).toHaveLength(1);
-      expect(report.applied[0]?.kind).toBe("fact");
-      expect(report.applied[0]?.olderId).toBe(older.id);
-      expect(report.applied[0]?.newerId).toBe(newer.id);
-      // Bi-temporal semantics: the row stays, it just stops being current.
-      expect(store.currentFacts().map((fact) => fact.id)).toEqual([newer.id]);
-      expect(
-        store.memoryEmbeddings({ kind: "fact" }).map((row) => row.sourceId),
-      ).not.toContain(older.id);
-    } finally {
-      store.close();
-    }
-  });
 });
 
 describe("consolidation candidate counting (retention sweep wiring)", () => {
@@ -340,8 +349,6 @@ describe("consolidation candidate counting (retention sweep wiring)", () => {
 
       const config: MemoryRetentionConfig = {
         events_hot_days: 30,
-        facts_retention: "forever",
-        digests_retention: "forever",
         stale_after_days: 90,
         sweep_interval_hours: 24,
       };

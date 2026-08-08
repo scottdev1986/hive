@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SkillAudience } from "../../src/adapters/skills";
-import { CAPABILITY_PROVIDERS } from "../../src/schemas";
+import { CAPABILITY_PROVIDERS } from "../../src/schemas/capability";
 import { SHIPPED_SKILLS, shippedSkillsFor } from "../../src/skills/shipped";
 
 /**
@@ -34,12 +34,19 @@ test("every shipped skill carries real content and vendor-required frontmatter",
   expect(SHIPPED_SKILLS.map((skill) => skill.name).sort()).toEqual([
     "code-review",
     "hive-alignment",
+    "hive-board-conventions",
     "hive-claude",
     "hive-codex",
+    "hive-dispatch",
+    "hive-escalation",
     "hive-grok",
     "hive-kimi",
+    "hive-landing",
+    "hive-mail-discipline",
     "hive-memory",
     "hive-opencode",
+    "hive-succession",
+    "hive-worktree-lifecycle",
     "karpathy-guidelines",
   ]);
 
@@ -59,30 +66,29 @@ const names = (audience: SkillAudience): string[] =>
   shippedSkillsFor(audience).map((skill) => skill.name);
 
 test("each vendor's agent is offered the skills written for it", () => {
-  expect(names({ role: "agent", tool: "claude" })).toEqual([
-    "hive-claude",
-    "hive-memory",
-    "karpathy-guidelines",
-  ]);
-  expect(names({ role: "agent", tool: "codex" })).toEqual([
-    "hive-codex",
-    "hive-memory",
-    "karpathy-guidelines",
-  ]);
-  expect(names({ role: "agent", tool: "grok" })).toEqual([
-    "hive-grok",
-    "hive-memory",
-    "karpathy-guidelines",
-  ]);
+  for (const tool of CAPABILITY_PROVIDERS) {
+    expect(names({ role: "agent", tool })).toEqual([
+      `hive-${tool}`,
+      "hive-memory",
+      "karpathy-guidelines",
+    ]);
+  }
 });
 
 test("a queen is offered neither a worktree contract nor coding guidance", () => {
   for (const tool of CAPABILITY_PROVIDERS) {
     // She is not standing in a worktree and writes no implementation code.
-    // What is hers: aligning with the user before delegating, and memory.
+    // What is hers: alignment, memory, and every pull-tier decision topic.
     expect(names({ role: "queen", tool })).toEqual([
       "hive-memory",
       "hive-alignment",
+      "hive-board-conventions",
+      "hive-dispatch",
+      "hive-escalation",
+      "hive-landing",
+      "hive-mail-discipline",
+      "hive-succession",
+      "hive-worktree-lifecycle",
     ]);
   }
 });
@@ -113,19 +119,19 @@ test("a compiled binary installs the shipped skills with no checkout to read fro
     entry,
     `import { installShippedSkills } from ${JSON.stringify(installer)};\n` +
       `const root = process.argv[2]!;\n` +
-      `for (const tool of ["claude", "codex", "grok"] as const) {\n` +
+      `for (const tool of ["claude", "codex", "grok", "kimi", "opencode"] as const) {\n` +
       `  await installShippedSkills(root, { role: "agent", tool, category: "code_review" });\n` +
       `}\n`,
   );
 
-  const compile = Bun.spawnSync([
-    "bun",
-    "build",
-    "--compile",
-    entry,
-    "--outfile",
-    binary,
-  ]);
+  const compile = Bun.spawnSync(
+    ["bun", "build", "--compile", entry, "--outfile", binary],
+    // bun leaves a 61 MB `.<id>-00000000.bun-build` scratch copy of its
+    // runtime in the process cwd on every --compile, success included. Run
+    // from the owned temp root so the afterAll removal takes the scratch too;
+    // the default cwd is the checkout root, where the scratch survives.
+    { cwd: root },
+  );
   expect(compile.stderr.toString()).toEqual("");
   expect(compile.exitCode).toEqual(0);
 
@@ -135,17 +141,18 @@ test("a compiled binary installs the shipped skills with no checkout to read fro
   expect(run.stderr.toString()).toEqual("");
   expect(run.exitCode).toEqual(0);
 
-  // Every skill a code_review agent of these three vendors is offered — the
+  // Every skill a code_review agent of these five vendors is offered — the
   // audience the entry above installed for, chosen because it is the widest
   // one and so leaves nothing unproven.
   for (const skill of SHIPPED_SKILLS) {
     for (const tool of skill.tools) {
       if (!skill.roles.includes("agent")) continue;
-      if (tool === "kimi" || tool === "opencode") continue;
       const native =
         tool === "claude"
           ? join(".claude", "skills")
-          : join(".agents", "skills");
+          : tool === "opencode"
+            ? join(".opencode", "skills")
+            : join(".agents", "skills");
       const installed = await readFile(
         join(target, native, skill.name, "SKILL.md"),
         "utf8",

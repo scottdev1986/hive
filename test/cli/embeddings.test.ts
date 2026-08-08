@@ -10,10 +10,12 @@ import {
   collectFastembedClosure,
   EMBEDDINGS_SOURCE_ENV,
   type EmbeddingsProvisionDeps,
+  type EmbeddingsReleaseProvisionDeps,
   ensureEmbeddingsRuntime,
+  ensureEmbeddingsRuntimeForRelease,
   findSourceNodeModules,
   provisionEmbeddingsRuntime,
-} from "../../src/cli/embeddings";
+} from "../../src/cli/embeddings-command";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 const tempRoots: string[] = [];
@@ -203,13 +205,34 @@ describe("ensureEmbeddingsRuntime — the fast path every provisioning caller sh
   });
 });
 
+test("update provisioning installs the activated release directly", async () => {
+  const runtimeDir = await makeTempDir("hive-embed-update-");
+  const versions: string[] = [];
+  const deps: EmbeddingsReleaseProvisionDeps = {
+    runtimeDir,
+    probe: async () => ({ model: "unused", dimensions: 384 }),
+    install: async (version, target) => {
+      versions.push(version);
+      expect(target).toBe(runtimeDir);
+      return { ok: true, detail: `runtime for ${version}` };
+    },
+  };
+
+  expect(await ensureEmbeddingsRuntimeForRelease("0.0.8", deps)).toEqual({
+    ok: true,
+    detail: "runtime for 0.0.8",
+  });
+  expect(versions).toEqual(["0.0.8"]);
+});
+
 describe("provisionEmbeddingsRuntime — dev checkout first, release download second", () => {
   function recorder(runtimeDir: string) {
     const calls: string[] = [];
     const deps: EmbeddingsProvisionDeps = {
       runtimeDir,
       cwd: "",
-      releaseBuild: false,
+      loaderPinsRuntime: false,
+      allowsLocalEmbeddingsSource: true,
       installFromCheckout: async (source) => {
         calls.push(`checkout:${source}`);
         return { ok: true, detail: "staged from checkout" };
@@ -275,7 +298,7 @@ describe("provisionEmbeddingsRuntime — dev checkout first, release download se
   });
 });
 
-describe("provisionEmbeddingsRuntime — a release build never takes a dev path", () => {
+describe("provisionEmbeddingsRuntime — a pinned-runtime build never takes a dev path", () => {
   test("a checkout in reach is ignored: the release download runs anyway", async () => {
     const root = await makeTempDir("hive-embed-release-build-");
     const nm = join(root, "node_modules");
@@ -284,9 +307,12 @@ describe("provisionEmbeddingsRuntime — a release build never takes a dev path"
     const deps: EmbeddingsProvisionDeps = {
       runtimeDir: join(root, "runtime"),
       cwd: root,
-      releaseBuild: true,
+      loaderPinsRuntime: true,
+      allowsLocalEmbeddingsSource: true,
       installFromCheckout: async () => {
-        throw new Error("a release build must never stage from a checkout");
+        throw new Error(
+          "a pinned-runtime build must never stage from a checkout",
+        );
       },
       installFromRelease: async () => {
         calls.push("release");
@@ -307,9 +333,12 @@ describe("provisionEmbeddingsRuntime — a release build never takes a dev path"
     const deps: EmbeddingsProvisionDeps = {
       runtimeDir: join(root, "runtime"),
       cwd: root,
-      releaseBuild: true,
+      loaderPinsRuntime: true,
+      allowsLocalEmbeddingsSource: true,
       installFromCheckout: async () => {
-        throw new Error("a release build must never stage from a checkout");
+        throw new Error(
+          "a pinned-runtime build must never stage from a checkout",
+        );
       },
       installFromRelease: async () => {
         throw new Error("an explicit dev source must refuse, not download");
@@ -321,7 +350,127 @@ describe("provisionEmbeddingsRuntime — a release build never takes a dev path"
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.reason).toContain(EMBEDDINGS_SOURCE_ENV);
-      expect(outcome.reason).toContain("dev-build control");
+      // Names the fact that refused it: the loader, not the policy.
+      expect(outcome.reason).toContain("refused at import");
+    }
+  });
+});
+
+// Two independent facts decide whether a local tree may be staged, so all four combinations are
+// asserted rather than the two that happen to ship today. Which two ship today is worth stating,
+// because neither may move: `make build` passes no --public-key, so the dev binary is unkeyed and
+// keeps accepting; .github/workflows/release.yml passes it only when the offline key exists, so a
+// keyed prod release keeps refusing. The unkeyed-prod row is the one behaviour this changes — a
+// release that ships without its key used to fail OPEN, which is a protection that switches itself
+// off exactly when the release is already degraded.
+describe("provisionEmbeddingsRuntime — the two facts, all four build shapes", () => {
+  const SHAPES = [
+    {
+      name: "keyed prod: refused, and the policy is the reason it names first",
+      allowsLocalEmbeddingsSource: false,
+      loaderPinsRuntime: true,
+      expect: "production build",
+    },
+    {
+      name: "unkeyed prod: refused on policy alone, though its loader could have coped",
+      allowsLocalEmbeddingsSource: false,
+      loaderPinsRuntime: false,
+      expect: "production build",
+    },
+    {
+      name: "keyed dev: allowed by policy, refused by a loader that pins its runtime",
+      allowsLocalEmbeddingsSource: true,
+      loaderPinsRuntime: true,
+      expect: "refused at import",
+    },
+    {
+      name: "unkeyed dev: the shape `make build` produces — staged from the checkout",
+      allowsLocalEmbeddingsSource: true,
+      loaderPinsRuntime: false,
+      expect: null,
+    },
+  ] as const;
+
+  for (const shape of SHAPES) {
+    test(shape.name, async () => {
+      const root = await makeTempDir("hive-embed-shape-");
+      const nm = join(root, "node_modules");
+      await plantPackage(nm, "fastembed");
+      const calls: string[] = [];
+      const deps: EmbeddingsProvisionDeps = {
+        runtimeDir: join(root, "runtime"),
+        cwd: root,
+        loaderPinsRuntime: shape.loaderPinsRuntime,
+        allowsLocalEmbeddingsSource: shape.allowsLocalEmbeddingsSource,
+        installFromCheckout: async (source) => {
+          calls.push(`checkout:${source}`);
+          return { ok: true, detail: "staged from checkout" };
+        },
+        installFromRelease: async () => {
+          calls.push("release");
+          return { ok: true, detail: "downloaded from release" };
+        },
+      };
+
+      const named = await provisionEmbeddingsRuntime({ from: root }, deps);
+      if (shape.expect === null) {
+        expect(named).toEqual({ ok: true, detail: "staged from checkout" });
+        expect(calls).toEqual([`checkout:${nm}`]);
+      } else {
+        expect(named.ok).toBe(false);
+        if (!named.ok) {
+          expect(named.reason).toContain(EMBEDDINGS_SOURCE_ENV);
+          expect(named.reason).toContain(shape.expect);
+        }
+        // A refusal never quietly falls back to the network either.
+        expect(calls).toEqual([]);
+      }
+
+      // The same verdict must hold with no environment variable set. Gating only the explicit
+      // source would leave a protection that a `cd` into any checkout defeats, because the walk
+      // starts from the cwd.
+      calls.length = 0;
+      const walked = await provisionEmbeddingsRuntime({}, deps);
+      expect(walked.ok).toBe(true);
+      expect(calls).toEqual(
+        shape.expect === null ? [`checkout:${nm}`] : ["release"],
+      );
+    });
+  }
+});
+
+describe("provisionEmbeddingsRuntime — the refusals are told apart", () => {
+  test("the policy refusal and the loader refusal are different messages", async () => {
+    const root = await makeTempDir("hive-embed-distinct-");
+    const base = {
+      runtimeDir: join(root, "runtime"),
+      cwd: root,
+      installFromCheckout: async () => {
+        throw new Error("a refused build must never stage");
+      },
+      installFromRelease: async () => {
+        throw new Error("a refused explicit source must never download");
+      },
+    };
+    const policy = await provisionEmbeddingsRuntime(
+      { from: root },
+      { ...base, allowsLocalEmbeddingsSource: false, loaderPinsRuntime: false },
+    );
+    const loader = await provisionEmbeddingsRuntime(
+      { from: root },
+      { ...base, allowsLocalEmbeddingsSource: true, loaderPinsRuntime: true },
+    );
+
+    expect(policy.ok).toBe(false);
+    expect(loader.ok).toBe(false);
+    if (!policy.ok && !loader.ok) {
+      // A reader who cannot tell "not allowed to" from "could not load it anyway" files the wrong
+      // bug, so the two must not collapse into one wording.
+      expect(policy.reason).not.toBe(loader.reason);
+      expect(policy.reason).toContain("production build");
+      expect(policy.reason).not.toContain("refused at import");
+      expect(loader.reason).toContain("refused at import");
+      expect(loader.reason).not.toContain("production build");
     }
   });
 });

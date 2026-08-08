@@ -1,0 +1,71 @@
+{
+  "runtime": {
+    "product": "codex-cli",
+    "version": "0.146.0",
+    "executable": "<user-home>/.local/bin/codex",
+    "resolvedExecutable": "<user-home>/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex"
+  },
+  "runAt": "2026-08-02T19:52:08.085Z",
+  "steps": {
+    "1-initialize-capabilities": "pass",
+    "2-new-thread-without-prompt": "pass",
+    "3-prompt-start-stream-complete": "pass",
+    "4-approval-deny-and-allow": "pass",
+    "5-targeted-interrupt": "pass",
+    "6-resume-and-read-thread": "pass",
+    "7-commands-models-permissions-config-status": "pass",
+    "7b-review-start": "pass",
+    "7c-thread-compact": "pass",
+    "8-disconnect-reattach-no-duplicate": "pass"
+  },
+  "capabilities": {
+    "newSession": "supported",
+    "prompt": "supported",
+    "cancel": "supported",
+    "permissions": "supported",
+    "streamingText": "supported",
+    "toolLifecycle": "supported",
+    "sessionRecovery": "supported",
+    "questions": "unsupported",
+    "commandCatalog": "supported",
+    "modelCatalog": "supported",
+    "modeCatalog": "unsupported",
+    "contextUsage": "supported",
+    "fork": "unsupported",
+    "compact": "supported",
+    "steering": "unsupported"
+  },
+  "unprovenBaseline": [],
+  "steadyStateUnknowns": [],
+  "eventKinds": [
+    "runtime-ready",
+    "unrecognized",
+    "turn-started",
+    "message-delta",
+    "usage-updated",
+    "turn-idle",
+    "tool-started",
+    "approval-waiting",
+    "elicitation-settled",
+    "tool-finished",
+    "interrupted",
+    "compacted",
+    "runtime-disconnected",
+    "runtime-connecting"
+  ],
+  "counts": {
+    "events": 169,
+    "approvals": 2,
+    "terminalTurns": 7
+  },
+  "processAudit": {
+    "childObserved": true,
+    "controllingTty": null,
+    "isolatedProcessGroup": true,
+    "noOrphansAfterClose": true
+  },
+  "sanitized": true,
+  "capabilityNotes": {
+    "fileChanges": "Live probe 2026-08-03: Codex is the only provider that aggregates a turn's edits itself, sending turn/diff/updated with a complete git-style unified diff (diff --git, index, hunks). It resends the whole aggregate per change, so it replaces rather than appends."
+  }
+}

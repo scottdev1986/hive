@@ -1,0 +1,8 @@
+{
+  "result": "failed",
+  "vendor": "codex",
+  "startedAt": "2026-08-02T13:10:38.731Z",
+  "completedAt": "2026-08-02T13:10:39.275Z",
+  "error": "hive_spawn: [\n  {\n    \"type\": \"text\",\n    \"text\": \"Cannot spawn maya: every candidate of the simple_coding route was refused:\\n  codex/gpt-5.3-codex-spark — resolution: codex's readable catalog has no record for gpt-5.3-codex-spark\\nEnable a model or edit the route in the Model Control Center.\"\n  }\n]",
+  "agent": null
+}

@@ -17,8 +17,8 @@ import {
 } from "../../src/release/embeddings-install";
 import { EMBEDDINGS_RUNTIME_ASSET } from "../../src/release/embeddings-runtime";
 import type { ReleaseManifest } from "../../src/release/manifest";
-import type { ReleaseSource } from "../../src/update/source";
-import { HIVE_VERSION } from "../../src/version";
+import type { ReleaseSource } from "../../src/update-service/source";
+import { HIVE_VERSION } from "../../src/shared/version";
 import { required } from "../required";
 
 const tempRoots: string[] = [];

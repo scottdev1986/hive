@@ -2,14 +2,7 @@ import AppKit
 import HiveTerminalKit
 import WorkspaceCore
 
-/// Drives one pane's `HiveTerminalView` against the pane's EXACT sessiond
-/// session, including attach, live output, and input.
-///
-/// The fence is the invariant: every attach uses the exact `sessionLocator`
-/// held by the pane — never a name lookup — and a grant whose locator differs
-/// from the pane's is refused before any byte reaches the surface. Renderer
-/// recreation re-attaches to the SAME exact generation with a fresh one-use
-/// grant, resuming at the acknowledged high-water.
+/// Drives one pane's `HiveTerminalView` against the pane's EXACT sessiond session, including attach, live output, and input. The fence is the invariant: every attach uses the exact `sessionLocator` held by the pane — never a name lookup — and a grant whose locator differs from the pane's is refused before any byte reaches the surface. Renderer recreation re-attaches to the SAME exact generation with a fresh one-use grant, resuming at the acknowledged high-water.
 final class SessiondPaneTerminal {
     let agentName: String
     let paneLocator: AgentSessionLocator
@@ -27,24 +20,17 @@ final class SessiondPaneTerminal {
     private var reconnectFailures = 0
     private var hasAttachedSuccessfully = false
     private(set) var degraded = false
-    /// Reserved for conditions retrying cannot fix. A recoverable loss must
-    /// never land here: a resting "renderer disconnected" pane is a defect.
-    /// Retryable failures remain visible without permanently giving up.
+    /// Reserved for conditions retrying cannot fix. A recoverable loss must never land here: a resting "renderer disconnected" pane is a defect. Retryable failures remain visible without permanently giving up.
     private(set) var gaveUp = false
-    /// The current failure reason while degraded or given up (nil while live).
     private(set) var lastFailure: String?
     let failuresBeforeDegraded = 6
     let reconnectDelay: TimeInterval = 1.0
     private var recoveryTimer: Timer?
-    /// Fired once after repeated completed failures. Retrying continues.
     var onDegraded: ((String) -> Void)?
-    /// Fired when an attach goes live again after a degraded stretch.
     var onRecovered: (() -> Void)?
     /// Fired once for a condition retrying cannot fix, with evidence.
     var onFailure: ((String) -> Void)?
 
-    /// Grant acquisition, overridable by the smoke harness: runs
-    /// `hive workspace-attach` and returns the raw grant JSON line.
     var requestGrant: (_ geometryJSON: String) throws -> String
 
     init(
@@ -71,7 +57,6 @@ final class SessiondPaneTerminal {
         detach()
     }
 
-    /// The pane's exact locator projected onto the wire locator type.
     var wireLocator: SessionLocator {
         SessionLocator(
             schemaVersion: paneLocator.schemaVersion,
@@ -85,8 +70,7 @@ final class SessiondPaneTerminal {
         )
     }
 
-    /// Creates the production surface. Throws when the pinned engine library
-    /// cannot be loaded; the pane then keeps its native failure representation.
+    /// Creates the production surface. Throws when the pinned engine library cannot be loaded; the pane then keeps its native failure representation.
     func makeView() throws -> HiveTerminalView {
         let terminal = try HiveTerminalView(frame: .zero, viewerId: viewerId)
         terminal.autoresizingMask = [.width, .height]
@@ -94,33 +78,20 @@ final class SessiondPaneTerminal {
         return terminal
     }
 
-    /// Starts immediately with the surface's current size or a conventional
-    /// 80×24 terminal. A locator may be published just before its host becomes
-    /// attachable, so the same fixed attach loop covers initial availability
-    /// and later transport loss. Later layout changes use the normal resize
-    /// path.
     func start() {
         guard !hasStarted, !detached else { return }
         hasStarted = true
-        // Apply the theme before attach so journal replay paints onto the
-        // themed surface. Applying configuration after processOutput can wipe
-        // the VT while the journal is full, leaving a blank pane.
         view?.prepareThemeBeforeAttach()
         beginAttach(afterSeq: 0)
     }
 
-    /// Renderer detach only: the logical pane, the session, and the daemon's
-    /// close/kill authority are untouched. Detach never claims close.
+    /// Renderer detach only: the logical pane, the session, and the daemon's close/kill authority are untouched. Detach never claims close.
     func detach() {
         detached = true
         stopRecovery()
-        // Release the claim before closing transport so the host claim cannot orphan.
-        view?.releaseClaimBestEffort()
         transport?.close()
         transport = nil
     }
-
-    // MARK: - Attach machinery
 
     private func beginAttach(afterSeq: UInt64) {
         guard !detached, !attachInFlight, !gaveUp else { return }
@@ -133,8 +104,7 @@ final class SessiondPaneTerminal {
             do {
                 let grantLine = try self.requestGrant(geometryJSON)
                 let grant = try Self.parseGrant(grantLine)
-                // Client-side fence: the grant must name the pane's exact
-                // locator (the daemon already fenced; verify anyway).
+                // Client-side fence: the grant must name the pane's exact locator (the daemon already fenced; verify anyway).
                 guard grant.locator == self.wireLocator else {
                     throw SessiondPaneTerminalError.grantLocatorMismatch
                 }
@@ -171,16 +141,7 @@ final class SessiondPaneTerminal {
         self.transport?.close()
         self.transport = transport
         do {
-            // The handshake runs OFF main. `AttachReplayClient.attach` blocks in
-            // `transport.receive` until the host sends a frame or the 5 second
-            // handshake timeout expires, and a terminal that has produced
-            // nothing yet sends nothing — so on main that is a five-second
-            // frozen workspace per pane, serially. Measured with real vendor
-            // TUIs on real PTYs (prototypes/terminal, proto-viewer): two such
-            // panes stalled the main queue for 10,000 ms; off main the worst
-            // stall in the same run was 1.9 ms.
-            //
-            // Only the fence and publish stay on main so panes attach concurrently.
+            // The handshake runs OFF main. `AttachReplayClient.attach` blocks in `transport.receive` until the host sends a frame or the 5 second handshake timeout expires, and a terminal that has produced nothing yet sends nothing — so on main that is a five-second frozen workspace per pane, serially. Measured with real vendor TUIs on real PTYs (prototypes/terminal, proto-viewer): two such panes stalled the main queue for 10,000 ms; off main the worst stall in the same run was 1.9 ms. Only the fence and publish stay on main so panes attach concurrently.
             let client = try view.prepareAttach(
                 grant: grant,
                 afterSeq: afterSeq,
@@ -212,8 +173,6 @@ final class SessiondPaneTerminal {
         }
     }
 
-    /// Main-thread tail of the attach: publish the handshake's result onto the
-    /// view and start the live pump.
     private func publishAttach(
         _ result: Result<AttachReplayOutcome, Error>,
         client: AttachReplayClient,
@@ -232,8 +191,7 @@ final class SessiondPaneTerminal {
                 transport.close()
                 NSLog("sessiond surface attach for %@ failed: %@", agentName, "\(state)")
                 if case .incompatibleEngine(let evidence) = state {
-                    // The app's engine build id cannot change while the app
-                    // runs, so no number of retries can make this grant match.
+                    // The app's engine build id cannot change while the app runs, so no number of retries can make this grant match.
                     failAttach("incompatible engine: \(evidence)")
                     return
                 }
@@ -253,14 +211,7 @@ final class SessiondPaneTerminal {
         }
     }
 
-    /// Background frame pump: live OUTPUT keeps flowing after the attach
-    /// handshake returns. Frames apply on THIS thread through the
-    /// locator-fenced view entry; transport loss triggers a re-attach to the
-    /// SAME exact generation at the applied high-water.
-    ///
-    /// `view` is captured here, on the main thread, rather than read from
-    /// `self.view` inside the loop: the pump applies frames on its own thread
-    /// and must not touch main-thread-owned properties.
+    /// Background frame pump: live OUTPUT keeps flowing after the attach handshake returns. Frames apply on THIS thread through the locator-fenced view entry; transport loss triggers a re-attach to the SAME exact generation at the applied high-water. `view` is captured here, on the main thread, rather than read from `self.view` inside the loop: the pump applies frames on its own thread and must not touch main-thread-owned properties.
     private func startPump(
         transport: UdsHostTransport,
         binding: SurfaceBinding,
@@ -270,8 +221,7 @@ final class SessiondPaneTerminal {
             var disconnectEvidence = "host transport ended"
             while true {
                 guard let self, !self.detached else { return }
-                // Weak so a live pump thread cannot outlive and retain the pane
-                // view; a torn-down view ends the pump like a transport loss.
+                // Weak so a live pump thread cannot outlive and retain the pane view; a torn-down view ends the pump like a transport loss.
                 guard let view else { return }
                 if transport.isClosed {
                     disconnectEvidence =
@@ -284,15 +234,7 @@ final class SessiondPaneTerminal {
                             transport.failureEvidence ?? "host closed the viewer stream (EOF)"
                         break // orderly close
                     }
-                    // Apply on THIS thread. The VT parse is the expensive part
-                    // (~milliseconds per 64 KiB chunk) and it no longer touches
-                    // the main queue at all, so output volume cannot delay a
-                    // keystroke. pumpHostFrame mirrors the cheap UI state to
-                    // main on its own.
-                    //
-                    // Do not coalesce frames off the main queue: applying one at a time
-                    // keeps the client's lock hold short so a keystroke can
-                    // overtake queued output instead of waiting out a batch.
+                    // Apply on THIS thread. The VT parse is the expensive part (~milliseconds per 64 KiB chunk) and it no longer touches the main queue at all, so output volume cannot delay a keystroke. pumpHostFrame mirrors the cheap UI state to main on its own. Do not coalesce frames off the main queue: applying one at a time keeps the client's lock hold short so a keystroke can overtake queued output instead of waiting out a batch.
                     view.pumpHostFrame(first, frameBinding: binding)
                 } catch let error as WireError {
                     if case .receiveTimeout = error { continue }
@@ -323,9 +265,7 @@ final class SessiondPaneTerminal {
     private func recordRecoverableFailure(_ evidence: String) {
         guard !gaveUp, !detached else { return }
         lastFailure = evidence
-        // Before the first successful frame this is still the initial attach,
-        // not a disconnected renderer. Keep it pending and retry without
-        // presenting a false reconnect state.
+        // Before the first successful frame this is still the initial attach, not a disconnected renderer. Keep it pending and retry without presenting a false reconnect state.
         if hasAttachedSuccessfully {
             reconnectFailures += 1
             if reconnectFailures >= failuresBeforeDegraded, !degraded {
@@ -340,13 +280,11 @@ final class SessiondPaneTerminal {
         scheduleReconnect()
     }
 
-    /// Test seam for the small recovery state machine.
     func recordReconnectFailureForTesting(_ evidence: String) {
         recordRecoverableFailure(evidence)
     }
 
-    /// An attach went live. Clears the budget so a later transient loss starts
-    /// fresh, and lifts a degraded pane back to healthy.
+    /// An attach went live. Clears the budget so a later transient loss starts fresh, and lifts a degraded pane back to healthy.
     func noteLiveAttach() {
         hasAttachedSuccessfully = true
         stopRecovery()
@@ -369,9 +307,7 @@ final class SessiondPaneTerminal {
         onFailure?(evidence)
     }
 
-    /// One completed failure schedules one fresh-grant reconnect. The attempt
-    /// itself schedules the next retry only if it fails, so there is no second
-    /// timer-driven state machine racing the attach chain.
+    /// One completed failure schedules one fresh-grant reconnect. The attempt itself schedules the next retry only if it fails, so there is no second timer-driven state machine racing the attach chain.
     private func scheduleReconnect() {
         guard !detached, !gaveUp, recoveryTimer == nil else { return }
         let timer = Timer(timeInterval: reconnectDelay, repeats: false) { [weak self] _ in
@@ -393,8 +329,6 @@ final class SessiondPaneTerminal {
         recoveryTimer?.invalidate()
         recoveryTimer = nil
     }
-
-    // MARK: - Grant subprocess
 
     private func runWorkspaceAttach(geometryJSON: String) throws -> String {
         guard let encoded = try? JSONEncoder().encode(paneLocator),

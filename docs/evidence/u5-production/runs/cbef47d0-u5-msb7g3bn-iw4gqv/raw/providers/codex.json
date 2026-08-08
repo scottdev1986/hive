@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "runId": "u5-msb7g3bn-iw4gqv",
+  "sourceSha": "cbef47d0b024318f03bfeeb7a6636c887f0806c9",
+  "provider": "codex",
+  "outcome": "pending-attestation",
+  "attemptOrdinal": 1,
+  "attemptedAt": "2026-08-02T02:52:38.986Z",
+  "retryAttempted": false,
+  "phase": "stable-composer",
+  "spawnRequested": true,
+  "admissionId": "4cdbcd39-ca8d-4bc4-8251-cce38ceccb58",
+  "name": "david",
+  "configuredModel": "gpt-5.3-codex-spark",
+  "status": "spawning",
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "fba75ed1ad",
+    "subject": {
+      "kind": "agent",
+      "agentId": "4cdbcd39-ca8d-4bc4-8251-cce38ceccb58"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc063-453a-7585-b8a5-c1ee2d2cb3e0",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "composer": {
+    "profile": "codex",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  },
+  "captureSha256": "3f98f7518f0e28e119fdc8a502a391773d059af0f8e3b172bb7b5a36d1c8b150"
+}

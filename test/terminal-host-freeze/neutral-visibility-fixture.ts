@@ -20,6 +20,7 @@ import type {
   VisibilityUnknown,
 } from "../../src/daemon/session-host/terminal-host-visibility-contract";
 import { NeutralTerminalHostFixture } from "./neutral-fixture";
+import { errorMessage } from "../../src/shared/error-message";
 
 export const NEUTRAL_VISIBILITY_FIXTURE_VERSION = "1.0.0" as const;
 export const VISIBILITY_LEASE_MILLISECONDS = 15_000;
@@ -392,7 +393,7 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
         survivors: [],
         completeness: "unknown",
         diagnostics: [
-          `visibility expiry teardown failed: ${error instanceof Error ? error.message : String(error)}`,
+          `visibility expiry teardown failed: ${errorMessage(error)}`,
         ],
       };
     }

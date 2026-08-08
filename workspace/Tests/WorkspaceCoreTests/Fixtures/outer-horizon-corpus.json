@@ -1,0 +1,3115 @@
+{
+  "schemaVersion": 1,
+  "scenarios": [
+    {
+      "name": "full-hive-dense-19",
+      "snapshot": {
+        "schemaVersion": 2,
+        "instanceId": "instance-fixture",
+        "seq": "1",
+        "entities": [
+          {
+            "kind": "hierarchy-run",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001",
+            "entityRevision": "3",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "3",
+              "root": {
+                "availability": "present",
+                "value": {
+                  "kind": "queen-root",
+                  "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+                  "instanceId": "instance-fixture",
+                  "repo": "hive"
+                }
+              },
+              "phase": {
+                "availability": "present",
+                "value": "P3"
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "topologyShape": {
+                "availability": "present",
+                "value": "full-hive"
+              },
+              "g1": {
+                "availability": "present",
+                "value": {
+                  "state": "approved",
+                  "decider": "engineer",
+                  "decidedAt": "2026-07-30T12:00:00.000Z",
+                  "spec": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "plan": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "topology": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "budget": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              },
+              "g2": {
+                "availability": "present",
+                "value": {
+                  "state": "pending"
+                }
+              },
+              "topologySource": {
+                "availability": "present",
+                "value": "hierarchy"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000104",
+            "generation": 1,
+            "entityRevision": "2",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "2",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2",
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+                  "agentId": "zoe",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000105",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+                  "agentId": "david",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000106",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000106",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000106",
+                  "agentId": "emma",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000103",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "reviewer"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                  "agentId": "sarah",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000110",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000110",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2",
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000110",
+                  "agentId": "dense-lead-1",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000111",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000111",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000110"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000110"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000111",
+                  "agentId": "dense-crew-1-1",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000112",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000112",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000110"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000110"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "researcher"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000112",
+                  "agentId": "dense-crew-1-2",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000113",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000113",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2",
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000113",
+                  "agentId": "dense-lead-2",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000114",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000114",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000113"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000113"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000114",
+                  "agentId": "dense-crew-2-1",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000115",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000115",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000113"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000113"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "researcher"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000115",
+                  "agentId": "dense-crew-2-2",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000116",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000116",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2",
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000116",
+                  "agentId": "dense-lead-3",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000117",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000117",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000116"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000116"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000117",
+                  "agentId": "dense-crew-3-1",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000118",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000118",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000116"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000116"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "researcher"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000118",
+                  "agentId": "dense-crew-3-2",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000119",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000119",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2",
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000119",
+                  "agentId": "dense-lead-4",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000120",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000120",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000119"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000119"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000120",
+                  "agentId": "dense-crew-4-1",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000121",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000121",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000119"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000119"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "researcher"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000121",
+                  "agentId": "dense-crew-4-2",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000122",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000122",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2",
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000122",
+                  "agentId": "dense-lead-5",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000123",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000123",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000122"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000122"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000123",
+                  "agentId": "dense-crew-5-1",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000124",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000124",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000122"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000122"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "researcher"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a3"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000124",
+                  "agentId": "dense-crew-5-2",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-task",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
+            "entityRevision": "2",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "2",
+              "tasks": {
+                "availability": "present",
+                "value": [
+                  {
+                    "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+                    "revision": "2",
+                    "state": "completed",
+                    "ownerNodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+                    "assigneeNodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+                    "parentTaskId": null,
+                    "dependsOn": [],
+                    "branch": "hive/david",
+                    "blockers": [],
+                    "evidence": []
+                  },
+                  {
+                    "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+                    "revision": "1",
+                    "state": "in-progress",
+                    "ownerNodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+                    "assigneeNodeId": "node_018f4f5e-0000-7000-8000-000000000106",
+                    "parentTaskId": null,
+                    "dependsOn": [
+                      "task_018f4f5e-0000-7000-8000-0000000000a1"
+                    ],
+                    "branch": "hive/emma",
+                    "blockers": [],
+                    "evidence": []
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-budget",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "limits": {
+                "availability": "present",
+                "value": {
+                  "activeSessions": {
+                    "hard": 32,
+                    "soft": 24,
+                    "reserved": 19,
+                    "used": 19
+                  },
+                  "totalSpawns": {
+                    "hard": 32,
+                    "soft": 24,
+                    "reserved": 19,
+                    "used": 19
+                  },
+                  "perLeadCrew": {
+                    "hard": 3,
+                    "soft": 3,
+                    "reserved": 3,
+                    "used": 3
+                  },
+                  "reviewerPool": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "vendorQuota": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "tokens": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "costCents": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wallTimeMs": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "ci": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wakeBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "messageBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  }
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-review",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "reviews": {
+                "availability": "present",
+                "value": [
+                  {
+                    "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+                    "revision": "1",
+                    "verdict": "accepted",
+                    "invalidation": {
+                      "state": "current"
+                    },
+                    "reviewer": {
+                      "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                      "agentId": "sarah",
+                      "generation": 1
+                    },
+                    "candidate": {
+                      "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    },
+                    "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-incident",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
+            "entityRevision": "3",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "3",
+              "runDecision": {
+                "availability": "present",
+                "value": [
+                  {
+                    "idempotencyKey": "approve-g1-once",
+                    "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "outcome": {
+                      "status": "accepted"
+                    },
+                    "observedRevision": "3"
+                  },
+                  {
+                    "idempotencyKey": "approve-g1-again",
+                    "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "outcome": {
+                      "status": "rejected",
+                      "failureCode": "gate-already-decided"
+                    },
+                    "observedRevision": "3"
+                  }
+                ]
+              },
+              "recovery": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no ownership-transfer source supplied for this snapshot"
+              },
+              "breaker": {
+                "availability": "absent",
+                "reason": "source-absent",
+                "detail": "no anomaly circuit-breaker record exists in the daemon"
+              }
+            }
+          }
+        ],
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "contentSha256": "fa6b9f99cfdc9a741d38e9d25159969220113a3cfa02ccf8b6edac75728a37e3"
+      }
+    },
+    {
+      "name": "empty",
+      "snapshot": {
+        "schemaVersion": 2,
+        "instanceId": "instance-fixture",
+        "seq": "2",
+        "entities": [],
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "contentSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    {
+      "name": "direct",
+      "snapshot": {
+        "schemaVersion": 2,
+        "instanceId": "instance-fixture",
+        "seq": "3",
+        "entities": [
+          {
+            "kind": "hierarchy-run",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001",
+            "entityRevision": "3",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "3",
+              "root": {
+                "availability": "present",
+                "value": {
+                  "kind": "queen-root",
+                  "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+                  "instanceId": "instance-fixture",
+                  "repo": "hive"
+                }
+              },
+              "phase": {
+                "availability": "present",
+                "value": "P2"
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "topologyShape": {
+                "availability": "present",
+                "value": "direct"
+              },
+              "g1": {
+                "availability": "present",
+                "value": {
+                  "state": "approved",
+                  "decider": "engineer",
+                  "decidedAt": "2026-07-30T12:00:00.000Z",
+                  "spec": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "plan": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "topology": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "budget": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              },
+              "g2": {
+                "availability": "present",
+                "value": {
+                  "state": "pending"
+                }
+              },
+              "topologySource": {
+                "availability": "present",
+                "value": "hierarchy"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000101",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
+                  "agentId": "david",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000103",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "reviewer"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                  "agentId": "sarah",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-task",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "tasks": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no task source supplied for this snapshot"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-budget",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "limits": {
+                "availability": "present",
+                "value": {
+                  "activeSessions": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "totalSpawns": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "perLeadCrew": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "reviewerPool": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "vendorQuota": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "tokens": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "costCents": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wallTimeMs": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "ci": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wakeBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "messageBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  }
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-review",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "reviews": {
+                "availability": "present",
+                "value": [
+                  {
+                    "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+                    "revision": "1",
+                    "verdict": "accepted",
+                    "invalidation": {
+                      "state": "current"
+                    },
+                    "reviewer": {
+                      "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                      "agentId": "sarah",
+                      "generation": 1
+                    },
+                    "candidate": {
+                      "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    },
+                    "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-incident",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "runDecision": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no run-control decision source supplied for this snapshot"
+              },
+              "recovery": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no ownership-transfer source supplied for this snapshot"
+              },
+              "breaker": {
+                "availability": "absent",
+                "reason": "source-absent",
+                "detail": "no anomaly circuit-breaker record exists in the daemon"
+              }
+            }
+          }
+        ],
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "contentSha256": "f14b6445ea5db872ed48c8e4e5274a78d211f8eb93685709c91f1d082820fc7f"
+      }
+    },
+    {
+      "name": "flat-present-empty",
+      "snapshot": {
+        "schemaVersion": 2,
+        "instanceId": "instance-fixture",
+        "seq": "4",
+        "entities": [
+          {
+            "kind": "hierarchy-run",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001",
+            "entityRevision": "3",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "3",
+              "root": {
+                "availability": "present",
+                "value": {
+                  "kind": "queen-root",
+                  "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+                  "instanceId": "instance-fixture",
+                  "repo": "hive"
+                }
+              },
+              "phase": {
+                "availability": "present",
+                "value": "P2"
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "topologyShape": {
+                "availability": "present",
+                "value": "flat"
+              },
+              "g1": {
+                "availability": "present",
+                "value": {
+                  "state": "approved",
+                  "decider": "engineer",
+                  "decidedAt": "2026-07-30T12:00:00.000Z",
+                  "spec": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "plan": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "topology": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "budget": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              },
+              "g2": {
+                "availability": "present",
+                "value": {
+                  "state": "pending"
+                }
+              },
+              "topologySource": {
+                "availability": "present",
+                "value": "hierarchy"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000101",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
+                  "agentId": "david",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000102",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000102",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000102",
+                  "agentId": "emma",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000103",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "reviewer"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                  "agentId": "sarah",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-task",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "tasks": {
+                "availability": "present",
+                "value": []
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-budget",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "limits": {
+                "availability": "present",
+                "value": {
+                  "activeSessions": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "totalSpawns": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "perLeadCrew": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "reviewerPool": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "vendorQuota": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "tokens": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "costCents": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wallTimeMs": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "ci": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wakeBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "messageBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  }
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-review",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "reviews": {
+                "availability": "present",
+                "value": [
+                  {
+                    "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+                    "revision": "1",
+                    "verdict": "accepted",
+                    "invalidation": {
+                      "state": "current"
+                    },
+                    "reviewer": {
+                      "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                      "agentId": "sarah",
+                      "generation": 1
+                    },
+                    "candidate": {
+                      "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    },
+                    "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-incident",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "runDecision": {
+                "availability": "present",
+                "value": []
+              },
+              "recovery": {
+                "availability": "present",
+                "value": []
+              },
+              "breaker": {
+                "availability": "absent",
+                "reason": "source-absent",
+                "detail": "no anomaly circuit-breaker record exists in the daemon"
+              }
+            }
+          }
+        ],
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "contentSha256": "44fcfafec0b331846798d074a435d4f5b4f0bf9424bf3900d4fdc6f8ef1bcef0"
+      }
+    },
+    {
+      "name": "lead-loss",
+      "snapshot": {
+        "schemaVersion": 2,
+        "instanceId": "instance-fixture",
+        "seq": "5",
+        "entities": [
+          {
+            "kind": "hierarchy-run",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001",
+            "entityRevision": "3",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "3",
+              "root": {
+                "availability": "present",
+                "value": {
+                  "kind": "queen-root",
+                  "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+                  "instanceId": "instance-fixture",
+                  "repo": "hive"
+                }
+              },
+              "phase": {
+                "availability": "present",
+                "value": "P3"
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "topologyShape": {
+                "availability": "present",
+                "value": "full-hive"
+              },
+              "g1": {
+                "availability": "present",
+                "value": {
+                  "state": "approved",
+                  "decider": "engineer",
+                  "decidedAt": "2026-07-30T12:00:00.000Z",
+                  "spec": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "plan": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "topology": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "budget": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              },
+              "g2": {
+                "availability": "present",
+                "value": {
+                  "state": "pending"
+                }
+              },
+              "topologySource": {
+                "availability": "present",
+                "value": "hierarchy"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000104",
+            "entityRevision": "4",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "4",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "terminated"
+              },
+              "binding": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no AgentBindingRef supplied for this node"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000105",
+            "generation": 2,
+            "entityRevision": "2",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "2",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+                  "agentId": "david",
+                  "generation": 2
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000103",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000104"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "reviewer"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                  "agentId": "sarah",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-task",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "tasks": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no task source supplied for this snapshot"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-budget",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "limits": {
+                "availability": "present",
+                "value": {
+                  "activeSessions": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "totalSpawns": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "perLeadCrew": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "reviewerPool": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "vendorQuota": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "tokens": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "costCents": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wallTimeMs": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "ci": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wakeBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "messageBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  }
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-review",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "reviews": {
+                "availability": "present",
+                "value": [
+                  {
+                    "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+                    "revision": "1",
+                    "verdict": "accepted",
+                    "invalidation": {
+                      "state": "current"
+                    },
+                    "reviewer": {
+                      "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                      "agentId": "sarah",
+                      "generation": 1
+                    },
+                    "candidate": {
+                      "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    },
+                    "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-incident",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "runDecision": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no run-control decision source supplied for this snapshot"
+              },
+              "recovery": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no ownership-transfer source supplied for this snapshot"
+              },
+              "breaker": {
+                "availability": "absent",
+                "reason": "source-absent",
+                "detail": "no anomaly circuit-breaker record exists in the daemon"
+              }
+            }
+          }
+        ],
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "contentSha256": "a016117084b050987f2a753de758ed8ec275e9883edcb7d52f1fbed7f2d4a542"
+      }
+    },
+    {
+      "name": "ownership-transfer",
+      "snapshot": {
+        "schemaVersion": 2,
+        "instanceId": "instance-fixture",
+        "seq": "6",
+        "entities": [
+          {
+            "kind": "hierarchy-run",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001",
+            "entityRevision": "3",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "3",
+              "root": {
+                "availability": "present",
+                "value": {
+                  "kind": "queen-root",
+                  "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+                  "instanceId": "instance-fixture",
+                  "repo": "hive"
+                }
+              },
+              "phase": {
+                "availability": "present",
+                "value": "P3"
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "topologyShape": {
+                "availability": "present",
+                "value": "full-hive"
+              },
+              "g1": {
+                "availability": "present",
+                "value": {
+                  "state": "approved",
+                  "decider": "engineer",
+                  "decidedAt": "2026-07-30T12:00:00.000Z",
+                  "spec": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "plan": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "topology": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "budget": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              },
+              "g2": {
+                "availability": "present",
+                "value": {
+                  "state": "pending"
+                }
+              },
+              "topologySource": {
+                "availability": "present",
+                "value": "hierarchy"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000104",
+            "entityRevision": "5",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "5",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "terminated"
+              },
+              "binding": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no AgentBindingRef supplied for this node"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000107",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000107",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "lead-worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "lead-coordination"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1",
+                  "task_018f4f5e-0000-7000-8000-0000000000a2"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000107",
+                  "agentId": "lucas",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000105",
+            "generation": 3,
+            "entityRevision": "3",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "3",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000107"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000107"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+                  "agentId": "david",
+                  "generation": 3
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000103",
+            "generation": 2,
+            "entityRevision": "2",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "2",
+              "parentNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000107"
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": "node_018f4f5e-0000-7000-8000-000000000107"
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "reviewer"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                  "agentId": "sarah",
+                  "generation": 2
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-task",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "tasks": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no task source supplied for this snapshot"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-budget",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "limits": {
+                "availability": "present",
+                "value": {
+                  "activeSessions": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "totalSpawns": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "perLeadCrew": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "reviewerPool": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "vendorQuota": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "tokens": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "costCents": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wallTimeMs": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "ci": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wakeBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "messageBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  }
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-review",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "reviews": {
+                "availability": "present",
+                "value": [
+                  {
+                    "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+                    "revision": "1",
+                    "verdict": "accepted",
+                    "invalidation": {
+                      "state": "current"
+                    },
+                    "reviewer": {
+                      "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                      "agentId": "sarah",
+                      "generation": 1
+                    },
+                    "candidate": {
+                      "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    },
+                    "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-incident",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
+            "entityRevision": "5",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "5",
+              "runDecision": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no run-control decision source supplied for this snapshot"
+              },
+              "recovery": {
+                "availability": "present",
+                "value": [
+                  {
+                    "transferId": "transfer_018f4f5e-0000-7000-8000-000000000801",
+                    "reason": "owner-bindings-unbound",
+                    "lostOwnerNodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+                    "successorNodeId": "node_018f4f5e-0000-7000-8000-000000000107",
+                    "hierarchyRevision": "5"
+                  }
+                ]
+              },
+              "breaker": {
+                "availability": "absent",
+                "reason": "source-absent",
+                "detail": "no anomaly circuit-breaker record exists in the daemon"
+              }
+            }
+          }
+        ],
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "contentSha256": "3d87d78d92e58079d1776eb460a52c8c73cbbf7af19e99fcb72abbfe753bd376"
+      }
+    },
+    {
+      "name": "all-absent",
+      "snapshot": {
+        "schemaVersion": 2,
+        "instanceId": "instance-fixture",
+        "seq": "7",
+        "entities": [
+          {
+            "kind": "hierarchy-run",
+            "id": "run_00000000-0000-7000-8000-0000000000a0",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_00000000-0000-7000-8000-0000000000a0",
+              "entityRevision": "0",
+              "root": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no Run record supplied"
+              },
+              "phase": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no Run record supplied"
+              },
+              "lifecycle": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no Run record supplied"
+              },
+              "topologyShape": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no TopologyDecision supplied"
+              },
+              "g1": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no Run record supplied"
+              },
+              "g2": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no Run record supplied"
+              },
+              "topologySource": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no hierarchy or legacy source supplied"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-task",
+            "id": "run_00000000-0000-7000-8000-0000000000a0:tasks",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_00000000-0000-7000-8000-0000000000a0",
+              "entityRevision": "0",
+              "tasks": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no task source supplied for this snapshot"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-budget",
+            "id": "run_00000000-0000-7000-8000-0000000000a0:budget",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_00000000-0000-7000-8000-0000000000a0",
+              "entityRevision": "0",
+              "limits": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no RunBudget supplied"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-review",
+            "id": "run_00000000-0000-7000-8000-0000000000a0:reviews",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_00000000-0000-7000-8000-0000000000a0",
+              "entityRevision": "0",
+              "reviews": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no Review records supplied"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-incident",
+            "id": "run_00000000-0000-7000-8000-0000000000a0:incident",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_00000000-0000-7000-8000-0000000000a0",
+              "entityRevision": "0",
+              "runDecision": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no run-control decision source supplied for this snapshot"
+              },
+              "recovery": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no ownership-transfer source supplied for this snapshot"
+              },
+              "breaker": {
+                "availability": "absent",
+                "reason": "source-absent",
+                "detail": "no anomaly circuit-breaker record exists in the daemon"
+              }
+            }
+          }
+        ],
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "contentSha256": "dc1f48440d8c982947531c2c2f54f4cf7f4f73434c1220879e88410987fe1872"
+      }
+    },
+    {
+      "name": "unknown-entity-kind",
+      "snapshot": {
+        "schemaVersion": 2,
+        "instanceId": "instance-fixture",
+        "seq": "8",
+        "entities": [
+          {
+            "kind": "hierarchy-run",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001",
+            "entityRevision": "3",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "3",
+              "root": {
+                "availability": "present",
+                "value": {
+                  "kind": "queen-root",
+                  "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+                  "instanceId": "instance-fixture",
+                  "repo": "hive"
+                }
+              },
+              "phase": {
+                "availability": "present",
+                "value": "P2"
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "topologyShape": {
+                "availability": "present",
+                "value": "direct"
+              },
+              "g1": {
+                "availability": "present",
+                "value": {
+                  "state": "approved",
+                  "decider": "engineer",
+                  "decidedAt": "2026-07-30T12:00:00.000Z",
+                  "spec": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "plan": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "topology": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "budget": {
+                    "revision": "1",
+                    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  }
+                }
+              },
+              "g2": {
+                "availability": "present",
+                "value": {
+                  "state": "pending"
+                }
+              },
+              "topologySource": {
+                "availability": "present",
+                "value": "hierarchy"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000101",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "author"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
+                  "agentId": "david",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-node",
+            "id": "node_018f4f5e-0000-7000-8000-000000000103",
+            "generation": 1,
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "parentNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "ownerNodeId": {
+                "availability": "present",
+                "value": null
+              },
+              "organizationalRole": {
+                "availability": "present",
+                "value": "worker"
+              },
+              "assignmentKind": {
+                "availability": "present",
+                "value": "reviewer"
+              },
+              "taskScope": {
+                "availability": "present",
+                "value": [
+                  "task_018f4f5e-0000-7000-8000-0000000000a1"
+                ]
+              },
+              "lifecycle": {
+                "availability": "present",
+                "value": "active"
+              },
+              "binding": {
+                "availability": "present",
+                "value": {
+                  "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                  "agentId": "sarah",
+                  "generation": 1
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-task",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "tasks": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no task source supplied for this snapshot"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-budget",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
+            "entityRevision": "1",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "limits": {
+                "availability": "present",
+                "value": {
+                  "activeSessions": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "totalSpawns": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "perLeadCrew": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "reviewerPool": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "vendorQuota": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "tokens": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "costCents": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wallTimeMs": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "ci": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "wakeBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  },
+                  "messageBudget": {
+                    "hard": 10,
+                    "soft": 8,
+                    "reserved": 4,
+                    "used": 2
+                  }
+                }
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-review",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "1",
+              "reviews": {
+                "availability": "present",
+                "value": [
+                  {
+                    "reviewId": "review_018f4f5e-0000-7000-8000-000000000201",
+                    "revision": "1",
+                    "verdict": "accepted",
+                    "invalidation": {
+                      "state": "current"
+                    },
+                    "reviewer": {
+                      "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
+                      "agentId": "sarah",
+                      "generation": 1
+                    },
+                    "candidate": {
+                      "commitSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                      "patchDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    },
+                    "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-incident",
+            "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
+            "entityRevision": "0",
+            "projection": {
+              "schemaVersion": 2,
+              "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+              "entityRevision": "0",
+              "runDecision": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no run-control decision source supplied for this snapshot"
+              },
+              "recovery": {
+                "availability": "absent",
+                "reason": "unmeasured",
+                "detail": "no ownership-transfer source supplied for this snapshot"
+              },
+              "breaker": {
+                "availability": "absent",
+                "reason": "source-absent",
+                "detail": "no anomaly circuit-breaker record exists in the daemon"
+              }
+            }
+          },
+          {
+            "kind": "hierarchy-future-state",
+            "id": "future-state-fixture",
+            "entityRevision": "1",
+            "projection": {
+              "wireLabel": "future state"
+            }
+          }
+        ],
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "contentSha256": "639f8bceb2c6e631aaa0853785d9095426e48dd236f19804517514e4b7ee7eae"
+      }
+    }
+  ]
+}

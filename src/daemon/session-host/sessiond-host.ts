@@ -1,29 +1,20 @@
-import {
-  createHash,
-  createHash as nodeCreateHash,
-  randomBytes,
-} from "node:crypto";
-import { connect, type Socket } from "node:net";
-import type { z } from "zod";
+import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import type { Socket } from "node:net";
+import { join } from "node:path";
+import { z } from "zod";
 import {
   AppliedPayloadSchema,
   AttachRequestPayloadSchema,
   ClaimAcquirePayloadSchema,
   ClaimResultPayloadSchema,
   CreateBeginPayloadSchema,
-  CreateCommitPayloadSchema,
-  CreatedPayloadSchema,
-  ErrorPayloadSchema,
   FRAME_FLAGS,
   FRAME_HEADER,
   FRAME_TYPES,
   type FrameTypeName,
-  HelloPayloadSchema,
   InputSubmitPayloadSchema,
   InspectedPayloadSchema,
-  OrphanDiscardedPayloadSchema,
-  OrphanDiscardPayloadSchema,
-  PingPongPayloadSchema,
   ResizePayloadSchema,
   SESSION_PROTOCOL_MINOR_RANGE,
   SESSION_PROTOCOL_VERSION,
@@ -31,12 +22,11 @@ import {
   TERMINAL_LIMITS,
   TerminatedPayloadSchema,
   TerminatePayloadSchema,
-  WelcomePayloadSchema,
   type WireErrorCode,
 } from "../../schemas/session-protocol";
-import { type DaemonHandshake, expectedDaemonHandshake } from "../handshake";
-import { resolveHiveHome } from "../instance-identity";
-import { resolveSessiondBinary } from "../sessiond-broker";
+import { resolveHiveHome } from "../../hive-home/instance-identity";
+import { systemClock } from "../../shared/clock";
+import { resolveSessiondBinary } from "./sessiond-broker";
 import type {
   AttachGrant,
   AttachRequest,
@@ -44,22 +34,22 @@ import type {
   CaptureResult,
   CreateResult,
   SessionHost,
-  SessionLocator,
   SessionSpec,
-} from "./contract";
+} from "./session-host-contract";
 import {
   adoptHost,
-  discardHostInputOrphan,
+  captureHostTerminal,
   executableBuildHash,
   issueHostAttachGrant,
 } from "./host-control";
 import { createResultFromRecord, launchHost } from "./host-launcher";
 import {
   callHost,
+  hostDirectory,
   listNeutralSessions,
   readControlSecret,
 } from "./host-operations";
-import { observeSessiondOutput } from "./sessiond-output-observer";
+import { sameSessionLocator } from "./locators";
 
 import {
   HiveTerminalBindingSchema,
@@ -75,45 +65,29 @@ import type {
   TerminationResult,
 } from "./terminal-host-contract";
 
-const CAPTURE_COLUMNS = 200;
-const CAPTURE_CELL_PX = 10;
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder("utf-8", { fatal: true });
-
-/** Host-authorized resolution modes. A held claim is deliberately an
- * explicit preemption, never an accidental orphan discard. */
-export type OrphanDiscardMode = "orphaned" | "held";
-
-/** ORPHAN_DISCARDED is a typed host decision, not a boolean whose false
- * branch can erase the distinction between refusal and preemption. */
-export type OrphanDiscardResult =
-  | Readonly<{
-      state: "discarded";
-      priorOwnerViewerId: string;
-      priorClaimId: string;
-      orphanAgeMilliseconds: string;
-      diagnostic: string;
-    }>
-  | Readonly<{
-      state: "preempted";
-      priorOwnerViewerId: string;
-      priorClaimId: string;
-      orphanAgeMilliseconds: null;
-      diagnostic: string;
-    }>
-  | Readonly<{
-      state: "refused";
-      priorOwnerViewerId: string | null;
-      priorClaimId: string | null;
-      orphanAgeMilliseconds: string | null;
-      diagnostic: string;
-    }>;
-
 export type LandedTerminalHost = Pick<
   TerminalHost,
   "claimInput" | "submitInput" | "resize" | "inspect" | "list" | "terminate"
 > &
-  Pick<SessionHost, "create" | "issueAttach">;
+  Pick<SessionHost, "create" | "capture" | "issueAttach"> &
+  HostExitWaiter;
+
+export type HostExitWaitResult =
+  | Readonly<{ kind: "managed-exit"; exitCode: number | null }>
+  | Readonly<{ kind: "inherited" }>
+  | Readonly<{ kind: "aborted" }>;
+
+export interface HostExitWaiter {
+  waitForHostExit(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<HostExitWaitResult>;
+}
+
+const HostFinalExitSchema = z.object({
+  schemaVersion: z.literal(1),
+  exitCode: z.number().int().min(0).max(255).nullable(),
+});
 
 export class SessiondProtocolError extends Error {
   constructor(message: string) {
@@ -282,10 +256,6 @@ export type SessiondControlRequest<Result> = Readonly<{
   payload: unknown;
   responseSchema: z.ZodType<Result>;
   flags?: number;
-  /** Defaults to the control-RPC budget. Only a create overrides it: reading a
-   * record and forking a shell plus a vendor CLI are not the same operation
-   * and must not share one deadline. */
-  timeoutMilliseconds?: number;
 }>;
 
 export interface SessiondControlClient {
@@ -293,403 +263,17 @@ export interface SessiondControlClient {
   close(): void;
 }
 
-export interface SessiondBrokerClient extends SessiondControlClient {
-  readonly engineBuildId: string | null;
-  createTransaction(
-    beginPayload: z.infer<typeof CreateBeginPayloadSchema>,
-    initialInput: Uint8Array,
-  ): Promise<z.infer<typeof CreatedPayloadSchema>>;
-}
-
-type PendingRequest = {
-  responseType: FrameTypeName;
-  responseSchema: z.ZodType<unknown>;
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
-};
-
-type ActiveCreate = {
-  readonly requestIds: Set<bigint>;
-  reject: (error: Error) => void;
-};
-
-export type SessiondNegotiatedLimits = Readonly<{
-  controlFrameMaxBytes: number;
-  streamChunkMaxBytes: number;
-  automatedMessageMaxBytes: number;
-}>;
-
-export class SessiondSocketClient implements SessiondBrokerClient {
-  private nextRequestId = 1n;
-  private readonly pending = new Map<bigint, PendingRequest>();
-  private readonly decoder = new SessiondFrameDecoder();
-  private closed = false;
-  private controlFrameMaxBytes = TERMINAL_LIMITS.controlJsonBytesPerFrame;
-  private streamChunkMaxBytes = TERMINAL_LIMITS.streamChunkBytes;
-  private automatedMessageMaxBytes = TERMINAL_LIMITS.automatedMessageBytes;
-  private activeCreate: ActiveCreate | null = null;
-  private negotiatedEngineBuildId: string | null = null;
-  get engineBuildId(): string | null {
-    return this.negotiatedEngineBuildId;
-  }
-
-  constructor(private readonly socket: Socket) {
-    socket.on("data", (chunk) =>
-      this.receive(typeof chunk === "string" ? Buffer.from(chunk) : chunk),
-    );
-    socket.on("error", (error) => this.fail(error));
-    socket.on("close", () =>
-      this.fail(new Error("sessiond connection closed")),
-    );
-  }
-
-  static connect(path: string): Promise<SessiondSocketClient> {
-    return new Promise((resolve, reject) => {
-      const socket = connect(path);
-      const onError = (error: Error) => reject(error);
-      socket.once("error", onError);
-      socket.once("connect", () => {
-        socket.off("error", onError);
-        resolve(new SessiondSocketClient(socket));
-      });
-    });
-  }
-
-  request<Result>(request: SessiondControlRequest<Result>): Promise<Result> {
-    if (this.closed)
-      return Promise.reject(new Error("sessiond connection is closed"));
-    const requestId = this.nextRequestId++;
-    const payload = textEncoder.encode(JSON.stringify(request.payload));
-    if (payload.byteLength > this.controlFrameMaxBytes) {
-      return Promise.reject(
-        new SessiondProtocolError(
-          "sessiond control frame exceeds the negotiated v1 cap",
-        ),
-      );
-    }
-    const bytes = encodeSessiondFrame({
-      type: request.requestType,
-      flags: request.flags ?? 0,
-      requestId,
-      streamSeq: 0n,
-      payload,
-    });
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(new Error(`sessiond ${request.requestType} request timed out`));
-      }, request.timeoutMilliseconds ??
-        TERMINAL_LIMITS.controlRpcTimeoutMilliseconds);
-      timeout.unref?.();
-      this.pending.set(requestId, {
-        responseType: request.responseType,
-        responseSchema: request.responseSchema as z.ZodType<unknown>,
-        resolve: (value) => resolve(value as Result),
-        reject,
-        timeout,
-      });
-      this.socket.write(bytes, (error) => {
-        if (error === null || error === undefined) return;
-        const pending = this.pending.get(requestId);
-        if (pending === undefined) return;
-        clearTimeout(pending.timeout);
-        this.pending.delete(requestId);
-        pending.reject(error);
-      });
-    });
-  }
-
-  createTransaction(
-    beginPayload: z.infer<typeof CreateBeginPayloadSchema>,
-    initialInput: Uint8Array,
-  ): Promise<z.infer<typeof CreatedPayloadSchema>> {
-    if (this.closed)
-      return Promise.reject(new Error("sessiond connection is closed"));
-    if (this.activeCreate !== null) {
-      return Promise.reject(
-        new SessiondProtocolError(
-          "sessiond create transaction is already active",
-        ),
-      );
-    }
-    if (initialInput.byteLength > this.automatedMessageMaxBytes) {
-      return Promise.reject(
-        new SessiondWireError(
-          "PAYLOAD_TOO_LARGE",
-          "create input exceeds the negotiated automated-message cap",
-          null,
-        ),
-      );
-    }
-    const input = initialInput.slice();
-
-    let rejectActive!: (error: Error) => void;
-    const interrupted = new Promise<never>((_, reject) => {
-      rejectActive = reject;
-    });
-    const active: ActiveCreate = {
-      requestIds: new Set(),
-      reject: rejectActive,
-    };
-    this.activeCreate = active;
-    const operation = this.writeCreateTransaction(beginPayload, input);
-    return Promise.race([operation, interrupted]).finally(() => {
-      if (this.activeCreate === active) this.activeCreate = null;
-    });
-  }
-
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.socket.destroy();
-    this.fail(new Error("sessiond connection closed"));
-  }
-
-  setControlFrameMaxBytes(value: number): void {
-    this.controlFrameMaxBytes = value;
-    this.decoder.setControlFrameMaxBytes(value);
-  }
-
-  setNegotiatedLimits(limits: SessiondNegotiatedLimits): void {
-    this.setControlFrameMaxBytes(limits.controlFrameMaxBytes);
-    this.streamChunkMaxBytes = limits.streamChunkMaxBytes;
-    this.automatedMessageMaxBytes = limits.automatedMessageMaxBytes;
-  }
-
-  setNegotiatedEngineBuildId(engineBuildId: string | null): void {
-    this.negotiatedEngineBuildId = engineBuildId;
-  }
-
-  private async writeCreateTransaction(
-    beginPayload: z.infer<typeof CreateBeginPayloadSchema>,
-    initialInput: Uint8Array,
-  ): Promise<z.infer<typeof CreatedPayloadSchema>> {
-    await this.writeNoResponseFrame(
-      "CREATE_BEGIN",
-      0,
-      0n,
-      textEncoder.encode(JSON.stringify(beginPayload)),
-    );
-    for (
-      let offset = 0;
-      offset < initialInput.byteLength;
-      offset += this.streamChunkMaxBytes
-    ) {
-      await this.writeNoResponseFrame(
-        "CREATE_INPUT",
-        FRAME_FLAGS.contentSensitive,
-        BigInt(offset),
-        initialInput.slice(offset, offset + this.streamChunkMaxBytes),
-      );
-    }
-    const commit = CreateCommitPayloadSchema.parse({
-      schemaVersion: 1,
-      totalLength: initialInput.byteLength,
-      sha256: createHash("sha256").update(initialInput).digest("hex"),
-    });
-    return this.request({
-      requestType: "CREATE_COMMIT",
-      responseType: "CREATED",
-      payload: commit,
-      responseSchema: CreatedPayloadSchema,
-      timeoutMilliseconds: TERMINAL_LIMITS.createRpcTimeoutMilliseconds,
-    });
-  }
-
-  private writeNoResponseFrame(
-    type: "CREATE_BEGIN" | "CREATE_INPUT",
-    flags: number,
-    streamSeq: bigint,
-    payload: Uint8Array,
-  ): Promise<void> {
-    if (this.closed)
-      return Promise.reject(new Error("sessiond connection is closed"));
-    const cap =
-      type === "CREATE_INPUT"
-        ? this.streamChunkMaxBytes
-        : this.controlFrameMaxBytes;
-    if (payload.byteLength > cap) {
-      return Promise.reject(
-        new SessiondProtocolError(
-          "sessiond frame exceeds the negotiated v1 cap",
-        ),
-      );
-    }
-    const requestId = this.nextRequestId++;
-    this.activeCreate?.requestIds.add(requestId);
-    const bytes = encodeSessiondFrame({
-      type,
-      flags,
-      requestId,
-      streamSeq,
-      payload,
-    });
-    return new Promise((resolve, reject) => {
-      this.socket.write(bytes, (error) => {
-        if (error === null || error === undefined) {
-          resolve();
-          return;
-        }
-        this.activeCreate?.requestIds.delete(requestId);
-        reject(error);
-      });
-    });
-  }
-
-  private receive(chunk: Uint8Array): void {
-    let frames: SessiondFrame[];
-    try {
-      frames = this.decoder.push(chunk);
-    } catch (error) {
-      this.fail(
-        error instanceof Error ? error : new Error("invalid sessiond frame"),
-      );
-      return;
-    }
-    for (const frame of frames) this.receiveFrame(frame);
-  }
-
-  private receiveFrame(frame: SessiondFrame): void {
-    if (frame.type === "PING") {
-      let decoded: unknown;
-      try {
-        decoded = JSON.parse(textDecoder.decode(frame.payload));
-      } catch {
-        this.fail(
-          new SessiondProtocolError(
-            "sessiond returned an invalid PING payload",
-          ),
-        );
-        return;
-      }
-      if (
-        frame.flags !== 0 ||
-        !PingPongPayloadSchema.safeParse(decoded).success
-      ) {
-        this.fail(
-          new SessiondProtocolError("sessiond returned an invalid PING frame"),
-        );
-        return;
-      }
-      this.socket.write(
-        encodeSessiondFrame({
-          type: "PONG",
-          flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-          requestId: frame.requestId,
-          streamSeq: 0n,
-          payload: frame.payload,
-        }),
-      );
-      return;
-    }
-    if (this.activeCreate?.requestIds.has(frame.requestId)) {
-      this.fail(this.errorFromFrame(frame));
-      return;
-    }
-    const pending = this.pending.get(frame.requestId);
-    if (pending === undefined) {
-      this.fail(
-        new SessiondProtocolError("sessiond returned an uncorrelated response"),
-      );
-      return;
-    }
-    clearTimeout(pending.timeout);
-    this.pending.delete(frame.requestId);
-    if (frame.type === "ERROR") {
-      pending.reject(this.errorFromFrame(frame));
-      return;
-    }
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(textDecoder.decode(frame.payload));
-    } catch {
-      pending.reject(
-        new SessiondProtocolError("sessiond returned invalid JSON"),
-      );
-      return;
-    }
-    if (
-      frame.type !== pending.responseType ||
-      frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final)
-    ) {
-      pending.reject(
-        new SessiondProtocolError("sessiond returned the wrong response frame"),
-      );
-      return;
-    }
-    const result = pending.responseSchema.safeParse(decoded);
-    if (!result.success) {
-      pending.reject(
-        new SessiondProtocolError(
-          "sessiond returned a response outside the frozen schema",
-        ),
-      );
-      return;
-    }
-    pending.resolve(result.data);
-  }
-
-  private errorFromFrame(frame: SessiondFrame): Error {
-    if (
-      frame.type !== "ERROR" ||
-      frame.flags !==
-        (FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error)
-    ) {
-      return new SessiondProtocolError(
-        "sessiond returned a response to a no-response frame",
-      );
-    }
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(textDecoder.decode(frame.payload));
-    } catch {
-      return new SessiondProtocolError("sessiond returned invalid JSON");
-    }
-    const error = ErrorPayloadSchema.safeParse(decoded);
-    return error.success
-      ? new SessiondWireError(
-          error.data.code,
-          error.data.message,
-          error.data.diagnosticId,
-        )
-      : new SessiondProtocolError("sessiond returned an invalid error payload");
-  }
-
-  private fail(error: Error): void {
-    if (!this.closed) {
-      this.closed = true;
-      this.socket.destroy();
-    }
-    this.activeCreate?.reject(error);
-    this.activeCreate = null;
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeout);
-      pending.reject(error);
-    }
-    this.pending.clear();
-  }
-}
-
 export interface SessiondHostOptions {
   repoRoot?: string;
   hiveHome?: string;
-  /** Test seam: launch a terminal host. Defaults to the real launcher. */
   launchHost?: typeof launchHost;
-  /** Test seam: speak to a host directly. Defaults to the real NHOP client. */
   callHost?: typeof callHost;
-  /** Test seam: read a host's operation capability. */
   readControlSecret?: typeof readControlSecret;
-  /** Test seam: enumerate published terminals. */
   listSessions?: typeof listNeutralSessions;
-  /** Test seam: prove ownership of a freshly launched host. */
   adoptHost?: typeof adoptHost;
-  /** Test seam: open the host's viewer wire for claim/input/resize. */
+  captureHost?: typeof captureHostTerminal;
   connectDirect?: (session: SessionRef) => Promise<SessiondControlClient>;
-  /** Bindings the create path requires; absent disables create admission. */
   pendingBindings?: TerminalHostBindingStore;
-  /** Accepted and ignored. Nothing is dialled at startup any more — a host is
-   * launched with a capability, so there is no handshake to present. */
   handshake?: () => Promise<unknown>;
 }
 
@@ -705,6 +289,7 @@ export class SessiondHost implements LandedTerminalHost {
   private readonly readControlSecret: typeof readControlSecret;
   private readonly listSessions: typeof listNeutralSessions;
   private readonly adoptHost: typeof adoptHost;
+  private readonly captureHost: typeof captureHostTerminal;
 
   constructor(options: SessiondHostOptions = {}) {
     const hiveHome = resolveHiveHome(options.hiveHome);
@@ -715,9 +300,7 @@ export class SessiondHost implements LandedTerminalHost {
     this.readControlSecret = options.readControlSecret ?? readControlSecret;
     this.listSessions = options.listSessions ?? listNeutralSessions;
     this.adoptHost = options.adoptHost ?? adoptHost;
-    const _handshake =
-      options.handshake ??
-      (() => expectedDaemonHandshake(options.repoRoot ?? process.cwd()));
+    this.captureHost = options.captureHost ?? captureHostTerminal;
     this.connectDirect =
       options.connectDirect ??
       (async () => {
@@ -726,10 +309,7 @@ export class SessiondHost implements LandedTerminalHost {
     this.pendingBindings = options.pendingBindings ?? null;
   }
 
-  async create(
-    spec: SessionSpec,
-    initialInput: Uint8Array,
-  ): Promise<CreateResult> {
+  async create(spec: SessionSpec): Promise<CreateResult> {
     if (this.pendingBindings === null) {
       throw new SessiondCreateAdmissionDisabledError();
     }
@@ -745,19 +325,12 @@ export class SessiondHost implements LandedTerminalHost {
       visibility: binding.visibility,
     });
     const queuedAt = Date.now();
-    // A create forks a host, a login shell and a vendor CLI, and the reply
-    // waits for all of it — against the same 10 s deadline an INSPECT gets.
-    // When a wide burst loses hosts to CREATE_COMMIT timeouts, the two numbers
-    // that tell queueing apart from a slow launch are the only ones missing.
+    // A create forks a host, a login shell and a vendor CLI, and the reply waits for all of it — against the same 10 s deadline an INSPECT gets. When a wide burst loses hosts to create timeouts, the two numbers that tell queueing apart from a slow launch are the only ones missing.
     const admittedAt = Date.now();
     try {
-      // Hive launches the host directly. Per-host connections keep multi-second
-      // boots from blocking unrelated creates on one shared accept loop.
       const adoptionSecret = new Uint8Array(randomBytes(32));
       const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
-      // Only the real launcher needs the built binary on disk; an injected
-      // launcher owns its own launch story, including on a checkout that has
-      // never built the native host.
+      // Only the real launcher needs the built binary on disk; an injected launcher owns its own launch story, including on a checkout that has never built the native host.
       if (executablePath === null && this.launchHostProcess === launchHost) {
         throw new SessiondProtocolError("hive-sessiond binary was not found");
       }
@@ -767,19 +340,15 @@ export class SessiondHost implements LandedTerminalHost {
           sessionId: locator.sessionId,
           executablePath: executablePath ?? "hive-sessiond",
           specJson: JSON.stringify(payload),
-          initialInput,
           adoptionSecret,
           readyTimeoutMilliseconds:
             TERMINAL_LIMITS.createRpcTimeoutMilliseconds,
         });
-        // Both the stream and the process handle are retained: the stream is
-        // the terminal's channel to Hive, and dropping the handle can let the
-        // runtime reap a healthy host.
+        // Both the stream and the process handle are retained: the stream is the terminal's channel to Hive, and dropping the handle can let the runtime reap a healthy host.
         this.hostControl.set(locator.sessionId, launched.control);
         this.hostProcess.set(locator.sessionId, launched.process);
         this.hostSecret.set(locator.sessionId, adoptionSecret);
-        // The host refuses every control verb until ownership is proved, so
-        // adoption happens once here rather than per grant.
+        // The host refuses every control verb until ownership is proved, so adoption happens once here rather than per grant.
         await this.adoptHost({
           hiveHome: this.hiveHome,
           sessionId: locator.sessionId,
@@ -792,8 +361,7 @@ export class SessiondHost implements LandedTerminalHost {
         });
         return createResultFromRecord(launched.record, parsedSpec.argv);
       } finally {
-        // Only the slow ones. A create that outruns half its budget separates
-        // "queued behind other creates" from "this launch is genuinely slow".
+        // Only the slow ones. A create that outruns half its budget separates "queued behind other creates" from "this launch is genuinely slow".
         const launchMs = Date.now() - admittedAt;
         if (launchMs * 2 >= TERMINAL_LIMITS.createRpcTimeoutMilliseconds) {
           console.error(
@@ -809,11 +377,6 @@ export class SessiondHost implements LandedTerminalHost {
     }
   }
 
-  /**
-   * Each terminal's control stream, held open after registration.
-   *
-   * Keeping it open lets the host report state to Hive after registration.
-   */
   private readonly hostControl = new Map<string, Socket>();
   private readonly hostProcess = new Map<
     string,
@@ -821,12 +384,49 @@ export class SessiondHost implements LandedTerminalHost {
   >();
   private readonly hostSecret = new Map<string, Uint8Array>();
 
-  /**
-   * The engine build the hosts will actually run.
-   *
-   * The build belongs to the linked VT engine, not a running process, so ask the
-   * binary that will be executed without requiring a broker.
-   */
+  async waitForHostExit(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<HostExitWaitResult> {
+    const child = this.hostProcess.get(sessionId);
+    if (child === undefined) return { kind: "inherited" };
+    if (signal.aborted) return { kind: "aborted" };
+    const outcome = await new Promise<"exited" | "aborted">((resolve) => {
+      let settled = false;
+      const finish = (value: "exited" | "aborted"): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      };
+      const onAbort = (): void => finish("aborted");
+      signal.addEventListener("abort", onAbort, { once: true });
+      void child.exited.then(() => finish("exited"));
+    });
+    if (outcome === "aborted") return { kind: "aborted" };
+    return {
+      kind: "managed-exit",
+      exitCode: await this.readFinalExitCode(sessionId),
+    };
+  }
+
+  private async readFinalExitCode(sessionId: string): Promise<number | null> {
+    try {
+      const value = HostFinalExitSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(hostDirectory(this.hiveHome, sessionId), "final.json"),
+            "utf8",
+          ),
+        ),
+      );
+      return value.exitCode;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The engine build the hosts will actually run. The build belongs to the linked VT engine, not a running process, so ask the binary that will be executed without requiring a broker. */
   async discoverEngineBuildId(): Promise<string> {
     const cached = this.engineBuildIdCache;
     if (cached !== null) return cached;
@@ -848,91 +448,34 @@ export class SessiondHost implements LandedTerminalHost {
 
   private engineBuildIdCache: string | null = null;
 
-  /**
-   * INPUT_ORPHAN_DISCARD: ask the host for a typed, authorized resolution
-   * of an orphaned or held human claim. The host alone may preempt a held claim,
-   * and reports that distinctly from an orphan discard.
-   */
-  async discardInputOrphan(
-    locator: SessionLocator,
-    mode: OrphanDiscardMode,
-  ): Promise<OrphanDiscardResult> {
-    OrphanDiscardPayloadSchema.parse({ schemaVersion: 1, locator, mode });
-    const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
-    if (executablePath === null) {
-      throw new SessiondProtocolError("hive-sessiond binary was not found");
-    }
-    const answer = await discardHostInputOrphan({
-      hiveHome: this.hiveHome,
-      sessionId: locator.sessionId,
-      locator,
-      mode,
-      buildId: await executableBuildHash(executablePath),
-    });
-    const { schemaVersion: _, ...result } =
-      OrphanDiscardedPayloadSchema.parse(answer);
-    return result;
-  }
-
-  /**
-   * The bounded visible-text read behind `hive_terminal_observe`.
-   *
-   * It uses the same viewer attach as the activity observer because that is
-   * the surface that already streams a pane's bytes to a reader who never takes
-   * input. This does not focus, claim, resize, or type.
-   */
+  /** The bounded visible-text read behind `hive_terminal_observe`. The host reads its libghostty grid directly. This does not attach a viewer, focus, claim, resize, or type. */
   async capture(
     locator: Parameters<SessionHost["capture"]>[0],
     request: CaptureRequest,
   ): Promise<CaptureResult> {
-    // The viewer declares a size for the attach; it never resizes the pane, and
-    // the replayed bytes do not depend on it. The result reports the size that
-    // produced the text rather than implying knowledge of the real window.
-    const rows = Math.max(request.maxRows, 1);
-    const geometry = {
-      columns: CAPTURE_COLUMNS,
-      rows,
-      widthPx: CAPTURE_COLUMNS * CAPTURE_CELL_PX,
-      heightPx: rows * CAPTURE_CELL_PX,
-      cellWidthPx: CAPTURE_CELL_PX,
-      cellHeightPx: CAPTURE_CELL_PX,
-    } as const;
-    const observed = await observeSessiondOutput(
-      this,
+    const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
+    if (executablePath === null) {
+      throw new SessiondProtocolError("hive-sessiond binary was not found");
+    }
+    const capture = await this.captureHost({
+      hiveHome: this.hiveHome,
+      sessionId: locator.sessionId,
       locator,
-      geometry,
-      `hive-daemon:capture:${locator.sessionId}`,
-    );
-    // The observer reconstructs the screen as the replay streams in, at the
-    // geometry the attach declared, so what arrives here is already the cells a
-    // terminal would be showing rather than the bytes that painted them.
-    const rendered = observed?.screen ?? "";
-    return {
-      locator,
-      outputSeq: observed?.outputThrough ?? "0",
-      columns: geometry.columns,
-      rows: geometry.rows,
-      screen: "primary",
-      cursor: { row: 0, column: 0, visible: false },
-      text: request.include === "visible-text" ? rendered : null,
-      // Truncated when rows were dropped OR the observer itself reported a gap:
-      // a reader deciding whether to trust a tail needs both facts, and the
-      // viewer's own 32KiB tail cap is exactly the case that would otherwise
-      // present a partial screen as a whole one.
-      // Truncated when the observer reported a gap: the viewer keeps a bounded
-      // tail, so a long-running pane's earliest bytes are already gone and the
-      // reconstruction starts mid-session. A reader deciding whether to trust a
-      // screen needs to know that.
-      truncated: observed?.completeness === "gap",
-      sha256: nodeCreateHash("sha256").update(rendered, "utf8").digest("hex"),
-    };
+      request,
+      buildId: await executableBuildHash(executablePath),
+    });
+    if (!sameSessionLocator(capture.locator, locator)) {
+      throw new SessiondProtocolError(
+        "sessiond host capture returned a different terminal generation",
+      );
+    }
+    return capture;
   }
 
   async issueAttach(
     locator: Parameters<SessionHost["issueAttach"]>[0],
     request: AttachRequest,
   ): Promise<AttachGrant> {
-    // Validate the request on the way in, exactly as the wire projection did.
     AttachRequestPayloadSchema.parse({ schemaVersion: 1, locator, ...request });
     const inspection = await this.inspect({
       key: locator.sessionId,
@@ -947,7 +490,7 @@ export class SessiondHost implements LandedTerminalHost {
       checkpointSeq:
         inspection?.checkpoints.newest?.throughEventSequence ?? "0",
       outputSeq: inspection?.output.retained.endExclusive ?? "0",
-      now: () => new Date(),
+      now: systemClock,
     });
   }
 
@@ -1031,12 +574,6 @@ export class SessiondHost implements LandedTerminalHost {
     }
   }
 
-  /**
-   * Asks the terminal directly.
-   *
-   * The spawn path polls this dozens of times per agent. Asking the host directly
-   * prevents those requests from queuing behind launches on a shared accept loop.
-   */
   async inspect(session: SessionRef): Promise<SessionInspection> {
     const secret = await this.readControlSecret(this.hiveHome, session);
     const body = await this.callHostDirect({
@@ -1054,14 +591,7 @@ export class SessiondHost implements LandedTerminalHost {
     return inspection;
   }
 
-  /**
-   * Enumerates terminals from what the hosts themselves published.
-   *
-   * The broker answered this from a registry it built by launching; Hive
-   * launches directly now, so that registry cannot know these hosts. A host
-   * that cannot be reached is omitted rather than failing the whole
-   * enumeration — one dead terminal must not blind Hive to the rest.
-   */
+  /** Enumerates terminals from what the hosts themselves published. The broker answered this from a registry it built by launching; Hive launches directly now, so that registry cannot know these hosts. A host that cannot be reached is omitted rather than failing the whole enumeration — one dead terminal must not blind Hive to the rest. */
   async list(): Promise<readonly SessionInspection[]> {
     const sessions = await this.listSessions(this.hiveHome);
     const inspected = await Promise.all(

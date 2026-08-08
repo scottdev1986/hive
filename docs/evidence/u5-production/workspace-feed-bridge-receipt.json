@@ -1,0 +1,141 @@
+{
+  "schemaVersion": 1,
+  "state": "visibility-accepted",
+  "emittedAt": "2026-08-01T20:57:03.851Z",
+  "sourceReadyPath": "/private/tmp/hvqa-g/artifacts/u5-app-ready-anna-rebased.json",
+  "agentCount": 5,
+  "agents": [
+    {
+      "id": "41c5727b-b071-47f7-9906-cc5949479929",
+      "name": "maya",
+      "tool": "claude",
+      "model": "claude-haiku-4-5-20251001",
+      "status": "working",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "41c5727b-b071-47f7-9906-cc5949479929"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-0cb5-7093-967d-4ee489d68e7b",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      }
+    },
+    {
+      "id": "ad08605c-058e-4e5c-8751-b4e6674bfc3a",
+      "name": "david",
+      "tool": "codex",
+      "model": "gpt-5.3-codex-spark",
+      "status": "spawning",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "ad08605c-058e-4e5c-8751-b4e6674bfc3a"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-1460-78ef-ab83-09bb0b2c980a",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      }
+    },
+    {
+      "id": "209681dd-99ee-49b2-8bf4-5bac46de411a",
+      "name": "sam",
+      "tool": "grok",
+      "model": "grok-4.5",
+      "status": "working",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "209681dd-99ee-49b2-8bf4-5bac46de411a"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-1d9a-7419-b108-de220b69081c",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      }
+    },
+    {
+      "id": "c3fbe0c5-dbe5-4e81-bd37-b31aecf33370",
+      "name": "john",
+      "tool": "kimi",
+      "model": "kimi-code/k3",
+      "status": "spawning",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "c3fbe0c5-dbe5-4e81-bd37-b31aecf33370"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-2b2a-7c93-b5e4-e83d902c54c4",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      }
+    },
+    {
+      "id": "94ad2202-e6a1-4983-8af7-0a7bbb2c47c2",
+      "name": "sarah",
+      "tool": "opencode",
+      "model": "opencode/deepseek-v4-flash-free",
+      "status": "spawning",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "94ad2202-e6a1-4983-8af7-0a7bbb2c47c2"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-37d7-734d-b00a-4b472acb1760",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      }
+    }
+  ],
+  "acceptedVisibility": [
+    {
+      "acceptedAt": "2026-08-01T20:52:41.064Z",
+      "appInventoryRevision": "1",
+      "publishedInventoryRevision": "2",
+      "terminalCount": 1,
+      "durationMs": 7
+    },
+    {
+      "acceptedAt": "2026-08-01T20:56:51.970Z",
+      "appInventoryRevision": "2",
+      "publishedInventoryRevision": "3",
+      "terminalCount": 1,
+      "durationMs": 2
+    },
+    {
+      "acceptedAt": "2026-08-01T20:56:56.047Z",
+      "appInventoryRevision": "3",
+      "publishedInventoryRevision": "4",
+      "terminalCount": 1,
+      "durationMs": 1
+    },
+    {
+      "acceptedAt": "2026-08-01T20:56:59.978Z",
+      "appInventoryRevision": "4",
+      "publishedInventoryRevision": "5",
+      "terminalCount": 1,
+      "durationMs": 1
+    },
+    {
+      "acceptedAt": "2026-08-01T20:57:03.851Z",
+      "appInventoryRevision": "5",
+      "publishedInventoryRevision": "6",
+      "terminalCount": 1,
+      "durationMs": 1
+    }
+  ]
+}

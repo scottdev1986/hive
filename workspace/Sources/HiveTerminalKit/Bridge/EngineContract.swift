@@ -1,7 +1,5 @@
 import Foundation
 
-/// Workspace-visible identity for the pinned renderer engine.
-/// Upstream symbols and handles remain private to the Hive adapter.
 public struct HiveTerminalEngineIdentity: Equatable, Sendable {
     public static let pinnedUpstreamCommit = "73534c4680a809398b396c94ac7f12fcccb7963d"
 
@@ -21,8 +19,6 @@ public struct HiveTerminalEngineIdentity: Equatable, Sendable {
     }
 }
 
-/// Value-only render proof. It intentionally exposes no upstream layer,
-/// surface handle, callback context, or lifetime token.
 public struct HiveTerminalRenderEvidence: Equatable, Sendable {
     public let engine: HiveTerminalEngineIdentity
     public let locator: SessionLocator?

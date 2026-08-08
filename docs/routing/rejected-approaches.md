@@ -21,7 +21,7 @@ producing a route per tier×vendor.
 
 **Why it died — the founding incident, 2026-07-10.** Every Codex tier's model column said
 `"default"`. `resolveConcreteModel` read that from `~/.codex/config.toml` — the file
-naming whatever the human last picked for their own interactive use. For most of that day
+naming whatever the user last picked for their own interactive use. For most of that day
 it named the frontier model. So **every Codex agent ran the frontier model at every
 tier.** The receipts survive in `agents.executionIdentity`: cheap-tier agents launched as
 `{"tool":"codex","model":"gpt-5.6-sol","effort":"low"}`. Standard-tier frontier work took
@@ -30,7 +30,7 @@ expensive model available.
 
 Claude never had this problem, and **the asymmetry is the whole story**: Claude's column
 named concrete aliases that resolved per tier; Codex's said `"default"` and inherited a
-human's preference.
+user's preference.
 
 > **A tier system that lowers the effort flag but not the model is not a tier system.**
 
@@ -79,7 +79,7 @@ And these principles, which outlived the machinery:
   model; an easier task goes to a cheaper agent capable of handling it." A policy must
   be able to place a *lower*-scoring capable model **on purpose**. This survives today
   as `hive-decides` effort choosing the *lowest sufficient* level
-  (`resolveAutoEffort`, `src/daemon/effort.ts`).
+  (`resolveAutoEffort`, `src/daemon/spawn/effort.ts`).
 - **No gating, only ordering.** "Absence of benchmark data never excludes." User
   ruling: *"in no way do i accept that we have a model or an effort level available to
   use and no way to use it."* Capability is a hard floor; a score never lifts an
@@ -152,8 +152,8 @@ The rubric itself survives — as *guidance for the classifier*, not as a wire f
 See the max-risk rule in [quota-and-headroom.md](quota-and-headroom.md#the-task-rubric).
 
 **Permanently rejected in the same breath:** letting the orchestrator name models
-outright. The founding reason — **an LLM's model knowledge froze at training**
-(SPEC §6). Exact ids and vendor ownership therefore come from discovery; Hive
+outright. The founding reason — **an LLM's model knowledge froze at training**.
+Exact ids and vendor ownership therefore come from discovery; Hive
 ships no model-name classifier.
 
 ## 6. Inferring capability from the vendor catalog
@@ -251,9 +251,9 @@ also owned *preference*, with implicit equal weights the user never expressed.
 The router design spec drew the boundary: **quota provides observations and
 proven exclusions; it never supplies a preference multiplier.** Today
 `routeAndReserve` is gone, `quota_fair_dispatch` is dropped on startup
-(`src/daemon/quota-ledger.ts`), and quota's whole routing surface is
+(`src/usage-service/quota-ledger.ts`), and quota's whole routing surface is
 `poolsGoverning` / `drainFor` / `launchCooldown` facts plus the never-refusing
-`reserveLaunch` booking (`src/daemon/quota.ts`). What was right about fair
+`reserveLaunch` booking (`src/usage-service/usage-quota.ts`). What was right about fair
 deficit — count assigned work, never compare unlike windows — survives in the
 router's smooth weighted round-robin over **user-authored** weights. See
 [quota-and-headroom.md](quota-and-headroom.md).
@@ -265,7 +265,7 @@ sets the priority order for context work:
 
 | Approach | Input tokens |
 |---|---|
-| `SPEC.md` embedded whole | **18,726** |
+| A whole top-level design doc embedded | **18,726** |
 | Section-only extract (`SPEC §6`) | **1,882** |
 | Outline-only | **421** |
 
@@ -294,4 +294,3 @@ outcomes to the user; only the user changes preference.*
 - [model-control-center.md](model-control-center.md) — the surface where the user does the weighting
 - [../design/hive-router.html](../design/hive-router.html) — the design spec that retired 7–9
 - [../providers/capability-discovery.md](../providers/capability-discovery.md) — what a catalog can and cannot tell you
-- [../../SPEC.md](../../SPEC.md) §6 — the orchestrator classifies; discovered policy resolves

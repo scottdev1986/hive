@@ -1,0 +1,38 @@
+{
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "6ea398f2b3",
+    "subject": {
+      "kind": "agent",
+      "agentId": "6dab1fdd-2a2f-491e-bf11-85fec035428c"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc296-e6ab-7523-a750-1557932765e4",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "outputSeq": "4790",
+  "columns": 80,
+  "rows": 24,
+  "rowStart": 0,
+  "screen": "primary",
+  "cursor": {
+    "row": 18,
+    "column": 2,
+    "visible": false
+  },
+  "text": "│                                    │ Tips for getting started                │\n│            Welcome back!           │ Run /init to create a CLAUDE.md file w… │\n│                                    │ ─────────────────────────────────────── │\n│               ▐▛███▜▌              │ What's new                              │\n│              ▝▜█████▛▘             │ Check the Claude Code changelog for up… │\n│                ▘▘ ▝▝               │                                         │\n│                                    │                                         │\n│   Haiku 4.5 · API Usage Billing    │                                         │\n│   ~/project/.hive/worktrees/maya   │                                         │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n\n❯ Begin the assigned task.                                                      \n  ⎿  Not logged in · Please run /login\n\n✻ Baked for 0s\n\n────────────────────────────────────────────────────────────────────────────────\n❯  \n────────────────────────────────────────────────────────────────────────────────\n  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · res…\n  🐝 maya                                           Not logged in · Run /login\n  ⏸ manual mode on",
+  "styledText": "\u001b[0m\u001b[38;5;174m│                                    \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0m\u001b[1m\u001b[38;5;174mTips for getting started                \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│            \u001b[0m\u001b[1mWelcome back!           \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0mRun /init to create a CLAUDE.md file w… \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│                                    \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0m\u001b[38;5;174m─────────────────────────────────────── │\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│               ▐\u001b[0m\u001b[38;5;174m\u001b[48;5;16m▛███▜\u001b[0m\u001b[38;5;174m▌              \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0m\u001b[1m\u001b[38;5;174mWhat's new                              \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│              ▝▜\u001b[0m\u001b[38;5;174m\u001b[48;5;16m█████\u001b[0m\u001b[38;5;174m▛▘             \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0m\u001b[38;5;246mCheck the Claude Code changelog for up… \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│                ▘▘ ▝▝               \u001b[0m\u001b[2m\u001b[38;5;174m│                                         \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│                                    \u001b[0m\u001b[2m\u001b[38;5;174m│                                         \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│   \u001b[0m\u001b[38;5;246mHaiku 4.5 · API Usage Billing    \u001b[0m\u001b[2m\u001b[38;5;174m│                                         \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│   \u001b[0m\u001b[38;5;246m~/project/.hive/worktrees/maya   \u001b[0m\u001b[2m\u001b[38;5;174m│                                         \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m╰──────────────────────────────────────────────────────────────────────────────╯\u001b[0m\r\n\r\n\r\n\u001b[0m\u001b[38;5;239m\u001b[48;5;237m❯ \u001b[0m\u001b[38;5;231m\u001b[48;5;237mBegin the assigned task.\u001b[0m\u001b[48;5;237m                                                      \u001b[0m\r\n\u001b[0m\u001b[38;5;246m  ⎿  \u001b[0m\u001b[38;5;211mNot logged in · Please run /login\u001b[0m\r\n\r\n\u001b[0m\u001b[38;5;246m✻ Baked for 0s\u001b[0m\r\n\r\n\u001b[0m\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\u001b[0m\r\n❯ \u001b[0m\u001b[7m \u001b[0m\r\n\u001b[0m\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\u001b[0m\r\n  \u001b[0m\u001b[38;5;220m⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker\u001b[0m\u001b[38;5;246m · res…\u001b[0m\r\n  \u001b[0m\u001b[38;5;246m🐝 maya\u001b[0m                                           \u001b[0m\u001b[38;5;211mNot logged in · Run /login\u001b[0m\r\n  \u001b[0m\u001b[38;5;246m⏸ manual mode on\u001b[0m",
+  "truncated": false,
+  "sha256": "68b1bfec423a435311eb52f34bbe835ccd1fbdcf01750ec3e4b529ab8d21fd7f",
+  "composer": {
+    "profile": "claude",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  }
+}

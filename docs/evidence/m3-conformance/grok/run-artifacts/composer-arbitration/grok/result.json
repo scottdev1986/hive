@@ -1,0 +1,50 @@
+{
+  "result": "failed",
+  "vendor": "grok",
+  "startedAt": "2026-08-02T01:27:19.611Z",
+  "completedAt": "2026-08-02T01:27:24.970Z",
+  "error": "publishing changed a user's composer: {\n  \"before\": {\n    \"profile\": \"grok\",\n    \"present\": true,\n    \"nonempty\": true,\n    \"stable\": true,\n    \"userEditSinceEmpty\": true,\n    \"userOperationInFlight\": false,\n    \"claim\": true,\n    \"invariant\": \"ok\"\n  },\n  \"after\": {\n    \"profile\": \"grok\",\n    \"present\": true,\n    \"nonempty\": true,\n    \"stable\": true,\n    \"userEditSinceEmpty\": true,\n    \"userOperationInFlight\": false,\n    \"claim\": true,\n    \"invariant\": \"ok\"\n  }\n}\n",
+  "agent": {
+    "id": "7f610c7c-aa66-405a-a60c-54cc06ab9893",
+    "name": "maya",
+    "tool": "grok",
+    "model": "grok-4.5",
+    "category": "simple_coding",
+    "status": "working",
+    "holdReason": null,
+    "holdResetAt": null,
+    "holdProviderRunId": null,
+    "quotaReservationId": "6fbc07bd-3678-4073-82f1-53ca63c74819",
+    "executionIdentity": {
+      "tool": "grok",
+      "model": "grok-4.5",
+      "effort": "high",
+      "cliVersion": "0.2.118",
+      "cliBuildHash": "1e1687c1cf6a"
+    },
+    "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+    "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-grok-run.q1gYCO/project/.hive/worktrees/maya",
+    "branch": "hive/maya-wait-quietly-for-a-terminal-de",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "580feb2505",
+      "subject": {
+        "kind": "agent",
+        "agentId": "7f610c7c-aa66-405a-a60c-54cc06ab9893"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc015-2bb6-787e-8d54-6588a525bc92",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    },
+    "toolSessionId": "ee8e09b7-92fe-4c89-872b-121ca42ba91d",
+    "recoveryAttempts": 0,
+    "contextPct": null,
+    "createdAt": "2026-08-02T01:27:20.758Z",
+    "lastEventAt": "2026-08-02T01:27:22.483Z",
+    "capabilityEpoch": 0,
+    "readOnly": true,
+    "writeRevoked": false,
+    "graphifyCalls": null
+  }
+}

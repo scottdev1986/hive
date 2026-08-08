@@ -4,12 +4,31 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   createProductionTerminalComposition,
+  spawnerExecutables,
   startBrokerAndDiscoverEngineBuildId,
   stopSpawnSession,
 } from "../../src/cli/daemon";
-import type { SessionInspection } from "../../src/daemon/session-host/contract";
-import type { AgentRecord } from "../../src/schemas";
+import type { SessionInspection } from "../../src/daemon/session-host/session-host-contract";
+import type { AgentRecord } from "../../src/schemas/agent";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
+
+test("spawnerExecutables carries every vendor's resolved path through, including Kimi and OpenCode", () => {
+  expect(
+    spawnerExecutables({
+      claude: "/opt/vendor/claude",
+      codex: "/opt/vendor/codex",
+      grok: "/opt/vendor/grok",
+      kimi: "/opt/vendor/kimi",
+      opencode: "/opt/vendor/opencode",
+    }),
+  ).toEqual({
+    claudeExecutable: "/opt/vendor/claude",
+    codexExecutable: "/opt/vendor/codex",
+    grokExecutable: "/opt/vendor/grok",
+    kimiExecutable: "/opt/vendor/kimi",
+    opencodeExecutable: "/opt/vendor/opencode",
+  });
+});
 
 test("production terminal composition constructs sessiond only", () => {
   const constructed: string[] = [];
@@ -26,10 +45,9 @@ test("production terminal composition constructs sessiond only", () => {
   expect(constructed).toEqual(["sessiond"]);
   expect(composition).toEqual({
     terminalHost,
-    spawnerDependencies: { sessiondInput: expect.any(Object) },
+    spawnerDependencies: {},
     daemonDependencies: {
       terminalHost,
-      sessiondInput: expect.any(Object),
       // The queen's visible-text read. Absent here, `hive_terminal_observe`
       // refuses every call in production while looking perfectly wired in the
       // tool registry — so the composition is where it has to be pinned.
@@ -39,9 +57,6 @@ test("production terminal composition constructs sessiond only", () => {
   });
   expect(composition.daemonDependencies.sessionHost).toBe(
     composition.terminalHost,
-  );
-  expect(composition.spawnerDependencies.sessiondInput).toBe(
-    composition.daemonDependencies.sessiondInput,
   );
   expect("tmux" in composition.spawnerDependencies).toBe(false);
   expect("tmux" in composition.daemonDependencies).toBe(false);
@@ -155,7 +170,6 @@ test("spawn cleanup dispatches a sessiond row by its exact locator", async () =>
     contextPct: null,
     createdAt: "2026-07-20T00:00:00.000Z",
     lastEventAt: "2026-07-20T00:00:00.000Z",
-    recoveryAttempts: 0,
     capabilityEpoch: 0,
     readOnly: true,
     writeRevoked: false,

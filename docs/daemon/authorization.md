@@ -5,23 +5,23 @@ Source: Hive source tree, 2026-07-15
 
 ## Summary
 
-The daemon can spawn processes, kill them, approve tool calls on a human's behalf, and fast-forward branches into `main` — and every agent it spawns runs as the same UID with a shell. Authorization is therefore the only boundary Hive has, and it rests on two rules: **a request body is evidence of intent, never of authority**, and **only the daemon mints** (`src/daemon/capabilities.ts:1-15`).
+The daemon can spawn processes, kill them, approve tool calls on a user's behalf, and fast-forward branches into `main` — and every agent it spawns runs as the same UID with a shell. Authorization is therefore the only boundary Hive has, and it rests on two rules: **a request body is evidence of intent, never of authority**, and **only the daemon mints** (`src/daemon/authorization/authorization-service.ts:1-15`).
 
-This document is the binding contract for `src/daemon/capabilities.ts`; if the code and this table disagree, the code is wrong. That claim only survives if the table is maintained — see [Keeping the matrix from drifting](#keeping-the-matrix-from-drifting).
+This document is the binding contract for `src/daemon/authorization/authorization-service.ts`; if the code and this table disagree, the code is wrong. That claim only survives if the table is maintained — see [Keeping the matrix from drifting](#keeping-the-matrix-from-drifting).
 
 ## Authentication and authorization are different problems
 
-Authentication answers "which capability is speaking" (`src/daemon/capabilities.ts:277-304`). Authorization answers "may that capability do this, to this subject, right now" (`src/daemon/capabilities.ts:306-365`). Conflating them is how control planes grow confused deputies: a caller proves it is *someone*, then names *anyone* in the request body, and the server obliges.
+Authentication answers "which capability is speaking" (`src/daemon/authorization/authorization-service.ts:277-304`). Authorization answers "may that capability do this, to this subject, right now" (`src/daemon/authorization/authorization-service.ts:306-365`). Conflating them is how control planes grow confused deputies: a caller proves it is *someone*, then names *anyone* in the request body, and the server obliges.
 
-So the daemon does two things in order. It authenticates the bearer token and resolves it to exactly one capability record — **before it parses the body**, so a caller with no credential is turned away without the daemon ever reading what it asked for (`src/daemon/capabilities.ts:406-424`). Then, for every request that names a subject (`agent`, `from`, `agentName`), it compares that name against the subject bound into the capability. A mismatch is a denial (`capability.foreign-subject`), not a coercion.
+So the daemon does two things in order. It authenticates the bearer token and resolves it to exactly one capability record — **before it parses the body**, so a caller with no credential is turned away without the daemon ever reading what it asked for (`src/daemon/authorization/authorization-service.ts:406-424`). Then, for every request that names a subject (`agent`, `from`, `agentName`), it compares that name against the subject bound into the capability. A mismatch is a denial (`capability.foreign-subject`), not a coercion.
 
 The blueprint's XPC design gets this for free by omitting tenant IDs from method signatures. HTTP has no such affordance — the body is attacker-controlled and there is nowhere else to put the subject — so the daemon rejects on mismatch and audits the attempt. Same boundary, different road.
 
 ## The four roles
 
-Four roles exist (`src/daemon/capabilities.ts:97-136`), and the interesting property of each is what it *cannot* do.
+Four roles exist (`src/daemon/authorization/authorization-service.ts:97-136`), and the interesting property of each is what it *cannot* do.
 
-**Operator** — the human's `hive` CLI and the Workspace acting for them. Holds every action. Its subject scope is unrestricted, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
+**User** — the user's `hive` CLI and the Workspace acting for them. Holds every action. Its subject scope is unrestricted, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
 
 **Orchestrator** — the root agent, named queen. Prefer queen when addressing or referring to it; the role name orchestrator remains correct, and old/`orchestrator` addressing is still understood. Spawns, approves, kills, recovers, reads the global inbox, and reads autonomy. It holds **no landing right and no autonomy/routing write**, ever. This is the single most important line in the matrix: the process that decides *what work happens* must not be the process that can *put code on `main`*. An orchestrator compromised by prompt injection can waste money; it cannot merge. Naming does not change this matrix.
 
@@ -29,11 +29,11 @@ Four roles exist (`src/daemon/capabilities.ts:97-136`), and the interesting prop
 
 **Reader** — read-only: talks, reads exact messages addressed to itself, and reports on itself. No `branch:land`, no `memory:write`.
 
-The asymmetry is the design. **No role is a superset of another that both decides and merges** — orchestrator and writer are disjoint. A captured credential of any kind buys a strict subset of the control plane (`src/daemon/capabilities.ts:97-100`).
+The asymmetry is the design. **No role is a superset of another that both decides and merges** — orchestrator and writer are disjoint. A captured credential of any kind buys a strict subset of the control plane (`src/daemon/authorization/authorization-service.ts:97-100`).
 
 ## The 26 actions
 
-Enumerated from `src/daemon/capabilities.ts:25-51`. `O` operator, `R` orchestrator, `W` writer, `r` reader.
+Enumerated from `src/daemon/authorization/authorization-service.ts:25-51`. `O` user, `R` orchestrator, `W` writer, `r` reader.
 
 | Action | Roles | Notes |
 |---|---|---|
@@ -65,7 +65,7 @@ Enumerated from `src/daemon/capabilities.ts:25-51`. `O` operator, `R` orchestrat
 | `routing-policy:write` | O | an agent rewriting the router is self-authorization |
 | `workspace-visibility:write` | O | only the credential-holding Workspace feed may attest UI inventory |
 
-`anySubject` (`src/daemon/capabilities.ts:62-67`): the operator for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers and readers may only ever name themselves.
+`anySubject` (`src/daemon/authorization/authorization-service.ts:62-67`): the user for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers and readers may only ever name themselves.
 
 ### Codex has no writer role
 
@@ -77,7 +77,7 @@ boundary.
 
 ## The routes and tools
 
-Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`src/daemon/capabilities.ts:426-449`).
+Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenticates first. **Audit** is whether an *allow* is written to `audit_log`; denials are always audited (`src/daemon/authorization/authorization-service.ts:426-449`).
 
 | Route / tool | Action | Subject | Audit allow | Gate |
 |---|---|---|---|---|
@@ -122,7 +122,7 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 
 ## Landing: reserve before merge
 
-`branch:land` is the only one-shot right in the system (`src/daemon/capabilities.ts:116-124`). The daemon **reserves** the right before it touches git and releases it only if the merge failed (`consumeOneShot` / `releaseOneShot`, `src/daemon/capabilities.ts:367-383`).
+`branch:land` is the only one-shot right in the system (`src/daemon/authorization/authorization-service.ts:116-124`). The daemon **reserves** the right before it touches git and releases it only if the merge failed (`consumeOneShot` / `releaseOneShot`, `src/daemon/authorization/authorization-service.ts:367-383`).
 
 Reserving up front rather than consuming afterwards is what makes two concurrent lands safe: the reservation is a primary-key insert, so the second request loses the race inside SQLite and never reaches `git merge`. Consuming *after* the merge would let both callers merge and only then discover one was a replay.
 
@@ -130,15 +130,15 @@ Burning the grant on a *failed* attempt — stricter, simpler, and the third alt
 
 ### Who re-arms a spent grant
 
-Something must re-arm the grant, because a working agent lands more than once. That something used to be a human, every lap, and it was the most expensive thing in the system: **one orchestrator cleared nine re-arm approvals in a single session**, and the more productive the agent, the more often it stalled. Most of those approvals granted nothing — the agent had already landed, `main..branch` was empty, and a human was being spent on merging a diff that did not exist.
+Something must re-arm the grant, because a working agent lands more than once. That something used to be a user, every lap, and it was the most expensive thing in the system: **one orchestrator cleared nine re-arm approvals in a single session**, and the more productive the agent, the more often it stalled. Most of those approvals granted nothing — the agent had already landed, `main..branch` was empty, and a user was being spent on merging a diff that did not exist.
 
 So the daemon now *measures the branch* first (`src/daemon/server.ts:1246-1300`). Three answers:
 
 - **`nothing-to-land`** — `main..branch` is empty. Nothing to merge, so nothing to grant, so **no approval is filed at all**. A grant to merge nothing is not a right anybody needs.
-- **`rearmed`** — the branch has commits the primary lacks *and* is rebased on current `main`, so the merge is a genuine fast-forward. Those are the two facts the human was being asked to eyeball, and git can state both. Audited as `capability.auto-rearm`, and bounded: `AUTO_REARM_BUDGET = 3` (`src/daemon/server.ts:399-404`) per agent, counted from the audit log itself.
+- **`rearmed`** — the branch has commits the primary lacks *and* is rebased on current `main`, so the merge is a genuine fast-forward. Those are the two facts the user was being asked to eyeball, and git can state both. Audited as `capability.auto-rearm`, and bounded: `AUTO_REARM_BUDGET = 3` (`src/daemon/server.ts:399-404`) per agent, counted from the audit log itself.
 - **`ask`** — everything else, and **every unknown**: an unreadable branch, a `null` from either measurement, a diverged branch, an exhausted budget.
 
-`readLandReadiness` is three-valued on purpose (`src/daemon/landing.ts:225-278`): `pending` and `rebased` are `null` when git could not answer, and **null routes to ask, never to grant**. An unreadable branch is no evidence, and **no evidence must never be converted into permission** — the failure mode that once disarmed both of the guards whose entire purpose was to refuse. This is the same invariant as the absence test in [database-resilience.md](database-resilience.md).
+`readLandReadiness` is three-valued on purpose (`src/daemon/landing/landing-service.ts:225-278`): `pending` and `rebased` are `null` when git could not answer, and **null routes to ask, never to grant**. An unreadable branch is no evidence, and **no evidence must never be converted into permission** — the failure mode that once disarmed both of the guards whose entire purpose was to refuse. This is the same invariant as the absence test in [database-resilience.md](database-resilience.md).
 
 What is deliberately *not* claimed is that the suite is green. The daemon cannot run a test suite inside a land handler, and an agent's *claim* that it is green is an act, not a state. The budget is the containment instead of a promise Hive cannot keep.
 
@@ -146,21 +146,21 @@ What is deliberately *not* claimed is that the suite is green. The daemon cannot
 
 **Epoch** is the revocation primitive. Every agent row carries a `capabilityEpoch`; every token freezes the epoch it was minted at. Revoking authority means advancing the epoch — one integer write, no token list to walk. Because the critical-control path already advances the epoch when it revokes writes, `hive_send --priority critical` becomes, for free, a credential revocation.
 
-Only `branch:land` and `message:ack` check it (`EPOCH_CHECKED`, `src/daemon/capabilities.ts:135-142`). This is a deliberate narrowing, not an oversight: epoch checks exist to stop *stale authority*, so only the actions that **commit** carry one — merging a branch, and confirming a control instruction landed. Gating reads on the epoch would fail every status poll during a rotation and buy nothing. The operator is exempt because it has no agent row (`src/daemon/credentials.ts:26-27`, `src/daemon/capabilities.ts:329-345`) — the same invariant [orchestrator-status.md](orchestrator-status.md) depends on for the root.
+Only `branch:land` and `message:ack` check it (`EPOCH_CHECKED`, `src/daemon/authorization/authorization-service.ts:135-142`). This is a deliberate narrowing, not an oversight: epoch checks exist to stop *stale authority*, so only the actions that **commit** carry one — merging a branch, and confirming a control instruction landed. Gating reads on the epoch would fail every status poll during a rotation and buy nothing. The user is exempt because it has no agent row (`src/daemon/authorization/credentials.ts:26-27`, `src/daemon/authorization/authorization-service.ts:329-345`) — the same invariant [orchestrator-status.md](orchestrator-status.md) depends on for the root.
 
-Separately, `WRITE_ACTIONS = {branch:land, memory:write, memory:delete}` (`src/daemon/capabilities.ts:144-148`) are refused for a `writeRevoked` agent even at a current epoch.
+Separately, `WRITE_ACTIONS = {branch:land, memory:write, memory:delete}` (`src/daemon/authorization/authorization-service.ts:144-148`) are refused for a `writeRevoked` agent even at a current epoch.
 
-**Expiry is absolute, not sliding.** A token dies at `expiresAt` regardless of use (default 24h, `src/daemon/capabilities.ts:201-202`). A sliding window was rejected because it lets a stolen credential keep itself alive forever simply by being used — exactly the credential we most want to expire.
+**Expiry is absolute, not sliding.** A token dies at `expiresAt` regardless of use (default 24h, `src/daemon/authorization/authorization-service.ts:201-202`). A sliding window was rejected because it lets a stolen credential keep itself alive forever simply by being used — exactly the credential we most want to expire.
 
 **Delegation is not supported, and this is a feature.** No capability mints another; there is no attenuation grammar. The authority graph is exactly one level deep and can be reasoned about by reading the agents table. A macaroon-style attenuable token is strictly more expressive and was rejected because Hive has no use case for it and every delegation edge is a place for authority to escape.
 
-**The one carve-out is `POST /codex-root-token`** (`src/daemon/server.ts:2401-2403`, handler at `:2416-2441`). The operator's launcher asks the *daemon* to mint the orchestrator credential a Codex root will present, because that root has no spawn path of its own. Still daemon-minted, still one level deep, and deliberately short-lived: a 60-second TTL that covers the hand-off window and nothing more. (An earlier version of this document flatly claimed no token-exchange endpoint exists. It did not survive contact with Codex.)
+**The one carve-out is `POST /codex-root-token`** (`src/daemon/server.ts:2401-2403`, handler at `:2416-2441`). The user's launcher asks the *daemon* to mint the orchestrator credential a Codex root will present, because that root has no spawn path of its own. Still daemon-minted, still one level deep, and deliberately short-lived: a 60-second TTL that covers the hand-off window and nothing more. (An earlier version of this document flatly claimed no token-exchange endpoint exists. It did not survive contact with Codex.)
 
 ## What a stolen credential buys
 
-A token is `hv1.<capabilityId>.<secret>` (`src/daemon/capabilities.ts:214-225`). The daemon stores only `sha256(secret)` and compares with `timingSafeEqual` (`src/daemon/capabilities.ts:204-211`), so a database or WAL leak yields no usable credential. An id that exists with a wrong secret is denied `capability.unknown` — indistinguishable, to the caller, from an id that never existed.
+A token is `hv1.<capabilityId>.<secret>` (`src/daemon/authorization/authorization-service.ts:214-225`). The daemon stores only `sha256(secret)` and compares with `timingSafeEqual` (`src/daemon/authorization/authorization-service.ts:204-211`), so a database or WAL leak yields no usable credential. An id that exists with a wrong secret is denied `capability.unknown` — indistinguishable, to the caller, from an id that never existed.
 
-Tokens travel by file, never by environment variable and never by argv: `$HIVE_HOME/credentials/<subject>.cap`, mode `0600`, inside a `0700` directory outside every worktree (`src/daemon/credentials.ts:29-42`), read with `O_CLOEXEC` (`:45-60`). Claude Code fetches its header through `headersHelper` rather than `${ENV_VAR}` expansion — the env-var form is documented and simpler, and was rejected because an environment variable is inherited by every descendant of the agent process, which is precisely the grandchild we are trying to starve. Codex has no headers-helper, so its token goes into a `0600` `config.toml`; `bearer_token_env_var` was rejected for the same reason.
+Tokens travel by file, never by environment variable and never by argv: `$HIVE_HOME/credentials/<subject>.cap`, mode `0600`, inside a `0700` directory outside every worktree (`src/daemon/authorization/credentials.ts:29-42`), read with `O_CLOEXEC` (`:45-60`). Claude Code fetches its header through `headersHelper` rather than `${ENV_VAR}` expansion — the env-var form is documented and simpler, and was rejected because an environment variable is inherited by every descendant of the agent process, which is precisely the grandchild we are trying to starve. Codex has no headers-helper, so its token goes into a `0600` `config.toml`; `bearer_token_env_var` was rejected for the same reason.
 
 Now the honest part. **Hive runs every agent as the user's own UID.** A same-UID process that knows the path can read the credential file, and a shell tool call inside an agent is such a process. No Unix socket, no `CLOEXEC` descriptor, and no peer check fixes that. What this design actually buys is not secrecy against a determined same-UID attacker — it is that **the credential an agent can steal is worth almost nothing**. A writer's token cannot spawn, cannot approve, cannot kill, cannot name another agent, cannot land twice, and stops working the moment its epoch rotates. The blast radius of theft is the authority the thief's own parent already had.
 
@@ -170,11 +170,11 @@ The adversarial tests therefore prove a precise claim: a descendant of an agent 
 
 Every mutating decision appends an `audit_log` row: timestamp, route, action, caller subject and role, capability id, the subject the caller *requested*, epoch, decision, reason. Denials are audited at least as carefully as allows, because the interesting security signal is `agent maya attempted branch:land on subject zara` — a request a well-behaved agent never makes. Read-only and long-poll routes pass `auditAllow: false` so `hive_status` polls cannot bury the rows that matter. The token secret never appears in a row, a log line, or an error message.
 
-**The audit log is load-bearing for authorization, not merely history** — `countAuditEntries` (`src/daemon/db.ts:1484`) computes the auto-re-arm budget from it. Trimming it would silently re-arm land grants the user already spent. See [database-resilience.md](database-resilience.md#what-must-never-be-auto-pruned).
+**The audit log is load-bearing for authorization, not merely history** — `countAuditEntries` (`src/daemon/database/access-store.ts:171`) computes the auto-re-arm budget from it. Trimming it would silently re-arm land grants the user already spent. See [database-resilience.md](database-resilience.md#what-must-never-be-auto-pruned).
 
 ## Keeping the matrix from drifting
 
-This document declares itself binding and `src/daemon/capabilities.ts:1-3` declares the code must not drift from it. Between those two statements, the code grew five actions (`root-token:mint`, `autonomy:read/write`, `routing-policy:read/write`), six routes, and four MCP tools that this table had no rows for. The contract did not fail loudly; it failed by **omission**, which is the failure mode a "binding table" is least able to detect.
+This document declares itself binding and `src/daemon/authorization/authorization-service.ts:1-3` declares the code must not drift from it. Between those two statements, the code grew five actions (`root-token:mint`, `autonomy:read/write`, `routing-policy:read/write`), six routes, and four MCP tools that this table had no rows for. The contract did not fail loudly; it failed by **omission**, which is the failure mode a "binding table" is least able to detect.
 
 So, the rule the drift itself teaches:
 
@@ -191,4 +191,3 @@ Capabilities are bound to a subject, not to a connection. Over HTTP there is not
 - [Database resilience](database-resilience.md) — the absence test, and why `audit_log` may never be pruned
 - [Orchestrator status](orchestrator-status.md) — `status:read`, and the no-agents-row invariant
 - [Routing policy](../routing/routing-policy.md) — what `routing-policy:write` consents to
-- [SPEC](../../SPEC.md) — the agent model these roles are cut from

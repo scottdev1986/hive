@@ -1,42 +1,48 @@
-/**
- * Project-neutral terminal host contract. All product policy belongs in an
- * adapter above this boundary.
- */
 export const TERMINAL_HOST_CONTRACT_VERSION = "1.0.0" as const;
 
-export type Completeness = "complete" | "partial" | "unavailable" | "unknown";
+import type {
+  Checkpoint,
+  ClaimResult,
+  ExitStatus,
+  HostLimits,
+  InputReceipt,
+  ReapEvidence,
+  SessionRef,
+  TerminalHostCreateRequest as CreateRequest,
+  TerminalHostCreateResult as CreateResult,
+  TerminalHostResizeResult as ResizeResult,
+  TerminalHostSessionInspection as SessionInspection,
+  TerminalHostTerminationResult as TerminationResult,
+  WindowSize,
+} from "../../schemas/session-protocol";
+
+export type {
+  Checkpoint,
+  ClaimResult,
+  Command,
+  Completeness,
+  EnvironmentEntry,
+  ExitStatus,
+  HostLimits,
+  InputClaim,
+  InputReceipt,
+  JobControlEvidence,
+  LaunchFailureLayer,
+  LaunchOutcome,
+  ProcessIdentity,
+  ReapEvidence,
+  SessionRef,
+  TerminalHostCreateRequest as CreateRequest,
+  TerminalHostCreateResult as CreateResult,
+  TerminalHostResizeResult as ResizeResult,
+  TerminalHostSessionInspection as SessionInspection,
+  TerminalHostTerminationResult as TerminationResult,
+  TerminalProfile,
+  WindowSize,
+} from "../../schemas/session-protocol";
+
 export type Sequence = string;
 export type Incarnation = string;
-
-export type SessionRef = Readonly<{
-  key: string;
-  incarnation: Incarnation;
-}>;
-
-export type ProcessIdentity = Readonly<{
-  processId: number;
-  startToken: string;
-}>;
-
-export type WindowSize = Readonly<{
-  columns: number;
-  rows: number;
-  widthPixels: number;
-  heightPixels: number;
-}>;
-
-export type TerminalProfile = Readonly<{
-  inputMode: "canonical" | "literal";
-  echo: boolean;
-  signalCharacters: boolean;
-  softwareFlowControl: boolean;
-  eofByte: number;
-  startByte: number;
-  stopByte: number;
-  hangupOnLastClose: boolean;
-}>;
-
-export type EnvironmentEntry = Readonly<{ name: string; value: string }>;
 
 export type TransferableHandle = Readonly<{
   token: string;
@@ -48,99 +54,6 @@ export type DescriptorMapping = Readonly<{
   targetDescriptor: number;
 }>;
 
-export type Command = Readonly<{
-  executable: string;
-  arguments: readonly string[];
-  workingDirectory: string;
-  completeEnvironment: readonly EnvironmentEntry[];
-  descriptorMap: readonly DescriptorMapping[];
-}>;
-
-export type HostLimits = Readonly<{
-  maxInputTransactionBytes: number;
-  maxInputQueueBytes: number;
-  maxOutputFrameBytes: number;
-  outputLowWaterBytes: number;
-  outputHighWaterBytes: number;
-  outputRetentionBytes: number;
-}>;
-
-export type JobControlEvidence = Readonly<{
-  sessionLeader: boolean;
-  controllingTerminal: boolean;
-  standardStreamsShareTerminal: boolean;
-  childSessionId: number;
-  childProcessGroupId: number;
-  foregroundProcessGroupId: number;
-  terminalIdentity: string;
-  initialProfileAppliedBeforeExec: boolean;
-  initialWindowAppliedBeforeExec: boolean;
-  completeness: Completeness;
-}>;
-
-export type ExitStatus = Readonly<{
-  code: number | null;
-  signal: number | null;
-  observedAt: string;
-}>;
-
-export type ReapEvidence = Readonly<{
-  authority: "direct-parent" | "durable-parent-record" | "unavailable";
-  reaped: boolean;
-  status: ExitStatus | null;
-  completeness: Completeness;
-}>;
-
-export type LaunchFailureLayer =
-  | "command"
-  | "working-directory"
-  | "environment"
-  | "descriptor-transfer"
-  | "terminal-setup"
-  | "exec-transition";
-
-export type LaunchOutcome =
-  | Readonly<{
-      state: "running";
-      child: ProcessIdentity;
-      execProof: "replacement-observed";
-      jobControl: JobControlEvidence;
-    }>
-  | Readonly<{
-      state: "exec-failed";
-      layer: LaunchFailureLayer;
-      osCode: string | number | null;
-      diagnostic: string;
-    }>
-  | Readonly<{ state: "exited"; exit: ExitStatus; reap: ReapEvidence }>
-  | Readonly<{ state: "unknown"; diagnostic: string }>;
-
-export type CreateRequest = Readonly<{
-  key: string;
-  idempotencyKey: string;
-  command: Command;
-  terminalProfile: TerminalProfile;
-  initialWindow: WindowSize;
-}>;
-
-export type CreateResult = Readonly<{
-  session: SessionRef;
-  outcome: LaunchOutcome;
-  limits: HostLimits;
-}>;
-
-export type InputClaim = Readonly<{
-  token: string;
-  writer: string;
-  kind: "human" | "automation";
-  leaseExpiresAt: string;
-}>;
-
-export type ClaimResult =
-  | Readonly<{ state: "granted"; claim: InputClaim }>
-  | Readonly<{ state: "denied"; owner: InputClaim | null; diagnostic: string }>
-  | Readonly<{ state: "unknown"; diagnostic: string }>;
-
 export type InputOperation =
   | Readonly<{ kind: "bytes"; bytes: Uint8Array }>
   | Readonly<{ kind: "canonical-end-of-file" }>
@@ -150,38 +63,6 @@ export type ExpectedForeground = Readonly<{
   pid: number;
   startToken: string;
   processGroupId: number;
-}>;
-
-export type InputReceipt = Readonly<{
-  transactionId: string;
-  stage: "accepted" | "queued" | "written-to-terminal" | "rejected" | "unknown";
-  byteRange: Readonly<{ start: Sequence; endExclusive: Sequence }> | null;
-  orderedAt: Sequence | null;
-  availableCreditBytes: number;
-  consumedByProcess: "not-claimed";
-  completeness: Completeness;
-  diagnostic: string | null;
-}>;
-
-export type ResizeResult =
-  | Readonly<{
-      state: "applied";
-      revision: Sequence;
-      readback: WindowSize;
-      orderedAt: Sequence;
-      foregroundProcessObservation: "not-claimed";
-    }>
-  | Readonly<{ state: "stale"; currentRevision: Sequence }>
-  | Readonly<{ state: "unknown"; diagnostic: string }>;
-
-export type Checkpoint = Readonly<{
-  contentType: string;
-  schemaVersion: string;
-  hashAlgorithm: "sha256";
-  hash: string;
-  throughEventSequence: Sequence;
-  throughOutputOffset: Sequence;
-  opaqueBytes: Uint8Array;
 }>;
 
 export type AttachCursor = Readonly<{
@@ -253,31 +134,6 @@ export type TerminalEvent =
   | (OrderedEventBase &
       Readonly<{ kind: "flow-control"; outputPaused: boolean }>);
 
-export type SessionInspection = Readonly<{
-  session: SessionRef;
-  lifecycle: "creating" | "running" | "exited" | "lost" | "unknown";
-  completeness: Completeness;
-  host: ProcessIdentity | null;
-  child: ProcessIdentity | null;
-  jobControl: JobControlEvidence | null;
-  window: Readonly<{ value: WindowSize; revision: Sequence }>;
-  output: Readonly<{
-    closed: boolean;
-    retained: Readonly<{ start: Sequence; endExclusive: Sequence }>;
-  }>;
-  checkpoints: Readonly<{
-    retained: number;
-    newest: Checkpoint | null;
-  }>;
-  inputOwner: InputClaim | null;
-  exit: ExitStatus | null;
-  reap: ReapEvidence;
-  descendants: readonly ProcessIdentity[];
-  survivors: readonly Readonly<{ process: ProcessIdentity; reason: string }>[];
-  evidenceAt: string;
-  diagnostics: readonly string[];
-}>;
-
 export type OutputAcknowledgement = Readonly<{
   throughEventSequence: Sequence;
   throughOutputOffset: Sequence;
@@ -288,8 +144,7 @@ export type SubscriptionCapabilities = Readonly<{
   protocolVersions: readonly string[];
 }>;
 
-/** Retained events are bounded and released by acknowledgement. Events are
- * counted rather than measured, so every bound but the frame cap is a count. */
+/** Retained events are bounded and released by acknowledgement. Events are counted rather than measured, so every bound but the frame cap is a count. */
 export type SubscriptionLimits = Readonly<{
   maxEventFrameBytes: number;
   retainedEventCount: number;
@@ -297,8 +152,6 @@ export type SubscriptionLimits = Readonly<{
   unacknowledgedEventHighWater: number;
 }>;
 
-/** Both positions use one session order, so a delivered event and the
- * output around it are comparable without a second clock. */
 export type SubscriptionCursor = Readonly<{
   eventSequence: Sequence;
   outputOffset: Sequence;
@@ -329,22 +182,13 @@ export type EventAcknowledgement = Readonly<{
   availableEventCredit: number;
 }>;
 
-export type TerminationResult = Readonly<{
-  state: "terminated" | "survivors" | "unknown";
-  exit: ExitStatus | null;
-  reap: ReapEvidence;
-  survivors: readonly Readonly<{ process: ProcessIdentity; reason: string }>[];
-  completeness: Completeness;
-  diagnostics: readonly string[];
-}>;
-
 export interface TerminalHost {
   create(request: CreateRequest): Promise<CreateResult>;
   claimInput(
     request: Readonly<{
       session: SessionRef;
       writer: string;
-      kind: "human" | "automation";
+      kind: "user" | "automation";
       leaseMilliseconds: number;
       idempotencyKey: string;
     }>,
@@ -359,7 +203,8 @@ export interface TerminalHost {
   submitInput(
     request: Readonly<{
       session: SessionRef;
-      claimToken: string;
+      provenance: "user" | "automation" | "terminal";
+      action: "edit" | "submit" | "cancel" | "gesture" | "deliver" | "keys";
       transactionId: string;
       idempotencyKey: string;
       expectedForeground?: ExpectedForeground;
@@ -391,10 +236,7 @@ export interface TerminalHost {
   ): Promise<OutputAcknowledgement>;
   inspect(session: SessionRef): Promise<SessionInspection>;
   list(): Promise<readonly SessionInspection[]>;
-  /** A subscription is a resumable cursor, not a boolean: it negotiates
-   * capabilities and event flow-control limits and begins at a caller-supplied
-   * event position or at the current end. A position outside retention is a
-   * gap, never silent loss. */
+  /** A subscription is a resumable cursor, not a boolean: it negotiates capabilities and event flow-control limits and begins at a caller-supplied event position or at the current end. A position outside retention is a gap, never silent loss. */
   subscribe(
     request: Readonly<{
       session: SessionRef;
@@ -403,16 +245,13 @@ export interface TerminalHost {
       from: SubscriptionStart;
     }>,
   ): Promise<SubscribeResult>;
-  /** Delivery for one subscription. Subscribers are independent, so this
-   * is keyed by subscription and never by session alone. */
+  /** Delivery for one subscription. Subscribers are independent, so this is keyed by subscription and never by session alone. */
   events(
     request: Readonly<{
       session: SessionRef;
       subscriptionId: string;
     }>,
   ): AsyncIterable<TerminalEvent>;
-  /** Retained events are released by acknowledgement on the same terms as
-   * output; the release names WHICH subscription it releases. */
   acknowledgeEvents(
     request: Readonly<{
       session: SessionRef;

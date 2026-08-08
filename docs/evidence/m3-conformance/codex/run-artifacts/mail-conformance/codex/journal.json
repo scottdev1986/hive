@@ -1,0 +1,65 @@
+[
+  {
+    "itemId": "mit_019fc29b-bff8-7000-90b7-6eb3fc9837c9",
+    "kind": "published",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-codex-control-1785676414406",
+    "at": "2026-08-02T13:13:34.968Z",
+    "detailJson": "{\"recipient\":\"david\",\"lane\":\"control\",\"topic\":\"m3-control\",\"seq\":1,\"recipientGeneration\":null,\"receipt\":{\"itemId\":\"mit_019fc29b-bff8-7000-90b7-6eb3fc9837c9\",\"lane\":\"control\",\"topic\":\"m3-control\",\"outcome\":\"published\",\"seq\":1,\"mergedCount\":0,\"acceptedAt\":\"2026-08-02T13:13:34.968Z\"}}"
+  },
+  {
+    "itemId": "mit_019fc29b-bffb-7000-9f91-896115409e26",
+    "kind": "published",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-codex-work-1785676414406",
+    "at": "2026-08-02T13:13:34.971Z",
+    "detailJson": "{\"recipient\":\"david\",\"lane\":\"work\",\"topic\":\"m3-work\",\"seq\":2,\"recipientGeneration\":null,\"receipt\":{\"itemId\":\"mit_019fc29b-bffb-7000-9f91-896115409e26\",\"lane\":\"work\",\"topic\":\"m3-work\",\"outcome\":\"published\",\"seq\":2,\"mergedCount\":0,\"acceptedAt\":\"2026-08-02T13:13:34.971Z\"}}"
+  },
+  {
+    "itemId": "mit_019fc29b-bffb-7000-9f91-896115409e26",
+    "kind": "coalesced",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-codex-work-1785676414406-merged",
+    "at": "2026-08-02T13:13:34.972Z",
+    "detailJson": "{\"topic\":\"m3-work\",\"receipt\":{\"itemId\":\"mit_019fc29b-bffb-7000-9f91-896115409e26\",\"lane\":\"work\",\"topic\":\"m3-work\",\"outcome\":\"coalesced\",\"seq\":2,\"mergedCount\":1,\"acceptedAt\":\"2026-08-02T13:13:34.972Z\"}}"
+  },
+  {
+    "itemId": "mit_019fc29b-bff8-7000-90b7-6eb3fc9837c9",
+    "kind": "claimed",
+    "actor": "david",
+    "actorGeneration": 1,
+    "idempotencyKey": null,
+    "at": "2026-08-02T13:13:43.619Z",
+    "detailJson": "{\"handlerId\":\"m3-safe-point\",\"attempt\":1,\"leaseUntil\":\"2026-08-02T13:15:43.619Z\"}"
+  },
+  {
+    "itemId": "mit_019fc29b-bffb-7000-9f91-896115409e26",
+    "kind": "claimed",
+    "actor": "david",
+    "actorGeneration": 1,
+    "idempotencyKey": null,
+    "at": "2026-08-02T13:13:45.589Z",
+    "detailJson": "{\"handlerId\":\"m3-safe-point\",\"attempt\":1,\"leaseUntil\":\"2026-08-02T13:15:45.589Z\"}"
+  },
+  {
+    "itemId": "mit_019fc29b-bff8-7000-90b7-6eb3fc9837c9",
+    "kind": "completed",
+    "actor": "david",
+    "actorGeneration": 1,
+    "idempotencyKey": null,
+    "at": "2026-08-02T13:13:47.888Z",
+    "detailJson": "{\"handlerId\":\"m3-safe-point\",\"attempt\":1,\"reason\":null}"
+  },
+  {
+    "itemId": "mit_019fc29b-bffb-7000-9f91-896115409e26",
+    "kind": "completed",
+    "actor": "david",
+    "actorGeneration": 1,
+    "idempotencyKey": null,
+    "at": "2026-08-02T13:13:50.314Z",
+    "detailJson": "{\"handlerId\":\"m3-safe-point\",\"attempt\":1,\"reason\":null}"
+  }
+]

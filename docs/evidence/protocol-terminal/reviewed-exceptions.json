@@ -1,0 +1,14 @@
+[
+  {
+    "vendor": "kimi",
+    "step": "6a-load-same-process-replay",
+    "acceptedBy": "queen 2026-08-02",
+    "why": "load-same-process-replay measured no-replay matches the design of record's documented behavior (\u00a74.1 load-vs-resume distinction; \u00a713 omission), measured honestly by ethan's measureLoadReplay rather than assumed; accepted for cutover, subject to Scott's overrule"
+  },
+  {
+    "vendor": "mail",
+    "step": "sinceBrokerSeq migration",
+    "acceptedBy": "ava 2026-08-02 (4c59b44d)",
+    "why": "src/cli/agent-ui/index.ts now documents cursor as the only position a subscribe may resume from, with the re-announcement reasoning, and test/agent-ui-end-to-end.test.ts covers it; the daemon refuses sinceBrokerSeq outright"
+  }
+]

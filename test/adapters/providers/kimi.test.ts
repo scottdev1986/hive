@@ -8,13 +8,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
-  buildKimiResumeCommand,
   buildKimiSpawnCommand,
-  discoverKimiRecoverySessionId,
   kimiReadOnlyContainmentGap,
-  probeKimiDefaultModel,
   wrapKimiSpawnWithEffort,
   wrapKimiWithInstructionFile,
   wrapKimiWithTurnHookContext,
@@ -23,8 +20,6 @@ import {
 } from "../../../src/adapters/providers/kimi-cli";
 import { getAgentAdapter } from "../../../src/adapters/providers/provider-registry";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
-import { credentialPath } from "../../../src/daemon/credentials";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -73,18 +68,6 @@ describe("Kimi adapter", () => {
     expect(both).not.toContain("--yolo");
   });
 
-  test("resume uses --session and replays current process flags", () => {
-    expect(buildKimiResumeCommand(writer, "session_abc")).toEqual([
-      "kimi",
-      "--session",
-      "session_abc",
-      "-m",
-      "kimi-code/k3",
-      "--yolo",
-    ]);
-    expect(buildKimiSpawnCommand(writer)).not.toContain("--session");
-  });
-
   test("the instruction wrap installs the 0600 prompt as project AGENTS.md", () => {
     const command = wrapKimiWithInstructionFile(
       "kimi -m model --yolo",
@@ -124,16 +107,6 @@ describe("Kimi adapter", () => {
     });
     expect(wrapped).toContain("HIVE_AGENT_NAME='maya'");
     expect(wrapped).toContain("HIVE_PROVIDER_RUN_ID=");
-  });
-
-  test("reads the effective default only from the config file", async () => {
-    const home = await worktree();
-    expect(probeKimiDefaultModel(home)).toBeNull();
-    await writeFile(
-      join(home, "config.toml"),
-      'default_model = "kimi-code/k3"\n',
-    );
-    expect(probeKimiDefaultModel(home)).toBe("kimi-code/k3");
   });
 
   test("writes project MCPs with capability auth and preserves unrelated servers", async () => {
@@ -187,9 +160,11 @@ describe("Kimi adapter", () => {
     expect(stat(hookPath)).rejects.toThrow();
   });
 
-  test("prepareSpawn keeps the token out of argv and the launch command", async () => {
+  test("protocol runtime preparation writes token-free MCP config", async () => {
     const root = await worktree();
-    const prepared = await getAgentAdapter("kimi").prepareSpawn({
+    const promptPath = join(root, "launch-prompt.txt");
+    await writeFile(promptPath, "You are maya.\n");
+    const prepared = await getAgentAdapter("kimi").prepareRuntime({
       name: "maya",
       model: "kimi-code/k3",
       worktreePath: root,
@@ -197,24 +172,15 @@ describe("Kimi adapter", () => {
       readOnly: false,
       dangerous: false,
       withCapability: true,
-      instructionPath: "/tmp/prompt.txt",
-      kickoff: "Begin the assigned task.",
+      instructionPath: promptPath,
       effort: "high",
     });
-    expect(prepared.argv).toEqual(["kimi", "-m", "kimi-code/k3", "--yolo"]);
-    expect(prepared.command).toContain(
-      "install -m 600 '/tmp/prompt.txt' '.kimi-code/AGENTS.md'",
-    );
-    expect(prepared.command).not.toContain("Begin the assigned task.");
-    expect(prepared.command).toContain("KIMI_MODEL_THINKING_EFFORT='high'");
-    expect(prepared.command).not.toContain("secret-token");
-    // Both env prefixes belong directly in front of kimi, after the brief
-    // install: an assignment placed ahead of `install` would reach that
-    // command instead, and kimi would connect unauthorized.
-    expect(prepared.command).toContain(
-      ` && ${HIVE_CAPABILITY_TOKEN_ENV}="$(cat '${credentialPath("maya")}')" ` +
-        `KIMI_MODEL_THINKING_EFFORT='high' 'kimi'`,
-    );
+    expect(prepared.argv).toEqual([]);
+    // The prompt is installed while preparing the worktree, so the launch
+    // command stays one command and a leading VAR=value assignment reaches it.
+    const agents = join(root, ".kimi-code", "AGENTS.md");
+    expect(await readFile(agents, "utf8")).toBe("You are maya.\n");
+    expect(((await stat(agents)).mode & 0o777).toString(8)).toBe("600");
     const mcp = await readFile(join(root, ".kimi-code", "mcp.json"), "utf8");
     expect(mcp).not.toContain("secret-token");
     expect(mcp).toContain(
@@ -223,78 +189,38 @@ describe("Kimi adapter", () => {
     expect(mcp).toContain("http://127.0.0.1:41000/mcp");
   });
 
-  test("recovery discovery uses state.json creation evidence and refuses ambiguity", async () => {
+  test("protocol runtime preparation writes a turn hook independent of the spawner worktree", async () => {
     const home = await worktree();
-    const target = resolve(join(home, "worktree"));
-    const state = async (
-      session: string,
-      createdAt: string,
-      workDir = target,
-    ) => {
-      const directory = join(home, "sessions", "wd_test", session);
-      await mkdir(directory, { recursive: true });
-      await writeFile(
-        join(directory, "state.json"),
-        JSON.stringify({
-          createdAt,
-          workDir,
-        }),
+    const previousHome = process.env.KIMI_CODE_HOME;
+    process.env.KIMI_CODE_HOME = home;
+    try {
+      await getAgentAdapter("kimi").prepareRuntime({
+        name: "maya",
+        model: "kimi-code/k3",
+        worktreePath: await worktree(),
+        daemonPort: 41000,
+        readOnly: false,
+        dangerous: false,
+        hiveCommand: ["/tmp/deleted-worktree/src/cli.ts"],
+        providerRunId: "11111111-1111-4111-8111-111111111111",
+      });
+      const config = await readFile(join(home, "config.toml"), "utf8");
+      expect(config).toContain(
+        "'bun' '/Users/scottkellar/Projects/hive/src/cli.ts' event turn-end",
       );
-    };
-    await state("session_old", "2026-07-13T11:59:59.000Z");
-    expect(
-      await discoverKimiRecoverySessionId(
-        target,
-        "2026-07-13T12:00:00.000Z",
-        home,
-      ),
-    ).toBeNull();
-
-    await state("session_current", "2026-07-13T12:00:01.000Z");
-    // A session for another worktree is never a candidate.
-    await state(
-      "session_elsewhere",
-      "2026-07-13T12:00:02.000Z",
-      join(home, "other"),
-    );
-    expect(
-      await discoverKimiRecoverySessionId(
-        target,
-        "2026-07-13T12:00:00.000Z",
-        home,
-      ),
-    ).toBe("session_current");
-
-    await state("session_second", "2026-07-13T12:00:03.000Z");
-    expect(
-      discoverKimiRecoverySessionId(target, "2026-07-13T12:00:00.000Z", home),
-    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
-
-    // A state file without a valid creation timestamp is invalid evidence.
-    await rm(join(home, "sessions", "wd_test", "session_second"), {
-      recursive: true,
-    });
-    await mkdir(join(home, "sessions", "wd_test", "session_broken"), {
-      recursive: true,
-    });
-    await writeFile(
-      join(home, "sessions", "wd_test", "session_broken", "state.json"),
-      JSON.stringify({ workDir: target }),
-    );
-    expect(
-      discoverKimiRecoverySessionId(target, "2026-07-13T12:00:00.000Z", home),
-    ).rejects.toMatchObject({
-      name: "RecoverySessionDiscoveryError",
-      reason: "invalid-evidence",
-    });
+      expect(config).not.toContain("/tmp/deleted-worktree");
+    } finally {
+      if (previousHome === undefined) delete process.env.KIMI_CODE_HOME;
+      else process.env.KIMI_CODE_HOME = previousHome;
+    }
   });
 });
 
 describe("read-only containment is reported, never faked", () => {
   /**
    * Kimi has no per-launch deny channel: its only permission surface is the
-   * operator's global config.toml, which Hive must not write (that gate belongs
-   * to the user). So a Hive "read-only" Kimi agent under an operator default of
+   * user's global config.toml, which Hive must not write (that gate belongs
+   * to the user). So a Hive "read-only" Kimi agent under a user default of
    * yolo/auto holds write authority and Hive cannot stop it. The contract Hive
    * CAN keep is refusing to pretend, and these cases pin exactly when it speaks.
    */
@@ -320,7 +246,7 @@ describe("read-only containment is reported, never faked", () => {
     }
   });
 
-  test("reporting the gap never writes the operator's config", async () => {
+  test("reporting the gap never writes the user's config", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-kimi-perm-"));
     try {
       const original = 'default_permission_mode = "yolo"\n';

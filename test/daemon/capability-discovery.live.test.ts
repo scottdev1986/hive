@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import {
-  ClaudeCapabilityProbe,
-  CodexCapabilityProbe,
-} from "../../src/daemon/capability-discovery";
+import { join } from "node:path";
+import { CodexAppServerAdapter } from "../../src/adapters/providers/codex-app-server/runtime-adapter";
+import { ClaudeStreamJsonAdapter } from "../../src/adapters/providers/protocol/claude-runtime-adapter";
 import { CapabilityRecordSchema } from "../../src/schemas/capability";
+import { requireStagedLiveFile } from "../live-prerequisites";
 
 /**
  * Drives the real, signed-in CLIs. Skipped unless HIVE_LIVE_CAPABILITIES=1,
@@ -23,7 +23,8 @@ const suite = live ? describe : describe.skip;
 
 suite("live capability discovery", () => {
   test("claude initialize returns a usable, provenance-stamped menu", async () => {
-    const result = await new ClaudeCapabilityProbe().read();
+    const result = (await new ClaudeStreamJsonAdapter().probe("claude"))
+      .catalog;
     if (result.status !== "ok") {
       throw new Error(`claude discovery unavailable: ${result.reason}`);
     }
@@ -40,7 +41,7 @@ suite("live capability discovery", () => {
   }, 60_000);
 
   test("codex model/list returns the account-visible catalog", async () => {
-    const result = await new CodexCapabilityProbe().read();
+    const result = (await new CodexAppServerAdapter().probe("codex")).catalog;
     if (result.status !== "ok") {
       throw new Error(`codex discovery unavailable: ${result.reason}`);
     }
@@ -62,7 +63,11 @@ suite("live capability discovery", () => {
   }, 60_000);
 
   test("codex config/read answers what an unflagged launch really runs", async () => {
-    const result = await new CodexCapabilityProbe().read();
+    requireStagedLiveFile(
+      "HIVE_LIVE_CODEX_CONFIG_FILE",
+      join(process.env.CODEX_HOME ?? "", "config.toml"),
+    );
+    const result = (await new CodexAppServerAdapter().probe("codex")).catalog;
     if (result.status !== "ok") {
       throw new Error(`codex discovery unavailable: ${result.reason}`);
     }

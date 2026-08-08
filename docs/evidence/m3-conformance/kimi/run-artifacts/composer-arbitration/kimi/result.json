@@ -1,0 +1,104 @@
+{
+  "result": "passed",
+  "vendor": "kimi",
+  "model": "kimi-code/k3",
+  "completedAt": "2026-08-02T14:28:48.621Z",
+  "agent": {
+    "id": "7befef12-5a4b-4583-9dc5-1d841f8d9f4a",
+    "name": "maya",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "7316881bde",
+      "subject": {
+        "kind": "agent",
+        "agentId": "7befef12-5a4b-4583-9dc5-1d841f8d9f4a"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    }
+  },
+  "busyMessage": {
+    "itemId": "mit_019fc2e0-8f47-7000-a70d-2d4ca222fa7b",
+    "lane": "control",
+    "topic": "qa",
+    "outcome": "published",
+    "seq": 1,
+    "mergedCount": 0,
+    "acceptedAt": "2026-08-02T14:28:44.486Z"
+  },
+  "deliveredMessage": {
+    "itemId": "mit_019fc2e0-9794-7000-a5d1-9f26920617e6",
+    "lane": "control",
+    "topic": "qa",
+    "outcome": "published",
+    "seq": 2,
+    "mergedCount": 0,
+    "acceptedAt": "2026-08-02T14:28:46.611Z"
+  },
+  "backlog": {
+    "recipient": "maya",
+    "lanes": {
+      "control": {
+        "available": 2
+      },
+      "work": {
+        "available": 0
+      }
+    },
+    "surface": "store"
+  },
+  "transitions": {
+    "empty": {
+      "profile": "kimi",
+      "present": true,
+      "nonempty": false,
+      "stable": true,
+      "userEditSinceEmpty": false,
+      "userOperationInFlight": false,
+      "claim": false,
+      "invariant": "ok"
+    },
+    "userDraft": {
+      "profile": "kimi",
+      "present": true,
+      "nonempty": true,
+      "stable": true,
+      "userEditSinceEmpty": true,
+      "userOperationInFlight": false,
+      "claim": true,
+      "invariant": "ok"
+    },
+    "busyPreserved": {
+      "profile": "kimi",
+      "present": true,
+      "nonempty": true,
+      "stable": true,
+      "userEditSinceEmpty": true,
+      "userOperationInFlight": false,
+      "claim": true,
+      "invariant": "ok"
+    },
+    "cleared": {
+      "profile": "kimi",
+      "present": true,
+      "nonempty": false,
+      "stable": true,
+      "userEditSinceEmpty": false,
+      "userOperationInFlight": false,
+      "claim": false,
+      "invariant": "ok"
+    },
+    "delivered": {
+      "profile": "kimi",
+      "present": true,
+      "nonempty": false,
+      "stable": true,
+      "userEditSinceEmpty": false,
+      "userOperationInFlight": false,
+      "claim": false,
+      "invariant": "ok"
+    }
+  }
+}

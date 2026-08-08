@@ -1,0 +1,38 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "session/request_permission",
+  "params": {
+    "sessionId": "session_00000000-0000-4000-8000-000000000001",
+    "options": [
+      {
+        "optionId": "q0_opt_0",
+        "name": "alpha",
+        "kind": "allow_once"
+      },
+      {
+        "optionId": "q0_opt_1",
+        "name": "beta",
+        "kind": "allow_once"
+      },
+      {
+        "optionId": "q0_skip",
+        "name": "Skip",
+        "kind": "reject_once"
+      }
+    ],
+    "toolCall": {
+      "toolCallId": "0:tool_00000000000000000000000000",
+      "title": "AskUserQuestion",
+      "content": [
+        {
+          "type": "content",
+          "content": {
+            "type": "text",
+            "text": "Pick one: alpha or beta?"
+          }
+        }
+      ]
+    }
+  }
+}

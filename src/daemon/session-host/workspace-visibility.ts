@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ORCHESTRATOR_NAME } from "../../schemas";
+import { ORCHESTRATOR_NAME } from "../../schemas/agent";
 import {
   type SessionLocator,
   SessionLocatorSchema,
@@ -138,11 +138,6 @@ function sameSource(
   );
 }
 
-/**
- * Hive-owned authority for the Workspace's full terminal inventory. Snapshots
- * are volatile on purpose: after a daemon restart the live Workspace must
- * re-attest its whole UI model before any create or renewal is admitted.
- */
 export class WorkspaceVisibilityAuthority {
   private owner: WorkspaceOwner | null = null;
   private current: WorkspaceVisibilitySnapshot | null = null;
@@ -326,12 +321,7 @@ export class WorkspaceVisibilityAuthority {
     return this.current;
   }
 
-  /** Whether the Workspace that authored the current inventory still verifies
-   * by PID and start token. False with no snapshot, and false when the process
-   * cannot be observed at all — the same fail-closed reading `admit` uses.
-   * Distinguishes "this inventory is unrenewable because its author is gone"
-   * from `admit`'s many other null answers, so the daemon can record *why* it
-   * is letting sessiond expire these hosts. */
+  /** Whether the Workspace that authored the current inventory still verifies by PID and start token. False with no snapshot, and false when the process cannot be observed at all — the same fail-closed reading `admit` uses. Distinguishes "this inventory is unrenewable because its author is gone" from `admit`'s many other null answers, so the daemon can record *why* it is letting sessiond expire these hosts. */
   sourceVerified(): boolean {
     return this.owner !== null && this.sourceIsLive(this.owner);
   }

@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readingsFromKimiUsages } from "../../src/daemon/quota-sources";
 import {
   mkdir,
   mkdtemp,
@@ -13,11 +12,10 @@ import { dirname, join } from "node:path";
 import {
   KimiHttpUsageTransport,
   kimiCredentialsPath,
-} from "../../src/daemon/kimi-usage";
-import {
-  accountBillingFromKimiUsage,
-  readAccountBilling,
-} from "../../src/daemon/usage-credits";
+} from "../../src/usage-service/kimi-usage";
+import { readingsFromKimiUsages } from "../../src/usage-service/quota-sources";
+import { accountBillingFromKimiUsage } from "../../src/usage-service/usage-credits/kimi";
+import { readAccountBilling } from "../../src/usage-service/usage-credits/reader";
 
 /**
  * Kimi's usage surface: GET /usages with the CLI's OAuth credential,
@@ -116,10 +114,10 @@ describe("kimi usage probe", () => {
       (result as { response: unknown }).response,
       new Date(NOW).toISOString(),
     );
-    // The shortest rate window (300 minutes) is the surfaced one: 1%.
+    // The most-used account window is the limiting one: weekly at 40%.
     expect(billing.generalUtilization).toMatchObject({
       state: "known",
-      value: 1,
+      value: 40,
     });
     expect(billing.creditsEnabled).toMatchObject({
       state: "unknown",
@@ -250,14 +248,14 @@ describe("kimi usage probe", () => {
       state: "unknown",
       reason: "malformed",
     });
-    // And a payload with no rate windows at all is field-absent, not 0%.
+    // A weekly-only payload still has a usable account-wide reading.
     const noWindows = accountBillingFromKimiUsage(
       { usage: USAGES_BODY.usage },
       new Date(NOW).toISOString(),
     );
     expect(noWindows.generalUtilization).toMatchObject({
-      state: "unknown",
-      reason: "field-absent",
+      state: "known",
+      value: 40,
     });
   });
 
@@ -272,7 +270,7 @@ describe("kimi usage probe", () => {
         },
       },
     );
-    expect(ok?.generalUtilization).toMatchObject({ state: "known", value: 1 });
+    expect(ok?.generalUtilization).toMatchObject({ state: "known", value: 40 });
 
     const quiet = await readAccountBilling(
       "kimi",

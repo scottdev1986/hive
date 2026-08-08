@@ -1,0 +1,80 @@
+{
+  "sessionId": "session_00000000-0000-4000-8000-000000000001",
+  "configOptions": [
+    {
+      "type": "select",
+      "id": "model",
+      "name": "Model",
+      "category": "model",
+      "currentValue": "kimi-code/k3",
+      "options": [
+        {
+          "value": "kimi-code/kimi-for-coding",
+          "name": "K2.7 Coding"
+        },
+        {
+          "value": "kimi-code/kimi-for-coding-highspeed",
+          "name": "K2.7 Coding Highspeed"
+        },
+        {
+          "value": "kimi-code/k3",
+          "name": "K3"
+        },
+        {
+          "value": "kimi-code/k3-256k",
+          "name": "K3-256k"
+        }
+      ]
+    },
+    {
+      "type": "select",
+      "id": "thinking",
+      "name": "Thinking",
+      "category": "thought_level",
+      "currentValue": "max",
+      "options": [
+        {
+          "value": "low",
+          "name": "Low"
+        },
+        {
+          "value": "high",
+          "name": "High"
+        },
+        {
+          "value": "max",
+          "name": "Max"
+        }
+      ]
+    },
+    {
+      "type": "select",
+      "id": "mode",
+      "name": "Mode",
+      "category": "mode",
+      "currentValue": "default",
+      "options": [
+        {
+          "value": "default",
+          "name": "Default",
+          "description": "Manual approvals; tools execute normally."
+        },
+        {
+          "value": "plan",
+          "name": "Plan",
+          "description": "Read-only planning; no tool execution."
+        },
+        {
+          "value": "auto",
+          "name": "Auto",
+          "description": "Fully autonomous — agent decides everything without asking."
+        },
+        {
+          "value": "yolo",
+          "name": "YOLO",
+          "description": "Auto-approve tool actions, but the agent may still ask questions."
+        }
+      ]
+    }
+  ]
+}

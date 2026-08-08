@@ -2,15 +2,14 @@ import {
   AuthorizedLaunch,
   type LaunchGateChecks,
   type RawLaunchCandidate,
-} from "../../src/daemon/authorized-launch";
-import { QuotaLedger } from "../../src/daemon/quota-ledger";
+} from "../../src/daemon/routing-service/authorized-launch";
+import { QuotaLedger } from "../../src/usage-service/quota-ledger";
 
 const pass = (): null => null;
 const checks: LaunchGateChecks = {
   resolution: pass,
   enablement: pass,
   availability: pass,
-  capabilityFloor: pass,
   effort: (candidate) => ({ effort: candidate.effort, refusal: null }),
 };
 

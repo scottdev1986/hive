@@ -1,0 +1,38 @@
+{
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "51f864cdfa",
+    "subject": {
+      "kind": "agent",
+      "agentId": "a66938d9-3511-4060-b5d9-15d3f43692fe"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc291-0422-7d4e-9db4-415f0293664a",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "outputSeq": "364186",
+  "columns": 80,
+  "rows": 24,
+  "rowStart": 0,
+  "screen": "primary",
+  "cursor": {
+    "row": 23,
+    "column": 1,
+    "visible": false
+  },
+  "text": "  assignmentId/Generation from your brief.\n\n◦ Calling\n  └ hive.hive_update_status({\"assignmentGeneration\":\"1\",\"assignmentId\":\"asg_019f\n        c291-0423-7d8f-9896-8ebaf8cd4f2d\",\"evidenceRefs\":\n        [],\"phase\":\"implementing\",\"summary\":\"Started mailbox protocol execution\n        for david at safe point\",\"progress\":0})\n\n\n  Field 1/1\n  Allow the hive MCP server to run tool \"hive_update_status\"?\n\n  assignmentGeneration: 1\n  assignmentId: asg_019fc291-0423-7d8f-9896-8ebaf8cd4f2d\n  evidenceRefs: []\n\n  › 1. Allow                   Run the tool and continue.\n    2. Allow for this session  Run the tool and remember this choice for this\n                               session.\n    3. Always allow            Run the tool and remember this choice for\n                               future tool calls.\n    4. Cancel                  Cancel this tool call\n  enter to submit | esc to cancel",
+  "styledText": "  \u001b[0m\u001b[38;5;6massignmentId/Generation\u001b[0m from your brief.\r\n\r\n\u001b[0m\u001b[2m◦ \u001b[0m\u001b[1mCalling\u001b[0m\r\n\u001b[0m\u001b[2m  └ \u001b[0m\u001b[38;5;6mhive\u001b[0m.\u001b[0m\u001b[38;5;6mhive_update_status\u001b[0m(\u001b[0m\u001b[2m{\"assignmentGeneration\":\"1\",\"assignmentId\":\"asg_019f\u001b[0m\r\n        \u001b[0m\u001b[2mc291-0423-7d8f-9896-8ebaf8cd4f2d\",\"evidenceRefs\":\u001b[0m\r\n        \u001b[0m\u001b[2m[],\"phase\":\"implementing\",\"summary\":\"Started mailbox protocol execution\u001b[0m\r\n        \u001b[0m\u001b[2mfor david at safe point\",\"progress\":0}\u001b[0m)\r\n\r\n\r\n  \u001b[0m\u001b[2mField 1/1\u001b[0m\r\n  Allow the hive MCP server to run tool \"hive_update_status\"?\r\n\r\n  assignmentGeneration: 1\r\n  assignmentId: asg_019fc291-0423-7d8f-9896-8ebaf8cd4f2d\r\n  evidenceRefs: []\r\n\r\n  \u001b[0m\u001b[1m\u001b[38;5;6m› 1. Allow                   Run the tool and continue.\u001b[0m\r\n    2. Allow for this session  \u001b[0m\u001b[2mRun the tool and remember this choice for this\u001b[0m\r\n                               \u001b[0m\u001b[2msession.\u001b[0m\r\n    3. Always allow            \u001b[0m\u001b[2mRun the tool and remember this choice for\u001b[0m\r\n                               \u001b[0m\u001b[2mfuture tool calls.\u001b[0m\r\n    4. Cancel                  \u001b[0m\u001b[2mCancel this tool call\u001b[0m\r\n  \u001b[0m\u001b[1m\u001b[38;5;6menter to submit\u001b[0m\u001b[2m | esc to cancel\u001b[0m",
+  "truncated": false,
+  "sha256": "6b461b268ed5586b29487d65074abb11249755b5e37e9ae3f989b75c39ca10c3",
+  "composer": {
+    "profile": "codex",
+    "present": false,
+    "nonempty": false,
+    "stable": false,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  }
+}

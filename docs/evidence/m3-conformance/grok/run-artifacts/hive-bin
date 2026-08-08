@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec /Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen/hive "$@"

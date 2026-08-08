@@ -79,38 +79,41 @@ final class CallbackDisciplineTests: XCTestCase {
         XCTAssertEqual(copy, Data([0x01, 0x02, 0x03, 0x04]))
     }
 
-    func testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds() {
+    func testWriteHandlerRunsOnNativeThreadWithoutMainQueueHop() {
         let ctx = BridgeCallbackContext()
         var sawInCallback: Bool?
-        var sawMainThread = false
+        var sawMainThread = true
+        let delivered = expectation(description: "write delivered")
         ctx.onWrite = { _ in
             sawInCallback = ctx.isInCallback
             sawMainThread = Thread.isMainThread
+            delivered.fulfill()
         }
         let bytes: [UInt8] = [1]
-        bytes.withUnsafeBufferPointer { buf in
-            hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
+        DispatchQueue.global(qos: .userInteractive).async {
+            bytes.withUnsafeBufferPointer { buf in
+                hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
+            }
         }
-        XCTAssertNil(sawInCallback, "host delivery must be deferred until the C callback returns")
-        XCTAssertFalse(ctx.isInCallback, "leave() must clear after return")
-        waitUntil { sawInCallback != nil }
-        XCTAssertEqual(sawInCallback, false, "host code must never run inside the C callback scope")
-        XCTAssertTrue(sawMainThread, "all host callback delivery is main-thread confined")
+        wait(for: [delivered], timeout: 1)
+        XCTAssertEqual(sawInCallback, false, "handler must run after the C callback scope ends")
+        XCTAssertFalse(sawMainThread, "input must not bounce through the main queue")
+        waitUntil { !ctx.isInCallback }
+        XCTAssertFalse(ctx.isInCallback)
     }
 
-    func testTeardownDropsDeliveryAlreadyQueuedBeforeFree() {
+    func testTeardownRejectsLaterWriteCallbacks() {
         let ctx = BridgeCallbackContext()
         var deliveries = 0
         ctx.onWrite = { _ in deliveries += 1 }
         let bytes: [UInt8] = [1]
 
+        ctx.beginTeardown()
         bytes.withUnsafeBufferPointer { buf in
             hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
         }
-        ctx.beginTeardown()
-        pumpMainQueue()
 
-        XCTAssertEqual(deliveries, 0, "queued callbacks must self-drop once teardown closes admission")
+        XCTAssertEqual(deliveries, 0, "callbacks must stop once teardown closes admission")
     }
 
     func testTeardownAlsoDropsQueuedRendererHealthDelivery() {
@@ -189,20 +192,19 @@ final class CallbackDisciplineTests: XCTestCase {
         XCTAssertEqual(deliveries, 0, "delivery queued by the completed copy must drop after teardown")
     }
 
-    func testCallbackMayRequestFreeOnlyAfterTrampolineReturns() {
+    func testWriteHandlerRunsAfterTheProtectedCopyScope() {
         let ctx = BridgeCallbackContext()
-        let engine = FakeManualSurface(callbackContext: ctx)
+        var delivered = false
         ctx.onWrite = { _ in
             XCTAssertFalse(ctx.isInCallback)
-            engine.free()
+            delivered = true
         }
         let bytes: [UInt8] = [1]
 
         bytes.withUnsafeBufferPointer { buf in
             hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
         }
-        XCTAssertFalse(engine.freed, "destruction must not re-enter the C callback")
-        waitUntil { engine.freed }
+        XCTAssertTrue(delivered, "write delivery must not wait for a main-queue turn")
     }
 
     func testEventTrampolineABI_isTwoParamStructPointer() {

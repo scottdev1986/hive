@@ -189,7 +189,7 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     request: Readonly<{
       session: SessionRef;
       writer: string;
-      kind: "human" | "automation";
+      kind: "user" | "automation";
       leaseMilliseconds: number;
       idempotencyKey: string;
     }>,

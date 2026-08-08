@@ -2,13 +2,12 @@ import { expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { tempRoot } from "./temp-root";
 
 // This tests the Make wiring rather than the shell scripts it calls. GNU Make
 // 3.81 stats a target once before deciding whether to remake it, so deleting a
@@ -56,7 +55,7 @@ function seedCache(source: Record<string, string>): {
   stamp: string;
   staged: string;
 } {
-  const cache = mkdtempSync(join(tmpdir(), "ghostty-make-wiring-"));
+  const cache = tempRoot("ghostty-make-wiring-");
   const artifact = join(
     cache,
     "artifacts",

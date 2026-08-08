@@ -1,0 +1,147 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "2", "generation": null },
+    "observedAt": "2026-07-30T12:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "contracts": [
+        {
+          "contractId": "contract_018f4f5e-0000-7000-8000-000000000501",
+          "revision": "2",
+          "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+          "owningSpec": {
+            "revision": "4",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "participants": [
+            "node_018f4f5e-0000-7000-8000-000000000104",
+            "node_018f4f5e-0000-7000-8000-000000000105"
+          ],
+          "payloadSchema": { "type": "object" },
+          "behaviorDecisions": ["deliver only through the declared channel"],
+          "compatibilityDecisions": ["schema changes require a new revision"],
+          "artifactRefs": [],
+          "acceptedBy": [
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "agentId": "zoe",
+              "generation": 1
+            },
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+              "agentId": "amy",
+              "generation": 1
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": null, "generation": null },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "2", "generation": null },
+    "observedAt": "2026-07-29T12:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "contracts": [
+        {
+          "contractId": "contract_018f4f5e-0000-7000-8000-000000000501",
+          "revision": "2",
+          "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+          "owningSpec": {
+            "revision": "4",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "participants": [
+            "node_018f4f5e-0000-7000-8000-000000000104",
+            "node_018f4f5e-0000-7000-8000-000000000105"
+          ],
+          "payloadSchema": { "type": "object" },
+          "behaviorDecisions": ["deliver only through the declared channel"],
+          "compatibilityDecisions": ["schema changes require a new revision"],
+          "artifactRefs": [],
+          "acceptedBy": [
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
+              "agentId": "zoe",
+              "generation": 1
+            },
+            {
+              "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
+              "agentId": "amy",
+              "generation": 1
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "2", "generation": null },
+    "observedAt": "2026-07-29T12:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "contracts": []
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": null, "generation": null },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "not-user"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "2", "generation": null },
+    "observedAt": "2026-07-30T12:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "3"
+    },
+    "value": {
+      "contracts": []
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "1", "generation": null },
+    "observedAt": "2026-07-30T11:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": { "revision": "2", "generation": null }
+    },
+    "value": {
+      "contracts": []
+    }
+  }
+]

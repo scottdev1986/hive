@@ -1,0 +1,447 @@
+{
+  "schemaVersion": 1,
+  "runId": "u5-msarbn10-96qvxg",
+  "result": "failed",
+  "startedAt": "2026-08-01T19:21:09.972Z",
+  "completedAt": "2026-08-01T19:22:19.607Z",
+  "artifactRoot": "/private/tmp/hvqa-a/artifacts/u5-terminal-workbench-live/u5-msarbn10-96qvxg",
+  "proof": {
+    "result": "failed",
+    "startedAt": "2026-08-01T19:21:09.972Z",
+    "failedAt": "2026-08-01T19:22:06.969Z",
+    "error": "background draft was not preserved after input attach detached"
+  },
+  "proofError": "background draft was not preserved after input attach detached",
+  "cleanup": {
+    "state": "clean",
+    "exactOwnedNames": {
+      "a5720072-6879-4ad7-bcd7-beef6d009a69": "david",
+      "1d540307-fce5-4bb8-8949-af39d7820033": "sam",
+      "6aac9d3e-a004-4fc7-97c8-18e523f03197": "john",
+      "c0852d2f-afed-4638-9fe6-1f78bbf12bcf": "sarah",
+      "6db59612-f1b6-4c13-ad3c-cebd52c8c15a": "alex"
+    },
+    "results": [
+      {
+        "agentId": "a5720072-6879-4ad7-bcd7-beef6d009a69",
+        "name": "david",
+        "state": "requested",
+        "result": {
+          "agent": {
+            "id": "a5720072-6879-4ad7-bcd7-beef6d009a69",
+            "name": "david",
+            "tool": "claude",
+            "model": "claude-haiku-4-5-20251001",
+            "liveModel": "claude-haiku-4-5-20251001",
+            "category": "simple_coding",
+            "status": "dead",
+            "holdReason": null,
+            "holdResetAt": null,
+            "holdProviderRunId": null,
+            "closedAt": "2026-08-01T19:22:09.372Z",
+            "quotaReservationId": "afed279c-1533-4028-a334-777acadb5256",
+            "executionIdentity": {
+              "tool": "claude",
+              "model": "claude-haiku-4-5-20251001"
+            },
+            "taskDescription": "HIVE_QA_U5_WORKBENCH_u5-msarbn10-96qvxg provider=claude. Wait quietly for a live terminal proof. Do not call tools, modify files, or report completion. Keep the session open until queen stops it.",
+            "worktreePath": null,
+            "branch": null,
+            "sessionLocator": {
+              "schemaVersion": 1,
+              "instanceId": "761fe8fac9",
+              "subject": {
+                "kind": "agent",
+                "agentId": "a5720072-6879-4ad7-bcd7-beef6d009a69"
+              },
+              "generation": 1,
+              "sessionId": "ses_019fbec6-0214-7304-9e50-3c42f302c5c4",
+              "hostKind": "sessiond",
+              "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+            },
+            "toolSessionId": "75372270-d5c4-45ba-b53d-d80944b0276c",
+            "recoveryAttempts": 0,
+            "contextPct": 16,
+            "contextWindow": 200000,
+            "createdAt": "2026-08-01T19:21:15.540Z",
+            "lastEventAt": "2026-08-01T19:22:09.372Z",
+            "capabilityEpoch": 0,
+            "readOnly": true,
+            "writeRevoked": false
+          },
+          "cleaned": {
+            "sessionId": "ses_019fbec6-0214-7304-9e50-3c42f302c5c4",
+            "worktreePath": "/private/tmp/u5p-a/.hive/worktrees/david",
+            "branch": "hive/david-hive-qa-u5-workbench-u5-msarbn"
+          },
+          "reaped": {
+            "killed": [
+              {
+                "pid": 78770,
+                "command": "/Users/scottkellar/Projects/hive/native/sessiond/zig-out/bin/hive-sessiond host"
+              },
+              {
+                "pid": 78771,
+                "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal '/Users/scottkellar/.local/share/claude/versions/2.1.220' '--model' 'claude-haiku-4-5-20251001' '--permission-mode' 'default' '--mcp-config' '/private/tmp/u5p-a/.hive/worktrees/david/.mcp.json' '--strict-mcp-config' '--append-system-prompt-file' '/private/tmp/hvqa-a/runtime/prompts/ses_019fbec6-0214-7304-9e50-3c42f302c5c4.txt' 'Begin the assigned task.'"
+              },
+              {
+                "pid": 78915,
+                "command": "/Users/scottkellar/.local/share/claude/versions/2.1.220 --model claude-haiku-4-5-20251001 --permission-mode default --mcp-config /private/tmp/u5p-a/.hive/worktrees/david/.mcp.json --strict-mcp-config --append-system-prompt-file /private/tmp/hvqa-a/runtime/prompts/ses_019fbec6-0214-7304-9e50-3c42f302c5c4.txt Begin the assigned task."
+              }
+            ],
+            "survivors": []
+          },
+          "preserved": null,
+          "stranded": null
+        }
+      },
+      {
+        "agentId": "1d540307-fce5-4bb8-8949-af39d7820033",
+        "name": "sam",
+        "state": "requested",
+        "result": {
+          "agent": {
+            "id": "1d540307-fce5-4bb8-8949-af39d7820033",
+            "name": "sam",
+            "tool": "codex",
+            "model": "gpt-5.3-codex-spark",
+            "category": "simple_coding",
+            "status": "dead",
+            "holdReason": null,
+            "holdResetAt": null,
+            "holdProviderRunId": null,
+            "closedAt": "2026-08-01T19:22:12.011Z",
+            "quotaReservationId": "bf270316-a8ac-47e0-97a9-e0b8dd1d9bdf",
+            "executionIdentity": {
+              "tool": "codex",
+              "model": "gpt-5.3-codex-spark",
+              "effort": "high"
+            },
+            "taskDescription": "HIVE_QA_U5_WORKBENCH_u5-msarbn10-96qvxg provider=codex. Wait quietly for a live terminal proof. Do not call tools, modify files, or report completion. Keep the session open until queen stops it.",
+            "worktreePath": null,
+            "branch": null,
+            "sessionLocator": {
+              "schemaVersion": 1,
+              "instanceId": "761fe8fac9",
+              "subject": {
+                "kind": "agent",
+                "agentId": "1d540307-fce5-4bb8-8949-af39d7820033"
+              },
+              "generation": 1,
+              "sessionId": "ses_019fbec6-0bd3-7283-bb4d-620de133ff93",
+              "hostKind": "sessiond",
+              "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+            },
+            "toolSessionId": "019fbec6-0dd9-7ec2-b4c5-0974913a12e7",
+            "recoveryAttempts": 0,
+            "contextPct": 11,
+            "createdAt": "2026-08-01T19:21:18.035Z",
+            "lastEventAt": "2026-08-01T19:22:12.011Z",
+            "capabilityEpoch": 0,
+            "readOnly": true,
+            "writeRevoked": false
+          },
+          "cleaned": {
+            "sessionId": "ses_019fbec6-0bd3-7283-bb4d-620de133ff93",
+            "worktreePath": "/private/tmp/u5p-a/.hive/worktrees/sam",
+            "branch": "hive/sam-hive-qa-u5-workbench-u5-msarbn"
+          },
+          "reaped": {
+            "killed": [
+              {
+                "pid": 79055,
+                "command": "/Users/scottkellar/Projects/hive/native/sessiond/zig-out/bin/hive-sessiond host"
+              },
+              {
+                "pid": 79057,
+                "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal install -m 600 '/private/tmp/hvqa-a/runtime/prompts/ses_019fbec6-0bd3-7283-bb4d-620de133ff93.codex.config.toml' '/Users/scottkellar/.codex/hive-ses_019fbec6-0bd3-7283-bb4d-620de133ff93.config.toml' && (trap 'rm -f '\\''/Users/scottkellar/.codex/hive-ses_019fbec6-0bd3-7283-bb4d-620de133ff93.config.toml'\\''' EXIT INT TERM; HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-a/credentials/sam.cap')\" '/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex' '--profile' 'hive-ses_019fbec6-0bd3-7283-bb4d-620de133ff93' '-c' 'features.apps=false' '-c' 'model=gpt-5.3-codex-spark' '-c' 'model_reasoning_effort=high' '--sandbox' 'read-only' '-c' 'projects={\"/private/tmp/u5p-a/.hive/worktrees/sam\"={trust_level=\"trusted\"}}' '--dangerously-bypass-hook-trust' '-c' 'features.hooks=true' '-c' 'hooks.SessionStart=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh session-start\",timeout=5}]}]' '-c' 'hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh turn-start\",timeout=5}]}]' '-c' 'hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh approval-request\",timeout=5}]}]' '-c' 'hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh tool-boundary\",timeout=5}]}]' '-c' 'hooks.Stop=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh turn-end\",timeout=5}]}]' '-c' 'mcp_servers.hive.url=\"http://127.0.0.1:51757/mcp\"' '-c' 'mcp_servers.hive.bearer_token_env_var=\"HIVE_CAPABILITY_TOKEN\"' '-c' 'mcp_servers.idea.enabled=false' '-c' 'mcp_servers.openaiDeveloperDocs.enabled=false' '-c' 'mcp_servers.webstorm.enabled=false' '-c' 'mcp_servers.rustrover.enabled=false' 'Begin the assigned task.')"
+              },
+              {
+                "pid": 79211,
+                "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal install -m 600 '/private/tmp/hvqa-a/runtime/prompts/ses_019fbec6-0bd3-7283-bb4d-620de133ff93.codex.config.toml' '/Users/scottkellar/.codex/hive-ses_019fbec6-0bd3-7283-bb4d-620de133ff93.config.toml' && (trap 'rm -f '\\''/Users/scottkellar/.codex/hive-ses_019fbec6-0bd3-7283-bb4d-620de133ff93.config.toml'\\''' EXIT INT TERM; HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-a/credentials/sam.cap')\" '/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex' '--profile' 'hive-ses_019fbec6-0bd3-7283-bb4d-620de133ff93' '-c' 'features.apps=false' '-c' 'model=gpt-5.3-codex-spark' '-c' 'model_reasoning_effort=high' '--sandbox' 'read-only' '-c' 'projects={\"/private/tmp/u5p-a/.hive/worktrees/sam\"={trust_level=\"trusted\"}}' '--dangerously-bypass-hook-trust' '-c' 'features.hooks=true' '-c' 'hooks.SessionStart=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh session-start\",timeout=5}]}]' '-c' 'hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh turn-start\",timeout=5}]}]' '-c' 'hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh approval-request\",timeout=5}]}]' '-c' 'hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh tool-boundary\",timeout=5}]}]' '-c' 'hooks.Stop=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh turn-end\",timeout=5}]}]' '-c' 'mcp_servers.hive.url=\"http://127.0.0.1:51757/mcp\"' '-c' 'mcp_servers.hive.bearer_token_env_var=\"HIVE_CAPABILITY_TOKEN\"' '-c' 'mcp_servers.idea.enabled=false' '-c' 'mcp_servers.openaiDeveloperDocs.enabled=false' '-c' 'mcp_servers.webstorm.enabled=false' '-c' 'mcp_servers.rustrover.enabled=false' 'Begin the assigned task.')"
+              },
+              {
+                "pid": 79212,
+                "command": "/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex --profile hive-ses_019fbec6-0bd3-7283-bb4d-620de133ff93 -c features.apps=false -c model=gpt-5.3-codex-spark -c model_reasoning_effort=high --sandbox read-only -c projects={\"/private/tmp/u5p-a/.hive/worktrees/sam\"={trust_level=\"trusted\"}} --dangerously-bypass-hook-trust -c features.hooks=true -c hooks.SessionStart=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh session-start\",timeout=5}]}] -c hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh turn-start\",timeout=5}]}] -c hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh approval-request\",timeout=5}]}] -c hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh tool-boundary\",timeout=5}]}] -c hooks.Stop=[{hooks=[{type=\"command\",command=\"/private/tmp/u5p-a/.hive/worktrees/sam/.codex/hive-notify.sh turn-end\",timeout=5}]}] -c mcp_servers.hive.url=\"http://127.0.0.1:51757/mcp\" -c mcp_servers.hive.bearer_token_env_var=\"HIVE_CAPABILITY_TOKEN\" -c mcp_servers.idea.enabled=false -c mcp_servers.openaiDeveloperDocs.enabled=false -c mcp_servers.webstorm.enabled=false -c mcp_servers.rustrover.enabled=false Begin the assigned task."
+              }
+            ],
+            "survivors": []
+          },
+          "preserved": null,
+          "stranded": null
+        }
+      },
+      {
+        "agentId": "6aac9d3e-a004-4fc7-97c8-18e523f03197",
+        "name": "john",
+        "state": "requested",
+        "result": {
+          "agent": {
+            "id": "6aac9d3e-a004-4fc7-97c8-18e523f03197",
+            "name": "john",
+            "tool": "grok",
+            "model": "grok-4.5",
+            "liveModel": "grok-4.5",
+            "category": "simple_coding",
+            "status": "dead",
+            "holdReason": null,
+            "holdResetAt": null,
+            "holdProviderRunId": null,
+            "closedAt": "2026-08-01T19:22:14.493Z",
+            "quotaReservationId": "ec0d49b0-4c91-49d2-b8dd-29244e37d5ce",
+            "executionIdentity": {
+              "tool": "grok",
+              "model": "grok-4.5",
+              "effort": "high",
+              "cliVersion": "0.2.118",
+              "cliBuildHash": "1e1687c1cf6a"
+            },
+            "taskDescription": "HIVE_QA_U5_WORKBENCH_u5-msarbn10-96qvxg provider=grok. Wait quietly for a live terminal proof. Do not call tools, modify files, or report completion. Keep the session open until queen stops it.",
+            "worktreePath": null,
+            "branch": null,
+            "sessionLocator": {
+              "schemaVersion": 1,
+              "instanceId": "761fe8fac9",
+              "subject": {
+                "kind": "agent",
+                "agentId": "6aac9d3e-a004-4fc7-97c8-18e523f03197"
+              },
+              "generation": 1,
+              "sessionId": "ses_019fbec6-157b-77c3-ac0c-2e30b969b67e",
+              "hostKind": "sessiond",
+              "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+            },
+            "toolSessionId": "30ec941f-5378-420f-9a95-1fe7a80a486f",
+            "recoveryAttempts": 0,
+            "contextPct": 1,
+            "createdAt": "2026-08-01T19:21:20.507Z",
+            "lastEventAt": "2026-08-01T19:22:14.493Z",
+            "capabilityEpoch": 0,
+            "readOnly": true,
+            "writeRevoked": false
+          },
+          "cleaned": {
+            "sessionId": "ses_019fbec6-157b-77c3-ac0c-2e30b969b67e",
+            "worktreePath": "/private/tmp/u5p-a/.hive/worktrees/john",
+            "branch": "hive/john-hive-qa-u5-workbench-u5-msarbn"
+          },
+          "reaped": {
+            "killed": [
+              {
+                "pid": 79653,
+                "command": "/Users/scottkellar/Projects/hive/native/sessiond/zig-out/bin/hive-sessiond host"
+              },
+              {
+                "pid": 79656,
+                "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-a/credentials/john.cap')\" GROK_CLAUDE_SKILLS_ENABLED=false GROK_CLAUDE_RULES_ENABLED=false GROK_CLAUDE_AGENTS_ENABLED=false GROK_CLAUDE_MCPS_ENABLED=false GROK_CLAUDE_HOOKS_ENABLED=false GROK_CURSOR_SKILLS_ENABLED=false GROK_CURSOR_RULES_ENABLED=false GROK_CURSOR_AGENTS_ENABLED=false GROK_CURSOR_MCPS_ENABLED=false GROK_CURSOR_HOOKS_ENABLED=false '/opt/homebrew/lib/node_modules/@xai-official/grok/bin/grok' '--no-auto-update' '-m' 'grok-4.5' '--reasoning-effort' 'high' '--deny' 'Bash' '--deny' 'Write' '--deny' 'Edit' '--allow' 'MCPTool' '--allow' 'Read' '--allow' 'Grep' '--session-id' '30ec941f-5378-420f-9a95-1fe7a80a486f' --rules \"$(cat '/private/tmp/hvqa-a/runtime/prompts/ses_019fbec6-157b-77c3-ac0c-2e30b969b67e.txt')\" 'Begin the assigned task.'"
+              },
+              {
+                "pid": 79802,
+                "command": "node /opt/homebrew/lib/node_modules/@xai-official/grok/bin/grok --no-auto-update -m grok-4.5 --reasoning-effort high --deny Bash --deny Write --deny Edit --allow MCPTool --allow Read --allow Grep --session-id 30ec941f-5378-420f-9a95-1fe7a80a486f --rules You are john, a Hive read-only agent.\\012\\012Your task: HIVE_QA_U5_WORKBENCH_u5-msarbn10-96qvxg provider=grok. Wait quietly for a live terminal proof. Do not call tools, modify files, or report completion. Keep the session open until queen stops it.\\012\\012Your file scope is your worktree at /private/tmp/u5p-a/.hive/worktrees/john; do all code and file work there.\\012\\012Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.\\012\\012Your orchestrator is named queen. Users and agents may address it as queen without quotation marks; the synonym \"orchestrator\" remains accepted. Send concise completion reports, blockers, and important findings to queen with hive_send; reference large artifacts instead of pasting them.\\012\\012Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than assigned, stop and report to queen rather than grinding.\\012\\012If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until queen answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.\\012\\012After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.\\012\\012Your assignment: asg_019fbec6-157c-75fe-914a-c97b36536f42 generation 1. Use these exact values with hive_update_status; stale values are rejected so a prior incarnation cannot report for its successor.\\012\\012Coding guidelines (these are not optional; the karpathy-guidelines skill holds the long form):\\0121. Think before coding. State your assumptions; if you are uncertain, ask. If a request has several readings, present them — never pick one silently. If a simpler approach exists, say so and push back. If something is unclear, stop and name it.\\0122. Simplicity first. Write the minimum code that solves the problem and nothing speculative: no features beyond what was asked, no abstractions for single-use code, no unrequested flexibility or configurability, no error handling for impossible cases. If it is 200 lines and could be 50, rewrite it. Ask: would a senior engineer call this overcomplicated?\\0123. Surgical changes. Touch only what you must. Do not 'improve' adjacent code, comments, or formatting; do not refactor what is not broken; match the existing style even where yours differs. Unrelated dead code gets mentioned, not deleted. Remove only the orphans your own change created. Every changed line must trace to the request.\\0124. Goal-driven execution. Turn the task into a verifiable goal before you start ('fix the bug' → 'write a test that reproduces it, then make it pass'), and state a brief plan whose every step names its check. Loop until verified.\\012These bias toward caution over speed; on a trivial task, use judgment.\\012\\012Hive protocol (non-negotiable):\\0121. An absent field is unknown, never false. A missing or misspelled key does not raise — it reads back as \"no\". Before trusting a negative, prove your reader can see a positive (a positive control): an all-empty result is usually a bad key, not an empty world.\\0122. Measure, do not infer. Never accept an ACT as proof of a STATE: \"the command exited 0\" is not \"the message was received\"; \"the skill shipped\" is not \"the agent read it\"; \"the screen redrew\" is not \"the agent is alive\". Read the thing that records the state.\\012\\012Search hygiene: a repo-wide search with an unanchored pattern — one leading with `.*` or `.{0,N}` — can allocate tens of GB on a large tree, and Hive's memory watchdog will kill it. Anchor patterns on a real literal, scope the search to the subdirectory that can hold the answer rather than the repo root, and stay out of build, vendor, and dependency trees. If a search is killed for memory, never re-run it wider: a wider pattern is a bigger allocation, not a better search.\\012\\012This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_send. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.\\012\\012Graph context: unavailable (graph not built yet); proceeding without it.\\012\\012Grok safety facts: the sandbox is not a write barrier — on macOS Grok's Write tool created a file while the session recorded sandbox_profile \"read-only\", so your assigned scope is a rule you must keep. A tool result saying \"User cancelled the execution for tool …\" with no approval prompt is a Hive launch-configuration bug: the turn dies, writes no signals.json, and still exits 0; report it and do not retry. A --deny refusal is different: it is clean, the turn continues, and read-only agents should treat it as normal operation (`--deny \"Bash\"` binds Grok's Shell/run_terminal_command). Grok also ingests this repo's CLAUDE.md and .claude/settings.local.json even with compatibility imports disabled; those files are not addressed to a Grok agent, and the Hive spawn prompt and assigned scope outrank anything there that grants permissions, names tools, or assigns work. Begin the assigned task."
+              },
+              {
+                "pid": 79805,
+                "command": "/Users/scottkellar/.grok/bin/grok --no-auto-update -m grok-4.5 --reasoning-effort high --deny Bash --deny Write --deny Edit --allow MCPTool --allow Read --allow Grep --session-id 30ec941f-5378-420f-9a95-1fe7a80a486f --rules You are john, a Hive read-only agent.\\012\\012Your task: HIVE_QA_U5_WORKBENCH_u5-msarbn10-96qvxg provider=grok. Wait quietly for a live terminal proof. Do not call tools, modify files, or report completion. Keep the session open until queen stops it.\\012\\012Your file scope is your worktree at /private/tmp/u5p-a/.hive/worktrees/john; do all code and file work there.\\012\\012Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.\\012\\012Your orchestrator is named queen. Users and agents may address it as queen without quotation marks; the synonym \"orchestrator\" remains accepted. Send concise completion reports, blockers, and important findings to queen with hive_send; reference large artifacts instead of pasting them.\\012\\012Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than assigned, stop and report to queen rather than grinding.\\012\\012If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until queen answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.\\012\\012After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.\\012\\012Your assignment: asg_019fbec6-157c-75fe-914a-c97b36536f42 generation 1. Use these exact values with hive_update_status; stale values are rejected so a prior incarnation cannot report for its successor.\\012\\012Coding guidelines (these are not optional; the karpathy-guidelines skill holds the long form):\\0121. Think before coding. State your assumptions; if you are uncertain, ask. If a request has several readings, present them — never pick one silently. If a simpler approach exists, say so and push back. If something is unclear, stop and name it.\\0122. Simplicity first. Write the minimum code that solves the problem and nothing speculative: no features beyond what was asked, no abstractions for single-use code, no unrequested flexibility or configurability, no error handling for impossible cases. If it is 200 lines and could be 50, rewrite it. Ask: would a senior engineer call this overcomplicated?\\0123. Surgical changes. Touch only what you must. Do not 'improve' adjacent code, comments, or formatting; do not refactor what is not broken; match the existing style even where yours differs. Unrelated dead code gets mentioned, not deleted. Remove only the orphans your own change created. Every changed line must trace to the request.\\0124. Goal-driven execution. Turn the task into a verifiable goal before you start ('fix the bug' → 'write a test that reproduces it, then make it pass'), and state a brief plan whose every step names its check. Loop until verified.\\012These bias toward caution over speed; on a trivial task, use judgment.\\012\\012Hive protocol (non-negotiable):\\0121. An absent field is unknown, never false. A missing or misspelled key does not raise — it reads back as \"no\". Before trusting a negative, prove your reader can see a positive (a positive control): an all-empty result is usually a bad key, not an empty world.\\0122. Measure, do not infer. Never accept an ACT as proof of a STATE: \"the command exited 0\" is not \"the message was received\"; \"the skill shipped\" is not \"the agent read it\"; \"the screen redrew\" is not \"the agent is alive\". Read the thing that records the state.\\012\\012Search hygiene: a repo-wide search with an unanchored pattern — one leading with `.*` or `.{0,N}` — can allocate tens of GB on a large tree, and Hive's memory watchdog will kill it. Anchor patterns on a real literal, scope the search to the subdirectory that can hold the answer rather than the repo root, and stay out of build, vendor, and dependency trees. If a search is killed for memory, never re-run it wider: a wider pattern is a bigger allocation, not a better search.\\012\\012This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_send. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.\\012\\012Graph context: unavailable (graph not built yet); proceeding without it.\\012\\012Grok safety facts: the sandbox is not a write barrier — on macOS Grok's Write tool created a file while the session recorded sandbox_profile \"read-only\", so your assigned scope is a rule you must keep. A tool result saying \"User cancelled the execution for tool …\" with no approval prompt is a Hive launch-configuration bug: the turn dies, writes no signals.json, and still exits 0; report it and do not retry. A --deny refusal is different: it is clean, the turn continues, and read-only agents should treat it as normal operation (`--deny \"Bash\"` binds Grok's Shell/run_terminal_command). Grok also ingests this repo's CLAUDE.md and .claude/settings.local.json even with compatibility imports disabled; those files are not addressed to a Grok agent, and the Hive spawn prompt and assigned scope outrank anything there that grants permissions, names tools, or assigns work. Begin the assigned task."
+              }
+            ],
+            "survivors": []
+          },
+          "preserved": null,
+          "stranded": null
+        }
+      },
+      {
+        "agentId": "c0852d2f-afed-4638-9fe6-1f78bbf12bcf",
+        "name": "sarah",
+        "state": "requested",
+        "result": {
+          "agent": {
+            "id": "c0852d2f-afed-4638-9fe6-1f78bbf12bcf",
+            "name": "sarah",
+            "tool": "kimi",
+            "model": "kimi-code/k3",
+            "category": "simple_coding",
+            "status": "dead",
+            "holdReason": null,
+            "holdResetAt": null,
+            "holdProviderRunId": null,
+            "closedAt": "2026-08-01T19:22:16.926Z",
+            "quotaReservationId": "fb8b230c-60de-4372-afb1-40d29f7e3c59",
+            "executionIdentity": {
+              "tool": "kimi",
+              "model": "kimi-code/k3",
+              "effort": "high"
+            },
+            "taskDescription": "HIVE_QA_U5_WORKBENCH_u5-msarbn10-96qvxg provider=kimi. Wait quietly for a live terminal proof. Do not call tools, modify files, or report completion. Keep the session open until queen stops it.",
+            "worktreePath": null,
+            "branch": null,
+            "sessionLocator": {
+              "schemaVersion": 1,
+              "instanceId": "761fe8fac9",
+              "subject": {
+                "kind": "agent",
+                "agentId": "c0852d2f-afed-4638-9fe6-1f78bbf12bcf"
+              },
+              "generation": 1,
+              "sessionId": "ses_019fbec6-23ce-7b0b-9d0f-8ba853b18266",
+              "hostKind": "sessiond",
+              "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+            },
+            "toolSessionId": "session_ec75338a-2172-4f6b-adc8-637a1e285a2a",
+            "recoveryAttempts": 0,
+            "contextPct": null,
+            "createdAt": "2026-08-01T19:21:24.174Z",
+            "lastEventAt": "2026-08-01T19:22:16.926Z",
+            "capabilityEpoch": 0,
+            "readOnly": true,
+            "writeRevoked": false
+          },
+          "cleaned": {
+            "sessionId": "ses_019fbec6-23ce-7b0b-9d0f-8ba853b18266",
+            "worktreePath": "/private/tmp/u5p-a/.hive/worktrees/sarah",
+            "branch": "hive/sarah-hive-qa-u5-workbench-u5-msarbn"
+          },
+          "reaped": {
+            "killed": [
+              {
+                "pid": 80353,
+                "command": "/Users/scottkellar/Projects/hive/native/sessiond/zig-out/bin/hive-sessiond host"
+              },
+              {
+                "pid": 80357,
+                "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal mkdir -p .kimi-code && install -m 600 '/private/tmp/hvqa-a/runtime/prompts/ses_019fbec6-23ce-7b0b-9d0f-8ba853b18266.txt' '.kimi-code/AGENTS.md' && HIVE_AGENT_NAME='sarah' HIVE_DAEMON_PORT='51757' HIVE_INSTANCE_ID='761fe8fac9' HIVE_PROVIDER_RUN_ID='931297e5-ab82-46c6-adea-b8b2f16158b7' HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-a/credentials/sarah.cap')\" KIMI_MODEL_THINKING_EFFORT='high' '/Users/scottkellar/.kimi-code/bin/kimi' '-m' 'kimi-code/k3'"
+              },
+              {
+                "pid": 80505,
+                "command": "kimi-code"
+              }
+            ],
+            "survivors": []
+          },
+          "preserved": null,
+          "stranded": null
+        }
+      },
+      {
+        "agentId": "6db59612-f1b6-4c13-ad3c-cebd52c8c15a",
+        "name": "alex",
+        "state": "requested",
+        "result": {
+          "agent": {
+            "id": "6db59612-f1b6-4c13-ad3c-cebd52c8c15a",
+            "name": "alex",
+            "tool": "opencode",
+            "model": "opencode/deepseek-v4-flash-free",
+            "category": "simple_coding",
+            "status": "dead",
+            "holdReason": null,
+            "holdResetAt": null,
+            "holdProviderRunId": null,
+            "closedAt": "2026-08-01T19:22:19.343Z",
+            "quotaReservationId": "29cc845e-bccd-4904-9789-be4ab1033407",
+            "executionIdentity": {
+              "tool": "opencode",
+              "model": "opencode/deepseek-v4-flash-free"
+            },
+            "taskDescription": "HIVE_QA_U5_WORKBENCH_u5-msarbn10-96qvxg provider=opencode. Wait quietly for a live terminal proof. Do not call tools, modify files, or report completion. Keep the session open until queen stops it.",
+            "worktreePath": null,
+            "branch": null,
+            "sessionLocator": {
+              "schemaVersion": 1,
+              "instanceId": "761fe8fac9",
+              "subject": {
+                "kind": "agent",
+                "agentId": "6db59612-f1b6-4c13-ad3c-cebd52c8c15a"
+              },
+              "generation": 1,
+              "sessionId": "ses_019fbec6-329c-7ad6-8444-591482bb14c8",
+              "hostKind": "sessiond",
+              "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+            },
+            "toolSessionId": "ses_04139b7e5ffeyAbVDvrD3xigei",
+            "recoveryAttempts": 0,
+            "contextPct": null,
+            "createdAt": "2026-08-01T19:21:27.964Z",
+            "lastEventAt": "2026-08-01T19:22:19.343Z",
+            "capabilityEpoch": 0,
+            "readOnly": true,
+            "writeRevoked": false
+          },
+          "cleaned": {
+            "sessionId": "ses_019fbec6-329c-7ad6-8444-591482bb14c8",
+            "worktreePath": "/private/tmp/u5p-a/.hive/worktrees/alex",
+            "branch": "hive/alex-hive-qa-u5-workbench-u5-msarbn"
+          },
+          "reaped": {
+            "killed": [
+              {
+                "pid": 80721,
+                "command": "/Users/scottkellar/Projects/hive/native/sessiond/zig-out/bin/hive-sessiond host"
+              },
+              {
+                "pid": 80722,
+                "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-a/credentials/alex.cap')\" '/Users/scottkellar/.opencode/bin/opencode' '-m' 'opencode/deepseek-v4-flash-free' '--agent' 'hive' '--prompt' 'Begin the assigned task.'"
+              },
+              {
+                "pid": 80920,
+                "command": "/Users/scottkellar/.opencode/bin/opencode -m opencode/deepseek-v4-flash-free --agent hive --prompt Begin the assigned task."
+              }
+            ],
+            "survivors": []
+          },
+          "preserved": null,
+          "stranded": null
+        }
+      }
+    ],
+    "projectRestored": true,
+    "terminalReadback": true,
+    "projectReadback": {
+      "head": "31fdbe3376ecf23cc2d10dcaae7ce2416a442532",
+      "status": "?? .gitignore\n?? .hive/",
+      "worktrees": "worktree /private/tmp/u5p-a\nHEAD 31fdbe3376ecf23cc2d10dcaae7ce2416a442532\nbranch refs/heads/main"
+    }
+  },
+  "routingRestore": {
+    "state": "restored",
+    "initialRevision": 19,
+    "finalRevision": 45,
+    "routeRestored": true,
+    "providersRestored": true,
+    "residualUnconfiguredRows": [
+      {
+        "provider": "codex",
+        "model": "gpt-5.3-codex-spark",
+        "effort": {
+          "mode": "never-configured"
+        }
+      },
+      {
+        "provider": "grok",
+        "model": "grok-4.5",
+        "effort": {
+          "mode": "never-configured"
+        }
+      },
+      {
+        "provider": "kimi",
+        "model": "kimi-code/k3",
+        "effort": {
+          "mode": "never-configured"
+        }
+      },
+      {
+        "provider": "opencode",
+        "model": "opencode/deepseek-v4-flash-free",
+        "effort": {
+          "mode": "never-configured"
+        }
+      }
+    ]
+  },
+  "limitations": [
+    "Stop Provider is unmeasured until its production control endpoint exists.",
+    "Terminate Terminal is unmeasured until its production control endpoint exists.",
+    "Workspace viewer SIGKILL is unmeasured until the production app drives this harness."
+  ]
+}

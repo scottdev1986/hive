@@ -1,0 +1,98 @@
+{
+  "runtime": "codex-cli 0.146.0",
+  "rule": "Every steady-state status dimension has a measured source or a researched known-absence owner.",
+  "dimensions": {
+    "runtime": {
+      "source": [
+        "initialize response",
+        "child process exit",
+        "App Server pipe closure"
+      ],
+      "schema": "src/adapters/providers/codex-app-server/generated/0.146.0/InitializeResponse.ts",
+      "implementation": "src/adapters/providers/codex-app-server/jsonl-rpc.ts",
+      "liveProof": "conformance-0.146.0.json steps 1 and 8; processAudit",
+      "steadyStateUnknown": false
+    },
+    "turn": {
+      "source": [
+        "turn/started",
+        "turn/completed",
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+        "item/permissions/requestApproval"
+      ],
+      "schema": [
+        "src/adapters/providers/codex-app-server/generated/0.146.0/ServerNotification.ts",
+        "src/adapters/providers/codex-app-server/generated/0.146.0/ServerRequest.ts"
+      ],
+      "liveProof": "conformance-0.146.0.json steps 3, 4, and 5",
+      "steadyStateUnknown": false
+    },
+    "input": {
+      "source": "Hive composer and durable outbound journal",
+      "codexReportsComposerState": false,
+      "absenceProof": "The generated 0.146.0 ServerNotification and ServerRequest unions contain no editor, selection, IME, composer, or draft events. Codex first observes input at turn/start.params.input; the frontend remains authoritative before submission.",
+      "schema": [
+        "src/adapters/providers/codex-app-server/generated/0.146.0/ServerNotification.ts",
+        "src/adapters/providers/codex-app-server/generated/0.146.0/ServerRequest.ts",
+        "src/adapters/providers/codex-app-server/generated/0.146.0/v2/TurnStartParams.ts"
+      ],
+      "steadyStateUnknown": false
+    },
+    "mail": {
+      "source": "Hive daemon mailbox ledger",
+      "codexReportsMailState": false,
+      "absenceProof": "The generated 0.146.0 client/server method unions contain no Hive mailbox methods. Mail is intentionally orthogonal to the vendor runtime and is daemon-measured for every provider.",
+      "schema": [
+        "src/adapters/providers/codex-app-server/generated/0.146.0/ClientRequest.ts",
+        "src/adapters/providers/codex-app-server/generated/0.146.0/ServerNotification.ts"
+      ],
+      "steadyStateUnknown": false
+    },
+    "health": {
+      "source": [
+        "successful initialize handshake",
+        "timestamped normalized events",
+        "App Server pipe closure",
+        "child process exit"
+      ],
+      "codexReportsHeartbeat": false,
+      "absenceProof": "The generated 0.146.0 method unions expose no ping or heartbeat. Hive therefore measures ready from the handshake, freshness from event timestamps, and disconnected/exited from pipe and process termination; it does not invent a vendor heartbeat.",
+      "liveProof": "conformance-0.146.0.json eventKinds and processAudit",
+      "steadyStateUnknown": false
+    },
+    "attention": {
+      "source": [
+        "approval-waiting",
+        "elicitation-settled",
+        "turn-failed",
+        "runtime-disconnected"
+      ],
+      "schema": [
+        "src/adapters/providers/codex-app-server/generated/0.146.0/ServerRequest.ts",
+        "src/adapters/providers/codex-app-server/generated/0.146.0/v2/TurnCompletedNotification.ts"
+      ],
+      "liveProof": "conformance-0.146.0.json steps 4, 5, and 8",
+      "steadyStateUnknown": false
+    },
+    "contextUsage": {
+      "source": "thread/tokenUsage/updated",
+      "schema": "src/adapters/providers/codex-app-server/generated/0.146.0/v2/ThreadTokenUsageUpdatedNotification.ts",
+      "calculation": "tokenUsage.total.totalTokens / tokenUsage.modelContextWindow; input/output tokens come from tokenUsage.last. A null context window is a reported absence, never zero.",
+      "liveProof": "conformance-0.146.0.json eventKinds contains usage-updated",
+      "steadyStateUnknown": false
+    }
+  },
+  "boundedTransitions": {
+    "approval": "Five-minute default deadline; expiry responds with the least privilege decision and emits elicitation-settled=deny.",
+    "transportDrop": "Pending request acknowledgements become delivery_unknown, while runtime and health immediately become disconnected. Reconnect performs initialize plus thread/resume without resubmitting the prompt.",
+    "unrecognizedVendorEvent": "Retained as unrecognized diagnostic data and never used as lifecycle state."
+  },
+  "optionalCapabilities": {
+    "questions": "unsupported by this adapter; 0.146.0 has item/tool/requestUserInput but P4 exposes no answer method through ProviderSession",
+    "modeCatalog": "unsupported by this adapter; collaborationMode/list is outside the P4 command and session contract",
+    "fork": "unsupported by P4; thread/fork exists in schema but is outside the first-release common boundary",
+    "steering": "unsupported by the first release per the design non-goal; turn/steer is never called"
+  },
+  "zeroSteadyStateUnknowns": true
+}

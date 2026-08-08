@@ -1,40 +1,19 @@
-/**
- * The passive update notice, conventional CLI shape: one dim line at the END of a
- * user-facing command, never at the start, never in the way.
- *
- * The check starts when the command starts and runs concurrently, so a warm
- * cache costs nothing and a cold one overlaps the command's own work; its
- * network budget is short enough that even `hive status` on an offline
- * machine is not held hostage. Rendering, dismissal, the 24-hour display
- * rate limit, and the security-release bypass all live in
- * src/update/notice.ts — this module only decides *when* to ask and *where*
- * the "last shown" timestamp lives, and prints whatever the renderer says.
- *
- * Workspace launch commands (bare `hive`, claude, codex, grok) are excluded:
- * they already print the richer start notice through startSession. Init is a
- * repo-only setup command and does not start a session. Machine-facing commands
- * (hooks, helpers and hidden process boundaries) never speak at all.
- */
+/** The passive update notice, conventional CLI shape: one dim line at the END of a user-facing command, never at the start, never in the way. The check starts when the command starts and runs concurrently, so a warm cache costs nothing and a cold one overlaps the command's own work; its network budget is short enough that even `hive status` on an offline machine is not held hostage. Rendering, dismissal, the 24-hour display rate limit, and the security-release bypass all live in src/update-service/notice.ts — this module only decides *when* to ask and *where* the "last shown" timestamp lives, and prints whatever the renderer says. Workspace launch commands (bare `hive` and all five vendor names) are excluded: they already print the richer start notice through startSession. Init is a repo-only setup command and does not start a session. Machine-facing commands (hooks, helpers and hidden process boundaries) never speak at all. */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { getHiveHome } from "../daemon/db";
+import { getHiveHome } from "../hive-home/home";
 import {
   checkForUpdate,
   fetchLatestFromGitHub,
   readUpdateCache,
   type UpdateCheck,
-} from "../update/check";
-import { renderUpdateNotice } from "../update/notice";
-import { detectInstallMethod } from "../update/paths";
+} from "../update-service/check";
+import { renderUpdateNotice } from "../update-service/notice";
+import { systemNow } from "../shared/clock";
+import { detectInstallMethod } from "../update-service/paths";
 
-/** How long the end-of-command check may spend on the network. A miss is not
- * an error: the result lands in the on-disk cache and the next command shows
- * it instantly. */
 export const NOTICE_NETWORK_BUDGET_MS = 300;
 
-/** Commands that earn the trailing notice. Everything else is either a
- * session boundary (start notice already printed), the updater itself, or a
- * machine-facing surface where a version line would corrupt a protocol. */
 const USER_FACING_COMMANDS = new Set([
   "status",
   "quota",
@@ -46,10 +25,7 @@ const USER_FACING_COMMANDS = new Set([
   "recover",
 ]);
 
-/** Where the "last shown" timestamp lives. Deliberately not inside
- * update-check.json: that file records what we know about releases, this one
- * records when we last interrupted the user, and they change on different
- * schedules. */
+/** Where the "last shown" timestamp lives. Deliberately not inside update-check.json: that file records what we know about releases, this one records when we last interrupted the user, and they change on different schedules. */
 export const noticeStatePath = (): string =>
   join(getHiveHome(), "update-notice.json");
 
@@ -70,13 +46,9 @@ export function writeLastNoticeAt(
   try {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${JSON.stringify({ lastNoticeAt })}\n`);
-  } catch {
-    // A read-only home loses the rate-limit marker, not the command.
-  }
+  } catch {}
 }
 
-/** Whether this invocation gets a trailing notice at all: an allowlisted
- * user-facing command, on a real terminal, outside CI. */
 export function wantsUpdateNotice(
   argv: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -93,9 +65,7 @@ export interface UpdateNoticeDeps {
   readonly statePath?: string;
 }
 
-/** The check with its network budget clamped: the same on-disk cache
- * checkForUpdate always maintains, but a cold fetch aborts fast instead of
- * keeping the process alive after the command has finished. */
+/** The check with its network budget clamped: the same on-disk cache checkForUpdate always maintains, but a cold fetch aborts fast instead of keeping the process alive after the command has finished. */
 const budgetedFetch = ((input, init) =>
   fetch(input, {
     ...init,
@@ -105,16 +75,15 @@ const budgetedFetch = ((input, init) =>
 const budgetedCheck = (): Promise<UpdateCheck> =>
   checkForUpdate({
     fetchLatest: () => fetchLatestFromGitHub(undefined, budgetedFetch),
-    now: () => Date.now(),
+    now: systemNow,
   });
 
-/** Resolve the notice line, or null for silence. Never rejects: a failed or
- * timed-out check is indistinguishable from "nothing to say". */
+/** Resolve the notice line, or null for silence. Never rejects: a failed or timed-out check is indistinguishable from "nothing to say". */
 export async function resolveUpdateNotice(
   deps: UpdateNoticeDeps = {},
 ): Promise<string | null> {
   try {
-    const now = (deps.now ?? Date.now)();
+    const now = (deps.now ?? systemNow)();
     const statePath = deps.statePath ?? noticeStatePath();
     const check = await (deps.check ?? budgetedCheck)();
     const line = renderUpdateNotice({
@@ -133,9 +102,7 @@ export async function resolveUpdateNotice(
   }
 }
 
-/** Run a command with the notice check alongside it, printing only after the
- * command finishes — and only when it finishes normally. A failed command's
- * error is the last thing the user reads, not a version advertisement. */
+/** Run a command with the notice check alongside it, printing only after the command finishes — and only when it finishes normally. A failed command's error is the last thing the user reads, not a version advertisement. */
 export async function withTrailingUpdateNotice<T>(
   enabled: boolean,
   run: () => Promise<T>,

@@ -13,15 +13,12 @@ final class SessiondPaneInputFocusTests: XCTestCase {
         let controller = ProjectWindowController(
             state: state,
             attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp",
             hivePath: "/usr/bin/false",
             daemonPort: 1,
-            orchestrator: "claude",
-            instanceID: "instance",
             instanceHome: "/tmp")
         controller.window?.isReleasedWhenClosed = false
         defer { controller.close() }
-        controller.bootstrapOrchestrator()
+        controller.prepareInitialLayout()
         func locator(generation: Int) -> AgentSessionLocator {
             AgentSessionLocator(
                 instanceId: "instance",
@@ -69,7 +66,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
                      "a relaunched root must detach the stale generation renderer")
     }
 
-    func testFocusedSessiondPaneRoutesRealKeyEventThroughClaimAndOutput() throws {
+    func testFocusedSessiondPaneRoutesRealKeyEventDirectlyAndAppliesOutput() throws {
         _ = NSApplication.shared
         let buildID = HiveTerminalEngineIdentity.current.buildId
         XCTAssertFalse(buildID.isEmpty)
@@ -78,16 +75,13 @@ final class SessiondPaneInputFocusTests: XCTestCase {
         let controller = ProjectWindowController(
             state: state,
             attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp",
             hivePath: "/usr/bin/false",
             daemonPort: 1,
-            orchestrator: "claude",
-            instanceID: "instance",
             instanceHome: "/tmp"
         )
         controller.window?.isReleasedWhenClosed = false
         defer { controller.close() }
-        controller.bootstrapOrchestrator()
+        controller.prepareInitialLayout()
 
         let paneID = ProjectState.paneID(forAgent: "aria")
         let locator = AgentSessionLocator(
@@ -140,7 +134,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
                 engineBuildId: buildID,
                 checkpointSeq: 0,
                 outputSeq: 0,
-                operations: ["view", "human-input", "resize"]
+                operations: ["view", "user-input", "resize"]
             ),
             geometry: TerminalGeometry(
                 columns: 80,
@@ -188,53 +182,18 @@ final class SessiondPaneInputFocusTests: XCTestCase {
         window.sendEvent(keyEvent)
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
-        let claim = try XCTUnwrap(transport.sent.last { $0.type == .claimAcquire })
-        terminal.pumpHostFrame(
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: claim.requestId,
-                payload: try FrameCodec.jsonPayload([
-                    "schemaVersion": 1,
-                    "result": [
-                        "state": "granted",
-                        "claim": ["token": "focus-claim"],
-                    ],
-                ])
-            ),
-            frameBinding: binding
-        )
         let inputDeadline = Date().addingTimeInterval(1)
-        while !transport.sent.contains(where: { $0.type == .inputSubmit }),
+        while !transport.sent.contains(where: { $0.type == .userInput }),
               Date() < inputDeadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
 
-        let input = try XCTUnwrap(transport.sent.last { $0.type == .inputSubmit })
-        let inputObject = try FrameCodec.parseJSONObject(input.payload)
-        let operation = try XCTUnwrap(inputObject["operation"] as? [String: Any])
-        XCTAssertEqual(
-            Data(base64Encoded: try XCTUnwrap(operation["bytes"] as? String)),
-            Data("x".utf8)
-        )
+        let input = try XCTUnwrap(transport.sent.last { $0.type == .userInput })
+        XCTAssertEqual(input.payload, Data("x".utf8))
+        XCTAssertEqual(input.requestId, 0)
+        XCTAssertFalse(transport.sent.contains { $0.type == .claimAcquire })
+        XCTAssertFalse(transport.sent.contains { $0.type == .inputSubmit })
 
-        let transactionID = try XCTUnwrap(inputObject["transactionId"] as? String)
-        terminal.pumpHostFrame(
-            WireFrame(
-                type: .applied,
-                flags: [.response, .final],
-                requestId: input.requestId,
-                payload: try FrameCodec.jsonPayload([
-                    "schemaVersion": 1,
-                    "resultKind": "input",
-                    "receipt": [
-                        "transactionId": transactionID,
-                        "stage": "written-to-terminal",
-                    ],
-                ])
-            ),
-            frameBinding: binding
-        )
         let beforeOutput = terminal.highWater
         terminal.pumpHostFrame(
             WireFrame(
@@ -246,10 +205,6 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             frameBinding: binding
         )
 
-        XCTAssertEqual(
-            terminal.inputSubmissionState,
-            .applied(transactionId: transactionID, stage: "written-to-terminal")
-        )
         XCTAssertGreaterThan(terminal.highWater, beforeOutput)
     }
 

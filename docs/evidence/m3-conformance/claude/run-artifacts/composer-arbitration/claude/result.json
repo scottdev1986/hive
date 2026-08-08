@@ -1,0 +1,48 @@
+{
+  "result": "failed",
+  "vendor": "claude",
+  "startedAt": "2026-08-02T13:12:34.583Z",
+  "completedAt": "2026-08-02T13:12:40.332Z",
+  "error": "publishing changed a user's composer: {\n  \"before\": {\n    \"profile\": \"claude\",\n    \"present\": true,\n    \"nonempty\": true,\n    \"stable\": true,\n    \"userEditSinceEmpty\": true,\n    \"userOperationInFlight\": false,\n    \"claim\": true,\n    \"invariant\": \"ok\"\n  },\n  \"after\": {\n    \"profile\": \"claude\",\n    \"present\": true,\n    \"nonempty\": true,\n    \"stable\": true,\n    \"userEditSinceEmpty\": true,\n    \"userOperationInFlight\": false,\n    \"claim\": true,\n    \"invariant\": \"ok\"\n  }\n}\n",
+  "agent": {
+    "id": "039a446a-1474-4c9d-90b7-33c052040e82",
+    "name": "maya",
+    "tool": "claude",
+    "model": "claude-haiku-4-5-20251001",
+    "category": "simple_coding",
+    "status": "working",
+    "holdReason": null,
+    "holdResetAt": null,
+    "holdProviderRunId": null,
+    "quotaReservationId": "24f45ae2-b49c-4d89-88ee-2b1affc8f2ba",
+    "executionIdentity": {
+      "tool": "claude",
+      "model": "claude-haiku-4-5-20251001"
+    },
+    "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+    "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya",
+    "branch": "hive/maya-wait-quietly-for-a-terminal-de",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "f4b6c72bae",
+      "subject": {
+        "kind": "agent",
+        "agentId": "039a446a-1474-4c9d-90b7-33c052040e82"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc29a-d9b7-7c49-9393-564b536a78ef",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    },
+    "toolSessionId": "c2260ed6-0621-4566-9622-86d689012390",
+    "recoveryAttempts": 0,
+    "contextPct": null,
+    "contextWindow": 200000,
+    "createdAt": "2026-08-02T13:12:36.023Z",
+    "lastEventAt": "2026-08-02T13:12:37.145Z",
+    "capabilityEpoch": 0,
+    "readOnly": true,
+    "writeRevoked": false,
+    "graphifyCalls": null
+  }
+}

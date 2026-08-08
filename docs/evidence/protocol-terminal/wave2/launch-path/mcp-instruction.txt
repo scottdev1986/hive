@@ -1,0 +1,1 @@
+Follow the user's request. You may call the one read-only Hive status tool they name, then answer exactly as requested.

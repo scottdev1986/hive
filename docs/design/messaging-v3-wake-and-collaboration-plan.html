@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Messaging v3 — protocol terminal &amp; guaranteed wake</title>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#f3f5f8;--panel:#fff;--panel2:#f8fafc;--ink:#111827;--sub:#556274;
+  --muted:#7c8797;--line:#dce2ea;--blue:#3976e6;--cyan:#1da3b2;
+  --green:#16865d;--amber:#b77916;--red:#cb3f52;--purple:#7957d5;
+  --shadow:0 16px 44px rgba(31,45,66,.08);
+  --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;--bg:#090d14;--panel:#111722;--panel2:#0d131d;--ink:#f2f5fa;
+  --sub:#b5bfce;--muted:#7e8999;--line:#273142;--blue:#73a1ff;--cyan:#56cad4;
+  --green:#55c996;--amber:#efba5b;--red:#ff7f91;--purple:#ad92ff;
+  --shadow:0 18px 54px rgba(0,0,0,.28);
+}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#090d14;--panel:#111722;--panel2:#0d131d;--ink:#f2f5fa;--sub:#b5bfce;--muted:#7e8999;--line:#273142;--blue:#73a1ff;--cyan:#56cad4;--green:#55c996;--amber:#efba5b;--red:#ff7f91;--purple:#ad92ff;--shadow:0 18px 54px rgba(0,0,0,.28)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;overflow-x:hidden;background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{width:100%;min-width:0;max-width:1160px;margin:auto;padding:30px 24px 100px}.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:50px}.brand{font-weight:750;letter-spacing:-.02em}.theme{border:1px solid var(--line);border-radius:999px;background:var(--panel);color:var(--sub);padding:7px 13px;cursor:pointer}
+.hero{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);gap:30px;align-items:center;margin-bottom:34px}.hero>*{min-width:0}.eyebrow,.label{color:var(--blue);font-size:12px;text-transform:uppercase;letter-spacing:.12em;font-weight:750}.hero h1{font-size:clamp(38px,6vw,68px);line-height:1.02;letter-spacing:-.055em;margin:10px 0 22px;max-width:13ch}.lede{font-size:19px;line-height:1.55;color:var(--sub);max-width:64ch}.decision{padding:24px;border:1px solid color-mix(in srgb,var(--blue) 35%,var(--line));border-radius:18px;background:linear-gradient(145deg,color-mix(in srgb,var(--blue) 8%,var(--panel)),var(--panel));box-shadow:var(--shadow)}.decision h2{font-size:18px;margin:0 0 14px}.decision ul{padding-left:19px;margin:0;color:var(--sub)}.decision li{margin:8px 0}.bad{color:var(--red);font-weight:700}.good{color:var(--green);font-weight:700}
+.vendors{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:32px 0 58px}.vendor{min-width:0;padding:14px;border:1px solid var(--line);background:var(--panel);border-radius:15px}.vhead{display:flex;align-items:center;gap:10px}.mark{display:grid;place-items:center;width:35px;height:35px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);flex:none}.mark svg{width:22px;height:22px;fill:currentColor}.vendor b{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vendor small{display:block;color:var(--muted);margin-top:2px}.proto{font:11px var(--mono);color:var(--blue);margin-top:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+section{min-width:0;margin-top:64px}.section-title{display:grid;grid-template-columns:60px 1fr;gap:14px;align-items:start;margin-bottom:22px}.section-title>*{min-width:0}.num{font:700 12px var(--mono);color:var(--muted);padding-top:8px}.section-title h2{font-size:29px;letter-spacing:-.035em;margin:0}.section-title p{color:var(--sub);max-width:72ch;margin:6px 0 0}.card{min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:22px;box-shadow:0 1px 0 rgba(0,0,0,.02)}.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card h3{font-size:17px;margin:0 0 8px}.card p{color:var(--sub);margin:0}.card ul{color:var(--sub);padding-left:19px;margin:10px 0 0}.card li{margin:7px 0}code{font:12.5px var(--mono);padding:2px 5px;border:1px solid var(--line);border-radius:5px;background:var(--panel2)}
+.topology{display:grid;grid-template-columns:1fr 52px 1fr 52px 1.25fr;align-items:center;gap:8px}.node{height:100%;min-height:130px;border:1px solid var(--line);border-radius:15px;padding:18px;background:var(--panel2)}.node strong{display:block;font-size:16px;margin-bottom:7px}.node span{display:block;color:var(--sub);font-size:13px}.arrow{text-align:center;color:var(--blue);font-size:28px}.pipes{border-color:color-mix(in srgb,var(--green) 45%,var(--line))}.terminal{border-color:color-mix(in srgb,var(--purple) 45%,var(--line))}
+.invariant{border-left:4px solid var(--red)}.invariant strong{color:var(--ink)}
+.matrix{min-width:0;max-width:100%;overflow:auto;border:1px solid var(--line);border-radius:16px;background:var(--panel)}table{border-collapse:collapse;width:100%;min-width:920px}th,td{text-align:left;vertical-align:top;padding:12px 14px;border-bottom:1px solid var(--line)}th{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--panel2)}td{color:var(--sub);font-size:13px}td:first-child{color:var(--ink);font-weight:700}tr:last-child td{border-bottom:0}.pill{display:inline-block;padding:2px 8px;border-radius:999px;background:color-mix(in srgb,var(--green) 12%,transparent);color:var(--green);font-size:11px;font-weight:750}.exp{background:color-mix(in srgb,var(--amber) 13%,transparent);color:var(--amber)}
+.flow{display:grid;min-width:0;max-width:100%;grid-template-columns:repeat(8,minmax(105px,1fr));gap:22px;overflow:auto;padding:5px 1px 16px}.step{position:relative;min-height:92px;padding:14px;border:1px solid var(--line);border-radius:13px;background:var(--panel)}.step:not(:last-child)::after{content:"→";position:absolute;right:-19px;top:31px;color:var(--blue);font-size:20px}.step b{display:block;font-size:12px}.step small{display:block;color:var(--muted);margin-top:7px}.proof{border-color:color-mix(in srgb,var(--green) 42%,var(--line))}.terminal-state{border-color:color-mix(in srgb,var(--purple) 42%,var(--line))}
+.dimensions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.dimension{padding:14px;border:1px solid var(--line);background:var(--panel2);border-radius:12px}.dimension b{font-size:12px;color:var(--blue)}.dimension span{display:block;color:var(--sub);font:12px/1.5 var(--mono);margin-top:6px}
+.terminal-shot{border-radius:20px;background:#0c1119;color:#edf2fa;border:1px solid #273246;box-shadow:0 24px 70px rgba(0,0,0,.25);overflow:hidden;font-family:var(--mono)}.chrome{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid #263142;background:#121a27}.agent-id{display:flex;align-items:center;gap:11px}.logo-tile{display:grid;place-items:center;width:34px;height:34px;border-radius:9px;background:#1783ff;color:#fff;font-weight:800}.agent-meta strong{display:block;font:700 13px system-ui}.agent-meta small{color:#93a1b6}.statusline{display:flex;gap:8px;font:11px system-ui;color:#9cabc0}.statusline i{font-style:normal;padding:3px 7px;border:1px solid #334158;border-radius:999px}.transcript{padding:22px 20px 10px;min-height:380px}.role{font:700 10px system-ui;letter-spacing:.1em;color:#6fa0ff;margin-top:16px}.bubble{color:#dfe7f3;margin-top:5px;max-width:72ch}.thought{color:#9ba9bd}.tool{margin:18px 0;padding:12px;border:1px solid #344158;border-radius:10px;background:#101722}.tool strong{font-size:11px;color:#8fb2ff}.tool pre{white-space:pre-wrap;margin:6px 0 0;color:#b9c6d8;font:12px/1.5 var(--mono)}.mail-card{border-left:3px solid #56cad4;padding:10px 12px;background:#102029;border-radius:5px;color:#a9dce1;font-size:12px}.composer{padding:11px 16px 14px;border-top:1px solid #273246;background:#101722}.queued{color:#e7b85d;font:11px system-ui;margin-bottom:8px}.draft{border:1px solid #3b4b64;border-radius:10px;padding:10px 12px;color:#eef4fc}.hint{color:#75849a;font:10px system-ui;margin-top:7px}
+.logo-rule{display:grid;grid-template-columns:1fr 1fr;gap:14px}.logo-stack{display:flex;gap:14px;align-items:center}.large-mark{width:58px;height:58px}.large-mark svg{width:34px;height:34px}
+.commands{display:grid;grid-template-columns:1fr 1fr;gap:14px}.cmdlist{margin-top:12px}.cmd{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}.cmd:last-child{border:0}.cmd b{font:12px var(--mono)}.cmd span{font-size:12px;color:var(--muted)}
+.milestones{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.mile{position:relative;padding:18px;border:1px solid var(--line);border-radius:15px;background:var(--panel)}.mile em{font:700 11px var(--mono);font-style:normal;color:var(--blue)}.mile h3{font-size:15px;margin:7px 0}.mile p{font-size:12.5px;color:var(--sub);margin:0}.cutover{border-color:color-mix(in srgb,var(--red) 45%,var(--line))}.open{counter-reset:item}.open li{counter-increment:item;list-style:none;position:relative;padding:0 0 14px 34px;color:var(--sub)}.open li::before{content:counter(item);position:absolute;left:0;top:0;width:22px;height:22px;display:grid;place-items:center;border-radius:7px;background:var(--panel2);border:1px solid var(--line);font:700 10px var(--mono);color:var(--blue)}
+.sources a{color:var(--blue);text-decoration:none}.sources a:hover{text-decoration:underline}.foot{margin-top:70px;padding-top:22px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+@media(max-width:900px){.hero{grid-template-columns:1fr}.vendors{grid-template-columns:repeat(2,1fr)}.topology{grid-template-columns:1fr}.arrow{transform:rotate(90deg)}.grid3,.dimensions,.milestones{grid-template-columns:1fr 1fr}}
+@media(max-width:620px){.wrap{padding:20px 15px 70px}.vendors,.grid2,.grid3,.dimensions,.logo-rule,.commands,.milestones{grid-template-columns:1fr}.hero h1{font-size:42px}.section-title{grid-template-columns:1fr}.num{padding:0}.statusline{display:none}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar"><div class="brand">HIVE / DESIGN</div><button class="theme" id="theme" type="button">Theme</button></div>
+
+  <header class="hero">
+    <div>
+      <div class="eyebrow">Messaging v3 · 2026-08-02 · design, not implemented</div>
+      <h1>The terminal belongs to Hive.</h1>
+      <p class="lede">The installed vendor remains the agent. Hive becomes the terminal frontend, talks to that runtime through its structured protocol, and can wake it without ever touching the user’s input.</p>
+    </div>
+    <aside class="decision">
+      <h2>The hard cut</h2>
+      <ul>
+        <li><span class="bad">Zero automated PTY input</span>—no paste, Enter, key, signal, or composer borrowing.</li>
+        <li><span class="good">Installed runtime is truth</span> for auth, config, models, tools, permissions, and sessions.</li>
+        <li>Experimental official protocols are allowed; unsupported behavior and native-TUI fallback are not.</li>
+        <li>Claude Channels remain off. No warning spam.</li>
+      </ul>
+    </aside>
+  </header>
+
+  <div class="vendors" aria-label="Five supported vendors">
+    <div class="vendor"><div class="vhead"><span class="mark"><svg viewBox="0 0 24 24" role="img" aria-label="Anthropic mark"><path d="M17.304 3.541h-3.672l6.696 16.918H24Zm-10.608 0L0 20.459h3.744l1.37-3.553h7.005l1.369 3.553h3.744L10.536 3.541ZM6.325 13.764l2.291-5.946 2.292 5.946Z"/></svg></span><span><b>Claude Code</b><small>2.1.220</small></span></div><div class="proto">stream-json · official SDK</div></div>
+    <div class="vendor"><div class="vhead"><span class="mark"><svg viewBox="0 0 256 260" role="img" aria-label="OpenAI mark"><path d="M239 106a65 65 0 0 0-76-84A66 66 0 0 0 52 45 65 65 0 0 0 17 153a65 65 0 0 0 76 84 65 65 0 0 0 111-23 65 65 0 0 0 35-108Zm-97 137a48 48 0 0 1-31-12l53-30a9 9 0 0 0 4-8v-73l22 13v60a49 49 0 0 1-48 50ZM37 198a48 48 0 0 1-6-33l54 31a8 8 0 0 0 8 0l63-36v25l-53 30a49 49 0 0 1-66-17ZM24 85a48 48 0 0 1 25-21v61a8 8 0 0 0 4 8l63 36-22 13-53-30A49 49 0 0 1 24 85Zm179 42-63-37 22-12 53 30a49 49 0 0 1-8 88v-62a9 9 0 0 0-4-7Zm22-33-53-31a8 8 0 0 0-9 0l-63 37V75l53-31a49 49 0 0 1 72 50ZM88 139l-22-12V66a49 49 0 0 1 80-38L92 59a9 9 0 0 0-4 7Zm12-25 28-17 28 17v32l-28 16-28-16Z"/></svg></span><span><b>Codex</b><small>0.146.0</small></span></div><div class="proto">App Server · JSON-RPC</div></div>
+    <div class="vendor"><div class="vhead"><span class="mark"><svg viewBox="0 0 466 517" role="img" aria-label="xAI mark"><path d="m0 183 234 334h104L104 183ZM0 517h104l52-74-52-75Zm466-517H362L182 257l52 74Zm-85 517h85V37L381 159Z"/></svg></span><span><b>Grok</b><small>0.2.118</small></span></div><div class="proto">ACP · JSON-RPC</div></div>
+    <div class="vendor"><div class="vhead"><span class="mark" style="background:#1783ff;color:white"><svg viewBox="0 0 24 25" role="img" aria-label="Kimi mark"><path fill="currentColor" d="M21.72.94a2.23 2.23 0 1 1 0 4.46h-1.97a.26.26 0 0 1-.26-.26V3.17A2.23 2.23 0 0 1 21.72.94ZM9.39 13.95l8.43-8.36c.16-.16.07-.47-.14-.47h-4.54l-.14.06-9.08 9.01c-.14.14-.35.02-.35-.21V5.39c0-.15-.1-.27-.22-.27H.22c-.12 0-.22.12-.22.27v18.53c0 .15.1.27.22.27h3.13c.12 0 .22-.12.22-.27v-3.78c0-.08.03-.16.08-.21l2.82-2.79a.2.2 0 0 1 .24-.03l7.53 5.54a8.9 8.9 0 0 0 4.01 1.49c.12.01.23-.11.23-.27v-3.56c0-.14-.08-.25-.19-.26a6.2 6.2 0 0 1-2.35-.94L9.42 14.39c-.14-.09-.15-.32-.03-.44Z"/></svg></span><span><b>Kimi Code</b><small>0.31.1</small></span></div><div class="proto">ACP · JSON-RPC</div></div>
+    <div class="vendor"><div class="vhead"><span class="mark" style="background:#4b4646;color:#f1ecec"><svg viewBox="0 0 240 300" role="img" aria-label="OpenCode mark"><path fill="#4b4646" d="M180 240H60V120h120Z"/><path fill="currentColor" d="M180 60H60v180h120ZM240 300H0V0h240Z"/></svg></span><span><b>OpenCode</b><small>1.18.11</small></span></div><div class="proto">ACP · JSON-RPC</div></div>
+  </div>
+
+  <section>
+    <div class="section-title"><div class="num">01</div><div><h2>One safe process boundary</h2><p>The useful terminal trick is not a signal or escape sequence. It is refusing to give the vendor process the terminal in the first place.</p></div></div>
+    <div class="topology">
+      <div class="node terminal"><strong>User terminal</strong><span>Keyboard, paste, mouse, IME and selection reach only the Hive frontend through the sessiond PTY.</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><strong><code>hive agent-ui</code></strong><span>Owns renderer, composer, outbound journal, scheduler, command palette and normalized state.</span></div>
+      <div class="arrow">→</div>
+      <div class="node pipes"><strong>Installed vendor child</strong><span>Runs with anonymous pipes or a private socket. Structured prompts, events, approvals and cancellation. Never a controlling TTY.</span></div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div class="card invariant"><h3>Automation can wake while you type</h3><p>The draft, cursor, selection, marked text, history, focus and scroll anchor are frontend state. Provider output can redraw around them but cannot mutate them.</p></div>
+      <div class="card invariant"><h3>No compatibility escape hatch</h3><p>A missing protocol produces a branded incompatibility screen. It never launches a native TUI and never types a prompt as a fallback.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title"><div class="num">02</div><div><h2>Measured support across five vendors</h2><p>Three vendors speak ACP. Codex and Claude use their own official structured surfaces. A common adapter sits above the wire format—not above unverified assumptions.</p></div></div>
+    <div class="matrix"><table>
+      <thead><tr><th>Vendor</th><th>Structured runtime</th><th>Measured evidence</th><th>Commands</th><th>Release condition</th></tr></thead>
+      <tbody>
+        <tr><td>Claude Code</td><td>Bidirectional stream-json; official Agent SDK control model</td><td>Live initialize returned five models and <b>54 commands</b>; SDK exposes permissions, interrupts and resume</td><td>Live initialize catalog</td><td><span class="pill">official surface</span> exact installed executable; Channels absent</td></tr>
+        <tr><td>Codex</td><td>Official App Server JSON-RPC</td><td>0.146.0 generated schema: threads, turns, stream items, approvals, model/config/skills, interrupt/steer</td><td>Schema-backed Hive mappings + skills</td><td><span class="pill exp">experimental</span> generated binding compatibility</td></tr>
+        <tr><td>Grok</td><td>Native ACP</td><td>Official integration guide plus live handshake: build, model/effort, load/list and seven commands</td><td>Handshake metadata</td><td><span class="pill">native ACP</span> live permission/cancel proof still required</td></tr>
+        <tr><td>Kimi Code</td><td>Native ACP</td><td>Exact 0.31.1 source: new/load/resume/list, prompt/cancel, tools/thoughts/plans, permissions/questions, config</td><td>ACP updates: six built-ins + skills</td><td><span class="pill">native ACP</span> full conformance</td></tr>
+        <tr><td>OpenCode</td><td>Native ACP</td><td>Exact 1.18.11 source: create/load/resume/list/close/fork, streaming, usage, permissions, config</td><td>ACP updates from commands + skills</td><td><span class="pill">native ACP</span> omit documented undo/redo gap</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <div class="section-title"><div class="num">03</div><div><h2>Delivery is a state machine, not a hopeful write</h2><p>Publish acceptance, protocol acceptance, turn observation, mailbox claim and settlement are different facts. The UI names each one.</p></div></div>
+    <div class="flow" aria-label="Mail delivery state machine">
+      <div class="step"><b>published</b><small>Broker row committed</small></div>
+      <div class="step"><b>frontend notified</b><small>Recipient IPC ACK</small></div>
+      <div class="step"><b>wake queued</b><small>Durable outbound row</small></div>
+      <div class="step"><b>vendor accepted</b><small>Request response</small></div>
+      <div class="step proof"><b>turn observed</b><small>Lifecycle event</small></div>
+      <div class="step proof"><b>mail presented</b><small>Poll result carried body</small></div>
+      <div class="step proof"><b>mail claimed</b><small>Lease after presentation</small></div>
+      <div class="step terminal-state"><b>settled</b><small>Complete · defer · reject · dead letter</small></div>
+    </div>
+    <div class="grid3">
+      <div class="card"><h3>Idle wake</h3><p>A recipient-local event schedules a fixed structured prompt immediately—even while a user draft is being edited. It carries an item ID, not message content.</p></div>
+      <div class="card"><h3>Busy agent</h3><p>The wake waits for an authoritative turn end, then runs before queued user work. Same-turn steering is deliberately outside v1.</p></div>
+      <div class="card"><h3>At least once, never false success</h3><p>An ignored wake retries idempotently until claim or visible terminal failure. A request ACK alone never becomes “delivered.”</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title"><div class="num">04</div><div><h2>Status stays orthogonal</h2><p>An agent can be working, have an active user draft, and have mail waiting at the same time. One status string cannot express that truth.</p></div></div>
+    <div class="dimensions">
+      <div class="dimension"><b>runtime</b><span>starting · connecting · ready · degraded · disconnected · exited</span></div>
+      <div class="dimension"><b>turn</b><span>idle · queued · submitting · working · approval · answer · cancelling · done · failed</span></div>
+      <div class="dimension"><b>input</b><span>empty · editing · composing · queued · delivery_unknown</span></div>
+      <div class="dimension"><b>mail</b><span>none · waiting · waking · claimed · retrying · dead_lettered</span></div>
+      <div class="dimension"><b>health</b><span>healthy · delayed · stale · disconnected · unknown</span></div>
+      <div class="dimension"><b>attention</b><span>none · info · action · approval · failure</span></div>
+    </div>
+    <div class="card" style="margin-top:14px"><p>Fresh structured events become <code>provider-protocol</code> evidence at the current App Server rank. Hook and terminal health remain diagnostic fallbacks. Unknown usage renders <b>—</b>, not 0%, and never gates delivery.</p></div>
+  </section>
+
+  <section>
+    <div class="section-title"><div class="num">05</div><div><h2>A terminal worth using</h2><p>Hive does not trade safety for a generic log viewer. It becomes a polished five-vendor terminal client with stable input, rich work cards and visible queues.</p></div></div>
+    <div class="terminal-shot" role="img" aria-label="Mock terminal pane for a Kimi agent, with status header, transcript, tool card, mail delivery card and untouched draft">
+      <div class="chrome"><div class="agent-id"><div class="logo-tile">K</div><div class="agent-meta"><strong>maya · Kimi Code</strong><small>kimi-k2 · high</small></div></div><div class="statusline"><i>WORKING</i><i>mail 1 waiting</i><i>connected</i></div></div>
+      <div class="transcript">
+        <div class="role">YOU · 13:42</div><div class="bubble">Refactor the parser and keep the compatibility tests.</div>
+        <div class="role">KIMI · THINKING</div><div class="bubble thought">I’ll inspect the parser boundary first…</div>
+        <div class="tool"><strong>TOOL · RG · RUNNING</strong><pre>rg -n "parseToken" src/</pre></div>
+        <div class="mail-card"><b>HIVE MAIL · CONTROL WAKE · DELIVERED</b><br>The agent claimed one control item.</div>
+      </div>
+      <div class="composer"><div class="queued">queued: your message will run after the control wake</div><div class="draft">› draft remains exactly here while provider output redraws…</div><div class="hint">/ opens commands · ⌘K actions · Esc closes overlay</div></div>
+    </div>
+    <div class="logo-rule" style="margin-top:14px">
+      <div class="card"><div class="logo-stack"><span class="mark large-mark"><b>SVG</b></span><div><h3>Identity twice</h3><p>The native pane header always uses the existing accessible <code>ProviderMarkView</code>. The terminal header uses the same vendor asset as a raster.</p></div></div></div>
+      <div class="card"><div class="logo-stack"><span class="mark large-mark"><b>APC</b></span><div><h3>Kitty graphics is proven</h3><p>Hive’s Ghostty path already tests a Kitty image APC and exact <code>OK</code> reply. Text tiles and full names remain the accessible fallback.</p></div></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title"><div class="num">06</div><div><h2>Commands stay vendor-authentic</h2><p>The installed runtime supplies the palette whenever it can. Hive commands are namespaced so they never shadow the vendor.</p></div></div>
+    <div class="commands">
+      <div class="card"><h3>Vendor palette</h3><p>Claude initialize, Grok handshake metadata, Kimi/OpenCode ACP updates, and Codex skills/config events refresh live.</p><div class="cmdlist"><div class="cmd"><b>/compact</b><span>vendor operation</span></div><div class="cmd"><b>/review</b><span>where advertised/mapped</span></div><div class="cmd"><b>/skill-name</b><span>installed skill</span></div></div></div>
+      <div class="card"><h3>Hive palette</h3><p>Frontend actions are explicit and local. A collision always belongs to the vendor.</p><div class="cmdlist"><div class="cmd"><b>/hive:mail</b><span>mail state</span></div><div class="cmd"><b>/hive:queue</b><span>outbound turns</span></div><div class="cmd"><b>/hive:status</b><span>all dimensions</span></div></div></div>
+    </div>
+    <div class="card" style="margin-top:14px"><p><b>Honest gap policy:</b> Codex receives only schema-backed App Server mappings. OpenCode’s documented ACP gaps for <code>/undo</code> and <code>/redo</code> remain absent. Native-TUI-only behavior is never sent to the model as text and never simulated.</p></div>
+  </section>
+
+  <section>
+    <div class="section-title"><div class="num">07</div><div><h2>Vertical implementation, atomic cutover</h2><p>One real provider proves the whole path before abstraction expands. Production changes only after all five installed runtimes pass.</p></div></div>
+    <div class="milestones">
+      <div class="mile"><em>P0</em><h3>Contracts &amp; fixtures</h3><p>Capability schema, sanitized handshakes, and a repository audit that rejects automated PTY input.</p></div>
+      <div class="mile"><em>P1</em><h3>Frontend shell</h3><p>Fake provider, renderer, composer, journal, Kitty marks and 10,000 adversarial redraw schedules.</p></div>
+      <div class="mile"><em>P2</em><h3>Kimi vertical</h3><p>Inspectable, complete ACP reference slice against exact 0.31.1 source.</p></div>
+      <div class="mile"><em>P3</em><h3>OpenCode + Grok</h3><p>Remaining ACP vendors, including live closed-source Grok permission/cancel proof.</p></div>
+      <div class="mile"><em>P4</em><h3>Codex App Server</h3><p>Generated bindings, threads, turns, items, approvals, reconnect and explicit commands.</p></div>
+      <div class="mile"><em>P5</em><h3>Claude stream</h3><p>Installed executable, commands, permissions, interrupt/resume; no Channels warning.</p></div>
+      <div class="mile"><em>P6</em><h3>Mail wake ledger</h3><p>Recipient events, durable wake scheduling, retries, claim correlation and external SLO attention.</p></div>
+      <div class="mile"><em>P7</em><h3>Status &amp; finish</h3><p>Protocol fusion, responsive cards, accessibility, themes, detach and high-output endurance.</p></div>
+      <div class="mile cutover"><em>P8</em><h3>Delete and cut over</h3><p>Five-vendor acceptance, then remove native TUI spawning, Kimi kickoff and pane idle inference.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title"><div class="num">08</div><div><h2>Release bars</h2><p>Maturity labels do not certify behavior. Only a real installed-vendor run can.</p></div></div>
+    <div class="grid2">
+      <div class="card"><h3>Common conformance</h3><ul><li>Initialize with a positive capability control.</li><li>Create, prompt, observe stream and completion.</li><li>Allow and deny a harmless permission.</li><li>Cancel and observe terminal state.</li><li>Resume/load without duplicate prompt.</li><li>Discover commands/models/modes where advertised.</li></ul></div>
+      <div class="card"><h3>User non-interference</h3><ul><li>Wake during typing, paste, IME and selection.</li><li>Wake during scrollback and resize storms.</li><li>Crash/reconnect with draft and queue intact.</li><li>Explicit cancellation never clears draft.</li><li>Unknown user delivery never auto-retries.</li><li>Zero non-user calls to terminal input.</li></ul></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-title"><div class="num">09</div><div><h2>Bounded open engineering items</h2><p>None can reopen the no-injection ruling or authorize a native-TUI fallback.</p></div></div>
+    <div class="card"><ol class="open">
+      <li><b>Grok:</b> capture a harmless live ACP permission request and cancel result.</li>
+      <li><b>Claude — resolved:</b> use direct stream-json control framing. Live comparison with Agent SDK 0.3.220 proved exact installed-binary use and equivalent initialize/permission events; direct framing avoids adding the SDK's optional bundled-runtime packages.</li>
+      <li><b>Journal:</b> choose daemon database or a single frontend-owned SQLite writer after crash/replay measurement.</li>
+      <li><b>Marks:</b> pick raster scales and finish the existing asset trademark/license review.</li>
+      <li><b>Codex:</b> pin review, compact, model, permissions and status method names from generated 0.146.0 bindings.</li>
+      <li><b>Migration:</b> explain the one-time move from native scrollback to a vendor-resumed protocol transcript.</li>
+    </ol></div>
+  </section>
+
+  <section class="sources">
+    <div class="section-title"><div class="num">10</div><div><h2>Primary sources</h2><p>The source Markdown contains the full contract, failure matrix, acceptance matrix and file-level implementation plan.</p></div></div>
+    <div class="grid2">
+      <div class="card"><h3>Vendor documentation</h3><ul><li><a href="https://docs.anthropic.com/en/docs/claude-code/cli-usage">Claude Code CLI</a> and <a href="https://github.com/anthropics/claude-agent-sdk-typescript">Agent SDK</a></li><li><a href="https://developers.openai.com/codex/app-server/">Codex App Server</a></li><li><a href="https://docs.x.ai/build/cli/headless-scripting">Grok ACP</a></li><li><a href="https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command">Kimi Code ACP entry</a></li><li><a href="https://opencode.ai/docs/acp/">OpenCode ACP</a></li></ul></div>
+      <div class="card"><h3>Repository evidence</h3><ul><li><code>provider-adapter.ts</code>: current PTY input boundary to retire</li><li><code>status-fusion.ts</code>: provenance/freshness foundation</li><li><code>mail.ts</code>: durable broker truth</li><li><code>ProviderMarkView.swift</code>: five accessible vendor marks</li><li><code>OrderedOutputEngineTests.swift</code>: Kitty image path proof</li></ul></div>
+    </div>
+  </section>
+
+  <footer class="foot">Standalone rendering of <code>messaging-v3-wake-and-collaboration-plan.md</code>, the source of truth. Decision, evidence, vendor versions, milestones and open items must change in both files in one commit.</footer>
+</div>
+<script>
+const root=document.documentElement;
+const requested=new URLSearchParams(location.search).get('theme');
+const saved=localStorage.getItem('hive-design-theme');
+if(requested==='light'||requested==='dark') root.dataset.theme=requested;
+else if(saved) root.dataset.theme=saved;
+document.getElementById('theme').addEventListener('click',()=>{
+  const dark=root.dataset.theme==='dark'||(!root.dataset.theme&&matchMedia('(prefers-color-scheme:dark)').matches);
+  root.dataset.theme=dark?'light':'dark';
+  localStorage.setItem('hive-design-theme',root.dataset.theme);
+});
+</script>
+</body>
+</html>

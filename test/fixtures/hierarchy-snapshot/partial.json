@@ -1,0 +1,184 @@
+[
+  {
+    "kind": "hierarchy-run",
+    "id": "run_018f4f5e-0000-7000-8000-000000000001",
+    "entityRevision": "3",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+      "entityRevision": "3",
+      "root": {
+        "availability": "present",
+        "value": {
+          "kind": "queen-root",
+          "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+          "instanceId": "instance-fixture",
+          "repo": "hive"
+        }
+      },
+      "phase": {
+        "availability": "present",
+        "value": "P2"
+      },
+      "lifecycle": {
+        "availability": "present",
+        "value": "active"
+      },
+      "topologyShape": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no TopologyDecision supplied for this run"
+      },
+      "g1": {
+        "availability": "present",
+        "value": {
+          "state": "approved",
+          "decider": "engineer",
+          "decidedAt": "2026-07-30T12:00:00.000Z",
+          "spec": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "plan": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "topology": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "budget": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      },
+      "g2": {
+        "availability": "present",
+        "value": {
+          "state": "pending"
+        }
+      },
+      "topologySource": {
+        "availability": "present",
+        "value": "hierarchy"
+      }
+    }
+  },
+  {
+    "kind": "hierarchy-node",
+    "id": "node_018f4f5e-0000-7000-8000-000000000101",
+    "entityRevision": "1",
+    "projection": {
+      "schemaVersion": 2,
+      "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
+      "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+      "entityRevision": "1",
+      "parentNodeId": {
+        "availability": "present",
+        "value": null
+      },
+      "ownerNodeId": {
+        "availability": "present",
+        "value": null
+      },
+      "organizationalRole": {
+        "availability": "present",
+        "value": "worker"
+      },
+      "assignmentKind": {
+        "availability": "present",
+        "value": "author"
+      },
+      "taskScope": {
+        "availability": "present",
+        "value": [
+          "task_018f4f5e-0000-7000-8000-0000000000a1"
+        ]
+      },
+      "lifecycle": {
+        "availability": "present",
+        "value": "active"
+      },
+      "binding": {
+        "availability": "present",
+        "value": {
+          "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
+          "agentId": "david",
+          "generation": 1
+        }
+      }
+    },
+    "generation": 1
+  },
+  {
+    "kind": "hierarchy-task",
+    "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+      "entityRevision": "0",
+      "tasks": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no task source supplied for this snapshot"
+      }
+    }
+  },
+  {
+    "kind": "hierarchy-budget",
+    "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+      "entityRevision": "0",
+      "limits": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no RunBudget supplied"
+      }
+    }
+  },
+  {
+    "kind": "hierarchy-review",
+    "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+      "entityRevision": "0",
+      "reviews": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no Review records supplied"
+      }
+    }
+  },
+  {
+    "kind": "hierarchy-incident",
+    "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
+    "entityRevision": "0",
+    "projection": {
+      "schemaVersion": 2,
+      "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+      "entityRevision": "0",
+      "runDecision": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no run-control decision source supplied for this snapshot"
+      },
+      "recovery": {
+        "availability": "absent",
+        "reason": "unmeasured",
+        "detail": "no ownership-transfer source supplied for this snapshot"
+      },
+      "breaker": {
+        "availability": "absent",
+        "reason": "source-absent",
+        "detail": "no anomaly circuit-breaker record exists in the daemon"
+      }
+    }
+  }
+]

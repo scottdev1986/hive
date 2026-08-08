@@ -3,8 +3,9 @@ import { chmod, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { hiveInstanceSuffix } from "../../daemon/instance-identity";
-import { shellToken } from "../../daemon/session-host/shell-session";
+import { safeJsonParse } from "../../shared/json";
+import { shellToken } from "../../shared/shell-quote";
+import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
 import {
   type GraphifyHookKind,
@@ -13,19 +14,12 @@ import {
 } from "./shared/graphify-hook";
 import {
   buildCodexMcpExclusionArgs,
+  daemonMcpUrl,
   HIVE_MCP_SERVERS,
 } from "./shared/mcp-scope";
 import { resolveProviderExecutable } from "./shared/provider-executable";
-import {
-  invalidRecoveryArtifactEvidence,
-  isMissingRecoveryArtifact,
-  type RecoverySessionArtifact,
-  recoveryArtifactTimestamp,
-  selectRecoverySessionId,
-} from "./shared/recovery-session";
 
-/** Typed, not a bare string in a template: the token the generated hook
- * dispatches on. A kind the script has no arm for silently never nudges. */
+/** Typed, not a bare string in a template: the token the generated hook dispatches on. A kind the script has no arm for silently never nudges. */
 const CODEX_GRAPHIFY_HOOK_KIND: GraphifyHookKind = "codex";
 
 export interface CodexSpawnOptions {
@@ -36,23 +30,12 @@ export interface CodexSpawnOptions {
   daemonPort: number;
   readOnly: boolean;
   executable?: string;
-  /** No-prompt autonomy through config overrides shared by spawn and resume.
-   * Read-only sessions keep their filesystem sandbox, but still inherit the
-   * user's no-prompt choice. */
   dangerous?: boolean;
-  /** Names of MCP servers this spawn inherits from the user's global
-   * `~/.codex/config.toml` and does not need. Each is detached for this
-   * process only, via a config override; the user's file is never touched.
-   * Hive's own `hive` server is never in this list. */
+  /** Names of MCP servers this spawn inherits from the user's global `~/.codex/config.toml` and does not need. Each is detached for this process only, via a config override; the user's file is never touched. Hive's own `hive` server is never in this list. */
   excludeMcpServers?: readonly string[];
-  /** Read the bearer from the launch environment. Only the variable name may
-   * enter argv, and the override is absent when no token exists. */
+  /** Read the bearer from the launch environment. Only the variable name may enter argv, and the override is absent when no token exists. */
   withCapabilityToken?: boolean;
-  /** The per-repo graphify MCP server, when the daemon has one up and healthy.
-   * Attached through the same config-override channel as `hive`; absent means
-   * no entry at all. */
   graphifyUrl?: string;
-  /** Ephemeral Hive-owned profile containing developer_instructions. */
   profile?: string;
 }
 
@@ -60,29 +43,13 @@ export type CodexAgentConfigOptions = Pick<
   CodexSpawnOptions,
   "name" | "daemonPort" | "readOnly" | "graphifyUrl"
 > & {
-  /** Exact argv prefix for this Hive build. Installed releases pass their
-   * absolute binary path so lifecycle hooks cannot attach to a different
-   * Hive installation or fail when `hive` is absent from PATH. */
+  /** Exact argv prefix for this Hive build. Installed releases pass their absolute binary path so lifecycle hooks cannot attach to a different Hive installation or fail when `hive` is absent from PATH. */
   hiveCommand?: readonly string[];
 };
 
 export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
 
-/**
- * The keystrokes codex's own approval popup advertises, and the only way a
- * Hive approval decision reaches a TUI-hosted session: there is no app-server
- * request to resolve, so the answer has to arrive as the key the widget is
- * waiting for.
- *
- * Measured against codex-cli 0.145.0 by driving a real session to an
- * on-request approval in a pty. The popup renders:
- *   1. Yes, proceed (y)
- *   3. No, and tell Codex what to do differently (esc)
- * and both keys were sent and observed dismissing the prompt (the vendor's own
- * "Action Required" terminal title cleared, and the turn continued). Escape
- * declines without opening a text field — the model simply asks again, which
- * bridges as a fresh approval rather than a second dead end.
- */
+/** The keystrokes codex's own approval popup advertises, and the only way a Hive approval decision reaches a TUI-hosted session: there is no app-server request to resolve, so the answer has to arrive as the key the widget is waiting for. Measured against codex-cli 0.145.0 by driving a real session to an on-request approval in a pty. The popup renders: 1. Yes, proceed (y) 3. No, and tell Codex what to do differently (esc) and both keys were sent and observed dismissing the prompt (the vendor's own "Action Required" terminal title cleared, and the turn continued). Escape declines without opening a text field — the model simply asks again, which bridges as a fresh approval rather than a second dead end. */
 export const CODEX_TUI_APPROVAL_KEYS = {
   approve: "y",
   deny: "\u001b",
@@ -93,20 +60,13 @@ const tomlString = (value: string): string => JSON.stringify(value);
 export function buildCodexTrustArgs(worktreePath: string): string[] {
   let absoluteWorktreePath: string;
   try {
-    // Codex compares trust against the physical cwd. On macOS `/tmp` resolves
-    // to `/private/tmp`; a logical-path override otherwise misses and leaves a
-    // fresh Hive agent blocked at the repository trust prompt.
     absoluteWorktreePath = realpathSync.native(worktreePath);
   } catch {
-    // Command-shape tests and diagnostics may intentionally name a path that
-    // does not exist yet. Preserve the prior absolute-path behavior there.
+    // Command-shape tests and diagnostics may intentionally name a path that does not exist yet. Preserve the prior absolute-path behavior there.
     absoluteWorktreePath = resolve(worktreePath);
   }
   return [
     "-c",
-    // Codex 0.144.6 does not address a quoted path through a dotted `-c` key.
-    // Replacing the complete projects table is process-scoped and makes the
-    // same trust decision without touching the user's persisted config.
     `projects={${tomlString(absoluteWorktreePath)}={trust_level="trusted"}}`,
   ];
 }
@@ -115,9 +75,7 @@ function buildCodexConfigArgs(
   options: CodexSpawnOptions,
   sandbox: { asConfigOverride: boolean },
 ): string[] {
-  // Apps/connectors do not appear in mcp_servers, so inherited-server
-  // exclusions cannot detach them. Hive agents have a deliberately scoped
-  // tool surface; disable Apps for this process without changing user config.
+  // Apps/connectors do not appear in mcp_servers, so inherited-server exclusions cannot detach them. Hive agents have a deliberately scoped tool surface; disable Apps for this process without changing user config.
   const args: string[] = ["-c", "features.apps=false"];
   if (options.model !== "default") {
     args.push("-c", `model=${options.model}`);
@@ -125,8 +83,6 @@ function buildCodexConfigArgs(
   args.push("-c", `model_reasoning_effort=${options.effort}`);
 
   if (options.readOnly) {
-    // `codex resume` documents no --sandbox flag, so the resume path passes
-    // the same restriction as a config override instead.
     if (sandbox.asConfigOverride) {
       args.push("-c", 'sandbox_mode="read-only"');
     } else {
@@ -151,13 +107,7 @@ function buildCodexConfigArgs(
     );
   }
 
-  // The lifecycle hooks ride the command line, not the worktree's
-  // `.codex/config.toml`: codex only loads project-local config when the
-  // directory's trust is persisted in the user's own config file, and Hive
-  // passes trust as a `-c` override precisely so it never edits that file.
-  // A hook defined only in the project file therefore never fires (verified
-  // against codex 0.144.1 — its trust prompt states project config, hooks,
-  // and exec policies load only for trusted directories).
+  // The lifecycle hooks ride the command line, not the worktree's `.codex/config.toml`: codex only loads project-local config when the directory's trust is persisted in the user's own config file, and Hive passes trust as a `-c` override precisely so it never edits that file. A hook defined only in the project file therefore never fires (verified against codex 0.144.1 — its trust prompt states project config, hooks, and exec policies load only for trusted directories).
   const notifyPath = resolve(
     options.worktreePath,
     ".codex",
@@ -181,14 +131,7 @@ function buildCodexConfigArgs(
     "-c",
     hookOverride("UserPromptSubmit", `${notifyPath} turn-start`),
     "-c",
-    // The vendor's own "I am parked on an approval popup" event. Without it a
-    // TUI-hosted codex agent that hits an on-request approval is invisible:
-    // hive_approvals stays empty, no tool boundary is ever reached, and every
-    // control surface is a dead end at once. The hook fires when the popup
-    // renders and its stdin
-    // carries the tool and command being decided. Residual: if a future vendor
-    // popup raises no PermissionRequest hook, it remains silent to Hive; pixels
-    // are deliberately not used as status truth or an approval source.
+    // The vendor's own "I am parked on an approval popup" event. Without it a TUI-hosted codex agent that hits an on-request approval is invisible: hive_approvals stays empty, no tool boundary is ever reached, and every control surface is a dead end at once. The hook fires when the popup renders and its stdin carries the tool and command being decided. Residual: if a future vendor popup raises no PermissionRequest hook, it remains silent to Hive; pixels are deliberately not used as status truth or an approval source.
     hookOverride("PermissionRequest", `${notifyPath} approval-request`),
     "-c",
     hookOverride("PostToolUse", `${notifyPath} tool-boundary`),
@@ -207,7 +150,7 @@ function buildCodexConfigArgs(
           ),
         ]),
     "-c",
-    `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    `mcp_servers.hive.url=${tomlString(daemonMcpUrl(options.daemonPort))}`,
     ...((options.dangerous ?? false)
       ? ["-c", 'mcp_servers.hive.default_tools_approval_mode="approve"']
       : []),
@@ -229,11 +172,6 @@ function buildCodexConfigArgs(
               ]
             : []),
         ]),
-    // Detach the human's own servers from this agent. Same override channel as
-    // hooks and trust, so spawn and resume stay one shape. When Hive attaches
-    // graphify, "graphify" joins the keep-set: otherwise a user's inherited
-    // server of the same name would be disabled by the very exclusion pass
-    // whose url override we just claimed.
     ...buildCodexMcpExclusionArgs(
       options.excludeMcpServers ?? [],
       options.graphifyUrl === undefined
@@ -253,22 +191,6 @@ export function buildCodexSpawnCommand(options: CodexSpawnOptions): string[] {
   ];
 }
 
-// Relaunches a crashed agent's recorded rollout (`codex resume [OPTIONS]
-// [SESSION_ID]`, verified against codex CLI help) with the same config
-// overrides the original spawn used.
-export function buildCodexResumeCommand(
-  options: CodexSpawnOptions,
-  sessionId: string,
-): string[] {
-  return [
-    options.executable ?? "codex",
-    "resume",
-    ...(options.profile === undefined ? [] : ["--profile", options.profile]),
-    ...buildCodexConfigArgs(options, { asConfigOverride: true }),
-    sessionId,
-  ];
-}
-
 export function resolveWorkingCodexExecutable() {
   return resolveProviderExecutable("codex", [
     ".local/bin/codex",
@@ -280,9 +202,7 @@ export function codexSessionsDirectory(home = homedir()): string {
   return join(home, ".codex", "sessions");
 }
 
-// Codex records every conversation as a rollout file whose first line is a
-// session_meta entry carrying the session id and cwd. If hook traffic provides
-// no thread id, resume the newest rollout for the agent's worktree.
+// Codex records every conversation as a rollout file whose first line is a session_meta entry carrying the session id and cwd. If hook traffic provides no thread id, resume the newest rollout for the agent's worktree.
 const ROLLOUT_SCAN_LIMIT = 100;
 
 export interface CodexRolloutLocation {
@@ -318,7 +238,6 @@ async function findCodexRollout(
 
 async function listCodexRollouts(
   home: string,
-  strictEvidence = false,
 ): Promise<{ path: string; mtimeMs: number }[]> {
   const rollouts: { path: string; mtimeMs: number }[] = [];
   const pending = [codexSessionsDirectory(home)];
@@ -328,14 +247,7 @@ async function listCodexRollouts(
     let entries: Dirent[];
     try {
       entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-        invalidRecoveryArtifactEvidence(
-          "Codex",
-          directory,
-          "directory cannot be read",
-        );
-      }
+    } catch {
       continue;
     }
     for (const entry of entries) {
@@ -345,24 +257,14 @@ async function listCodexRollouts(
       } else if (/^rollout-.*\.jsonl$/.test(entry.name)) {
         try {
           rollouts.push({ path, mtimeMs: (await stat(path)).mtimeMs });
-        } catch (error) {
-          if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-            invalidRecoveryArtifactEvidence(
-              "Codex",
-              path,
-              "cannot be inspected",
-            );
-          }
-          // A rollout deleted mid-scan is simply not a candidate.
-        }
+        } catch {}
       }
     }
   }
   return rollouts;
 }
 
-// The newest rollout recorded for a worktree — used only when no durable
-// session id has been captured yet (crash-recovery discovery).
+// The newest rollout recorded for a worktree — used only when no durable session id has been captured yet (crash-recovery discovery).
 export async function findLatestCodexRollout(
   worktreePath: string,
   home = homedir(),
@@ -370,40 +272,8 @@ export async function findLatestCodexRollout(
   return findCodexRollout(worktreePath, home);
 }
 
-export async function findCodexRolloutBySessionId(
-  worktreePath: string,
-  sessionId: string,
-  home = homedir(),
-): Promise<CodexRolloutLocation | null> {
-  return findCodexRollout(worktreePath, home, sessionId);
-}
-
-export async function discoverCodexRecoverySessionId(
-  worktreePath: string,
-  agentCreatedAt: string,
-  home = homedir(),
-): Promise<string | null> {
-  const target = resolve(worktreePath);
-  const artifacts: RecoverySessionArtifact[] = [];
-  for (const rollout of await listCodexRollouts(home, true)) {
-    const meta = await readRolloutSessionMeta(rollout.path, true);
-    if (meta === null || meta.cwd !== target) continue;
-    artifacts.push({
-      sessionId: meta.sessionId,
-      createdAtMs: recoveryArtifactTimestamp(
-        "Codex",
-        rollout.path,
-        meta.createdAt,
-      ),
-      path: rollout.path,
-    });
-  }
-  return selectRecoverySessionId("Codex", agentCreatedAt, artifacts);
-}
-
 async function readRolloutSessionMeta(
   path: string,
-  strictEvidence = false,
 ): Promise<{ sessionId: string; cwd: string; createdAt: unknown } | null> {
   let firstLine: string;
   try {
@@ -416,34 +286,17 @@ async function readRolloutSessionMeta(
       lines.close();
       input.destroy();
     }
-  } catch (error) {
-    if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-      invalidRecoveryArtifactEvidence("Codex", path, "cannot be read");
-    }
-    return null;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(firstLine);
   } catch {
-    if (strictEvidence) {
-      invalidRecoveryArtifactEvidence("Codex", path, "is not valid JSONL");
-    }
     return null;
   }
+  const parsed = safeJsonParse(firstLine);
+  if (parsed === undefined) return null;
   if (
     typeof parsed !== "object" ||
     parsed === null ||
     !("type" in parsed) ||
     parsed.type !== "session_meta"
   ) {
-    if (strictEvidence) {
-      invalidRecoveryArtifactEvidence(
-        "Codex",
-        path,
-        "has no session_meta first record",
-      );
-    }
     return null;
   }
   if (
@@ -491,14 +344,10 @@ export async function writeCodexAgentConfig(
     ].join(" "),
     "",
   ].join("\n");
-  // No hook tables and no Authorization header here: this project-local file
-  // only loads for directories whose trust is persisted in the user's config,
-  // which Hive never edits. The lifecycle hooks ride the spawn command's `-c`
-  // overrides, and the capability reaches codex through bearer_token_env_var —
-  // never through config codex will not read.
+  // No hook tables and no Authorization header here: this project-local file only loads for directories whose trust is persisted in the user's config, which Hive never edits. The lifecycle hooks ride the spawn command's `-c` overrides, and the capability reaches codex through bearer_token_env_var — never through config codex will not read.
   const config = [
     "[mcp_servers.hive]",
-    `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
+    `url = ${tomlString(daemonMcpUrl(options.daemonPort))}`,
     "",
   ].join("\n");
 
@@ -507,11 +356,8 @@ export async function writeCodexAgentConfig(
     writeFile(configPath, config, { mode: 0o600 }),
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
     writeGraphifyHook(graphifyPath, options.graphifyUrl),
-    // Remove any bearer left in the project tree so the live token cannot
-    // survive reconciliation.
+    // Remove any bearer left in the project tree so the live token cannot survive reconciliation.
     rm(join(codexDirectory, "capability-token"), { force: true }),
   ]);
-  // writeFile's mode only applies at creation, and both files are rewritten at
-  // every spawn — over whatever an earlier Hive, or the user, left behind.
   await Promise.all([chmod(configPath, 0o600), chmod(notifyPath, 0o755)]);
 }

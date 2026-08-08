@@ -1,46 +1,31 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { connect } from "node:net";
-import { join } from "node:path";
 import {
+  CaptureRequestSchema,
+  CaptureResultSchema,
   FRAME_FLAGS,
   type FrameTypeName,
   GrantRegisterPayloadSchema,
   HostAdoptPayloadSchema,
   SESSION_PROTOCOL_VERSION,
   TERMINAL_LIMITS,
-} from "../../schemas";
-import type { AttachGrant, AttachRequest, SessionLocator } from "./contract";
+} from "../../schemas/session-protocol";
+import type {
+  AttachGrant,
+  AttachRequest,
+  CaptureRequest,
+  CaptureResult,
+  SessionLocator,
+} from "./session-host-contract";
 import { encodeSessiondFrame, SessiondFrameDecoder } from "./sessiond-host";
-import { hostDirectory, HostOperationError } from "./host-operations";
+import { hostSocketPath, HostOperationError } from "./host-operations";
 
-/**
- * The host's own control wire, spoken directly.
- *
- * A terminal serves one socket for neutral operations and this socket for
- * adoption and viewer-grant registration. Hive speaks this protocol directly.
- *
- * Every exchange is one connection, one request, one response. There is no
- * handshake and no session, so a slow host delays only its own caller.
- */
-
-/** The host correlates a control exchange on this id. */
 const CONTROL_REQUEST_ID = 2n;
 
-/** Unused attach grants expire after this long. */
 const GRANT_LIFETIME_MS = 30_000;
 
-function controlSocketPath(hiveHome: string, sessionId: string): string {
-  return join(hostDirectory(hiveHome, sessionId), "host.sock");
-}
-
-/**
- * The connection handshake a host requires before any verb.
- *
- * The host compares the build id it is told here against the one carried by
- * adoption, so a mismatched executable is refused rather than adopted. Request
- * id 1 is the handshake's; every verb that follows uses id 2.
- */
+/** The connection handshake a host requires before any verb. The host compares the build id it is told here against the one carried by adoption, so a mismatched executable is refused rather than adopted. Request id 1 is the handshake's; every verb that follows uses id 2. */
 function helloPayload(instanceId: string, buildId: string): unknown {
   return {
     schemaVersion: 1,
@@ -149,8 +134,6 @@ async function exchange(
           return;
         }
         if (frame.type !== responseType) continue;
-        // The host answers on the request's id, response|final. Anything else
-        // is a frame this exchange did not ask for.
         if (frame.requestId !== CONTROL_REQUEST_ID) continue;
         if (frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final))
           continue;
@@ -171,13 +154,7 @@ async function exchange(
   });
 }
 
-/**
- * Proves ownership of a host with its launch-time capability.
- *
- * The host refuses every control verb until this succeeds, so it runs once per
- * launch. The secret is the `adopt.cap` the launcher wrote — not the neutral
- * `control.cap`, which authorises a different wire.
- */
+/** Proves ownership of a host with its launch-time capability. The host refuses every control verb until this succeeds, so it runs once per launch. The secret is the `adopt.cap` the launcher wrote — not the neutral `control.cap`, which authorises a different wire. */
 export async function adoptHost(options: {
   hiveHome: string;
   sessionId: string;
@@ -194,11 +171,10 @@ export async function adoptHost(options: {
       major: SESSION_PROTOCOL_VERSION.major,
       minor: SESSION_PROTOCOL_VERSION.minor,
     },
-    // Only adoption is permitted on this challenge.
     operation: "adopt",
   });
   await exchange(
-    controlSocketPath(options.hiveHome, options.sessionId),
+    hostSocketPath(options.hiveHome, options.sessionId),
     "HOST_ADOPT",
     payload,
     TERMINAL_LIMITS.controlRpcTimeoutMilliseconds,
@@ -206,13 +182,7 @@ export async function adoptHost(options: {
   );
 }
 
-/**
- * Issues a one-use viewer grant.
- *
- * The token is minted here and the host is told only its hash, so a grant that
- * leaks from disk cannot be replayed into an attach. The viewer connects to the
- * host's own socket with the token; Hive is not in that path.
- */
+/** Issues a one-use viewer grant. The token is minted here and the host is told only its hash, so a grant that leaks from disk cannot be replayed into an attach. The viewer connects to the host's own socket with the token; Hive is not in that path. */
 export async function issueHostAttachGrant(options: {
   hiveHome: string;
   sessionId: string;
@@ -237,7 +207,7 @@ export async function issueHostAttachGrant(options: {
     geometry: options.request.geometry,
   });
   const answer = await exchange(
-    controlSocketPath(options.hiveHome, options.sessionId),
+    hostSocketPath(options.hiveHome, options.sessionId),
     "GRANT_REGISTER",
     payload,
     TERMINAL_LIMITS.controlRpcTimeoutMilliseconds,
@@ -255,7 +225,7 @@ export async function issueHostAttachGrant(options: {
   }
   return {
     locator: options.locator,
-    endpoint: controlSocketPath(options.hiveHome, options.sessionId),
+    endpoint: hostSocketPath(options.hiveHome, options.sessionId),
     token,
     expiresAt,
     engineBuildId: options.engineBuildId,
@@ -265,14 +235,7 @@ export async function issueHostAttachGrant(options: {
   };
 }
 
-/**
- * The SHA-256 of the `hive-sessiond` executable.
- *
- * A host compares this against its own binary: adoption proves not just that
- * the caller holds the capability but that it is running the same build. It is
- * the executable's hash, NOT the engine build id — those are different values
- * and the host refuses a mismatch as unauthenticated.
- */
+/** The SHA-256 of the `hive-sessiond` executable. A host compares this against its own binary: adoption proves not just that the caller holds the capability but that it is running the same build. It is the executable's hash, NOT the engine build id — those are different values and the host refuses a mismatch as unauthenticated. */
 const executableHashes = new Map<string, Promise<string>>();
 
 export function executableBuildHash(path: string): Promise<string> {
@@ -285,26 +248,20 @@ export function executableBuildHash(path: string): Promise<string> {
   return digest;
 }
 
-/**
- * Asks the terminal to resolve an orphaned or held human input claim.
- *
- * The policy is the host's alone: it decides whether a claim is orphaned or
- * needs an explicit preemption, and reports those as different outcomes. Hive
- * adds nothing to that judgement; it only carries the question.
- */
-export async function discardHostInputOrphan(options: {
+export async function captureHostTerminal(options: {
   hiveHome: string;
   sessionId: string;
   locator: SessionLocator;
-  mode: "orphaned" | "held";
+  request: CaptureRequest;
   buildId: string;
-}): Promise<unknown> {
-  return await exchange(
-    controlSocketPath(options.hiveHome, options.sessionId),
-    "INPUT_ORPHAN_DISCARD",
-    { schemaVersion: 1, locator: options.locator, mode: options.mode },
+}): Promise<CaptureResult> {
+  const answer = await exchange(
+    hostSocketPath(options.hiveHome, options.sessionId),
+    "HOST_CAPTURE",
+    CaptureRequestSchema.parse(options.request),
     TERMINAL_LIMITS.controlRpcTimeoutMilliseconds,
     { instanceId: options.locator.instanceId, buildId: options.buildId },
-    "ORPHAN_DISCARDED",
+    "HOST_CAPTURED",
   );
+  return CaptureResultSchema.parse(answer);
 }

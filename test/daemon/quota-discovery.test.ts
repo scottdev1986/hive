@@ -3,16 +3,24 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HiveDatabase } from "../../src/daemon/db";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
-  type CodexRateLimitsResponse,
-  QuotaService,
-} from "../../src/daemon/quota";
-import { QuotaLedger } from "../../src/daemon/quota-ledger";
+  QuotaConfigSchema,
+  type QuotaLimit,
+  type QuotaPoolStatus,
+} from "../../src/schemas/quota";
+import { QuotaService } from "../../src/usage-service/usage-quota";
+import { QuotaLedger } from "../../src/usage-service/quota-ledger";
+import {
+  drainedWindowFor,
+  measured,
+} from "../../src/usage-service/quota-pool-status";
+import { resolvedLimits } from "../../src/usage-service/quota-pools";
 import {
   ClaudeQuotaProbe,
   type ClaudeUsageResponse,
   CodexQuotaProbe,
+  type CodexRateLimitsResponse,
   catalogFromClaudeModels,
   catalogFromGrokInitialize,
   type GrokBillingResponse,
@@ -25,12 +33,7 @@ import {
   readingsFromCodexResponse,
   readingsFromGrokBilling,
   readingsFromKimiUsages,
-} from "../../src/daemon/quota-sources";
-import {
-  QuotaConfigSchema,
-  type QuotaLimit,
-  type QuotaPoolStatus,
-} from "../../src/schemas";
+} from "../../src/usage-service/quota-sources";
 import { required } from "../required";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
@@ -108,6 +111,35 @@ class StubProbe implements QuotaProbe {
     this.calls += 1;
     return Promise.resolve(this.result);
   }
+}
+
+function claudeWindowProbe(
+  fiveHourUsed: number,
+  fiveHourResetAt: Date,
+  weeklyResetAt: Date,
+): StubProbe {
+  return new StubProbe("claude", {
+    status: "ok",
+    pools: readingsFromClaudeUsage(
+      {
+        subscription_type: "max",
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: {
+            utilization: fiveHourUsed,
+            resets_at: fiveHourResetAt.toISOString(),
+          },
+          seven_day: {
+            utilization: 40,
+            resets_at: weeklyResetAt.toISOString(),
+          },
+        },
+      },
+      "default",
+      now.toISOString(),
+    ),
+    catalog: [],
+  });
 }
 
 async function service(
@@ -731,7 +763,7 @@ describe("notification-driven quota updates", () => {
     }
   });
 
-  test("still maps percentages onto an operator's declared units when overridden", async () => {
+  test("still maps percentages onto an user's declared units when overridden", async () => {
     const override: QuotaLimit = {
       provider: "codex",
       account: "default",
@@ -798,15 +830,24 @@ describe("per-window accounting", () => {
         spentAt.toISOString(),
       );
 
-      // A five-hour-only statusLine now arrives, newer than the weekly reading.
+      // A newer five-hour-only provider observation arrives; weekly must keep
+      // the earlier reading plus the reconcile debit.
       const laterAt = new Date(now.getTime() + 120_000);
-      await quota.observeStatusline(
-        { tool: "codex", model: "gpt-5.3-codex" },
-        {
-          fiveHour: { usedPct: 60, resetsAt: null },
-          observedAt: laterAt.toISOString(),
-        },
-      );
+      await quota.observe({
+        provider: "codex",
+        account: "default",
+        pool: "codex",
+        fiveHourUsed: 60,
+        weeklyUsed: 40.75,
+        observedAt: laterAt.toISOString(),
+        fiveHourResetAt: null,
+        weeklyResetAt: null,
+        source: "provider",
+        confidence: "reported",
+        fiveHourObservedAt: laterAt.toISOString(),
+        fiveHourSource: "provider",
+        fiveHourConfidence: "reported",
+      });
 
       const status = pool(quota, "codex", laterAt);
       // The weekly reading was 40%; the 0.75% spent after it must still count.
@@ -921,24 +962,158 @@ describe("staleness", () => {
     }
   });
 
-  // A reset voids the old reading. Reporting 0% would claim the account is
-  // untouched, but the human spends this account outside Hive too — nobody has
-  // measured the new window yet, so it is unknown until the next probe.
-  test("a passed reset makes the window unknown, not zero", async () => {
-    const codex = new StubProbe("codex", await codexPools());
-    const { quota, db } = await service([codex]);
+  test("rolls a non-exhausted Claude window at its known reset", async () => {
+    let clock = now;
+    const resetAt = new Date(now.getTime() + 10 * 60_000);
+    const nextResetAt = new Date(resetAt.getTime() + 5 * 60 * 60_000);
+    const claude = claudeWindowProbe(
+      61,
+      resetAt,
+      new Date(now.getTime() + 3 * 24 * 60 * 60_000),
+    );
+    const { quota, db } = await service([claude], [], () => clock);
     try {
-      await quota.refreshFromProviders(now);
-      const later = new Date(now.getTime() + 3 * 60 * 60_000);
-      const status = pool(quota, "codex", later);
-      expect(status.fiveHour.used).toBeNull();
-      expect(status.fiveHour.confidence).toBe("missing");
-      // The weekly window has not reset, so its reading survives.
-      expect(status.weekly.used).toBe(40);
-      // And Hive re-probes rather than waiting out the refresh interval.
-      expect(quota.needsRefresh(later)).toBe(true);
+      await quota.refreshFromProviders(clock);
+      expect(pool(quota, "subscription", clock).fiveHour.used).toBe(61);
+
+      clock = new Date(resetAt.getTime() + 1);
+      expect(pool(quota, "subscription", clock).fiveHour).toMatchObject({
+        availability: "available",
+        used: 0,
+        resetsAt: nextResetAt.toISOString(),
+        confidence: "estimated",
+        source: "ledger",
+        observedAt: resetAt.toISOString(),
+      });
     } finally {
       db.close();
+    }
+  });
+
+  test("a known reset rolls the window while an unobserved pool stays unknown", async () => {
+    let clock = now;
+    const resetAt = new Date(now.getTime() + 10 * 60_000);
+    const nextResetAt = new Date(resetAt.getTime() + 5 * 60 * 60_000);
+    const weeklyResetAt = new Date(now.getTime() + 3 * 24 * 60 * 60_000);
+    const claude = claudeWindowProbe(100, resetAt, weeklyResetAt);
+    const { quota, db } = await service([claude], [], () => clock);
+    const unobserved = await service([], [], () => clock);
+    try {
+      await quota.refreshFromProviders(clock);
+      const candidate = required(
+        (
+          await authorizeForQuotaTest([
+            { tool: "claude", model: "claude-fable-5" },
+          ])
+        )[0],
+      );
+      quota.reserveLaunch("reset-crossing", candidate, "simple_coding");
+
+      unobserved.ledger.upsertDiscoveredPool({
+        provider: "claude",
+        account: "default",
+        pool: "unobserved",
+        models: ["*"],
+        label: null,
+        fiveHourWindowMinutes: 300,
+        weeklyWindowMinutes: 10_080,
+        fiveHourMeterState: "metered",
+        weeklyMeterState: "metered",
+        discoveredAt: now.toISOString(),
+        source: "provider",
+      });
+
+      const before = pool(quota, "subscription", clock);
+      const unobservedBefore = pool(unobserved.quota, "unobserved", clock);
+      expect(before.fiveHour).toMatchObject({
+        availability: "available",
+        used: 100,
+        reserved: 4,
+        remaining: 0,
+        resetsAt: resetAt.toISOString(),
+      });
+      expect(drainedWindowFor([before])).toEqual({
+        pool: "subscription",
+        window: "fiveHour",
+        resetsAt: resetAt.toISOString(),
+      });
+      expect(measured(unobservedBefore)).toBeNull();
+
+      clock = new Date(resetAt.getTime() + 1);
+      const after = pool(quota, "subscription", clock);
+      expect(after.fiveHour).toMatchObject({
+        availability: "available",
+        allowance: 100,
+        used: 0,
+        reserved: 0,
+        remaining: 100,
+        remainingPct: 1,
+        resetsAt: nextResetAt.toISOString(),
+        confidence: "estimated",
+        source: "ledger",
+        observedAt: resetAt.toISOString(),
+      });
+      expect(after.weekly.used).toBe(40);
+      expect(after.weekly.reserved).toBe(0.75);
+      expect(measured(after)).not.toBeNull();
+      expect(drainedWindowFor([after])).toBeNull();
+      const unobservedAfter = pool(unobserved.quota, "unobserved", clock);
+      expect(unobservedAfter).toEqual(unobservedBefore);
+      expect(measured(unobservedAfter)).toBeNull();
+
+      const postReset = quota.reserveLaunch(
+        "post-reset",
+        candidate,
+        "simple_coding",
+      );
+      const spentAt = new Date(clock.getTime() + 60_000);
+      await quota.reconcile(postReset.id, 2, "provider", spentAt.toISOString());
+      clock = spentAt;
+      expect(pool(quota, "subscription", clock).fiveHour).toMatchObject({
+        used: 2,
+        reserved: 0,
+        remaining: 98,
+        confidence: "estimated",
+        source: "ledger",
+      });
+
+      clock = new Date(resetAt.getTime() + 31 * 60_000);
+      const decayed = pool(quota, "subscription", clock);
+      expect(decayed.fiveHour).toMatchObject({
+        availability: "unknown",
+        used: null,
+        reserved: 0,
+        resetsAt: nextResetAt.toISOString(),
+        confidence: "missing",
+        source: "none",
+        observedAt: null,
+      });
+      expect(measured(decayed)).toBeNull();
+
+      const providerObservedAt = new Date(clock.getTime() + 60_000);
+      await quota.observe({
+        provider: "claude",
+        account: "default",
+        pool: "subscription",
+        fiveHourUsed: 25,
+        weeklyUsed: 41,
+        observedAt: providerObservedAt.toISOString(),
+        fiveHourResetAt: nextResetAt.toISOString(),
+        weeklyResetAt: weeklyResetAt.toISOString(),
+        source: "provider",
+        confidence: "reported",
+      });
+      clock = providerObservedAt;
+      expect(pool(quota, "subscription", clock).fiveHour).toMatchObject({
+        used: 25,
+        resetsAt: nextResetAt.toISOString(),
+        confidence: "reported",
+        source: "provider",
+        observedAt: providerObservedAt.toISOString(),
+      });
+    } finally {
+      db.close();
+      unobserved.db.close();
     }
   });
 
@@ -965,7 +1140,108 @@ describe("staleness", () => {
     }
   });
 
-  test("an operator override does not silently disable discovery", async () => {
+  test("an operator click queues behind an older probe and overlapping clicks share the successor", async () => {
+    const releases: Array<() => void> = [];
+    let calls = 0;
+    const probe: QuotaProbe = {
+      provider: "grok",
+      read: async () => {
+        calls += 1;
+        await new Promise<void>((resolve) => releases.push(resolve));
+        return { status: "ok", pools: [], catalog: [] };
+      },
+    };
+    let current = now;
+    const { quota, db } = await service([probe], [], () => current);
+    try {
+      const periodic = quota.refreshFromProviders(current, { force: true });
+      await Promise.resolve();
+      expect(calls).toBe(1);
+
+      const firstRequest = new Date(now.getTime() + 1_000);
+      current = firstRequest;
+      const firstClick = quota.refreshFromProviders(firstRequest, {
+        force: true,
+        trigger: "operator",
+      });
+      const secondRequest = new Date(now.getTime() + 2_000);
+      current = secondRequest;
+      const overlappingClick = quota.refreshFromProviders(secondRequest, {
+        force: true,
+        trigger: "operator",
+      });
+      await Promise.resolve();
+      expect(calls).toBe(1);
+
+      releases[0]?.();
+      for (let index = 0; index < 10 && calls < 2; index += 1) {
+        await Promise.resolve();
+      }
+      expect(calls).toBe(2);
+      releases[1]?.();
+
+      const [, firstReports, overlappingReports] = await Promise.all([
+        periodic,
+        firstClick,
+        overlappingClick,
+      ]);
+      expect(calls).toBe(2);
+      expect(firstReports[0]?.delivery).toBe("queued");
+      expect(overlappingReports[0]?.delivery).toBe("coalesced");
+      expect(
+        Date.parse(firstReports[0]?.startedAt ?? ""),
+      ).toBeGreaterThanOrEqual(firstRequest.getTime());
+      expect(
+        Date.parse(overlappingReports[0]?.startedAt ?? ""),
+      ).toBeGreaterThanOrEqual(secondRequest.getTime());
+    } finally {
+      db.close();
+    }
+  });
+
+  test("repeated operator refreshes report the five-second vendor-call limit", async () => {
+    let current = now;
+    let calls = 0;
+    const probe: QuotaProbe = {
+      provider: "grok",
+      read: () => {
+        calls += 1;
+        return Promise.resolve({ status: "ok", pools: [], catalog: [] });
+      },
+    };
+    const { quota, db } = await service([probe], [], () => current);
+    try {
+      const first = await quota.refreshFromProviders(current, {
+        force: true,
+        trigger: "operator",
+      });
+      expect(first[0]?.status).toBe("ok");
+      expect(calls).toBe(1);
+
+      current = new Date(now.getTime() + 1_000);
+      const limited = await quota.refreshFromProviders(current, {
+        force: true,
+        trigger: "operator",
+      });
+      expect(limited).toEqual([
+        {
+          provider: "grok",
+          status: "rate-limited",
+          pools: 0,
+          reason:
+            "operator probes are limited to one vendor call every 5 seconds",
+          completedAt: current.toISOString(),
+          retryAt: new Date(now.getTime() + 5_000).toISOString(),
+          delivery: "rate-limited",
+        },
+      ]);
+      expect(calls).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a user override does not silently disable discovery", async () => {
     const override: QuotaLimit = {
       provider: "codex",
       account: "default",
@@ -987,7 +1263,7 @@ describe("staleness", () => {
       await quota.refreshFromProviders(now);
       expect(codex.calls).toBe(1);
 
-      // And the percentages land scaled onto the units the operator declared.
+      // And the percentages land scaled onto the units the user declared.
       const status = pool(quota, "codex");
       expect(status.origin).toBe("manual");
       expect(status.fiveHour.unit).toBe("units");
@@ -1203,13 +1479,10 @@ describe("claude usage probe", () => {
       );
       await quota.refreshFromProviders(later, { force: true });
 
-      const limit = quota
-        .resolvedLimits()
-        .find(
-          (candidate) =>
-            candidate.provider === "claude" &&
-            candidate.pool === "subscription",
-        );
+      const limit = resolvedLimits(quota.ledger, quota.config).find(
+        (candidate) =>
+          candidate.provider === "claude" && candidate.pool === "subscription",
+      );
       expect(limit?.fiveHourMeterState).toBe("unknown");
       expect(limit?.fiveHourWindowMinutes).toBe(300);
       expect(pool(quota, "subscription", later).fiveHour.availability).not.toBe(
@@ -1325,9 +1598,9 @@ describe("pools gate the models they actually meter", () => {
   test("binds a metered pool to its models through the provider's own catalog", async () => {
     const { quota } = await service([claudeProbe(exhaustedFable)]);
     await quota.refreshFromProviders(now, { force: true });
-    const fable = quota
-      .resolvedLimits()
-      .find((limit) => limit.pool === "weekly:Fable");
+    const fable = resolvedLimits(quota.ledger, quota.config).find(
+      (limit) => limit.pool === "weekly:Fable",
+    );
     // Discovered, not hardcoded: "Fable" is joined to the concrete id the CLI
     // says it resolves to, and every name that model answers to is bound with it
     // so a pin cannot dodge the meter.
@@ -1419,20 +1692,31 @@ describe("pools gate the models they actually meter", () => {
     ]);
   });
 
-  test("account-wide statusLine numbers never land in a model's own pool", async () => {
+  test("account-wide provider readings never land in a model's own pool", async () => {
     const { quota } = await service([claudeProbe(exhaustedFable)]);
     await quota.refreshFromProviders(now, { force: true });
-    // The statusLine reports the *account's* windows. Filing them under the
-    // running model would overwrite Fable's measured 99% with the account's 61%
-    // and destroy the very reading the gate depends on.
-    await quota.observeStatusline(
-      { tool: "claude", model: "claude-fable-5" },
-      {
-        fiveHour: { usedPct: 12, resetsAt: null },
-        sevenDay: { usedPct: 61, resetsAt: null },
-        observedAt: new Date(now.getTime() + 60_000).toISOString(),
-      },
-    );
+    // Account-wide windows belong to the subscription pool. Writing them under
+    // the running model would overwrite Fable's measured 99% with the
+    // account's 61% and destroy the reading the gate depends on.
+    const at = new Date(now.getTime() + 60_000).toISOString();
+    await quota.observe({
+      provider: "claude",
+      account: "default",
+      pool: "subscription",
+      fiveHourUsed: 12,
+      weeklyUsed: 61,
+      observedAt: at,
+      fiveHourResetAt: null,
+      weeklyResetAt: null,
+      source: "provider",
+      confidence: "reported",
+      fiveHourObservedAt: at,
+      fiveHourSource: "provider",
+      fiveHourConfidence: "reported",
+      weeklyObservedAt: at,
+      weeklySource: "provider",
+      weeklyConfidence: "reported",
+    });
     expect(pool(quota, "weekly:Fable").weekly.used).toBe(99);
     expect(pool(quota, "subscription").weekly.used).toBe(61);
   });
@@ -1451,7 +1735,7 @@ describe("pools gate the models they actually meter", () => {
       ),
       "complex_coding",
     );
-    // A human switches the session to Fable. The agent is already running, so the
+    // A user switches the session to Fable. The agent is already running, so the
     // booking must follow it onto the Fable cap even though that cap is full —
     // refusing would not stop the burn, it would only hide it.
     await quota.reconcileAgentModel("drifter", "claude-fable-5");
@@ -1540,7 +1824,7 @@ describe("a route that cannot start is on cooldown", () => {
 
     // Someone fixes the underlying cause and a codex agent proves life. That is
     // the only evidence that matters, and it supersedes everything Hive
-    // concluded from the failure — no operator action, no expiry to wait out.
+    // concluded from the failure — no user action, no expiry to wait out.
     const pinned = quota.reserveLaunch("b", codexRoute, "complex_coding");
     quota.markStarted(pinned.id, now.toISOString());
     expect(quota.launchCooldown(codexRoute)).toBeNull();

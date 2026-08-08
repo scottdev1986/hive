@@ -2,17 +2,19 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HiveDatabase } from "../../src/daemon/db";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
   classifyVendorDrainError,
   DrainHandler,
   type ReplacementDrain,
-} from "../../src/daemon/drain-handler";
-import { drainedWindowFor, QuotaService } from "../../src/daemon/quota";
-import { QuotaLedger } from "../../src/daemon/quota-ledger";
-import type { QuotaProbe } from "../../src/daemon/quota-sources";
-import type { AgentRecord } from "../../src/schemas";
-import { QuotaConfigSchema } from "../../src/schemas";
+} from "../../src/daemon/spawn/drain-handler";
+import type { AgentRecord } from "../../src/schemas/agent";
+import { QuotaConfigSchema } from "../../src/schemas/quota";
+import { QuotaService } from "../../src/usage-service/usage-quota";
+import { QuotaLedger } from "../../src/usage-service/quota-ledger";
+import { drainedWindowFor } from "../../src/usage-service/quota-pool-status";
+import type { QuotaProbe } from "../../src/usage-service/quota-sources";
+import { required } from "../required";
 
 /**
  * The drain handler: hold when a window resets within the hour,
@@ -45,7 +47,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 40,
     createdAt: now.toISOString(),
     lastEventAt: now.toISOString(),
-    recoveryAttempts: 0,
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
@@ -138,7 +139,7 @@ async function harness(
   const drain = new DrainHandler({
     db,
     quota,
-    send: async (from, to, body, options) => {
+    publish: async (from, to, body, options) => {
       if (
         options?.idempotencyKey !== undefined &&
         sent.some(
@@ -177,8 +178,8 @@ async function harness(
 
 function insertRunningAgent(h: Harness, record: AgentRecord): void {
   h.db.insertAgent(record);
-  if (record.status === "failed") return;
-  const locator = record.sessionLocator!;
+  if (record.status === "dead") return;
+  const locator = required(record.sessionLocator);
   h.db.insertProviderRun({
     runId:
       record.name === "otto"
@@ -190,9 +191,13 @@ function insertRunningAgent(h: Harness, record: AgentRecord): void {
     model: record.model,
     effort: null,
     conversationId: null,
-    pid: record.name === "otto" ? 4_200 : 4_100,
-    startToken: record.name === "otto" ? "4200:1" : "4100:1",
-    foregroundProcessGroupId: record.name === "otto" ? 4_200 : 4_100,
+    adapterChild: {
+      pid: record.name === "otto" ? 4_200 : 4_100,
+      startToken: record.name === "otto" ? "4200:1" : "4100:1",
+      processGroupId: record.name === "otto" ? 4_200 : 4_100,
+      observedAt: now.toISOString(),
+    },
+    protocolReceipt: null,
     capabilityEpoch: record.capabilityEpoch,
     launchGrantId: `grant-${record.name}`,
     startedAt: now.toISOString(),
@@ -215,7 +220,7 @@ describe("the drain handler", () => {
     insertRunningAgent(h, agent());
 
     await h.drain.sweep();
-    const held = h.db.getAgentById("agent-maya")!;
+    const held = required(h.db.getAgentById("agent-maya"));
     expect(held.status).toBe("held");
     expect(held.holdReason).toContain("subscription");
     expect(held.holdReason).toContain(at(30));
@@ -270,7 +275,7 @@ describe("the drain handler", () => {
     expect(h.resumed).toHaveLength(0);
     h.db.upsertAgent(held);
     await h.drain.sweep();
-    const freed = h.db.getAgentById("agent-maya")!;
+    const freed = required(h.db.getAgentById("agent-maya"));
     expect(freed.status).toBe("idle");
     expect(freed.holdReason).toBeNull();
     expect(freed.holdResetAt).toBeNull();
@@ -298,7 +303,9 @@ describe("the drain handler", () => {
     ]);
     insertRunningAgent(h, agent());
     await h.drain.sweep();
-    const resetAt = h.db.getAgentById("agent-maya")!.holdResetAt;
+    const resetAt = required(
+      required(h.db.getAgentById("agent-maya")).holdResetAt,
+    );
     now = new Date(now.getTime() + 31 * 60_000);
 
     let resumeCalls = 0;
@@ -388,7 +395,7 @@ describe("the drain handler", () => {
     // A `held` row with a null reset is a state the sweep's resume can never
     // act on: the agent would wait for a poke that cannot arrive. The seam
     // reports this agent instead of holding it.
-    const row = h.db.getAgentById("agent-maya")!;
+    const row = required(h.db.getAgentById("agent-maya"));
     expect({
       status: row.status,
       holdResetAt: row.holdResetAt ?? null,
@@ -414,14 +421,13 @@ describe("the drain handler", () => {
       id: "agent-otto",
       name: "otto",
       tool: "opencode",
-      status: "failed",
-      failedAt: now.toISOString(),
+      status: "dead",
     });
     insertRunningAgent(h, opencodeAgent);
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
 
     expect(h.paused).toEqual(["maya"]);
-    const held = h.db.getAgentById("agent-maya")!;
+    const held = required(h.db.getAgentById("agent-maya"));
     expect(held.status).toBe("held");
     expect(held.holdReason).toContain("every provider is out of usage");
     expect(held.holdResetAt).toBe(at(240));
@@ -445,8 +451,7 @@ describe("the drain handler", () => {
       id: "agent-otto",
       name: "otto",
       tool: "opencode",
-      status: "failed",
-      failedAt: now.toISOString(),
+      status: "dead",
     });
     insertRunningAgent(h, opencodeAgent);
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
@@ -459,7 +464,7 @@ describe("the drain handler", () => {
       "Resume it when any provider's usage returns",
     );
     expect(h.paused).toEqual([]);
-    const retained = h.db.getAgentById("agent-maya")!;
+    const retained = required(h.db.getAgentById("agent-maya"));
     expect({
       status: retained.status,
       holdResetAt: retained.holdResetAt ?? null,
@@ -483,13 +488,12 @@ describe("the drain handler", () => {
       id: "agent-otto",
       name: "otto",
       tool: "opencode",
-      status: "failed",
-      failedAt: now.toISOString(),
+      status: "dead",
     });
     insertRunningAgent(h, opencodeAgent);
 
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
-    expect(h.db.getAgentById("agent-otto")!.status).toBe("failed");
+    expect(required(h.db.getAgentById("agent-otto")).status).toBe("dead");
     // The agent is already terminal, so its work is retained and the
     // replacement seam is reported without inventing a handoff for it.
     expect(h.replacements).toHaveLength(1);
@@ -517,7 +521,7 @@ describe("the drain handler", () => {
     ]);
     insertRunningAgent(h, agent());
     await h.drain.sweep();
-    expect(h.db.getAgentById("agent-maya")!.status).toBe("working");
+    expect(required(h.db.getAgentById("agent-maya")).status).toBe("working");
     expect(h.paused).toHaveLength(0);
     expect(h.replacements).toHaveLength(0);
   });

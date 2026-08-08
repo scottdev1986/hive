@@ -1,6 +1,5 @@
 import Foundation
 
-/// Severity for attention ordering. Higher raw value sorts first.
 public enum AttentionSeverity: Int, Codable, Comparable {
     case completed = 1
     case disconnected = 2
@@ -19,7 +18,6 @@ public struct AttentionItem: Equatable, Codable, Identifiable {
     public let severity: AttentionSeverity
     public let title: String
     public let detail: String
-    /// Monotonic ordering timestamp supplied by the event source (seconds).
     public let raisedAt: TimeInterval
 
     public init(id: String, projectID: ProjectID, paneID: PaneID,
@@ -35,10 +33,7 @@ public struct AttentionItem: Equatable, Codable, Identifiable {
     }
 }
 
-/// The attention queue: ordered by severity, then age (oldest first), then id.
-/// Never ordered by pane position. Items are cleared only by explicit
-/// resolution commands (acknowledge / approve / open failure) — activating or
-/// focusing an item's pane must not remove it.
+/// The attention queue: ordered by severity, then age (oldest first), then id. Never ordered by pane position. Items are cleared only by explicit resolution commands (acknowledge / approve / open failure) — activating or focusing an item's pane must not remove it.
 public struct AttentionQueue: Equatable {
     private(set) var items: [String: AttentionItem] = [:]
 
@@ -52,16 +47,12 @@ public struct AttentionQueue: Equatable {
         }
     }
 
-    public var isEmpty: Bool { items.isEmpty }
     public var count: Int { items.count }
-
-    public func item(id: String) -> AttentionItem? { items[id] }
 
     public mutating func raise(_ item: AttentionItem) {
         items[item.id] = item
     }
 
-    /// Explicit resolution — the only way an item leaves the queue.
     public mutating func resolve(id: String) {
         items.removeValue(forKey: id)
     }

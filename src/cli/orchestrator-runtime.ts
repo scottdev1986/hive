@@ -1,8 +1,13 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { getHiveHome } from "../daemon/db";
-import { type CapabilityProvider, CapabilityProviderSchema } from "../schemas";
+import { probeProcessLiveness } from "../adapters/process-liveness";
+import { getHiveHome } from "../hive-home/home";
+import {
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "../schemas/capability";
+import { systemClock } from "../shared/clock";
 
 const OrchestratorRuntimeSchema = z.strictObject({
   version: z.literal(1),
@@ -20,12 +25,8 @@ export function orchestratorRuntimePath(home = getHiveHome()): string {
 }
 
 function processIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
+  const liveness = probeProcessLiveness(pid);
+  return liveness === "live" || liveness === "other-uid";
 }
 
 export async function readLiveOrchestratorRuntime(
@@ -42,10 +43,7 @@ export async function readLiveOrchestratorRuntime(
   }
 }
 
-/** Publish the provider-native session selected by the supervisor's bounded
- * artifact monitor. The PID guard prevents an old generation from rewriting
- * a replacement supervisor's marker. Passing null clears the previous root
- * generation before the next provider process launches. */
+/** Publish the provider-native session selected by the supervisor's bounded artifact monitor. The PID guard prevents an old generation from rewriting a replacement supervisor's marker. Passing null clears the previous root generation before the next provider process launches. */
 export async function publishOrchestratorSessionId(
   sessionId: string | null,
   path = orchestratorRuntimePath(),
@@ -70,13 +68,7 @@ export async function publishOrchestratorSessionId(
   return true;
 }
 
-/**
- * Publish which root owns this instance while its supervisor is alive.
- *
- * The owner UUID makes cleanup generation-safe, while the PID makes a marker
- * left by SIGKILL inert. Each named Hive instance has its own HIVE_HOME, so a
- * Grok root can never capture a report addressed to another window.
- */
+/** Publish which root owns this instance while its supervisor is alive. The owner UUID makes cleanup generation-safe, while the PID makes a marker left by SIGKILL inert. Each named Hive instance has its own HIVE_HOME, so a Grok root can never capture a report addressed to another window. */
 export async function withOrchestratorRuntime<T>(
   tool: CapabilityProvider,
   action: () => Promise<T>,
@@ -92,7 +84,7 @@ export async function withOrchestratorRuntime<T>(
     owner: crypto.randomUUID(),
     pid: options.pid ?? process.pid,
     tool,
-    startedAt: (options.now ?? (() => new Date()))().toISOString(),
+    startedAt: (options.now ?? systemClock)().toISOString(),
   });
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${runtime.owner}.tmp`;

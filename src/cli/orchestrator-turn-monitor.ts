@@ -6,13 +6,17 @@ import {
   findLatestGrokSessionDirectory,
   findLatestGrokSessionId,
 } from "../adapters/providers/grok-cli";
-import { getHiveHome } from "../daemon/db";
-import type { TurnBoundaryKind } from "../daemon/orchestrator-status";
-import { readNativeTurnCompleted } from "../daemon/tool-telemetry";
-import { type CapabilityProvider, ORCHESTRATOR_NAME } from "../schemas";
-import { operatorFetch } from "./credential";
-import { buildHookEvent } from "./event";
+import { grokQueenHome } from "../adapters/queen-skills";
+import type { TurnBoundaryKind } from "../daemon/status-service/status-service";
+import { readNativeTurnCompleted } from "../daemon/observability/tool-telemetry";
+import type { CapabilityProvider } from "../schemas/capability";
+import { ORCHESTRATOR_NAME } from "../schemas/agent";
+import { userFetch } from "./credential";
+import { buildHookEvent, postHookEvent } from "./event-command";
 import { publishOrchestratorSessionId } from "./orchestrator-runtime";
+import { orchestratorConfigRoot } from "./orchestrator";
+import { abortableSleep } from "../shared/sleep";
+import { errorMessage } from "../shared/error-message";
 
 const POLL_MS = 250;
 
@@ -30,30 +34,6 @@ export interface NativeTurnMonitorDependencies {
   readonly warn: (message: string) => void;
 }
 
-const abortableSleep = (
-  milliseconds: number,
-  signal: AbortSignal,
-): Promise<void> =>
-  new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const finish = (): void => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", finish);
-      resolve();
-    };
-    const timer = setTimeout(finish, milliseconds);
-    signal.addEventListener("abort", finish, { once: true });
-  });
-
-/**
- * Bridge the exact turn boundaries Codex and Grok already persist into the
- * same daemon event stream Claude's hooks use. A first observed completed turn
- * emits a pair because the monitor may have started after a short turn ended;
- * the pair is measured vendor evidence, not an invented idle default.
- */
 export async function monitorNativeOrchestratorTurns(
   baselineSessionId: string | null,
   signal: AbortSignal,
@@ -89,7 +69,7 @@ export async function monitorNativeOrchestratorTurns(
       }
       lastWarning = null;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       if (message !== lastWarning) {
         dependencies.warn(
           `[hive] orchestrator status observation failed: ${message}`,
@@ -111,7 +91,7 @@ async function locateNativeTurnArtifact(
       ? null
       : { sessionId: rollout.sessionId, path: rollout.path };
   }
-  const home = join(getHiveHome(), "runtime", "orchestrator", ".grok");
+  const home = grokQueenHome(orchestratorConfigRoot());
   const sessionId = await findLatestGrokSessionId(cwd, home);
   if (sessionId === null) return null;
   const directory = await findLatestGrokSessionDirectory(cwd, sessionId, home);
@@ -125,25 +105,17 @@ async function reportBoundary(
   kind: TurnBoundaryKind,
   sessionId: string,
 ): Promise<void> {
-  const response = await operatorFetch(`http://127.0.0.1:${port}/event`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(
-      buildHookEvent(kind, {
-        agent: ORCHESTRATOR_NAME,
-        toolSessionId: sessionId,
-      }),
-    ),
-    signal: AbortSignal.timeout(1_000),
-  });
-  if (!response.ok) {
-    throw new Error(`daemon rejected ${kind} (${response.status})`);
-  }
+  await postHookEvent(
+    buildHookEvent(kind, {
+      agent: ORCHESTRATOR_NAME,
+      toolSessionId: sessionId,
+    }),
+    port,
+    userFetch,
+  );
 }
 
-/** Run one root generation with an implemented passive artifact monitor.
- * Failure to establish the baseline fails closed to unknown status while
- * leaving the orchestrator itself usable. */
+/** Run one root generation with an implemented passive artifact monitor. Failure to establish the baseline fails closed to unknown status while leaving the orchestrator itself usable. */
 export async function withNativeOrchestratorTurnMonitor<T>(
   tool: CapabilityProvider,
   port: number,
@@ -160,9 +132,7 @@ export async function withNativeOrchestratorTurnMonitor<T>(
     baseline = await locateNativeTurnArtifact(nativeTool, cwd);
   } catch (error) {
     console.error(
-      `[hive] orchestrator status baseline unavailable: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `[hive] orchestrator status baseline unavailable: ${errorMessage(error)}`,
     );
     return run();
   }

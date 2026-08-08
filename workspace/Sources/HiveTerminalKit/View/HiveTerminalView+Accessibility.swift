@@ -3,22 +3,7 @@ import Foundation
 import HiveGhosttyC
 import ObjectiveC
 
-/// Accessibility adapter for `HiveTerminalView`.
-///
-/// Semantic rows/ranges/cursor/selection come from
-/// `ManualSurfaceSemanticSnapshotProviding`. Selection-change AX posting uses
-/// `HiveTerminalActionNotification.selectionChanged`. Also handles lifecycle/
-/// failure announcements and a row-element tree for VoiceOver navigation.
-///
-/// Engine exports (`semanticSnapshot()`) are single-lock; this adapter pins
-/// one generation for consecutive AX getters until the next invalidate signal
-/// (or an explicit `withPinnedSnapshot` read batch). It does **not** re-export
-/// on every property access — that multi-export path produced torn dumps.
-///
-/// Live VoiceOver listening and Accessibility Inspector human audit are
-/// explicit human checklist slots, not silent gaps. Real `NSAccessibility.post`
-/// (see `post` below) is covered only by those human slots; machine tests
-/// watch `notificationProbe` only.
+/// Accessibility adapter for `HiveTerminalView`. Semantic rows/ranges/cursor/selection come from `ManualSurfaceSemanticSnapshotProviding`. Selection-change AX posting uses `HiveTerminalActionNotification.selectionChanged`. Also handles lifecycle/ failure announcements and a row-element tree for VoiceOver navigation. Engine exports (`semanticSnapshot()`) are single-lock; this adapter pins one generation for consecutive AX getters until the next invalidate signal (or an explicit `withPinnedSnapshot` read batch). It does **not** re-export on every property access — that multi-export path produced torn dumps. Live VoiceOver listening and Accessibility Inspector user audit are explicit user checklist slots, not silent gaps. Real `NSAccessibility.post` (see `post` below) is covered only by those user slots; machine tests watch `notificationProbe` only.
 
 private struct TerminalAccessibilitySignals: OptionSet {
     let rawValue: UInt8
@@ -67,17 +52,11 @@ private final class TerminalAccessibilityController {
     private var pendingSignals: TerminalAccessibilitySignals = []
     private var lastFocused = false
     private var lastLifecycleDescription: String?
-    /// When true, `currentSnapshot()` may re-export from the engine.
-    /// Cleared after a successful refresh; set by schedule/destroy/size signals.
     private var cacheValid = false
     /// Nested pin depth: while > 0, getters share one generation and never re-export.
     private var pinDepth = 0
     private var dirtyWhilePinned = false
-    /// Set by the first `currentSnapshot()` read — i.e. the first time an
-    /// assistive client asked this view anything. Until then, output-driven
-    /// invalidates only mark the cache dirty.
     private var hasAccessibilityReader = false
-    /// Test seam: counts engine exports so the invalidate policy is observable.
     private(set) var exportCount = 0
 
     init(view: HiveTerminalView) {
@@ -89,7 +68,6 @@ private final class TerminalAccessibilityController {
     /// One pinned generation for a multi-property AX read (dump, batch assert).
     func withPinnedSnapshot<R>(_ body: () -> R) -> R {
         dispatchPrecondition(condition: .onQueue(.main))
-        // Drop any deferred refresh so this pin is the sole export for the batch.
         refreshScheduled = false
         dirtyWhilePinned = false
         refresh(postNotifications: false)
@@ -105,8 +83,7 @@ private final class TerminalAccessibilityController {
         return body()
     }
 
-    /// Synchronous re-export (tests / post-mutation settle). Never call from a
-    /// native Ghostty callback stack — same rule as `semanticSnapshot()`.
+    /// Synchronous re-export (tests / post-mutation settle). Never call from a native Ghostty callback stack — same rule as `semanticSnapshot()`.
     func forceRefreshFromEngine() {
         dispatchPrecondition(condition: .onQueue(.main))
         refreshScheduled = false
@@ -118,9 +95,6 @@ private final class TerminalAccessibilityController {
 
     func currentSnapshot() -> ManualSurfaceSemanticSnapshot? {
         dispatchPrecondition(condition: .onQueue(.main))
-        // Every AX getter on the view funnels through here, so the first read is
-        // the moment an assistive client actually exists. Before it, posting
-        // notifications is work with no listener — see `schedule(_:)`.
         hasAccessibilityReader = true
         // Pinned batch: never re-export mid-read (prevents torn flat-vs-children).
         if pinDepth > 0 {
@@ -141,27 +115,10 @@ private final class TerminalAccessibilityController {
         } else {
             cacheValid = false
         }
-        // An output-driven invalidate is the only high-frequency signal here:
-        // it arrives once per parsed chunk, and its scheduled refresh exports
-        // the whole viewport on the main thread, taking the same renderer mutex
-        // the terminal I/O thread holds for a chunk parse. Until an assistive
-        // client has actually read this view there is nobody to notify, and
-        // `currentSnapshot()` re-exports on demand anyway — so marking the
-        // cache dirty (done above) is the entire obligation.
-        //
-        // Measured with 32 live panes flooding real zsh shells through real
-        // PTYs (prototypes/terminal, 3 runs per arm): 56k main-thread exports
-        // become 2.1k, and main-queue scheduling latency goes from
-        // p50 9.5 / p99 13.0 ms to p50 8.1 / p99 10.8 ms.
-        //
-        // Selection, scroll, geometry and lifecycle signals are user-paced and
-        // keep notifying eagerly.
         if signal == .invalidate, !hasAccessibilityReader { return }
         guard !refreshScheduled else { return }
         refreshScheduled = true
-        // Always defer. A bridge INVALIDATE may be delivered while Ghostty is
-        // still on a native callback stack; the semantic export's lock is
-        // deliberately non-recursive and is never entered reentrantly.
+        // Always defer. A bridge INVALIDATE may be delivered while Ghostty is still on a native callback stack; the semantic export's lock is deliberately non-recursive and is never entered reentrantly.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.refreshScheduled = false
@@ -256,9 +213,7 @@ private final class TerminalAccessibilityController {
         }
 
         let cached = snapshot
-        // Generation saturates at UInt64.max by contract. Comparing the
-        // complete value keeps refreshes truthful even after saturation (and
-        // also avoids treating a digest collision as semantic identity).
+        // Generation saturates at UInt64.max by contract. Comparing the complete value keeps refreshes truthful even after saturation (and also avoids treating a digest collision as semantic identity).
         if cached != next || pendingSignals.contains(.geometry) {
             snapshot = next
             synchronizeRows(next)
@@ -292,9 +247,6 @@ private final class TerminalAccessibilityController {
                 post(element: rows[index], notification: .valueChanged)
             }
         }
-        // Engine posts HiveTerminalActionNotification.selectionChanged; also
-        // compare consecutive snapshots so a selection made without an action
-        // tag still announces.
         if previous.selection != next.selection || pendingSignals.contains(.selection) {
             post(element: view, notification: .selectedTextChanged)
         }
@@ -425,15 +377,11 @@ private extension HiveTerminalView {
 }
 
 extension HiveTerminalView {
-    /// Test seam: records NSAccessibility notifications the controller posts
-    /// (selection/value/layout/lifecycle). Production leaves this nil.
     var accessibilityNotificationProbe: ((NSAccessibility.Notification) -> Void)? {
         get { terminalAccessibilityController.notificationProbe }
         set { terminalAccessibilityController.notificationProbe = newValue }
     }
 
-    /// Test seam: how many times the semantic viewport has been exported from
-    /// the engine. Pins the invalidate policy in `schedule(_:)`.
     var accessibilityExportCount: Int { terminalAccessibilityController.exportCount }
 
     func wireAccessibilitySignals() {
@@ -461,9 +409,6 @@ extension HiveTerminalView {
         terminalAccessibilityController.schedule(.geometry)
     }
 
-    /// Test/settle seam: one synchronous engine export into the AX cache.
-    /// Prefer this over comparing a live `surface.semanticSnapshot()` to
-    /// cached `accessibilityChildren()` — those are two different reads.
     func forceAccessibilitySnapshotRefresh() {
         terminalAccessibilityController.forceRefreshFromEngine()
     }
@@ -503,7 +448,6 @@ extension HiveTerminalView {
         }
     }
 
-    /// Human-readable lifecycle/failure state for AX label/valueDescription.
     func accessibilityLifecycleDescription() -> String {
         switch surfaceState {
         case .starting:
@@ -531,9 +475,7 @@ extension HiveTerminalView {
         }
     }
 
-    /// Dump the current AX tree for evidence capture (Inspector-shaped text).
-    /// One pinned semantic generation for the entire dump — flat props and
-    /// children always come from the same snapshot.
+    /// Dump the current AX tree for evidence capture (Inspector-shaped text). One pinned semantic generation for the entire dump — flat props and children always come from the same snapshot.
     func accessibilityTreeDump() -> String {
         terminalAccessibilityController.withPinnedSnapshot {
             var lines: [String] = []
@@ -541,12 +483,10 @@ extension HiveTerminalView {
             lines.append("role=\(accessibilityRole()?.rawValue ?? "nil")")
             lines.append("label=\(accessibilityLabel() ?? "nil")")
             lines.append("help=\(accessibilityHelp() ?? "nil")")
-            // Normalize focus for reproducible evidence (host window may steal focus).
             lines.append("focused=\(isAccessibilityFocused() || window != nil)")
             lines.append("lifecycle=\(accessibilityLifecycleDescription())")
             if let snap {
-                // Omit raw generation from evidence — it is monotonic and
-                // run-dependent; sha256 pins must not encode that noise.
+                // Omit raw generation from evidence — it is monotonic and run-dependent; sha256 pins must not encode that noise.
                 lines.append("geometryRows=\(snap.geometry.rows)")
                 lines.append("geometryColumns=\(snap.geometry.columns)")
             } else {
@@ -566,7 +506,6 @@ extension HiveTerminalView {
             lines.append("insertionLine=\(insertion == NSNotFound ? "none" : String(insertion))")
             lines.append("valueDescription=\(accessibilityValueDescription() ?? "nil")")
             let value = (accessibilityValue() as? String) ?? ""
-            // Stable content fingerprint: first non-blank lines only (not full padding).
             let contentLines = value.split(separator: "\n", omittingEmptySubsequences: false)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }

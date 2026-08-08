@@ -1,0 +1,8 @@
+{
+  "result": "failed",
+  "vendor": "opencode",
+  "startedAt": "2026-08-02T12:59:38.565Z",
+  "completedAt": "2026-08-02T12:59:39.826Z",
+  "error": "hive_spawn: [\n  {\n    \"type\": \"text\",\n    \"text\": \"Cannot spawn maya: every candidate of the simple_coding route was refused:\\n  opencode/openai/gpt-5.6-terra — resolution: opencode's readable catalog has no record for openai/gpt-5.6-terra\\nEnable a model or edit the route in the Model Control Center.\"\n  }\n]",
+  "agent": null
+}

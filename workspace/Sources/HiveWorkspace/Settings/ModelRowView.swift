@@ -1,28 +1,15 @@
 import AppKit
 import WorkspaceCore
 
-/// One model under a provider card: enable switch, name + id, three-valued
-/// effort control, and the override chrome.
-///
-/// The switch is a FINANCIAL CONSENT CONTROL: flipping it on authorises Hive
-/// to spend on this model, with no later prompt. Rows whose billing cannot be
-/// verified as covered carry a persistent, calm may-spend line (`spendCaveat`)
-/// so a user who flips one can never say nobody told him.
-///
-/// The switch position always shows the stored PREFERENCE; effectiveness is
-/// carried by the row chrome. The three off-reasons get three treatments:
-/// seeded-off is inviting (full-strength row, "Off by default" badge),
-/// user-off is neutral, provider-off is a dimmed override that still shows
-/// the model's own setting.
+/// One model under a provider card: enable switch, name + id, three-valued effort control, and the override chrome. The switch is a FINANCIAL CONSENT CONTROL: flipping it on authorises Hive to spend on this model, with no later prompt. Rows whose billing cannot be verified as covered carry a persistent, calm may-spend line (`spendCaveat`) so a user who flips one can never say nobody told him. The switch position always shows the stored PREFERENCE; effectiveness is carried by the row chrome. The three off-reasons get three treatments: seeded-off is inviting (full-strength row, "Off by default" badge), user-off is neutral, provider-off is a dimmed override that still shows the model's own setting.
 final class ModelRowView: NSView {
 
     private let toggle = NSSwitch()
     var onToggle: ((Bool) -> Void)?
 
     init(
-        model: DiscoveredModel,
+        presentation: WorkspaceModelPresentation,
         rowState: ModelRowState,
-        effortAxis: EffortAxis,
         effortSelection: EffortTarget?,
         providerTitle: String,
         poolExhausted: Bool,
@@ -34,17 +21,17 @@ final class ModelRowView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let name = model.humanName
+        let name = presentation.name
         let nameLabel = NSTextField(labelWithString: name)
         nameLabel.font = Theme.Font.body
         nameLabel.lineBreakMode = .byTruncatingTail
         nameLabel.compressHorizontally(priority: 480, toolTip: name)
 
-        let idLabel = NSTextField(labelWithString: model.displayId)
+        let idLabel = NSTextField(labelWithString: presentation.displayId)
         idLabel.font = Theme.Font.monoCaption
         idLabel.textColor = .tertiaryLabelColor
         idLabel.lineBreakMode = .byTruncatingTail
-        idLabel.toolTip = model.displayId
+        idLabel.toolTip = presentation.displayId
         idLabel.setContentCompressionResistancePriority(.init(470), for: .horizontal)
 
         toggle.controlSize = .small
@@ -53,7 +40,7 @@ final class ModelRowView: NSView {
         toggle.setAccessibilityLabel(MCCCopy.a11yModelToggle(name))
 
         let effort = EffortControlView(
-            axis: effortAxis, selection: effortSelection,
+            axis: presentation.effortAxis.rendered, selection: effortSelection,
             enabled: rowState == .enabled || rowState == .disabledBySelf
                 || rowState == .seededOff)
         effort.onSelect = onEffort
@@ -67,8 +54,6 @@ final class ModelRowView: NSView {
         case .enabled:
             toggle.state = .on
         case .seededOff:
-            // Deliberate, safe, and INVITING: full-strength row, an "Off by
-            // default" badge, and the consent story in plain words.
             toggle.state = .off
             badges.append(CapsuleBadge(
                 text: MCCCopy.seededOffBadge, symbol: "shield", style: .info))
@@ -117,9 +102,6 @@ final class ModelRowView: NSView {
             caption.setContentCompressionResistancePriority(.init(450), for: .horizontal)
             textColumn.addArrangedSubview(caption)
         }
-        // The persistent may-spend line: icon + words, calm, always there
-        // while coverage is unverified. Seeded-off rows fold it into their
-        // consent caption instead of saying it twice.
         if let spendCaveat, rowState != .seededOff {
             let icon = NSImageView()
             icon.image = NSImage(
@@ -129,8 +111,6 @@ final class ModelRowView: NSView {
             let text = rowState == .enabled
                 ? MCCCopy.maySpendEnabled(spendCaveat)
                 : MCCCopy.maySpend(spendCaveat)
-            // A money warning that truncates is a money warning that does
-            // not work: this one wraps until it is fully legible.
             let label = NSTextField(wrappingLabelWithString: text)
             label.font = Theme.Font.caption
             label.textColor = .secondaryLabelColor
@@ -158,9 +138,6 @@ final class ModelRowView: NSView {
                 greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight),
         ])
 
-        // Effective state dominates the chrome: a non-effective row is
-        // visibly muted as a whole, not just captioned — EXCEPT seeded-off,
-        // which is a deliberate invitation and stays full strength.
         switch rowState {
         case .disabledByProvider, .unavailable:
             alphaValue = Theme.disabledContentAlpha

@@ -9,24 +9,29 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { writeMemoryFact } from "../../src/adapters/memory";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { memoryEmbeddingNotice } from "../../src/cli/control";
-import type { Role } from "../../src/daemon/capabilities";
-import { HiveDatabase } from "../../src/daemon/db";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
-import type { MemoryEmbedder } from "../../src/daemon/memory-embeddings";
-import { MemoryIndex } from "../../src/daemon/memory-index";
+import type { Role } from "../../src/daemon/authorization/authorization-service";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { HiveDaemon } from "../../src/daemon/server";
+import type {
+  Spawner,
+  SpawnRequest,
+} from "../../src/daemon/spawn/spawn-service";
+import { actingAs } from "../support/daemon-test-support";
+import type { MemoryEmbedder } from "../../src/memory-service/embeddings";
+import { EpisodicStore } from "../../src/memory-service/episodic";
+import { MemoryIndex } from "../../src/memory-service/fts-index";
 import {
   buildMemoryRecallBundle,
   executeMemoryTrigger,
   memoryRecallDegradedWarning,
-} from "../../src/daemon/memory-triggers";
-import { HiveDaemon } from "../../src/daemon/server";
-import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
-import { actingAs } from "../../src/daemon/testing";
-import type { AgentRecord } from "../../src/schemas";
+} from "../../src/memory-service/recall";
+import { writeMemoryFact } from "../../src/memory-service/memory-store";
+import type { AgentRecord } from "../../src/schemas/agent";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
@@ -154,8 +159,8 @@ describe("recall envelope semantic discriminator (defect D2)", () => {
       episodic: null,
     };
     const context = {
-      authority: "operator" as const,
-      from: "operator",
+      authority: "user" as const,
+      from: "user",
       target: "some-agent",
     };
     const warning = memoryRecallDegradedWarning("embedding-runtime-missing");
@@ -180,7 +185,7 @@ describe("recall envelope semantic discriminator (defect D2)", () => {
     const { repo, index } = await makeWiki(WIKI);
     const found = await executeMemoryTrigger(
       { kind: "recall", payload: "lease renewal" },
-      { authority: "operator", from: "operator", target: "some-agent" },
+      { authority: "user", from: "user", target: "some-agent" },
       {
         repoRoot: () => repo,
         memory: index,
@@ -260,8 +265,8 @@ type ToolValue = any;
 
 async function connectedClient(
   daemon: HiveDaemon,
-  subject = "operator",
-  role: Role = "operator",
+  subject = "user",
+  role: Role = "user",
 ): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
@@ -334,29 +339,6 @@ describe("write responses (defect D2)", () => {
     const client = await connectedClient(daemon);
     const written = await seedArticle(client, "No semantic leg at all");
     expect(written.embedding).toBe("unavailable:disabled");
-  });
-
-  test("memory_note carries the same outcome field", async () => {
-    const episodic = new EpisodicStore(":memory:");
-    const { daemon } = await makeDaemon({ episodic, failingLoad: true });
-    const client = await connectedClient(daemon);
-    const cold = textValue(
-      await client.callTool({
-        name: "memory_note",
-        arguments: { topic: "deploy", title: "Cold note", body: "Body." },
-      }),
-    );
-    expect(cold.state).toBe("recorded");
-    expect(cold.embedding).toBe("queued");
-    await required(daemon.embeddingIndex).settle();
-    const second = textValue(
-      await client.callTool({
-        name: "memory_note",
-        arguments: { topic: "deploy", title: "Warm note", body: "Body." },
-      }),
-    );
-    expect(second.embedding).toBe("unavailable:embedding-runtime-missing");
-    episodic.close();
   });
 });
 

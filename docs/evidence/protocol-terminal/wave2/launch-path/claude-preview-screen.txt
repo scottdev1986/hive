@@ -1,0 +1,17 @@
+[AN]  aaron · Claude Code                                      DONE   mail —
+claude-haiku-4-5-20251001                              context 13%   connected
+──────────────────────────────────────────────────────────────────────────────
+thinking
+Now I have the schema for mcp__hive__hive_mail_status. I need to call it with
+recipient "aaron".
+┌ tool · mcp__hive__hive_mail_status ───────────────────────────────────── ok ┐
+└─────────────────────────────────────────────────────────────────────────────┘
+AGENT
+MCP_CLAUDE
+──────────────────────────────────────────────────────────────────────────────
+❯ type a message…
+  / commands · ⌘K actions · Esc closes overlay
+
+Sanitized text capture from the direct installed-Claude agent-ui proof. ANSI
+color and empty padding rows were removed; the header, streamed transcript,
+tool card, agent response, and composer are preserved.

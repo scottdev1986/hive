@@ -4,13 +4,7 @@ import { fetchGraphifyRelease } from "../../src/adapters/graphify-channel";
 
 const expected = graphifyPin();
 
-/**
- * The object ids of everything that determines the runtime channel's content:
- * the pin and the builder. The publisher stamps its manifest with the pushed
- * HEAD, which batching makes an unreliable name for the same sources — two
- * shas with identical graphify inputs produce identical channels, so identity
- * is judged on the inputs, never on which push happened to carry them.
- */
+/** The object ids of everything that determines the runtime channel's content: the pin and the builder. The publisher stamps its manifest with the pushed HEAD, which batching makes an unreliable name for the same sources — two shas with identical graphify inputs produce identical channels, so identity is judged on the inputs, never on which push happened to carry them. */
 function graphifyInputIds(commit: string): string | null {
   const proc = Bun.spawnSync([
     "git",

@@ -19,7 +19,7 @@ const WORKER_SKILLS = [
 
 /** Operational address patterns that must prefer queen (the systematic sweep). */
 const OPERATIONAL_QUEEN_MARKERS = [
-  "to queen with `hive_send`",
+  "to queen with `hive_mail_publish`",
   "report to queen rather than grinding",
   "message queen naming the conflicting files",
   "message queen instead of retrying",
@@ -29,7 +29,7 @@ const OPERATIONAL_QUEEN_MARKERS = [
 
 /** Pre-queen operational address phrases that must not reappear. */
 const FORBIDDEN_OPERATIONAL_ORCHESTRATOR = [
-  "to the orchestrator with `hive_send`",
+  "to the orchestrator with `hive_mail_publish`",
   "report to the orchestrator rather",
   "message the orchestrator naming",
   "message the orchestrator instead",

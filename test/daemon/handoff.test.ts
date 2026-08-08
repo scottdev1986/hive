@@ -2,24 +2,26 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { HiveDatabase } from "../../src/daemon/db";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import { loadAgentStandards } from "../../src/daemon/spawn/agent-standards";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
   buildHandoffBundle,
   measureHandoffWorktree,
-} from "../../src/daemon/handoff";
+} from "../../src/daemon/queen-provider-service/handoff";
 import { HiveDaemon } from "../../src/daemon/server";
-import { buildAgentPrompt } from "../../src/daemon/spawner-impl";
-import { StatusStore } from "../../src/daemon/status-store";
-import { actingAs } from "../../src/daemon/testing";
-import type {
-  AgentRecord,
-  MemoryFact,
-  ProviderEvent,
-  ProviderRun,
-} from "../../src/schemas";
-import { AgentMessageSchema } from "../../src/schemas";
+import { buildAgentPrompt } from "../../src/daemon/spawn/spawner-impl";
+import { StatusStore } from "../../src/daemon/status/status-store";
+import { actingAs } from "../support/daemon-test-support";
+import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
+import type { MemoryFact } from "../../src/schemas/memory";
+import type { ProviderEvent } from "../../src/schemas/provider-communication";
+import type { ProviderRun } from "../../src/schemas/provider-run";
+import { MailItemSchema } from "../../src/schemas/mail";
+import { mailbox } from "../mail-test-support";
 
 const AT = "2026-07-25T01:00:00.000Z";
 const terminal = {
@@ -46,7 +48,6 @@ const agent: AgentRecord = {
   contextPct: null,
   createdAt: AT,
   lastEventAt: "2026-07-25T01:10:00.000Z",
-  recoveryAttempts: 0,
   capabilityEpoch: 1,
   readOnly: false,
   writeRevoked: true,
@@ -60,9 +61,13 @@ const run: ProviderRun = {
   model: agent.model,
   effort: "high",
   conversationId: "thread-handoff",
-  pid: 4_200,
-  startToken: "4200:1",
-  foregroundProcessGroupId: 4_200,
+  adapterChild: {
+    pid: 4_200,
+    startToken: "4200:1",
+    processGroupId: 4_200,
+    observedAt: AT,
+  },
+  protocolReceipt: null,
   capabilityEpoch: 0,
   launchGrantId: "grant-handoff",
   startedAt: AT,
@@ -133,12 +138,13 @@ describe("handoff bundle", () => {
     }
   });
 
-  test("replacement bootstrap carries the exact pickup boundary", () => {
+  test("replacement bootstrap carries the exact pickup boundary", async () => {
     const prompt = buildAgentPrompt(
       "replacement",
       "Preserve exact work",
       { path: "/repo/.hive/worktrees/replacement", branch: "hive/replacement" },
       "",
+      await loadAgentStandards(join(import.meta.dir, "../..")),
       {
         category: "simple_coding",
         handoffId: "018f1e90-7b5a-7cc0-8000-000000000216",
@@ -175,14 +181,22 @@ describe("handoff bundle", () => {
       },
       new Date("2026-07-25T01:09:00.000Z"),
     );
-    const requirement = AgentMessageSchema.parse({
-      id: "requirement-message",
-      from: "queen",
-      to: agent.name,
+    const requirement = MailItemSchema.parse({
+      itemId: "requirement-message",
+      recipient: agent.name,
+      sender: "queen",
+      lane: "control",
+      topic: "handoff",
       body: "Retain the worktree",
+      seq: 3,
+      state: "available",
+      mergedCount: 0,
+      attempts: 0,
+      recipientGeneration: null,
       createdAt: "2026-07-25T01:01:00.000Z",
-      notifiedAt: null,
-      sequence: 3,
+      updatedAt: "2026-07-25T01:01:00.000Z",
+      expiresAt: null,
+      notBefore: null,
     });
     const providerEvent: ProviderEvent = {
       eventId: "provider-event-handoff",
@@ -209,7 +223,7 @@ describe("handoff bundle", () => {
         untrackedPaths: ["notes.txt"],
         commits: [{ id: "head-sha", subject: "Preserve work" }],
       },
-      messages: [requirement],
+      mail: [requirement],
       providerEvents: [providerEvent],
       statusEvents: status.listEventsForAgent(agent.id),
       output: {
@@ -238,10 +252,15 @@ describe("handoff bundle", () => {
       endedAt: "2026-07-25T01:11:00.000Z",
     });
     expect(bundle.originalTaskRef.content).toBe(agent.taskDescription);
-    expect(bundle.requirementRefs.map((ref) => ref.id)).toEqual([
-      requirement.id,
+    expect(bundle.requirementRefs).toEqual([
+      {
+        kind: "message",
+        id: requirement.itemId,
+        content: requirement.body,
+        digest: expect.any(String),
+      },
     ]);
-    expect(bundle.pendingMessageIds).toEqual([requirement.id]);
+    expect(bundle.pendingMessageIds).toEqual([requirement.itemId]);
     expect(bundle.messagesThrough).toBe(3);
     expect(bundle.memoryRefs.map((ref) => ref.id)).toEqual([memory.id]);
     expect(bundle.activity).toMatchObject({
@@ -264,7 +283,7 @@ describe("handoff bundle", () => {
       agent,
       run,
       measurement: null,
-      messages: [],
+      mail: [],
       providerEvents: [],
       statusEvents: [],
       output: null,
@@ -290,7 +309,7 @@ describe("handoff bundle", () => {
         agent,
         run: { ...run, model: "different-model" },
         measurement: null,
-        messages: [],
+        mail: [],
         providerEvents: [],
         statusEvents: [],
         output: null,
@@ -301,14 +320,22 @@ describe("handoff bundle", () => {
   });
 
   test("a dead source without a final status still produces a usable handoff", async () => {
-    const requirement = AgentMessageSchema.parse({
-      id: "dead-source-requirement",
-      from: "queen",
-      to: agent.name,
+    const requirement = MailItemSchema.parse({
+      itemId: "dead-source-requirement",
+      recipient: agent.name,
+      sender: "queen",
+      lane: "control",
+      topic: "handoff",
       body: "Continue from the retained worktree",
+      seq: 4,
+      state: "available",
+      mergedCount: 0,
+      attempts: 0,
+      recipientGeneration: null,
       createdAt: "2026-07-25T01:01:00.000Z",
-      notifiedAt: null,
-      sequence: 4,
+      updatedAt: "2026-07-25T01:01:00.000Z",
+      expiresAt: null,
+      notBefore: null,
     });
     const bundle = await buildHandoffBundle({
       handoffId: "018f1e90-7b5a-7cc0-8000-000000000217",
@@ -323,7 +350,7 @@ describe("handoff bundle", () => {
         untrackedPaths: [],
         commits: [],
       },
-      messages: [requirement],
+      mail: [requirement],
       providerEvents: [],
       statusEvents: [],
       output: {
@@ -338,10 +365,15 @@ describe("handoff bundle", () => {
 
     expect(bundle.activity.statusReportRef).toBeNull();
     expect(bundle.originalTaskRef.content).toBe(agent.taskDescription);
-    expect(bundle.requirementRefs.map((ref) => ref.id)).toEqual([
-      requirement.id,
+    expect(bundle.requirementRefs).toEqual([
+      {
+        kind: "message",
+        id: requirement.itemId,
+        content: requirement.body,
+        digest: expect.any(String),
+      },
     ]);
-    expect(bundle.pendingMessageIds).toEqual([requirement.id]);
+    expect(bundle.pendingMessageIds).toEqual([requirement.itemId]);
     expect(bundle.branch).toMatchObject({
       name: agent.branch,
       head: "head-sha",
@@ -431,7 +463,7 @@ describe("handoff bundle", () => {
       handoffId: stored.bundle.handoffId,
       excludedPoolIds: ["weekly"],
     });
-    expect(db.listMessages().at(-1)?.body).toContain(
+    expect(mailbox(daemon.mail, ORCHESTRATOR_NAME).at(-1)?.body).toContain(
       "replacement (codex/gpt-5-codex) was launched to pick it up",
     );
 

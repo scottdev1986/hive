@@ -1,16 +1,9 @@
 import Foundation
 import CoreGraphics
 
-/// Pure math for the ~180 ms interruptible layout transition. The AppKit
-/// animator drives this from a display-rate timer; keeping the curve here
-/// makes commit/interruption semantics unit-testable.
 public enum LayoutTransition {
-    /// Terminal cell geometry is committed once when the transition ends, not
-    /// per frame, so this window is what keeps a resize from becoming a storm of
-    /// TUI reflows. Reduce Motion skips the animation entirely.
     public static let duration: TimeInterval = 0.18
 
-    /// Ease-in-out cubic, clamped.
     public static func progress(elapsed: TimeInterval, duration: TimeInterval = duration) -> Double {
         guard duration > 0 else { return 1 }
         let t = min(max(elapsed / duration, 0), 1)

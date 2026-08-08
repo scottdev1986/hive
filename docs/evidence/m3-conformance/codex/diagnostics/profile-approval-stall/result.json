@@ -1,0 +1,48 @@
+{
+  "result": "failed",
+  "vendor": "codex",
+  "startedAt": "2026-08-02T13:01:51.001Z",
+  "completedAt": "2026-08-02T13:07:52.279Z",
+  "error": "agent did not settle every conformance item",
+  "agent": {
+    "id": "a66938d9-3511-4060-b5d9-15d3f43692fe",
+    "name": "david",
+    "tool": "codex",
+    "model": "gpt-5.3-codex-spark",
+    "category": "simple_coding",
+    "status": "awaiting-approval",
+    "holdReason": null,
+    "holdResetAt": null,
+    "holdProviderRunId": null,
+    "quotaReservationId": "fcf4d11f-762c-43b8-8667-84823eb6dc4a",
+    "executionIdentity": {
+      "tool": "codex",
+      "model": "gpt-5.3-codex-spark",
+      "effort": "high"
+    },
+    "taskDescription": "At the first safe point, handle the mailbox for your exact assigned name. First call hive_update_status and preserve its mailBacklog result as the notice receipt. Then call hive_mail_poll for your own recipient name. Claim the returned control item and every returned work digest item with handlerId m3-safe-point. After each successful claim, try once to claim that same item with handlerId m3-competing and preserve the expected refusal. Complete each claimed item as completed, then call hive_mail_complete a second time for each with the same handlerId to prove replay. Finally call hive_mail_status for your own recipient and report the tool receipts exactly.",
+    "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.x1RCa4/project/.hive/worktrees/david",
+    "branch": "hive/david-at-the-first-safe-point-handle",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "51f864cdfa",
+      "subject": {
+        "kind": "agent",
+        "agentId": "a66938d9-3511-4060-b5d9-15d3f43692fe"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc291-0422-7d4e-9db4-415f0293664a",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    },
+    "toolSessionId": "019fc291-04fa-72f1-9aeb-5a7078f8874d",
+    "recoveryAttempts": 0,
+    "contextPct": 11,
+    "createdAt": "2026-08-02T13:01:51.522Z",
+    "lastEventAt": "2026-08-02T13:02:21.992Z",
+    "capabilityEpoch": 0,
+    "readOnly": true,
+    "writeRevoked": false,
+    "graphifyCalls": 0
+  }
+}

@@ -1,20 +1,14 @@
 import AppKit
 
-/// A capsule badge: SF Symbol + short copy on a tinted fill. The design
-/// system's one way of naming a state (Off, Stale reading, Near limit…).
-///
-/// Styles never rely on color alone — every badge carries its symbol and its
-/// words, so the states survive Increase Contrast and color-blindness.
+/// A capsule badge: SF Symbol + short copy on a tinted fill. The design system's one way of naming a state (Off, Stale reading, Near limit…). Styles never rely on color alone — every badge carries its symbol and its words, so the states survive Increase Contrast and color-blindness.
 final class CapsuleBadge: NSView {
 
     enum Style {
         /// Calm information (Paid overflow off, Provisional).
         case neutral
-        /// Deliberate can't-measure information (the unmetered provider).
         case info
         /// Needs attention (Near limit, Stale reading, provider off).
         case warning
-        /// Critically low / plan limit reached.
         case critical
 
         var fill: NSColor {

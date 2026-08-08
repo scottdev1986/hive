@@ -55,7 +55,7 @@ git diff --name-only "$BASE".."$SHA"
 4. Check the tests: do new behaviors have tests, and did the new tests
    actually execute (see "Test evidence")?
 5. Sweep for unused code (see below).
-6. Report via `hive_send` (see "Reporting findings").
+6. Report via `hive_mail_publish` (see "Reporting findings").
 
 Prioritize in this order: correctness, security, unused code, missing tests,
 maintainability. Do not pad the report — a finding you wouldn't act on is
@@ -109,7 +109,7 @@ exactly what is unverified.
 
 ## Reporting findings
 
-Send one durable message to the orchestrator with `hive_send`. Reference files
+Publish one durable control-lane message to the orchestrator with `hive_mail_publish`. Reference files
 as `path:line`; do not paste large diffs. If a finding is uncertain, say so —
 a wrong confident claim costs more than an honest maybe.
 

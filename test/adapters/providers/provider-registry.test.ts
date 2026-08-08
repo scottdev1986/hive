@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAgentAdapter } from "../../../src/adapters/providers/provider-registry";
+import {
+  getAgentAdapter,
+  getProviderRuntimeAdapter,
+} from "../../../src/adapters/providers/provider-registry";
 import { CAPABILITY_PROVIDERS } from "../../../src/schemas/capability";
 import { ProviderCommunicationCapabilitiesSchema } from "../../../src/schemas/provider-communication";
 
@@ -22,6 +25,12 @@ describe("agent adapter factory", () => {
   test("every capability provider resolves to an adapter with a matching id", () => {
     for (const provider of CAPABILITY_PROVIDERS) {
       expect(getAgentAdapter(provider).id).toBe(provider);
+    }
+  });
+
+  test("the same provider set resolves through the runtime probe registry", () => {
+    for (const provider of CAPABILITY_PROVIDERS) {
+      expect(getProviderRuntimeAdapter(provider).id).toBe(provider);
     }
   });
 
@@ -88,9 +97,9 @@ describe("agent adapter factory", () => {
     });
   });
 
-  test("claude prepares config, argv, and a kickoff-bearing command", async () => {
+  test("claude prepares protocol config and argv", async () => {
     const path = await worktree();
-    const prepared = await getAgentAdapter("claude").prepareSpawn({
+    const prepared = await getAgentAdapter("claude").prepareRuntime({
       name: "maya",
       model: "claude-opus-4-8",
       worktreePath: path,
@@ -98,7 +107,6 @@ describe("agent adapter factory", () => {
       readOnly: true,
       dangerous: false,
       instructionPath: "/tmp/prompt.txt",
-      kickoff: "Begin the assigned task.",
     });
     expect(prepared.argv).toEqual([
       "claude",
@@ -112,14 +120,11 @@ describe("agent adapter factory", () => {
       "--append-system-prompt-file",
       "/tmp/prompt.txt",
     ]);
-    expect(prepared.command).toBe(
-      `${prepared.argv.map((token) => `'${token}'`).join(" ")} 'Begin the assigned task.'`,
-    );
   });
 
-  test("codex wraps the token through the shell and installs its profile", async () => {
+  test("codex prepares app-server config without a TUI profile", async () => {
     const path = await worktree();
-    const prepared = await getAgentAdapter("codex").prepareSpawn({
+    const prepared = await getAgentAdapter("codex").prepareRuntime({
       name: "maya",
       model: "gpt-5.3-codex",
       worktreePath: path,
@@ -128,37 +133,17 @@ describe("agent adapter factory", () => {
       dangerous: false,
       withCapability: true,
       instructionPath: "/tmp/prompt.txt",
-      sessionId: "session-1",
-      kickoff: "Begin the assigned task.",
     });
     expect(prepared.argv[0]).toBe("codex");
-    expect(prepared.argv.slice(1, 3)).toEqual(["--profile", "hive-session-1"]);
-    // The token value never enters argv or the command: only the 0600 file
-    // read does.
-    expect(prepared.command).toContain('HIVE_CAPABILITY_TOKEN="$(cat ');
-    expect(prepared.command).not.toContain("secret-token");
-    expect(prepared.command).toContain("install -m 600 ");
-  });
-
-  test("codex resume carries no profile or token wrap without instructions", async () => {
-    const path = await worktree();
-    const prepared = await getAgentAdapter("codex").prepareSpawn({
-      name: "maya",
-      model: "gpt-5.3-codex",
-      worktreePath: path,
-      daemonPort: 41000,
-      readOnly: true,
-      dangerous: false,
-      resumeSessionId: "rollout-1",
-    });
-    expect(prepared.argv[1]).toBe("resume");
     expect(prepared.argv).not.toContain("--profile");
-    expect(prepared.command).not.toContain("install -m 600");
+    expect(prepared.argv).toContain(
+      'mcp_servers.hive.bearer_token_env_var="HIVE_CAPABILITY_TOKEN"',
+    );
   });
 
-  test("grok takes no positional kickoff; instructions ride the rules wrap", async () => {
+  test("grok prepares project config without native TUI argv", async () => {
     const path = await worktree();
-    const prepared = await getAgentAdapter("grok").prepareSpawn({
+    const prepared = await getAgentAdapter("grok").prepareRuntime({
       name: "maya",
       model: "grok-4",
       worktreePath: path,
@@ -166,21 +151,8 @@ describe("agent adapter factory", () => {
       readOnly: false,
       dangerous: false,
       instructionPath: "/tmp/prompt.txt",
-      newVendorSessionId: "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f",
       providerRunId: "018f1e90-7b5a-7cc0-8000-000000000223",
-      kickoff: "Begin the assigned task.",
     });
-    expect(prepared.argv).toEqual([
-      "grok",
-      "--no-auto-update",
-      "-m",
-      "grok-4",
-      "--always-approve",
-      "--session-id",
-      "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f",
-    ]);
-    expect(prepared.command).toContain("GROK_CLAUDE_SKILLS_ENABLED=false");
-    expect(prepared.command).toContain("--rules \"$(cat '/tmp/prompt.txt')\"");
-    expect(prepared.command).toContain("'Begin the assigned task.'");
+    expect(prepared.argv).toEqual([]);
   });
 });

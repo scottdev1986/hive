@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "viewerPid": 45690,
+  "executablePath": "/private/tmp/u5ws-build-g/HiveWorkspace.app/Contents/MacOS/HiveWorkspace",
+  "launchArguments": [
+    "--workspace-shell-live",
+    "--port",
+    "64968",
+    "--instance-home",
+    "/private/tmp/hvqa-g",
+    "--hive",
+    "/private/tmp/hvqa-g/artifacts/hive-bin",
+    "--project",
+    "/private/tmp/u5p-d",
+    "--instance-id",
+    "83efed86e5",
+    "--feed",
+    "/private/tmp/hvqa-g/artifacts/u5-workspace-feed-bridge"
+  ],
+  "launchedAt": "2026-08-01T20:52:35Z",
+  "preKillProcessReadback": "45690 45679 SN   Sat Aug  1 16:52:35 2026     /private/tmp/u5ws-build-g/HiveWorkspace.app/Contents/MacOS/HiveWorkspace --workspace-shell-live --port 64968 --instance-home /private/tmp/hvqa-g --hive /private/tmp/hvqa-g/artifacts/hive-bin --project /private/tmp/u5p-d --instance-id 83efed86e5 --feed /private/tmp/hvqa-g/artifacts/u5-workspace-feed-bridge; exact production executable SHA-256 8573aa909154d6847c26c1dfc58706a25fce8345d3a740312df9a42ab56f1782",
+  "sigkillIssuedAt": "2026-08-01T20:57:36Z",
+  "waitStatus": "137",
+  "postKillState": "absent",
+  "postKillProbe": "ps -p exact recorded PID refused after bounded poll; unified launch exec returned 137",
+  "screenshots": [
+    "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-claude.png",
+    "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-codex.png",
+    "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-grok.png",
+    "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-kimi.png",
+    "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-opencode.png"
+  ]
+}

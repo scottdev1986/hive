@@ -1,0 +1,38 @@
+{
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "51f864cdfa",
+    "subject": {
+      "kind": "agent",
+      "agentId": "3f5745b3-096d-46fe-a4ae-f0cfc509eacc"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc29b-bfeb-74e1-ad04-4dc72677b67a",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "outputSeq": "190812",
+  "columns": 80,
+  "rows": 24,
+  "rowStart": 0,
+  "screen": "primary",
+  "cursor": {
+    "row": 21,
+    "column": 2,
+    "visible": true
+  },
+  "text": "\n  5. hive_mail_complete (completed) on each claimed item, then replay call again\n     with same handler ID\n\n  - control item replay result: replayed:false then replayed:true\n  - work item replay result: replayed:false then replayed:true\n\n  6. hive_mail_status (final)\n     control.available:0, control.leased:0, control.leasedExpired:0\n     work.available:0, work.leased:0, work.leasedExpired:0\n     deadLetters.total:0\n\n  7. Final safe-point hive_mail_poll\n     control:null, workDigest:[], backlog all zero.\n\n  Also sent completion report to queen via hive_mail_publish on control lane:\n  itemId: mit_019fc29c-0980-7000-bce5-3aeaecdafecf, outcome:\"published\".\n\n────────────────────────────────────────────────────────────────────────────────\n\n\n› Write tests for @filename\n\n  gpt-5.3-codex-spark high · ~/project/.hive/worktrees/david",
+  "styledText": "\r\n  \u001b[0m\u001b[38;5;12m5. \u001b[0m\u001b[38;5;6mhive_mail_complete\u001b[0m (\u001b[0m\u001b[38;5;6mcompleted\u001b[0m) on each claimed item, then replay call again\r\n     with same handler ID\r\n\r\n  - control item replay result: \u001b[0m\u001b[38;5;6mreplayed:false\u001b[0m then \u001b[0m\u001b[38;5;6mreplayed:true\u001b[0m\r\n  - work item replay result: \u001b[0m\u001b[38;5;6mreplayed:false\u001b[0m then \u001b[0m\u001b[38;5;6mreplayed:true\u001b[0m\r\n\r\n  \u001b[0m\u001b[38;5;12m6. \u001b[0m\u001b[38;5;6mhive_mail_status\u001b[0m (final)\r\n     \u001b[0m\u001b[38;5;6mcontrol.available:0, control.leased:0, control.leasedExpired:0\u001b[0m\r\n     \u001b[0m\u001b[38;5;6mwork.available:0, work.leased:0, work.leasedExpired:0\u001b[0m\r\n     \u001b[0m\u001b[38;5;6mdeadLetters.total:0\u001b[0m\r\n\r\n  \u001b[0m\u001b[38;5;12m7. \u001b[0mFinal safe-point \u001b[0m\u001b[38;5;6mhive_mail_poll\u001b[0m\r\n     \u001b[0m\u001b[38;5;6mcontrol:null\u001b[0m, \u001b[0m\u001b[38;5;6mworkDigest:[]\u001b[0m, backlog all zero.\r\n\r\n  Also sent completion report to \u001b[0m\u001b[38;5;6mqueen\u001b[0m via \u001b[0m\u001b[38;5;6mhive_mail_publish\u001b[0m on \u001b[0m\u001b[38;5;6mcontrol\u001b[0m lane:\r\n  \u001b[0m\u001b[38;5;6mitemId: mit_019fc29c-0980-7000-bce5-3aeaecdafecf\u001b[0m, \u001b[0m\u001b[38;5;6moutcome:\"published\"\u001b[0m.\r\n\r\n\u001b[0m\u001b[2m────────────────────────────────────────────────────────────────────────────────\u001b[0m\r\n\r\n\r\n\u001b[0m\u001b[1m› \u001b[0m\u001b[2mWrite tests for @filename\u001b[0m\r\n\r\n  \u001b[0m\u001b[38;2;246;226;183mgpt-5.3-codex-spark high\u001b[0m\u001b[2m · \u001b[0m\u001b[38;2;171;223;167m~/project/.hive/worktrees/david\u001b[0m",
+  "truncated": false,
+  "sha256": "9d0106912c145c5b192c53664c87ab21f8b7da9d33d290b6bd744a1c8a71fbe2",
+  "composer": {
+    "profile": "codex",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  }
+}

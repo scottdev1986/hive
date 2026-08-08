@@ -1,0 +1,364 @@
+{
+  "schemaVersion": 1,
+  "attemptOrder": [
+    "claude",
+    "codex",
+    "opencode",
+    "grok",
+    "kimi"
+  ],
+  "outcomes": [
+    {
+      "provider": "claude",
+      "outcome": "pending-attestation",
+      "attemptOrdinal": 1,
+      "attemptedAt": "2026-08-02T02:33:47.667Z",
+      "retryAttempted": false,
+      "phase": "stable-composer",
+      "spawnRequested": true,
+      "admissionId": "7ef7febe-5224-4dad-86f4-824a0a54960f",
+      "name": "maya",
+      "configuredModel": "claude-haiku-4-5-20251001",
+      "status": "working",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "7ef7febe-5224-4dad-86f4-824a0a54960f"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc052-05e2-7092-879e-adbe30b43b57",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "claude",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "976eeccb27693eee87e4d84c2582d72c2d1d352ea8b7b12040748df4af314e52"
+    },
+    {
+      "provider": "codex",
+      "outcome": "pending-attestation",
+      "attemptOrdinal": 1,
+      "attemptedAt": "2026-08-02T02:33:51.169Z",
+      "retryAttempted": false,
+      "phase": "stable-composer",
+      "spawnRequested": true,
+      "admissionId": "ea67a18c-c682-468b-8995-62c487b9623c",
+      "name": "david",
+      "configuredModel": "gpt-5.3-codex-spark",
+      "status": "spawning",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "ea67a18c-c682-468b-8995-62c487b9623c"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc052-0fb4-7161-b9b9-06af5a14cf87",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "codex",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "3d44bc5662ad75b58e9a810248b62e922effdcc2f7aa9512962c9c4d9252d094"
+    },
+    {
+      "provider": "opencode",
+      "outcome": "pending-attestation",
+      "attemptOrdinal": 1,
+      "attemptedAt": "2026-08-02T02:33:52.897Z",
+      "retryAttempted": false,
+      "phase": "stable-composer",
+      "spawnRequested": true,
+      "admissionId": "fb81380f-0042-483a-aa91-28a04ced68f4",
+      "name": "sam",
+      "configuredModel": "opencode/deepseek-v4-flash-free",
+      "status": "stuck",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "fb81380f-0042-483a-aa91-28a04ced68f4"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc052-194e-7032-b3c6-7fb273f3826b",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "opencode",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "6002b17d296aa47acf299bdfa9b9a866daf30b815c97282a29c0b2415332294e"
+    },
+    {
+      "provider": "grok",
+      "outcome": "pending-attestation",
+      "attemptOrdinal": 1,
+      "attemptedAt": "2026-08-02T02:35:26.394Z",
+      "retryAttempted": false,
+      "phase": "stable-composer",
+      "spawnRequested": true,
+      "admissionId": "b4ff4546-ed3b-46bd-85be-0ed5c9ef2396",
+      "name": "john",
+      "configuredModel": "grok-4.5",
+      "status": "spawning",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "b4ff4546-ed3b-46bd-85be-0ed5c9ef2396"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc053-86e9-715f-bced-08269ca89ad4",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "grok",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "4501c2994cc664767776bac2ca1e8a35113c7a7930309e08d5b3aef9ea23fec6"
+    },
+    {
+      "provider": "kimi",
+      "outcome": "pending-attestation",
+      "attemptOrdinal": 1,
+      "attemptedAt": "2026-08-02T02:35:29.260Z",
+      "retryAttempted": false,
+      "phase": "stable-composer",
+      "spawnRequested": true,
+      "admissionId": "ed81f087-a4d7-4e93-9517-7a0510770047",
+      "name": "sarah",
+      "configuredModel": "kimi-code/k3",
+      "status": "spawning",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "ed81f087-a4d7-4e93-9517-7a0510770047"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc053-9272-7609-a0a2-d449665f8270",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "kimi",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "34c14cd75aeb8937295b9bb15d87d686631a100f5f9158d6b70388b31ea4654a"
+    }
+  ],
+  "admissions": [
+    {
+      "agentId": "7ef7febe-5224-4dad-86f4-824a0a54960f",
+      "name": "maya",
+      "provider": "claude",
+      "configuredModel": "claude-haiku-4-5-20251001",
+      "liveModel": {
+        "state": "unknown",
+        "reason": "provider has not reported a live model"
+      },
+      "status": "working",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "7ef7febe-5224-4dad-86f4-824a0a54960f"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc052-05e2-7092-879e-adbe30b43b57",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "claude",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "976eeccb27693eee87e4d84c2582d72c2d1d352ea8b7b12040748df4af314e52"
+    },
+    {
+      "agentId": "ea67a18c-c682-468b-8995-62c487b9623c",
+      "name": "david",
+      "provider": "codex",
+      "configuredModel": "gpt-5.3-codex-spark",
+      "liveModel": {
+        "state": "unknown",
+        "reason": "provider has not reported a live model"
+      },
+      "status": "spawning",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "ea67a18c-c682-468b-8995-62c487b9623c"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc052-0fb4-7161-b9b9-06af5a14cf87",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "codex",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "3d44bc5662ad75b58e9a810248b62e922effdcc2f7aa9512962c9c4d9252d094"
+    },
+    {
+      "agentId": "fb81380f-0042-483a-aa91-28a04ced68f4",
+      "name": "sam",
+      "provider": "opencode",
+      "configuredModel": "opencode/deepseek-v4-flash-free",
+      "liveModel": {
+        "state": "unknown",
+        "reason": "provider has not reported a live model"
+      },
+      "status": "stuck",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "fb81380f-0042-483a-aa91-28a04ced68f4"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc052-194e-7032-b3c6-7fb273f3826b",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "opencode",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "6002b17d296aa47acf299bdfa9b9a866daf30b815c97282a29c0b2415332294e"
+    },
+    {
+      "agentId": "b4ff4546-ed3b-46bd-85be-0ed5c9ef2396",
+      "name": "john",
+      "provider": "grok",
+      "configuredModel": "grok-4.5",
+      "liveModel": {
+        "state": "unknown",
+        "reason": "provider has not reported a live model"
+      },
+      "status": "spawning",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "b4ff4546-ed3b-46bd-85be-0ed5c9ef2396"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc053-86e9-715f-bced-08269ca89ad4",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "grok",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "4501c2994cc664767776bac2ca1e8a35113c7a7930309e08d5b3aef9ea23fec6"
+    },
+    {
+      "agentId": "ed81f087-a4d7-4e93-9517-7a0510770047",
+      "name": "sarah",
+      "provider": "kimi",
+      "configuredModel": "kimi-code/k3",
+      "liveModel": {
+        "state": "unknown",
+        "reason": "provider has not reported a live model"
+      },
+      "status": "spawning",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "87f653c084",
+        "subject": {
+          "kind": "agent",
+          "agentId": "ed81f087-a4d7-4e93-9517-7a0510770047"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc053-9272-7609-a0a2-d449665f8270",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "kimi",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "captureSha256": "34c14cd75aeb8937295b9bb15d87d686631a100f5f9158d6b70388b31ea4654a"
+    }
+  ]
+}

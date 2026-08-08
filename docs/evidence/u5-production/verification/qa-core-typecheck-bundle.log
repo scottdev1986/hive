@@ -1,0 +1,21 @@
+bun test v1.3.14 (d1632b29)
+
+qa/u5-terminal-workbench-core.test.ts:
+(pass) U5 proof decisions > keeps incomplete auxiliary viewer readback unclaimed [0.06ms]
+(pass) U5 proof decisions > defaults to all five live providers [0.05ms]
+(pass) U5 proof decisions > a blocked provider cannot yield an overall pass [0.26ms]
+(pass) U5 proof decisions > passes only when every canonical provider is attested [0.03ms]
+(pass) U5 spawn cleanup reconciliation > reconciles admitted IDs and refused readbacks instead of request count [0.09ms]
+(pass) U5 spawn cleanup reconciliation > keeps every unresolved cleanup fact non-clean [0.08ms]
+
+ 6 pass
+ 0 fail
+ 23 expect() calls
+Ran 6 tests across 1 file. [51.00ms]
+Bundled 288 modules in 15ms
+
+  u5-terminal-workbench-live-final.js  1.24 MB  (entry point)
+
+Bundled 288 modules in 13ms
+
+  u5-workspace-feed-bridge-final.js  1.00 MB  (entry point)

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
 import { graphifyPin } from "../../src/adapters/graphify";
-import { GraphifyService } from "../../src/daemon/graphify-service";
+import { GraphifyService } from "../../src/daemon/graphify-service/graphify-service";
 
 // The hard rule under test everywhere here: nothing throws, nothing hangs,
 // and a repo that cannot have a graph records an honest degraded state.

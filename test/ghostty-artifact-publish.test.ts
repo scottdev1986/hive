@@ -1,13 +1,7 @@
 import { expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tempRoot } from "./temp-root";
 
 // The GhosttyKit shared-cache key omits the patch series and other locked
 // inputs. Publishing must compare the full manifest before keeping a same-key
@@ -15,8 +9,13 @@ import { join } from "node:path";
 // use one patch series for the incumbent and another for the current lock.
 
 const root = join(import.meta.dir, "..");
-const publish = join(root, "scripts", "publish-ghostty-artifact.sh");
-const lockCheck = join(root, "scripts", "ghostty-artifact-lock-check.sh");
+const publish = join(root, "scripts", "native", "publish-ghostty-artifact.sh");
+const lockCheck = join(
+  root,
+  "scripts",
+  "native",
+  "ghostty-artifact-lock-check.sh",
+);
 
 const GHOSTTY_COMMIT = "73534c4680a809398b396c94ac7f12fcccb7963d";
 const OLD_PATCH_SHA =
@@ -98,7 +97,7 @@ function run(cmd: string[]): { exitCode: number; stderr: string } {
 }
 
 test("publish replaces a same-key incumbent built from a different patch series (689bc0a0)", () => {
-  const base = mkdtempSync(join(tmpdir(), "ghostty-publish-"));
+  const base = tempRoot("ghostty-publish-");
   const out = join(base, "build-tmp");
   const finalOut = join(base, `ghostty-${GHOSTTY_COMMIT}-zig-0.15.2`);
   const lock = join(base, "toolchain-lock.json");
@@ -120,7 +119,7 @@ test("publish replaces a same-key incumbent built from a different patch series 
 });
 
 test("publish keeps a same-key incumbent built from the same locked inputs (#46 race)", () => {
-  const base = mkdtempSync(join(tmpdir(), "ghostty-publish-"));
+  const base = tempRoot("ghostty-publish-");
   const out = join(base, "build-tmp");
   const finalOut = join(base, `ghostty-${GHOSTTY_COMMIT}-zig-0.15.2`);
   const lock = join(base, "toolchain-lock.json");
@@ -138,7 +137,7 @@ test("publish keeps a same-key incumbent built from the same locked inputs (#46 
 });
 
 test("publish into an empty slot lands the fresh build", () => {
-  const base = mkdtempSync(join(tmpdir(), "ghostty-publish-"));
+  const base = tempRoot("ghostty-publish-");
   const out = join(base, "build-tmp");
   const finalOut = join(base, `ghostty-${GHOSTTY_COMMIT}-zig-0.15.2`);
   const lock = join(base, "toolchain-lock.json");
@@ -153,7 +152,7 @@ test("publish into an empty slot lands the fresh build", () => {
 });
 
 test("lock check accepts a matching artifact and refuses every drifted field", () => {
-  const base = mkdtempSync(join(tmpdir(), "ghostty-lockcheck-"));
+  const base = tempRoot("ghostty-lockcheck-");
   const lock = join(base, "toolchain-lock.json");
   writeLock(lock, newIdentity);
 
@@ -180,7 +179,7 @@ test("lock check accepts a matching artifact and refuses every drifted field", (
 });
 
 test("lock check fails closed on missing manifest, missing key, and empty value", () => {
-  const base = mkdtempSync(join(tmpdir(), "ghostty-lockcheck-"));
+  const base = tempRoot("ghostty-lockcheck-");
   const lock = join(base, "toolchain-lock.json");
   writeLock(lock, newIdentity);
 
@@ -203,7 +202,7 @@ test("lock check fails closed on missing manifest, missing key, and empty value"
 });
 
 test("lock check refuses a source-matching Debug artifact", () => {
-  const base = mkdtempSync(join(tmpdir(), "ghostty-lockcheck-"));
+  const base = tempRoot("ghostty-lockcheck-");
   const lock = join(base, "toolchain-lock.json");
   const artifact = join(base, "debug-artifact");
   writeLock(lock, newIdentity);

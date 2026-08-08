@@ -1,0 +1,481 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.6,
+          "liveShare": 0.8,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.25,
+          "liveShare": 0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.15,
+          "liveShare": 0.2,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.6,
+          "liveShare": 0.8,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.25,
+          "liveShare": 0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.15,
+          "liveShare": 0.2,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.6,
+          "liveShare": 0.8,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.25,
+          "liveShare": 0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.15,
+          "liveShare": 0.2,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "6-competing"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.6,
+          "liveShare": 0.8,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.25,
+          "liveShare": 0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.15,
+          "liveShare": 0.2,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "6-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.6,
+          "liveShare": 0.8,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.25,
+          "liveShare": 0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.15,
+          "liveShare": 0.2,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  }
+]

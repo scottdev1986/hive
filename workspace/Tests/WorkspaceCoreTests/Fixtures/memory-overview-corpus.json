@@ -1,0 +1,531 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-overview-r7",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-overview-r7",
+      "freshness": "live",
+      "wiki": {
+        "state": "ok",
+        "articles": 3,
+        "pitfalls": 1,
+        "unverifiedPitfalls": 1,
+        "scopes": [
+          {
+            "scope": "repo",
+            "state": "ok",
+            "articles": 3,
+            "pitfalls": 1,
+            "unverifiedPitfalls": 1,
+            "rawObservations": 5
+          },
+          {
+            "scope": "global",
+            "state": "empty",
+            "articles": 0,
+            "pitfalls": 0,
+            "unverifiedPitfalls": 0,
+            "rawObservations": 0
+          }
+        ]
+      },
+      "episodic": {
+        "state": "ok",
+        "events": 8,
+        "facts": 4,
+        "digests": 2
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "lastJobs": [
+        {
+          "id": "00000007-retention-sweep",
+          "kind": "retention-sweep",
+          "state": "succeeded",
+          "requestedBy": "user",
+          "startedAt": "2026-07-30T19:50:00.000Z",
+          "finishedAt": "2026-07-30T19:50:02.000Z",
+          "progress": {
+            "step": "reading back",
+            "done": 1,
+            "total": 1
+          },
+          "summary": "deleted 2 aged events, demoted 1 article to stale",
+          "error": null,
+          "readback": {
+            "events": 8,
+            "facts": 4,
+            "ftsRows": 3
+          }
+        }
+      ],
+      "gaps": [
+        {
+          "code": "vectors-partial",
+          "detail": "one article has no vector yet"
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-overview-r7",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-29T20:00:00.000Z",
+      "sourceRevision": "memory-overview-r7",
+      "freshness": "cached",
+      "wiki": {
+        "state": "ok",
+        "articles": 3,
+        "pitfalls": 1,
+        "unverifiedPitfalls": 1,
+        "scopes": [
+          {
+            "scope": "repo",
+            "state": "ok",
+            "articles": 3,
+            "pitfalls": 1,
+            "unverifiedPitfalls": 1,
+            "rawObservations": 5
+          },
+          {
+            "scope": "global",
+            "state": "empty",
+            "articles": 0,
+            "pitfalls": 0,
+            "unverifiedPitfalls": 0,
+            "rawObservations": 0
+          }
+        ]
+      },
+      "episodic": {
+        "state": "ok",
+        "events": 8,
+        "facts": 4,
+        "digests": 2
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "lastJobs": [
+        {
+          "id": "00000007-retention-sweep",
+          "kind": "retention-sweep",
+          "state": "succeeded",
+          "requestedBy": "user",
+          "startedAt": "2026-07-30T19:50:00.000Z",
+          "finishedAt": "2026-07-30T19:50:02.000Z",
+          "progress": {
+            "step": "reading back",
+            "done": 1,
+            "total": 1
+          },
+          "summary": "deleted 2 aged events, demoted 1 article to stale",
+          "error": null,
+          "readback": {
+            "events": 8,
+            "facts": 4,
+            "ftsRows": 3
+          }
+        }
+      ],
+      "gaps": [
+        {
+          "code": "vectors-partial",
+          "detail": "one article has no vector yet"
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-overview-r7",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-29T20:00:00.000Z",
+      "sourceRevision": "memory-overview-r7",
+      "freshness": "cached",
+      "wiki": {
+        "state": "ok",
+        "articles": 3,
+        "pitfalls": 1,
+        "unverifiedPitfalls": 1,
+        "scopes": [
+          {
+            "scope": "repo",
+            "state": "ok",
+            "articles": 3,
+            "pitfalls": 1,
+            "unverifiedPitfalls": 1,
+            "rawObservations": 5
+          },
+          {
+            "scope": "global",
+            "state": "empty",
+            "articles": 0,
+            "pitfalls": 0,
+            "unverifiedPitfalls": 0,
+            "rawObservations": 0
+          }
+        ]
+      },
+      "episodic": {
+        "state": "ok",
+        "events": 8,
+        "facts": 4,
+        "digests": 2
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "lastJobs": [
+        {
+          "id": "00000007-retention-sweep",
+          "kind": "retention-sweep",
+          "state": "succeeded",
+          "requestedBy": "user",
+          "startedAt": "2026-07-30T19:50:00.000Z",
+          "finishedAt": "2026-07-30T19:50:02.000Z",
+          "progress": {
+            "step": "reading back",
+            "done": 1,
+            "total": 1
+          },
+          "summary": "deleted 2 aged events, demoted 1 article to stale",
+          "error": null,
+          "readback": {
+            "events": 8,
+            "facts": 4,
+            "ftsRows": 3
+          }
+        }
+      ],
+      "gaps": [
+        {
+          "code": "vectors-partial",
+          "detail": "one article has no vector yet"
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-overview-r7",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "memory-overview-r7-competing"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-overview-r7",
+      "freshness": "live",
+      "wiki": {
+        "state": "ok",
+        "articles": 3,
+        "pitfalls": 1,
+        "unverifiedPitfalls": 1,
+        "scopes": [
+          {
+            "scope": "repo",
+            "state": "ok",
+            "articles": 3,
+            "pitfalls": 1,
+            "unverifiedPitfalls": 1,
+            "rawObservations": 5
+          },
+          {
+            "scope": "global",
+            "state": "empty",
+            "articles": 0,
+            "pitfalls": 0,
+            "unverifiedPitfalls": 0,
+            "rawObservations": 0
+          }
+        ]
+      },
+      "episodic": {
+        "state": "ok",
+        "events": 8,
+        "facts": 4,
+        "digests": 2
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "lastJobs": [
+        {
+          "id": "00000007-retention-sweep",
+          "kind": "retention-sweep",
+          "state": "succeeded",
+          "requestedBy": "user",
+          "startedAt": "2026-07-30T19:50:00.000Z",
+          "finishedAt": "2026-07-30T19:50:02.000Z",
+          "progress": {
+            "step": "reading back",
+            "done": 1,
+            "total": 1
+          },
+          "summary": "deleted 2 aged events, demoted 1 article to stale",
+          "error": null,
+          "readback": {
+            "events": 8,
+            "facts": 4,
+            "ftsRows": 3
+          }
+        }
+      ],
+      "gaps": [
+        {
+          "code": "vectors-partial",
+          "detail": "one article has no vector yet"
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-overview-r7",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "memory-overview-r7-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-overview-r7",
+      "freshness": "live",
+      "wiki": {
+        "state": "ok",
+        "articles": 3,
+        "pitfalls": 1,
+        "unverifiedPitfalls": 1,
+        "scopes": [
+          {
+            "scope": "repo",
+            "state": "ok",
+            "articles": 3,
+            "pitfalls": 1,
+            "unverifiedPitfalls": 1,
+            "rawObservations": 5
+          },
+          {
+            "scope": "global",
+            "state": "empty",
+            "articles": 0,
+            "pitfalls": 0,
+            "unverifiedPitfalls": 0,
+            "rawObservations": 0
+          }
+        ]
+      },
+      "episodic": {
+        "state": "ok",
+        "events": 8,
+        "facts": 4,
+        "digests": 2
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "lastJobs": [
+        {
+          "id": "00000007-retention-sweep",
+          "kind": "retention-sweep",
+          "state": "succeeded",
+          "requestedBy": "user",
+          "startedAt": "2026-07-30T19:50:00.000Z",
+          "finishedAt": "2026-07-30T19:50:02.000Z",
+          "progress": {
+            "step": "reading back",
+            "done": 1,
+            "total": 1
+          },
+          "summary": "deleted 2 aged events, demoted 1 article to stale",
+          "error": null,
+          "readback": {
+            "events": 8,
+            "facts": 4,
+            "ftsRows": 3
+          }
+        }
+      ],
+      "gaps": [
+        {
+          "code": "vectors-partial",
+          "detail": "one article has no vector yet"
+        }
+      ]
+    }
+  }
+]

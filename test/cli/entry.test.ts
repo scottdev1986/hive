@@ -2,6 +2,30 @@ import { describe, expect, test } from "bun:test";
 import { createProgram } from "../../src/cli";
 
 describe("CLI command descriptions", () => {
+  test("all five vendors have first-class Workspace launch commands", () => {
+    const launches = new Map(
+      createProgram()
+        .commands.filter((command) =>
+          ["claude", "codex", "grok", "kimi", "opencode"].includes(
+            command.name(),
+          ),
+        )
+        .map((command) => [command.name(), command]),
+    );
+
+    expect([...launches.keys()]).toEqual([
+      "claude",
+      "codex",
+      "grok",
+      "kimi",
+      "opencode",
+    ]);
+    for (const command of launches.values()) {
+      expect(command.description()).toStartWith("Open Workspace with");
+      expect(command.options).toEqual([]);
+    }
+  });
+
   test("routing describes the policy and live facts it actually prints", () => {
     const routing = createProgram().commands.find(
       (command) => command.name() === "routing",
@@ -36,6 +60,18 @@ describe("CLI command descriptions", () => {
     expect(promote?.description()).toContain("machine default");
     expect(promote?.description()).toContain("Replace");
     expect(promote?.description()).toContain("discarding");
+  });
+
+  test("recover does not claim to resume a crashed agent's conversation", () => {
+    // The daemon's CrashRecovery only ever inspects and reports (see
+    // recovery-service.ts); it never relaunches or resumes a provider
+    // session. `hive recover`'s own help text must not promise otherwise.
+    const recover = createProgram().commands.find(
+      (command) => command.name() === "recover",
+    );
+
+    expect(recover?.description()).toContain("Report-only");
+    expect(recover?.description()).not.toContain("Resume");
   });
 });
 

@@ -1,7 +1,5 @@
-import { createReadStream } from "node:fs";
 import {
   mkdir,
-  readdir,
   readFile,
   realpath,
   rename,
@@ -10,10 +8,10 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { isDeepStrictEqual } from "node:util";
-import { hiveInstanceSuffix } from "../../daemon/instance-identity";
-import { shellToken } from "../../daemon/session-host/shell-session";
+import { shellToken } from "../../shared/shell-quote";
+import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { isRecord } from "../../shared/is-record";
 import { withFileLock } from "../file-lock";
 import {
   GRAPHIFY_HOOK_SCRIPT,
@@ -21,59 +19,39 @@ import {
   graphifyHookPath,
   writeGraphifyHook,
 } from "./shared/graphify-hook";
+import { daemonMcpUrl } from "./shared/mcp-scope";
 import { ORCHESTRATOR_CLAUDE_WRITE_RULES } from "./shared/orchestrator-role";
 import {
   probeProviderExecutable,
   providerExecutableCandidates,
   resolveProviderExecutable,
 } from "./shared/provider-executable";
-import {
-  invalidRecoveryArtifactEvidence,
-  isMissingRecoveryArtifact,
-  type RecoverySessionArtifact,
-  RecoverySessionDiscoveryError,
-  recoveryArtifactTimestamp,
-  selectRecoverySessionId,
-} from "./shared/recovery-session";
 
 export interface ClaudeSpawnOptions {
   name: string;
   model: string;
   effort?: string;
+  /** Enable Claude's explicit agent-to-user message boundary. */
+  brief?: boolean;
+  /** Vendor autocompaction setting (`auto` or an absolute token budget). */
+  autoCompact?: string;
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** Grant a read-only session the queen's orchestrator role: `gh` in
-   * Bash plus Edit/Write scoped to her memory and planning files
-   * (orchestrator-role.ts). Every other command and path still raises a
-   * prompt, and NotebookEdit stays denied. Must stay off for the read-only
-   * restart of a revoked writer, which shares the same deny list. */
   boardTools?: boolean;
-  /** Suppress interactive permission prompts. Read-only authority remains
-   * enforced independently by denied tools and server capabilities. */
+  /** Suppress interactive permission prompts. Read-only authority remains enforced independently by denied tools and server capabilities. */
   dangerous?: boolean;
-  /** The per-repo graphify MCP server, when the daemon has one up and healthy.
-   * Absent means no entry at all: a dead URL in the config would cost every
-   * agent a connect-timeout. */
+  /** The per-repo graphify MCP server, when the daemon has one up and healthy. Absent means no entry at all: a dead URL in the config would cost every agent a connect-timeout. */
   graphifyUrl?: string;
-  /** Absolute path selected by the daemon. Terminal hosts can outlive the
-   * daemon and retain a different PATH, so production launches must not ask
-   * the pane to resolve `claude` again. */
+  /** Absolute path selected by the daemon. Terminal hosts can outlive the daemon and retain a different PATH, so production launches must not ask the pane to resolve `claude` again. */
   executable?: string;
-  /** Restrict the session to the worktree's own `.mcp.json` — Hive's `hive`
-   * server — instead of also inheriting every server
-   * configured for the human's interactive sessions. Absent means today's
-   * inherit-everything behavior. */
+  /** Restrict the session to the worktree's own `.mcp.json` — Hive's `hive` server — instead of also inheriting every server configured for the user's interactive sessions. Absent means today's inherit-everything behavior. */
   scopedMcpConfigPath?: string;
-  /** Hive-owned settings file for a launch that must not read project or local
-   * settings from its cwd. User settings still apply. */
+  /** Hive-owned settings file for a launch that must not read project or local settings from its cwd. User settings still apply. */
   scopedSettingsPath?: string;
   /** 0600 file containing additional system instructions for this session. */
   appendSystemPromptFile?: string;
-  /** Exact argv prefix for this Hive build. Installed releases pass their
-   * absolute binary path so hooks and MCP helpers cannot attach to a
-   * different installation (or fail because `hive` is absent from PATH).
-   * Source-mode and focused adapter tests may omit it and use `hive`. */
+  /** Exact argv prefix for this Hive build. Installed releases pass their absolute binary path so hooks and MCP helpers cannot attach to a different installation (or fail because `hive` is absent from PATH). Source-mode and focused adapter tests may omit it and use `hive`. */
   hiveCommand?: readonly string[];
 }
 
@@ -87,30 +65,42 @@ export type ClaudeAgentConfigOptions = Pick<
   | "graphifyUrl"
   | "hiveCommand"
 > & {
-  /** The exact ProviderRun this settings file speaks for. Claude's hook payload
-   * carries a session id but no run id, and a session is not a run: a hook from
-   * a superseded run reaches the daemon with a current timestamp and would
-   * otherwise be attributed to whichever run is active now. Hive owns this file,
-   * so the run id rides the hook's own argv. Absent for the orchestrator, which
-   * has no ProviderRun. */
   providerRunId?: string;
 };
 
 const VERSION_PROBE_TIMEOUT_MS = 5_000;
 
-/** Synchronous `--version` probe. Non-billable by construction: `--version`
- * never opens a session (a guessed subcommand, by contrast, becomes a billable
- * prompt). Null means this executable cannot launch anything. */
+/** Synchronous `--version` probe. Non-billable by construction: `--version` never opens a session (a guessed subcommand, by contrast, becomes a billable prompt). Null means this executable cannot launch anything. */
 export function probeClaudeVersion(executable: string): string | null {
   const output = probeProviderExecutable(executable, VERSION_PROBE_TIMEOUT_MS);
   if (output === null) return null;
   return /(\d+\.\d+\.\d+)/.exec(output)?.[1] ?? "unknown";
 }
 
-/** Candidate installations in preference order: every PATH entry, then the
- * native-installer locations a broken package-manager shim commonly shadows
- * (a stale `claude` shim can sit ahead of a working ~/.local/bin/claude on a
- * typical login PATH). */
+/** The same `--version` probe without the synchronous wait. The runtime adapter's capability probe runs inside the daemon, where a spawnSync of a cold CLI blocks every request the daemon is serving for the duration of that boot; this variant yields the event loop instead. Same contract: null means this executable cannot launch anything. */
+export async function probeClaudeVersionDetached(
+  executable: string,
+): Promise<string | null> {
+  try {
+    const child = Bun.spawn([executable, "--version"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: VERSION_PROBE_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+    });
+    const output = await new Response(child.stdout).text();
+    await child.exited;
+    if (child.exitCode !== 0) return null;
+    const trimmed = output.trim();
+    if (trimmed.length === 0) return "unknown";
+    return /(\d+\.\d+\.\d+)/.exec(trimmed)?.[1] ?? "unknown";
+  } catch {
+    return null;
+  }
+}
+
+/** Candidate installations in preference order: every PATH entry, then the native-installer locations a broken package-manager shim commonly shadows (a stale `claude` shim can sit ahead of a working ~/.local/bin/claude on a typical login PATH). */
 export function claudeExecutableCandidates(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
@@ -126,11 +116,7 @@ export interface ResolvedClaudeExecutable {
   version: string | null;
 }
 
-/** Bind launches to an executable that provably works. A long-lived terminal
- * host has its own environment, and PATH order happily serves a stale or
- * broken installation first — so a candidate must answer `--version` before
- * it may launch anything. No candidate answering resolves to the bare command
- * with a null version, which downstream version gates fail closed on. */
+/** Bind launches to an executable that provably works. A long-lived terminal host has its own environment, and PATH order happily serves a stale or broken installation first — so a candidate must answer `--version` before it may launch anything. No candidate answering resolves to the bare command with a null version; the protocol handshake remains the authority on whether that executable is usable. */
 export function resolveWorkingClaudeExecutable(
   probe: (executable: string) => string | null = probeClaudeVersion,
   candidates: () => string[] = claudeExecutableCandidates,
@@ -149,13 +135,7 @@ const hook = (
   { hooks: [{ type: "command", command }] },
 ];
 
-/** Claude Code resolves its config from $HOME, not from the passwd entry, so
- * Hive must read the same variable. os.homedir() ignores a reassigned HOME and
- * would silently point at the operator's real config. */
 const claudeHome = (): string => process.env.HOME ?? homedir();
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const isMissingFileError = (error: unknown): boolean =>
   isRecord(error) && error.code === "ENOENT";
@@ -236,13 +216,13 @@ export function buildClaudeSpawnCommand(options: ClaudeSpawnOptions): string[] {
   if (options.effort !== undefined) {
     command.push("--effort", options.effort);
   }
-  // A reader under autonomy takes its mode from the worktree settings
-  // ("bypassPermissions", paired there with a deny list that keeps it unable to
-  // write). The flag would win over that file, so it must not be passed: it is
-  // what pinned autonomous readers to manual approval, where the first WebFetch
-  // raised a dialog no one was watching. An attended reader — the orchestrator,
-  // and the read-only restart of a revoked writer — passes no autonomy and
-  // still gets manual approval here.
+  if (options.brief === true) {
+    command.push("--brief");
+  }
+  if (options.autoCompact !== undefined) {
+    command.push("--autocompact", options.autoCompact);
+  }
+  // A reader under autonomy takes its mode from the worktree settings ("bypassPermissions", paired there with a deny list that keeps it unable to write). The flag would win over that file, so it must not be passed: it is what pinned autonomous readers to manual approval, where the first WebFetch raised a dialog no one was watching. An attended reader — the orchestrator, and the read-only restart of a revoked writer — passes no autonomy and still gets manual approval here.
   if (options.readOnly && !(options.dangerous ?? false)) {
     command.push("--permission-mode", "default");
   }
@@ -255,7 +235,6 @@ export function buildClaudeSpawnCommand(options: ClaudeSpawnOptions): string[] {
     );
   }
   if (options.scopedMcpConfigPath !== undefined) {
-    // `--mcp-config` is variadic; the strict flag terminates its value list.
     command.push(
       "--mcp-config",
       options.scopedMcpConfigPath,
@@ -268,138 +247,23 @@ export function buildClaudeSpawnCommand(options: ClaudeSpawnOptions): string[] {
   return command;
 }
 
-// Relaunches a crashed agent's actual conversation (`claude --resume
-// <session-id>`, verified against claude CLI help) with the same launch
-// flags the original spawn used; hooks and permissions come from the
-// worktree config exactly as at spawn.
-export function buildClaudeResumeCommand(
-  options: ClaudeSpawnOptions,
-  sessionId: string,
-): string[] {
-  const command = buildClaudeSpawnCommand(options);
-  command.splice(1, 0, "--resume", sessionId);
-  return command;
-}
+// Relaunches a crashed agent's actual conversation (`claude --resume <session-id>`, verified against claude CLI help) with the same launch flags the original spawn used; hooks and permissions come from the worktree config exactly as at spawn.
 
-// Claude Code stores transcripts under ~/.claude/projects/<munged-cwd>/,
-// where the munge replaces every non-alphanumeric path character with "-".
-export function claudeProjectDirectory(
-  worktreePath: string,
-  home = claudeHome(),
-): string {
-  return join(
-    home,
-    ".claude",
-    "projects",
-    resolve(worktreePath).replace(/[^A-Za-z0-9]/g, "-"),
-  );
-}
-
-export async function discoverClaudeRecoverySessionId(
-  worktreePath: string,
-  agentCreatedAt: string,
-  home = homedir(),
-): Promise<string | null> {
-  const directory = claudeProjectDirectory(worktreePath, home);
-  let entries: string[];
-  try {
-    entries = await readdir(directory);
-  } catch {
-    return null;
-  }
-  const target = resolve(worktreePath);
-  const artifacts: RecoverySessionArtifact[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith(".jsonl")) continue;
-    const path = join(directory, entry);
-    const sessionId = entry.slice(0, -".jsonl".length);
-    const artifact = await readClaudeRecoveryArtifact(path, sessionId, target);
-    if (artifact !== null) artifacts.push(artifact);
-  }
-  return selectRecoverySessionId("Claude", agentCreatedAt, artifacts);
-}
-
-async function readClaudeRecoveryArtifact(
-  path: string,
-  sessionId: string,
-  target: string,
-): Promise<RecoverySessionArtifact | null> {
-  let earliest = Number.POSITIVE_INFINITY;
-  let sawSessionRecord = false;
-  let sawDifferentCwd = false;
-  try {
-    const input = createReadStream(path);
-    const lines = createInterface({ input, crlfDelay: Infinity });
-    try {
-      for await (const line of lines) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (
-          typeof parsed !== "object" ||
-          parsed === null ||
-          !("sessionId" in parsed) ||
-          parsed.sessionId !== sessionId
-        )
-          continue;
-        sawSessionRecord = true;
-        if (!("timestamp" in parsed)) continue;
-        if (!("cwd" in parsed) || typeof parsed.cwd !== "string") {
-          invalidRecoveryArtifactEvidence("Claude", path, "has no cwd");
-        }
-        if (parsed.cwd !== target) {
-          sawDifferentCwd = true;
-          continue;
-        }
-        earliest = Math.min(
-          earliest,
-          recoveryArtifactTimestamp("Claude", path, parsed.timestamp),
-        );
-      }
-    } finally {
-      lines.close();
-      input.destroy();
-    }
-  } catch (error) {
-    if (error instanceof RecoverySessionDiscoveryError) throw error;
-    if (isMissingRecoveryArtifact(error)) return null;
-    return invalidRecoveryArtifactEvidence("Claude", path, "cannot be read");
-  }
-  if (Number.isFinite(earliest)) {
-    return { sessionId, createdAtMs: earliest, path };
-  }
-  if (sawSessionRecord && sawDifferentCwd) return null;
-  return invalidRecoveryArtifactEvidence(
-    "Claude",
-    path,
-    "has no timestamped session record",
-  );
-}
-
-// Claude Code keeps per-project first-run state in ~/.claude.json.
 export function claudeConfigPath(home = claudeHome()): string {
   return join(home, ".claude.json");
 }
 
-// One writer at a time per process. Parallel spawns would otherwise read the
-// same config, add different worktrees, and the last rename would win.
 let trustSeedQueue: Promise<void> = Promise.resolve();
 
 const positiveInteger = (value: unknown): number =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
 
-/** Trust exactly the agent worktree. Without folder trust Claude blocks and
- * discards the project permission rules that enforce read-only sessions. */
+/** Trust exactly the agent worktree. Without folder trust Claude blocks and discards the project permission rules that enforce read-only sessions. */
 export async function seedClaudeWorktreeTrust(
   worktreePath: string,
   home = claudeHome(),
 ): Promise<void> {
-  // The CLI keys projects by the resolved path, so a worktree reached through a
-  // symlinked prefix (/tmp and /var are symlinks on macOS) must be seeded under
-  // its real path or the entry silently never matches.
+  // The CLI keys projects by the resolved path, so a worktree reached through a symlinked prefix (/tmp and /var are symlinks on macOS) must be seeded under its real path or the entry silently never matches.
   const key = await realpath(worktreePath).catch(() => resolve(worktreePath));
   const configPath = claudeConfigPath(home);
 
@@ -408,10 +272,7 @@ export async function seedClaudeWorktreeTrust(
       const config = await readJsonObject(configPath);
       const projects = isRecord(config.projects) ? config.projects : {};
       const existing = isRecord(projects[key]) ? projects[key] : {};
-      // hasTrustDialogAccepted is the load-bearing key: on 2.1.206 it alone both
-      // clears the dialog and restores project-scoped settings. The onboarding
-      // pair is cheap insurance against a version that gates an interactive
-      // project-onboarding step on it, and stays inside this worktree's entry.
+      // hasTrustDialogAccepted is the load-bearing key: on 2.1.206 it alone both clears the dialog and restores project-scoped settings. The onboarding pair is cheap insurance against a version that gates an interactive project-onboarding step on it, and stays inside this worktree's entry.
       const seeded = {
         ...existing,
         hasTrustDialogAccepted: true,
@@ -421,8 +282,7 @@ export async function seedClaudeWorktreeTrust(
           positiveInteger(existing.projectOnboardingSeenCount),
         ),
       };
-      // Re-spawns and crash recovery re-seed the same worktree; skipping the
-      // write keeps us out of the way of the CLI's own config writer.
+      // Re-spawns and crash recovery re-seed the same worktree; skipping the write keeps us out of the way of the CLI's own config writer.
       if (isDeepStrictEqual(existing, seeded)) return;
 
       const next = { ...config, projects: { ...projects, [key]: seeded } };
@@ -479,14 +339,7 @@ export async function writeClaudeAgentConfig(
         : ["--provider-run-id", shellToken(options.providerRunId)]),
     ].join(" ");
 
-  // Denied tools are removed from the session and its subagents, including in
-  // bypass mode; the permission mode alone does not make a session read-only.
-  // Every built-in tool the vendor marks "Permission required: Yes" that can
-  // run a shell command or mutate the filesystem must appear here, because
-  // under bypassPermissions nothing else stops it. Re-check on CLI upgrades:
-  // a tool added upstream silently punches a hole in this list.
-  // Skill and Agent are deliberately absent: a skill's shell still goes through
-  // Bash, and a subagent's tool calls are checked against these same rules.
+  // Denied tools are removed from the session and its subagents, including in bypass mode; the permission mode alone does not make a session read-only. Every built-in tool the vendor marks "Permission required: Yes" that can run a shell command or mutate the filesystem must appear here, because under bypassPermissions nothing else stops it. Re-check on CLI upgrades: a tool added upstream silently punches a hole in this list. Skill and Agent are deliberately absent: a skill's shell still goes through Bash, and a subagent's tool calls are checked against these same rules.
   const readOnlyDeny = [
     "Edit",
     "Write",
@@ -496,22 +349,15 @@ export async function writeClaudeAgentConfig(
     "Monitor",
     "EnterWorktree",
   ];
-  // An orchestrator session keeps
-  // the shell for gh and gains Edit/Write scoped to her own memory and
-  // planning docs (orchestrator-role.ts) — every other command and path
-  // still raises a prompt. The constant above is shared with the read-only
-  // restart of a revoked writer, which must keep its shell and edit tools
-  // taken away. Attended mode only — under bypass there is no prompt left to
-  // scope the grant, so that branch keeps the unmodified list.
   const boardTools =
     (options.boardTools ?? false) && !(options.dangerous ?? false);
-  const attendedDeny = boardTools ? ["NotebookEdit"] : readOnlyDeny;
+  // Queen delegates through Hive so every assignment has a board story and a
+  // durable lifecycle. Claude's native Agent tool bypasses both.
+  const attendedDeny = boardTools ? ["NotebookEdit", "Agent"] : readOnlyDeny;
 
   const permissions = options.readOnly
     ? (options.dangerous ?? false)
       ? {
-          // The deny list defines read-only; an allow list would require Hive
-          // to predict every present and future read tool.
           defaultMode: "bypassPermissions",
           deny: readOnlyDeny,
         }
@@ -522,11 +368,8 @@ export async function writeClaudeAgentConfig(
             "Read",
             "Glob",
             "Grep",
-            // Vendor permission prompts are outside Hive's approval queue. The
-            // reader capability still denies write/land server-side, while this
-            // rule lets the agent report, acknowledge, and escalate unattended.
+            // Vendor permission prompts are outside Hive's approval queue. The reader capability still denies write/land server-side, while this rule lets the agent report, acknowledge, and escalate unattended.
             "mcp__hive__*",
-            // Prefix match: covers `gh issue`, `gh project item-edit`, `gh api`.
             ...(boardTools
               ? ["Bash(gh:*)", ...ORCHESTRATOR_CLAUDE_WRITE_RULES]
               : []),
@@ -553,13 +396,10 @@ export async function writeClaudeAgentConfig(
           ],
         };
 
-  // Every bypass-mode session, including an autonomous reader, needs the
-  // worktree-local acknowledgement or it blocks on an interactive warning.
+  // Every bypass-mode session, including an autonomous reader, needs the worktree-local acknowledgement or it blocks on an interactive warning.
   const bypassingPermissions = options.dangerous ?? false;
   const graphifyHook = graphifyHookPath(worktreePath, ".claude");
-  // The kind is typed, not a free string: it is the token the generated hook
-  // dispatches on, and a spelling the script has no arm for silently never
-  // nudges.
+  // The kind is typed, not a free string: it is the token the generated hook dispatches on, and a spelling the script has no arm for silently never nudges.
   const graphifyCommand = (kind: GraphifyHookKind): string =>
     `${shellToken(graphifyHook)} ${kind}`;
 
@@ -570,15 +410,10 @@ export async function writeClaudeAgentConfig(
       : {}),
     hooks: {
       SessionStart: hook(eventCommand("session-start")),
-      // Always write the current daemon endpoint. deepMerge preserves the
-      // user's own UserPromptSubmit hooks alongside Hive's.
       UserPromptSubmit: hook(eventCommand("turn-start")),
       Stop: hook(eventCommand("turn-end")),
       Notification: hook(eventCommand("notification")),
-      // This is the mid-turn safe boundary for urgent injection. Without it,
-      // a busy agent's queued urgent controls wait for the end of
-      // a possibly hour-long turn. The daemon treats it as a delivery tick,
-      // never a status change or an events-table row.
+      // This is the mid-turn safe boundary for urgent injection. Without it, a busy agent's queued urgent controls wait for the end of a possibly hour-long turn. The daemon treats it as a delivery tick, never a status change or an events-table row.
       PostToolUse: hook(eventCommand("tool-boundary")),
       ...(options.graphifyUrl === undefined
         ? {}
@@ -593,21 +428,6 @@ export async function writeClaudeAgentConfig(
                   },
                 ],
               },
-              // Grep belongs HERE, not on the Bash matcher. The `search` branch
-              // filters shell commands with case-sensitive lowercase patterns
-              // (*grep*, *"rg "*), and a native Grep call's hook input says
-              // `"tool_name":"Grep"` — capital G, no shell command at all — so
-              // it would fall straight through that filter and exit silent. The
-              // gap that mattered: `Bash` only ever caught SHELLED-OUT search,
-              // which is the route the harness steers models away from, while
-              // the native Grep tool — the likeliest search of all — was in no
-              // matcher whatsoever. This branch suppresses nothing but reads of
-              // graph output, which is the correct rule for Grep too: an agent
-              // already grepping inside graphify-out/ needs no nudge.
-              // The graph tools are in this matcher for the gate, not for a
-              // nudge: the hook declines the first structural search of a
-              // session, and it can only know an agent already went graph-first
-              // if its own hook saw that call.
               {
                 matcher:
                   "Read|Glob|Grep|mcp__hive__graph_locate|mcp__graphify__.*",
@@ -618,36 +438,16 @@ export async function writeClaudeAgentConfig(
             ],
           }),
     },
-    // The statusLine JSON carries the subscriber's five-hour/weekly usage;
-    // the command forwards it to the daemon as semi-official quota telemetry.
-    statusLine: {
-      type: "command",
-      command: [
-        hiveInvocation,
-        "statusline",
-        "--agent",
-        shellToken(options.name),
-        "--port",
-        String(options.daemonPort),
-        "--instance-id",
-        hiveInstanceSuffix(),
-      ].join(" "),
-    },
     permissions,
   };
   const mcp = {
     mcpServers: {
       hive: {
         type: "http",
-        url: `http://127.0.0.1:${options.daemonPort}/mcp`,
-        // The capability travels through a helper Claude runs at connect time,
-        // not through `headers: {Authorization: "Bearer ${VAR}"}`. An env var
-        // would be inherited by every descendant of this agent's process; the
-        // helper reads a 0600 file with a close-on-exec descriptor instead.
+        url: daemonMcpUrl(options.daemonPort),
+        // The capability travels through a helper Claude runs at connect time, not through `headers: {Authorization: "Bearer ${VAR}"}`. An env var would be inherited by every descendant of this agent's process; the helper reads a 0600 file with a close-on-exec descriptor instead.
         headersHelper: `${hiveInvocation} credential --agent ${shellToken(options.name)}`,
       },
-      // The repo's local knowledge graph, read-only and loopback-only. Only
-      // written when the daemon's server was healthy at spawn time.
       ...(options.graphifyUrl === undefined
         ? {}
         : {
@@ -661,8 +461,7 @@ export async function writeClaudeAgentConfig(
 
   const mergedSettings = deepMerge(existingSettings, settings);
   const mergedMcp = deepMerge(existingMcp, mcp);
-  // A missing URL must remove a stale merged entry or every respawn retains a
-  // dead endpoint.
+  // A missing URL must remove a stale merged entry or every respawn retains a dead endpoint.
   if (options.graphifyUrl === undefined && isRecord(mergedMcp.mcpServers)) {
     delete mergedMcp.mcpServers.graphify;
   }
@@ -676,10 +475,7 @@ export async function writeClaudeAgentConfig(
     );
   }
 
-  // deepMerge unions arrays under `permissions`, so a config written before
-  // the grant existed keeps its bare denials through every respawn and the
-  // allow rules never get a chance to apply — and deny outranks allow. Take
-  // the bare denials the role replaces back out.
+  // deepMerge unions arrays under `permissions`, so a config written before the grant existed keeps its bare denials through every respawn and the allow rules never get a chance to apply — and deny outranks allow. Take the bare denials the role replaces back out.
   if (boardTools && isRecord(mergedSettings.permissions)) {
     const merged = mergedSettings.permissions;
     if (Array.isArray(merged.deny)) {

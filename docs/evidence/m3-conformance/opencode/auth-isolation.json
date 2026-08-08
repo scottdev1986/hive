@@ -1,0 +1,79 @@
+{
+  "vendor": "opencode",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.opencode/bin/opencode",
+  "binaryBefore": {
+    "version": "1.18.11",
+    "device": 16777234,
+    "inode": 277067580,
+    "size": 138608738,
+    "mtimeMs": 1785583238000
+  },
+  "operatorBefore": {
+    ".config/opencode": "756b3d107d8c2bd8263a62bae8731ea2c368a407b98cfb50e68a779e8de2c46a",
+    ".local/share/opencode": "ee2854eacea6ef79b57050b9133aa7c78679828ce85f2d50f9d3b04337ca639e"
+  },
+  "borrowed": [],
+  "artifacts": [],
+  "binaryAfter": {
+    "version": "1.18.11",
+    "device": 16777234,
+    "inode": 277067580,
+    "size": 138608738,
+    "mtimeMs": 1785583238000
+  },
+  "operatorAfter": {
+    ".config/opencode": "756b3d107d8c2bd8263a62bae8731ea2c368a407b98cfb50e68a779e8de2c46a",
+    ".local/share/opencode": "0fab76d1069ad08710be2ed15178b426e7fc16a5566a65aea9d5456fb818d9e8"
+  },
+  "changedOperatorPaths": [
+    ".local/share/opencode"
+  ],
+  "changedOperatorNodes": {
+    ".local/share/opencode": [
+      {
+        "relativePath": "log/opencode.log",
+        "before": {
+          "relativePath": "log/opencode.log",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 136328164,
+          "mode": 420,
+          "size": 7608969,
+          "mtimeMs": 1785675559311.7385
+        },
+        "after": {
+          "relativePath": "log/opencode.log",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 136328164,
+          "mode": 420,
+          "size": 7609256,
+          "mtimeMs": 1785675568351.5874
+        }
+      },
+      {
+        "relativePath": "opencode.db-wal",
+        "before": {
+          "relativePath": "opencode.db-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 136328171,
+          "mode": 420,
+          "size": 3349592,
+          "mtimeMs": 1785675568083.0576
+        },
+        "after": {
+          "relativePath": "opencode.db-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 136328171,
+          "mode": 420,
+          "size": 3642112,
+          "mtimeMs": 1785675581371.079
+        }
+      }
+    ]
+  },
+  "artifactsAfter": []
+}

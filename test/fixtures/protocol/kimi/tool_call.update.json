@@ -1,0 +1,16 @@
+{
+  "sessionUpdate": "tool_call",
+  "toolCallId": "0:tool_00000000000000000000000000",
+  "title": "Bash",
+  "kind": "execute",
+  "status": "pending",
+  "content": [
+    {
+      "type": "content",
+      "content": {
+        "type": "text",
+        "text": ""
+      }
+    }
+  ]
+}

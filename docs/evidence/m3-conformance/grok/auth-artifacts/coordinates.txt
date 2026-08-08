@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-ga
+home=/private/tmp/hvqa-ga
+default_home=/private/tmp/hvqa-ga/default
+port=54294
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-grok-auth.39GyZj/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen/source
+hive_bin=/private/tmp/hvqa-ga/artifacts/hive-bin

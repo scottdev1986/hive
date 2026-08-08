@@ -1,15 +1,4 @@
-//! terminal_state — headless VT + durable journal/checkpoint.
-//! Owns: feed every PTY output byte through an injected VT engine, write back
-//! ONLY PTY-bound effects (GHOSTTY_TERMINAL_OPT_WRITE_PTY), maintain journal.bin,
-//! assemble the 116-byte HVTCP001 envelope AROUND the bridge's opaque export,
-//! dual-retain verified checkpoints, and import-verify into a FRESH terminal +
-//! digest BEFORE atomic rename.
-//! Does NOT own: input arbitration, process kill, viewer grants, PTY open/spawn.
-//! Incomplete / failed checkpoint yields CHECKPOINT_UNAVAILABLE — never a
-//! silent "mostly restored" path. Envelope + journal paths are testable with
-//! an export double (injected via VtEngine). Wire sequences are exclusive
-//! high-water; checkpoints import-verify into a fresh terminal before rename.
-//! Header layout source: CHECKPOINT_HEADER in session_protocol.generated.zig.
+// ! terminal_state — headless VT + durable journal/checkpoint. ! Owns: feed every PTY output byte through an injected VT engine, write back ! ONLY PTY-bound effects (GHOSTTY_TERMINAL_OPT_WRITE_PTY), maintain journal.bin, ! assemble the 116-byte HVTCP001 envelope AROUND the bridge's opaque export, ! dual-retain verified checkpoints, and import-verify into a FRESH terminal + ! digest BEFORE atomic rename. ! Does NOT own: input arbitration, process kill, viewer grants, PTY open/spawn. ! Incomplete / failed checkpoint yields CHECKPOINT_UNAVAILABLE — never a ! silent "mostly restored" path. Envelope + journal paths are testable with ! an export double (injected via VtEngine). Wire sequences are exclusive ! high-water; checkpoints import-verify into a fresh terminal before rename. ! Header layout source: CHECKPOINT_HEADER in session_protocol.generated.zig.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -17,48 +6,37 @@ const generated = @import("session_protocol_generated");
 const hvtcp001_header = @import("hvtcp001_header");
 const checkpoint_format = @import("checkpoint_format");
 
-pub const checkpoint_max_bytes = checkpoint_format.checkpoint_max_bytes;
-pub const checkpoint_contiguous_max_bytes = checkpoint_format.checkpoint_contiguous_max_bytes;
-pub const checkpoint_stream_chunk_bytes = checkpoint_format.checkpoint_stream_chunk_bytes;
-pub const legacy_engine_build_id = checkpoint_format.legacy_engine_build_id;
-pub const acceptsEngineBuildId = checkpoint_format.acceptsEngineBuildId;
-pub const header_bytes = checkpoint_format.header_bytes;
-pub const magic = checkpoint_format.magic;
-pub const version = checkpoint_format.version;
-pub const flags_v1 = checkpoint_format.flags_v1;
-pub const engine_build_id_bytes = checkpoint_format.engine_build_id_bytes;
-pub const payload_sha256_bytes = checkpoint_format.payload_sha256_bytes;
+const checkpoint_max_bytes = checkpoint_format.checkpoint_max_bytes;
+const checkpoint_contiguous_max_bytes = checkpoint_format.checkpoint_contiguous_max_bytes;
+const checkpoint_stream_chunk_bytes = checkpoint_format.checkpoint_stream_chunk_bytes;
+const legacy_engine_build_id = checkpoint_format.legacy_engine_build_id;
+const acceptsEngineBuildId = checkpoint_format.acceptsEngineBuildId;
+const header_bytes = checkpoint_format.header_bytes;
+const magic = checkpoint_format.magic;
+const version = checkpoint_format.version;
+const flags_v1 = checkpoint_format.flags_v1;
+const engine_build_id_bytes = checkpoint_format.engine_build_id_bytes;
+const payload_sha256_bytes = checkpoint_format.payload_sha256_bytes;
 const off = checkpoint_format.off;
-pub const CheckpointHeader = checkpoint_format.CheckpointHeader;
-pub const EnvelopeError = checkpoint_format.EnvelopeError;
-pub const Error = checkpoint_format.Error;
-pub const encodeHeader = checkpoint_format.encodeHeader;
-pub const decodeHeader = checkpoint_format.decodeHeader;
-pub const CheckpointFields = checkpoint_format.CheckpointFields;
-pub const assembleEnvelope = checkpoint_format.assembleEnvelope;
-pub const parseEnvelope = checkpoint_format.parseEnvelope;
-pub const verifyPayload = checkpoint_format.verifyPayload;
-
-// ── Limits (TERMINAL_LIMITS) ───────────────────────────────────────────
+const CheckpointHeader = checkpoint_format.CheckpointHeader;
+const EnvelopeError = checkpoint_format.EnvelopeError;
+const Error = checkpoint_format.Error;
+const encodeHeader = checkpoint_format.encodeHeader;
+const decodeHeader = checkpoint_format.decodeHeader;
+const CheckpointFields = checkpoint_format.CheckpointFields;
+const assembleEnvelope = checkpoint_format.assembleEnvelope;
+const parseEnvelope = checkpoint_format.parseEnvelope;
+const verifyPayload = checkpoint_format.verifyPayload;
 
 /// Replay journal capacity per generation.
 pub const journal_max_bytes: usize = 64 * 1024 * 1024;
-/// Dual retain: newest valid + previous valid.
 pub const retained_checkpoints: usize = 2;
-/// Stream chunk bound for OUTPUT / SNAPSHOT_BYTES.
 pub const stream_chunk_max_bytes: usize = 64 * 1024;
-/// Checkpoint after this much new output since last verified checkpoint.
 pub const checkpoint_output_interval_bytes: u64 = 2 * 1024 * 1024;
-/// Checkpoint after this many nanoseconds of mono time since last verified.
 pub const checkpoint_interval_ns: u64 = 30 * std.time.ns_per_s;
-/// Journal persistence batching: journal.bin rewrites at most once per this
-/// interval while output streams (durability is unchanged at checkpoints,
-/// termination, and forced persists — only the streaming path is batched).
+/// Journal persistence batching: journal.bin rewrites at most once per this interval while output streams (durability is unchanged at checkpoints, termination, and forced persists — only the streaming path is batched).
 pub const journal_persist_interval_ns: u64 = 250 * std.time.ns_per_ms;
 
-// ── Injected seams (export double before full TG2) ──────────────────────────
-
-/// PTY-bound write sink — only GHOSTTY_TERMINAL_OPT_WRITE_PTY effects land here.
 pub const PtyEffectSink = struct {
     context: *anyopaque,
     writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
@@ -68,41 +46,18 @@ pub const PtyEffectSink = struct {
     }
 };
 
-/// One headless VT engine instance (live terminal or a fresh verify terminal).
-/// Production wires libghostty-vt + hive_ghostty_terminal_checkpoint_export_v1
-/// import_v1. Tests inject an export double so envelope/journal paths are
-/// proven without requiring TG2 completeness.
-/// Contract
-/// `write` feeds PTY output bytes; may emit PTY-bound effects via the
-/// registered sink (engine-owned).
-/// `exportOpaque` returns a slice OWNED BY THE PASSED ZIG ALLOCATOR.
-/// Caller always frees with `allocator.free`. The real bridge export
-/// (`hive_ghostty_terminal_checkpoint_export_v1`) returns C-allocated
-/// memory via the bridge alloc_fn — the host-composition ADAPTER MUST
-/// copy that payload into the Zig allocator (or free via the matching
-/// C free path) before returning from exportFn. Returning a C heap
-/// pointer that TerminalState later `allocator.free`s is heap corruption.
-/// On error → CHECKPOINT_UNAVAILABLE (never "mostly restored").
-/// `importOpaque` leaves the destination UNCHANGED on failure.
-/// `digest` is a deterministic semantic fingerprint for restore equality.
+/// One headless VT engine instance (live terminal or a fresh verify terminal). Production wires libghostty-vt + hive_ghostty_terminal_checkpoint_export_v1 import_v1. Tests inject an export double so envelope/journal paths are proven without requiring TG2 completeness. Contract `write` feeds PTY output bytes; may emit PTY-bound effects via the registered sink (engine-owned). `exportOpaque` returns a slice OWNED BY THE PASSED ZIG ALLOCATOR. Caller always frees with `allocator.free`. The real bridge export (`hive_ghostty_terminal_checkpoint_export_v1`) returns C-allocated memory via the bridge alloc_fn — the host-composition ADAPTER MUST copy that payload into the Zig allocator (or free via the matching C free path) before returning from exportFn. Returning a C heap pointer that TerminalState later `allocator.free`s is heap corruption. On error → CHECKPOINT_UNAVAILABLE (never "mostly restored"). `importOpaque` leaves the destination UNCHANGED on failure. `digest` is a deterministic semantic fingerprint for restore equality.
 pub const VtEngine = struct {
     context: *anyopaque,
     deinitFn: *const fn (context: *anyopaque) void,
     writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
-    /// See ownership contract above — Zig-allocator-owned on success.
     exportFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8,
-    /// Bounded producer used for checkpoints above the legacy contiguous cap.
-    /// Null keeps old engine doubles/source compatibility and falls back to
-    /// exportFn, still writing the result in bounded chunks.
+    /// Bounded producer used for checkpoints above the legacy contiguous cap. Null keeps old engine doubles/source compatibility and falls back to exportFn, still writing the result in bounded chunks.
     exportStreamFn: ?*const fn (context: *anyopaque, sink: OpaqueStreamSink) anyerror!usize = null,
-    /// Fresh engine with the same live callbacks/effect sink. Resize uses this
-    /// to prepare a candidate without mutating the attached terminal.
     cloneFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!VtEngine = null,
     importFn: *const fn (context: *anyopaque, payload: []const u8) anyerror!void,
     digestFn: *const fn (context: *anyopaque) [32]u8,
-    /// Snapshot of PTY-bound effect bytes collected since create/import (for TG2 stream compare).
     effectsFn: *const fn (context: *anyopaque) []const u8,
-    /// Resize the shadow terminal grid; cell px are whole pixels per cell.
     resizeFn: *const fn (
         context: *anyopaque,
         columns: u32,
@@ -179,7 +134,6 @@ pub const OpaqueStreamSink = struct {
     }
 };
 
-/// Factory that builds a fresh engine for import-verify (: import into a FRESH terminal).
 pub const VtEngineFactory = struct {
     context: *anyopaque,
     createFn: *const fn (
@@ -199,7 +153,6 @@ pub const VtEngineFactory = struct {
     }
 };
 
-/// Mono-clock source (injectable for deterministic checkpoint-interval tests).
 pub const Clock = struct {
     context: *anyopaque,
     nowFn: *const fn (context: *anyopaque) u64,
@@ -209,13 +162,7 @@ pub const Clock = struct {
     }
 };
 
-/// Write HVTCP001 directly to a caller-owned spool. A zero header is reserved,
-/// the opaque payload is hashed while the engine streams it, then the complete
-/// header is patched at offset zero and the file is synced. HVTCP001's payload
-/// SHA-256 detects a torn/out-of-order patch after recovery; the inner
-/// HVGCP001 payload has no body digest and relies on this outer integrity
-/// layer. A failed export never leaves a header that could be mistaken for a
-/// complete checkpoint.
+/// Write HVTCP001 directly to a caller-owned spool. A zero header is reserved, the opaque payload is hashed while the engine streams it, then the complete header is patched at offset zero and the file is synced. HVTCP001's payload SHA-256 detects a torn/out-of-order patch after recovery; the inner HVGCP001 payload has no body digest and relies on this outer integrity layer. A failed export never leaves a header that could be mistaken for a complete checkpoint.
 pub fn writeEnvelopeStream(
     allocator: std.mem.Allocator,
     engine: VtEngine,
@@ -311,15 +258,8 @@ fn createAnonymousSpool(dir: std.fs.Dir) Error!std.fs.File {
     return error.IoFailed;
 }
 
-// ── In-memory journal (file persistence is host composition / disk layer) ───
-
-/// Exclusive-high-water byte journal. `start_seq` is the exclusive start of
-/// retained bytes (every byte with offset in [start_seq, end_seq) is present).
-/// `end_seq` == host `outputSeq` (exclusive next write offset).
 pub const Journal = struct {
     allocator: std.mem.Allocator,
-    /// First retained exclusive sequence (bytes below this have been covered by a
-    /// verified checkpoint and may have been evicted).
     start_seq: u64 = 0,
     bytes: std.ArrayList(u8) = .{},
 
@@ -340,8 +280,6 @@ pub const Journal = struct {
         return self.bytes.items.len;
     }
 
-    /// Append PTY output; rejects if journal would exceed capacity.
-    /// Caller MUST checkpoint/evict when `wouldExceed` before appending.
     pub fn append(self: *Journal, data: []const u8) Error!void {
         if (data.len == 0) return;
         if (self.bytes.items.len + data.len > journal_max_bytes) return error.JournalPressure;
@@ -352,24 +290,18 @@ pub const Journal = struct {
         return self.bytes.items.len + additional > journal_max_bytes;
     }
 
-    /// Evict bytes with exclusive end ≤ `through_seq` (i.e. all bytes below
-    /// through_seq). Refuses if through_seq is not covered by retained range
-    /// start (cannot invent a hole). Never evicts past end_seq.
+    /// Evict bytes with exclusive end ≤ `through_seq` (i.e. all bytes below through_seq). Refuses if through_seq is not covered by retained range start (cannot invent a hole). Never evicts past end_seq.
     pub fn evictThrough(self: *Journal, through_seq: u64) Error!void {
         if (through_seq < self.start_seq) return; // already evicted
         if (through_seq > self.endSeq()) return error.Internal;
         const drop: usize = @intCast(through_seq - self.start_seq);
         if (drop == 0) return;
         const remain = self.bytes.items[drop..];
-        // Shift remaining bytes to front.
         std.mem.copyForwards(u8, self.bytes.items[0..remain.len], remain);
         self.bytes.shrinkRetainingCapacity(remain.len);
         self.start_seq = through_seq;
     }
 
-    /// Slice journal bytes beginning exactly at `from_seq` (exclusive high-water
-    /// of a checkpoint). Empty if from_seq == end_seq. Error if from_seq is
-    /// outside retained range (would invent missing history).
     pub fn sliceFrom(self: *const Journal, from_seq: u64) Error![]const u8 {
         if (from_seq < self.start_seq) return error.CheckpointUnavailable;
         if (from_seq > self.endSeq()) return error.Internal;
@@ -378,10 +310,7 @@ pub const Journal = struct {
     }
 };
 
-// ── Dual-retained checkpoint store ──────────────────────────────────────────
-
 pub const StoredCheckpoint = struct {
-    /// Anonymous spool containing header + opaque payload. Owned.
     file: std.fs.File,
     header: CheckpointHeader,
 
@@ -402,9 +331,7 @@ pub const StoredCheckpoint = struct {
         return read;
     }
 
-    /// Legacy contiguous consumer adapter. Checkpoint creation and retention
-    /// never use this; callers that still require one import slice pay for it
-    /// only at consumption time.
+    /// Legacy contiguous consumer adapter. Checkpoint creation and retention never use this; callers that still require one import slice pay for it only at consumption time.
     pub fn readOpaqueAlloc(
         self: *const StoredCheckpoint,
         allocator: std.mem.Allocator,
@@ -470,7 +397,6 @@ pub const StoredCheckpoint = struct {
     }
 };
 
-/// Newest at index 0, previous at index 1. Both must be import-verified.
 pub const CheckpointStore = struct {
     slots: [retained_checkpoints]?StoredCheckpoint = .{ null, null },
 
@@ -496,16 +422,12 @@ pub const CheckpointStore = struct {
         return null;
     }
 
-    /// Push a newly verified checkpoint as newest; demote previous newest and
-    /// drop oldest. Takes ownership of the spool file.
     pub fn pushVerified(self: *CheckpointStore, checkpoint: StoredCheckpoint) void {
         if (self.slots[1]) |*old| old.deinit();
         self.slots[1] = self.slots[0];
         self.slots[0] = checkpoint;
     }
 };
-
-// ── TerminalState ───────────────────────────────────────────────────────────
 
 pub const Geometry = struct {
     columns: u32,
@@ -519,8 +441,6 @@ pub const TerminalState = struct {
     engine: VtEngine,
     factory: VtEngineFactory,
     clock: Clock,
-    /// Borrowed secure directory in which checkpoint spools are created and
-    /// immediately unlinked. It must outlive this state.
     checkpoint_spool_dir: std.fs.Dir,
     /// Raw 32-byte engine build id embedded in every envelope (from bridge; do not compute).
     engine_build_id: [32]u8,
@@ -529,22 +449,13 @@ pub const TerminalState = struct {
     journal: Journal,
     checkpoints: CheckpointStore,
 
-    /// Exclusive next PTY-output byte offset (outputSeq).
     output_seq: u64 = 0,
-    /// throughSeq of newest valid checkpoint; 0 when none (checkpointSeq).
     checkpoint_seq: u64 = 0,
-    /// Bytes of output since last verified checkpoint (for 2 MiB interval).
     bytes_since_checkpoint: u64 = 0,
-    /// Mono nanos of last verified checkpoint (or create).
     last_checkpoint_mono: u64 = 0,
-    /// Journal bytes/seq changed since the last persistJournal (batching).
     journal_dirty: bool = false,
-    /// Mono nanos of the last persistJournal (or create).
     last_journal_persist_mono: u64 = 0,
-    /// When true, reconnect must surface CHECKPOINT_UNAVAILABLE (no silent approx).
     reconnect_available: bool = true,
-    /// Lowest exclusive journal offset already sent across all live viewers
-    /// (sent_seq); `null` when no viewer is attached. See setViewerFloor.
     viewer_floor_seq: ?u64 = null,
     closed: bool = false,
 
@@ -571,10 +482,6 @@ pub const TerminalState = struct {
             .last_checkpoint_mono = now,
             .last_journal_persist_mono = now,
         };
-        // Sync the engine's pixel geometry once so XTWINOPS size reports and
-        // future checkpoint envelopes agree with `geometry` from the start.
-        // Non-fatal: the grid size is already correct from engine create; only
-        // cell px would stay unknown (reported as 0) if this fails.
         state.engine.resize(
             geometry.columns,
             geometry.rows,
@@ -607,14 +514,7 @@ pub const TerminalState = struct {
         return self.journal.start_seq;
     }
 
-    /// Publish the slowest live viewer's delivered high-water, or `null` when
-    /// no viewer is attached. A checkpoint fires from inside feedOutput and
-    /// evicts the journal it just covered; without this floor that eviction can
-    /// pass bytes an attached viewer has not been sent, and its next push reads
-    /// an evicted range and the host detaches a healthy pane.
-    /// The journal-pressure path in feedChunk deliberately ignores the floor: a
-    /// viewer a whole journal behind is dropped rather than growing retention
-    /// without bound.
+    /// Publish the slowest live viewer's delivered high-water, or `null` when no viewer is attached. A checkpoint fires from inside feedOutput and evicts the journal it just covered; without this floor that eviction can pass bytes an attached viewer has not been sent, and its next push reads an evicted range and the host detaches a healthy pane. The journal-pressure path in feedChunk deliberately ignores the floor: a viewer a whole journal behind is dropped rather than growing retention without bound.
     pub fn setViewerFloor(self: *TerminalState, seq: ?u64) void {
         self.viewer_floor_seq = seq;
     }
@@ -636,10 +536,6 @@ pub const TerminalState = struct {
         return self.checkpoints.newest();
     }
 
-    /// geometry: the shadow VT follows every applied window resize so the
-    /// next verified checkpoint carries the live geometry — envelope fields
-    /// AND opaque payload agree, so restoreInto renders at the real size
-    /// instead of the create-time 80x24.
     pub const PreparedResize = struct {
         base: StoredCheckpoint,
         resized: StoredCheckpoint,
@@ -655,18 +551,13 @@ pub const TerminalState = struct {
         }
     };
 
-    /// Prepare and verify a resized clone without mutating either live
-    /// representation. The host imports this verified state into the live VT,
-    /// applies the PTY resize, and rolls the VT back if that second step fails.
     pub fn prepareResize(self: *TerminalState, geometry: Geometry) Error!PreparedResize {
         if (self.closed) return error.Closed;
         if (geometry.columns == 0 or geometry.rows == 0 or
             geometry.columns > std.math.maxInt(u16) or
             geometry.rows > std.math.maxInt(u16)) return error.Internal;
 
-        // First capture the unmodified terminal. If any later preflight step
-        // fails, this verified checkpoint keeps the existing live geometry
-        // reattachable and the live engine is never resized.
+        // First capture the unmodified terminal. If any later preflight step fails, this verified checkpoint keeps the existing live geometry reattachable and the live engine is never resized.
         var base = self.buildVerifiedCheckpoint(self.engine, self.geometry) catch |err| {
             self.noteCheckpointFailure();
             return err;
@@ -717,9 +608,6 @@ pub const TerminalState = struct {
         };
     }
 
-    /// Apply the already-export-verified state to the live renderer. The
-    /// import contract leaves the destination unchanged on failure, so the
-    /// host can still decline the PTY resize.
     pub fn applyPreparedResize(self: *TerminalState, prepared: *PreparedResize) Error!void {
         std.debug.assert(prepared.owned);
         var mapping = try prepared.resized.map();
@@ -758,15 +646,11 @@ pub const TerminalState = struct {
         self.geometry = prepared.previous_geometry;
     }
 
-    /// Retain the verified before/after checkpoints after both live
-    /// representations have committed.
     pub fn finalizePreparedResize(self: *TerminalState, prepared: *PreparedResize) void {
         std.debug.assert(prepared.owned);
         self.checkpoints.pushVerified(prepared.base);
         const resized_header = prepared.resized.header;
         self.checkpoints.pushVerified(prepared.resized);
-        // Resize must establish a restorable geometry, but it is not a journal
-        // pressure event. Keep the replay window intact for attached viewers.
         self.finishCheckpoint(resized_header, false);
         prepared.owned = false;
     }
@@ -778,13 +662,11 @@ pub const TerminalState = struct {
         self.finalizePreparedResize(&prepared);
     }
 
-    /// Feed PTY output: journal first (durability), then VT. On journal pressure,
-    /// checkpoint-first then keep draining. Never drops bytes silently.
+    /// Feed PTY output: journal first (durability), then VT. On journal pressure, checkpoint-first then keep draining. Never drops bytes silently.
     pub fn feedOutput(self: *TerminalState, data: []const u8) Error!void {
         if (self.closed) return error.Closed;
         if (data.len == 0) return;
 
-        // Split only for the stream-chunk bound; journal still receives contiguous ranges.
         var offset: usize = 0;
         while (offset < data.len) {
             const take = @min(stream_chunk_max_bytes, data.len - offset);
@@ -796,31 +678,19 @@ pub const TerminalState = struct {
 
     fn feedChunk(self: *TerminalState, chunk: []const u8) Error!void {
         if (self.journal.wouldExceed(chunk.len)) {
-            // Checkpoint-first, then evict covered prefix; if still no room, mark
-            // reconnect unavailable but CONTINUE draining (journal limit).
             const cp_result = self.tryCheckpoint();
             if (cp_result) |_| {
-                // Eviction of covered prefix happens inside tryCheckpoint on success.
             } else |_| {
                 self.reconnect_available = false;
             }
             if (self.journal.wouldExceed(chunk.len)) {
-                // Still over capacity: cannot retain required replay bytes. Mark
-                // unavailable and drop oldest only if a verified checkpoint covers them.
+                // Still over capacity: cannot retain required replay bytes. Mark unavailable and drop oldest only if a verified checkpoint covers them.
                 if (self.checkpoints.newest()) |cp| {
-                    // Evict only through verified throughSeq; if that frees enough, proceed.
                     try self.journal.evictThrough(cp.header.through_seq);
                 }
                 if (self.journal.wouldExceed(chunk.len)) {
-                    // Required replay would be lost — refuse silent discard of
-                    // uncovered bytes; still drain VT so the PTY does not stall,
-                    // but reconnect is unavailable and journal retains what it can
-                    // by force-dropping ONLY bytes already covered (none left).
+                    // Required replay would be lost — refuse silent discard of uncovered bytes; still drain VT so the PTY does not stall, but reconnect is unavailable and journal retains what it can by force-dropping ONLY bytes already covered (none left).
                     self.reconnect_available = false;
-                    // Drop from the front only up to remaining capacity; uncovered
-                    // bytes would be lost → we instead drop the whole journal after
-                    // marking unavailable (no verified covering checkpoint remains
-                    // that frees space). Journal after this is incomplete.
                     self.journal.bytes.clearRetainingCapacity();
                     self.journal.start_seq = self.output_seq; // hole from prior start..now
                     self.journal_dirty = true;
@@ -828,16 +698,13 @@ pub const TerminalState = struct {
             }
         }
 
-        // F1: engine.write FIRST, then journal on success. Journal-before-write
-        // left end_seq > output_seq when write failed → later checkpoint used a
-        // stale through_seq and restoreInto silently diverged (forbids).
+        // F1: engine.write FIRST, then journal on success. Journal-before-write left end_seq > output_seq when write failed → later checkpoint used a stale through_seq and restoreInto silently diverged (forbids).
         self.engine.write(chunk) catch {
             self.reconnect_available = false;
             return error.Internal;
         };
         self.journal.append(chunk) catch |err| {
-            // Engine accepted bytes the journal could not retain — reconnect
-            // would diverge. Never claim a clean restore from here.
+            // Engine accepted bytes the journal could not retain — reconnect would diverge. Never claim a clean restore from here.
             self.reconnect_available = false;
             return err;
         };
@@ -847,7 +714,6 @@ pub const TerminalState = struct {
 
         if (self.shouldCheckpoint()) {
             self.tryCheckpoint() catch {
-                // Interval failure does not abort output drain; surface via flag.
                 self.reconnect_available = false;
             };
         }
@@ -860,8 +726,6 @@ pub const TerminalState = struct {
         return false;
     }
 
-    /// Create a verified checkpoint through an anonymous spool, import it into
-    /// a FRESH terminal, compare semantic digests, then retain the spool.
     pub fn tryCheckpoint(self: *TerminalState) Error!void {
         if (self.closed) return error.Closed;
         const checkpoint = self.buildVerifiedCheckpoint(self.engine, self.geometry) catch |err| {
@@ -874,9 +738,7 @@ pub const TerminalState = struct {
     }
 
     fn noteCheckpointFailure(self: *TerminalState) void {
-        // A failed refresh does not invalidate a checkpoint whose replay tail
-        // is still retained. The journal-pressure path separately marks the
-        // state unavailable if it must discard uncovered bytes.
+        // A failed refresh does not invalidate a checkpoint whose replay tail is still retained. The journal-pressure path separately marks the state unavailable if it must discard uncovered bytes.
         if (self.checkpoints.newest() == null) self.reconnect_available = false;
     }
 
@@ -946,10 +808,7 @@ pub const TerminalState = struct {
         }
     }
 
-    /// Restore path for attach: import newest verified checkpoint into `dest`,
-    /// then replay journal bytes beginning exactly at throughSeq. Returns the
-    /// high-water after restore (output_seq). Incomplete / missing checkpoint
-    /// yields CHECKPOINT_UNAVAILABLE — never approximates.
+    /// Restore path for attach: import newest verified checkpoint into `dest`, then replay journal bytes beginning exactly at throughSeq. Returns the high-water after restore (output_seq). Incomplete / missing checkpoint yields CHECKPOINT_UNAVAILABLE — never approximates.
     pub fn restoreInto(self: *const TerminalState, dest: VtEngine) Error!u64 {
         if (!self.reconnect_available) return error.CheckpointUnavailable;
         const cp = self.checkpoints.newest() orelse return error.CheckpointUnavailable;
@@ -958,10 +817,7 @@ pub const TerminalState = struct {
             return error.EngineMismatch;
         }
 
-        // Re-verify envelope integrity before import. StoredCheckpoint.verify
-        // checks length + payload SHA-256 without assembling a contiguous
-        // file image; do not leak raw EnvelopeError (there is no wire code for
-        // a SHA/length mismatch).
+        // Re-verify envelope integrity before import. StoredCheckpoint.verify checks length + payload SHA-256 without assembling a contiguous file image; do not leak raw EnvelopeError (there is no wire code for a SHA/length mismatch).
         const header = cp.verify() catch return error.CheckpointUnavailable;
         var mapping = try cp.map();
         defer mapping.deinit();
@@ -969,7 +825,6 @@ pub const TerminalState = struct {
 
         dest.importOpaque(payload) catch return error.CheckpointUnavailable;
 
-        // Replay journal from throughSeq exclusively.
         const tail = try self.journal.sliceFrom(header.through_seq);
         if (tail.len > 0) {
             dest.write(tail) catch return error.Internal;
@@ -977,9 +832,7 @@ pub const TerminalState = struct {
         return self.output_seq;
     }
 
-    /// Disk-style write of newest checkpoint to `dir` as checkpoint-0.bin (and
-    /// previous as checkpoint-1.bin). Atomic: unique randomized.tmp, fsync,
-    /// rename.
+    /// Disk-style write of newest checkpoint to `dir` as checkpoint-0.bin (and previous as checkpoint-1.bin). Atomic: unique randomized.tmp, fsync, rename.
     pub fn persistCheckpoints(self: *const TerminalState, dir: std.fs.Dir) Error!void {
         if (self.checkpoints.newest()) |cp| {
             try writeAtomicCheckpoint(dir, "checkpoint-0.bin", cp);
@@ -991,7 +844,6 @@ pub const TerminalState = struct {
 
     /// Persist journal.bin atomically with mode 0600 on the file itself.
     pub fn persistJournal(self: *TerminalState, dir: std.fs.Dir) Error!void {
-        // Layout: 16-byte prefix (start_seq u64 BE + end_seq u64 BE) + raw bytes.
         var prefix: [16]u8 = undefined;
         std.mem.writeInt(u64, prefix[0..8], self.journal.start_seq, .big);
         std.mem.writeInt(u64, prefix[8..16], self.journal.endSeq(), .big);
@@ -1008,11 +860,7 @@ pub const TerminalState = struct {
         self.last_journal_persist_mono = self.clock.now();
     }
 
-    /// Batched streaming persist: rewrites journal.bin at most once per
-    /// journal_persist_interval_ns so chatty output does not fsync-storm the
-    /// whole journal per batch. No-op while clean or inside the window.
-    /// Checkpoint/terminate/read-paths that need durability must call
-    /// persistJournal directly — batching never delays those.
+    /// Batched streaming persist: rewrites journal.bin at most once per journal_persist_interval_ns so chatty output does not fsync-storm the whole journal per batch. No-op while clean or inside the window. Checkpoint/terminate/read-paths that need durability must call persistJournal directly — batching never delays those.
     pub fn persistJournalIfDue(self: *TerminalState, dir: std.fs.Dir) Error!void {
         if (!self.journal_dirty) return;
         const now = self.clock.now();
@@ -1022,17 +870,12 @@ pub const TerminalState = struct {
 };
 
 fn writeAtomic(dir: std.fs.Dir, name: []const u8, bytes: []const u8) Error!void {
-    // journal.bin carries raw PTY output (potential secrets). Fail closed
-    // unless the target directory is owned by this uid and not group/other
-    // writable: in a shared dir a hostile writer could pre-plant or race the
-    // temp path. Same uid+mode doctrine as broker.openOwnedDirectory.
+    // journal.bin carries raw PTY output (potential secrets). Fail closed unless the target directory is owned by this uid and not group/other writable: in a shared dir a hostile writer could pre-plant or race the temp path. Same uid+mode doctrine as broker.openOwnedDirectory.
     const stat = std.posix.fstat(dir.fd) catch return error.IoFailed;
     if (stat.uid != std.posix.getuid() or stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR or
         stat.mode & 0o022 != 0) return error.IoFailed;
 
-    // Unique randomized temp name per call: a same-dir writer cannot predict
-    // and pre-plant the temp path to win the rename race. O_NOFOLLOW + 0600
-    // below are retained regardless.
+    // Unique randomized temp name per call: a same-dir writer cannot predict and pre-plant the temp path to win the rename race. O_NOFOLLOW + 0600 below are retained regardless.
     var tmp_buf: [64]u8 = undefined;
     const tmp_name = std.fmt.bufPrint(&tmp_buf, "{s}.{x:0>16}.tmp", .{
         name,
@@ -1082,8 +925,6 @@ fn writeAtomicCheckpoint(
     dir_file.sync() catch return error.IoFailed;
 }
 
-/// Core of writeAtomic with an explicit temp name, so tests can exercise
-/// O_NOFOLLOW against a pre-planted symlink at a known temp path.
 fn writeAtomicTmp(dir: std.fs.Dir, name: []const u8, tmp_name: []const u8, bytes: []const u8) Error!void {
     const fd = std.posix.openat(dir.fd, tmp_name, .{
         .ACCMODE = .WRONLY,
@@ -1098,22 +939,14 @@ fn writeAtomicTmp(dir: std.fs.Dir, name: []const u8, tmp_name: []const u8, bytes
     file.writeAll(bytes) catch return error.IoFailed;
     file.sync() catch return error.IoFailed; // data durable
     dir.rename(tmp_name, name) catch return error.IoFailed;
-    // fsync the directory so the rename itself survives power loss.
-    // Without this, checkpoint-0.bin may be absent/zero after crash even though
-    // the file fsync succeeded.
+    // fsync the directory so the rename itself survives power loss. Without this, checkpoint-0.bin may be absent/zero after crash even though the file fsync succeeded.
     const dir_file: std.fs.File = .{ .handle = dir.fd };
     dir_file.sync() catch return error.IoFailed;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Tests — positive-control doctrine is mandatory.
-// ═══════════════════════════════════════════════════════════════════════════
-
 const testing = std.testing;
 
-/// Liam's 116-byte HVTCP001 fixture — shared binary locked by
-/// native/tests/abi/checkpoint-envelope.c via HVTCP001_FIXTURE_PATH (F5).
-/// Do not hand-transcribe; edit hvtcp001-header.bin (and C static) together.
+/// Liam's 116-byte HVTCP001 fixture — shared binary locked by native/tests/abi/checkpoint-envelope.c via HVTCP001_FIXTURE_PATH (F5). Do not hand-transcribe; edit hvtcp001-header.bin (and C static) together.
 const liam_fixture: *const [header_bytes]u8 = hvtcp001_header.bytes;
 
 comptime {
@@ -1135,10 +968,7 @@ test "envelope constants match generated CHECKPOINT_HEADER" {
     try testing.expectEqual(@as(u32, 0), flags_v1);
 }
 
-// F4 positive control: local off table equals generated.checkpoint.offset.
-// A deliberate interior mismatch (e.g. off.through_seq = 17 while generated
-// stays 16) fails the comptime block above — this runtime test re-states the
-// full table so a silent no-op comptime guard cannot hide.
+// F4 positive control: local off table equals generated.checkpoint.offset. A deliberate interior mismatch (e.g. off.through_seq = 17 while generated stays 16) fails the comptime block above — this runtime test re-states the full table so a silent no-op comptime guard cannot hide.
 test "envelope offsets match generated CHECKPOINT_HEADER.offsets" {
     try testing.expectEqual(generated.checkpoint.offset.magic, off.magic);
     try testing.expectEqual(generated.checkpoint.offset.version, off.version);
@@ -1158,7 +988,6 @@ test "envelope offsets match generated CHECKPOINT_HEADER.offsets" {
 }
 
 test "liam fixture positive control: decode succeeds with exact field values" {
-    // Canary: if decode is dead code or fixture is wrong, this fails first.
     const h = try decodeHeader(liam_fixture);
     try testing.expectEqual(@as(u64, 42), h.through_seq);
     try testing.expectEqual(@as(u64, 7), h.created_mono_nanos);
@@ -1186,7 +1015,6 @@ test "encodeHeader round-trips to liam fixture" {
 }
 
 test "wrong magic rejects (positive control: good fixture still decodes)" {
-    // Positive control first — production decode path is alive.
     _ = try decodeHeader(liam_fixture);
 
     var bad = liam_fixture.*;
@@ -1197,7 +1025,6 @@ test "wrong magic rejects (positive control: good fixture still decodes)" {
 test "wrong headerBytes rejects (positive control alive)" {
     _ = try decodeHeader(liam_fixture);
     var bad = liam_fixture.*;
-    // headerBytes at offset 10; set to 115
     writeBe16(&bad, 10, 115);
     try testing.expectError(error.WrongHeaderBytes, decodeHeader(&bad));
 }
@@ -1255,43 +1082,27 @@ test "parseEnvelope rejects truncated and corrupt payload (positive control)" {
     }, "ok");
     defer testing.allocator.free(file);
 
-    // Positive control: good file parses.
     _ = try parseEnvelope(file);
 
-    // Truncated
     try testing.expectError(error.Truncated, parseEnvelope(file[0 .. header_bytes - 1]));
     try testing.expectError(error.PayloadLengthMismatch, parseEnvelope(file[0 .. file.len - 1]));
 
-    // Corrupt one opaque byte → sha mismatch
     var corrupt = try testing.allocator.dupe(u8, file);
     defer testing.allocator.free(corrupt);
     corrupt[header_bytes] ^= 0xff;
     try testing.expectError(error.PayloadSha256Mismatch, parseEnvelope(corrupt));
 }
 
-// ── Export-double VT engine for unit tests (A2 / pre-TG2) ───────────────────
-
-/// Deterministic double: state = concatenation of written bytes; opaque export
-/// is magic "MOCKCP01" + state; import replaces state; digest = SHA-256(state).
-/// PTY effects: when input contains BEL (0x07), emits a single 0x07 as "effect"
-/// stand-in (WRITE_PTY path is engine-owned; we record effect bytes).
 const MockEngine = struct {
     allocator: std.mem.Allocator,
     state: std.ArrayList(u8) = .{},
     effect_log: std.ArrayList(u8) = .{},
-    /// When true, export returns error (incomplete TG2 / export failure).
     fail_export: bool = false,
-    /// When true, export returns empty payload (A2 incomplete).
     empty_export: bool = false,
-    /// When true, export returns payload that won't round-trip digest.
     incomplete_export: bool = false,
-    /// Test-only streamed payload size; bypasses the mock checkpoint body.
     stream_padding_bytes: usize = 0,
-    /// When true, write returns error (F1 fallible VT write).
     fail_write: bool = false,
-    /// When true, resize returns error without changing the engine geometry.
     fail_resize: bool = false,
-    /// Last applied resize (init-time geometry sync counts as a resize).
     columns: u32 = 0,
     rows: u32 = 0,
     cell_width_px: u32 = 0,
@@ -1355,7 +1166,6 @@ const MockEngine = struct {
         const self: *MockEngine = @ptrCast(@alignCast(ctx));
         if (self.fail_write) return error.OutOfMemory;
         try self.state.appendSlice(self.allocator, bytes);
-        // Record a stand-in PTY effect for BEL — proves effect stream is tracked.
         for (bytes) |b| {
             if (b == 0x07) try self.effect_log.append(self.allocator, 0x07);
         }
@@ -1366,8 +1176,7 @@ const MockEngine = struct {
         if (self.fail_export) return error.CheckpointUnavailable;
         if (self.empty_export) return try allocator.alloc(u8, 0);
         if (self.incomplete_export) {
-            // Deliberately incomplete: omit state so import digest ≠ live.
-            // Still structurally valid so import succeeds but digests diverge.
+            // Deliberately incomplete: omit state so import digest ≠ live. Still structurally valid so import succeeds but digests diverge.
             var out: std.ArrayList(u8) = .{};
             errdefer out.deinit(allocator);
             try out.appendSlice(allocator, "MOCKCP01");
@@ -1376,7 +1185,6 @@ const MockEngine = struct {
             try out.appendSlice(allocator, &sha);
             return try out.toOwnedSlice(allocator);
         }
-        // Layout: "MOCKCP01" + state + sha256(state). Corrupt-any-byte fails import.
         var out: std.ArrayList(u8) = .{};
         errdefer out.deinit(allocator);
         try out.appendSlice(allocator, "MOCKCP01");
@@ -1421,7 +1229,6 @@ const MockEngine = struct {
 
     fn importCb(ctx: *anyopaque, payload: []const u8) anyerror!void {
         const self: *MockEngine = @ptrCast(@alignCast(ctx));
-        // Validate mock payload. On failure leave destination UNCHANGED.
         if (payload.len < 8 + 32 or !std.mem.eql(u8, payload[0..8], "MOCKCP01")) {
             return error.InvalidCheckpoint;
         }
@@ -1640,7 +1447,6 @@ test "F1: engine.write failure preserves end_seq==output_seq (no silent diverge)
     try testing.expectEqual(s.ts.outputSeq(), s.ts.journal.endSeq());
     try testing.expect(s.ts.reconnect_available);
 
-    // Positive control: success path still works (production path not dead).
     try s.ts.feedOutput("more");
     try testing.expectEqual(@as(u64, 6), s.ts.outputSeq());
     try testing.expectEqual(s.ts.outputSeq(), s.ts.journal.endSeq());
@@ -1671,7 +1477,6 @@ test "tryCheckpoint verifies import+digest then retains; journal evicts throughS
 
     const cp = s.ts.checkpoints.newest().?;
     try testing.expectEqual(@as(u64, 8), cp.header.through_seq);
-    // Envelope magic
     var checkpoint_magic: [8]u8 = undefined;
     try testing.expectEqual(@as(usize, 8), try cp.readAt(&checkpoint_magic, 0));
     try testing.expectEqualStrings(magic, &checkpoint_magic);
@@ -1684,8 +1489,6 @@ test "incomplete export yields CHECKPOINT_UNAVAILABLE (A2); no silent mostly-res
     try s.ts.feedOutput("partial");
     s.engine_ptr.incomplete_export = true;
 
-    // Positive control: with complete export, checkpoint would succeed.
-    // Prove the success path is not dead by briefly flipping the flag.
     s.engine_ptr.incomplete_export = false;
     try s.ts.tryCheckpoint();
     try testing.expect(s.ts.checkpointAvailable());
@@ -1694,8 +1497,7 @@ test "incomplete export yields CHECKPOINT_UNAVAILABLE (A2); no silent mostly-res
     try s.ts.feedOutput("more");
     s.engine_ptr.incomplete_export = true;
     try testing.expectError(error.CheckpointUnavailable, s.ts.tryCheckpoint());
-    // The previous verified checkpoint plus its retained replay tail remains a
-    // valid reattach path. A failed refresh must not silently disable it.
+    // The previous verified checkpoint plus its retained replay tail remains a valid reattach path. A failed refresh must not silently disable it.
     try testing.expectEqual(seq_after_good, s.ts.checkpointSeq());
     try testing.expect(s.ts.reconnect_available);
     try testing.expect(s.ts.checkpoints.newest() != null);
@@ -1706,7 +1508,6 @@ test "empty / failed export → CHECKPOINT_UNAVAILABLE (positive control alive)"
     defer s.deinit();
     try s.ts.feedOutput("x");
 
-    // Positive control: good path works.
     try s.ts.tryCheckpoint();
     try testing.expect(s.ts.checkpointAvailable());
 
@@ -1731,11 +1532,9 @@ test "corrupt one opaque byte → import fails / destination unchanged" {
     defer testing.allocator.free(payload);
     var corrupt = try testing.allocator.dupe(u8, payload);
     defer testing.allocator.free(corrupt);
-    // Flip a byte inside the mock body (past MOCKCP01 magic).
     try testing.expect(corrupt.len > 8);
     corrupt[8] ^= 0xff;
 
-    // Fresh terminal with a sentinel so we can prove "unchanged on failure".
     var fresh = try MockEngine.create(testing.allocator);
     // Don't use engine deinit which destroys — manage manually.
     defer fresh.destroy();
@@ -1744,12 +1543,9 @@ test "corrupt one opaque byte → import fails / destination unchanged" {
     defer testing.allocator.free(before);
 
     const eng = fresh.engine();
-    // Manual: importOpaque should fail and leave state as SENTINEL.
-    // Note: eng.deinit would destroy fresh; we only call import.
     try testing.expectError(error.InvalidCheckpoint, eng.importOpaque(corrupt));
     try testing.expectEqualStrings(before, fresh.state.items);
 
-    // Positive control: good payload imports and changes state.
     try eng.importOpaque(payload);
     try testing.expectEqualStrings("stable-state", fresh.state.items);
 }
@@ -1762,14 +1558,10 @@ test "restoreInto replays journal after throughSeq; digest matches uninterrupted
     try s.ts.tryCheckpoint();
     try s.ts.feedOutput("BBB");
 
-    // Uninterrupted digest on live engine.
     const live_digest = s.ts.engine.digest();
 
-    // Restore into fresh.
     var fresh = try MockEngine.create(testing.allocator);
     defer {
-        // restoreInto does not take ownership; destroy manually.
-        // TerminalState.restoreInto uses dest without deinit.
         fresh.destroy();
     }
     const dest = fresh.engine();
@@ -1784,7 +1576,6 @@ test "never evict journal bytes not covered by a verified checkpoint" {
     defer s.deinit();
 
     try s.ts.feedOutput("keep-me");
-    // No checkpoint yet — start_seq stays 0; full journal retained.
     try testing.expectEqual(@as(u64, 0), s.ts.journal.start_seq);
     try testing.expectEqualStrings("keep-me", s.ts.journal.bytes.items);
 
@@ -1821,7 +1612,6 @@ test "checkpoint interval triggers after 2 MiB new output" {
     var s = try makeState();
     defer s.deinit();
 
-    // Feed just under the interval without explicit checkpoint.
     const chunk_size: usize = 64 * 1024;
     var filled: u64 = 0;
     var buf: [chunk_size]u8 = undefined;
@@ -1830,39 +1620,28 @@ test "checkpoint interval triggers after 2 MiB new output" {
         try s.ts.feedOutput(&buf);
         filled += chunk_size;
     }
-    // Should not have auto-checkpointed yet (still under 2 MiB).
     try testing.expectEqual(@as(u64, 0), s.ts.checkpointSeq());
 
-    // Cross the threshold.
     try s.ts.feedOutput(&buf);
     try testing.expect(s.ts.checkpointSeq() > 0);
     try testing.expect(s.ts.checkpointAvailable());
 }
 
-// the checkpoint fires from INSIDE feedOutput, i.e. before the host loop
-// pumps the attached viewer. Evicting the covered prefix therefore raced ahead
-// of the viewer's sent_seq on the 30s cadence, its next push read an evicted
-// range, and the host detached a healthy pane.
+// the checkpoint fires from INSIDE feedOutput, i.e. before the host loop pumps the attached viewer. Evicting the covered prefix therefore raced ahead of the viewer's sent_seq on the 30s cadence, its next push read an evicted range, and the host detached a healthy pane.
 test "an interval checkpoint never evicts past a live viewer floor" {
     var s = try makeState();
     defer s.deinit();
 
-    // A viewer is attached and has been sent everything journaled so far.
     try s.ts.feedOutput("delivered");
     s.ts.setViewerFloor(s.ts.outputSeq());
 
-    // The interval elapses, so the next feed checkpoints and evicts inside
-    // feedOutput while "undelivered" has not reached the viewer.
     s.clock.nanos += checkpoint_interval_ns;
     try s.ts.feedOutput("undelivered");
     try testing.expect(s.ts.checkpointSeq() > 0);
 
-    // The viewer's next push starts at the floor and must still be servable.
     try testing.expectEqual(@as(u64, 9), s.ts.journal.start_seq);
     try testing.expectEqualStrings("undelivered", try s.ts.journal.sliceFrom(9));
 
-    // Positive control: with no attached viewer the same sequence DOES evict
-    // the whole covered prefix, so the assertions above are not vacuous.
     s.ts.setViewerFloor(null);
     s.clock.nanos += checkpoint_interval_ns;
     try s.ts.feedOutput("tail");
@@ -1870,13 +1649,7 @@ test "an interval checkpoint never evicts past a live viewer floor" {
     try testing.expectError(error.CheckpointUnavailable, s.ts.journal.sliceFrom(9));
 }
 
-// F3: This is PLUMBING-ONLY. MockEngine state is plain byte concatenation and
-// digest=SHA256(state), so restored==uninterrupted holds for ANY split
-// independent of VT parsing. It proves envelope/journal/restore round-trips
-// bytes through the seam. It is NOT TG2 and MUST NOT be read as sequence-split
-// corpus evidence. The real adversarial CSI/OSC/DCS/UTF-8/grapheme/Kitty
-// synchronized-output/alternate-screen split corpus is gated on TG2 host
-// composition against libghostty-vt (A2).
+// F3: This is PLUMBING-ONLY. MockEngine state is plain byte concatenation and digest=SHA256(state), so restored==uninterrupted holds for ANY split independent of VT parsing. It proves envelope/journal/restore round-trips bytes through the seam. It is NOT TG2 and MUST NOT be read as sequence-split corpus evidence. The real adversarial CSI/OSC/DCS/UTF-8/grapheme/Kitty synchronized-output/alternate-screen split corpus is gated on TG2 host composition against libghostty-vt (A2).
 test "plumbing only: byte-split feed/checkpoint/restore round-trips opaque state (NOT TG2 corpus)" {
     const sequences = [_][]const u8{
         "\x1b[31m", // CSI SGR
@@ -1891,7 +1664,6 @@ test "plumbing only: byte-split feed/checkpoint/restore round-trips opaque state
         "plain",
     };
 
-    // Uninterrupted run.
     var unint = try MockEngine.create(testing.allocator);
     defer unint.destroy();
     for (sequences) |seq| {
@@ -1899,17 +1671,13 @@ test "plumbing only: byte-split feed/checkpoint/restore round-trips opaque state
     }
     const unint_digest = MockEngine.digestCb(unint);
 
-    // Split at every boundary: feed byte-by-byte with checkpoint before/after
-    // each sequence, restore into fresh, compare.
     var s = try makeState();
     defer s.deinit();
 
     for (sequences) |seq| {
-        // Checkpoint before split (may be empty state first time — force after ≥1 byte).
         if (s.ts.outputSeq() > 0) {
             s.ts.tryCheckpoint() catch {};
         }
-        // Feed one byte at a time (adversarial split).
         for (seq) |b| {
             const one = [_]u8{b};
             try s.ts.feedOutput(&one);
@@ -1917,7 +1685,6 @@ test "plumbing only: byte-split feed/checkpoint/restore round-trips opaque state
         try s.ts.tryCheckpoint();
     }
 
-    // Restore path must actually RUN import into a fresh terminal.
     var restored = try MockEngine.create(testing.allocator);
     defer restored.destroy();
     const dest = restored.engine();
@@ -1926,8 +1693,6 @@ test "plumbing only: byte-split feed/checkpoint/restore round-trips opaque state
     try testing.expectEqualSlices(u8, &unint_digest, &dest.digest());
     try testing.expectEqualStrings(unint.state.items, restored.state.items);
 
-    // Subsequent effect stream: after restore high-water, new output must produce
-    // the same *new* effects as the uninterrupted engine from the same state.
     unint.effect_log.clearRetainingCapacity();
     restored.effect_log.clearRetainingCapacity();
     const more = "\x07post";
@@ -1962,7 +1727,6 @@ test "persistCheckpoints atomic write + re-parse envelope" {
     const h = try parseEnvelope(file);
     try testing.expectEqual(s.ts.checkpointSeq(), h.through_seq);
 
-    // Positive control: wrong magic on disk would fail parse.
     var bad = try testing.allocator.dupe(u8, file);
     defer testing.allocator.free(bad);
     bad[0] = 'Z';
@@ -1980,8 +1744,6 @@ test "persistJournal does not follow a symlink at the temporary path" {
     }
     try tmp.dir.symLink("sentinel", "journal.bin.tmp", .{});
 
-    // Positive control: the same core write with no symlink at the temp path
-    // succeeds, so the rejection below is the O_NOFOLLOW check, not a dead path.
     try writeAtomicTmp(tmp.dir, "control.bin", "control.bin.tmp", "ok");
 
     try testing.expectError(error.IoFailed, writeAtomicTmp(tmp.dir, "journal.bin", "journal.bin.tmp", "secret"));
@@ -2003,11 +1765,9 @@ test "writeAtomic fails closed on a group/other-writable target directory" {
     defer shared.close();
     try shared.chmod(0o777);
 
-    // Shared-dir doctrine: refuse even though the dir is owned by this uid
-    // group/other write bits let a hostile writer race the temp path.
+    // Shared-dir doctrine: refuse even though the dir is owned by this uid group/other write bits let a hostile writer race the temp path.
     try testing.expectError(error.IoFailed, s.ts.persistJournal(shared));
 
-    // Positive control: tightening to owner-only unblocks the same persist.
     try shared.chmod(0o700);
     try s.ts.persistJournal(shared);
     const journal_stat = try std.posix.fstatat(shared.fd, "journal.bin", std.posix.AT.SYMLINK_NOFOLLOW);
@@ -2022,16 +1782,13 @@ test "persistJournal uses unique randomized temp names (legacy fixed name inert)
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    // Pre-plant the legacy predictable temp name: a same-dir writer's file must
-    // neither be consumed, truncated, nor block the persist.
     {
         var planted = try tmp.dir.createFile("journal.bin.tmp", .{ .mode = 0o600 });
         defer planted.close();
         try planted.writeAll("planted");
     }
 
-    // Two persists back-to-back: randomized names cannot collide with the
-    // planted file or with each other.
+    // Two persists back-to-back: randomized names cannot collide with the planted file or with each other.
     try s.ts.persistJournal(tmp.dir);
     try s.ts.persistJournal(tmp.dir);
 
@@ -2043,7 +1800,6 @@ test "persistJournal uses unique randomized temp names (legacy fixed name inert)
     defer testing.allocator.free(journal);
     try testing.expectEqualStrings("secret", journal[16..]);
 
-    // No randomized temp file survives the rename.
     var listing = try tmp.dir.openDir(".", .{ .iterate = true });
     defer listing.close();
     var it = listing.iterate();
@@ -2060,7 +1816,6 @@ test "restore refuses when reconnect_available is false (no mostly-restored)" {
     try s.ts.feedOutput("a");
     try s.ts.tryCheckpoint();
 
-    // Positive control: restore works while available.
     var ok_eng = try MockEngine.create(testing.allocator);
     defer ok_eng.destroy();
     _ = try s.ts.restoreInto(ok_eng.engine());

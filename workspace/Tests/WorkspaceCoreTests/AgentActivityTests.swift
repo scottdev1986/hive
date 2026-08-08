@@ -2,8 +2,21 @@ import XCTest
 @testable import WorkspaceCore
 
 final class AgentActivityTests: XCTestCase {
+    private func presentation(
+        paneKind: String = "running",
+        activity: String,
+        waitingKind: String? = nil
+    ) -> AgentFeedPresentation {
+        AgentFeedPresentation(
+            panePresence: "visible",
+            terminalState: paneKind == "failed" ? "failed" : "live",
+            headerDetail: activity,
+            paneStatus: FeedPanePresentation(
+                kind: paneKind, waitingKind: waitingKind),
+            activity: activity)
+    }
 
-    func testUnifiedLegendMapsEveryActivityToOneAppearance() {
+    func testUnifiedLegendMapsEveryCanonicalActivityToOneAppearance() {
         XCTAssertEqual(AgentActivity.working.appearance,
                        StatusAppearance(color: .green, symbol: "circle.fill", border: .solid))
         XCTAssertEqual(AgentActivity.idle.appearance,
@@ -12,6 +25,8 @@ final class AgentActivityTests: XCTestCase {
                        StatusAppearance(color: .blue, symbol: "circle.dotted", border: .solid))
         XCTAssertEqual(AgentActivity.needsUser.appearance,
                        StatusAppearance(color: .orange, symbol: "hand.raised.fill", border: .solid))
+        XCTAssertEqual(AgentActivity.held.appearance,
+                       StatusAppearance(color: .teal, symbol: "hourglass.circle.fill", border: .solid))
         XCTAssertEqual(AgentActivity.done.appearance,
                        StatusAppearance(color: .purple, symbol: "checkmark.circle.fill", border: .solid))
         XCTAssertEqual(AgentActivity.failed.appearance,
@@ -20,156 +35,88 @@ final class AgentActivityTests: XCTestCase {
                        StatusAppearance(color: .gray, symbol: "bolt.horizontal.circle.fill", border: .dashed))
         XCTAssertEqual(AgentActivity.unknown.appearance,
                        StatusAppearance(color: .gray, symbol: "questionmark.circle", border: .dashed))
-        XCTAssertEqual(AttentionSeverity.waiting.statusColor, .orange)
-        XCTAssertEqual(AttentionSeverity.completed.statusColor, .purple)
-        XCTAssertEqual(AttentionSeverity.failed.statusColor, .red)
-        XCTAssertEqual(AttentionSeverity.disconnected.statusColor, .gray)
     }
 
-    func testUnrecognizedStatusIsUnknownAndNeverHealthy() {
-        let raw = "some-future-status"
-        XCTAssertEqual(FeedStatusMap.paneStatus(for: raw), .unknown)
-        XCTAssertEqual(FeedStatusMap.activity(for: raw), .unknown)
-        XCTAssertNotEqual(FeedStatusMap.activity(for: raw).appearance,
-                          AgentActivity.working.appearance)
-    }
-
-    func testFeedLossKeepsDisconnectedAppearance() {
-        let status = PaneStatus.disconnected(reason: "feed lost", lastConfirmed: "working")
-        XCTAssertEqual(FeedStatusMap.activity(for: "unknown", paneStatus: status), .disconnected)
-        XCTAssertNotEqual(FeedStatusMap.activity(for: "unknown", paneStatus: status), .unknown)
-    }
-
-    func testDaemonVocabularyMapsToActivity() {
-        XCTAssertEqual(FeedStatusMap.activity(for: "working"), .working)
-        XCTAssertEqual(FeedStatusMap.activity(for: "idle"), .idle)
-        XCTAssertEqual(FeedStatusMap.activity(for: "spawning"), .spawning)
-        XCTAssertEqual(FeedStatusMap.activity(for: "done"), .done)
-        XCTAssertEqual(FeedStatusMap.activity(for: "failed"), .failed)
-        XCTAssertEqual(FeedStatusMap.activity(for: "exited"), .disconnected)
-    }
-
-    /// Red is only ever a measured blocked-on-human state: a pending approval
-    /// (awaiting-approval) or a genuine human-input block (control-paused,
-    /// stuck). Nothing else may produce it.
-    func testNeedsUserComesOnlyFromMeasuredBlockedStates() {
-        XCTAssertEqual(FeedStatusMap.activity(for: "awaiting-approval"), .needsUser)
-        XCTAssertEqual(FeedStatusMap.activity(for: "control-paused"), .needsUser)
-        XCTAssertEqual(FeedStatusMap.activity(for: "stuck"), .needsUser)
-        // Idle correlates with-but-never-means needing a human.
-        XCTAssertNotEqual(FeedStatusMap.activity(for: "idle"), .needsUser)
-        XCTAssertNotEqual(FeedStatusMap.activity(for: "done"), .needsUser)
-    }
-
-    /// An unrecognized or absent status word must render as unknown — never
-    /// impersonate working, idle, or (worst) needs-user.
-    func testUnknownWordsDegradeToUnknownNotAState() {
-        XCTAssertEqual(FeedStatusMap.activity(for: "unknown"), .unknown)
-        XCTAssertEqual(FeedStatusMap.activity(for: "dead"), .disconnected)
-        XCTAssertEqual(FeedStatusMap.activity(for: ""), .unknown)
-        XCTAssertEqual(FeedStatusMap.activity(for: "some-future-status"), .unknown)
-    }
-
-    /// The feed-lost path rewrites feedStatus to "unknown", so a dead feed
-    /// turns every agent dot gray rather than freezing a stale colour.
-    func testFeedLossTurnsDotUnknown() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
-        state.apply(feed: [AgentSnapshot(name: "alfie", status: "working")], now: 0)
-        state.markFeedLost()
-        let pane = state.panes[ProjectState.paneID(forAgent: "alfie")]!
-        XCTAssertEqual(FeedStatusMap.activity(for: pane.feedStatus), .unknown)
-    }
-
-    // MARK: The orchestrator's dot
-
-    private func orchestratorPane(in state: ProjectState) -> PaneState {
-        state.panes[ProjectState.orchestratorPaneID]!
-    }
-
-    /// The bug this fix exists for: the pane was seeded with the invented word
-    /// "running", which is in no daemon vocabulary, so the dot degraded it to
-    /// unknown and the root — alive by definition — was gray forever. The seed
-    /// must now be an honest "unknown", and no status word may be fabricated.
-    func testOrchestratorIsSeededUnknownNotAFabricatedWord() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
-        state.addOrchestrator()
-        let pane = orchestratorPane(in: state)
-        XCTAssertEqual(pane.feedStatus, "unknown")
-        XCTAssertNotEqual(pane.feedStatus, "running")
-        // Honest, and honestly gray: nothing has been measured yet.
-        XCTAssertEqual(FeedStatusMap.activity(for: pane.feedStatus), .unknown)
-    }
-
-    /// A measured open turn: the root is working, and the dot goes green.
-    func testOrchestratorWorkingFromFeed() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
-        state.addOrchestrator()
-        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
-        XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .working)
-    }
-
-    /// A measured closed turn: the root is idle (yellow), which is a real state
-    /// and NOT the same as unknown (gray). That distinction is the whole point.
-    func testOrchestratorIdleFromFeed() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
-        state.addOrchestrator()
-        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "idle"), now: 0)
-        let activity = FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus)
-        XCTAssertEqual(activity, .idle)
-        XCTAssertNotEqual(activity, .unknown)
-    }
-
-    /// The terminal child is an independent liveness surface. If it exits,
-    /// the last turn boundary cannot leave the pane looking idle or working.
-    func testOrchestratorExitOverridesAndOutlivesFeedStatus() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
-        state.addOrchestrator()
-        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "idle"), now: 0)
-
-        XCTAssertEqual(
-            state.markOrchestratorExited(exitCode: 17),
-            [.statusChanged(ProjectState.orchestratorPaneID)])
-        var pane = orchestratorPane(in: state)
-        XCTAssertEqual(pane.feedStatus, "exited (code 17)")
-        XCTAssertEqual(FeedStatusMap.activity(for: pane.feedStatus, paneStatus: pane.status),
-                       .disconnected)
-
-        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 1)
-        pane = orchestratorPane(in: state)
-        XCTAssertEqual(pane.feedStatus, "exited (code 17)",
-                       "a stale feed must not paint a dead root healthy")
-    }
-
-    /// The daemon omits the field when it cannot honestly say (no turn events,
-    /// or a self-contradicting record — the stale-hook case). The pane must fall
-    /// BACK to unknown rather than keep the last word it heard: a lost signal
-    /// must never become a confident stale claim.
-    func testOrchestratorRevertsToUnknownWhenTheFieldIsAbsent() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
-        state.addOrchestrator()
-        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
-        XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .working)
-
-        state.apply(feed: [], orchestrator: nil, now: 1)
-        XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .unknown)
-    }
-
-    /// A dead feed invalidates the root's status exactly as it does an agent's.
-    /// The root's status is measured from turn boundaries, so a dead feed makes
-    /// it as untrustworthy as any agent's.
-    func testFeedLossTurnsTheOrchestratorDotUnknownToo() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
-        state.addOrchestrator()
-        state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
-        state.markFeedLost()
-        XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .unknown)
-    }
-
-    /// Red means a measured human block, and the root can never be in one: it IS
-    /// the human's seat. No status the feed can carry for it may reach needsUser.
-    func testOrchestratorCanNeverRenderNeedsUser() {
-        for word in ["working", "idle", "unknown"] {
-            XCTAssertNotEqual(FeedStatusMap.activity(for: word), .needsUser)
+    func testSwiftRendersTheDaemonPresentationVocabulary() {
+        let cases: [(String, AgentActivity)] = [
+            ("working", .working), ("idle", .idle), ("needs-user", .needsUser),
+            ("held", .held), ("spawning", .spawning), ("done", .done),
+            ("failed", .failed), ("disconnected", .disconnected),
+            ("vendor-future-state", .unknown),
+        ]
+        for (wire, expected) in cases {
+            XCTAssertEqual(presentation(activity: wire).renderedActivity, expected)
         }
+        XCTAssertEqual(
+            presentation(paneKind: "waiting", activity: "needs-user",
+                         waitingKind: "approval").paneStatus.paneStatus(),
+            .waiting(.approval))
+        XCTAssertEqual(
+            presentation(paneKind: "waiting", activity: "needs-user",
+                         waitingKind: "userInput").paneStatus.paneStatus(),
+            .waiting(.userInput))
+        XCTAssertEqual(
+            presentation(paneKind: "vendor-future", activity: "unknown")
+                .paneStatus.paneStatus(),
+            .unknown)
+    }
+
+    func testRawStatusNeverDeterminesPaneSemantics() throws {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.apply(feed: [AgentSnapshot(
+            name: "alfie",
+            status: "working",
+            presentation: .unknown)])
+        var pane = try XCTUnwrap(
+            state.panes[ProjectState.paneID(forAgent: "alfie")])
+        XCTAssertEqual(pane.activity, .unknown)
+        XCTAssertEqual(pane.status, .unknown)
+
+        state.apply(feed: [AgentSnapshot(
+            name: "alfie",
+            status: "vendor-future-state",
+            presentation: presentation(activity: "working"))])
+        pane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "alfie")])
+        XCTAssertEqual(pane.feedStatus, "vendor-future-state")
+        XCTAssertEqual(pane.activity, .working)
+        XCTAssertEqual(pane.status, .running)
+    }
+
+    func testFeedLossIsRenderedAsClientObservedTransportLoss() throws {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.apply(feed: [AgentSnapshot(
+            name: "alfie",
+            presentation: presentation(activity: "working"))])
+        state.markFeedLost()
+        let pane = try XCTUnwrap(
+            state.panes[ProjectState.paneID(forAgent: "alfie")])
+        XCTAssertEqual(pane.activity, .disconnected)
+        if case .disconnected = pane.status {} else {
+            XCTFail("a lost transport must render disconnected")
+        }
+    }
+
+    func testOrchestratorUsesOnlyItsBackendPresentation() throws {
+        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        state.addOrchestrator()
+        var pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
+        XCTAssertEqual(pane.feedStatus, "unknown")
+        XCTAssertEqual(pane.activity, .unknown)
+        XCTAssertEqual(pane.status, .unknown)
+
+        state.apply(
+            feed: [],
+            orchestrator: OrchestratorSnapshot(
+                status: "vendor-future-state",
+                presentation: presentation(activity: "working")))
+        pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
+        XCTAssertEqual(pane.feedStatus, "vendor-future-state")
+        XCTAssertEqual(pane.activity, .working)
+        XCTAssertEqual(pane.status, .running)
+
+        state.apply(feed: [], orchestrator: nil)
+        pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
+        XCTAssertEqual(pane.activity, .unknown)
+        XCTAssertEqual(pane.status, .unknown)
     }
 }

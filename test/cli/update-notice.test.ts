@@ -9,8 +9,8 @@ import {
   withTrailingUpdateNotice,
   writeLastNoticeAt,
 } from "../../src/cli/update-notice";
-import type { UpdateCheck } from "../../src/update/check";
-import { plain } from "../../src/update/notice";
+import type { UpdateCheck } from "../../src/update-service/check";
+import { plain } from "../../src/update-service/notice";
 
 const updateAvailable: UpdateCheck = {
   state: "update-available",
@@ -50,11 +50,12 @@ describe("wantsUpdateNotice", () => {
       "init",
       "claude",
       "codex",
+      "grok",
+      "kimi",
+      "opencode",
       "update",
       "event",
-      "statusline",
       "credential",
-      "statusline",
       "daemon",
       "workspace-feed",
       "workspace-orchestrator",

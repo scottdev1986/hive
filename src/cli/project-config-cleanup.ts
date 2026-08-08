@@ -1,21 +1,21 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { removeGrokAgentConfig } from "../adapters/providers/grok-cli";
+import { daemonMcpUrl } from "../adapters/providers/shared/mcp-scope";
+import { listInstances } from "../daemon/lifecycle/instances";
+import { readDaemonPort } from "../daemon/lifecycle/daemon-lifecycle";
 import {
   hiveInstanceSuffix,
   isDefaultHiveHome,
-} from "../daemon/instance-identity";
-import { listInstances } from "../daemon/instances";
-import { readDaemonPort } from "../daemon/lifecycle";
+} from "../hive-home/instance-identity";
+import { isRecord } from "../shared/is-record";
+import { safeJsonParse } from "../shared/json";
 
 interface RepairScope {
   readonly instanceId: string;
   readonly port: number | null;
   readonly allowLegacy: boolean;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 async function readText(path: string): Promise<string | null> {
   try {
@@ -39,8 +39,7 @@ async function writeJsonOrRemove(
 
 const localHiveUrl = (value: unknown, scope: RepairScope): boolean => {
   if (typeof value !== "string") return false;
-  if (scope.port !== null && value === `http://127.0.0.1:${scope.port}/mcp`)
-    return true;
+  if (scope.port !== null && value === daemonMcpUrl(scope.port)) return true;
   return scope.allowLegacy && /^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(value);
 };
 
@@ -49,7 +48,6 @@ function isHiveMcpServer(value: unknown, scope: RepairScope): boolean {
     isRecord(value) &&
     localHiveUrl(value.url, scope) &&
     typeof value.headersHelper === "string" &&
-    // queen is preferred; orchestrator remains for pre-rename leaked config.
     /^hive credential --agent (?:queen|orchestrator)$/.test(value.headersHelper)
   );
 }
@@ -61,12 +59,8 @@ async function cleanClaudeMcp(
   const path = join(root, ".mcp.json");
   const text = await readText(path);
   if (text === null) return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return false;
-  }
+  const parsed = safeJsonParse(text);
+  if (parsed === undefined) return false;
   if (!isRecord(parsed) || !isRecord(parsed.mcpServers)) return false;
   const servers = { ...parsed.mcpServers };
   let changed = false;
@@ -87,7 +81,6 @@ const hiveOrchestratorCommand = (
   scope: RepairScope,
 ): boolean => {
   if (typeof value !== "string") return false;
-  // Preferred address is queen; synonym orchestrator still matches old leaks.
   if (
     !/^hive (?:event [a-z-]+|statusline) --agent (?:queen|orchestrator) --port \d+/.test(
       value,
@@ -163,12 +156,8 @@ async function cleanClaudeSettings(
   const path = join(root, ".claude", "settings.local.json");
   const text = await readText(path);
   if (text === null) return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return false;
-  }
+  const parsed = safeJsonParse(text);
+  if (parsed === undefined) return false;
   if (!isRecord(parsed)) return false;
   const next = { ...parsed };
   let changed = false;

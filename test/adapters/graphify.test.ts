@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   stat,
@@ -320,6 +321,88 @@ describe("installGraphify", () => {
     } finally {
       await rm(join(tools, "current"), { force: true });
       await rm(newer, { recursive: true, force: true });
+    }
+  });
+
+  test("concurrent installs share one machine-level critical section", async () => {
+    const concurrentRelease: GraphifyRelease = {
+      ...release(),
+      manifest: {
+        ...release().manifest,
+        hiveBuild: 7,
+        tag: "graphify-v0.9.25-hive.7",
+      },
+    };
+    const tools = join(hiveHome, "tools", "graphify");
+    const directory = join(tools, "versions", "0.9.25-hive.7");
+    let resolveCount = 0;
+    let fetchCount = 0;
+    let tarCalls = 0;
+    let releaseResolutions!: () => void;
+    let releaseFirstUntar!: () => void;
+    let markFirstUntarStarted!: () => void;
+    let markSecondUntarStarted!: () => void;
+    const resolutionsReady = new Promise<void>((resolve) => {
+      releaseResolutions = resolve;
+    });
+    const firstUntarStarted = new Promise<void>((resolve) => {
+      markFirstUntarStarted = resolve;
+    });
+    const secondUntarStarted = new Promise<void>((resolve) => {
+      markSecondUntarStarted = resolve;
+    });
+    const firstUntarReleased = new Promise<void>((resolve) => {
+      releaseFirstUntar = resolve;
+    });
+    const deps = {
+      resolveRelease: async () => {
+        resolveCount += 1;
+        if (resolveCount === 2) releaseResolutions();
+        await resolutionsReady;
+        return concurrentRelease;
+      },
+      fetchArtifact: async () => {
+        fetchCount += 1;
+        return new Response(bundleBytes);
+      },
+      run: async (argv: string[]) => {
+        if (argv[0] !== "/usr/bin/tar") return ok();
+        tarCalls += 1;
+        if (tarCalls === 1) {
+          markFirstUntarStarted();
+          await firstUntarReleased;
+        } else {
+          markSecondUntarStarted();
+        }
+        const target = argv[argv.indexOf("-C") + 1] as string;
+        await mkdir(target, { recursive: true });
+        await Promise.all([
+          writeFile(join(target, "graphify"), "#!/bin/sh\n"),
+          writeFile(join(target, "graphify-mcp"), "#!/bin/sh\n"),
+        ]);
+        return ok();
+      },
+    };
+
+    try {
+      const installs = [installGraphify(deps), installGraphify(deps)];
+      await firstUntarStarted;
+      const overlapped = await Promise.race([
+        secondUntarStarted.then(() => true),
+        Bun.sleep(100).then(() => false),
+      ]);
+      releaseFirstUntar();
+      const results = await Promise.all(installs);
+
+      expect(resolveCount).toBe(2);
+      expect(fetchCount).toBe(1);
+      expect(overlapped).toBe(false);
+      expect(tarCalls).toBe(1);
+      expect(results.every((result) => result.ok)).toBe(true);
+    } finally {
+      releaseFirstUntar();
+      await rm(join(tools, "current"), { force: true });
+      await rm(directory, { recursive: true, force: true });
     }
   });
 });
@@ -658,6 +741,40 @@ describe("writeGraphifyIgnore", () => {
     expect(await readFile(join(root, ".graphifyignore"), "utf8")).toBe(
       "my-own-rules/\n",
     );
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("stages the rewrite somewhere git does not see it", async () => {
+    const root = await gitRepo();
+    // The two names `hive init` writes into the repository's tracked
+    // .gitignore. `.graphifyignore` is an exact name, so it covers the file
+    // itself and nothing suffixed onto it.
+    await writeFile(
+      join(root, ".gitignore"),
+      "graphify-out/\n.graphifyignore\n",
+    );
+    git(root, ["add", "-A"]);
+    git(root, ["commit", "-m", "ignore graphify output"]);
+    // A rewrite that cannot finish leaves its staging file behind, which is
+    // what makes the staging location observable. Wherever that file goes, git
+    // must not see it: an untracked path in the scan root is a dirty checkout
+    // to everything that reads `git status`, and this rewrite runs after every
+    // landing. A directory in place of the file fails the final rename.
+    await mkdir(join(root, ".graphifyignore"), { recursive: true });
+
+    const result = await writeGraphifyIgnore(root);
+
+    expect(result.ok).toBe(false);
+    // Positive control, and it deliberately does not care where the leftover
+    // is: without one, a clean `git status` below would only be saying that
+    // nothing got written at all.
+    const leftovers = [
+      ...(await readdir(root)),
+      ...(await readdir(join(root, "graphify-out"))),
+    ].filter((name) => name.endsWith(".tmp"));
+    expect(leftovers).toHaveLength(1);
+    const status = Bun.spawnSync(["git", "-C", root, "status", "--porcelain"]);
+    expect(status.stdout.toString().trim()).toBe("");
     await rm(root, { recursive: true, force: true });
   });
 });

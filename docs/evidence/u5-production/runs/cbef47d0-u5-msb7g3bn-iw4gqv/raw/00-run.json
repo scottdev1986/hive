@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "runId": "u5-msb7g3bn-iw4gqv",
+  "startedAt": "2026-08-02T02:52:31.571Z",
+  "scope": "three-live-two-measured-blocks-v1",
+  "home": "/private/tmp/hvqa-l",
+  "project": "/private/tmp/u5p-g",
+  "sourceRoot": "/Users/scottkellar/Projects/hive/.hive/worktrees/anna",
+  "sourceSha": "cbef47d0b024318f03bfeeb7a6636c887f0806c9",
+  "sourceStatus": "?? .hive-artifacts/",
+  "daemonPort": 56177,
+  "initialPolicyRevision": 1,
+  "initialAgentCount": 0,
+  "pendingAssertions": {
+    "stopProvider": "production endpoint absent in this production proof leg",
+    "terminateTerminal": "production endpoint absent in this production proof leg",
+    "viewerProcessSigkill": "awaiting the production Workspace rendezvous"
+  }
+}

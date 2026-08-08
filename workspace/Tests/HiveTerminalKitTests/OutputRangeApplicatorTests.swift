@@ -48,6 +48,29 @@ final class OutputRangeApplicatorTests: XCTestCase {
         )
     }
 
+    func testOnlyMostRecentRangeRetainsConflictDigest() {
+        XCTAssertEqual(
+            applicator.apply(bytes: Data("abc".utf8), streamSeq: 0, frameBinding: binding),
+            .applied(newHighWater: 3)
+        )
+        XCTAssertEqual(
+            applicator.apply(bytes: Data("def".utf8), streamSeq: 3, frameBinding: binding),
+            .applied(newHighWater: 6)
+        )
+
+        // An older range is fully behind high-water and cannot be applied again.
+        XCTAssertEqual(
+            applicator.apply(bytes: Data("abd".utf8), streamSeq: 0, frameBinding: binding),
+            .duplicateIgnored
+        )
+        // The immediately preceding range still detects a conflicting retry.
+        XCTAssertEqual(
+            applicator.apply(bytes: Data("deg".utf8), streamSeq: 3, frameBinding: binding),
+            .digestConflictRebaseRequired
+        )
+        XCTAssertEqual(engine.appliedRanges.count, 2)
+    }
+
     func testGapRequiresRebase() {
         XCTAssertEqual(
             applicator.apply(bytes: Data("abc".utf8), streamSeq: 0, frameBinding: binding),

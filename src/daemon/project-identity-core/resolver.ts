@@ -8,20 +8,24 @@ import {
   foldIdentityKey,
   isAtOrBeneath,
 } from "./canonical";
-import { isLinkedWorktree, probeGit, repoFamilyKeyOf } from "./git";
+import {
+  isLinkedWorktree,
+  probeGit,
+  repoFamilyKeyOf,
+} from "./project-identity-git";
 import type { LedgerCapability, ManagedWorktreeLedger } from "./ledger";
 import type { ProjectRegistry } from "./registry";
-import type { FsEvidence, ProjectKey, Resolution } from "./types";
+import type {
+  FsEvidence,
+  ProjectKey,
+  Resolution,
+} from "./project-identity-types";
 
 export interface ResolveOptions {
   registry: ProjectRegistry;
   ledger: ManagedWorktreeLedger;
   ledgerCapability: LedgerCapability;
   bookmarks?: BookmarkProvider;
-  /**
-   * Ephemeral "Use Parent" override for a nested repository or submodule. Legal only
-   * while the child is unregistered; afterwards the child owns its root permanently.
-   */
   useParent?: boolean;
 }
 
@@ -33,18 +37,13 @@ function reject(
   return { status: "REJECTED", reason, path, detail };
 }
 
-/**
- * Steps 1-6 of the blueprint's resolver order, then reconciliation against the registry.
- * The function is pure with respect to the filesystem: it reads, and it never creates,
- * moves, or deletes anything.
- */
+/** Steps 1-6 of the blueprint's resolver order, then reconciliation against the registry. The function is pure with respect to the filesystem: it reads, and it never creates, moves, or deletes anything. */
 export function resolveProject(
   directory: string,
   options: ResolveOptions,
 ): Resolution {
   const bookmarks = options.bookmarks ?? new NullBookmarkProvider();
 
-  // Step 1 -- canonicalize the existing invocation directory.
   const canonical = canonicalizeDirectory(directory);
   if (!canonical.ok) {
     return reject(
@@ -113,7 +112,6 @@ export function resolveProject(
     );
   }
 
-  // Steps 4-6 produced a root. Everything below is registry reconciliation.
   const rootCanonical = canonicalizeDirectory(key.canonicalPath);
   if (!rootCanonical.ok)
     return reject(rootCanonical.error, key.canonicalPath, "root vanished");
@@ -147,8 +145,7 @@ function gitProjectKey(
   const gitCommonDir = probe.gitCommonDir;
   if (!topLevel || !gitDir || !gitCommonDir) return null;
 
-  // Step 4 -- the canonical physical worktree root is the boundary. Nested paths and
-  // symlink aliases arrive here already collapsed onto it by realpath + rev-parse.
+  // Step 4 -- the canonical physical worktree root is the boundary. Nested paths and symlink aliases arrive here already collapsed onto it by realpath + rev-parse.
   const root = realpathSync.native(topLevel);
 
   if (options.useParent) {
@@ -168,7 +165,6 @@ function gitProjectKey(
         volume,
       );
     }
-    // No enclosing repository: Use Parent has nothing to select, so fall through.
   }
 
   return keyFromProbe(root, probe, volume);
@@ -182,9 +178,7 @@ function keyFromProbe(
   const gitDir = probe.gitDir as string;
   const gitCommonDir = probe.gitCommonDir as string;
 
-  // Step 5 -- a user-created linked worktree is a distinct writable project even
-  // though it shares git-common-dir. A submodule is its own nearest project and has
-  // its own common dir. Separate clones differ by common dir and so are distinct.
+  // Step 5 -- a user-created linked worktree is a distinct writable project even though it shares git-common-dir. A submodule is its own nearest project and has its own common dir. Separate clones differ by common dir and so are distinct.
   const linked = isLinkedWorktree(probe);
   const kind: ProjectKey["kind"] = probe.superprojectRoot
     ? "git-submodule"
@@ -206,7 +200,6 @@ function keyFromProbe(
   };
 }
 
-/** Step 6 -- a plain directory uses its exact canonical root. */
 function plainProjectKey(
   canonicalPath: string,
   volume: ProjectKey["volume"],
@@ -237,15 +230,7 @@ function findRegisteredPlainAncestor(
   return null;
 }
 
-/**
- * Compare what is on disk with what the registry believes.
- *
- * The ordering matters. Evidence is checked *before* the bookmark, because a plain
- * Foundation bookmark resolves path-first: once any directory reoccupies a project's
- * old path, the bookmark points at that impostor and agrees with the confirmed path.
- * A resolver that trusted "resolved path == confirmed path" would attach the wrong
- * directory. Only the inode/birthtime mismatch catches it, and only by refusing.
- */
+/** Compare what is on disk with what the registry believes. The ordering matters. Evidence is checked *before* the bookmark, because a plain Foundation bookmark resolves path-first: once any directory reoccupies a project's old path, the bookmark points at that impostor and agrees with the confirmed path. A resolver that trusted "resolved path == confirmed path" would attach the wrong directory. Only the inode/birthtime mismatch catches it, and only by refusing. */
 function reconcile(
   key: ProjectKey,
   evidence: FsEvidence,
@@ -256,9 +241,7 @@ function reconcile(
 
   if (existing) {
     if (!evidenceMatches(existing.evidence, evidence)) {
-      // The directory standing at this path is not the one we registered. It may be a
-      // recreation of a deleted project, or an unrelated directory that took the path
-      // while the real project moved away. Never inherit; break the binding and refuse.
+      // The directory standing at this path is not the one we registered. It may be a recreation of a deleted project, or an unrelated directory that took the path while the real project moved away. Never inherit; break the binding and refuse.
       registry.tombstonePath(key.identityKey, "RECREATED_OR_IMPOSTOR");
       registry.markNeedsRebind(existing.hiveUuid, "LOST");
       return {
@@ -273,8 +256,7 @@ function reconcile(
       };
     }
 
-    // Same inode. Corroborate with the bookmark, which can still disagree if the
-    // directory is reachable at two paths (for example a stale hardlinked mount).
+    // Same inode. Corroborate with the bookmark, which can still disagree if the directory is reachable at two paths (for example a stale hardlinked mount).
     if (existing.bookmark && bookmarks.available) {
       const resolved = bookmarks.resolve(existing.bookmark);
       if (resolved) {
@@ -296,16 +278,11 @@ function reconcile(
       }
     }
 
-    // `dev` is useful current-mount evidence even though it is not durable
-    // identity. Refresh it after inode + birth time have positively matched so
-    // pre-fix launchers can consume a registry repaired by a newer binary.
+    // `dev` is useful current-mount evidence even though it is not durable identity. Refresh it after inode + birth time have positively matched so pre-fix launchers can consume a registry repaired by a newer binary.
     registry.refreshEvidence(existing.hiveUuid, evidence);
     return { status: "RESOLVED", key, hiveUuid: existing.hiveUuid, evidence };
   }
 
-  // No record at this path. Is a registered project's *directory* standing here? A
-  // rename preserves dev, ino and birthtime, so this is how a move is detected. A
-  // cross-volume move copies, producing a new inode, and is correctly a new project.
   const moved = registry.findByEvidence(evidence);
   if (moved) {
     registry.markNeedsRebind(moved.hiveUuid, "MOVED");
@@ -342,14 +319,9 @@ function safeRealpath(path: string): string | null {
   }
 }
 
-/** In-flight creation leases, keyed by identityKey, then by idempotency key. */
 const leases = new Map<string, string>();
 
-/**
- * `resolveOrCreate(ProjectKey, idempotencyKey)`: N simultaneous starts for one root
- * yield one HiveUUID. The unique constraint lives in the registry; the lease exists so
- * concurrent callers observe the same answer rather than racing to create.
- */
+/** `resolveOrCreate(ProjectKey, idempotencyKey)`: N simultaneous starts for one root yield one HiveUUID. The unique constraint lives in the registry; the lease exists so concurrent callers observe the same answer rather than racing to create. */
 export function resolveOrCreate(
   directory: string,
   options: ResolveOptions,
@@ -359,7 +331,7 @@ export function resolveOrCreate(
   if (first.status !== "NEEDS_SETUP" || first.reason !== "NEW_PROJECT")
     return first;
 
-  const leaseKey = `${first.key.identityKey} ${idempotencyKey}`;
+  const leaseKey = `${first.key.identityKey}\0${idempotencyKey}`;
   const held = leases.get(leaseKey);
   if (held) {
     const record = options.registry.findByUuid(held);

@@ -136,4 +136,30 @@ describe("buildEmbeddingsRuntimeArtifact", () => {
       false,
     );
   }, 30_000);
+
+  test("a pinned mtime produces the same tarball digest twice from the same out dir", async () => {
+    const root = await makeTempDir("hive-emb-det-");
+    const nm = await plantFixtureNodeModules(root);
+    const out = join(root, "out");
+    await mkdir(out, { recursive: true });
+    const stamp = "2026-08-13T00:00:00.000Z";
+
+    const first = await buildEmbeddingsRuntimeArtifact({
+      sourceNodeModules: nm,
+      outDir: out,
+      installedAt: stamp,
+      sourceLabel: "sealed-main",
+      deterministicMtime: stamp,
+    });
+    const second = await buildEmbeddingsRuntimeArtifact({
+      sourceNodeModules: nm,
+      outDir: out,
+      installedAt: stamp,
+      sourceLabel: "sealed-main",
+      deterministicMtime: stamp,
+    });
+
+    expect(first.sha256).toBe(second.sha256);
+    expect(first.loadedDigest).toBe(second.loadedDigest);
+  }, 30_000);
 });

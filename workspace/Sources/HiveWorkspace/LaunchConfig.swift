@@ -1,48 +1,27 @@
 import Foundation
 
-/// Arguments the CLI passes at launch:
-///
-///     open -a HiveWorkspace --args --project <abs dir> --port <daemon port>
-///       --instance-id <id> --instance-home <abs dir>
-///       --hive <abs hive binary>
-///       [--orchestrator claude|codex|grok]
-///
-/// Plus two development/CI flags:
-///     --smoke          headless end-to-end checks (offscreen windows, exits 0/1)
-///     --feed <binary>  overrides the feed process (defaults to `<hive> workspace-feed`);
-///                      the process-boundary seam the smoke harness uses.
-///
-/// A Dock launch shows the project-neutral home window. Bare `hive` opens the
-/// current repository when there is one, and otherwise opens that same home.
-struct LaunchConfig {
-    var projectDirectory: String?
+public struct LaunchConfig {
+    public var projectDirectory: String?
+    public var projectID: String?
+    public var projectName: String?
     var port: Int?
     var instanceID: String?
     var instanceHome: String?
     var hivePath: String?
-    var orchestrator = "claude"
     var feedOverride: String?
-    var smoke = false
-    /// Open the Settings window (Model Control Center) at launch. A
-    /// development/verification affordance; works with or without a project.
+    public var smoke = false
     var settings = false
-    /// Which settings section to open ("tasks", "models", or "usage").
     var settingsPage: String?
-    /// Force the app appearance ("light"/"dark") — screenshot/verification
-    /// affordance; never changes the system setting.
+    /// Force the app appearance ("light"/"dark") — screenshot/verification affordance; never changes the system setting.
     var appearance: String?
-    /// Force the settings window width at launch (responsive verification).
     var settingsWidth: Double?
 
-    /// A window can only open with the full contract; anything less gets the
-    /// explainer window.
     var isComplete: Bool {
-        projectDirectory != nil && port != nil && instanceID != nil
+        projectDirectory != nil && projectID != nil && projectName != nil
+            && port != nil && instanceID != nil
             && instanceHome != nil && hivePath != nil
     }
 
-    /// The feed subprocess invocation: the override binary verbatim, or
-    /// `<hive> workspace-feed`, always with the daemon port appended.
     func feedInvocation(
         workspaceSessionID: String
     ) -> (executable: String, arguments: [String], environment: [String: String])? {
@@ -76,6 +55,10 @@ struct LaunchConfig {
                 config.settingsWidth = iterator.next().flatMap(Double.init)
             case "--project":
                 config.projectDirectory = iterator.next()
+            case "--project-id":
+                config.projectID = iterator.next()
+            case "--project-name":
+                config.projectName = iterator.next()
             case "--port":
                 config.port = iterator.next().flatMap(Int.init)
             case "--instance-id":
@@ -84,11 +67,6 @@ struct LaunchConfig {
                 config.instanceHome = iterator.next()
             case "--hive":
                 config.hivePath = iterator.next()
-            case "--orchestrator":
-                if let tool = iterator.next(),
-                   tool == "claude" || tool == "codex" || tool == "grok" {
-                    config.orchestrator = tool
-                }
             case "--feed":
                 config.feedOverride = iterator.next()
             default:

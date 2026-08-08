@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import { evidenceMatches } from "./canonical";
-import type { FsEvidence, ProjectKey, RebindReason } from "./types";
+import type {
+  FsEvidence,
+  ProjectKey,
+  RebindReason,
+} from "./project-identity-types";
 
 export type ProjectState = "READY" | "STOPPED" | "NEEDS_REBIND";
 
@@ -15,24 +19,18 @@ export interface ProjectRecord {
   gitCommonDir: string | null;
   repoFamilyKey: string | null;
   superprojectRoot: string | null;
-  /** Plain Foundation bookmark, base64. Null when the helper was unavailable. */
   bookmark: string | null;
   evidence: FsEvidence;
   state: ProjectState;
   rebindReason: RebindReason | null;
 }
 
-export type TombstoneReason =
-  /** The path's directory was replaced by a different one (delete+recreate, or an impostor). */
-  | "RECREATED_OR_IMPOSTOR"
-  /** An operator explicitly forgot the project. */
-  | "FORGOTTEN";
+export type TombstoneReason = "RECREATED_OR_IMPOSTOR" | "FORGOTTEN";
 
 export interface Tombstone {
   identityKey: string;
   formerHiveUuid: string;
   reason: TombstoneReason;
-  /** The displaced path evidence retained to explain the refusal. */
   formerEvidence: FsEvidence;
 }
 export interface ProjectRegistrySnapshot {
@@ -47,17 +45,7 @@ export class IdentityKeyOccupied extends Error {
   }
 }
 
-/**
- * The Supervisor's `ProjectKey <-> HiveUUID` registry.
- *
- * Two invariants it exists to hold:
- *
- *  - `hiveUuid` is opaque and random. It is minted once and never derived from the
- *    path, because a path-derived id would make a recreated directory inherit the
- *    old Hive and would make a legitimate move look like a new project.
- *  - Nothing here attaches a Hive to a directory on matching evidence alone. Evidence
- *    is only ever used to refuse.
- */
+/** The Supervisor's `ProjectKey <-> HiveUUID` registry. Two invariants it exists to hold: - `hiveUuid` is opaque and random. It is minted once and never derived from the path, because a path-derived id would make a recreated directory inherit the old Hive and would make a legitimate move look like a new project. - Nothing here attaches a Hive to a directory on matching evidence alone. Evidence is only ever used to refuse. */
 export class ProjectRegistry {
   private readonly byUuid = new Map<string, ProjectRecord>();
   private readonly byIdentityKey = new Map<string, string>();
@@ -104,7 +92,6 @@ export class ProjectRegistry {
     return this.byUuid.get(hiveUuid) ?? null;
   }
 
-  /** Refresh non-identity filesystem evidence after a positive resolution. */
   refreshEvidence(hiveUuid: string, evidence: FsEvidence): boolean {
     const record = this.byUuid.get(hiveUuid);
     if (!record || !evidenceMatches(record.evidence, evidence)) return false;
@@ -112,14 +99,7 @@ export class ProjectRegistry {
     return true;
   }
 
-  /**
-   * Locate the record whose directory *is* the one described by `evidence`.
-   *
-   * This is the only reliable way to follow a move: a rename preserves inode and
-   * birthtime, while a bookmark will abandon the moved directory the moment anything
-   * reoccupies its old path. st_dev is deliberately excluded because mount device
-   * numbers can change across reboots. Use it to *offer a rebind*, never to attach silently.
-   */
+  /** Locate the record whose directory *is* the one described by `evidence`. This is the only reliable way to follow a move: a rename preserves inode and birthtime, while a bookmark will abandon the moved directory the moment anything reoccupies its old path. st_dev is deliberately excluded because mount device numbers can change across reboots. Use it to *offer a rebind*, never to attach silently. */
   findByEvidence(evidence: FsEvidence): ProjectRecord | null {
     for (const record of this.byUuid.values()) {
       if (evidenceMatches(record.evidence, evidence)) return record;
@@ -155,15 +135,11 @@ export class ProjectRegistry {
     };
     this.byUuid.set(record.hiveUuid, record);
     this.byIdentityKey.set(record.identityKey, record.hiveUuid);
-    // Creating here clears the refusal; the operator has now made the decision.
+    // Creating here clears the refusal; the user has now made the decision.
     this.tombstones.delete(key.identityKey);
     return record;
   }
 
-  /**
-   * Explicit rebind of an existing Hive onto a new location. The operator, not the
-   * resolver, decides that the directory now at `key` is the same project.
-   */
   rebind(
     hiveUuid: string,
     key: ProjectKey,
@@ -193,10 +169,6 @@ export class ProjectRegistry {
     return record;
   }
 
-  /**
-   * Break the path -> Hive binding and record why. The Hive itself survives: it may
-   * still be alive at another path, and a later resolve there will offer a rebind.
-   */
   tombstonePath(
     identityKey: string,
     reason: TombstoneReason,

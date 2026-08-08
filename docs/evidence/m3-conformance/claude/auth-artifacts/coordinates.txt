@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-ca
+home=/private/tmp/hvqa-ca
+default_home=/private/tmp/hvqa-ca/default
+port=52053
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-auth.DmTupu/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/claude/m3-frozen/source
+hive_bin=/private/tmp/hvqa-ca/artifacts/hive-bin

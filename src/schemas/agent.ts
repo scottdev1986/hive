@@ -2,43 +2,29 @@ import { z } from "zod";
 import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
 import { RoutingCategorySchema } from "./routing-policy";
 import { SessionLocatorSchema } from "./session-protocol";
+import { WorkspaceStatusDimensionsV1Schema } from "./status-envelope";
 
-// Preferred user-facing name of the root orchestrator. It is not a spawned
-// agent and has no row in the agents table; delivery routes it through the
-// dedicated root delivery path instead of ordinary agent liveness checks.
-// The architectural role word remains "orchestrator"; this is the address.
 export const ORCHESTRATOR_NAME = "queen";
 
-// Compatibility synonym accepted so stored addresses remain routable.
 export const ORCHESTRATOR_NAME_ALIASES = ["orchestrator"] as const;
 
-/** Every accepted root recipient name: preferred first, then synonyms. */
 export function orchestratorRecipientNames(): readonly string[] {
   return [ORCHESTRATOR_NAME, ...ORCHESTRATOR_NAME_ALIASES];
 }
 
-/** True when `name` addresses the root (preferred or synonym), case-insensitive. */
 export function isOrchestratorName(name: string): boolean {
   const normalized = name.toLowerCase();
   return orchestratorRecipientNames().includes(normalized);
 }
 
-/** Collapse any accepted root name to the preferred form; leave others alone. */
 export function canonicalOrchestratorName(name: string): string {
   return isOrchestratorName(name) ? ORCHESTRATOR_NAME : name;
 }
 
-// A control restart must be able to reproduce the process that was actually
-// launched without reading a routing table or a mutable tool default. Keep
-// only immutable launch choices here; daemon ports, paths, permissions, and
-// hook configuration remain dynamic and are rebuilt for the read-only run.
 export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
   z.strictObject({
     tool: z.literal("claude"),
     model: z.string().min(1),
-    // Optional only for the short launch window before Claude's first
-    // statusLine render and persisted rows without the field. Once observed it
-    // is immutable.
     effort: EffortLevelSchema.optional(),
   }),
   z.strictObject({
@@ -67,11 +53,7 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
 
 export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;
 
-// A closed agent is done with the world: it holds no live terminal, accepts no
-// messages, and its name is free to be issued again. Every other status —
-// including `spawning`, `control-paused`, and `stuck` — is a live holder that
-// still owns its name.
-export const TERMINAL_AGENT_STATUSES = ["done", "dead", "failed"] as const;
+export const TERMINAL_AGENT_STATUSES = ["done", "dead"] as const;
 
 export type TerminalAgentStatus = (typeof TERMINAL_AGENT_STATUSES)[number];
 
@@ -83,108 +65,59 @@ export function isTerminalAgentStatus(
 
 const RETIRED_VIEWER_FIELD = ["terminal", "Handle"].join("");
 
-export const DeliveryBlockedSchema = z
-  .strictObject({
-    messageId: z.string().min(1),
-    queuedMinutes: z.number().int().nonnegative(),
-    diagnostic: z.string(),
-  })
-  .readonly();
-
 const AgentRecordShape = {
-  // The AgentUUID: distinct per holder of a name, for the lifetime of the Hive.
-  // Two agents that share a name across time never share an id, so history can
-  // always tell them apart.
+  // The AgentUUID: distinct per holder of a name, for the lifetime of the Hive. Two agents that share a name across time never share an id, so history can always tell them apart.
   id: z.string().min(1),
   name: z.string().min(1),
   tool: CapabilityProviderSchema,
-  /** The model this agent was *launched* with. A control restart replays this
-   * immutable execution identity to reproduce the launch it is
-   * interrupting. It is an intention, and it never changes. */
+  /** The model this agent was *launched* with. A control restart replays this immutable execution identity to reproduce the launch it is interrupting. It is an intention, and it never changes. */
   model: z.string().min(1),
-  /** The model this agent is *observed* running, read from its transcript. A
-   * user who types `/model` mid-session changes this and not `model`. Absent
-   * means "no observation" — never "the same as spawn", because a guess is what
-   * this field exists to stop. Quota accounting and `hive status` read it first. */
+  /** The model this agent is *observed* running, read from its transcript. A user who types `/model` mid-session changes this and not `model`. Absent means "no observation" — never "the same as spawn", because a guess is what this field exists to stop. Quota accounting and `hive status` read it first. */
   liveModel: z.string().min(1).optional(),
-  /** The task category this agent was spawned under. */
   category: RoutingCategorySchema,
   status: z.enum([
     "spawning",
     "working",
     "idle",
+    "unknown",
     "awaiting-approval",
     "control-paused",
-    /** Held by the quota drain handler when its provider's window is
-     * spent and resets soon; the 30s sweep pokes it past the reset. */
+    /** Held by the quota drain handler when its provider's window is spent and resets soon; the 30s sweep pokes it past the reset. */
     "held",
     "stuck",
     "done",
     "dead",
-    "failed",
   ]),
-  failureReason: z.string().optional(),
-  failedAt: z.iso.datetime().optional(),
+  // A hive_status-only projection. The flat word above stays during the migration window, but it cannot substitute for any dimensional fact.
+  statusDimensions: WorkspaceStatusDimensionsV1Schema.optional(),
   /** Why the drain handler is holding this agent (pool + window + reset). */
   holdReason: z.string().nullable().optional(),
-  /** The window reset the hold waits for. Cleared with the hold. */
   holdResetAt: z.iso.datetime().nullable().optional(),
-  /** Exact provider run the quota hold may resume. */
   holdProviderRunId: z.string().uuid().nullable().optional(),
-  // When this holder closed. Stamped once, the first time the agent reaches a
-  // terminal status, and cleared if crash recovery brings the same agent back.
-  // Absent means the holder is live. This is what makes a name safe to reissue:
-  // the daemon can always say which agent closed and when.
   closedAt: z.iso.datetime().optional(),
   quotaReservationId: z.string().min(1).optional(),
-  /** The router decision that authorized this agent's launch. */
-  decisionId: z.string().min(1).optional(),
   controlQuotaReservationId: z.string().min(1).optional(),
   controlMessageId: z.string().min(1).optional(),
   executionIdentity: ExecutionIdentitySchema.optional(),
   taskDescription: z.string(),
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
-  /** Identifies the agent's terminal host. Optional so persisted records
-   * without a locator remain decodable during database migration. */
   sessionLocator: SessionLocatorSchema.optional(),
-  // The tool-level conversation identity (Claude session id, Codex thread id)
-  // captured from hook traffic, so a crashed process can be relaunched with
-  // its native resume instead of respawned from a blank prompt.
   toolSessionId: z.string().min(1).optional(),
-  recoveryAttempts: z.number().int().nonnegative().default(0),
-  /**
-   * How full this agent's context is, or **null when Hive has not observed it**.
-   *
-   * Do not substitute zero for null: zero means an empty observed context,
-   * while null means Hive has no evidence. Treating null as zero can invite
-   * more work onto an agent whose context Hive cannot inspect.
-   *
-   * Hive has no automatic recycle actuator. The orchestrator may use this as
-   * one input to reuse, and must treat null as "not eligible", never as room.
-   */
+  /** How full this agent's context is, or **null when Hive has not observed it**. Do not substitute zero for null: zero means an empty observed context, while null means Hive has no evidence. Treating null as zero can invite more work onto an agent whose context Hive cannot inspect. Hive has no automatic recycle actuator. The orchestrator may use this as one input to reuse, and must treat null as "not eligible", never as room. */
   contextPct: z.number().min(0).max(100).nullable(),
-  // The context window Claude Code reported for this session via the
-  // statusLine payload's `context_window_size` — 200000, or 1000000 where the
-  // account's plan upgrades it. Absent until a statusline report has ever
-  // carried it. This is the measured denominator the telemetry sweep divides
-  // the transcript's token count by; it is never defaulted, because a guessed
-  // A guessed denominator can substantially overstate context use.
+  // The context window Claude Code reported for this session via the statusLine payload's `context_window_size` — 200000, or 1000000 where the account's plan upgrades it. Absent until a protocol session fact has ever carried it. This is the measured denominator the telemetry sweep divides the transcript's token count by; it is never defaulted, because a guessed A guessed denominator can substantially overstate context use.
   contextWindow: z.number().int().positive().optional(),
-  // Per-session graph-tool adoption observed from the agent's provider
-  // artifacts. Present only on hive_status rows when graphify is configured;
-  // null means no trustworthy observation, never zero calls.
+  // Per-session graph-tool adoption observed from the agent's provider artifacts. Present only on hive_status rows when graphify is configured; null means no trustworthy observation, never zero calls.
   graphifyCalls: z.number().int().nonnegative().nullable().optional(),
-  // A hive_status-only projection: the oldest message whose recorded delivery
-  // failure has crossed the stuck threshold. It is optional because healthy
-  // full records remain byte-for-byte agent rows.
-  deliveryBlocked: DeliveryBlockedSchema.optional(),
   createdAt: z.iso.datetime(),
   lastEventAt: z.iso.datetime(),
+  landedCommit: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .optional(),
+  landedAt: z.iso.datetime().optional(),
   capabilityEpoch: z.number().int().nonnegative().default(0),
-  // Durable launch posture. A reader was intentionally launched without
-  // write/land authority; that is distinct from a writer whose authority was
-  // later revoked by critical control.
   readOnly: z.boolean().default(false),
   writeRevoked: z.boolean().default(false),
 } as const;
@@ -204,32 +137,15 @@ export const AgentRecordSchema = z.preprocess((value) => {
 
 export type AgentRecord = z.infer<typeof AgentRecordSchema>;
 
-/** A closed holder: keeps its row and its history, owns nothing. */
-export function isClosedAgent(agent: Pick<AgentRecord, "status">): boolean {
-  return isTerminalAgentStatus(agent.status);
-}
-
-/** The live holder of a name. Exactly one may exist at a time. */
 export function isLiveAgent(agent: Pick<AgentRecord, "status">): boolean {
   return !isTerminalAgentStatus(agent.status);
 }
 
-/**
- * How an agent is named wherever history and live agents are shown together.
- * A bare `sarah` always means the agent answering to that name right now; a
- * past holder is always marked, `sarah (closed 14:11)`. Without this, a reused
- * name puts two indistinguishable `sarah` rows in front of the user — the
- * ambiguity the naming rules exist to prevent.
- *
- * Falls back to the record's own clock when durable closure time is absent.
- */
+/** How an agent is named wherever history and live agents are shown together. A bare `sarah` always means the agent answering to that name right now; a past holder is always marked, `sarah (closed 14:11)`. Without this, a reused name puts two indistinguishable `sarah` rows in front of the user — the ambiguity the naming rules exist to prevent. Falls back to the record's own clock when durable closure time is absent. */
 export function describeAgentName(
-  agent: Pick<
-    AgentRecord,
-    "name" | "status" | "closedAt" | "failedAt" | "lastEventAt"
-  >,
+  agent: Pick<AgentRecord, "name" | "status" | "closedAt" | "lastEventAt">,
 ): string {
   if (isLiveAgent(agent)) return agent.name;
-  const closedAt = agent.closedAt ?? agent.failedAt ?? agent.lastEventAt;
+  const closedAt = agent.closedAt ?? agent.lastEventAt;
   return `${agent.name} (closed ${closedAt.slice(11, 16)})`;
 }

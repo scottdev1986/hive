@@ -1,0 +1,19 @@
+# P6 mail wake ledger — test run (final)
+# commit baseline: ccab8d46  date: 2026-08-02T19:15:27Z
+
+# the P6 suites
+Hive published mail for ada but could not raise its mail-ready event: the frontend socket is gone
+
+ 95 pass
+ 0 fail
+ 209 expect() calls
+Ran 95 tests across 5 files. [827.00ms]
+
+# the WHOLE suite, which is the number that counts
+
+ 2786 pass
+ 13 skip
+ 2 todo
+ 0 fail
+ 11194 expect() calls
+Ran 2801 tests across 238 files. [134.77s]

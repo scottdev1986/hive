@@ -1,0 +1,209 @@
+{
+  "vendor": "grok",
+  "installedVersion": "0.2.118",
+  "capturedAt": "2026-08-02T18:00:37Z",
+  "purpose": "permission and cancel live conformance",
+  "preconditions": {
+    "permission_mode": "default (isolated HOME config; user ~/.grok/config.toml has permission_mode=always-approve which skips session/request_permission)",
+    "yolo": false,
+    "harmless_commands": [
+      "echo hive-acp-perm-deny-probe",
+      "echo hive-acp-perm-allow-probe"
+    ]
+  },
+  "permission_requests_live": [
+    {
+      "decision": "deny",
+      "selectedOptionId": "reject-once",
+      "options": [
+        {
+          "optionId": "allow-once",
+          "name": "Yes, proceed",
+          "kind": "allow_once"
+        },
+        {
+          "optionId": "reject-once",
+          "name": "No, and tell Grok what to do differently",
+          "kind": "reject_once"
+        }
+      ],
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "session/request_permission",
+        "params": {
+          "sessionId": "ses_<redacted>",
+          "toolCall": {
+            "toolCallId": "<id>",
+            "kind": "execute",
+            "title": "Execute `echo hive-acp-perm-deny-probe`",
+            "rawInput": {
+              "variant": "Bash",
+              "command": "echo hive-acp-perm-deny-probe",
+              "description": "Run hive-acp perm deny probe echo",
+              "is_background": false
+            },
+            "_meta": {
+              "x.ai/tool": {
+                "version": 1,
+                "name": "run_terminal_command",
+                "kind": "execute",
+                "namespace": "grok_build",
+                "label": "Run Command",
+                "read_only": false,
+                "input": {
+                  "command": "echo hive-acp-perm-deny-probe",
+                  "description": "Run hive-acp perm deny probe echo"
+                }
+              }
+            }
+          },
+          "options": [
+            {
+              "optionId": "allow-once",
+              "name": "Yes, proceed",
+              "kind": "allow_once"
+            },
+            {
+              "optionId": "reject-once",
+              "name": "No, and tell Grok what to do differently",
+              "kind": "reject_once"
+            }
+          ]
+        }
+      },
+      "client_response": {
+        "jsonrpc": "2.0",
+        "id": "<server-request-id>",
+        "result": {
+          "outcome": {
+            "outcome": "selected",
+            "optionId": "reject-once"
+          }
+        }
+      },
+      "tool": {
+        "name": "run_terminal_command",
+        "command": "echo hive-acp-perm-deny-probe"
+      }
+    },
+    {
+      "decision": "allow",
+      "selectedOptionId": "allow-once",
+      "options": [
+        {
+          "optionId": "allow-once",
+          "name": "Yes, proceed",
+          "kind": "allow_once"
+        },
+        {
+          "optionId": "reject-once",
+          "name": "No, and tell Grok what to do differently",
+          "kind": "reject_once"
+        }
+      ],
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "session/request_permission",
+        "params": {
+          "sessionId": "ses_<redacted>",
+          "toolCall": {
+            "toolCallId": "<id>",
+            "kind": "execute",
+            "title": "Execute `echo hive-acp-perm-allow-probe`",
+            "rawInput": {
+              "variant": "Bash",
+              "command": "echo hive-acp-perm-allow-probe",
+              "description": "Run hive-acp perm allow probe echo",
+              "is_background": false
+            },
+            "_meta": {
+              "x.ai/tool": {
+                "version": 1,
+                "name": "run_terminal_command",
+                "kind": "execute",
+                "namespace": "grok_build",
+                "label": "Run Command",
+                "read_only": false,
+                "input": {
+                  "command": "echo hive-acp-perm-allow-probe",
+                  "description": "Run hive-acp perm allow probe echo"
+                }
+              }
+            }
+          },
+          "options": [
+            {
+              "optionId": "allow-once",
+              "name": "Yes, proceed",
+              "kind": "allow_once"
+            },
+            {
+              "optionId": "reject-once",
+              "name": "No, and tell Grok what to do differently",
+              "kind": "reject_once"
+            }
+          ]
+        }
+      },
+      "client_response": {
+        "jsonrpc": "2.0",
+        "id": "<server-request-id>",
+        "result": {
+          "outcome": {
+            "outcome": "selected",
+            "optionId": "allow-once"
+          }
+        }
+      },
+      "tool": {
+        "name": "run_terminal_command",
+        "command": "echo hive-acp-perm-allow-probe"
+      }
+    }
+  ],
+  "cancel": {
+    "method": "session/cancel as JSON-RPC notification (request form returns -32601 Method not found)",
+    "prompt_result": {
+      "jsonrpc": "2.0",
+      "id": 7,
+      "result": {
+        "stopReason": "cancelled",
+        "_meta": {
+          "sessionId": "ses_<redacted>",
+          "requestId": "<id>",
+          "promptId": "<id>",
+          "totalTokens": 11698,
+          "modelId": "grok-4.5",
+          "inputTokens": 11692,
+          "outputTokens": 5,
+          "cachedReadTokens": 11520,
+          "reasoningTokens": 0,
+          "cancellationCategory": "MidTurnAbort"
+        }
+      }
+    },
+    "prompt_complete_notification": {
+      "jsonrpc": "2.0",
+      "method": "_x.ai/session/prompt_complete",
+      "params": {
+        "sessionId": "ses_<redacted>",
+        "promptId": "<id>",
+        "stopReason": "cancelled",
+        "agentResult": null
+      }
+    },
+    "observed_terminal": {
+      "stopReason": "cancelled",
+      "cancellationCategory": "MidTurnAbort"
+    }
+  },
+  "measured": {
+    "permission_allow": true,
+    "permission_deny": true,
+    "cancel_terminal_state": true,
+    "session_list": true,
+    "load_session_capability_advertised": true
+  }
+}

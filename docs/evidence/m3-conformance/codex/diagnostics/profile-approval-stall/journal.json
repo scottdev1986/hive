@@ -1,0 +1,29 @@
+[
+  {
+    "itemId": "mit_019fc291-0431-7000-af8f-9c0722d9e28c",
+    "kind": "published",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-codex-control-1785675710999",
+    "at": "2026-08-02T13:01:51.537Z",
+    "detailJson": "{\"recipient\":\"david\",\"lane\":\"control\",\"topic\":\"m3-control\",\"seq\":1,\"recipientGeneration\":null,\"receipt\":{\"itemId\":\"mit_019fc291-0431-7000-af8f-9c0722d9e28c\",\"lane\":\"control\",\"topic\":\"m3-control\",\"outcome\":\"published\",\"seq\":1,\"mergedCount\":0,\"acceptedAt\":\"2026-08-02T13:01:51.537Z\"}}"
+  },
+  {
+    "itemId": "mit_019fc291-0435-7000-a049-3f8aa43695c3",
+    "kind": "published",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-codex-work-1785675710999",
+    "at": "2026-08-02T13:01:51.541Z",
+    "detailJson": "{\"recipient\":\"david\",\"lane\":\"work\",\"topic\":\"m3-work\",\"seq\":2,\"recipientGeneration\":null,\"receipt\":{\"itemId\":\"mit_019fc291-0435-7000-a049-3f8aa43695c3\",\"lane\":\"work\",\"topic\":\"m3-work\",\"outcome\":\"published\",\"seq\":2,\"mergedCount\":0,\"acceptedAt\":\"2026-08-02T13:01:51.541Z\"}}"
+  },
+  {
+    "itemId": "mit_019fc291-0435-7000-a049-3f8aa43695c3",
+    "kind": "coalesced",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-codex-work-1785675710999-merged",
+    "at": "2026-08-02T13:01:51.543Z",
+    "detailJson": "{\"topic\":\"m3-work\",\"receipt\":{\"itemId\":\"mit_019fc291-0435-7000-a049-3f8aa43695c3\",\"lane\":\"work\",\"topic\":\"m3-work\",\"outcome\":\"coalesced\",\"seq\":2,\"mergedCount\":1,\"acceptedAt\":\"2026-08-02T13:01:51.543Z\"}}"
+  }
+]

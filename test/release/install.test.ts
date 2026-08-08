@@ -16,7 +16,7 @@ import {
   activateWithHealthCheck,
   rollback,
   stageRelease,
-} from "../../src/update/install";
+} from "../../src/update-service/install";
 
 const repoRoot = resolve(import.meta.dir, "../..");
 const roots: string[] = [];
@@ -183,25 +183,73 @@ fi
 async function runInstaller(
   fixture: InstallerFixture,
   version: string,
+  args: string[] = [],
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const child = Bun.spawn(["sh", join(repoRoot, "install.sh"), version], {
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      PATH: `${fixture.fakeBin}:${process.env.PATH ?? ""}`,
-      HIVE_INSTALL_FIXTURES: fixture.fixtures,
-      HIVE_INSTALL_ROOT: fixture.installRoot,
-      HIVE_BIN_DIR: fixture.binDir,
+  const child = Bun.spawn(
+    ["sh", join(repoRoot, "install.sh"), ...args, version],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${fixture.fakeBin}:${process.env.PATH ?? ""}`,
+        HIVE_INSTALL_FIXTURES: fixture.fixtures,
+        HIVE_INSTALL_ROOT: fixture.installRoot,
+        HIVE_BIN_DIR: fixture.binDir,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
     },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  );
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
   return { exitCode, stdout, stderr };
+}
+
+async function stageLocalBuild(
+  fixture: InstallerFixture,
+  version: string,
+): Promise<string> {
+  const build = join(fixture.root, "build");
+  await mkdir(build);
+  for (const name of ["hive-darwin-arm64", "hive-sessiond-darwin-arm64"]) {
+    await Bun.write(
+      join(build, name),
+      name.startsWith("hive-darwin-")
+        ? `#!/bin/sh\nif [ "$1" = --version ]; then echo 'hive ${version}'; fi\n`
+        : "#!/bin/sh\n",
+    );
+    await chmod(join(build, name), 0o755);
+  }
+  await Bun.write(
+    join(build, "HiveWorkspace.tar.gz"),
+    Bun.file(join(fixture.fixtures, "HiveWorkspace.tar.gz")),
+  );
+  return build;
+}
+
+async function assertProdCommandsAbsent(binDir: string): Promise<void> {
+  for (const command of ["hive-dev", "hive-qa"]) {
+    const probe = Bun.spawn(
+      [
+        "/bin/sh",
+        "-c",
+        `if command -v ${command} >/dev/null; then echo '${command} is reachable' >&2; exit 1; fi`,
+      ],
+      {
+        env: { PATH: binDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const [exitCode, stderr] = await Promise.all([
+      probe.exited,
+      new Response(probe.stderr).text(),
+    ]);
+    if (exitCode !== 0) throw new Error(stderr.trim());
+  }
 }
 
 async function selfUpdate(
@@ -242,6 +290,60 @@ async function selfUpdate(
 }
 
 describe("the standalone installer", () => {
+  test("the same installer gives dev and qa distinct roots and command names", async () => {
+    for (const variant of ["dev", "qa"] as const) {
+      const fixture = await createInstallerFixture("1.2.3");
+      const build = await stageLocalBuild(fixture, "1.2.3");
+      const binLink = join(fixture.binDir, `hive-${variant}`);
+      const installed = await runInstaller(fixture, "1.2.3", [
+        "--variant",
+        variant,
+        "--from-build",
+        build,
+      ]);
+      expect(installed.exitCode).toBe(0);
+      expect(await readlink(binLink)).toBe(
+        join(fixture.installRoot, "current", "hive"),
+      );
+      expect(installed.stdout).toContain(`unverified local ${variant} build`);
+    }
+  });
+
+  test("a prod install exposes no dev or qa command", async () => {
+    const fixture = await createInstallerFixture("1.2.3");
+    const installed = await runInstaller(fixture, "1.2.3");
+    expect(installed.exitCode).toBe(0);
+    expect(await Bun.file(join(fixture.binDir, "hive")).exists()).toBe(true);
+    await assertProdCommandsAbsent(fixture.binDir);
+
+    await symlink(
+      join(fixture.binDir, "hive"),
+      join(fixture.binDir, "hive-dev"),
+    );
+    await expect(assertProdCommandsAbsent(fixture.binDir)).rejects.toThrow(
+      "hive-dev is reachable",
+    );
+    await rm(join(fixture.binDir, "hive-dev"));
+    await assertProdCommandsAbsent(fixture.binDir);
+  });
+
+  test("local prod builds and non-qa refs are refused", async () => {
+    const fixture = await createInstallerFixture("1.2.3");
+    const build = await stageLocalBuild(fixture, "1.2.3");
+    expect(
+      (await runInstaller(fixture, "1.2.3", ["--from-build", build])).exitCode,
+    ).not.toBe(0);
+    expect(
+      (
+        await runInstaller(fixture, "1.2.3", [
+          "--variant",
+          "dev",
+          "--ref",
+          "topic",
+        ])
+      ).exitCode,
+    ).not.toBe(0);
+  });
   test("a fresh signed install remains a fully verified rollback target", async () => {
     const fixture = await createInstallerFixture("1.2.3");
     const installed = await runInstaller(fixture, "1.2.3");

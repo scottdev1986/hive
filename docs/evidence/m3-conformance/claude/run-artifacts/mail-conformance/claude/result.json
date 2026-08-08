@@ -1,0 +1,75 @@
+{
+  "result": "passed",
+  "vendor": "claude",
+  "model": "claude-haiku-4-5-20251001",
+  "completedAt": "2026-08-02T13:13:43.089Z",
+  "agent": {
+    "id": "4edf1e48-b812-4b40-8f94-052fe4ed90ec",
+    "name": "david",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "f4b6c72bae",
+      "subject": {
+        "kind": "agent",
+        "agentId": "4edf1e48-b812-4b40-8f94-052fe4ed90ec"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc29b-0072-79d2-961d-53d304041f2d",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    }
+  },
+  "publish": {
+    "controlFirst": {
+      "itemId": "mit_019fc29b-0081-7000-804c-43ca4787c969",
+      "lane": "control",
+      "topic": "m3-control",
+      "outcome": "published",
+      "seq": 1,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:12:45.953Z"
+    },
+    "controlReplay": {
+      "itemId": "mit_019fc29b-0081-7000-804c-43ca4787c969",
+      "lane": "control",
+      "topic": "m3-control",
+      "outcome": "published",
+      "seq": 1,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:12:45.953Z"
+    },
+    "workFirst": {
+      "itemId": "mit_019fc29b-0084-7000-96f4-ce4c714bbc52",
+      "lane": "work",
+      "topic": "m3-work",
+      "outcome": "published",
+      "seq": 2,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:12:45.956Z"
+    },
+    "workMerged": {
+      "itemId": "mit_019fc29b-0084-7000-96f4-ce4c714bbc52",
+      "lane": "work",
+      "topic": "m3-work",
+      "outcome": "coalesced",
+      "seq": 2,
+      "mergedCount": 1,
+      "acceptedAt": "2026-08-02T13:12:45.957Z"
+    }
+  },
+  "terminalWrites": {
+    "beforeSpawn": {
+      "total": 0,
+      "bySession": {}
+    },
+    "afterSpawn": {
+      "total": 0,
+      "bySession": {}
+    },
+    "final": {
+      "total": 0,
+      "bySession": {}
+    }
+  },
+  "eventCount": 7
+}

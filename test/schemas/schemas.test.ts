@@ -1,22 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
-  type AgentMessage,
-  AgentMessageSchema,
   type AgentRecord,
   AgentRecordSchema,
   canonicalOrchestratorName,
-  emptyRoutingPolicy,
-  HandoffSchema,
-  HiveConfigSchema,
-  type HookEvent,
-  HookEventSchema,
   isOrchestratorName,
   ORCHESTRATOR_NAME,
   ORCHESTRATOR_NAME_ALIASES,
   orchestratorRecipientNames,
+} from "../../src/schemas/agent";
+import {
+  emptyRoutingPolicy,
   RoutingPolicySchema,
-  StatuslineReportSchema,
-} from "../../src/schemas";
+} from "../../src/schemas/routing-policy";
+import { HandoffSchema } from "../../src/schemas/handoff-schema";
+import { HiveConfigSchema } from "../../src/schemas/config-schema";
+import { type HookEvent, HookEventSchema } from "../../src/schemas/event";
+import { ProtocolSessionFactsReportSchema } from "../../src/schemas/token-usage-schema";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -35,15 +34,10 @@ describe("HiveConfigSchema", () => {
         perProcessMemoryMb: 12_288,
         minSystemAvailableMb: 4_096,
       },
-      lifecycle: {
-        idleReap: true,
-        idleReapMinutes: 10,
-      },
+      artifacts: { retention_days: 90 },
       memory: {
         retention: {
           events_hot_days: 30,
-          facts_retention: "forever",
-          digests_retention: "forever",
           stale_after_days: 90,
           sweep_interval_hours: 24,
         },
@@ -81,7 +75,6 @@ describe("AgentRecordSchema", () => {
     contextPct: 25,
     createdAt: timestamp,
     lastEventAt: timestamp,
-    recoveryAttempts: 0,
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
@@ -111,56 +104,12 @@ describe("AgentRecordSchema", () => {
     ).toThrow();
   });
 
-  test("parses persisted spawn failure details", () => {
-    const failed = {
-      ...agent,
-      status: "failed",
-      failureReason: "Error: model not supported",
-      failedAt: timestamp,
-    } satisfies AgentRecord;
-    expect(AgentRecordSchema.parse(roundTrip(failed))).toEqual(failed);
-  });
-
   test("rejects retired external-viewer state", () => {
     const retiredViewerState = ["terminal", "Handle"].join("");
     expect(() =>
       AgentRecordSchema.parse({
         ...agent,
         [retiredViewerState]: { app: "external", sessionId: "session-uuid" },
-      }),
-    ).toThrow();
-  });
-});
-
-describe("AgentMessageSchema", () => {
-  const message = {
-    id: "message-1",
-    from: "agent-1",
-    to: "agent-3",
-    body: "The interface is ready.",
-    createdAt: timestamp,
-    priority: "normal",
-    state: "queued",
-    notifiedAt: null,
-    acknowledgedAt: null,
-    sequence: 0,
-    idempotencyKey: null,
-  } satisfies AgentMessage;
-
-  test("parses a valid round-trip", () => {
-    const parsed = AgentMessageSchema.parse(message);
-    expect(AgentMessageSchema.parse(roundTrip(parsed))).toEqual(message);
-  });
-
-  test("rejects an invalid message", () => {
-    expect(() =>
-      AgentMessageSchema.parse({ ...message, notifiedAt: 123 }),
-    ).toThrow();
-    expect(() =>
-      AgentMessageSchema.parse({
-        ...message,
-        priority: undefined,
-        priorty: "critical",
       }),
     ).toThrow();
   });
@@ -269,28 +218,29 @@ describe("HandoffSchema", () => {
   });
 });
 
-describe("StatuslineReportSchema", () => {
+describe("ProtocolSessionFactsReportSchema", () => {
   const report = {
     agent: "agent-3",
-    fiveHour: { usedPct: 37, resetsAt: timestamp },
+    model: "claude-opus-5",
     contextWindow: 1_000_000,
-    contextUsedPct: 22,
+    contextPercent: 22,
     observedAt: timestamp,
   };
 
   test("preserves measured fields and rejects renamed ones", () => {
-    expect(StatuslineReportSchema.parse(report)).toEqual(report);
+    expect(ProtocolSessionFactsReportSchema.parse(report)).toEqual(report);
     expect(() =>
-      StatuslineReportSchema.parse({
+      ProtocolSessionFactsReportSchema.parse({
         ...report,
         contextWindow: undefined,
         context_window: 1_000_000,
       }),
     ).toThrow();
     expect(() =>
-      StatuslineReportSchema.parse({
+      ProtocolSessionFactsReportSchema.parse({
         ...report,
-        fiveHour: { usedPct: 37, resetsAt: undefined, resets_at: timestamp },
+        contextPercent: undefined,
+        context_used_pct: 22,
       }),
     ).toThrow();
   });

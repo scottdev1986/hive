@@ -3,12 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type AccountBilling,
   BILLING_MEMORY_TTL_MINUTES,
-  poolAvailability,
   readBillingWithMemory,
+  readRememberedBilling,
+} from "../../src/usage-service/usage-credits/usage-credit-memory";
+import {
+  poolAvailability,
   spendRisk,
-} from "../../src/daemon/usage-credits";
+} from "../../src/usage-service/usage-credits/policy";
+import type { AccountBilling } from "../../src/usage-service/usage-credits/usage-credit-types";
 import { known, unknown } from "../../src/schemas/capability";
 import { required } from "../required";
 
@@ -26,9 +29,9 @@ const NOW = new Date("2026-07-12T02:05:00.000Z");
 
 const billing = (overrides: Partial<AccountBilling> = {}): AccountBilling => ({
   creditsEnabled: known(false, "claude.get_usage", AT),
-  disabledReason: null,
   generalUtilization: known(30, "claude.get_usage", AT),
   modelUtilization: {},
+  overflowUncertainty: null,
   ...overrides,
 });
 
@@ -57,6 +60,16 @@ describe("an exhausted pool nothing can pay for means UNAVAILABLE, not free", ()
     // the request, so deep keeps landing on a model that cannot run instead of
     // falling through to Opus.
     expect(poolAvailability(spent, "Fable").state).toBe("exhausted");
+  });
+
+  test("a spent account-wide pool also makes every model unavailable", () => {
+    const spent = billing({
+      generalUtilization: known(100, "claude.get_usage", AT),
+    });
+    expect(poolAvailability(spent, "Opus")).toMatchObject({
+      state: "exhausted",
+      detail: expect.stringContaining("account plan pool"),
+    });
   });
 
   test("spent pool + credits ON: money could pay, so it is the guard's question", () => {
@@ -90,9 +103,45 @@ describe("an exhausted pool nothing can pay for means UNAVAILABLE, not free", ()
       "exhausted",
     );
   });
+
+  test("one derivation names the pool that actually limits the model", () => {
+    const accountLimited = billing({
+      creditsEnabled: known(true, "claude.get_usage", AT),
+      generalUtilization: known(80, "claude.get_usage", AT),
+      modelUtilization: { fable: 20 },
+    });
+    expect(spendRisk(accountLimited, "Fable").detail).toContain(
+      "account plan pool 80% used",
+    );
+
+    const missingAccount = billing({
+      creditsEnabled: unknown("surface-silent", "claude.get_usage", AT),
+      generalUtilization: unknown("field-absent", "claude.get_usage", AT),
+      modelUtilization: { fable: 20 },
+    });
+    expect(spendRisk(missingAccount, "Fable").state).toBe("unknown");
+  });
 });
 
 describe("the billing reader heals itself", () => {
+  test("the projection reader never invokes a live billing transport", async () => {
+    const path = `${process.env.HIVE_HOME}/billing-read-only.json`;
+    await readBillingWithMemory("claude", {
+      path,
+      read: async () => billing(),
+      now: () => new Date(AT),
+    });
+
+    const remembered = await readRememberedBilling("claude", {
+      path,
+      now: () => NOW,
+    });
+
+    expect(remembered?.generalUtilization).toEqual(
+      known(30, "claude.get_usage", AT),
+    );
+  });
+
   test("a quiet surface falls back to the last good reading, at its true age", async () => {
     let calls = 0;
     const warnings: string[] = [];
@@ -110,8 +159,8 @@ describe("the billing reader heals itself", () => {
       now: () => NOW,
       warn: (message) => warnings.push(message),
     });
-    // It retried before giving up on the live surface.
-    expect(calls).toBe(2);
+    // One failed probe is enough before using the bounded fallback.
+    expect(calls).toBe(1);
     // And it recovered the fact that decides everything: credits are OFF, so
     // nothing can be charged and there is no reason to refuse the launch.
     expect(healed?.creditsEnabled).toEqual(
@@ -136,6 +185,20 @@ describe("the billing reader heals itself", () => {
     });
     // Not a confident guess dressed as a measurement: unknown, so the guard asks.
     expect(stale?.creditsEnabled.state).toBe("unknown");
+  });
+
+  test("a future-dated memory is rejected", async () => {
+    const path = `${process.env.HIVE_HOME}/billing-future.json`;
+    await readBillingWithMemory("claude", {
+      path,
+      read: async () => billing(),
+      now: () => new Date(AT),
+    });
+    const remembered = await readRememberedBilling("claude", {
+      path,
+      now: () => new Date(Date.parse(AT) - 60_000),
+    });
+    expect(remembered).toBeNull();
   });
 
   test("with no memory at all, a quiet surface stays honestly unknown", async () => {

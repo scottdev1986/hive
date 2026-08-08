@@ -1,9 +1,9 @@
 import XCTest
 @testable import WorkspaceCore
 
-/// The daemon policy document: decoding the wire shape and the fail-closed
-/// reading. The one rule everything here defends: ABSENT MEANS UNCONFIGURED,
-/// and unconfigured never reads as enabled or as permission to spend.
+/// The daemon policy document's wire shape and editor-safe spellings. Effective
+/// provider/model state is deliberately absent here: Workspace receives that
+/// interpretation in `WorkspaceModelControlView`.
 final class RoutingPolicyDocumentTests: XCTestCase {
 
     private var fixture: RoutingPolicyDocument {
@@ -15,9 +15,12 @@ final class RoutingPolicyDocumentTests: XCTestCase {
           "provisional": true,
           "providers": { "claude": "enabled", "codex": "disabled" },
           "models": [
-            { "provider": "claude", "model": "claude-haiku-4-5", "state": "disabled" },
-            { "provider": "codex", "model": "gpt-5.6-sol", "state": "enabled" },
-            { "provider": "grok", "model": "grok-4.5", "state": "enabled" },
+            { "provider": "claude", "model": "claude-haiku-4-5", "state": "disabled",
+              "effort": { "mode": "never-configured" } },
+            { "provider": "codex", "model": "gpt-5.6-sol", "state": "enabled",
+              "effort": { "mode": "never-configured" } },
+            { "provider": "grok", "model": "grok-4.5", "state": "enabled",
+              "effort": { "mode": "never-configured" } },
             { "provider": "claude", "model": "claude-fable-5",
               "effort": { "mode": "exact", "value": "high" } }
           ],
@@ -54,64 +57,20 @@ final class RoutingPolicyDocumentTests: XCTestCase {
         XCTAssertEqual(complex?.candidates[0].weight, 3)
         XCTAssertEqual(
             complex?.candidates[1].effort,
-            RoutingPolicyDocument.WireEffort.none)
+            RoutingPolicyDocument.CandidateEffort.none)
         XCTAssertEqual(document.global?.routerMode, .hiveEqual)
         XCTAssertNil(
             document.route(for: .planning),
             "a category with no route of its own resolves to global, not to an empty route")
     }
 
-    func testAbsentProviderDisablesAnUnconfiguredModel() {
+    func testEffortOnlyRowDecodesWithoutInventingEnablement() {
         let document = fixture
-        XCTAssertEqual(document.providerState(.grok), .unconfigured)
-        let unlisted = document.modelState(provider: .grok, model: "grok-3-mini")
-        XCTAssertEqual(unlisted.state, .disabled)
-        XCTAssertEqual(unlisted.source, .provider)
-        XCTAssertEqual(
-            document.rowState(provider: .grok, model: "grok-3-mini", available: true),
-            .disabledByProvider(preferenceOn: false),
-            "an absent provider confers no authority on its models")
-    }
-
-    func testProviderDisabledDominatesAnEnabledModelRow() {
-        let document = fixture
-        let reading = document.modelState(provider: .codex, model: "gpt-5.6-sol")
-        XCTAssertEqual(reading.state, .disabled)
-        XCTAssertEqual(reading.source, .provider)
-        XCTAssertEqual(
-            document.rowState(provider: .codex, model: "gpt-5.6-sol", available: true),
-            .disabledByProvider(preferenceOn: true),
-            "the stored preference is shown, non-authoritative")
-    }
-
-    func testExplicitModelRowIsOnlyAPreferenceUnderAnUnconfiguredProvider() {
-        let document = fixture
-        let reading = document.modelState(provider: .grok, model: "grok-4.5")
-        XCTAssertEqual(reading.state, .disabled)
-        XCTAssertEqual(reading.source, .provider)
-        XCTAssertEqual(
-            document.rowState(provider: .grok, model: "grok-4.5", available: true),
-            .disabledByProvider(preferenceOn: true),
-            "the enabled child preference survives but is not authoritative")
-    }
-
-    func testEffortOnlyRowDoesNotBlessEnablement() {
-        let document = fixture
-        // claude-fable-5 has an effort row but no state; the enabled provider
-        // answers for enablement — choosing an effort never consents a model.
-        let reading = document.modelState(provider: .claude, model: "claude-fable-5")
-        XCTAssertEqual(reading.state, .enabled)
-        XCTAssertEqual(reading.source, .provider)
+        XCTAssertNil(
+            document.modelRow(provider: .claude, model: "claude-fable-5")?.state)
         XCTAssertEqual(
             document.modelEffort(provider: .claude, model: "claude-fable-5"),
             .exact("high"))
-    }
-
-    func testSelfDisabledUnderEnabledProviderIsUserOff() {
-        let document = fixture
-        XCTAssertEqual(
-            document.rowState(provider: .claude, model: "claude-haiku-4-5", available: true),
-            .disabledBySelf)
     }
 
     func testEffortWireSpellingsRoundTripAndMatchTheCli() throws {
@@ -154,16 +113,38 @@ final class RoutingPolicyDocumentTests: XCTestCase {
                 provider: "claude", model: "claude-fable-5",
                 effort: .hiveDecides, weight: 1).cliArgument,
             "claude/claude-fable-5@hive-decides=1")
-        // No spelling at all: never-configured is a model-row state, and an
-        // unknown mode must not be respelled. NIL forces the caller to refuse.
-        XCTAssertNil(
-            RoutingPolicyDocument.WireRouteCandidate(
-                provider: "claude", model: "claude-fable-5",
-                effort: .neverConfigured, weight: 1).cliArgument)
-        XCTAssertNil(
-            RoutingPolicyDocument.WireRouteCandidate(
-                provider: "claude", model: "claude-fable-5",
-                effort: .unknown("thinking-budget"), weight: 1).cliArgument)
+    }
+
+    func testUnknownCandidateEffortMakesOnlyItsRouteNonWritable() throws {
+        let wire = Data(#"{"mode":"thinking-budget"}"#.utf8)
+        let effort = try JSONDecoder().decode(
+            RoutingPolicyDocument.CandidateEffort.self,
+            from: wire)
+        XCTAssertEqual(effort, .unknown("thinking-budget"))
+
+        let candidate = RoutingPolicyDocument.WireRouteCandidate(
+            provider: "future",
+            model: "future-model",
+            effort: effort,
+            weight: 1)
+        let route = RoutingPolicyDocument.WireRoute(
+            mode: "hive-equal",
+            candidates: [candidate])
+        XCTAssertFalse(route.writable)
+        XCTAssertNil(candidate.cliArgument)
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                RoutingPolicyDocument.CandidateEffort.self,
+                from: JSONEncoder().encode(effort)),
+            effort)
+    }
+
+    func testExactCandidateEffortStillRequiresItsValue() {
+        let wire = Data(#"{"mode":"exact"}"#.utf8)
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                RoutingPolicyDocument.CandidateEffort.self,
+                from: wire))
     }
 
     func testWireRouteBridgesToEditorTermsAndBack() throws {

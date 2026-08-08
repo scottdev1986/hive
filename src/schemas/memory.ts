@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { opaqueString } from "./wire-schema";
 
 export function normalizeNulText(value: string): string {
   return value.replaceAll("\0", "\uFFFD");
@@ -14,16 +15,21 @@ export const MemorySourceSchema = z.enum([
   "init",
   "agent",
   "orchestrator",
-  "human",
+  "user",
   "legacy",
 ]);
 export type MemorySource = z.infer<typeof MemorySourceSchema>;
+
+/** Pre-rename articles may still say `human`; normalize before schema parse. */
+export function normalizeMemorySource(value: string): string {
+  return value === "human" ? "user" : value;
+}
 
 export const MemoryWriterSourceSchema = z.enum([
   "init",
   "agent",
   "orchestrator",
-  "human",
+  "user",
 ]);
 
 export const MemoryVerificationStatusSchema = z.enum([
@@ -39,7 +45,14 @@ export type MemoryVerificationStatus = z.infer<
 export const MemoryKindSchema = z.enum(["article", "pitfall"]);
 export type MemoryKind = z.infer<typeof MemoryKindSchema>;
 
-const IsoDateSchema = z.iso.date();
+const IsoDateSchema = opaqueString(z.iso.date());
+
+/** Who wrote an article: the actor identity the daemon binds to the call, never a name the caller supplies. It is what makes "verified by someone else" checkable — `source` records a ROLE (agent, orchestrator, user) and cannot tell two agents apart. Optional because articles written before it existed carry no author, and an absent author reads as unknown rather than as "anyone may verify this". */
+export const MemoryAuthorSchema = z
+  .string()
+  .min(1)
+  .max(120)
+  .regex(/^[^\s:]+$/, "author must be a single token with no colon or space");
 
 const verificationDateError = (input: {
   status: MemoryVerificationStatus;
@@ -55,6 +68,35 @@ const verificationDateError = (input: {
     return "stale articles require their prior verified date";
   }
   return null;
+};
+
+/** The rules an article obeys whether it arrives as a write or is read back off disk. Shared so the two cannot drift apart, and so a schema derived from the write input's fields can restate them. */
+const refineMemoryArticle = (
+  input: {
+    status: MemoryVerificationStatus;
+    verified?: string | undefined;
+    body: string;
+  },
+  context: z.RefinementCtx,
+): void => {
+  const verificationError = verificationDateError(input);
+  if (verificationError !== null) {
+    context.addIssue({
+      code: "custom",
+      path: ["verified"],
+      message: verificationError,
+    });
+  }
+  if (
+    input.status === "conflicted" &&
+    !/conflict|disagree|contradict/i.test(input.body)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["body"],
+      message: "conflicted articles must annotate the disagreement",
+    });
+  }
 };
 
 export const MemoryTopicSchema = z
@@ -80,66 +122,36 @@ export const MemoryFactSchema = z
     supersedes: z.array(z.string()),
     raw: z.array(z.string()),
     verified: IsoDateSchema.optional(),
+    author: MemoryAuthorSchema.optional(),
   })
-  .superRefine((input, context) => {
-    const verificationError = verificationDateError(input);
-    if (verificationError !== null) {
-      context.addIssue({
-        code: "custom",
-        path: ["verified"],
-        message: verificationError,
-      });
-    }
-    if (
-      input.status === "conflicted" &&
-      !/conflict|disagree|contradict/i.test(input.body)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["body"],
-        message: "conflicted articles must annotate the disagreement",
-      });
-    }
-  });
+  .superRefine(refineMemoryArticle);
 export type MemoryFact = z.infer<typeof MemoryFactSchema>;
 
-export const MemoryWriteInputSchema = z
-  .strictObject({
-    scope: MemoryScopeSchema,
-    id: z.string().min(1).optional(),
-    topic: MemoryTopicSchema,
-    title: RequiredMemoryTextSchema,
-    body: RequiredMemoryTextSchema,
-    tags: z.array(MemoryTextSchema).optional(),
-    date: IsoDateSchema.optional(),
-    source: MemoryWriterSourceSchema,
-    evidence: RequiredMemoryTextSchema,
-    status: MemoryVerificationStatusSchema,
-    kind: MemoryKindSchema.default("article"),
-    supersedes: z.array(z.string()),
-    verified: IsoDateSchema.optional(),
-  })
-  .superRefine((input, context) => {
-    const verificationError = verificationDateError(input);
-    if (verificationError !== null) {
-      context.addIssue({
-        code: "custom",
-        path: ["verified"],
-        message: verificationError,
-      });
-    }
-    if (
-      input.status === "conflicted" &&
-      !/conflict|disagree|contradict/i.test(input.body)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["body"],
-        message: "conflicted articles must annotate the disagreement",
-      });
-    }
-  });
+const MemoryWriteInputFields = z.strictObject({
+  scope: MemoryScopeSchema,
+  id: z.string().min(1).optional(),
+  topic: MemoryTopicSchema,
+  title: RequiredMemoryTextSchema,
+  body: RequiredMemoryTextSchema,
+  tags: z.array(MemoryTextSchema).optional(),
+  date: IsoDateSchema.optional(),
+  source: MemoryWriterSourceSchema,
+  evidence: RequiredMemoryTextSchema,
+  status: MemoryVerificationStatusSchema,
+  kind: MemoryKindSchema.default("article"),
+  supersedes: z.array(z.string()),
+  verified: IsoDateSchema.optional(),
+  author: MemoryAuthorSchema.optional(),
+});
+
+export const MemoryWriteInputSchema =
+  MemoryWriteInputFields.superRefine(refineMemoryArticle);
 export type MemoryWriteInput = z.input<typeof MemoryWriteInputSchema>;
+
+/** The write input as a CALLER may express it: every field except `author`. The daemon fills the author from the identity bound to the call, so a caller is never asked who it is and cannot answer with someone else's name. Derived from the same fields as the write input so the two cannot drift. */
+export const MemoryWriteRequestFieldsSchema = MemoryWriteInputFields.omit({
+  author: true,
+}).superRefine(refineMemoryArticle);
 
 export const MemorySimilarCandidateSchema = z.strictObject({
   scope: MemoryScopeSchema,
@@ -162,9 +174,6 @@ export const MemoryWriteResultSchema = z
     status: MemoryVerificationStatusSchema,
     verified: IsoDateSchema.optional(),
     similarCandidates: z.array(MemorySimilarCandidateSchema).optional(),
-    /** What happened to this write's vector projection:
-     * "indexed" | "queued" | "unavailable:<state>". Optional for wire
-     * compatibility with daemons that omit the field. */
     embedding: z.string().optional(),
   })
   .superRefine((input, context) => {
@@ -194,8 +203,6 @@ export function compactMemoryWriteResult(
     source: fact.source,
     status: fact.status,
     ...(fact.verified !== undefined ? { verified: fact.verified } : {}),
-    // Advisory only (dedup layer 2): omitted when empty so a clean write's
-    // response stays exactly as compact as before.
     ...(similarCandidates.length > 0 ? { similarCandidates } : {}),
   };
 }

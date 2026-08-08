@@ -1,0 +1,147 @@
+[
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent\":{\"id\":\"7c498b77-ba6a-447a-8a3c-9fe3a6018d98\",\"name\":\"maya\",\"tool\":\"codex\",\"model\":\"gpt-5.3-codex-spark\",\"category\":\"simple_coding\",\"status\":\"dead\",\"holdReason\":null,\"holdResetAt\":null,\"holdProviderRunId\":null,\"closedAt\":\"2026-08-02T13:13:31.583Z\",\"quotaReservationId\":\"135dd43e-e620-4509-a5a5-24957ed4cef8\",\"executionIdentity\":{\"tool\":\"codex\",\"model\":\"gpt-5.3-codex-spark\",\"effort\":\"high\"},\"taskDescription\":\"Wait quietly for a terminal delivery test. Do not use tools or modify files.\",\"worktreePath\":\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya\",\"branch\":\"hive/maya-wait-quietly-for-a-terminal-de\",\"sessionLocator\":{\"schemaVersion\":1,\"instanceId\":\"51f864cdfa\",\"subject\":{\"kind\":\"agent\",\"agentId\":\"7c498b77-ba6a-447a-8a3c-9fe3a6018d98\"},\"generation\":1,\"sessionId\":\"ses_019fc29b-9106-7ddf-8feb-bdcea808183d\",\"hostKind\":\"sessiond\",\"engineBuildId\":\"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1\"},\"toolSessionId\":\"019fc29b-9272-7102-b530-606decdcc95f\",\"recoveryAttempts\":0,\"contextPct\":null,\"createdAt\":\"2026-08-02T13:13:22.950Z\",\"lastEventAt\":\"2026-08-02T13:13:31.583Z\",\"capabilityEpoch\":0,\"readOnly\":true,\"writeRevoked\":false},\"cleaned\":{\"sessionId\":\"ses_019fc29b-9106-7ddf-8feb-bdcea808183d\",\"worktreePath\":null,\"branch\":null},\"reaped\":{\"killed\":[{\"pid\":156,\"command\":\"/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen-codex/hive-sessiond host\"},{\"pid\":157,\"command\":\"/bin/zsh -l -i -c hive_terminal_command=\\\"$1\\\"\\\\012if [[ -n \\\"${HISTFILE:-}\\\" ]]; then\\\\012  print -s -- \\\"$hive_terminal_command\\\"\\\\012  fc -AI \\\"$HISTFILE\\\" 2>/dev/null || true\\\\012fi\\\\012eval \\\"$hive_terminal_command\\\"\\\\012exec /bin/zsh -l -i hive-terminal install -m 600 '/private/tmp/hvqa-dr/runtime/prompts/ses_019fc29b-9106-7ddf-8feb-bdcea808183d.codex.config.toml' '/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/.codex/hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d.config.toml' && (trap 'rm -f '\\\\''/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/.codex/hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d.config.toml'\\\\''' EXIT INT TERM; HIVE_CAPABILITY_TOKEN=\\\"$(cat '/private/tmp/hvqa-dr/credentials/maya.cap')\\\" '/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex' '--profile' 'hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d' '-c' 'features.apps=false' '-c' 'model=gpt-5.3-codex-spark' '-c' 'model_reasoning_effort=high' '--sandbox' 'read-only' '-c' 'approval_policy=\\\"never\\\"' '-c' 'projects={\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya\\\"={trust_level=\\\"trusted\\\"}}' '--dangerously-bypass-hook-trust' '-c' 'features.hooks=true' '-c' 'hooks.SessionStart=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh session-start\\\",timeout=5}]}]' '-c' 'hooks.UserPromptSubmit=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-start\\\",timeout=5}]}]' '-c' 'hooks.PermissionRequest=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh approval-request\\\",timeout=5}]}]' '-c' 'hooks.PostToolUse=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh tool-boundary\\\",timeout=5}]}]' '-c' 'hooks.Stop=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-end\\\",timeout=5}]}]' '-c' 'mcp_servers.hive.url=\\\"http://127.0.0.1:53524/mcp\\\"' '-c' 'mcp_servers.hive.default_tools_approval_mode=\\\"approve\\\"' '-c' 'mcp_servers.hive.bearer_token_env_var=\\\"HIVE_CAPABILITY_TOKEN\\\"' 'Begin the assigned task.')\"},{\"pid\":163,\"command\":\"/bin/zsh -l -i -c hive_terminal_command=\\\"$1\\\"\\\\012if [[ -n \\\"${HISTFILE:-}\\\" ]]; then\\\\012  print -s -- \\\"$hive_terminal_command\\\"\\\\012  fc -AI \\\"$HISTFILE\\\" 2>/dev/null || true\\\\012fi\\\\012eval \\\"$hive_terminal_command\\\"\\\\012exec /bin/zsh -l -i hive-terminal install -m 600 '/private/tmp/hvqa-dr/runtime/prompts/ses_019fc29b-9106-7ddf-8feb-bdcea808183d.codex.config.toml' '/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/.codex/hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d.config.toml' && (trap 'rm -f '\\\\''/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/.codex/hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d.config.toml'\\\\''' EXIT INT TERM; HIVE_CAPABILITY_TOKEN=\\\"$(cat '/private/tmp/hvqa-dr/credentials/maya.cap')\\\" '/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex' '--profile' 'hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d' '-c' 'features.apps=false' '-c' 'model=gpt-5.3-codex-spark' '-c' 'model_reasoning_effort=high' '--sandbox' 'read-only' '-c' 'approval_policy=\\\"never\\\"' '-c' 'projects={\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya\\\"={trust_level=\\\"trusted\\\"}}' '--dangerously-bypass-hook-trust' '-c' 'features.hooks=true' '-c' 'hooks.SessionStart=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh session-start\\\",timeout=5}]}]' '-c' 'hooks.UserPromptSubmit=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-start\\\",timeout=5}]}]' '-c' 'hooks.PermissionRequest=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh approval-request\\\",timeout=5}]}]' '-c' 'hooks.PostToolUse=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh tool-boundary\\\",timeout=5}]}]' '-c' 'hooks.Stop=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-end\\\",timeout=5}]}]' '-c' 'mcp_servers.hive.url=\\\"http://127.0.0.1:53524/mcp\\\"' '-c' 'mcp_servers.hive.default_tools_approval_mode=\\\"approve\\\"' '-c' 'mcp_servers.hive.bearer_token_env_var=\\\"HIVE_CAPABILITY_TOKEN\\\"' 'Begin the assigned task.')\"},{\"pid\":164,\"command\":\"/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex --profile hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d -c features.apps=false -c model=gpt-5.3-codex-spark -c model_reasoning_effort=high --sandbox read-only -c approval_policy=\\\"never\\\" -c projects={\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya\\\"={trust_level=\\\"trusted\\\"}} --dangerously-bypass-hook-trust -c features.hooks=true -c hooks.SessionStart=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh session-start\\\",timeout=5}]}] -c hooks.UserPromptSubmit=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-start\\\",timeout=5}]}] -c hooks.PermissionRequest=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh approval-request\\\",timeout=5}]}] -c hooks.PostToolUse=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh tool-boundary\\\",timeout=5}]}] -c hooks.Stop=[{hooks=[{type=\\\"command\\\",command=\\\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-end\\\",timeout=5}]}] -c mcp_servers.hive.url=\\\"http://127.0.0.1:53524/mcp\\\" -c mcp_servers.hive.default_tools_approval_mode=\\\"approve\\\" -c mcp_servers.hive.bearer_token_env_var=\\\"HIVE_CAPABILITY_TOKEN\\\" Begin the assigned task.\"}],\"survivors\":[]},\"preserved\":null,\"stranded\":null}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "agent": {
+          "id": "7c498b77-ba6a-447a-8a3c-9fe3a6018d98",
+          "name": "maya",
+          "tool": "codex",
+          "model": "gpt-5.3-codex-spark",
+          "category": "simple_coding",
+          "status": "dead",
+          "holdReason": null,
+          "holdResetAt": null,
+          "holdProviderRunId": null,
+          "closedAt": "2026-08-02T13:13:31.583Z",
+          "quotaReservationId": "135dd43e-e620-4509-a5a5-24957ed4cef8",
+          "executionIdentity": {
+            "tool": "codex",
+            "model": "gpt-5.3-codex-spark",
+            "effort": "high"
+          },
+          "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+          "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya",
+          "branch": "hive/maya-wait-quietly-for-a-terminal-de",
+          "sessionLocator": {
+            "schemaVersion": 1,
+            "instanceId": "51f864cdfa",
+            "subject": {
+              "kind": "agent",
+              "agentId": "7c498b77-ba6a-447a-8a3c-9fe3a6018d98"
+            },
+            "generation": 1,
+            "sessionId": "ses_019fc29b-9106-7ddf-8feb-bdcea808183d",
+            "hostKind": "sessiond",
+            "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+          },
+          "toolSessionId": "019fc29b-9272-7102-b530-606decdcc95f",
+          "recoveryAttempts": 0,
+          "contextPct": null,
+          "createdAt": "2026-08-02T13:13:22.950Z",
+          "lastEventAt": "2026-08-02T13:13:31.583Z",
+          "capabilityEpoch": 0,
+          "readOnly": true,
+          "writeRevoked": false
+        },
+        "cleaned": {
+          "sessionId": "ses_019fc29b-9106-7ddf-8feb-bdcea808183d",
+          "worktreePath": null,
+          "branch": null
+        },
+        "reaped": {
+          "killed": [
+            {
+              "pid": 156,
+              "command": "/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen-codex/hive-sessiond host"
+            },
+            {
+              "pid": 157,
+              "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal install -m 600 '/private/tmp/hvqa-dr/runtime/prompts/ses_019fc29b-9106-7ddf-8feb-bdcea808183d.codex.config.toml' '/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/.codex/hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d.config.toml' && (trap 'rm -f '\\''/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/.codex/hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d.config.toml'\\''' EXIT INT TERM; HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-dr/credentials/maya.cap')\" '/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex' '--profile' 'hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d' '-c' 'features.apps=false' '-c' 'model=gpt-5.3-codex-spark' '-c' 'model_reasoning_effort=high' '--sandbox' 'read-only' '-c' 'approval_policy=\"never\"' '-c' 'projects={\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya\"={trust_level=\"trusted\"}}' '--dangerously-bypass-hook-trust' '-c' 'features.hooks=true' '-c' 'hooks.SessionStart=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh session-start\",timeout=5}]}]' '-c' 'hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-start\",timeout=5}]}]' '-c' 'hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh approval-request\",timeout=5}]}]' '-c' 'hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh tool-boundary\",timeout=5}]}]' '-c' 'hooks.Stop=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-end\",timeout=5}]}]' '-c' 'mcp_servers.hive.url=\"http://127.0.0.1:53524/mcp\"' '-c' 'mcp_servers.hive.default_tools_approval_mode=\"approve\"' '-c' 'mcp_servers.hive.bearer_token_env_var=\"HIVE_CAPABILITY_TOKEN\"' 'Begin the assigned task.')"
+            },
+            {
+              "pid": 163,
+              "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal install -m 600 '/private/tmp/hvqa-dr/runtime/prompts/ses_019fc29b-9106-7ddf-8feb-bdcea808183d.codex.config.toml' '/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/.codex/hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d.config.toml' && (trap 'rm -f '\\''/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/.codex/hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d.config.toml'\\''' EXIT INT TERM; HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-dr/credentials/maya.cap')\" '/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex' '--profile' 'hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d' '-c' 'features.apps=false' '-c' 'model=gpt-5.3-codex-spark' '-c' 'model_reasoning_effort=high' '--sandbox' 'read-only' '-c' 'approval_policy=\"never\"' '-c' 'projects={\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya\"={trust_level=\"trusted\"}}' '--dangerously-bypass-hook-trust' '-c' 'features.hooks=true' '-c' 'hooks.SessionStart=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh session-start\",timeout=5}]}]' '-c' 'hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-start\",timeout=5}]}]' '-c' 'hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh approval-request\",timeout=5}]}]' '-c' 'hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh tool-boundary\",timeout=5}]}]' '-c' 'hooks.Stop=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-end\",timeout=5}]}]' '-c' 'mcp_servers.hive.url=\"http://127.0.0.1:53524/mcp\"' '-c' 'mcp_servers.hive.default_tools_approval_mode=\"approve\"' '-c' 'mcp_servers.hive.bearer_token_env_var=\"HIVE_CAPABILITY_TOKEN\"' 'Begin the assigned task.')"
+            },
+            {
+              "pid": 164,
+              "command": "/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex --profile hive-ses_019fc29b-9106-7ddf-8feb-bdcea808183d -c features.apps=false -c model=gpt-5.3-codex-spark -c model_reasoning_effort=high --sandbox read-only -c approval_policy=\"never\" -c projects={\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya\"={trust_level=\"trusted\"}} --dangerously-bypass-hook-trust -c features.hooks=true -c hooks.SessionStart=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh session-start\",timeout=5}]}] -c hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-start\",timeout=5}]}] -c hooks.PermissionRequest=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh approval-request\",timeout=5}]}] -c hooks.PostToolUse=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh tool-boundary\",timeout=5}]}] -c hooks.Stop=[{hooks=[{type=\"command\",command=\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya/.codex/hive-notify.sh turn-end\",timeout=5}]}] -c mcp_servers.hive.url=\"http://127.0.0.1:53524/mcp\" -c mcp_servers.hive.default_tools_approval_mode=\"approve\" -c mcp_servers.hive.bearer_token_env_var=\"HIVE_CAPABILITY_TOKEN\" Begin the assigned task."
+            }
+          ],
+          "survivors": []
+        },
+        "preserved": null,
+        "stranded": null
+      }
+    }
+  },
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent\":{\"id\":\"7c498b77-ba6a-447a-8a3c-9fe3a6018d98\",\"name\":\"maya\",\"tool\":\"codex\",\"model\":\"gpt-5.3-codex-spark\",\"category\":\"simple_coding\",\"status\":\"dead\",\"holdReason\":null,\"holdResetAt\":null,\"holdProviderRunId\":null,\"closedAt\":\"2026-08-02T13:13:31.583Z\",\"quotaReservationId\":\"135dd43e-e620-4509-a5a5-24957ed4cef8\",\"executionIdentity\":{\"tool\":\"codex\",\"model\":\"gpt-5.3-codex-spark\",\"effort\":\"high\"},\"taskDescription\":\"Wait quietly for a terminal delivery test. Do not use tools or modify files.\",\"worktreePath\":null,\"branch\":null,\"sessionLocator\":{\"schemaVersion\":1,\"instanceId\":\"51f864cdfa\",\"subject\":{\"kind\":\"agent\",\"agentId\":\"7c498b77-ba6a-447a-8a3c-9fe3a6018d98\"},\"generation\":1,\"sessionId\":\"ses_019fc29b-9106-7ddf-8feb-bdcea808183d\",\"hostKind\":\"sessiond\",\"engineBuildId\":\"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1\"},\"toolSessionId\":\"019fc29b-9272-7102-b530-606decdcc95f\",\"recoveryAttempts\":0,\"contextPct\":null,\"createdAt\":\"2026-08-02T13:13:22.950Z\",\"lastEventAt\":\"2026-08-02T13:13:32.653Z\",\"capabilityEpoch\":0,\"readOnly\":true,\"writeRevoked\":false},\"cleaned\":{\"sessionId\":\"ses_019fc29b-9106-7ddf-8feb-bdcea808183d\",\"worktreePath\":\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya\",\"branch\":\"hive/maya-wait-quietly-for-a-terminal-de\"},\"reaped\":{\"killed\":[],\"survivors\":[]},\"preserved\":null,\"stranded\":null}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "agent": {
+          "id": "7c498b77-ba6a-447a-8a3c-9fe3a6018d98",
+          "name": "maya",
+          "tool": "codex",
+          "model": "gpt-5.3-codex-spark",
+          "category": "simple_coding",
+          "status": "dead",
+          "holdReason": null,
+          "holdResetAt": null,
+          "holdProviderRunId": null,
+          "closedAt": "2026-08-02T13:13:31.583Z",
+          "quotaReservationId": "135dd43e-e620-4509-a5a5-24957ed4cef8",
+          "executionIdentity": {
+            "tool": "codex",
+            "model": "gpt-5.3-codex-spark",
+            "effort": "high"
+          },
+          "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+          "worktreePath": null,
+          "branch": null,
+          "sessionLocator": {
+            "schemaVersion": 1,
+            "instanceId": "51f864cdfa",
+            "subject": {
+              "kind": "agent",
+              "agentId": "7c498b77-ba6a-447a-8a3c-9fe3a6018d98"
+            },
+            "generation": 1,
+            "sessionId": "ses_019fc29b-9106-7ddf-8feb-bdcea808183d",
+            "hostKind": "sessiond",
+            "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+          },
+          "toolSessionId": "019fc29b-9272-7102-b530-606decdcc95f",
+          "recoveryAttempts": 0,
+          "contextPct": null,
+          "createdAt": "2026-08-02T13:13:22.950Z",
+          "lastEventAt": "2026-08-02T13:13:32.653Z",
+          "capabilityEpoch": 0,
+          "readOnly": true,
+          "writeRevoked": false
+        },
+        "cleaned": {
+          "sessionId": "ses_019fc29b-9106-7ddf-8feb-bdcea808183d",
+          "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/maya",
+          "branch": "hive/maya-wait-quietly-for-a-terminal-de"
+        },
+        "reaped": {
+          "killed": [],
+          "survivors": []
+        },
+        "preserved": null,
+        "stranded": null
+      }
+    }
+  }
+]

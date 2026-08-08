@@ -1,18 +1,12 @@
 import Foundation
 
-/// WCAG 2.x relative luminance and contrast ratio.
-///
-/// WCAG 2.2 is the only normative contrast standard; WCAG 3.0 remains a
-/// Working Draft carrying no normative contrast algorithm, so APCA is
-/// deliberately not implemented here.
+/// WCAG 2.x relative luminance and contrast ratio. WCAG 2.2 is the only normative contrast standard; WCAG 3.0 remains a Working Draft carrying no normative contrast algorithm, so APCA is deliberately not implemented here.
 enum WCAGContrast {
     enum ColorError: Error, Equatable {
         case malformedHex(String)
     }
 
-    /// Parses exactly six hex digits. Anything shorter, longer, or containing a
-    /// non-hex character is rejected rather than silently truncated — a lenient
-    /// parser reports a typo'd entry as a confident pass.
+    /// Parses exactly six hex digits. Anything shorter, longer, or containing a non-hex character is rejected rather than silently truncated — a lenient parser reports a typo'd entry as a confident pass.
     static func channels(_ hex: String) throws -> (Double, Double, Double) {
         let scalars = Array(hex.utf8)
         guard scalars.count == 6 else { throw ColorError.malformedHex(hex) }

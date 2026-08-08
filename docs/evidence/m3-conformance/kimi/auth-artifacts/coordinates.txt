@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-ka
+home=/private/tmp/hvqa-ka
+default_home=/private/tmp/hvqa-ka/default
+port=49390
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-auth.NKa7Qa/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/kimi/m3-frozen/source
+hive_bin=/private/tmp/hvqa-ka/artifacts/hive-bin

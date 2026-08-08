@@ -10,7 +10,8 @@
       "src/**/*.ts",
       "test/**/*.ts",
       "scripts/**/*.ts",
-      "native/**/*.ts"
+      "native/**/*.ts",
+      "!workspace/Sources/HiveGhosttyC/include/ghostty.h"
     ]
   },
   "formatter": {

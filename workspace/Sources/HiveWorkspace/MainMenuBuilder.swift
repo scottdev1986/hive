@@ -1,13 +1,10 @@
 import AppKit
 
-/// Native menu bar. Every pane item targets the active project controller —
-/// the same command model as clicks and accessibility actions.
 enum MainMenuBuilder {
 
     static func build(paneTarget: AnyObject? = nil) -> NSMenu {
         let mainMenu = NSMenu()
 
-        // Application
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
@@ -15,15 +12,12 @@ enum MainMenuBuilder {
         appMenu.addItem(withTitle: "About Hive Workspace",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        // Resolved through the responder chain to the AppDelegate, like the
-        // autonomy items below.
         appMenu.addItem(withTitle: "Settings…",
                         action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Hive Workspace",
                         action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
-        // Edit (native text editing + find)
         let editItem = NSMenuItem()
         mainMenu.addItem(editItem)
         let editMenu = NSMenu(title: "Edit")
@@ -36,7 +30,6 @@ enum MainMenuBuilder {
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
 
-        // Pane (the shared command model, keyboard-first)
         let paneItem = NSMenuItem()
         mainMenu.addItem(paneItem)
         let paneMenu = NSMenu(title: "Pane")
@@ -74,9 +67,6 @@ enum MainMenuBuilder {
                                      keyEquivalent: "k")
         acknowledge.keyEquivalentModifierMask = [.command, .shift]
         paneMenu.addItem(acknowledge)
-        // Approvals and message sending happen inside the native TUIs by
-        // typing — the pane is a real terminal, so there is no app-level
-        // approve/deny surface anymore.
         paneMenu.addItem(.separator())
         let close = NSMenuItem(title: "Close Pane",
                                action: #selector(ProjectWindowController.closeFocusedPane(_:)), keyEquivalent: "w")
@@ -86,10 +76,7 @@ enum MainMenuBuilder {
             item.target = paneTarget
         }
 
-        // Agents (the autonomy dial). State lives in the daemon: the
-        // AppDelegate validates the checkmarks from the feed's last report and
-        // sets the dial through `hive autonomy`, so this menu never shows a
-        // state the daemon has not confirmed.
+        // Agents (the autonomy dial). State lives in the daemon: the AppDelegate validates the checkmarks from the feed's last report and sets the dial through `hive autonomy`, so this menu never shows a state the daemon has not confirmed.
         let agentsItem = NSMenuItem()
         mainMenu.addItem(agentsItem)
         let agentsMenu = NSMenu(title: "Agents")
@@ -99,7 +86,6 @@ enum MainMenuBuilder {
         agentsMenu.addItem(withTitle: "Full Autonomy (No Permission Prompts)",
                            action: #selector(AppDelegate.selectDangerousAutonomy(_:)), keyEquivalent: "")
 
-        // Workspace (cross-project surfaces)
         let workspaceItem = NSMenuItem()
         mainMenu.addItem(workspaceItem)
         let workspaceMenu = NSMenu(title: "Workspace")
@@ -113,7 +99,6 @@ enum MainMenuBuilder {
         switcher.keyEquivalentModifierMask = [.command, .shift]
         workspaceMenu.addItem(switcher)
 
-        // Window
         let windowItem = NSMenuItem()
         mainMenu.addItem(windowItem)
         let windowMenu = NSMenu(title: "Window")

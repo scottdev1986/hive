@@ -1,0 +1,8 @@
+{
+  "result": "failed",
+  "vendor": "kimi",
+  "startedAt": "2026-08-02T14:19:10.725Z",
+  "completedAt": "2026-08-02T14:19:11.943Z",
+  "error": "hive_spawn: [\n  {\n    \"type\": \"text\",\n    \"text\": \"Cannot spawn maya: every candidate of the simple_coding route was refused:\\n  kimi/kimi-code/k3 — resolution: kimi's model catalog is unreadable\\nEnable a model or edit the route in the Model Control Center.\"\n  }\n]",
+  "agent": null
+}

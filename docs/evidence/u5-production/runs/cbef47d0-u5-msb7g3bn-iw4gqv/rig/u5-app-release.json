@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "viewerPid": 65327,
+  "executablePath": "/private/tmp/u5-app-cbe/extracted/HiveWorkspace.app/Contents/MacOS/HiveWorkspace",
+  "launchArguments": [
+    "--workspace-shell-live",
+    "--port",
+    "56177",
+    "--instance-home",
+    "/private/tmp/hvqa-l",
+    "--hive",
+    "/private/tmp/hvqa-l/artifacts/hive-bin",
+    "--project",
+    "/private/tmp/u5p-g",
+    "--instance-id",
+    "fba75ed1ad",
+    "--feed",
+    "/private/tmp/hvqa-l/artifacts/u5-workspace-feed-bridge"
+  ],
+  "launchedAt": "2026-08-02T03:05:45Z",
+  "preKillProcessReadback": "65327 /private/tmp/u5-app-cbe/extracted/HiveWorkspace.app/Contents/MacOS/HiveWorkspace --workspace-shell-live --port 56177 --instance-home /private/tmp/hvqa-l --hive /private/tmp/hvqa-l/artifacts/hive-bin --project /private/tmp/u5p-g --instance-id fba75ed1ad --feed /private/tmp/hvqa-l/artifacts/u5-workspace-feed-bridge\nexecutableSha256=a155ea8f2e84ec60d6ac15c6c4a8b70a0a96530bdf43140e04d7711d3a7eee2e\nrecordedDirectChildren:\n65543 65327 bun run /Users/scottkellar/Projects/hive/.hive/worktrees/anna/qa/u5-workspace-feed-bridge.ts --port 56177 --instance-id fba75ed1ad --workspace-session-id workspace-shell-8D1490BC-17EA-41AB-969E-EFB70F68562B\n66289 65327 (bun)",
+  "sigkillIssuedAt": "2026-08-02T03:06:36Z",
+  "waitStatus": "137",
+  "postKillState": "absent",
+  "postKillProbe": "ps -p 65327 -o pid=: exit=1 stdout=\"\" stderr=\"\"; recordedDirectChildren=65543,66289; allAbsent=true",
+  "screenshots": [
+    "/private/tmp/hvqa-l/artifacts/u5-terminal-workbench-live/u5-msb7g3bn-iw4gqv/workspace-final-codex.png",
+    "/private/tmp/hvqa-l/artifacts/u5-terminal-workbench-live/u5-msb7g3bn-iw4gqv/workspace-final-opencode.png",
+    "/private/tmp/hvqa-l/artifacts/u5-terminal-workbench-live/u5-msb7g3bn-iw4gqv/workspace-final-grok.png",
+    "/private/tmp/hvqa-l/artifacts/u5-terminal-workbench-live/u5-msb7g3bn-iw4gqv/workspace-final-kimi.png",
+    "/private/tmp/hvqa-l/artifacts/u5-terminal-workbench-live/u5-msb7g3bn-iw4gqv/workspace-final-claude.png"
+  ]
+}

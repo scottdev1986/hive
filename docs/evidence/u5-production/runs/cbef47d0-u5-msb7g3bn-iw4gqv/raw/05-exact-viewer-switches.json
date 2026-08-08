@@ -1,0 +1,426 @@
+{
+  "schemaVersion": 1,
+  "logicalViewerId": "u5-workbench-surface-u5-msb7g3bn-iw4gqv",
+  "connectionPolicy": "one locator-fixed connection at a time",
+  "switches": [
+    {
+      "ordinal": 1,
+      "viewerId": "u5-workbench-surface-u5-msb7g3bn-iw4gqv",
+      "fromLocator": null,
+      "toLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "499f50f6-446a-42e9-84c0-95eea8192ee9"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-3b84-794e-859a-a2980d3b6521",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "grant": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "499f50f6-446a-42e9-84c0-95eea8192ee9"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-3b84-794e-859a-a2980d3b6521",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1",
+        "expiresAt": "2026-08-02T02:53:24.069Z",
+        "checkpointSeq": "0",
+        "outputSeq": "0",
+        "operations": [
+          "view"
+        ]
+      },
+      "auxiliaryReadback": {
+        "state": "observed-complete",
+        "completeness": "complete",
+        "nonEmptyScreen": true,
+        "outputThrough": "6420",
+        "screenSha256": "5b4b9a0c1cd54f918965d49781a9ae0b2b2c7a9c87c1bdeea04e891abae3a6a8",
+        "screen": "│                                             │ Tips for getting started       │\n│             Welcome back Scott!             │ Run /init to create a CLAUDE.… │\n│                                             │ ────────────────────────────── │\n│                   ▐▛███▜▌                   │ What's new                     │\n│                  ▝▜█████▛▘                  │ Bug fixes and reliability imp… │\n│                    ▘▘ ▝▝                    │ Added Claude Opus 5 (`claude-… │\n│                                             │ Added `sandbox.network.strict… │\n│       Haiku 4.5 · Claude Max · Scott        │ /release-notes for more        │\n│   /private/tmp/u5p-g/.hive/worktrees/maya   │                                │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n\n❯ Begin the assigned task.\n\n⏺ I'm ready. Waiting quietly for live terminal proof or further instruction from\n  queen.\n\n✻ Baked for 6s\n\n────────────────────────────────────────────────────────────────────────────────\n❯\n────────────────────────────────────────────────────────────────────────────────\n  🐝  maya · 5h 14% · 7d 18%\n  ⏸ manual mode on · ← 1 agent"
+      },
+      "detachedAt": "2026-08-02T02:52:54.202Z",
+      "postDetach": {
+        "agentId": "499f50f6-446a-42e9-84c0-95eea8192ee9",
+        "status": "idle",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "499f50f6-446a-42e9-84c0-95eea8192ee9"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-3b84-794e-859a-a2980d3b6521",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "captureSha256": "1089397f733a0deefca80b23d711ebb2b4a5afd6c88070b30f6f64673fe103bd",
+        "composer": {
+          "profile": "claude",
+          "present": true,
+          "nonempty": false,
+          "stable": true,
+          "userEditSinceEmpty": false,
+          "userOperationInFlight": false,
+          "claim": false,
+          "invariant": "ok"
+        },
+        "stableComposerObserved": true
+      }
+    },
+    {
+      "ordinal": 2,
+      "viewerId": "u5-workbench-surface-u5-msb7g3bn-iw4gqv",
+      "fromLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "499f50f6-446a-42e9-84c0-95eea8192ee9"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-3b84-794e-859a-a2980d3b6521",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "toLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "4cdbcd39-ca8d-4bc4-8251-cce38ceccb58"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-453a-7585-b8a5-c1ee2d2cb3e0",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "grant": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "4cdbcd39-ca8d-4bc4-8251-cce38ceccb58"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-453a-7585-b8a5-c1ee2d2cb3e0",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1",
+        "expiresAt": "2026-08-02T02:53:24.342Z",
+        "checkpointSeq": "0",
+        "outputSeq": "0",
+        "operations": [
+          "view"
+        ]
+      },
+      "auxiliaryReadback": {
+        "state": "observed-complete",
+        "completeness": "complete",
+        "nonEmptyScreen": true,
+        "outputThrough": "31512",
+        "screenSha256": "d29e16f81fad0859502049f9c5c291b65482d319519d9378b5fb8f131f723c2e",
+        "screen": "\n⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without\n\n╭────────────────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.146.0)                             │\n│                                                        │\n│ model:     gpt-5.3-codex-spark high   /model to change │\n│ directory: /private/tmp/u5p-g/.hive/worktrees/david    │\n╰────────────────────────────────────────────────────────╯\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n\n› Begin the assigned task.\n\n\n• Received. I’m entering the assigned Hive work as read-only and will not call\n  tools or modify files. I’ll wait quietly for live terminal proof from queen\n  and continue only on explicit instruction.\n\n\n› Improve documentation in @filename\n\n  gpt-5.3-codex-spark high · /private/tmp/u5p-g/.hive/worktrees/davidq"
+      },
+      "detachedAt": "2026-08-02T02:52:54.470Z",
+      "postDetach": {
+        "agentId": "4cdbcd39-ca8d-4bc4-8251-cce38ceccb58",
+        "status": "idle",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "4cdbcd39-ca8d-4bc4-8251-cce38ceccb58"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-453a-7585-b8a5-c1ee2d2cb3e0",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "captureSha256": "7a7cb50014ad9fcbb056483e5b557197f6415b5165c772ba49df58c639c02bc3",
+        "composer": {
+          "profile": "codex",
+          "present": true,
+          "nonempty": false,
+          "stable": true,
+          "userEditSinceEmpty": false,
+          "userOperationInFlight": false,
+          "claim": false,
+          "invariant": "ok"
+        },
+        "stableComposerObserved": true
+      }
+    },
+    {
+      "ordinal": 3,
+      "viewerId": "u5-workbench-surface-u5-msb7g3bn-iw4gqv",
+      "fromLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "4cdbcd39-ca8d-4bc4-8251-cce38ceccb58"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-453a-7585-b8a5-c1ee2d2cb3e0",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "toLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "614ee96c-f084-4dff-8d9e-add50cd0d7ad"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-4eb9-77da-a026-0b22755bd36b",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "grant": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "614ee96c-f084-4dff-8d9e-add50cd0d7ad"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-4eb9-77da-a026-0b22755bd36b",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1",
+        "expiresAt": "2026-08-02T02:53:24.614Z",
+        "checkpointSeq": "0",
+        "outputSeq": "0",
+        "operations": [
+          "view"
+        ]
+      },
+      "auxiliaryReadback": {
+        "state": "observed-complete",
+        "completeness": "complete",
+        "nonEmptyScreen": true,
+        "outputThrough": "56243",
+        "screenSha256": "904d143e6272b667a0f55f198192ee32ad847badf0d7efb4b4f2fe8f938ee599",
+        "screen": "\n  ┃\n  ┃  Begin the assigned task.\n  ┃\n\n     + Thought: 3.1s\n\n     I understand my assignment: this is a live-terminal proof exercise. I\n     will wait quietly, not call tools, not modify files, and not report\n     completion. I'll hold this session open until queen stops it.\n\n     ▣  Hive · DeepSeek V4 Flash Free (New) · 6.6s\n\n\n\n\n\n  ┃\n  ┃\n  ┃\n  ┃  Hive · DeepSeek V4 Flash Free (New) OpenCode Zen\n  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n   /private/tmp/u5p-g/.hive/worktrees/sam         27.6K (14%)  ctrl+p commands"
+      },
+      "detachedAt": "2026-08-02T02:52:54.740Z",
+      "postDetach": {
+        "agentId": "614ee96c-f084-4dff-8d9e-add50cd0d7ad",
+        "status": "idle",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "614ee96c-f084-4dff-8d9e-add50cd0d7ad"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-4eb9-77da-a026-0b22755bd36b",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "captureSha256": "88f52e0469300731cdc73af593b5afd4df1938ec1a0e800ace69ea63a078d5d9",
+        "composer": {
+          "profile": "opencode",
+          "present": true,
+          "nonempty": false,
+          "stable": true,
+          "userEditSinceEmpty": false,
+          "userOperationInFlight": false,
+          "claim": false,
+          "invariant": "ok"
+        },
+        "stableComposerObserved": true
+      }
+    },
+    {
+      "ordinal": 4,
+      "viewerId": "u5-workbench-surface-u5-msb7g3bn-iw4gqv",
+      "fromLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "614ee96c-f084-4dff-8d9e-add50cd0d7ad"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-4eb9-77da-a026-0b22755bd36b",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "toLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "4eed596b-74b7-4a5c-9970-f6779e5dcf99"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-681d-7c04-861d-70e161b06ec2",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "grant": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "4eed596b-74b7-4a5c-9970-f6779e5dcf99"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-681d-7c04-861d-70e161b06ec2",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1",
+        "expiresAt": "2026-08-02T02:53:24.880Z",
+        "checkpointSeq": "0",
+        "outputSeq": "0",
+        "operations": [
+          "view"
+        ]
+      },
+      "auxiliaryReadback": {
+        "state": "observed-complete",
+        "completeness": "complete",
+        "nonEmptyScreen": true,
+        "outputThrough": "38257",
+        "screenSha256": "251f1e6c8af9670c7169675e75a07a1c99448aa33ca3641e52264f148924a2e1",
+        "screen": "\n   hive/john-hive-qa-u5-workbench-u5-msb7g3 worktree /private/tmp… 15K / 500K\n\n\n                                                                               █\n     ❯ Begin the assigned task.                                     10:52 PM   █\n                                                                               █\n                                                                               █\n     ◆ user_prompt_submit  [hooks: 1]                                          █\n     ◆ Thought for 2.6s                                                        █\n                                                                               █\n     john ready — waiting quietly for live terminal proof. No       10:52 PM   █\n     tools, no file changes, no completion report until queen                  █\n     stops the session.                                                        █\n                                                                               █\n     Worked for 5.1s                                        stop  [hooks: 1]   █\n                                                                               █\n\n  ╭──────────────────────────────────────────────────────────────────────────╮\n  │ ❯                                                                        │\n  ╰─────────────── Weekly limit left: 1% · Grok 4.5 (high) · always-approve ─╯\n\n  Shift+Tab:mode  │  Ctrl+x:shortcuts"
+      },
+      "detachedAt": "2026-08-02T02:52:55.158Z",
+      "postDetach": {
+        "agentId": "4eed596b-74b7-4a5c-9970-f6779e5dcf99",
+        "status": "idle",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "4eed596b-74b7-4a5c-9970-f6779e5dcf99"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-681d-7c04-861d-70e161b06ec2",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "captureSha256": "4f2663f6644f18afde8a305f570d2e5bc05fd4dfb00bf9b68960f7c3154ab1dc",
+        "composer": {
+          "profile": "grok",
+          "present": true,
+          "nonempty": false,
+          "stable": true,
+          "userEditSinceEmpty": false,
+          "userOperationInFlight": false,
+          "claim": false,
+          "invariant": "ok"
+        },
+        "stableComposerObserved": true
+      }
+    },
+    {
+      "ordinal": 5,
+      "viewerId": "u5-workbench-surface-u5-msb7g3bn-iw4gqv",
+      "fromLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "4eed596b-74b7-4a5c-9970-f6779e5dcf99"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-681d-7c04-861d-70e161b06ec2",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "toLocator": {
+        "schemaVersion": 1,
+        "instanceId": "fba75ed1ad",
+        "subject": {
+          "kind": "agent",
+          "agentId": "9819faed-b5f4-48f9-9721-54632ecdca70"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc063-7610-7889-bd28-8c2333185d64",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "grant": {
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "9819faed-b5f4-48f9-9721-54632ecdca70"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-7610-7889-bd28-8c2333185d64",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1",
+        "expiresAt": "2026-08-02T02:53:25.308Z",
+        "checkpointSeq": "0",
+        "outputSeq": "0",
+        "operations": [
+          "view"
+        ]
+      },
+      "auxiliaryReadback": {
+        "state": "observed-complete",
+        "completeness": "complete",
+        "nonEmptyScreen": true,
+        "outputThrough": "5090",
+        "screenSha256": "f077e9cb211f67916a59d4d12b3445160c5467cc3adb4745e92f2526acf6095c",
+        "screen": "\n ╭────────────────────────────────────────────────────────────────────────────╮\n │                                                                            │\n │  ▐█▛█▛█▌  Welcome to Kimi Code!                                            │\n │  ▐█████▌  Send /help for help information.                                 │\n │                                                                            │\n │  Directory: /private/tmp/u5p-g/.hive/worktrees/sarah                       │\n │  Session:   session_7a9e6f75-23f9-4236-bace-d1d98296aa40                   │\n │  Model:     K3                                                             │\n │  Version:   0.31.1                                                         │\n │  MCP:       1 connected                                                    │\n │                                                                            │\n ╰────────────────────────────────────────────────────────────────────────────╯\n\n ✦ Use Kimi K3 with High thinking effort - for the best balance between token\n                                         spend and capability\n   Run /model to switch to K3 and set thinking effort to High\n\n   MCP server \"hive\" connected · 46 tools (http)\n\n ╭────────────────────────────────────────────────────────────────────────────╮\n │ >                                                                          │\n ╰────────────────────────────────────────────────────────────────────────────╯\n K3 thinking: high  …/.hive/worktrees/sarah  hive/sarah-hive-qa-u5-workbench-u…\n                                                             context: 0% (0/1M)"
+      },
+      "detachedAt": "2026-08-02T02:52:55.437Z",
+      "postDetach": {
+        "agentId": "9819faed-b5f4-48f9-9721-54632ecdca70",
+        "status": "spawning",
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "fba75ed1ad",
+          "subject": {
+            "kind": "agent",
+            "agentId": "9819faed-b5f4-48f9-9721-54632ecdca70"
+          },
+          "generation": 1,
+          "sessionId": "ses_019fc063-7610-7889-bd28-8c2333185d64",
+          "hostKind": "sessiond",
+          "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+        },
+        "captureSha256": "7a191b8962ba1c7960d9a1446180888f2339ad954b9fa06c893c662ec7a125c7",
+        "composer": {
+          "profile": "kimi",
+          "present": true,
+          "nonempty": false,
+          "stable": true,
+          "userEditSinceEmpty": false,
+          "userOperationInFlight": false,
+          "claim": false,
+          "invariant": "ok"
+        },
+        "stableComposerObserved": true
+      }
+    }
+  ]
+}

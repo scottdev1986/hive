@@ -1,0 +1,13 @@
+{
+  "transactionId": "qa-codex-user-edit-1785676402183",
+  "stage": "written-to-terminal",
+  "byteRange": {
+    "start": "0",
+    "endExclusive": "34"
+  },
+  "orderedAt": "4",
+  "availableCreditBytes": 131072,
+  "consumedByProcess": "not-claimed",
+  "completeness": "complete",
+  "diagnostic": null
+}

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "runId": "u5-msb6rwsf-onqkn0",
+  "sourceSha": "a38d9b92e7e8ae4657d2b141011b1db9b6948be0",
+  "provider": "opencode",
+  "outcome": "pending-attestation",
+  "attemptOrdinal": 1,
+  "attemptedAt": "2026-08-02T02:33:52.897Z",
+  "retryAttempted": false,
+  "phase": "stable-composer",
+  "spawnRequested": true,
+  "admissionId": "fb81380f-0042-483a-aa91-28a04ced68f4",
+  "name": "sam",
+  "configuredModel": "opencode/deepseek-v4-flash-free",
+  "status": "stuck",
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "87f653c084",
+    "subject": {
+      "kind": "agent",
+      "agentId": "fb81380f-0042-483a-aa91-28a04ced68f4"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc052-194e-7032-b3c6-7fb273f3826b",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "composer": {
+    "profile": "opencode",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  },
+  "captureSha256": "6002b17d296aa47acf299bdfa9b9a866daf30b815c97282a29c0b2415332294e"
+}

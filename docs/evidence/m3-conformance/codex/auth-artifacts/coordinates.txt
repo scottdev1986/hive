@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-da
+home=/private/tmp/hvqa-da
+default_home=/private/tmp/hvqa-da/default
+port=52381
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-auth.FC2eG9/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen-codex/source
+hive_bin=/private/tmp/hvqa-da/artifacts/hive-bin

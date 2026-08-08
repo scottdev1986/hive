@@ -1,14 +1,7 @@
 import { join } from "node:path";
 import {
-  ClaudeCapabilityProbe,
-  ClaudeStdioCapabilityTransport,
-} from "../../daemon/capability-discovery";
-import { shellJoin } from "../../daemon/session-host/shell-session";
-import {
-  buildClaudeResumeCommand,
   buildClaudeSpawnCommand,
   type ClaudeSpawnOptions,
-  resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "./claude-cli";
@@ -16,17 +9,7 @@ import type { AgentAdapter } from "./provider-adapter";
 
 export const claudeAgentAdapter: AgentAdapter = {
   id: "claude",
-  // Hooks source four normalized kinds — run-started (SessionStart),
-  // turn-started (UserPromptSubmit), turn-idle (Stop, and Notification's
-  // idle_prompt) and tool-finished (PostToolUse) — plus approval-waiting from
-  // Notification's permission_prompt. Every registered name is checked against
-  // the event list claude 2.1.220 itself dispatches (claude.test.ts).
-  // NOT sourced from hooks, and the gap is deliberate rather than an omission:
-  // run-ended, because measured process exit is the stronger evidence;
-  // tool-started, turn-failed, compacted and interrupted, because the vendor
-  // events exist (PreToolUse, StopFailure, PreCompact, PostToolBatch) but no
-  // reader consumes them. Registering one is a single line if a consumer
-  // appears.
+  // Hooks source four normalized kinds — run-started (SessionStart), turn-started (UserPromptSubmit), turn-idle (Stop, and Notification's idle_prompt) and tool-finished (PostToolUse) — plus approval-waiting from Notification's permission_prompt. Every registered name is checked against the event list claude 2.1.220 itself dispatches (claude.test.ts). NOT sourced from hooks, and the gap is deliberate rather than an omission: run-ended, because measured process exit is the stronger evidence; tool-started, turn-failed, compacted and interrupted, because the vendor events exist (PreToolUse, StopFailure, PreCompact, PostToolBatch) but no reader consumes them. Registering one is a single line if a consumer appears.
   communication: {
     provider: "claude",
     eventSource: "hooks",
@@ -38,7 +21,7 @@ export const claudeAgentAdapter: AgentAdapter = {
     conversationResume: true,
   },
   prepareWorktree: seedClaudeWorktreeTrust,
-  async prepareSpawn(context) {
+  async prepareRuntime(context) {
     await writeClaudeAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,
       name: context.name,
@@ -73,30 +56,7 @@ export const claudeAgentAdapter: AgentAdapter = {
         ? {}
         : { appendSystemPromptFile: context.instructionPath }),
     };
-    const argv =
-      context.resumeSessionId === undefined
-        ? buildClaudeSpawnCommand(options)
-        : buildClaudeResumeCommand(options, context.resumeSessionId);
-    return {
-      argv,
-      command: shellJoin(
-        context.kickoff === undefined ? argv : [...argv, context.kickoff],
-      ),
-    };
+    const argv = buildClaudeSpawnCommand(options);
+    return { argv };
   },
-  discover: (executable = resolveWorkingClaudeExecutable().path) =>
-    new ClaudeCapabilityProbe(
-      new ClaudeStdioCapabilityTransport(
-        [
-          executable,
-          "-p",
-          "--input-format",
-          "stream-json",
-          "--output-format",
-          "stream-json",
-          "--verbose",
-        ],
-        [executable],
-      ),
-    ).read(),
 };

@@ -39,6 +39,6 @@ This ADR is the newer binding terminal decision. Earlier exploratory documentati
 
 - Keep tmux and SwiftTerm as the permanent foundation: rejected because session lifetime, process evidence, input authority, and rendering remain split across legacy substrates.
 - Embed or fork the Ghostty application: rejected because Hive owns its workspace, settings, lifecycle, status, hierarchy, and visual identity.
-- Let `libghostty` spawn and own the provider PTY: rejected because all human and automated input must enter the single sessiond arbiter and canonical VT state must survive renderer replacement.
+- Let `libghostty` spawn and own the provider PTY: rejected because all user and automated input must enter the single sessiond arbiter and canonical VT state must survive renderer replacement.
 - Build a Hive transcript renderer: rejected because the real vendor VT stream and TUI semantics are binding invariant I1.
 - Make the terminal transition depend on hierarchy or Split Horizon: rejected because those later designs consume this foundation rather than define it.

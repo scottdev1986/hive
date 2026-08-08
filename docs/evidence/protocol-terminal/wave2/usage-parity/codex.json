@@ -1,0 +1,142 @@
+{
+  "vendor": "codex",
+  "capturedAt": "2026-08-02T21:44:59.156Z",
+  "vendorSessionId": "019fc46f-decb-7731-90ef-934477e99b47",
+  "prompt": "Reply with exactly PONG and nothing else. Do not use tools.",
+  "rawUsageFrames": [
+    {
+      "method": "thread/tokenUsage/updated",
+      "params": {
+        "threadId": "019fc46f-decb-7731-90ef-934477e99b47",
+        "turnId": "019fc46f-df02-7250-ac00-0b0eeef0bbbb",
+        "tokenUsage": {
+          "total": {
+            "totalTokens": 15155,
+            "inputTokens": 15149,
+            "cachedInputTokens": 11008,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 6,
+            "reasoningOutputTokens": 0
+          },
+          "last": {
+            "totalTokens": 15155,
+            "inputTokens": 15149,
+            "cachedInputTokens": 11008,
+            "cacheWriteInputTokens": 0,
+            "outputTokens": 6,
+            "reasoningOutputTokens": 0
+          },
+          "modelContextWindow": 258400
+        }
+      },
+      "emittedAtMs": 1785707097526
+    }
+  ],
+  "normalizedUsageEvents": [
+    {
+      "kind": "usage-updated",
+      "turnId": "019fc46f-df02-7250-ac00-0b0eeef0bbbb",
+      "contextPercent": 5.864938080495357,
+      "inputTokens": 15149,
+      "outputTokens": 6,
+      "cachedInputTokens": 11008,
+      "cacheCreationInputTokens": 0,
+      "reasoningTokens": 0,
+      "contextWindow": 258400,
+      "usageKey": "cumulative",
+      "cumulative": true,
+      "source": "codex-app-server",
+      "observedAt": "2026-08-02T21:44:57.526Z",
+      "sequence": 32,
+      "occurredAt": "2026-08-02T21:44:57.526Z"
+    }
+  ],
+  "toolCalls": [],
+  "assistantMessages": 2,
+  "liveModel": [
+    "gpt-5.6-sol"
+  ],
+  "contextWindow": [
+    258400
+  ],
+  "attributedEvents": [
+    {
+      "key": "cumulative",
+      "counts": {
+        "inputTokens": 15149,
+        "cachedInputTokens": 11008,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 6,
+        "reasoningTokens": 0
+      },
+      "observedAt": "2026-08-02T21:44:57.526Z",
+      "source": "codex-app-server",
+      "cumulative": true
+    }
+  ],
+  "protocolTotals": {
+    "inputTokens": 15149,
+    "cachedInputTokens": 11008,
+    "cacheCreationInputTokens": 0,
+    "outputTokens": 6,
+    "reasoningTokens": 0,
+    "totalTokens": 15155
+  },
+  "protocolTotalsAfterReplay": {
+    "inputTokens": 15149,
+    "cachedInputTokens": 11008,
+    "cacheCreationInputTokens": 0,
+    "outputTokens": 6,
+    "reasoningTokens": 0,
+    "totalTokens": 15155
+  },
+  "artifactCollectorTotals": {
+    "inputTokens": 15149,
+    "cachedInputTokens": 11008,
+    "cacheCreationInputTokens": null,
+    "outputTokens": 6,
+    "reasoningTokens": 0,
+    "totalTokens": 15155
+  },
+  "protocolProvenance": {
+    "source": "codex-app-server",
+    "observedAt": "2026-08-02T21:44:57.526Z"
+  },
+  "protocolProvenanceAfterReplay": {
+    "source": "codex-app-server",
+    "observedAt": "2026-08-02T21:44:57.526Z"
+  },
+  "artifactCollectorProvenance": {
+    "source": "codex-rollout",
+    "observedAt": "2026-08-02T21:44:57.525Z"
+  },
+  "factByFact": {
+    "inputTokens": "equal",
+    "cachedInputTokens": "equal",
+    "cacheCreationInputTokens": "gained: collector could not see it",
+    "outputTokens": "equal",
+    "reasoningTokens": "equal",
+    "totalTokens": "equal"
+  },
+  "scannerFacts": {
+    "model": null,
+    "contextTokens": null,
+    "contextPct": 6
+  },
+  "protocolFacts": {
+    "model": "gpt-5.6-sol",
+    "contextWindow": 258400,
+    "contextPct": 5.864938080495357,
+    "contextTokens": 15155
+  },
+  "factByFactBeyondCounts": {
+    "liveModel": "gained: scanner could not see it",
+    "contextTokens": "gained: scanner could not see it",
+    "contextPct": "equal"
+  },
+  "contextKeysInRawFrames": [
+    "modelContextWindow"
+  ],
+  "absentOverProtocol": [],
+  "verdict": "lossless"
+}

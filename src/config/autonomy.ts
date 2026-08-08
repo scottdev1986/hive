@@ -1,19 +1,8 @@
-/**
- * Runtime autonomy control: the one agent-autonomy dial in
- * `~/.hive/config.toml`.
- *
- * The user flips agent autonomy from the Workspace's Agents menu (which runs
- * `hive autonomy <mode>`), so the change has to outlive the daemon that
- * received it. The persistence is a surgical text edit, not a re-serialize:
- * the file is the user's, and comments or keys this build does not know must
- * survive the write. The edit is proven before it is written — the new text
- * must parse back to the requested value, or nothing touches disk.
- */
-
 import { rename } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import type { HiveConfig } from "../schemas";
+import type { HiveConfig } from "../schemas/config-schema";
+import { withHiveConfigLock } from "./document-lock";
+import { hiveConfigPath } from "./load";
+import { errorMessage } from "../shared/error-message";
 
 export type Autonomy = HiveConfig["autonomy"];
 
@@ -23,19 +12,13 @@ export function isAutonomy(value: unknown): value is Autonomy {
   return AUTONOMY_VALUES.includes(value as Autonomy);
 }
 
-/** The daemon's live autonomy state: `get` is what the next spawn or resume
- * will actually use, `set` persists first and only then changes the live
- * value, so disk and memory can never silently diverge. */
+/** The daemon's live autonomy state: `get` is what the next spawn or resume will actually use, `set` persists first and only then changes the live value, so disk and memory can never silently diverge. */
 export interface AutonomyControl {
   get(): Autonomy;
   set(value: Autonomy): Promise<void>;
 }
 
-/** Replace the top-level `autonomy` key in TOML text, or insert one. Only
- * lines before the first table header are candidates — an `autonomy` inside
- * `[some.table]` is a different key. Inserting at the very top keeps the new
- * key top-level whatever follows. Throws (writing nothing) unless the result
- * provably parses back to the requested value. */
+/** Replace the top-level `autonomy` key in TOML text, or insert one. Only lines before the first table header are candidates — an `autonomy` inside `[some.table]` is a different key. Inserting at the very top keeps the new key top-level whatever follows. Throws (writing nothing) unless the result provably parses back to the requested value. */
 export function upsertAutonomy(text: string, value: Autonomy): string {
   const assignment = `autonomy = "${value}"`;
   const lines = text.split("\n");
@@ -59,9 +42,9 @@ export function upsertAutonomy(text: string, value: Autonomy): string {
     parsed = Bun.TOML.parse(result) as Record<string, unknown>;
   } catch (error) {
     throw new Error(
-      `refusing to write config: the result does not parse as TOML (${
-        error instanceof Error ? error.message : String(error)
-      })`,
+      `refusing to write config: the result does not parse as TOML (${errorMessage(
+        error,
+      )})`,
     );
   }
   if (parsed.autonomy !== value) {
@@ -74,29 +57,23 @@ export function upsertAutonomy(text: string, value: Autonomy): string {
   return result;
 }
 
-export function defaultConfigPath(): string {
-  return join(Bun.env.HIVE_HOME ?? join(homedir(), ".hive"), "config.toml");
-}
-
 let pendingPersistence: Promise<void> = Promise.resolve();
 
-/** Write the autonomy key into the user's config file, atomically: the new
- * text lands under a temp name and a rename makes it the file, so no reader
- * ever sees a half-written config. */
 export function persistAutonomy(
   value: Autonomy,
-  path = defaultConfigPath(),
+  path = hiveConfigPath(),
 ): Promise<void> {
-  // Concurrent HTTP requests must commit in call order; sharing the process's
-  // staging name without this queue can rename another request's contents.
-  const write = pendingPersistence.then(async () => {
-    const file = Bun.file(path);
-    const text = (await file.exists()) ? await file.text() : "";
-    const next = upsertAutonomy(text, value);
-    const temp = `${path}.tmp-${process.pid}`;
-    await Bun.write(temp, next);
-    await rename(temp, path);
-  });
+  // Concurrent HTTP requests must commit in call order; sharing the process's staging name without this queue can rename another request's contents. The queue orders autonomy writes against each other; the document lock excludes the OTHER features that rewrite this same file, whose edits this read-modify-write would otherwise render over and erase.
+  const write = pendingPersistence.then(() =>
+    withHiveConfigLock(path, async () => {
+      const file = Bun.file(path);
+      const text = (await file.exists()) ? await file.text() : "";
+      const next = upsertAutonomy(text, value);
+      const temp = `${path}.tmp-${process.pid}`;
+      await Bun.write(temp, next);
+      await rename(temp, path);
+    }),
+  );
   pendingPersistence = write.catch(() => undefined);
   return write;
 }

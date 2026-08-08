@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
-import { repairIdentityFromStagedVersionProbe } from "../../src/update/bootstrap";
+import { repairIdentityFromStagedVersionProbe } from "../../src/update-service/bootstrap";
 
 describe("legacy updater bootstrap", () => {
   test("a staged version probe repairs the current project", () => {

@@ -1,0 +1,17 @@
+{
+  "requestId": "req_019fc29a-d37d-7000-a18f-1052ab7dd0e5",
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "f4b6c72bae",
+    "subject": {
+      "kind": "root"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc29a-d37d-7000-a18f-1052ab7dd0e5",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "state": "running",
+  "exitCode": null,
+  "diagnostic": null
+}

@@ -19,7 +19,7 @@ import {
   skillReaders,
   unaddressedSkills,
 } from "../../src/adapters/skills";
-import { CAPABILITY_PROVIDERS } from "../../src/schemas";
+import { CAPABILITY_PROVIDERS } from "../../src/schemas/capability";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 import { required } from "../required";
 
@@ -362,13 +362,13 @@ describe("skill provisioning", () => {
     }
   });
 
-  test("a human's edited copy of a foreign skill is theirs, and survives", async () => {
+  test("a user's edited copy of a foreign skill is theirs, and survives", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-skills-foreign-edited-"));
     tempRoots.push(root);
     const worktree = join(root, "worktree");
     const native = join(worktree, ".agents", "skills");
 
-    // Same name Hive ships for another vendor, but the bytes are the human's.
+    // Same name Hive ships for another vendor, but the bytes are the user's.
     // Hive removes only its own copy; it does not get to delete someone's work
     // because the name collides with one of ours.
     const mine = "# mine, not Hive's\n";

@@ -1,8 +1,8 @@
 const std = @import("std");
+const generated = @import("session_protocol_generated");
 const pty_host = @import("pty_host");
 
 pub const schema_version: u8 = 1;
-pub const socket_relative_path = "host.sock";
 pub const record_relative_path = "record.json";
 pub const control_relative_path = "control.cap";
 pub const runtime_relative_path = "neutral";
@@ -18,26 +18,18 @@ pub const SessionRef = struct {
     }
 };
 
-pub const ProcessIdentity = struct {
-    processId: i32,
-    startToken: []const u8,
-};
+pub const ProcessIdentity = generated.TerminalHostProcessIdentity;
 
-pub const WindowSize = struct {
-    columns: u32,
-    rows: u32,
-    widthPixels: u32,
-    heightPixels: u32,
+pub const WindowSize = generated.TerminalHostWindowSize;
 
-    pub fn ptyGeometry(self: WindowSize) pty_host.Geometry {
-        return .{
-            .columns = self.columns,
-            .rows = self.rows,
-            .width_px = self.widthPixels,
-            .height_px = self.heightPixels,
-        };
-    }
-};
+pub fn ptyGeometry(window: WindowSize) pty_host.Geometry {
+    return .{
+        .columns = window.columns,
+        .rows = window.rows,
+        .width_px = window.widthPixels,
+        .height_px = window.heightPixels,
+    };
+}
 
 pub const TerminalProfile = struct {
     inputMode: enum { canonical, literal },
@@ -97,7 +89,6 @@ pub const CreateRequest = struct {
 pub const LaunchSpec = struct {
     argv: []const []const u8,
     cwd: []const u8,
-    /// Complete replacement environment in `name=value` form.
     envp: []const []const u8,
     terminalProfile: TerminalProfile,
     initialWindow: WindowSize,
@@ -112,31 +103,9 @@ pub const HostLimits = struct {
     outputRetentionBytes: usize,
 };
 
-pub const JobControlEvidence = struct {
-    sessionLeader: bool,
-    controllingTerminal: bool,
-    standardStreamsShareTerminal: bool,
-    childSessionId: i32,
-    childProcessGroupId: i32,
-    foregroundProcessGroupId: i32,
-    terminalIdentity: []const u8,
-    initialProfileAppliedBeforeExec: bool,
-    initialWindowAppliedBeforeExec: bool,
-    completeness: enum { complete, partial, unavailable, unknown },
-};
-
-pub const ExitStatus = struct {
-    code: ?i32,
-    signal: ?i32,
-    observedAt: []const u8,
-};
-
-pub const ReapEvidence = struct {
-    authority: enum { @"direct-parent", @"durable-parent-record", unavailable },
-    reaped: bool,
-    status: ?ExitStatus,
-    completeness: enum { complete, partial, unavailable, unknown },
-};
+pub const JobControlEvidence = generated.TerminalHostJobControlEvidence;
+pub const ExitStatus = generated.TerminalHostExitStatus;
+pub const ReapEvidence = generated.TerminalHostReapEvidence;
 
 pub const OsCode = union(enum) {
     string: []const u8,
@@ -171,8 +140,6 @@ pub const CreateResult = struct {
     limits: HostLimits,
 };
 
-/// Operation-facing host abstraction. The production implementation belongs
-/// above the persistence/socket lifecycle in this module.
 pub const Host = struct {
     context: *anyopaque,
     createFn: *const fn (*anyopaque, CreateRequest) anyerror!CreateResult,

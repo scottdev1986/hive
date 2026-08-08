@@ -1,0 +1,3616 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-4-5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.04,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-5",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-9",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.06,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.045,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3-fast",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-mini",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-heavy",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.03,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-mini",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2-instruct",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k1",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-lite",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-vision",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.025,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.2",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.035,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-4-5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.04,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-5",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-9",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.06,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.045,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3-fast",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-mini",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-heavy",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.03,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-mini",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2-instruct",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k1",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-lite",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-vision",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.025,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.2",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.035,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-4-5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.04,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-5",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-9",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.06,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.045,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3-fast",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-mini",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-heavy",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.03,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-mini",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2-instruct",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k1",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-lite",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-vision",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.025,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.2",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.035,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "6-competing"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-4-5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.04,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-5",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-9",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.06,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.045,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3-fast",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-mini",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-heavy",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.03,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-mini",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2-instruct",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k1",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-lite",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-vision",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.025,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.2",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.035,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "6",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "6-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 1,
+      "category": "complex_coding",
+      "policyRevision": 6,
+      "scope": "complex_coding",
+      "mode": "user-weighted",
+      "routeDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "candidates": [
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-fable-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-4-5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.04,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-5",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-sonnet-4-8",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-opus-4-9",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "claude",
+            "model": "claude-haiku-5",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.06,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "codex",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.045,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3-fast",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-1-mini",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 25,
+          "configuredShare": 0.025,
+          "liveShare": 0.023,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-3",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "grok",
+            "model": "grok-4-heavy",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.03,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-fast",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-mini",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k2-instruct",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 35,
+          "configuredShare": 0.035,
+          "liveShare": 0.032,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k1",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-lite",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 60
+          },
+          "effectiveWeight": 60,
+          "configuredShare": 0.06,
+          "liveShare": 0.054,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "kimi",
+            "model": "kimi-k3-vision",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 25
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.025,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-terra-fast",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 15
+          },
+          "effectiveWeight": 15,
+          "configuredShare": 0.015,
+          "liveShare": 0.013,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.5",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 40
+          },
+          "effectiveWeight": 40,
+          "configuredShare": 0.04,
+          "liveShare": 0.036,
+          "eligible": true,
+          "effectiveEffort": "medium",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.4",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 30
+          },
+          "effectiveWeight": 30,
+          "configuredShare": 0.03,
+          "liveShare": 0.027,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-sol",
+            "effort": {
+              "mode": "exact",
+              "value": "high"
+            },
+            "weight": 20
+          },
+          "effectiveWeight": 20,
+          "configuredShare": 0.02,
+          "liveShare": 0.018,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.3",
+            "effort": {
+              "mode": "hive-decides"
+            },
+            "weight": 10
+          },
+          "effectiveWeight": 10,
+          "configuredShare": 0.01,
+          "liveShare": 0.009,
+          "eligible": true,
+          "effectiveEffort": "high",
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-nova",
+            "effort": {
+              "mode": "provider-controlled"
+            },
+            "weight": 45
+          },
+          "effectiveWeight": 45,
+          "configuredShare": 0.045,
+          "liveShare": 0.041,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.2",
+            "effort": {
+              "mode": "exact",
+              "value": "medium"
+            },
+            "weight": 35
+          },
+          "effectiveWeight": 0,
+          "configuredShare": 0.035,
+          "liveShare": 0.0,
+          "eligible": false,
+          "effectiveEffort": "high",
+          "refusal": {
+            "gate": "pool-excluded",
+            "detail": "the candidate's quota pool is drained",
+            "retryAt": "2026-07-30T21:00:00.000Z"
+          }
+        },
+        {
+          "candidate": {
+            "provider": "opencode",
+            "model": "gpt-5.6-luna",
+            "effort": {
+              "mode": "none"
+            },
+            "weight": 5
+          },
+          "effectiveWeight": 5,
+          "configuredShare": 0.005,
+          "liveShare": 0.005,
+          "eligible": true,
+          "effectiveEffort": null,
+          "refusal": null
+        }
+      ],
+      "refusal": null,
+      "balance": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "current": 0.25
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "current": -0.25
+        }
+      ],
+      "inspectedAt": "2026-07-30T20:00:00.000Z"
+    }
+  }
+]

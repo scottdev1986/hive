@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-or
+home=/private/tmp/hvqa-or
+default_home=/private/tmp/hvqa-or/default
+port=50309
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-run.RG7Udr/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-nina-opencode/source
+hive_bin=/private/tmp/hvqa-or/artifacts/hive-bin

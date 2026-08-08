@@ -1,20 +1,15 @@
 import Foundation
 import CoreGraphics
 
-/// Split orientation of an interior layout node.
-/// `.horizontal` places children side by side (split along a vertical line);
-/// `.vertical` stacks children (first on top).
 public enum SplitOrientation: String, Codable, Equatable {
     case horizontal
     case vertical
 }
 
-/// A binary split tree over the satellite region.
 public indirect enum LayoutNode: Equatable, Codable {
     case leaf(PaneID)
     case split(orientation: SplitOrientation, ratio: Double, first: LayoutNode, second: LayoutNode)
 
-    /// Pane IDs in deterministic depth-first (first, second) traversal order.
     public var paneIDs: [PaneID] {
         switch self {
         case .leaf(let id): return [id]
@@ -26,9 +21,6 @@ public indirect enum LayoutNode: Equatable, Codable {
         paneIDs.contains(pane)
     }
 
-    /// Removes `pane`; the sibling of the removed leaf replaces its parent split,
-    /// so exactly one split collapses and nothing else moves.
-    /// Returns nil when the tree becomes empty.
     public func removing(_ pane: PaneID) -> LayoutNode? {
         switch self {
         case .leaf(let id):
@@ -36,8 +28,7 @@ public indirect enum LayoutNode: Equatable, Codable {
         case .split(let orientation, let ratio, let first, let second):
             if case .leaf(let id) = first, id == pane { return second }
             if case .leaf(let id) = second, id == pane { return first }
-            // A split child containing the pane keeps at least its sibling
-            // after removal, so removing(_:) below can never return nil.
+            // A split child containing the pane keeps at least its sibling after removal, so removing(_:) below can never return nil.
             if first.contains(pane) {
                 return .split(orientation: orientation, ratio: ratio, first: first.removing(pane)!, second: second)
             }
@@ -48,7 +39,6 @@ public indirect enum LayoutNode: Equatable, Codable {
         }
     }
 
-    /// Replaces the leaf holding `pane` with `replacement` (used by promote-swap).
     public func replacingLeaf(_ pane: PaneID, with replacement: PaneID) -> LayoutNode {
         switch self {
         case .leaf(let id):
@@ -63,7 +53,6 @@ public indirect enum LayoutNode: Equatable, Codable {
         }
     }
 
-    /// Replaces the leaf holding `pane` with an arbitrary node (used by insertion splits).
     public func replacingLeaf(_ pane: PaneID, with node: LayoutNode) -> LayoutNode {
         switch self {
         case .leaf(let id):
@@ -79,16 +68,8 @@ public indirect enum LayoutNode: Equatable, Codable {
     }
 }
 
-/// Geometry constants for the deterministic solver.
 public struct LayoutMetrics: Equatable {
-    /// Fraction of the usable width the master pane occupies while satellites
-    /// exist. `init` clamps it to the 40–60% band and defaults to the floor — a
-    /// deliberate operator choice, because every point the master gives up is
-    /// divided among ALL the satellites at once: at sixteen agents a 58% master
-    /// leaves each satellite about eleven columns, and the queen does not need
-    /// three fifths of the window to stay readable.
     public var masterRatio: Double
-    /// Gap between panes, in points.
     public var gap: Double
 
     public init(masterRatio: Double = 0.40, gap: Double = 8) {
@@ -97,15 +78,6 @@ public struct LayoutMetrics: Equatable {
     }
 }
 
-/// The master/satellite layout for one project window.
-///
-/// Invariants:
-/// - The master pane is rendered as the left column at `metrics.masterRatio`
-///   whenever at least one satellite exists; alone it fills the bounds.
-/// - Satellites live in a binary split tree; depth-first traversal order is the
-///   deterministic pane order every layout decision is resolved against.
-/// - All mutations are pure tree operations; the same operation sequence with
-///   the same geometry always yields the same tree and the same frames.
 public struct LayoutTree: Equatable, Codable {
     public private(set) var master: PaneID?
     public private(set) var satellites: LayoutNode?
@@ -132,12 +104,6 @@ public struct LayoutTree: Equatable, Codable {
 
     public func contains(_ pane: PaneID) -> Bool { paneIDs.contains(pane) }
 
-    // MARK: Insertion
-
-    /// Inserts a pane using the least-disruptive split: the first pane becomes
-    /// master; later panes split the geometrically largest satellite leaf in
-    /// half along its longer axis, leaving every other pane's region untouched.
-    /// Ties break on traversal order, so insertion is deterministic.
     public mutating func insert(_ pane: PaneID, in bounds: CGRect) {
         precondition(!contains(pane), "pane \(pane) already in layout")
         guard master != nil else {
@@ -171,12 +137,6 @@ public struct LayoutTree: Equatable, Codable {
             orientation: orientation, ratio: 0.5, first: .leaf(target), second: .leaf(pane)))
     }
 
-    // MARK: Close
-
-    /// Removes a pane. Closing a satellite collapses only its parent split.
-    /// Closing the master pulls `preferredMaster` (falling back to the first
-    /// satellite in traversal order) out of the satellite tree into the master
-    /// slot, leaving the remaining satellite order intact.
     public mutating func close(_ pane: PaneID, preferredMaster: PaneID? = nil) {
         if pane == master {
             guard let tree = satellites else {
@@ -192,11 +152,7 @@ public struct LayoutTree: Equatable, Codable {
         satellites = satellites?.removing(pane)
     }
 
-    // MARK: Promotion
-
-    /// Atomically swaps `pane` with the current master. The pane takes the
-    /// master slot and the old master takes the pane's satellite leaf, so the
-    /// rest of the satellite order never changes.
+    /// Atomically swaps `pane` with the current master. The pane takes the master slot and the old master takes the pane's satellite leaf, so the rest of the satellite order never changes.
     public mutating func promote(_ pane: PaneID) {
         guard let currentMaster = master, pane != currentMaster else { return }
         guard let tree = satellites, tree.contains(pane) else { return }
@@ -204,11 +160,6 @@ public struct LayoutTree: Equatable, Codable {
         master = pane
     }
 
-    // MARK: Frames
-
-    /// Deterministic frames for the current tree in `bounds` (top-left origin
-    /// agnostic; caller decides coordinate flip). Same tree + same bounds
-    /// always produces identical output.
     public func frames(in bounds: CGRect) -> [PaneID: CGRect] {
         var result: [PaneID: CGRect] = [:]
         guard let master else { return result }

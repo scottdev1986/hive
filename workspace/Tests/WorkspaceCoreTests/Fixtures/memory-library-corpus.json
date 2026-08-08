@@ -1,0 +1,546 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-library-r3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-library-r3",
+      "freshness": "live",
+      "state": "ok",
+      "items": [
+        {
+          "kind": "article",
+          "key": "article\u0000repo\u0000retention-policy",
+          "scope": "repo",
+          "id": "retention-policy",
+          "title": "Retention policy",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "article-r2",
+          "source": "agent",
+          "status": "verified",
+          "verified": "2026-07-30",
+          "supersedes": [],
+          "rawRefs": [
+            "raw/memory/2026-07-30-retention-policy.md"
+          ],
+          "evidence": "fixture observation"
+        },
+        {
+          "kind": "fact",
+          "key": "fact\u0000project\u00000000000000000042",
+          "scope": "project",
+          "id": "42",
+          "title": "Memory fixture fact",
+          "topic": "memory",
+          "updated": "2026-07-30T19:00:00.000Z",
+          "revision": "fact-r1",
+          "source": "user",
+          "status": "current",
+          "confidence": null,
+          "validAt": "2026-07-30T19:00:00.000Z",
+          "invalidAt": null
+        },
+        {
+          "kind": "pitfall",
+          "key": "pitfall\u0000global\u0000stale-display",
+          "scope": "global",
+          "id": "stale-display",
+          "title": "Keep stale values visible",
+          "topic": "workspace",
+          "updated": "2026-07-29",
+          "revision": "pitfall-r4",
+          "source": "user",
+          "status": "unverified",
+          "verified": null,
+          "supersedes": [],
+          "rawRefs": [
+            "raw/workspace/2026-07-29-stale-display.md"
+          ],
+          "evidence": "observed in the native shell"
+        },
+        {
+          "kind": "digest",
+          "key": "digest\u0000project\u00000000000000000009",
+          "scope": "project",
+          "id": "9",
+          "title": "angela session digest",
+          "topic": "session",
+          "updated": "2026-07-30T19:30:00.000Z",
+          "revision": "digest-r9",
+          "source": "digest compiler",
+          "status": "compiled",
+          "agent": "angela",
+          "sessionId": null
+        },
+        {
+          "kind": "raw-ref",
+          "key": "raw-ref\u0000repo\u0000memory/2026-07-30-retention-policy",
+          "scope": "repo",
+          "id": "memory/2026-07-30-retention-policy",
+          "title": "2026-07-30-retention-policy.md",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "raw-r1",
+          "source": "raw/memory/2026-07-30-retention-policy.md",
+          "status": "immutable",
+          "path": "raw/memory/2026-07-30-retention-policy.md",
+          "bytes": 418
+        }
+      ],
+      "nextCursor": null,
+      "total": 5
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-library-r3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-29T20:00:00.000Z",
+      "sourceRevision": "memory-library-r3",
+      "freshness": "cached",
+      "state": "ok",
+      "items": [
+        {
+          "kind": "article",
+          "key": "article\u0000repo\u0000retention-policy",
+          "scope": "repo",
+          "id": "retention-policy",
+          "title": "Retention policy",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "article-r2",
+          "source": "agent",
+          "status": "verified",
+          "verified": "2026-07-30",
+          "supersedes": [],
+          "rawRefs": [
+            "raw/memory/2026-07-30-retention-policy.md"
+          ],
+          "evidence": "fixture observation"
+        },
+        {
+          "kind": "fact",
+          "key": "fact\u0000project\u00000000000000000042",
+          "scope": "project",
+          "id": "42",
+          "title": "Memory fixture fact",
+          "topic": "memory",
+          "updated": "2026-07-30T19:00:00.000Z",
+          "revision": "fact-r1",
+          "source": "user",
+          "status": "current",
+          "confidence": null,
+          "validAt": "2026-07-30T19:00:00.000Z",
+          "invalidAt": null
+        },
+        {
+          "kind": "pitfall",
+          "key": "pitfall\u0000global\u0000stale-display",
+          "scope": "global",
+          "id": "stale-display",
+          "title": "Keep stale values visible",
+          "topic": "workspace",
+          "updated": "2026-07-29",
+          "revision": "pitfall-r4",
+          "source": "user",
+          "status": "unverified",
+          "verified": null,
+          "supersedes": [],
+          "rawRefs": [
+            "raw/workspace/2026-07-29-stale-display.md"
+          ],
+          "evidence": "observed in the native shell"
+        },
+        {
+          "kind": "digest",
+          "key": "digest\u0000project\u00000000000000000009",
+          "scope": "project",
+          "id": "9",
+          "title": "angela session digest",
+          "topic": "session",
+          "updated": "2026-07-30T19:30:00.000Z",
+          "revision": "digest-r9",
+          "source": "digest compiler",
+          "status": "compiled",
+          "agent": "angela",
+          "sessionId": null
+        },
+        {
+          "kind": "raw-ref",
+          "key": "raw-ref\u0000repo\u0000memory/2026-07-30-retention-policy",
+          "scope": "repo",
+          "id": "memory/2026-07-30-retention-policy",
+          "title": "2026-07-30-retention-policy.md",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "raw-r1",
+          "source": "raw/memory/2026-07-30-retention-policy.md",
+          "status": "immutable",
+          "path": "raw/memory/2026-07-30-retention-policy.md",
+          "bytes": 418
+        }
+      ],
+      "nextCursor": null,
+      "total": 5
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-library-r3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-29T20:00:00.000Z",
+      "sourceRevision": "memory-library-r3",
+      "freshness": "cached",
+      "state": "ok",
+      "items": [
+        {
+          "kind": "article",
+          "key": "article\u0000repo\u0000retention-policy",
+          "scope": "repo",
+          "id": "retention-policy",
+          "title": "Retention policy",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "article-r2",
+          "source": "agent",
+          "status": "verified",
+          "verified": "2026-07-30",
+          "supersedes": [],
+          "rawRefs": [
+            "raw/memory/2026-07-30-retention-policy.md"
+          ],
+          "evidence": "fixture observation"
+        },
+        {
+          "kind": "fact",
+          "key": "fact\u0000project\u00000000000000000042",
+          "scope": "project",
+          "id": "42",
+          "title": "Memory fixture fact",
+          "topic": "memory",
+          "updated": "2026-07-30T19:00:00.000Z",
+          "revision": "fact-r1",
+          "source": "user",
+          "status": "current",
+          "confidence": null,
+          "validAt": "2026-07-30T19:00:00.000Z",
+          "invalidAt": null
+        },
+        {
+          "kind": "pitfall",
+          "key": "pitfall\u0000global\u0000stale-display",
+          "scope": "global",
+          "id": "stale-display",
+          "title": "Keep stale values visible",
+          "topic": "workspace",
+          "updated": "2026-07-29",
+          "revision": "pitfall-r4",
+          "source": "user",
+          "status": "unverified",
+          "verified": null,
+          "supersedes": [],
+          "rawRefs": [
+            "raw/workspace/2026-07-29-stale-display.md"
+          ],
+          "evidence": "observed in the native shell"
+        },
+        {
+          "kind": "digest",
+          "key": "digest\u0000project\u00000000000000000009",
+          "scope": "project",
+          "id": "9",
+          "title": "angela session digest",
+          "topic": "session",
+          "updated": "2026-07-30T19:30:00.000Z",
+          "revision": "digest-r9",
+          "source": "digest compiler",
+          "status": "compiled",
+          "agent": "angela",
+          "sessionId": null
+        },
+        {
+          "kind": "raw-ref",
+          "key": "raw-ref\u0000repo\u0000memory/2026-07-30-retention-policy",
+          "scope": "repo",
+          "id": "memory/2026-07-30-retention-policy",
+          "title": "2026-07-30-retention-policy.md",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "raw-r1",
+          "source": "raw/memory/2026-07-30-retention-policy.md",
+          "status": "immutable",
+          "path": "raw/memory/2026-07-30-retention-policy.md",
+          "bytes": 418
+        }
+      ],
+      "nextCursor": null,
+      "total": 5
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-library-r3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "memory-library-r3-competing"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-library-r3",
+      "freshness": "live",
+      "state": "ok",
+      "items": [
+        {
+          "kind": "article",
+          "key": "article\u0000repo\u0000retention-policy",
+          "scope": "repo",
+          "id": "retention-policy",
+          "title": "Retention policy",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "article-r2",
+          "source": "agent",
+          "status": "verified",
+          "verified": "2026-07-30",
+          "supersedes": [],
+          "rawRefs": [
+            "raw/memory/2026-07-30-retention-policy.md"
+          ],
+          "evidence": "fixture observation"
+        },
+        {
+          "kind": "fact",
+          "key": "fact\u0000project\u00000000000000000042",
+          "scope": "project",
+          "id": "42",
+          "title": "Memory fixture fact",
+          "topic": "memory",
+          "updated": "2026-07-30T19:00:00.000Z",
+          "revision": "fact-r1",
+          "source": "user",
+          "status": "current",
+          "confidence": null,
+          "validAt": "2026-07-30T19:00:00.000Z",
+          "invalidAt": null
+        },
+        {
+          "kind": "pitfall",
+          "key": "pitfall\u0000global\u0000stale-display",
+          "scope": "global",
+          "id": "stale-display",
+          "title": "Keep stale values visible",
+          "topic": "workspace",
+          "updated": "2026-07-29",
+          "revision": "pitfall-r4",
+          "source": "user",
+          "status": "unverified",
+          "verified": null,
+          "supersedes": [],
+          "rawRefs": [
+            "raw/workspace/2026-07-29-stale-display.md"
+          ],
+          "evidence": "observed in the native shell"
+        },
+        {
+          "kind": "digest",
+          "key": "digest\u0000project\u00000000000000000009",
+          "scope": "project",
+          "id": "9",
+          "title": "angela session digest",
+          "topic": "session",
+          "updated": "2026-07-30T19:30:00.000Z",
+          "revision": "digest-r9",
+          "source": "digest compiler",
+          "status": "compiled",
+          "agent": "angela",
+          "sessionId": null
+        },
+        {
+          "kind": "raw-ref",
+          "key": "raw-ref\u0000repo\u0000memory/2026-07-30-retention-policy",
+          "scope": "repo",
+          "id": "memory/2026-07-30-retention-policy",
+          "title": "2026-07-30-retention-policy.md",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "raw-r1",
+          "source": "raw/memory/2026-07-30-retention-policy.md",
+          "status": "immutable",
+          "path": "raw/memory/2026-07-30-retention-policy.md",
+          "bytes": 418
+        }
+      ],
+      "nextCursor": null,
+      "total": 5
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-library-r3",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "memory-library-r3-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-library-r3",
+      "freshness": "live",
+      "state": "ok",
+      "items": [
+        {
+          "kind": "article",
+          "key": "article\u0000repo\u0000retention-policy",
+          "scope": "repo",
+          "id": "retention-policy",
+          "title": "Retention policy",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "article-r2",
+          "source": "agent",
+          "status": "verified",
+          "verified": "2026-07-30",
+          "supersedes": [],
+          "rawRefs": [
+            "raw/memory/2026-07-30-retention-policy.md"
+          ],
+          "evidence": "fixture observation"
+        },
+        {
+          "kind": "fact",
+          "key": "fact\u0000project\u00000000000000000042",
+          "scope": "project",
+          "id": "42",
+          "title": "Memory fixture fact",
+          "topic": "memory",
+          "updated": "2026-07-30T19:00:00.000Z",
+          "revision": "fact-r1",
+          "source": "user",
+          "status": "current",
+          "confidence": null,
+          "validAt": "2026-07-30T19:00:00.000Z",
+          "invalidAt": null
+        },
+        {
+          "kind": "pitfall",
+          "key": "pitfall\u0000global\u0000stale-display",
+          "scope": "global",
+          "id": "stale-display",
+          "title": "Keep stale values visible",
+          "topic": "workspace",
+          "updated": "2026-07-29",
+          "revision": "pitfall-r4",
+          "source": "user",
+          "status": "unverified",
+          "verified": null,
+          "supersedes": [],
+          "rawRefs": [
+            "raw/workspace/2026-07-29-stale-display.md"
+          ],
+          "evidence": "observed in the native shell"
+        },
+        {
+          "kind": "digest",
+          "key": "digest\u0000project\u00000000000000000009",
+          "scope": "project",
+          "id": "9",
+          "title": "angela session digest",
+          "topic": "session",
+          "updated": "2026-07-30T19:30:00.000Z",
+          "revision": "digest-r9",
+          "source": "digest compiler",
+          "status": "compiled",
+          "agent": "angela",
+          "sessionId": null
+        },
+        {
+          "kind": "raw-ref",
+          "key": "raw-ref\u0000repo\u0000memory/2026-07-30-retention-policy",
+          "scope": "repo",
+          "id": "memory/2026-07-30-retention-policy",
+          "title": "2026-07-30-retention-policy.md",
+          "topic": "memory",
+          "updated": "2026-07-30",
+          "revision": "raw-r1",
+          "source": "raw/memory/2026-07-30-retention-policy.md",
+          "status": "immutable",
+          "path": "raw/memory/2026-07-30-retention-policy.md",
+          "bytes": 418
+        }
+      ],
+      "nextCursor": null,
+      "total": 5
+    }
+  }
+]

@@ -1,14 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { getAgentAdapter } from "../../src/adapters/providers/provider-registry";
-import { buildActivitySnapshot } from "../../src/daemon/activity-snapshot";
-import type { FusedAgentStatus } from "../../src/daemon/status-fusion";
-import type {
-  AgentRecord,
-  CapabilityProvider,
-  ProviderEvent,
-  ProviderRun,
-} from "../../src/schemas";
-import { CAPABILITY_PROVIDERS } from "../../src/schemas/capability";
+import {
+  buildActivitySnapshot,
+  redactTerminalEvidence,
+} from "../../src/daemon/status-service/activity-snapshot";
+import type { FusedAgentStatus } from "../../src/daemon/status-service/fusion";
+import type { AgentRecord } from "../../src/schemas/agent";
+import {
+  type CapabilityProvider,
+  CAPABILITY_PROVIDERS,
+} from "../../src/schemas/capability";
+import type { ProviderEvent } from "../../src/schemas/provider-communication";
+import type { ProviderRun } from "../../src/schemas/provider-run";
+import { required } from "../required";
 
 const observedAt = "2026-07-24T20:00:00.000Z";
 
@@ -26,7 +30,6 @@ function agent(provider: CapabilityProvider): AgentRecord {
     contextPct: null,
     createdAt: observedAt,
     lastEventAt: observedAt,
-    recoveryAttempts: 0,
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
@@ -50,9 +53,13 @@ function run(value: AgentRecord): ProviderRun {
     model: value.model,
     effort: null,
     conversationId: null,
-    pid: 4300,
-    startToken: "4300:1",
-    foregroundProcessGroupId: 4300,
+    adapterChild: {
+      pid: 4300,
+      startToken: "4300:1",
+      processGroupId: 4300,
+      observedAt,
+    },
+    protocolReceipt: null,
     capabilityEpoch: 0,
     launchGrantId: `grant-${value.tool}`,
     startedAt: observedAt,
@@ -76,12 +83,61 @@ function event(kind: ProviderEvent["kind"], occurredAt: string): ProviderEvent {
   };
 }
 
+function statusWithTurn(
+  value: AgentRecord,
+  turn: NonNullable<FusedAgentStatus["turnState"]>["value"],
+): FusedAgentStatus {
+  return {
+    agentId: value.id,
+    incarnationGeneration: 1,
+    revision: "1",
+    sessionState: null,
+    runtimeState: null,
+    turnState: {
+      value: turn,
+      source: { kind: "provider-protocol", id: "status-fixture" },
+      observedAt,
+      freshness: "fresh",
+      confidence: "authoritative",
+    },
+    workflowState: { kind: "reserved" },
+    inputState: null,
+    mailState: null,
+    healthState: null,
+    absences: {},
+    providerCapabilities: null,
+    attention: null,
+    report: null,
+    sources: [],
+    conflicts: [],
+  };
+}
+
 describe("ActivitySnapshot", () => {
+  test.each(["working", "awaiting_approval", "done", "failed"] as const)(
+    "preserves the canonical %s turn state",
+    (turn) => {
+      const value = agent("codex");
+      const snapshot = buildActivitySnapshot({
+        agent: value,
+        run: run(value),
+        inspection: null,
+        gitPaths: [],
+        events: [],
+        status: statusWithTurn(value, turn),
+        observedAt,
+      });
+
+      expect(snapshot.turnState).toBe(turn);
+    },
+  );
+
   test("all providers use structured process, git, and status evidence", () => {
     for (const provider of CAPABILITY_PROVIDERS) {
       expect(getAgentAdapter(provider).communication.provider).toBe(provider);
       const value = agent(provider);
       const active = run(value);
+      const child = required(active.adapterChild);
       const snapshot = buildActivitySnapshot({
         agent: value,
         run: active,
@@ -96,9 +152,9 @@ describe("ActivitySnapshot", () => {
           foreground: {
             state: "managed",
             runId: active.runId,
-            pid: active.pid,
-            startToken: active.startToken,
-            foregroundProcessGroupId: active.foregroundProcessGroupId,
+            pid: child.pid,
+            startToken: child.startToken,
+            foregroundProcessGroupId: child.processGroupId,
           },
           expectedExecutable: "/bin/zsh",
           executableVerified: true,
@@ -166,10 +222,14 @@ describe("ActivitySnapshot", () => {
       turnState: "unknown",
       summary: null,
       completeness: "unknown",
+      // A terminal nobody could inspect has written an unknown number of
+      // bytes. Reporting 0 made it read exactly like a session that started
+      // and produced nothing, which is the opposite conclusion.
+      outputThrough: null,
     });
   });
 
-  test("session lifecycle cannot erase measured turn state", () => {
+  test("the canonical status service is the only turn-state input", () => {
     const value = agent("codex");
     expect(
       buildActivitySnapshot({
@@ -181,7 +241,7 @@ describe("ActivitySnapshot", () => {
           event("tool-finished", "2026-07-24T19:59:59.000Z"),
           event("run-started", observedAt),
         ],
-        status: null,
+        status: statusWithTurn(value, "working"),
         observedAt,
       }).turnState,
     ).toBe("working");
@@ -194,10 +254,14 @@ describe("ActivitySnapshot", () => {
       incarnationGeneration: 1,
       revision: "1",
       sessionState: null,
+      runtimeState: null,
       turnState: null,
       workflowState: { kind: "reserved" },
       inputState: null,
+      mailState: null,
       healthState: null,
+      absences: {},
+      providerCapabilities: null,
       attention: null,
       report: {
         phase: "complete",
@@ -259,5 +323,40 @@ describe("ActivitySnapshot", () => {
         observedAt,
       }).turnState,
     ).toBe("unknown");
+  });
+});
+
+// Every value below is invented for this test. Never paste a real credential here:
+// a test fixture is committed, and committing a secret to prove it gets masked
+// defeats the thing being proved.
+describe("redactTerminalEvidence", () => {
+  test("masks vendor API keys whose value carries no recognisable prefix", () => {
+    // xAI and Grok keys do not start with `sk-`, so only the variable name
+    // identifies them. Before these names were part of the one shared pattern,
+    // this text reached a durable handoff record intact.
+    const redacted: string = redactTerminalEvidence(
+      "env: XAI_API_KEY=xai-abcdef0123456789 GROK_API_KEY=grok-9876543210fedcba",
+    );
+
+    expect(redacted).not.toContain("xai-abcdef0123456789");
+    expect(redacted).not.toContain("grok-9876543210fedcba");
+    expect(redacted).toBe("env: [REDACTED] [REDACTED]");
+  });
+
+  test("masks a capability token written with spaces around the equals sign", () => {
+    const redacted: string = redactTerminalEvidence(
+      "export HIVE_CAPABILITY_TOKEN = cap-0123456789abcdef",
+    );
+
+    expect(redacted).not.toContain("cap-0123456789abcdef");
+    expect(redacted).toBe("export [REDACTED]");
+  });
+
+  test("still masks the prefixed forms it caught before", () => {
+    const redacted: string = redactTerminalEvidence(
+      "Bearer tok-0123456789abcdef sk-0123456789abcdef ghp_0123456789abcdef",
+    );
+
+    expect(redacted).toBe("[REDACTED] [REDACTED] [REDACTED]");
   });
 });

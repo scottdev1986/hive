@@ -1,9 +1,5 @@
 import AppKit
 
-/// The grouped-inset card every settings surface sits on: rounded continuous
-/// corners, a quiet fill over the window background, a hairline stroke.
-/// `dashed` marks an unavailable provider with a visibly different
-/// border that does not rely on color.
 class CardView: NSView {
 
     var dashed: Bool = false {
@@ -49,15 +45,12 @@ class CardView: NSView {
         path.stroke()
     }
 
-    /// Pin an arranged subview to the card's full content width. Stack views
-    /// left-align by default; rows want the whole row.
     func pinToContentWidth(_ view: NSView) {
         view.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
     }
 }
 
-/// The muted inset block inside a card — the unmetered panel and override
-/// notes use it. Secondary grouped fill, never error red.
+/// The muted inset block inside a card — the unmetered panel and override notes use it. Secondary grouped fill, never error red.
 class InsetPanelView: NSView {
 
     let contentStack = NSStackView()
@@ -90,9 +83,7 @@ class InsetPanelView: NSView {
 }
 
 extension NSBox {
-    /// A hairline separator that never absorbs a stretched stack's surplus
-    /// space (a stretched NSBox floats its 1 px line mid-gap, which reads as
-    /// broken layout).
+    /// A hairline separator that never absorbs a stretched stack's surplus space (a stretched NSBox floats its 1 px line mid-gap, which reads as broken layout).
     static func hdsSeparator() -> NSBox {
         let box = NSBox()
         box.boxType = .separator

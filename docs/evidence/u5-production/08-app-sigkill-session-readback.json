@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-08-01T20:57:59.805Z",
+  "state": "measured",
+  "release": {
+    "schemaVersion": 1,
+    "viewerPid": 45690,
+    "executablePath": "/private/tmp/u5ws-build-g/HiveWorkspace.app/Contents/MacOS/HiveWorkspace",
+    "launchArguments": [
+      "--workspace-shell-live",
+      "--port",
+      "64968",
+      "--instance-home",
+      "/private/tmp/hvqa-g",
+      "--hive",
+      "/private/tmp/hvqa-g/artifacts/hive-bin",
+      "--project",
+      "/private/tmp/u5p-d",
+      "--instance-id",
+      "83efed86e5",
+      "--feed",
+      "/private/tmp/hvqa-g/artifacts/u5-workspace-feed-bridge"
+    ],
+    "launchedAt": "2026-08-01T20:52:35Z",
+    "preKillProcessReadback": "45690 45679 SN   Sat Aug  1 16:52:35 2026     /private/tmp/u5ws-build-g/HiveWorkspace.app/Contents/MacOS/HiveWorkspace --workspace-shell-live --port 64968 --instance-home /private/tmp/hvqa-g --hive /private/tmp/hvqa-g/artifacts/hive-bin --project /private/tmp/u5p-d --instance-id 83efed86e5 --feed /private/tmp/hvqa-g/artifacts/u5-workspace-feed-bridge; exact production executable SHA-256 8573aa909154d6847c26c1dfc58706a25fce8345d3a740312df9a42ab56f1782",
+    "sigkillIssuedAt": "2026-08-01T20:57:36Z",
+    "waitStatus": "137",
+    "postKillState": "absent",
+    "postKillProbe": "ps -p exact recorded PID refused after bounded poll; unified launch exec returned 137",
+    "screenshots": [
+      "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-claude.png",
+      "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-codex.png",
+      "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-grok.png",
+      "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-kimi.png",
+      "/private/tmp/hvqa-g/artifacts/u5-terminal-workbench-live/u5-msaukaje-ebu1dx/workspace-final-opencode.png"
+    ]
+  },
+  "allExactGenerationsRetained": true,
+  "stableComposerCount": 5,
+  "agents": [
+    {
+      "agentId": "41c5727b-b071-47f7-9906-cc5949479929",
+      "name": "maya",
+      "provider": "claude",
+      "status": "idle",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "41c5727b-b071-47f7-9906-cc5949479929"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-0cb5-7093-967d-4ee489d68e7b",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "claude",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "stableComposerObserved": true,
+      "captureSha256": "dd582f4dc8784c283a3bb5034d29f7cbf2f13003ccb8ac7caec784b7d1f41d21"
+    },
+    {
+      "agentId": "ad08605c-058e-4e5c-8751-b4e6674bfc3a",
+      "name": "david",
+      "provider": "codex",
+      "status": "awaiting-approval",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "ad08605c-058e-4e5c-8751-b4e6674bfc3a"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-1460-78ef-ab83-09bb0b2c980a",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "codex",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "stableComposerObserved": true,
+      "captureSha256": "07e0258961bdddca210a8c2195ccd269eec52303a18ce19f894c62c7a3d4fbd9"
+    },
+    {
+      "agentId": "209681dd-99ee-49b2-8bf4-5bac46de411a",
+      "name": "sam",
+      "provider": "grok",
+      "status": "idle",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "209681dd-99ee-49b2-8bf4-5bac46de411a"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-1d9a-7419-b108-de220b69081c",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "grok",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "stableComposerObserved": true,
+      "captureSha256": "14e0b88ed606adb2e269d3b760bb916f8707f51291a2fda254c7d2c62f3189f6"
+    },
+    {
+      "agentId": "c3fbe0c5-dbe5-4e81-bd37-b31aecf33370",
+      "name": "john",
+      "provider": "kimi",
+      "status": "idle",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "c3fbe0c5-dbe5-4e81-bd37-b31aecf33370"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-2b2a-7c93-b5e4-e83d902c54c4",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "kimi",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "stableComposerObserved": true,
+      "captureSha256": "4a0aa9b9c2be7702a3b02d66b77741c4d3f92c0abcb06138545d254d7a1ae7a2"
+    },
+    {
+      "agentId": "94ad2202-e6a1-4983-8af7-0a7bbb2c47c2",
+      "name": "sarah",
+      "provider": "opencode",
+      "status": "idle",
+      "locator": {
+        "schemaVersion": 1,
+        "instanceId": "83efed86e5",
+        "subject": {
+          "kind": "agent",
+          "agentId": "94ad2202-e6a1-4983-8af7-0a7bbb2c47c2"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fbf19-37d7-734d-b00a-4b472acb1760",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "composer": {
+        "profile": "opencode",
+        "present": true,
+        "nonempty": false,
+        "stable": true,
+        "userEditSinceEmpty": false,
+        "userOperationInFlight": false,
+        "claim": false,
+        "invariant": "ok"
+      },
+      "stableComposerObserved": true,
+      "captureSha256": "e01d9d08e5c84d54e7a01fae3ea343694da98e3c4a0357d504f045b32db049ae"
+    }
+  ]
+}

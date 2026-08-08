@@ -1,0 +1,110 @@
+{
+  "result": "passed",
+  "vendor": "codex",
+  "model": "gpt-5.3-codex-spark",
+  "completedAt": "2026-08-02T23:08:05.655Z",
+  "agent": {
+    "id": "50b860e3-d57c-4128-8f49-3a2a3b79ed2c",
+    "name": "maya",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "f6c63b7004",
+      "subject": {
+        "kind": "agent",
+        "agentId": "50b860e3-d57c-4128-8f49-3a2a3b79ed2c"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc4bb-f564-7d68-8991-9eea36572e13",
+      "hostKind": "sessiond",
+      "engineBuildId": "0059bac81addd1a74ddf2fae334ea2dfb2079d30399d528967db01995f4056ed"
+    }
+  },
+  "busyMessage": {
+    "itemId": "mit_019fc4bb-fa14-7000-b4d9-053c59166a6e",
+    "lane": "control",
+    "topic": "qa",
+    "outcome": "published",
+    "seq": 1,
+    "mergedCount": 0,
+    "acceptedAt": "2026-08-02T23:08:01.428Z"
+  },
+  "deliveredMessage": {
+    "itemId": "mit_019fc4bc-02a0-7000-829f-3997bd0958c8",
+    "lane": "control",
+    "topic": "qa",
+    "outcome": "published",
+    "seq": 2,
+    "mergedCount": 0,
+    "acceptedAt": "2026-08-02T23:08:03.616Z"
+  },
+  "backlog": {
+    "recipient": "maya",
+    "observedAt": "2026-08-02T23:08:05.653Z",
+    "lanes": {
+      "control": {
+        "available": 2,
+        "leased": 0,
+        "leasedExpired": 0
+      },
+      "work": {
+        "available": 0,
+        "leased": 0,
+        "leasedExpired": 0
+      }
+    },
+    "oldestAvailable": {
+      "itemId": "mit_019fc4bb-fa14-7000-b4d9-053c59166a6e",
+      "lane": "control",
+      "topic": "qa",
+      "ageSeconds": 4
+    },
+    "leases": [],
+    "deadLetters": {
+      "total": 0,
+      "byReason": {},
+      "recent": []
+    }
+  },
+  "userReceipts": {
+    "edit": {
+      "transactionId": "qa-codex-user-edit-1785712079349",
+      "stage": "written-to-terminal",
+      "byteRange": {
+        "start": "0",
+        "endExclusive": "34"
+      },
+      "orderedAt": "4",
+      "availableCreditBytes": 131072,
+      "consumedByProcess": "not-claimed",
+      "completeness": "complete",
+      "diagnostic": null
+    },
+    "clear": {
+      "transactionId": "qa-codex-user-clear-1785712079349",
+      "stage": "written-to-terminal",
+      "byteRange": {
+        "start": "34",
+        "endExclusive": "35"
+      },
+      "orderedAt": "5",
+      "availableCreditBytes": 131072,
+      "consumedByProcess": "not-claimed",
+      "completeness": "complete",
+      "diagnostic": null
+    }
+  },
+  "terminalWrites": {
+    "beforeBusy": 0,
+    "afterBusy": 0,
+    "beforeDeliver": 0,
+    "afterDeliver": 0
+  },
+  "transitions": {
+    "empty": "absent",
+    "userDraft": "present:QA_CODEX_HUMAN_DRAFT_1785712079349",
+    "busyPreserved": "present:QA_CODEX_HUMAN_DRAFT_1785712079349",
+    "cleared": "absent",
+    "delivered": "absent"
+  },
+  "captureComposerNull": true
+}

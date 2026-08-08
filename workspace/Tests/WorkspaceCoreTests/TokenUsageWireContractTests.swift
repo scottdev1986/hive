@@ -5,10 +5,9 @@ import XCTest
 /// decoder. `Fixtures/token-usage-wire.json` is a document the daemon may
 /// legitimately emit: it carries every subject role in `TOKEN_USAGE_ROLES`.
 ///
-/// Decoding must degrade NARROWLY (an unknown value costs its own field, never
-/// the document). A strict throw on one unrecognised wire value fails the
-/// whole document and falls back to a blank/provisional screen. A role this
-/// build cannot name must stay VISIBLE, never folded into WORKERS.
+/// This file pins the raw evidence nested in the daemon-owned Workspace view.
+/// Row grouping and headlines are not reconstructed here; the endpoint sends
+/// those as `WorkspaceTokenSessionPresentation`.
 final class TokenUsageWireContractTests: XCTestCase {
 
     private func wireFixture() throws -> Data {
@@ -24,24 +23,18 @@ final class TokenUsageWireContractTests: XCTestCase {
         try JSONDecoder().decode(TokenUsageSnapshot.self, from: data)
     }
 
-    /// The whole document decodes: the fleet aggregate reads, the orchestrator
-    /// collapses into one row, and the two workers are listed.
+    /// The whole raw document decodes without manufacturing presentation rows.
     func testDecodesTheSharedFixture() throws {
         let snapshot = try decodeSnapshot(try wireFixture())
         let session = try XCTUnwrap(snapshot.sessions.first)
         XCTAssertEqual(session.fleet.counts?.totalTokens, 1780)
-        let rows = session.usageRows
-        XCTAssertTrue(rows.contains { $0.name == "Queen" })
-        let workerRows = rows.filter { $0.name != "Queen" }
         XCTAssertEqual(
-            Set(workerRows.map(\.name)), ["maya", "quinn"],
-            "each worker is listed individually beside the collapsed orchestrator")
+            Set(session.subjects.map(\.name)), ["Orchestrator", "maya", "quinn"])
     }
 
     /// The null-cache-subset lesson: a Codex/Grok worker reports cache READS but
     /// not cache CREATION. Reads survive; creation is an honest nil; the whole
-    /// bucket must not go null just because one subset is missing, and the
-    /// headline still derives — from reads alone.
+    /// bucket must not go null just because one subset is missing.
     func testWorkerBucketToleratesNullCacheCreation() throws {
         let snapshot = try decodeSnapshot(try wireFixture())
         let session = try XCTUnwrap(snapshot.sessions.first)
@@ -49,7 +42,6 @@ final class TokenUsageWireContractTests: XCTestCase {
         XCTAssertEqual(counts.totalTokens, 580)
         XCTAssertEqual(counts.cachedInputTokens, 300)
         XCTAssertNil(counts.cacheCreationInputTokens)
-        XCTAssertEqual(counts.headline.newTokens, (500 - 300) + 80)
     }
 
     /// FORWARD COMPATIBILITY: a future daemon adds a role this build has never
@@ -76,21 +68,8 @@ final class TokenUsageWireContractTests: XCTestCase {
         let snapshot = try decodeSnapshot(
             try JSONSerialization.data(withJSONObject: json))
         let decoded = try XCTUnwrap(snapshot.sessions.first)
-        // Did not crash, did not vanish: the unknown-role subject is still a row.
-        XCTAssertTrue(
-            decoded.usageRows.contains { $0.name == "maya" },
-            "an unrenderable role must stay visible, not disappear")
-        // And it is NOT in the worker partition — the drift the two-green-suites
-        // lesson exists to stop. It lands in the neutral unclassified bucket
-        // instead, while the genuine worker "quinn" stays a worker.
-        XCTAssertFalse(
-            decoded.workerSubjects.contains { $0.name == "maya" },
-            "a role this build cannot name must never be counted as a worker")
-        XCTAssertTrue(
-            decoded.unclassifiedSubjects.contains { $0.name == "maya" },
-            "the unknown role belongs to the neutral, still-visible bucket")
-        XCTAssertTrue(
-            decoded.workerSubjects.contains { $0.name == "quinn" },
-            "a real worker is still partitioned as a worker")
+        let maya = try XCTUnwrap(decoded.subjects.first { $0.name == "maya" })
+        XCTAssertEqual(maya.role, "reviewer")
+        XCTAssertEqual(decoded.subjects.count, 3)
     }
 }

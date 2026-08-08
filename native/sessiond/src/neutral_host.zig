@@ -3,55 +3,54 @@ const pty_host = @import("pty_host");
 const process_inspector = @import("process_inspector");
 const contract = @import("neutral_contract");
 
-pub const schema_version = contract.schema_version;
-pub const socket_relative_path = contract.socket_relative_path;
-pub const record_relative_path = contract.record_relative_path;
-pub const control_relative_path = contract.control_relative_path;
-pub const runtime_relative_path = contract.runtime_relative_path;
-pub const operation_payload_max_bytes = contract.operation_payload_max_bytes;
-pub const SessionRef = contract.SessionRef;
-pub const ProcessIdentity = contract.ProcessIdentity;
-pub const WindowSize = contract.WindowSize;
-pub const TerminalProfile = contract.TerminalProfile;
-pub const EnvironmentEntry = contract.EnvironmentEntry;
-pub const TransferableHandle = contract.TransferableHandle;
-pub const DescriptorMapping = contract.DescriptorMapping;
-pub const Command = contract.Command;
-pub const CreateRequest = contract.CreateRequest;
-pub const LaunchSpec = contract.LaunchSpec;
-pub const HostLimits = contract.HostLimits;
-pub const JobControlEvidence = contract.JobControlEvidence;
-pub const ExitStatus = contract.ExitStatus;
-pub const ReapEvidence = contract.ReapEvidence;
-pub const OsCode = contract.OsCode;
-pub const LaunchOutcome = contract.LaunchOutcome;
-pub const CreateResult = contract.CreateResult;
-pub const Host = contract.Host;
+const schema_version = contract.schema_version;
+const record_relative_path = contract.record_relative_path;
+const control_relative_path = contract.control_relative_path;
+const runtime_relative_path = contract.runtime_relative_path;
+const operation_payload_max_bytes = contract.operation_payload_max_bytes;
+const SessionRef = contract.SessionRef;
+const ProcessIdentity = contract.ProcessIdentity;
+const WindowSize = contract.WindowSize;
+const TerminalProfile = contract.TerminalProfile;
+const EnvironmentEntry = contract.EnvironmentEntry;
+const TransferableHandle = contract.TransferableHandle;
+const DescriptorMapping = contract.DescriptorMapping;
+const Command = contract.Command;
+const CreateRequest = contract.CreateRequest;
+const LaunchSpec = contract.LaunchSpec;
+const HostLimits = contract.HostLimits;
+const JobControlEvidence = contract.JobControlEvidence;
+const ExitStatus = contract.ExitStatus;
+const ReapEvidence = contract.ReapEvidence;
+const OsCode = contract.OsCode;
+const LaunchOutcome = contract.LaunchOutcome;
+const CreateResult = contract.CreateResult;
+const Host = contract.Host;
 const putLength = contract.putLength;
 
 const neutral_runtime = @import("neutral_runtime");
-pub const Lifecycle = neutral_runtime.Lifecycle;
-pub const OutputEvidence = neutral_runtime.OutputEvidence;
-pub const CheckpointEvidence = neutral_runtime.CheckpointEvidence;
-pub const Record = neutral_runtime.Record;
-pub const HostRegistration = neutral_runtime.HostRegistration;
-pub const RecordUpdate = neutral_runtime.RecordUpdate;
-pub const ReserveResult = neutral_runtime.ReserveResult;
-pub const TerminationReserveResult = neutral_runtime.TerminationReserveResult;
-pub const sessionDirectoryName = neutral_runtime.sessionDirectoryName;
-pub const Runtime = neutral_runtime.Runtime;
+const Lifecycle = neutral_runtime.Lifecycle;
+const OutputEvidence = neutral_runtime.OutputEvidence;
+const CheckpointEvidence = neutral_runtime.CheckpointEvidence;
+const Record = neutral_runtime.Record;
+const HostRegistration = neutral_runtime.HostRegistration;
+const RecordUpdate = neutral_runtime.RecordUpdate;
+const ReserveResult = neutral_runtime.ReserveResult;
+const TerminationReserveResult = neutral_runtime.TerminationReserveResult;
+const sessionDirectoryName = neutral_runtime.sessionDirectoryName;
+const Runtime = neutral_runtime.Runtime;
 const OwnedSessionRef = neutral_runtime.OwnedSessionRef;
-pub const Registry = neutral_runtime.Registry;
-pub const Operation = neutral_runtime.Operation;
-pub const OperationRequest = neutral_runtime.OperationRequest;
-pub const OperationResponse = neutral_runtime.OperationResponse;
-pub const OperationHandler = neutral_runtime.OperationHandler;
+const Registry = neutral_runtime.Registry;
+const Operation = neutral_runtime.Operation;
+const OperationRequest = neutral_runtime.OperationRequest;
+const OperationResponse = neutral_runtime.OperationResponse;
+const OperationHandler = neutral_runtime.OperationHandler;
 const readExact = neutral_runtime.readExact;
 const connection_io_timeout_ms = neutral_runtime.connection_io_timeout_ms;
 const setConnectionTimeoutMs = neutral_runtime.setConnectionTimeoutMs;
-pub const ClientResponse = neutral_runtime.ClientResponse;
-pub const Client = neutral_runtime.Client;
-pub const HostEndpoint = neutral_runtime.HostEndpoint;
+const ClientResponse = neutral_runtime.ClientResponse;
+const Client = neutral_runtime.Client;
+const HostEndpoint = neutral_runtime.HostEndpoint;
 
 const c = @cImport({
     @cInclude("signal.h");
@@ -65,8 +64,7 @@ const ExecFailedPayload = std.meta.TagPayload(LaunchOutcome, .@"exec-failed");
 const LaunchFailureLayer = @FieldType(ExecFailedPayload, "layer");
 const ExecProof = @FieldType(std.meta.TagPayload(LaunchOutcome, .running), "execProof");
 
-/// Limits advertised with every create. Derived from the terminal layer's own
-/// queue and chunk bounds so the wire never promises more than the host holds.
+/// Limits advertised with every create. Derived from the terminal layer's own queue and chunk bounds so the wire never promises more than the host holds.
 const direct_host_limits: HostLimits = .{
     .maxInputTransactionBytes = pty_host.stream_chunk_max_bytes,
     .maxInputQueueBytes = pty_host.write_queue_cap_bytes,
@@ -76,10 +74,6 @@ const direct_host_limits: HostLimits = .{
     .outputRetentionBytes = pty_host.write_queue_cap_bytes,
 };
 
-/// Ledger encoding of `LaunchOutcome`. The stored bytes are exactly the frozen
-/// flattened wire shape, and reading them back is the single path by which any
-/// create result is returned. This struct is the permissive READ shape; writes
-/// go through `stringify`, which emits one variant at a time.
 const StoredOutcome = struct {
     state: enum { running, @"exec-failed", unknown },
     child: ?ProcessIdentity = null,
@@ -102,12 +96,6 @@ const StoredOutcome = struct {
         return .{ .state = .unknown, .diagnostic = diagnostic };
     }
 
-    /// Written one variant at a time. The frozen create-result schema marks
-    /// every field of a variant required — including `osCode`, which is
-    /// nullable but must still be PRESENT on exec-failed. Emitting the flat
-    /// struct with nulls dropped omits it; emitting it with nulls kept adds
-    /// fields the schema forbids on the other variants (additionalProperties
-    /// is false), so neither flat form validates.
     fn stringify(self: StoredOutcome, allocator: std.mem.Allocator) ![]u8 {
         return switch (self.state) {
             .running => std.json.Stringify.valueAlloc(allocator, .{
@@ -176,9 +164,7 @@ fn putInt(hasher: *std.crypto.hash.sha2.Sha256, value: i64) void {
     hasher.update(&bytes);
 }
 
-/// Injective, length-prefixed digest over every frozen create field. The ledger
-/// compares it so a replayed idempotency key carrying a different request is a
-/// typed conflict rather than a silent second launch.
+/// Injective, length-prefixed digest over every frozen create field. The ledger compares it so a replayed idempotency key carrying a different request is a typed conflict rather than a silent second launch.
 fn hashCreateRequest(request: CreateRequest, out: *[32]u8) void {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     putField(&hasher, request.key);
@@ -214,27 +200,19 @@ fn hashCreateRequest(request: CreateRequest, out: *[32]u8) void {
 }
 
 pub const LaunchEvidence = struct {
-    /// Image the child is actually running, as resolved after exec.
     executable: []const u8,
     rootSnapshotStatus: process_inspector.SnapshotStatus,
 };
 
-/// Production `Host`: opens its own terminal and launches the frozen command
-/// directly. It owns the resulting PTY, so it must run in the process that will
-/// go on to serve the session. Create is exactly-once by the registry ledger
-/// a replayed idempotency key returns the recorded result and never spawns.
+/// Production `Host`: opens its own terminal and launches the frozen command directly. It owns the resulting PTY, so it must run in the process that will go on to serve the session. Create is exactly-once by the registry ledger a replayed idempotency key returns the recorded result and never spawns.
 pub const DirectHost = struct {
     allocator: std.mem.Allocator,
     registry: *Registry,
     pty: *pty_host.PtyHost,
     arena: std.heap.ArenaAllocator,
-    /// Spawn attempts actually issued to the terminal layer. The ledger must
-    /// hold this at one per created session; replays may never advance it.
+    /// Spawn attempts actually issued to the terminal layer. The ledger must hold this at one per created session; replays may never advance it.
     spawns: usize = 0,
-    /// Launch evidence the frozen CreateResult does not carry. A product host
-    /// above this module records the resolved image and the process-tree
-    /// snapshot status on its own record, so keep them from the readback rather
-    /// than making it re-derive what this create already measured.
+    /// Launch evidence the frozen CreateResult does not carry. A product host above this module records the resolved image and the process-tree snapshot status on its own record, so keep them from the readback rather than making it re-derive what this create already measured.
     launch_evidence: ?LaunchEvidence = null,
 
     pub fn init(
@@ -283,9 +261,6 @@ pub const DirectHost = struct {
         }
     }
 
-    /// A `Record` borrows registry storage that the next mutation recycles, so
-    /// the identity this host hands out — and keeps using across register and
-    /// commit — must be copied out of the registry arena first.
     fn ownSession(self: *DirectHost, session: SessionRef) !SessionRef {
         const a = self.arena.allocator();
         return .{
@@ -294,13 +269,9 @@ pub const DirectHost = struct {
         };
     }
 
-    /// The one path that turns ledger state into a create result, so a first
-    /// create and its replay cannot diverge.
+    /// The one path that turns ledger state into a create result, so a first create and its replay cannot diverge.
     fn replay(self: *DirectHost, session: SessionRef) !CreateResult {
         const record = self.registry.get(session) orelse return error.SessionNotFound;
-        // A reservation without a committed result means an earlier create died
-        // mid-launch. Its child may well be running, so relaunching here would
-        // double-spawn: report the launch as unproven instead of guessing.
         const stored = record.createResultJson orelse return .{
             .session = session,
             .outcome = .{ .unknown = .{
@@ -324,9 +295,7 @@ pub const DirectHost = struct {
     }
 
     fn launch(self: *DirectHost, session: SessionRef, request: CreateRequest) !CreateResult {
-        // the wire carries opaque transfer tokens and this host has no
-        // descriptor-passing channel that could resolve one into a descriptor.
-        // Refuse in the ledger so the rejection replays like any other result.
+        // the wire carries opaque transfer tokens and this host has no descriptor-passing channel that could resolve one into a descriptor. Refuse in the ledger so the rejection replays like any other result.
         if (request.command.descriptorMap.len > 0) return self.commit(session, StoredOutcome.execFailed(
             .@"descriptor-transfer",
             null,
@@ -337,7 +306,6 @@ pub const DirectHost = struct {
         defer scratch.deinit();
         const a = scratch.allocator();
 
-        // argv[0] is the image execve resolves, so the frozen executable leads.
         const argv = try a.alloc([]const u8, request.command.arguments.len + 1);
         argv[0] = request.command.executable;
         @memcpy(argv[1..], request.command.arguments);
@@ -351,7 +319,7 @@ pub const DirectHost = struct {
             .cwd = request.command.workingDirectory,
             .envp = envp,
             .terminal_profile = request.terminalProfile.ptyProfile(),
-            .geometry = request.initialWindow.ptyGeometry(),
+            .geometry = contract.ptyGeometry(request.initialWindow),
         }) catch |err| return self.commit(session, StoredOutcome.unknown(@errorName(err)));
         const spawned = switch (outcome) {
             .running => |value| value,
@@ -373,14 +341,12 @@ pub const DirectHost = struct {
         var child_token_storage: [64]u8 = undefined;
         const child_token = try spawned.start_token.format(&child_token_storage);
 
-        // A running readback exists only after the child cleared the
-        // setsid/TIOCSCTTY/dup2 barrier, so these bits are measured, not assumed.
+        // A running readback exists only after the child cleared the setsid/TIOCSCTTY/dup2 barrier, so these bits are measured, not assumed.
         const session_leader = spawned.pid == spawned.session;
         const controlling_terminal = spawned.terminalIdentity().len > 0;
         const job_control: JobControlEvidence = .{
             .sessionLeader = session_leader,
             .controllingTerminal = controlling_terminal,
-            // The exec barrier binds all three standard streams to the slave.
             .standardStreamsShareTerminal = true,
             .childSessionId = spawned.session,
             .childProcessGroupId = spawned.pgid,
@@ -393,8 +359,6 @@ pub const DirectHost = struct {
                 spawned.initial_window_applied_before_exec) .complete else .partial,
         };
 
-        // The registered window is the geometry read back off the terminal, not
-        // the one requested.
         _ = try self.registry.register(session, .{
             .host = .{ .processId = c.getpid(), .startToken = host_token },
             .child = .{ .processId = spawned.pid, .startToken = child_token },
@@ -435,7 +399,7 @@ fn proveSocketPathPreflight(allocator: std.mem.Allocator) !void {
     defer allocator.free(root);
     try std.fs.makeDirAbsolute(root);
 
-    if (Runtime.open(allocator, root)) |runtime_value| {
+    if (Runtime.open(allocator, .{ .socket = root, .state = root })) |runtime_value| {
         var runtime = runtime_value;
         runtime.deinit();
         return error.OverlongSocketPathAccepted;
@@ -459,7 +423,7 @@ fn proveCreateFailureAdmission(allocator: std.mem.Allocator) !void {
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try Runtime.open(allocator, root);
+    var runtime = try Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
     var registry = try Registry.open(allocator, &runtime);
     defer registry.deinit();
@@ -503,10 +467,7 @@ fn proveCreateFailureAdmission(allocator: std.mem.Allocator) !void {
     if (!replay.session.eql(failed_session.value)) return error.HistoricalReplayLost;
 }
 
-/// Direct create is exactly-once against a real terminal. A replayed
-/// idempotency key returns the recorded result without issuing a second spawn,
-/// a changed request under that key is a typed conflict, and a descriptor map
-/// is refused with typed evidence rather than silently ignored.
+/// Direct create is exactly-once against a real terminal. A replayed idempotency key returns the recorded result without issuing a second spawn, a changed request under that key is a typed conflict, and a descriptor map is refused with typed evidence rather than silently ignored.
 fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
     var root_storage: [64]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/nd-{x}", .{
@@ -518,33 +479,12 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try Runtime.open(allocator, root);
+    var runtime = try Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
     var registry = try Registry.open(allocator, &runtime);
     defer registry.deinit();
 
-    const request: CreateRequest = .{
-        .key = "foreign://opaque/direct-create",
-        .idempotencyKey = "direct-create-1",
-        .command = .{
-            .executable = "/bin/cat",
-            .arguments = &.{},
-            .workingDirectory = "/tmp",
-            .completeEnvironment = &.{.{ .name = "TERM", .value = "xterm-256color" }},
-            .descriptorMap = &.{},
-        },
-        .terminalProfile = .{
-            .inputMode = .canonical,
-            .echo = false,
-            .signalCharacters = true,
-            .softwareFlowControl = false,
-            .eofByte = 4,
-            .startByte = 17,
-            .stopByte = 19,
-            .hangupOnLastClose = true,
-        },
-        .initialWindow = .{ .columns = 80, .rows = 24, .widthPixels = 0, .heightPixels = 0 },
-    };
+    const request = catCreateRequest("foreign://opaque/direct-create", "direct-create-1");
 
     var pty = try pty_host.PtyHost.init(allocator);
     defer pty.deinit();
@@ -563,18 +503,12 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
     }
     if (direct.spawns != 1) return error.UnexpectedSpawnCount;
 
-    // The sharpest double-spawn risk is a fresh host process retrying the same
-    // create after a crash. Its terminal is untouched, so nothing but the ledger
-    // stands between the retry and a second child: assert on that host's own
-    // spawn counter, which only the replay path can hold at zero. This runs
-    // before the same-host replay so no earlier guard can mask it.
+    // The sharpest double-spawn risk is a fresh host process retrying the same create after a crash. Its terminal is untouched, so nothing but the ledger stands between the retry and a second child: assert on that host's own spawn counter, which only the replay path can hold at zero. This runs before the same-host replay so no earlier guard can mask it.
     var retry_pty = try pty_host.PtyHost.init(allocator);
     defer retry_pty.deinit();
     var retry_direct = DirectHost.init(allocator, &registry, &retry_pty);
     defer retry_direct.deinit();
-    // However the retry ends, it must not have started a second child. The
-    // ledger's own register/commit guards reject a duplicate *record*, but they
-    // fire after the spawn — only the replay branch prevents the process.
+    // However the retry ends, it must not have started a second child. The ledger's own register/commit guards reject a duplicate *record*, but they fire after the spawn — only the replay branch prevents the process.
     const retried = retry_direct.host().create(request) catch |err| {
         if (retry_direct.spawns != 0) return error.DoubleSpawn;
         return err;
@@ -589,8 +523,7 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
         retried_running.child.processId != running.child.processId)
         return error.DirectCreateReplayChanged;
 
-    // Replay control: the identical frozen request returns the recorded result
-    // and this host's own terminal is never asked for a second child.
+    // Replay control: the identical frozen request returns the recorded result and this host's own terminal is never asked for a second child.
     const replayed = try direct.host().create(request);
     const replayed_running = switch (replayed.outcome) {
         .running => |value| value,
@@ -603,8 +536,7 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
         !std.mem.eql(u8, replayed_running.child.startToken, running.child.startToken))
         return error.DirectCreateReplayChanged;
 
-    // A changed request under the same idempotency key is a typed conflict,
-    // never a second launch.
+    // A changed request under the same idempotency key is a typed conflict, never a second launch.
     var conflicting = request;
     conflicting.initialWindow = .{
         .columns = 81,
@@ -617,9 +549,7 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
     } else |err| if (err != error.CreateConflict) return err;
     if (direct.spawns != 1) return error.DoubleSpawn;
 
-    // Descriptor maps are explicitly unsupported in the wire carries opaque
-    // transfer tokens this host cannot resolve, so the create is refused with
-    // typed evidence, committed to the ledger, and never spawned.
+    // Descriptor maps are explicitly unsupported in the wire carries opaque transfer tokens this host cannot resolve, so the create is refused with typed evidence, committed to the ledger, and never spawned.
     var descriptor_pty = try pty_host.PtyHost.init(allocator);
     defer descriptor_pty.deinit();
     var descriptor_direct = DirectHost.init(allocator, &registry, &descriptor_pty);
@@ -643,10 +573,7 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
         return error.DescriptorMapNotRefused;
     if (refused_record.lifecycle != .create_failed) return error.DescriptorMapNotRefused;
 
-    // The committed refusal is validated against the generated wire schema by
-    // proveCreateResultDocuments in the golden layer, which catches a missing
-    // required-but-nullable field (osCode) without this module hand-listing the
-    // frozen shape.
+    // The committed refusal is validated against the generated wire schema by proveCreateResultDocuments in the golden layer, which catches a missing required-but-nullable field (osCode) without this module hand-listing the frozen shape.
 }
 
 pub const CreateResultProof = struct {
@@ -659,12 +586,7 @@ pub const CreateResultProof = struct {
     }
 };
 
-/// Create through `host` and return the frozen create-result document for the
-/// outcome the ledger committed.
-/// The record is read here rather than by the caller because a `Record` borrows
-/// registry storage that the next reservation recycles; keeping the borrow
-/// inside this call is what stops a caller from holding it across another
-/// create.
+/// Create through `host` and return the frozen create-result document for the outcome the ledger committed. The record is read here rather than by the caller because a `Record` borrows registry storage that the next reservation recycles; keeping the borrow inside this call is what stops a caller from holding it across another create.
 pub fn createDocument(
     allocator: std.mem.Allocator,
     scratch: std.mem.Allocator,
@@ -683,11 +605,7 @@ pub fn createDocument(
     );
 }
 
-/// Assemble the frozen create-result document for one committed session.
-/// The outcome is embedded from the COMMITTED LEDGER BYTES, parsed as an opaque
-/// value, rather than re-serialized from typed values: a field the ledger
-/// omitted must stay omitted here, or a schema check above would be validating
-/// a document this host never actually wrote.
+/// Assemble the frozen create-result document for one committed session. The outcome is embedded from the COMMITTED LEDGER BYTES, parsed as an opaque value, rather than re-serialized from typed values: a field the ledger omitted must stay omitted here, or a schema check above would be validating a document this host never actually wrote.
 fn createResultDocument(
     allocator: std.mem.Allocator,
     scratch: std.mem.Allocator,
@@ -767,6 +685,48 @@ const TestTimeoutHandler = struct {
     }
 };
 
+fn fixtureHostRegistration(window: WindowSize) HostRegistration {
+    return .{
+        .host = .{ .processId = 11, .startToken = "host-start" },
+        .child = .{ .processId = 12, .startToken = "child-start" },
+        .childSessionId = 12,
+        .childProcessGroupId = 12,
+        .foregroundProcessGroupId = 12,
+        .terminalIdentity = "/dev/ttys001",
+        .sessionLeader = true,
+        .controllingTerminal = true,
+        .standardStreamsShareTerminal = true,
+        .initialProfileAppliedBeforeExec = true,
+        .initialWindowAppliedBeforeExec = true,
+        .window = window,
+    };
+}
+
+fn catCreateRequest(key: []const u8, idempotency_key: []const u8) CreateRequest {
+    return .{
+        .key = key,
+        .idempotencyKey = idempotency_key,
+        .command = .{
+            .executable = "/bin/cat",
+            .arguments = &.{},
+            .workingDirectory = "/tmp",
+            .completeEnvironment = &.{.{ .name = "TERM", .value = "xterm-256color" }},
+            .descriptorMap = &.{},
+        },
+        .terminalProfile = .{
+            .inputMode = .canonical,
+            .echo = false,
+            .signalCharacters = true,
+            .softwareFlowControl = false,
+            .eofByte = 4,
+            .startByte = 17,
+            .stopByte = 19,
+            .hangupOnLastClose = true,
+        },
+        .initialWindow = .{ .columns = 80, .rows = 24, .widthPixels = 0, .heightPixels = 0 },
+    };
+}
+
 test "stalled accepted connection is cut by the transport deadline and later calls proceed" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
     const testing = std.testing;
@@ -781,7 +741,7 @@ test "stalled accepted connection is cut by the transport deadline and later cal
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try Runtime.open(allocator, root);
+    var runtime = try Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
     var registry = try Registry.open(allocator, &runtime);
     defer registry.deinit();
@@ -797,30 +757,13 @@ test "stalled accepted connection is cut by the transport deadline and later cal
         .existing => return error.UnexpectedReplay,
     };
     const session = reserved.session;
-    // A Record borrows registry storage that the register below recycles, so
-    // the session identity used across that mutation must be copied out first.
     var stable_session = try OwnedSessionRef.init(allocator, session);
     defer stable_session.deinit();
-    _ = try registry.register(session, .{
-        .host = .{ .processId = 11, .startToken = "host-start" },
-        .child = .{ .processId = 12, .startToken = "child-start" },
-        .childSessionId = 12,
-        .childProcessGroupId = 12,
-        .foregroundProcessGroupId = 12,
-        .terminalIdentity = "/dev/ttys001",
-        .sessionLeader = true,
-        .controllingTerminal = true,
-        .standardStreamsShareTerminal = true,
-        .initialProfileAppliedBeforeExec = true,
-        .initialWindowAppliedBeforeExec = true,
-        .window = reserved.window,
-    });
+    _ = try registry.register(session, fixtureHostRegistration(reserved.window));
     var endpoint = try HostEndpoint.open(allocator, &runtime, stable_session.value);
     defer endpoint.deinit();
 
-    // A peer that connects and stalls pre-authentication must not freeze the
-    // single-threaded host: the accepted connection carries the fail-closed
-    // recv/send bound from the moment accept returns.
+    // A peer that connects and stalls pre-authentication must not freeze the single-threaded host: the accepted connection carries the fail-closed recv/send bound from the moment accept returns.
     const stalled = try std.net.connectUnixSocket(endpoint.socketPath);
     defer stalled.close();
     var accepted: ?std.net.Stream = null;
@@ -841,9 +784,7 @@ test "stalled accepted connection is cut by the transport deadline and later cal
     );
     try testing.expectEqual(@as(@TypeOf(rcv.tv_usec), 0), rcv.tv_usec);
 
-    // With the bound shortened so the test does not wait out the production
-    // value, the stalled peer's silence fails the header read with WouldBlock
-    // and the operation handler is never reached.
+    // With the bound shortened so the test does not wait out the production value, the stalled peer's silence fails the header read with WouldBlock and the operation handler is never reached.
     try setConnectionTimeoutMs(server.handle, 50);
     var never: TestTimeoutHandler = .{ .payload = "unexpected" };
     try testing.expectError(
@@ -852,8 +793,7 @@ test "stalled accepted connection is cut by the transport deadline and later cal
     );
     try testing.expect(!never.called);
 
-    // Positive control: cutting the stalled connection must not take the
-    // endpoint with it — the next well-formed client is served normally.
+    // Positive control: cutting the stalled connection must not take the endpoint with it — the next well-formed client is served normally.
     var stub: TestTimeoutHandler = .{ .payload = "live" };
     const serve_thread = try std.Thread.spawn(.{}, struct {
         fn serve(ep: *HostEndpoint, operation_handler: OperationHandler) void {
@@ -884,7 +824,7 @@ test "bound control socket keeps its 0o600 mode evidence under a permissive umas
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try Runtime.open(allocator, root);
+    var runtime = try Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
     var registry = try Registry.open(allocator, &runtime);
     defer registry.deinit();
@@ -900,9 +840,6 @@ test "bound control socket keeps its 0o600 mode evidence under a permissive umas
         .existing => return error.UnexpectedReplay,
     };
 
-    // Even with a fully permissive process umask the socket node must come
-    // into existence without group/other bits, and the recorded evidence
-    // every later open is checked against must agree.
     const previous_umask = c.umask(0o000);
     defer _ = c.umask(previous_umask);
     var endpoint = try HostEndpoint.open(allocator, &runtime, reserved.session);
@@ -924,7 +861,7 @@ test "client refuses an aggregate frame the server would reject" {
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try Runtime.open(allocator, root);
+    var runtime = try Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
     var registry = try Registry.open(allocator, &runtime);
     defer registry.deinit();
@@ -939,30 +876,13 @@ test "client refuses an aggregate frame the server would reject" {
         .reserved => |record| record,
         .existing => return error.UnexpectedReplay,
     };
-    // A Record borrows registry storage that register recycles, so the
-    // session identity used across that mutation must be copied out first.
     var stable_session = try OwnedSessionRef.init(allocator, reserved.session);
     defer stable_session.deinit();
-    _ = try registry.register(reserved.session, .{
-        .host = .{ .processId = 11, .startToken = "host-start" },
-        .child = .{ .processId = 12, .startToken = "child-start" },
-        .childSessionId = 12,
-        .childProcessGroupId = 12,
-        .foregroundProcessGroupId = 12,
-        .terminalIdentity = "/dev/ttys001",
-        .sessionLeader = true,
-        .controllingTerminal = true,
-        .standardStreamsShareTerminal = true,
-        .initialProfileAppliedBeforeExec = true,
-        .initialWindowAppliedBeforeExec = true,
-        .window = reserved.window,
-    });
+    _ = try registry.register(reserved.session, fixtureHostRegistration(reserved.window));
     var client = try registry.connect(stable_session.value);
     defer client.deinit();
 
-    // Every field is individually under operation_payload_max_bytes but their
-    // SUM — the rule serveAccepted enforces — is over: the client must refuse
-    // before writing to a socket the server would abandon mid-frame.
+    // Every field is individually under operation_payload_max_bytes but their SUM — the rule serveAccepted enforces — is over: the client must refuse before writing to a socket the server would abandon mid-frame.
     const payload = try allocator.alloc(u8, operation_payload_max_bytes - 64);
     defer allocator.free(payload);
     @memset(payload, 'x');
@@ -974,20 +894,13 @@ test "client refuses an aggregate frame the server would reject" {
         client.call(allocator, .inspect, long_key, payload),
     );
 
-    // Positive control: a frame under the aggregate bound passes the size
-    // gate and fails later on missing socket evidence (no endpoint is
-    // listening), proving the rejection above was the aggregate rule.
     try testing.expectError(
         error.FileNotFound,
         client.call(allocator, .inspect, "", ""),
     );
 }
 
-/// Real committed create results — one running, one descriptor-map refusal
-/// assembled as frozen create-result documents.
-/// This module must stay project-neutral, so it cannot validate them against
-/// the Hive wire schema itself. The golden layer above imports both and does
-/// the validation; producing the documents here is what lets it.
+/// Real committed create results — one running, one descriptor-map refusal assembled as frozen create-result documents. This module must stay project-neutral, so it cannot validate them against the Hive wire schema itself. The golden layer above imports both and does the validation; producing the documents here is what lets it.
 pub fn proveCreateResultDocuments(allocator: std.mem.Allocator) !CreateResultProof {
     var root_storage: [64]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/ncr-{x}", .{
@@ -999,35 +912,14 @@ pub fn proveCreateResultDocuments(allocator: std.mem.Allocator) !CreateResultPro
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try Runtime.open(allocator, root);
+    var runtime = try Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
     var registry = try Registry.open(allocator, &runtime);
     defer registry.deinit();
     var scratch = std.heap.ArenaAllocator.init(allocator);
     defer scratch.deinit();
 
-    const request: CreateRequest = .{
-        .key = "foreign://opaque/create-result-document",
-        .idempotencyKey = "create-result-1",
-        .command = .{
-            .executable = "/bin/cat",
-            .arguments = &.{},
-            .workingDirectory = "/tmp",
-            .completeEnvironment = &.{.{ .name = "TERM", .value = "xterm-256color" }},
-            .descriptorMap = &.{},
-        },
-        .terminalProfile = .{
-            .inputMode = .canonical,
-            .echo = false,
-            .signalCharacters = true,
-            .softwareFlowControl = false,
-            .eofByte = 4,
-            .startByte = 17,
-            .stopByte = 19,
-            .hangupOnLastClose = true,
-        },
-        .initialWindow = .{ .columns = 80, .rows = 24, .widthPixels = 0, .heightPixels = 0 },
-    };
+    const request = catCreateRequest("foreign://opaque/create-result-document", "create-result-1");
 
     var pty = try pty_host.PtyHost.init(allocator);
     defer pty.deinit();
@@ -1042,8 +934,7 @@ pub fn proveCreateResultDocuments(allocator: std.mem.Allocator) !CreateResultPro
         },
         else => return error.DirectCreateFailed,
     }
-    // Read the running record BEFORE the next create: a Record borrows registry
-    // storage that the following reservation recycles.
+    // Read the running record BEFORE the next create: a Record borrows registry storage that the following reservation recycles.
     const running_record = registry.get(created.session) orelse return error.SessionNotFound;
     const running = try createResultDocument(
         allocator,
@@ -1095,7 +986,7 @@ fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {
         _ = budget.deinit();
     };
     const bounded_allocator = budget.allocator();
-    var runtime = try Runtime.open(bounded_allocator, root);
+    var runtime = try Runtime.open(bounded_allocator, .{ .socket = root, .state = root });
     var runtime_active = true;
     defer if (runtime_active) runtime.deinit();
     var registry = try Registry.open(bounded_allocator, &runtime);
@@ -1112,20 +1003,7 @@ fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {
         .reserved => |record| record,
         .existing => return error.UnexpectedReplay,
     };
-    const registered = try registry.register(reserved.session, .{
-        .host = .{ .processId = 11, .startToken = "host-start" },
-        .child = .{ .processId = 12, .startToken = "child-start" },
-        .childSessionId = 12,
-        .childProcessGroupId = 12,
-        .foregroundProcessGroupId = 12,
-        .terminalIdentity = "/dev/ttys001",
-        .sessionLeader = true,
-        .controllingTerminal = true,
-        .standardStreamsShareTerminal = true,
-        .initialProfileAppliedBeforeExec = true,
-        .initialWindowAppliedBeforeExec = true,
-        .window = reserved.window,
-    });
+    const registered = try registry.register(reserved.session, fixtureHostRegistration(reserved.window));
     const replay = switch (try registry.reserve(
         registered.session.key,
         "bounded-create-1",
@@ -1156,13 +1034,7 @@ fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {
 }
 
 pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
-    // Security gate: the live proof handler below terminates a real child and
-    // writes proof-run evidence — including a FROZEN observedAt timestamp
-    // into the durable ledger. That ledger-write power must stay unreachable
-    // from production code paths, so the handler and its host role are
-    // declared INSIDE this proof entry point rather than at module scope
-    // nothing outside `proveLiveLifecycle` (whose only caller is the golden
-    // proof runner, test/neutral-host-golden.zig) can name or serve them.
+    // Security gate: the live proof handler below terminates a real child and writes proof-run evidence — including a FROZEN observedAt timestamp into the durable ledger. That ledger-write power must stay unreachable from production code paths, so the handler and its host role are declared INSIDE this proof entry point rather than at module scope nothing outside `proveLiveLifecycle` (whose only caller is the golden proof runner, test/neutral-host-golden.zig) can name or serve them.
     const LiveProofHost = struct {
         pty: *pty_host.PtyHost,
         registry: *Registry,
@@ -1265,7 +1137,7 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
 
         fn run(root: []const u8, request: CreateRequest, ready_fd: std.posix.fd_t) !void {
             const run_allocator = std.heap.page_allocator;
-            var runtime = try Runtime.open(run_allocator, root);
+            var runtime = try Runtime.open(run_allocator, .{ .socket = root, .state = root });
             defer runtime.deinit();
             var registry = try Registry.open(run_allocator, &runtime);
             defer registry.deinit();
@@ -1275,8 +1147,6 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
             var direct = DirectHost.init(run_allocator, &registry, &pty);
             defer direct.deinit();
 
-            // The create path under proof: one frozen request in, one committed
-            // CreateResult out, with the terminal opened and owned by this host.
             const created = try direct.host().create(request);
             const running = switch (created.outcome) {
                 .running => |value| value,
@@ -1325,7 +1195,7 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     consumer_directory.close();
     root_directory.close();
 
-    var runtime = try Runtime.open(allocator, root);
+    var runtime = try Runtime.open(allocator, .{ .socket = root, .state = root });
     var registry = Registry.open(allocator, &runtime) catch |err| {
         runtime.deinit();
         return err;
@@ -1349,9 +1219,7 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
             },
             .descriptorMap = &.{},
         },
-        // Every field is deliberately off the terminal layer's default, so a
-        // profile observed on the slave was applied by this create and not
-        // inherited from the host.
+        // Every field is deliberately off the terminal layer's default, so a profile observed on the slave was applied by this create and not inherited from the host.
         .terminalProfile = .{
             .inputMode = .canonical,
             .echo = false,
@@ -1385,8 +1253,7 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     };
     std.posix.close(ready_pipe[1]);
     const ready: std.fs.File = .{ .handle = ready_pipe[0] };
-    // The host mints the incarnation inside create, so the controller learns
-    // the session identity only after the create was committed.
+    // The host mints the incarnation inside create, so the controller learns the session identity only after the create was committed.
     var incarnation: [32]u8 = undefined;
     try readExact(ready, &incarnation);
     ready.close();
@@ -1395,12 +1262,11 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     if (directory_name.len != 46 or std.mem.indexOf(u8, &directory_name, key) != null)
         return error.OpaqueDirectoryDerivationFailed;
 
-    // Discard the original controller state. Recovery must use only the
-    // durable record, private capability, and live host.sock.
+    // Discard the original controller state. Recovery must use only the durable record, private capability, and live host.sock.
     registry.deinit();
     runtime.deinit();
     original_owned = false;
-    var recovered_runtime = try Runtime.open(allocator, root);
+    var recovered_runtime = try Runtime.open(allocator, .{ .socket = root, .state = root });
     defer recovered_runtime.deinit();
     var recovered = try Registry.open(allocator, &recovered_runtime);
     defer recovered.deinit();
@@ -1420,8 +1286,6 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
         live.terminalIdentity == null or
         !std.mem.startsWith(u8, live.terminalIdentity.?, "/dev/"))
         return error.RecoveredJobControlEvidenceIncomplete;
-    // The committed create result is the frozen flattened wire shape, and it
-    // agrees with the job-control evidence recovered from the record.
     var replay_arena = std.heap.ArenaAllocator.init(allocator);
     defer replay_arena.deinit();
     const replayed = std.json.parseFromSliceLeaky(
@@ -1444,14 +1308,25 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
         return error.ActiveSessionRemoved
     else |err| if (err != error.SessionStillActive) return err;
 
+    // A second endpoint for a session whose first one is still serving must be refused. The refusal
+    // now comes from connecting to the address rather than from finding a name taken, so this proof
+    // is also what stands between a stale-socket reclaim and a live-socket theft.
     if (HostEndpoint.open(allocator, &recovered_runtime, session)) |endpoint_value| {
         var endpoint = endpoint_value;
         endpoint.deinit();
         return error.LiveEndpointTakeoverAccepted;
-    } else |err| if (err != error.HostEndpointExists) return err;
+    } else |err| if (err != error.SocketAddressHeldByLiveHost) return err;
+    // And the refusal must leave the live socket where it was: a reclaim that unlinked first would
+    // pass the check above and still have destroyed a working session's address.
+    {
+        const held = try recovered_runtime.socketPath(allocator, session);
+        defer allocator.free(held);
+        const probe = std.net.connectUnixSocket(held) catch
+            return error.LiveEndpointLostToRefusal;
+        probe.close();
+    }
 
-    // Positive replay control: the identical semantic digest returns the
-    // original incarnation and cannot reserve or spawn another session.
+    // Positive replay control: the identical semantic digest returns the original incarnation and cannot reserve or spawn another session.
     const replay = switch (try recovered.reserve(
         key,
         "create-idempotency-1",
@@ -1485,7 +1360,6 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     if (!submitted.accepted) return error.InputSubmissionFailed;
     var attached = try client.call(allocator, .attach, "", "0");
     defer attached.deinit();
-    // Slave OPOST|ONLCR expands the written bare NL to CRLF on the master.
     if (!attached.accepted or std.mem.indexOf(
         u8,
         attached.payload,

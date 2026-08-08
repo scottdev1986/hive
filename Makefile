@@ -3,17 +3,21 @@
 #
 # Public commands:
 #
-#   make clean   stop the dev instance, then delete all dev artifacts
-#   make build   build + stage the standalone dev release under .dev/
-#   make run     run the staged dev build (defaults to this checkout)
-#   make test    lint + format + typecheck + bun suites + sessiond (Zig) + Workspace (Swift)
+#   make clean       uninstall dev while retaining its configured state
+#   make clean-all   uninstall dev with --purge: retention overridden, everything destroyed
+#   make build       build + stage the standalone dev release under .dev/
+#   make run         run the staged dev build (defaults to this checkout)
+#   make test        lint + format + typecheck + bun suites + sessiond (Zig) + Workspace (Swift)
 #
 # Everything else here is internal structure, never a command to run by hand:
-# heals and remediation run inside these four. No fifth command. build is
-# complete every time; correctness outranks incrementality.
+# heals and remediation run inside these five. build is complete every time;
+# correctness outranks incrementality.
 #
 # Isolation: every rendezvous name derives from HIVE_HOME (DEV_HOME below).
-# Nothing reads or writes ~/.hive, ~/.local/share/hive, or ~/.local/bin/hive.
+# DEV_HOME is a named instance under ~/.hive/instances, which is what that
+# directory is for; the dev daemon touches nothing else in ~/.hive except the
+# memory state it deliberately shares, and never ~/.local/share/hive or
+# ~/.local/bin/hive.
 
 SHELL := /bin/sh
 .DEFAULT_GOAL := build
@@ -27,19 +31,25 @@ INSTALL_ROOT := $(DEV)/root
 DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
 DAEMON_STARTUP_LOG := $(DEV)/daemon-startup.log
-# Short per-checkout home: sessiond's canonical host socket path must fit macOS's
-# 103-char sun_path (this spelling costs 100). Do not lengthen it.
+# Per-checkout dev home, on the persistent volume. hive.db is the board's only
+# store, so this must be somewhere the OS will not reclaim: /tmp is swept by
+# /usr/libexec/tmp_cleaner, which deletes files untouched for three days, and is
+# recreated empty at boot. A dev home there loses the whole board silently, with
+# the directory left looking intact because its symlinks are not regular files.
+# This spelling is the existing named-instance layout (see namedInstanceHome in
+# src/daemon/lifecycle/instances.ts), so the dev instance is an ordinary
+# instance rather than a fourth home convention.
 ROOT_RESOLVED := $(shell cd "$(ROOT)" && pwd -P)
 DEV_HOME_TAG := $(shell printf '%s' "$(ROOT_RESOLVED)" | /usr/bin/shasum -a 256 | cut -c1-10)
-DEV_HOME := /tmp/hv-$(DEV_HOME_TAG)
+DEV_HOME := $(HOME)/.hive/instances/dev-$(DEV_HOME_TAG)
 # The dev home's memory state (memory/, projects/, project-registry.json,
 # models/) is SHARED with the real ~/.hive via symlinks that run's
-# scripts/dev-memory-setup.ts creates, so dev testing reuses live lessons.
-# Nothing in this Makefile may recursively delete through those links: clean's
-# rm -rf only ever receives the literal $(DEV) / $(DEV_HOME) paths, and rm
-# unlinks symlinks without following them — keep it that way. Daemon runtime
-# state (daemon.port, credentials, runtime/, logs/, hive.db) stays per-home,
-# never linked.
+# scripts/dev/dev-memory-setup.ts creates, so dev testing reuses live lessons.
+# Nothing in this Makefile may recursively delete through those links, and the
+# uninstaller clean and clean-all delegate to unlinks a symlink rather than
+# following it. Daemon runtime state
+# (daemon.port, credentials, logs/, hive.db) stays per-home, never linked;
+# sessiond's runtime tree is not in the home at all.
 LOCK := $(ROOT)/native/toolchain-lock.json
 # Shared per-user cache: zig caches and lock-keyed Ghostty artifacts live
 # outside the checkout so worktrees share them. Correctness comes from content
@@ -77,7 +87,7 @@ GHOSTTY_ARTIFACT_STAMP := $(GHOSTTY_ARTIFACT)/.hive-lock-$(LOCK_SHA).stamp
 # The artifact key omits most locked inputs, so a stale artifact can wear a
 # current stamp. This must stay at PARSE time: make stats a target and decides
 # to remake it before any prerequisite's recipe could drop the stamp.
-GHOSTTY_ARTIFACT_HEAL := $(shell "$(ROOT)/scripts/ghostty-artifact-heal.sh" \
+GHOSTTY_ARTIFACT_HEAL := $(shell "$(ROOT)/scripts/native/ghostty-artifact-heal.sh" \
   "$(GHOSTTY_ARTIFACT)" "$(LOCK)" "$(GHOSTTY_ARTIFACT_STAMP)")
 $(if $(GHOSTTY_ARTIFACT_HEAL),$(info make: $(GHOSTTY_ARTIFACT_HEAL)))
 GHOSTTYKIT := $(ROOT)/workspace/Vendor/GhosttyKit.xcframework
@@ -86,7 +96,10 @@ GHOSTTYKIT_INFO := $(GHOSTTYKIT)/Info.plist
 # name in the unified log, indistinguishable from the installed app. The rule
 # below renames it so clean and process binding can tell them apart.
 WORKSPACE_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspaceDev
-WORKSPACE_SPM_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
+# The QA executable, not the shipped one: it is the app plus the headless smoke
+# checks and the frozen-corpus shell, which the product no longer carries. The
+# evidence flows launch this file, so they keep working unchanged.
+WORKSPACE_SPM_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspaceQA
 # Per-checkout: built from THIS worktree's sources, never the shared cache.
 SESSIOND_RELEASE_ROOT := $(ROOT)/.cache/sessiond-releasefast
 SESSIOND_RELEASE_BIN := $(SESSIOND_RELEASE_ROOT)/bin/hive-sessiond
@@ -114,14 +127,14 @@ GHOSTTY_ENGINE_INPUTS := $(shell find \
 	$(ROOT)/native/ghostty-upstream-tree.txt
 GHOSTTY_BUILD_INPUTS := $(GHOSTTY_ENGINE_INPUTS) \
 	$(LOCK) \
-	$(ROOT)/scripts/build-ghosttykit.sh \
-	$(ROOT)/scripts/check-ghostty-abi.sh \
-	$(ROOT)/scripts/preflight-native-toolchain.sh \
-	$(ROOT)/scripts/prepare-zig-xcode-overlay.sh \
-	$(ROOT)/scripts/qualify-ghostty-checkpoint.sh \
-	$(ROOT)/scripts/qualify-ghostty-release-lock.sh \
-	$(ROOT)/scripts/vendor-ghostty.sh \
-	$(ROOT)/scripts/write-ghostty-artifact-metadata.ts
+	$(ROOT)/scripts/native/build-ghosttykit.sh \
+	$(ROOT)/scripts/native/check-ghostty-abi.sh \
+	$(ROOT)/scripts/native/preflight-native-toolchain.sh \
+	$(ROOT)/scripts/native/prepare-zig-xcode-overlay.sh \
+	$(ROOT)/scripts/native/qualify-ghostty-checkpoint.sh \
+	$(ROOT)/scripts/native/qualify-ghostty-release-lock.sh \
+	$(ROOT)/scripts/native/vendor-ghostty.sh \
+	$(ROOT)/scripts/native/write-ghostty-artifact-metadata.ts
 WORKSPACE_INPUTS := $(shell find \
 	$(ROOT)/workspace/Sources \
 	$(ROOT)/workspace/Resources \
@@ -132,8 +145,8 @@ WORKSPACE_INPUTS := $(shell find \
 SESSIOND_INPUTS := $(shell find $(ROOT)/native/sessiond/src -type f) \
 	$(ROOT)/native/sessiond/build.zig \
 	$(ROOT)/native/sessiond/build.zig.zon \
-	$(ROOT)/scripts/prepare-zig-xcode-overlay.sh \
-	$(ROOT)/scripts/zig-runner-tools/xcrun \
+	$(ROOT)/scripts/native/prepare-zig-xcode-overlay.sh \
+	$(ROOT)/scripts/native/zig-runner-tools/xcrun \
 	$(LOCK) \
 	$(GHOSTTY_ENGINE_INPUTS)
 
@@ -141,8 +154,16 @@ SESSIOND_INPUTS := $(shell find $(ROOT)/native/sessiond/src -type f) \
 # `hive init` stages the embedding runtime from source instead of downloading a
 # release the dev version is not pinned to. A dev run provisions through init
 # like every other path — there is no separate install command — and
-# scripts/verify-dev-run.ts refuses to hand over a daemon whose embeddings are
+# scripts/dev/verify-dev-run.ts refuses to hand over a daemon whose embeddings are
 # not "ready" after a live recall probe.
+#
+# OTUI_ASSET_ROOT makes every compiled dev binary load OpenTUI's native dylib and
+# tree-sitter assets straight out of node_modules. Without it, Bun materializes a
+# fresh copy of the embedded libopentui.dylib into TMPDIR on every process that
+# initializes a renderer and never deletes it — with TMPDIR pinned to .dev/tmp
+# that accumulated 4.5 MB per agent-ui/daemon process forever. The variable names
+# a complete asset set: OpenTUI throws if any asset it resolves is missing under
+# the root, and node_modules is the only tree that has all of them.
 DEV_ENV := \
 	HIVE_HOME=$(DEV_HOME) \
 	HIVE_EMBEDDINGS_SOURCE=$(ROOT) \
@@ -151,10 +172,11 @@ DEV_ENV := \
 	HIVE_DISABLE_UPDATES=1 \
 	HIVE_GRAPHIFY_MANIFEST=$(GRAPHIFY_LOCAL_MANIFEST) \
 	HIVE_PORT=0 \
+	OTUI_ASSET_ROOT=$(ROOT)/node_modules \
 	TMPDIR=$(DEV)/tmp
 
-# The four public commands, then the internal structure they pull in.
-.PHONY: clean build run test sessiond toolchain graphify-local
+# The five public commands, then the internal structure they pull in.
+.PHONY: clean clean-all build run test sessiond toolchain graphify-local
 
 graphify-local: $(GRAPHIFY_LOCAL_MANIFEST)
 
@@ -169,12 +191,12 @@ $(GRAPHIFY_LOCAL_MANIFEST): graphify.lock $(shell find "$(ROOT)/scripts/graphify
 toolchain: $(TOOLCHAIN_STAMP)
 
 $(TOOLCHAIN_STAMP): $(LOCK) \
-		$(ROOT)/scripts/provision-native-toolchain.sh \
-		$(ROOT)/scripts/validate-native-toolchain-lock.sh \
-		$(ROOT)/scripts/ghostty-dependency-cache.ts \
+		$(ROOT)/scripts/native/provision-native-toolchain.sh \
+		$(ROOT)/scripts/native/validate-native-toolchain-lock.sh \
+		$(ROOT)/scripts/native/ghostty-dependency-cache.ts \
 		$(ROOT)/vendor/ghostty/build.zig.zon.json
 	@mkdir -p "$(DEMO_CACHE)"
-	@"$(ROOT)/scripts/provision-native-toolchain.sh"
+	@"$(ROOT)/scripts/native/provision-native-toolchain.sh"
 	@touch "$@"
 
 # Catches vendor-tree drift the lock does not record. Runs on every build and
@@ -184,20 +206,20 @@ vendor-verify:
 	@set -e; \
 	dirty=$$(git -C "$(ROOT)" status --porcelain -- vendor/ghostty); \
 	if [ -n "$$dirty" ]; then \
-	  echo "make: vendor/ghostty has uncommitted changes; commit them, update native/toolchain-lock.json (ghostty.patchedTree), and prove with scripts/vendor-ghostty.sh verify:" >&2; \
+	  echo "make: vendor/ghostty has uncommitted changes; commit them, update native/toolchain-lock.json (ghostty.patchedTree), and prove with scripts/native/vendor-ghostty.sh verify:" >&2; \
 	  printf '%s\n' "$$dirty" | head >&2; exit 1; \
 	fi; \
 	tree=$$(git -C "$(ROOT)" rev-parse HEAD:vendor/ghostty); \
 	locked=$$(/usr/bin/plutil -extract ghostty.patchedTree raw -o - "$(LOCK)"); \
 	if [ "$$tree" != "$$locked" ]; then \
-	  echo "make: vendor/ghostty tree $$tree does not match lock patchedTree $$locked; run scripts/vendor-ghostty.sh verify" >&2; exit 1; \
+	  echo "make: vendor/ghostty tree $$tree does not match lock patchedTree $$locked; run scripts/native/vendor-ghostty.sh verify" >&2; exit 1; \
 	fi
 
 # No mtime prerequisites on purpose: the stamp name is the content key, so a
 # fresh worktree reuses the artifact instead of a full rebuild.
 $(GHOSTTY_ARTIFACT_STAMP): | toolchain
 	@echo "building lock-pinned GhosttyKit"
-	@"$(ROOT)/scripts/build-ghosttykit.sh"
+	@"$(ROOT)/scripts/native/build-ghosttykit.sh"
 	@test -f "$(GHOSTTY_ARTIFACT_INFO)" || { echo "make: GhosttyKit build produced no artifact; rerun 'make build'" >&2; exit 1; }
 	@ls "$(GHOSTTY_ARTIFACT)"/GhosttyKit.xcframework/macos-*/lib*.a >/dev/null 2>&1 || { echo "make: GhosttyKit macOS archive is invalid; rerun 'make build'" >&2; exit 1; }
 	@test -f "$(GHOSTTY_ARTIFACT)/checkpoint-fixtures/$(UNAME_M)/corpus.hvg6" || { echo "make: GhosttyKit checkpoint corpus is missing; rerun 'make build'" >&2; exit 1; }
@@ -207,7 +229,7 @@ $(GHOSTTY_ARTIFACT_STAMP): | toolchain
 # archive. Nothing structural makes them equal — the lock check is what does, and
 # without it a stale artifact stages silently and every pane attach dies.
 $(GHOSTTYKIT_INFO): $(GHOSTTY_ARTIFACT_STAMP)
-	@"$(ROOT)/scripts/ghostty-artifact-lock-check.sh" "$(GHOSTTY_ARTIFACT)" "$(LOCK)" || { echo "make: cached GhosttyKit artifact does not record the toolchain lock's ghostty source identity; refusing to stage it (rerun 'make build')" >&2; exit 1; }
+	@"$(ROOT)/scripts/native/ghostty-artifact-lock-check.sh" "$(GHOSTTY_ARTIFACT)" "$(LOCK)" || { echo "make: cached GhosttyKit artifact does not record the toolchain lock's ghostty source identity; refusing to stage it (rerun 'make build')" >&2; exit 1; }
 	@echo "staging lock-pinned GhosttyKit for SwiftPM"
 	@/bin/rm -rf "$(GHOSTTYKIT)" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
 	@mkdir -p "$(ROOT)/workspace/Vendor"
@@ -217,7 +239,7 @@ $(GHOSTTYKIT_INFO): $(GHOSTTY_ARTIFACT_STAMP)
 	@touch "$@"
 
 # Not reached by the four: release builds its own. This is for the attach/smoke
-# harness (scripts/b22-live-attach-proof.ts), which builds it by absolute path.
+# harness (scripts/qa/b22-live-attach-proof.ts), which builds it by absolute path.
 $(WORKSPACE_BIN): $(WORKSPACE_INPUTS) $(GHOSTTYKIT_INFO)
 	@echo "building Workspace Swift executable"
 	@swift build --package-path "$(ROOT)/workspace"
@@ -244,9 +266,9 @@ $(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) $(GHOSTTY_ARTIFACT_STAMP) | toolchai
 	@mkdir -p "$(SESSIOND_RELEASE_ROOT)"
 	@/bin/rm -f "$@"
 	@set -e; \
-		overlay=$$("$(ROOT)/scripts/prepare-zig-xcode-overlay.sh"); \
+		overlay=$$("$(ROOT)/scripts/native/prepare-zig-xcode-overlay.sh"); \
 		cd "$(ROOT)/native/sessiond"; \
-		PATH="$(ROOT)/scripts/zig-runner-tools:$$PATH" "$(ZIG)" build install \
+		PATH="$(ROOT)/scripts/native/zig-runner-tools:$$PATH" "$(ZIG)" build install \
 			--prefix "$(SESSIOND_RELEASE_ROOT)" \
 			--cache-dir "$(NATIVE_CACHE)/zig-local/sessiond" \
 			--global-cache-dir "$(NATIVE_CACHE)/zig-global" \
@@ -261,17 +283,13 @@ $(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) $(GHOSTTY_ARTIFACT_STAMP) | toolchai
 build:
 	/bin/rm -f "$(HIVE_BIN)"
 	$(MAKE) toolchain vendor-verify "$(GHOSTTYKIT_INFO)" sessiond
-	bun install --frozen-lockfile
+	bun install --frozen-lockfile --os=darwin --cpu='*'
 	$(MAKE) graphify-local
 	bun run src/release/build.ts --version $(DEV_VERSION) \
-	  --commit $$(git rev-parse --short HEAD) --out "$(DIST)"
-	rm -rf "$(INSTALL_ROOT)/versions/$(DEV_VERSION)"
-	mkdir -p "$(INSTALL_ROOT)/versions/$(DEV_VERSION)" "$(DEV)/bin"
-	install -m 755 "$(DIST)/$(CLI_ASSET)" "$(INSTALL_ROOT)/versions/$(DEV_VERSION)/hive"
-	install -m 755 "$(DIST)/$(SESSIOND_ASSET)" \
-	  "$(INSTALL_ROOT)/versions/$(DEV_VERSION)/hive-sessiond"
-	tar -xzf "$(DIST)/HiveWorkspace.tar.gz" -C "$(INSTALL_ROOT)/versions/$(DEV_VERSION)"
-	ln -shf "versions/$(DEV_VERSION)" "$(INSTALL_ROOT)/current"
+	  --variant dev --commit $$(git rev-parse --short HEAD) --out "$(DIST)"
+	HIVE_HOME="$(DEV_HOME)" HIVE_INSTALL_ROOT="$(INSTALL_ROOT)" \
+	  HIVE_BIN_LINK="$(DEV)/bin/hive-dev" HIVE_BIN_DIR="$(DEV)/bin" \
+	  sh "$(ROOT)/install.sh" --variant dev --from-build "$(DIST)" "$(DEV_VERSION)"
 	@echo "staged: $$("$(HIVE_BIN)" --version)"
 
 # PROJECT defaults to this checkout (inside a worktree, that worktree). An
@@ -287,161 +305,45 @@ run:
 	fi; \
 	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
 	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp"; \
-	bun run "$(ROOT)/scripts/dev-memory-setup.ts" "$(DEV_HOME)" "$(HOME)/.hive"; \
+	bun run "$(ROOT)/scripts/dev/dev-memory-setup.ts" "$(DEV_HOME)" "$(HOME)/.hive"; \
 	cd "$$proj"; \
 	env $(DEV_ENV) "$(HIVE_BIN)" init; \
 	/bin/rm -f "$(DAEMON_STARTUP_LOG)"; \
 	env $(DEV_ENV) "$(HIVE_BIN)" daemon >"$(DAEMON_STARTUP_LOG)" 2>&1 & daemon_pid=$$!; \
-	if ! bun run "$(ROOT)/scripts/verify-dev-run.ts" "$(DAEMON_STARTUP_LOG)" "$(HIVE_BIN)" "$(ROOT)" "$$daemon_pid" "$(DEV_HOME)"; then \
+	if ! bun run "$(ROOT)/scripts/dev/verify-dev-run.ts" "$(DAEMON_STARTUP_LOG)" "$(HIVE_BIN)" "$(ROOT)" "$$daemon_pid"; then \
 	  kill "$$daemon_pid" 2>/dev/null || true; \
 	  wait "$$daemon_pid" 2>/dev/null || true; \
 	  exit 1; \
 	fi; \
-	env $(DEV_ENV) "$(HIVE_BIN)"
+	if ! env $(DEV_ENV) "$(HIVE_BIN)"; then \
+	  kill "$$daemon_pid" 2>/dev/null || true; \
+	  wait "$$daemon_pid" 2>/dev/null || true; \
+	  exit 1; \
+	fi; \
+	if ! bun run "$(ROOT)/scripts/dev/verify-dev-run.ts" --memory "$(DEV_HOME)"; then \
+	  kill "$$daemon_pid" 2>/dev/null || true; \
+	  wait "$$daemon_pid" 2>/dev/null || true; \
+	  exit 1; \
+	fi
 
 # No pipes anywhere: a red suite must exit red. The real-CLI e2e suite is already
 # inside `bun run test` and self-skips unless HIVE_E2E=1; opting in is
-# `HIVE_E2E=1 bun test test/cli/e2e-real.test.ts`, which is what CI runs.
+# `HIVE_E2E=1 bun run scripts/test-sandbox.ts -- bun test test/cli/e2e-real.test.ts`.
 test: toolchain vendor-verify $(GHOSTTYKIT_INFO)
 	bun install --frozen-lockfile
 	bun run check
 	bun run test
 	cd workspace && swift test
 
-# Stop the dev instance, then delete every dev artifact — never delete without
-# stopping first. Load-bearing invariants, each easy to break silently:
-#   - No kill is trusted: the sweep re-reads the process table and rm -rf runs
-#     only on an empty readback; a survivor refuses and exits non-zero.
-#   - Select by executable path and argv, never by process name — the user's
-#     installed hive runs its own Workspace and vendor CLIs.
-#   - Bind by executable under .dev/, or by open files under .dev/HIVE_HOME.
-#     Argv only nominates a candidate; exec path or lsof binds it. Mentioners
-#     are reported, never signalled.
-#   - Three spellings each for .dev and the home (literal, physical, deepest
-#     surviving ancestor) so a clean still works once a directory is gone.
-#   - Empty derivations refuse instead of defaulting: an empty dev path would
-#     prefix-match every absolute path on the machine.
-#   - The invoker's whole ancestor chain is excluded, walked to pid 1.
-# Deletion only ever receives the literal $(DEV) and DEV_HOME paths, with no
-# trailing slash. DEV_HOME/memory, projects, project-registry.json and models
-# may be symlinks into the real ~/.hive; rm -rf unlinks a symlink without
-# following it, so the real home stays unreachable. Physical path spellings
-# feed only the process-binding checks. The -L guards refuse a top-level
-# symlink so no future edit can delete "through" a dev path.
-clean:
+# Clean delegates state ownership and liveness to the same uninstaller every
+# native install uses. The binary must exist because source-running a second
+# implementation would make clean disagree with the installed variant record.
+# clean-all is the same call with --purge: the uninstaller's retention set
+# overridden to nothing, never a second sweep.
+clean clean-all:
 	@set -e; \
-	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P) || true; else dev="$(DEV)"; fi; \
-	[ -n "$$dev" ] || { echo "refusing: could not determine the dev directory path" >&2; exit 1; }; \
-	case "$$dev" in /*) ;; *) echo "refusing: dev path is not absolute ($$dev)" >&2; exit 1;; esac; \
-	home="$(DEV_HOME)"; \
-	[ -n "$$home" ] || { echo "refusing: could not determine the dev HIVE_HOME path" >&2; exit 1; }; \
-	case "$$home" in /*) ;; *) echo "refusing: dev HIVE_HOME is not absolute ($$home)" >&2; exit 1;; esac; \
-	self=$$$$; \
-	pidfile=""; \
-	if [ -f "$$home/daemon.pid" ]; then pidfile="$$home/daemon.pid"; \
-	elif [ -f "$$dev/home/daemon.pid" ]; then pidfile="$$dev/home/daemon.pid"; fi; \
-	if [ -n "$$pidfile" ]; then \
-	  pid=$$(cat "$$pidfile" 2>/dev/null) || true; \
-	  [ -n "$$pid" ] || { echo "refusing: daemon.pid exists but could not be read" >&2; exit 1; }; \
-	  command=$$(ps -p "$$pid" -o comm= 2>/dev/null || true); \
-	  case "$$command" in "$$dev"/*) kill "$$pid" 2>/dev/null || true;; esac; \
-	fi; \
-	is_mine() { q=$$1; k=0; \
-	  while [ $$k -lt 8 ]; do \
-	    [ "$$q" = "$$self" ] && return 0; \
-	    q=$$(ps -p "$$q" -o ppid= 2>/dev/null | tr -d ' '); \
-	    [ -n "$$q" ] || return 0; [ "$$q" = "1" ] && return 1; \
-	    k=$$((k + 1)); \
-	  done; return 1; }; \
-	ancestors=" "; a=$$self; k=0; complete=no; \
-	while [ $$k -lt 4096 ]; do \
-	  a=$$(ps -p "$$a" -o ppid= 2>/dev/null | tr -d ' '); \
-	  [ -n "$$a" ] || { complete=yes; break; }; \
-	  [ "$$a" = "0" ] && { complete=yes; break; }; \
-	  ancestors="$$ancestors$$a "; \
-	  [ "$$a" = "1" ] && { complete=yes; break; }; \
-	  k=$$((k + 1)); \
-	done; \
-	[ "$$complete" = yes ] || { \
-	  echo "refusing: could not walk the full ancestor chain; some ancestor would be kill-eligible" >&2; exit 1; }; \
-	excluded() { case "$$ancestors" in *" $$1 "*) return 0;; esac; is_mine "$$1"; }; \
-	devl="$(DEV)"; \
-	devp="$$dev"; d="$$dev"; rest=""; \
-	while [ ! -d "$$d" ] && [ "$$d" != "/" ] && [ -n "$$d" ]; do \
-	  b=$$(basename "$$d") || true; \
-	  [ -n "$$b" ] || { echo "refusing: could not basename a deleted-dev path component" >&2; exit 1; }; \
-	  rest="/$$b$$rest"; \
-	  d=$$(dirname "$$d") || true; \
-	  [ -n "$$d" ] || { echo "refusing: could not walk to a surviving ancestor of the dev path" >&2; exit 1; }; \
-	done; \
-	if [ -d "$$d" ]; then \
-	  base=$$(cd "$$d" && pwd -P) || true; \
-	  [ -n "$$base" ] || { echo "refusing: could not resolve the physical dev path" >&2; exit 1; }; \
-	  devp="$$base$$rest"; \
-	fi; \
-	[ -n "$$devp" ] || { echo "refusing: could not resolve the physical dev path" >&2; exit 1; }; \
-	homel="$(DEV_HOME)"; \
-	homep="$$home"; hd="$$home"; hrest=""; \
-	while [ ! -d "$$hd" ] && [ "$$hd" != "/" ] && [ -n "$$hd" ]; do \
-	  hb=$$(basename "$$hd") || true; \
-	  [ -n "$$hb" ] || { echo "refusing: could not basename a deleted-home path component" >&2; exit 1; }; \
-	  hrest="/$$hb$$hrest"; \
-	  hd=$$(dirname "$$hd") || true; \
-	  [ -n "$$hd" ] || { echo "refusing: could not walk to a surviving ancestor of the dev HIVE_HOME" >&2; exit 1; }; \
-	done; \
-	if [ -d "$$hd" ]; then \
-	  hbase=$$(cd "$$hd" && pwd -P) || true; \
-	  [ -n "$$hbase" ] || { echo "refusing: could not resolve the physical dev HIVE_HOME" >&2; exit 1; }; \
-	  homep="$$hbase$$hrest"; \
-	fi; \
-	[ -n "$$homep" ] || { echo "refusing: could not resolve the physical dev HIVE_HOME" >&2; exit 1; }; \
-	is_bound() { \
-	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in \
-	    "$$dev"/*|"$$devp"/*|"$$devl"/*|"$$home"/*|"$$homep"/*|"$$homel"/*) return 0;; esac; \
-	  if lsof -n -P -a -p "$$1" -Fn 2>/dev/null \
-	    | awk -v d="$$dev" -v dp="$$devp" -v dl="$$devl" \
-	          -v h="$$home" -v hp="$$homep" -v hl="$$homel" ' \
-	        /^n/ { p = substr($$0, 2); \
-	               if (p == d  || index(p, d  "/") == 1) { found = 1; exit } \
-	               if (p == dp || index(p, dp "/") == 1) { found = 1; exit } \
-	               if (p == dl || index(p, dl "/") == 1) { found = 1; exit } \
-	               if (p == h  || index(p, h  "/") == 1) { found = 1; exit } \
-	               if (p == hp || index(p, hp "/") == 1) { found = 1; exit } \
-	               if (p == hl || index(p, hl "/") == 1) { found = 1; exit } } \
-	        END { exit(found ? 0 : 1) }'; then return 0; fi; \
-	  return 1; }; \
-	candidates() { \
-	  { ps -axo pid=,comm= | while read -r p c; do \
-	      case "$$c" in \
-	        "$$dev"/*|"$$devp"/*|"$$devl"/*|"$$home"/*|"$$homep"/*|"$$homel"/*) echo "$$p";; \
-	      esac; done; \
-	    ps -axo pid=,command= | while read -r p rest; do \
-	      case "$$rest" in \
-	        *"$$dev"/*|*"$$devp"/*|*"$$devl"/*|*"$$home"/*|*"$$homep"/*|*"$$homel"/*) echo "$$p";; \
-	      esac; done; \
-	  } | sort -u | while read -r p; do \
-	    [ -n "$$p" ] || continue; excluded "$$p" || echo "$$p"; done; }; \
-	dev_pids() { candidates | while read -r p; do is_bound "$$p" && echo "$$p"; done; :; }; \
-	mentioners() { candidates | while read -r p; do is_bound "$$p" || echo "$$p"; done; :; }; \
-	pids=$$(dev_pids) || true; \
-	named=$$(mentioners) || true; \
-	[ -z "$$named" ] || echo "found mentioners, not killing:" $$named; \
-	if [ ! -d "$(DEV)" ] && [ ! -d "$$home" ] && [ -z "$$pids" ]; then exit 0; \
-	fi; \
-	if [ -n "$$pids" ]; then \
-	  echo "stopping dev processes:" $$pids; \
-	  for p in $$pids; do kill "$$p" 2>/dev/null || true; done; \
-	  alive=""; \
-	  i=0; while [ $$i -lt 20 ]; do \
-	    alive=$$(dev_pids) || true; [ -n "$$alive" ] || break; sleep 0.5; i=$$((i + 1)); \
-	  done; \
-	  if [ -n "$$alive" ]; then \
-	    echo "refusing to delete $(DEV) / $$home: still running:" $$alive >&2; \
-	    echo "they run from files under $(DEV) or $$home; deleting would strand them" >&2; \
-	    exit 1; \
-	  fi; \
-	  echo "all dev processes confirmed stopped"; \
-	fi; \
-	[ ! -L "$(DEV)" ] || { echo "refusing: $(DEV) is a symlink; clean deletes literal dev paths only" >&2; exit 1; }; \
-	[ ! -L "$$home" ] || { echo "refusing: $$home is a symlink; clean deletes literal dev paths only" >&2; exit 1; }; \
-	rm -rf "$(DEV)" "$$home"
+	if [ -x "$(HIVE_BIN)" ]; then \
+		if [ "$@" = clean-all ]; then env $(DEV_ENV) "$(HIVE_BIN)" uninstall --yes --purge; \
+		else env $(DEV_ENV) "$(HIVE_BIN)" uninstall --yes; fi; \
+	else echo "no installed dev binary; removing build output only"; fi; \
+	rm -rf "$(DEV)" "$(ROOT)"/.*.bun-build

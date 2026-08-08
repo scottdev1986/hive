@@ -1,0 +1,38 @@
+{
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "f4b6c72bae",
+    "subject": {
+      "kind": "agent",
+      "agentId": "039a446a-1474-4c9d-90b7-33c052040e82"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc29a-d9b7-7c49-9393-564b536a78ef",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "outputSeq": "5459",
+  "columns": 80,
+  "rows": 24,
+  "rowStart": 0,
+  "screen": "alternate",
+  "cursor": {
+    "row": 19,
+    "column": 2,
+    "visible": true
+  },
+  "text": "│                ▘▘ ▝▝                │ Added Claude Opus 5 (`claude-opus-5`)… │\n│                                     │ Added `sandbox.network.strictAllowlis… │\n│   Haiku 4.5 · Claude Max · Scott    │ /release-notes for more                │\n│   ~/project/.hive/worktrees/maya    │                                        │\n╰──────────────────────────────────────────────────────────────────────────────╯\n\n ▎ Fable 5 is now a standard part of your Max plan\n ▎ You can use up to 50% of your weekly usage limit on Fable 5. If you hit your\n ▎ limit, you can continue on Fable 5 with usage credits. Fable 5 draws down\n ▎ usage faster than Opus 4.8. Run /model and select Fable to use it. Learn\n ▎ more: https://support.claude.com/en/articles/15424964-claude-fable-5-promotio\n ▎ nal-access\n   +1 more · /status\n\n❯ Begin the assigned task.                                                      \n\n✢ Hullaballooing… \n\n────────────────────────────────────────────────────────────────────────────────\n❯ \n────────────────────────────────────────────────────────────────────────────────\n  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · res…\n  🐝 maya\n  ⏸ manual mode on",
+  "styledText": "\u001b[0m\u001b[38;5;174m│                ▘▘ ▝▝                \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0mAdded Claude Opus 5 (`claude-opus-5`)… \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│                                     \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0mAdded `sandbox.network.strictAllowlis… \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│   \u001b[0m\u001b[38;5;246mHaiku 4.5 · Claude Max · Scott    \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0m\u001b[3m\u001b[38;5;246m/release-notes for more                \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m│   \u001b[0m\u001b[38;5;246m~/project/.hive/worktrees/maya    \u001b[0m\u001b[2m\u001b[38;5;174m│ \u001b[0m                                       \u001b[0m\u001b[38;5;174m│\u001b[0m\r\n\u001b[0m\u001b[38;5;174m╰──────────────────────────────────────────────────────────────────────────────╯\u001b[0m\r\n\r\n \u001b[0m\u001b[38;5;174m▎ Fable 5 is now a standard part of your Max plan\u001b[0m\r\n \u001b[0m\u001b[38;5;174m▎ \u001b[0mYou can use up to 50% of your weekly usage limit on Fable 5. If you hit your\r\n \u001b[0m\u001b[38;5;174m▎\u001b[0m limit, you can continue on Fable 5 with usage credits. Fable 5 draws down\r\n \u001b[0m\u001b[38;5;174m▎ \u001b[0musage faster than Opus 4.8. Run /model and select Fable to use it. Learn\r\n \u001b[0m\u001b[38;5;174m▎ \u001b[0mmore: \u001b[0m\u001b[38;5;12mhttps://support.claude.com/en/articles/15424964-claude-fable-5-promotio\u001b[0m\r\n \u001b[0m\u001b[38;5;174m▎ \u001b[0m\u001b[38;5;12mnal-access\u001b[0m\r\n   \u001b[0m\u001b[38;5;246m+1 more · /status\u001b[0m\r\n\r\n\u001b[0m\u001b[38;5;239m\u001b[48;5;237m❯ \u001b[0m\u001b[38;5;231m\u001b[48;5;237mBegin the assigned task.\u001b[0m\u001b[48;5;237m                                                      \u001b[0m\r\n\r\n\u001b[0m\u001b[38;5;174m✢ Hullaballooing… \u001b[0m\r\n\r\n\u001b[0m\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\u001b[0m\r\n\u001b[0m\u001b[38;5;246m❯ \u001b[0m\r\n\u001b[0m\u001b[38;5;244m────────────────────────────────────────────────────────────────────────────────\u001b[0m\r\n  \u001b[0m\u001b[38;5;220m⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker\u001b[0m\u001b[38;5;246m · res…\u001b[0m\r\n  \u001b[0m\u001b[38;5;246m🐝 maya\u001b[0m\r\n  \u001b[0m\u001b[38;5;246m⏸ manual mode on\u001b[0m",
+  "truncated": false,
+  "sha256": "669d54b66e414a2818657120862523d4dd6088c0b487e058e10a6e6318e0f299",
+  "composer": {
+    "profile": "claude",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  }
+}

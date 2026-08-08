@@ -12,12 +12,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  buildCodexResumeCommand,
   buildCodexSpawnCommand,
   buildCodexTrustArgs,
   CODEX_NOTIFY_SCRIPT,
-  codexSessionsDirectory,
-  discoverCodexRecoverySessionId,
   writeCodexAgentConfig,
 } from "../../../src/adapters/providers/codex-cli";
 import {
@@ -25,8 +22,8 @@ import {
   wrapSpawnWithCapabilityEnv,
 } from "../../../src/adapters/providers/shared/capability-env";
 import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/providers/shared/graphify-hook";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
-import { credentialPath } from "../../../src/daemon/credentials";
+import { credentialPath } from "../../../src/hive-home/home";
+import { shellJoin } from "../../../src/shared/shell-quote";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -156,15 +153,6 @@ describe("Codex spawn-scoped MCP surface", () => {
     });
     expect(command.join(" ")).not.toContain("odd.name");
   });
-
-  test("a resumed session keeps the same scoped surface", () => {
-    const command = buildCodexResumeCommand(
-      { ...base, excludeMcpServers: ["idea"] },
-      "session-7",
-    );
-    expect(command).toContain("mcp_servers.idea.enabled=false");
-    expect(command.at(-1)).toBe("session-7");
-  });
 });
 
 // The lifecycle hooks must ride the command line: codex only loads a
@@ -237,56 +225,6 @@ describe("Codex adapter", () => {
     ]);
   });
 
-  test("full autonomy removes prompts without weakening a read-only sandbox", () => {
-    const base = {
-      name: "agent-4",
-      model: "gpt-5-codex",
-      effort: "high" as const,
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-    };
-
-    const dangerous = buildCodexSpawnCommand({
-      ...base,
-      readOnly: false,
-      dangerous: true,
-    });
-    expect(dangerous).toContain('sandbox_mode="danger-full-access"');
-    expect(dangerous).toContain('approval_policy="never"');
-    expect(dangerous).not.toContain('approval_policy="on-request"');
-    // The resume path replays the same posture, so a crash-recovered agent
-    // does not silently stall on a prompt nobody is watching.
-    expect(
-      buildCodexResumeCommand(
-        { ...base, readOnly: false, dangerous: true },
-        "s1",
-      ),
-    ).toContain('approval_policy="never"');
-
-    // Full autonomy governs prompts for readers too, while read-only remains
-    // the stronger filesystem restriction.
-    const readOnly = buildCodexSpawnCommand({
-      ...base,
-      readOnly: true,
-      dangerous: true,
-    });
-    expect(readOnly).toContain("read-only");
-    expect(readOnly).not.toContain('sandbox_mode="danger-full-access"');
-    expect(readOnly).toContain('approval_policy="never"');
-    expect(readOnly).not.toContain('approval_policy="on-request"');
-
-    const resumedReader = buildCodexResumeCommand(
-      {
-        ...base,
-        readOnly: true,
-        dangerous: true,
-      },
-      "reader-session",
-    );
-    expect(resumedReader).toContain('sandbox_mode="read-only"');
-    expect(resumedReader).toContain('approval_policy="never"');
-  });
-
   test("builds trusted-project, native-hook, and MCP CLI overrides", () => {
     expect(buildCodexTrustArgs("/tmp/work tree")).toEqual([
       "-c",
@@ -346,177 +284,6 @@ describe("Codex adapter", () => {
       "-c",
       `projects={${JSON.stringify(await realpath(worktreePath))}={trust_level="trusted"}}`,
     ]);
-  });
-
-  test("builds a resume argv that replays the spawn overrides as `codex resume`", () => {
-    expect(
-      buildCodexResumeCommand(
-        {
-          name: "agent-4",
-          model: "gpt-5-codex",
-          effort: "high" as const,
-          worktreePath: "/tmp/worktree",
-          daemonPort: 4317,
-          readOnly: false,
-        },
-        "019f-thread",
-      ),
-    ).toEqual([
-      "codex",
-      "resume",
-      "-c",
-      "features.apps=false",
-      "-c",
-      "model=gpt-5-codex",
-      "-c",
-      "model_reasoning_effort=high",
-      "-c",
-      'sandbox_mode="workspace-write"',
-      "-c",
-      'approval_policy="on-request"',
-      "-c",
-      'projects={"/tmp/worktree"={trust_level="trusted"}}',
-      "--dangerously-bypass-hook-trust",
-      "-c",
-      "features.hooks=true",
-      ...expectedHookOverrides("/tmp/worktree"),
-      "-c",
-      'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
-      "019f-thread",
-    ]);
-  });
-
-  test("a read-only resume expresses the sandbox as a config override, not --sandbox", () => {
-    const command = buildCodexResumeCommand(
-      {
-        name: "agent-4",
-        model: "default",
-        effort: "medium" as const,
-        worktreePath: "/tmp/worktree",
-        daemonPort: 4317,
-        readOnly: true,
-      },
-      "019f-thread",
-    );
-    expect(command).not.toContain("--sandbox");
-    expect(command).toContain('sandbox_mode="read-only"');
-  });
-
-  test("rollout disk discovery reads session_meta lines larger than 8 KiB", async () => {
-    const fakeHome = join(tempRoot, "large-meta-codex-home");
-    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "11");
-    await mkdir(dayDir, { recursive: true });
-    const firstLine = JSON.stringify({
-      timestamp: "2026-07-11T09:00:00.000Z",
-      type: "session_meta",
-      payload: {
-        id: "large-meta-session",
-        cwd: worktreePath,
-        base_instructions: "x".repeat(17_000),
-      },
-    });
-    expect(Buffer.byteLength(firstLine)).toBeGreaterThan(8192);
-    await writeFile(
-      join(dayDir, "rollout-2026-07-11T09-00-00-large.jsonl"),
-      `${firstLine}\n`,
-    );
-
-    expect(
-      await discoverCodexRecoverySessionId(
-        worktreePath,
-        "2026-07-11T08:00:00.000Z",
-        fakeHome,
-      ),
-    ).toEqual("large-meta-session");
-  });
-
-  test("refuses a session_meta record whose session id key is unknown", async () => {
-    const fakeHome = join(tempRoot, "drifted-meta-codex-home");
-    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "11");
-    await mkdir(dayDir, { recursive: true });
-    await writeFile(
-      join(dayDir, "rollout-2026-07-11T10-00-00-drifted.jsonl"),
-      `${JSON.stringify({
-        type: "session_meta",
-        payload: { sessionID: "drifted-session", cwd: worktreePath },
-      })}\n`,
-    );
-
-    expect(
-      discoverCodexRecoverySessionId(
-        worktreePath,
-        "2026-07-11T09:00:00.000Z",
-        fakeHome,
-      ),
-    ).rejects.toThrow("Invalid Codex session_meta");
-  });
-
-  test("recovery discovery uses session_meta creation evidence and refuses ambiguity", async () => {
-    const fakeHome = join(tempRoot, "codex-recovery-home");
-    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "13");
-    await mkdir(dayDir, { recursive: true });
-    const meta = (sessionId: string, timestampKey: string, timestamp: string) =>
-      `${JSON.stringify({
-        type: "session_meta",
-        [timestampKey]: timestamp,
-        payload: { id: sessionId, cwd: worktreePath },
-      })}\n`;
-    await writeFile(
-      join(dayDir, "rollout-predecessor.jsonl"),
-      meta("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
-    );
-
-    expect(
-      await discoverCodexRecoverySessionId(
-        worktreePath,
-        "2026-07-13T12:00:00.000Z",
-        fakeHome,
-      ),
-    ).toBeNull();
-    await writeFile(
-      join(dayDir, "rollout-current.jsonl"),
-      meta("current", "timestamp", "2026-07-13T12:00:01.000Z"),
-    );
-    await writeFile(
-      join(dayDir, "rollout-predecessor.jsonl"),
-      meta("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
-    );
-
-    expect(
-      await discoverCodexRecoverySessionId(
-        worktreePath,
-        "2026-07-13T12:00:00.000Z",
-        fakeHome,
-      ),
-    ).toBe("current");
-
-    await writeFile(
-      join(dayDir, "rollout-second-current.jsonl"),
-      meta("second-current", "timestamp", "2026-07-13T12:00:02.000Z"),
-    );
-    expect(
-      discoverCodexRecoverySessionId(
-        worktreePath,
-        "2026-07-13T12:00:00.000Z",
-        fakeHome,
-      ),
-    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
-    await rm(join(dayDir, "rollout-second-current.jsonl"));
-
-    await writeFile(
-      join(dayDir, "rollout-unknown-evidence.jsonl"),
-      meta("unknown-evidence", "timestmp", "2026-07-13T12:00:03.000Z"),
-    );
-    expect(
-      discoverCodexRecoverySessionId(
-        worktreePath,
-        "2026-07-13T12:00:00.000Z",
-        fakeHome,
-      ),
-    ).rejects.toMatchObject({
-      name: "RecoverySessionDiscoveryError",
-      reason: "invalid-evidence",
-    });
   });
 
   test("omits the model override for the account default", () => {
@@ -646,10 +413,33 @@ describe("Codex adapter", () => {
     // The launch wrapper reads the credential file — outside every worktree —
     // inside the spawn shell, so `ps` shows the substitution text, never the
     // secret, and no project file ever holds it.
-    const wrapped = wrapSpawnWithCapabilityEnv("codex -c x=1", "maya");
+    const wrapped = wrapSpawnWithCapabilityEnv("codex -c x=1", "maya", "codex");
     expect(wrapped).toEqual(
       `${HIVE_CAPABILITY_TOKEN_ENV}="$(cat '${credentialPath("maya")}')" codex -c x=1`,
     );
     expect(wrapped).not.toContain("/worktree");
+  });
+
+  test("the capability wrapper refuses a command that runs something first", () => {
+    const hive = "/opt/hive/hive";
+    const launch = `${shellJoin([hive, "agent-ui", "--subject", "amos"])}`;
+    // Assignments already in front are fine: they bind alongside, not instead.
+    expect(
+      wrapSpawnWithCapabilityEnv(
+        `HIVE_AGENT_NAME='amos' ${launch}`,
+        "amos",
+        hive,
+      ),
+    ).toContain(HIVE_CAPABILITY_TOKEN_ENV);
+
+    // The shape that shipped a tokenless Kimi: a copy step before the launch
+    // takes the assignment, and the provider never sees it.
+    expect(() =>
+      wrapSpawnWithCapabilityEnv(
+        `mkdir -p .kimi-code && install -m 600 '/tmp/p.txt' '.kimi-code/AGENTS.md' && ${launch}`,
+        "amos",
+        hive,
+      ),
+    ).toThrow(/would not reach/);
   });
 });

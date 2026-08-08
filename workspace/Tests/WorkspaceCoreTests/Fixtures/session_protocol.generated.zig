@@ -23,10 +23,6 @@ pub const frame_type = struct {
     pub const @"error": u16 = 0x0003;
     pub const ping: u16 = 0x0004;
     pub const pong: u16 = 0x0005;
-    pub const create_begin: u16 = 0x0100;
-    pub const create_input: u16 = 0x0101;
-    pub const create_commit: u16 = 0x0102;
-    pub const created: u16 = 0x0103;
     pub const list: u16 = 0x0110;
     pub const listed: u16 = 0x0111;
     pub const inspect: u16 = 0x0112;
@@ -50,7 +46,7 @@ pub const frame_type = struct {
     pub const attach_ready: u16 = 0x020a;
     pub const claim_acquire: u16 = 0x0300;
     pub const claim_result: u16 = 0x0301;
-    pub const human_input: u16 = 0x0302;
+    pub const user_input: u16 = 0x0302;
     pub const claim_release: u16 = 0x0303;
     pub const gesture_input: u16 = 0x0304;
     pub const input_submit: u16 = 0x0305;
@@ -62,6 +58,8 @@ pub const frame_type = struct {
     pub const host_register: u16 = 0x0400;
     pub const host_adopt: u16 = 0x0401;
     pub const grant_register: u16 = 0x0402;
+    pub const host_capture: u16 = 0x0403;
+    pub const host_captured: u16 = 0x0404;
 };
 
 pub const wire_schema = struct {
@@ -74,8 +72,6 @@ pub const wire_schema = struct {
     pub const grant_register_payload = "grantRegisterPayload";
     pub const host_record_v1 = "hostRecordV1";
     pub const create_begin_payload = "createBeginPayload";
-    pub const create_commit_payload = "createCommitPayload";
-    pub const created_payload = "createdPayload";
     pub const list_payload = "listPayload";
     pub const listed_payload = "listedPayload";
     pub const inspect_payload = "inspectPayload";
@@ -142,8 +138,8 @@ pub const wire_error = enum {
     not_found,
     not_ready,
     already_exists,
-    human_owned,
-    human_orphaned,
+    user_owned,
+    user_orphaned,
     input_busy,
     rebase_required,
     snapshot_required,
@@ -161,9 +157,9 @@ pub const wire_error = enum {
 
 pub const input_state = enum {
     free,
-    human_gesture,
-    human_owned,
-    human_orphaned,
+    user_gesture,
+    user_owned,
+    user_orphaned,
     automation_buffering,
     automation_committed,
     terminating,
@@ -184,6 +180,81 @@ pub const ghostty_bridge_event = enum(u8) {
     bell = 4,
     clipboard_denied = 5,
     close_request = 6,
+};
+
+pub const InputProvenance = enum {
+    user,
+    automation,
+    terminal,
+};
+
+pub const InputAction = enum {
+    edit,
+    submit,
+    cancel,
+    gesture,
+    deliver,
+    keys,
+};
+
+pub const TerminalHostCompleteness = enum {
+    complete,
+    partial,
+    unavailable,
+    unknown,
+};
+
+pub const TerminalHostReapAuthority = enum {
+    @"direct-parent",
+    @"durable-parent-record",
+    unavailable,
+};
+
+pub const TerminalGeometry = struct {
+    columns: u32,
+    rows: u32,
+    widthPx: u32,
+    heightPx: u32,
+    cellWidthPx: f64,
+    cellHeightPx: f64,
+};
+
+pub const TerminalHostWindowSize = struct {
+    columns: u32,
+    rows: u32,
+    widthPixels: u32,
+    heightPixels: u32,
+};
+
+pub const TerminalHostProcessIdentity = struct {
+    processId: i32,
+    startToken: []const u8,
+};
+
+pub const TerminalHostJobControlEvidence = struct {
+    sessionLeader: bool,
+    controllingTerminal: bool,
+    standardStreamsShareTerminal: bool,
+    childSessionId: i32,
+    childProcessGroupId: i32,
+    foregroundProcessGroupId: i32,
+    terminalIdentity: []const u8,
+    initialProfileAppliedBeforeExec: bool,
+    initialWindowAppliedBeforeExec: bool,
+    completeness: TerminalHostCompleteness,
+};
+
+pub const TerminalHostExitStatus = struct {
+    code: ?i32,
+    signal: ?i32,
+    observedAt: []const u8,
+};
+
+pub const TerminalHostReapEvidence = struct {
+    authority: TerminalHostReapAuthority,
+    reaped: bool,
+    status: ?TerminalHostExitStatus,
+    completeness: TerminalHostCompleteness,
 };
 
 pub const checkpoint = struct {
@@ -244,7 +315,6 @@ pub const limits = struct {
     pub const missed_pong_intervals: u8 = 3;
 };
 
-// Payloads remain schema-driven; no hand-maintained Zig payload structs live here.
 pub const schema_fixture = @embedFile("session-protocol.schema.json");
 pub const wire_corpus_fixture = @embedFile("session-protocol-corpus.json");
 pub const reducer_corpus_fixture = @embedFile("reducer-parity-corpus.json");

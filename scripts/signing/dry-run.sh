@@ -1,17 +1,4 @@
 #!/bin/sh
-# Prove Developer ID + entitlements locally before trusting CI.
-#
-#   scripts/signing/dry-run.sh              # sign + verify the CLI slices (fast)
-#   scripts/signing/dry-run.sh --full       # also build, sign, notarize the .app
-#   scripts/signing/dry-run.sh --notarize   # notarize the CLI slices too
-#
-# Same production path as CI: same env vars, src/release/build.ts, verify.sh.
-# A `bun --compile` binary embeds a JIT; the hardened runtime kills it without
-# the right entitlements. This builds, signs, and *runs* a real Hive CLI so
-# signing mistakes show up here, not after release.
-#
-# Prerequisites: Xcode CLT; Developer ID Application cert in login keychain;
-# for notarization, MACOS_NOTARY_KEY_PATH / _KEY_ID / _ISSUER_ID.
 set -eu
 
 cd "$(dirname "$0")/../.."
@@ -33,8 +20,6 @@ say() { printf '\n=== %s ===\n' "$1"; }
 command -v codesign >/dev/null 2>&1 || die "codesign not found (install Xcode command-line tools)"
 [ -f "$ENTITLEMENTS" ] || die "missing $ENTITLEMENTS"
 
-# Resolve the signing identity: honour MACOS_SIGN_IDENTITY, else auto-detect the
-# one Developer ID Application certificate in the keychain.
 if [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
   say "Finding your Developer ID Application certificate"
   security find-identity -v -p codesigning || true
@@ -50,8 +35,6 @@ printf 'dry-run: signing as: %s\n' "$MACOS_SIGN_IDENTITY"
 export MACOS_SIGN_IDENTITY
 export HIVE_SIGN_ENTITLEMENTS="$ENTITLEMENTS"
 
-# Notarization is real work against Apple's service; only do it when asked and
-# when credentials are present. Otherwise sign-and-verify locally.
 NOTARIZE=0
 if [ "$FULL" = 1 ] || [ "$FORCE_NOTARIZE" = 1 ]; then NOTARIZE=1; fi
 if [ "$NOTARIZE" = 1 ]; then
@@ -60,7 +43,6 @@ if [ "$NOTARIZE" = 1 ]; then
   [ -n "${MACOS_NOTARY_KEY_ID:-}" ] || die "set MACOS_NOTARY_KEY_ID"
   [ -n "${MACOS_NOTARY_ISSUER_ID:-}" ] || die "set MACOS_NOTARY_ISSUER_ID"
 else
-  # Ensure sign.ts takes the sign-only branch: clear any partial notary env.
   unset MACOS_NOTARY_KEY_PATH MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID || true
 fi
 
@@ -69,7 +51,6 @@ BUILD_ARGS="--version 0.0.0 --commit dryrun --out $OUT"
 [ "$FULL" = 1 ] || BUILD_ARGS="$BUILD_ARGS --skip-workspace"
 
 say "Building and signing via the production build.ts"
-# shellcheck disable=SC2086
 bun run src/release/build.ts $BUILD_ARGS
 
 say "Verifying like CI does"

@@ -32,21 +32,28 @@ Before implementing:
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-## 3. Surgical Changes
+## 3. Surgical Changes, Eyes Open
 
-**Touch only what you must. Clean up only your own mess.**
+**Touch only what you must. Fix what you find in your path.**
 
 When editing existing code:
 - Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
+- Don't go hunting for work.
 - Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
+- The test is "not broken," not "not mine": things you meet on the way are part of the job, not a distraction from it.
+- Consolidate genuine redundancy in your path — several ways of doing one thing, or duplicated logic in code you had to open anyway — because divergent implementations hide bugs.
+- Fix a bug you discover; do not merely report it.
+
+Both stop at the same line:
+- The code must already be in front of you because of the task.
+- The fix must fit the diff a reviewer is reading and must not change behavior the task never asked about.
+- If it is larger than the task, reaches another agent's files, or changes behavior outside your task, report it to queen and do not start the refactor.
+- Unrelated dead code you never had to open is still mentioned, not deleted.
 
 When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
 
-The test: Every changed line should trace directly to the user's request.
+The test: Every changed line should trace to the user's request, or to something you had to touch to fulfill it.
 
 ## 4. Goal-Driven Execution
 

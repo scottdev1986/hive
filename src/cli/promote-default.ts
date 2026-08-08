@@ -1,14 +1,15 @@
 import { join, resolve } from "node:path";
 
-import { getHiveHome, HiveDatabase } from "../daemon/db";
-import { hiveInstanceSuffix } from "../daemon/instance-identity";
-import { defaultHiveHome } from "../daemon/instances";
-import { daemonInstanceLiveness } from "../daemon/lifecycle";
+import { HiveDatabase } from "../daemon/database/hive-database";
+import { getHiveHome } from "../hive-home/home";
+import { hiveInstanceSuffix } from "../hive-home/instance-identity";
+import { defaultHiveHome } from "../hive-home/home";
+import { daemonInstanceLiveness } from "../daemon/lifecycle/daemon-lifecycle";
 import {
   RoutingPolicyStore,
   readRoutingPolicyDatabase,
 } from "../daemon/routing-policy-store";
-import type { RoutingPolicy } from "../schemas";
+import type { RoutingPolicy } from "../schemas/routing-policy";
 
 const PROMOTE_ACTOR = "hive-cli-promote-default";
 
@@ -23,11 +24,6 @@ export interface PromoteDefaultModelControlResult {
   readonly targetRevision: number;
 }
 
-/**
- * Promote this instance's explicit Model Control document to the machine
- * default. A live (or unprovably dead) default daemon owns its database, so
- * this command writes only after its lock has been proved dead.
- */
 export async function promoteDefaultModelControl(
   options: PromoteDefaultModelControlOptions = {},
 ): Promise<PromoteDefaultModelControlResult> {
@@ -63,8 +59,7 @@ export async function promoteDefaultModelControl(
   } finally {
     sourceDb.close();
   }
-  // Mirror RoutingPolicyStore.promote's source-quality guard before opening
-  // either target store, so a refused promotion cannot change either target.
+  // Mirror RoutingPolicyStore.promote's source-quality guard before opening either target store, so a refused promotion cannot change either target.
   if (source.revision === 0) {
     throw new Error(
       "Refusing to promote Model Control: the source has no user-authored policy yet (revision 0).",

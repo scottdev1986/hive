@@ -1,23 +1,26 @@
-import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readMemoryFact, writeMemoryFact } from "../../src/adapters/memory";
 import { loadHiveConfig } from "../../src/config/load";
-import { HiveDatabase } from "../../src/daemon/db";
-import type { RootDeliveryOutcome } from "../../src/daemon/delivery";
-import type { SessionSender } from "../../src/daemon/delivery";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
-import { runRetentionSweep } from "../../src/daemon/memory-retention";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { MemoryRetentionService } from "../../src/daemon/memory-retention-service/memory-retention-service";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { Spawner } from "../../src/daemon/spawner";
-import { submitPaste } from "../../src/daemon/testing";
+import type { Spawner } from "../../src/daemon/spawn/spawn-service";
+import { EpisodicStore } from "../../src/memory-service/episodic";
 import {
-  type AgentRecord,
+  readMemoryFact,
+  verifyMemoryFact,
+  writeMemoryFact,
+} from "../../src/memory-service/memory-store";
+import { runRetentionSweep } from "../../src/memory-service/retention";
+import type { AgentRecord } from "../../src/schemas/agent";
+import {
   HiveConfigSchema,
   type MemoryRetentionConfig,
-} from "../../src/schemas";
+} from "../../src/schemas/config-schema";
+import type { MemoryScope } from "../../src/schemas/memory";
+import { killAgentTeardown } from "../kill-teardown";
 import { required } from "../required";
 
 // One fixed clock for every sweep assertion below.
@@ -30,8 +33,6 @@ function retentionConfig(
 ): MemoryRetentionConfig {
   return {
     events_hot_days: 30,
-    facts_retention: "forever",
-    digests_retention: "forever",
     stale_after_days: 90,
     sweep_interval_hours: 24,
     ...overrides,
@@ -64,49 +65,19 @@ function openStore(path: string): EpisodicStore {
   return new EpisodicStore(path);
 }
 
-/** Seeds a digest row directly, bypassing the digest compiler, so the sweep is
- * tested against provenance shapes it must recognize, not compiler output. */
-function seedDigest(storePath: string, provenance: string): void {
-  const seed = new Database(storePath);
-  seed
-    .query(`
-    INSERT INTO digests (agent, session_id, compiled_at, body, provenance)
-    VALUES (?, ?, ?, ?, ?)
-  `)
-    .run("agent-a", "session-1", NOW.toISOString(), "digest body", provenance);
-  seed.close();
-}
-
-function digestCount(storePath: string): number {
-  const reader = new Database(storePath, { readonly: true });
-  const row = reader.query("SELECT COUNT(*) AS count FROM digests").get() as {
-    count: number;
-  };
-  reader.close();
-  return row.count;
-}
-
 describe("runRetentionSweep — episodic hot tier", () => {
-  test("deletes aged events, keeps fresh ones, and spares digest-referenced rows", async () => {
+  test("deletes aged events and keeps fresh ones", async () => {
     const repo = await makeRepo();
     const storePath = join(repo, "episodic.db");
     const store = openStore(storePath);
     try {
-      const referenced = store.appendEvent({
-        ts: OLD_TS,
+      store.appendEvent({ ts: OLD_TS, type: "status", summary: "old" });
+      store.appendEvent({ ts: OLD_TS, type: "status", summary: "also old" });
+      const fresh = store.appendEvent({
+        ts: FRESH_TS,
         type: "status",
-        summary: "old but referenced by a digest",
+        summary: "fresh",
       });
-      store.appendEvent({
-        ts: OLD_TS,
-        type: "status",
-        summary: "old and free",
-      });
-      store.appendEvent({ ts: FRESH_TS, type: "status", summary: "fresh" });
-      seedDigest(
-        storePath,
-        JSON.stringify({ eventIds: [referenced.id], journalRange: "1-9" }),
-      );
 
       const report = await runRetentionSweep({
         episodic: store,
@@ -115,80 +86,25 @@ describe("runRetentionSweep — episodic hot tier", () => {
         now: NOW,
       });
 
-      expect(report.eventsDeleted).toBe(1);
-      const remaining = store.eventsFor().map((event) => event.id);
-      expect(remaining).toHaveLength(2);
-      expect(remaining).toContain(referenced.id);
+      expect(report.eventsDeleted).toBe(2);
+      expect(store.eventsFor().map((event) => event.id)).toEqual([fresh.id]);
     } finally {
       store.close();
     }
   });
 
-  test("an unparseable digest provenance fails closed: no event is deleted", async () => {
+  test("a kill-time sweep can skip the pairwise candidate scan", async () => {
     const repo = await makeRepo();
-    const storePath = join(repo, "episodic.db");
-    const store = openStore(storePath);
+    const store = openStore(join(repo, "episodic.db"));
     try {
-      store.appendEvent({
-        ts: OLD_TS,
-        type: "status",
-        summary: "old and free",
-      });
-      seedDigest(storePath, "this is not json");
-
       const report = await runRetentionSweep({
         episodic: store,
         repoRoot: repo,
         config: retentionConfig(),
         now: NOW,
+        countCandidates: false,
       });
-
-      expect(report.eventsDeleted).toBe(0);
-      expect(store.rowCounts().events).toBe(1);
-    } finally {
-      store.close();
-    }
-  });
-
-  test("never touches facts or digests, however ancient", async () => {
-    const repo = await makeRepo();
-    const storePath = join(repo, "episodic.db");
-    const store = openStore(storePath);
-    try {
-      const first = store.recordFact({
-        topic: "routing",
-        title: "old belief",
-        body: "superseded long ago",
-        source: "test",
-        validAt: "2025-01-01T00:00:00.000Z",
-      });
-      store.recordFact({
-        topic: "routing",
-        title: "old belief",
-        body: "its replacement, also ancient",
-        source: "test",
-        validAt: "2025-06-01T00:00:00.000Z",
-        supersedesId: first.id,
-      });
-      store.appendEvent({
-        ts: "2025-01-02T00:00:00.000Z",
-        type: "x",
-        summary: "ancient",
-      });
-      seedDigest(storePath, JSON.stringify({}));
-
-      const report = await runRetentionSweep({
-        episodic: store,
-        repoRoot: repo,
-        config: retentionConfig({ events_hot_days: 1 }),
-        now: NOW,
-      });
-
-      // The ancient unreferenced event goes; facts and digests stay whole.
-      expect(report.eventsDeleted).toBe(1);
-      expect(store.rowCounts().facts).toBe(2);
-      expect(store.factsAsOf("2025-03-01T00:00:00.000Z")).toHaveLength(1);
-      expect(digestCount(storePath)).toBe(1);
+      expect(report.consolidationCandidates).toBe(0);
     } finally {
       store.close();
     }
@@ -196,34 +112,46 @@ describe("runRetentionSweep — episodic hot tier", () => {
 });
 
 describe("runRetentionSweep — wiki stale demotion", () => {
-  async function seedWiki(repo: string): Promise<void> {
-    // Verified long enough ago to age out (verified == article date satisfies
-    // the write contract's stale guard).
+  /** Seed an article the way a verified one now comes about: written by one
+   * session, checked by a later one. Nothing else can produce `verified`. */
+  async function seedVerified(
+    repo: string,
+    scope: MemoryScope,
+    id: string,
+    fields: { title: string; body: string; written: string; checked: string },
+  ): Promise<void> {
     await writeMemoryFact(repo, {
-      scope: "repo",
-      id: "old-verified",
+      scope,
+      id,
       topic: "routing",
+      title: fields.title,
+      body: fields.body,
+      date: fields.written,
+      source: "user",
+      evidence: "seeded",
+      status: "unverified",
+      supersedes: [],
+      author: "the-author",
+    });
+    await verifyMemoryFact(repo, scope, id, {
+      verifier: "a-later-session",
+      date: fields.checked,
+    });
+  }
+
+  async function seedWiki(repo: string): Promise<void> {
+    // Checked long enough ago to age out.
+    await seedVerified(repo, "repo", "old-verified", {
       title: "Old verified article",
       body: "A belief verified many months ago.",
-      date: "2026-03-01",
-      verified: "2026-03-01",
-      source: "human",
-      evidence: "seeded",
-      status: "verified",
-      supersedes: [],
+      written: "2026-02-28",
+      checked: "2026-03-01",
     });
-    await writeMemoryFact(repo, {
-      scope: "repo",
-      id: "recent-verified",
-      topic: "routing",
+    await seedVerified(repo, "repo", "recent-verified", {
       title: "Recently verified article",
       body: "Verified this month.",
-      date: "2026-07-10",
-      verified: "2026-07-10",
-      source: "human",
-      evidence: "seeded",
-      status: "verified",
-      supersedes: [],
+      written: "2026-07-09",
+      checked: "2026-07-10",
     });
     await writeMemoryFact(repo, {
       scope: "repo",
@@ -245,7 +173,7 @@ describe("runRetentionSweep — wiki stale demotion", () => {
       body: "Demoted by an earlier sweep.",
       date: "2026-07-01",
       verified: "2026-03-01",
-      source: "human",
+      source: "user",
       evidence: "seeded",
       status: "stale",
       supersedes: [],
@@ -262,18 +190,11 @@ describe("runRetentionSweep — wiki stale demotion", () => {
       status: "conflicted",
       supersedes: [],
     });
-    await writeMemoryFact(repo, {
-      scope: "global",
-      id: "global-old-verified",
-      topic: "routing",
+    await seedVerified(repo, "global", "global-old-verified", {
       title: "Global old verified article",
       body: "A global belief verified many months ago.",
-      date: "2026-03-01",
-      verified: "2026-03-01",
-      source: "human",
-      evidence: "seeded",
-      status: "verified",
-      supersedes: [],
+      written: "2026-02-28",
+      checked: "2026-03-01",
     });
   }
 
@@ -368,17 +289,6 @@ describe("[memory.retention] config", () => {
         memory: { retention: { sweep_interval_hours: 0 } },
       }),
     ).toThrow();
-    // facts/digests retention is "forever" by invariant, never a knob.
-    expect(() =>
-      HiveConfigSchema.parse({
-        memory: { retention: { facts_retention: "30d" } },
-      }),
-    ).toThrow();
-    expect(() =>
-      HiveConfigSchema.parse({
-        memory: { retention: { digests_retention: "30d" } },
-      }),
-    ).toThrow();
     // Strict: an unknown key is a typo, and a typo must not parse.
     expect(() =>
       HiveConfigSchema.parse({ memory: { retention: { events_hot_day: 30 } } }),
@@ -429,7 +339,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     contextPct: 14,
     createdAt: timestamp,
     lastEventAt: timestamp,
-    recoveryAttempts: 0,
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
@@ -442,21 +351,6 @@ class StubSpawner implements Spawner {
     throw new Error("not used in these tests");
   }
 }
-
-class SilentSessionSender implements SessionSender {
-  constructor(private readonly db: HiveDatabase) {}
-
-  async sendSessionMessage(agent: AgentRecord): Promise<void> {
-    submitPaste(this.db, required(agent.sessionLocator?.sessionId));
-  }
-}
-
-const offlineRootProtocol = {
-  isLive: () => false,
-  async deliverMessage(): Promise<RootDeliveryOutcome> {
-    return { delivered: false, reason: "test double never delivers" };
-  },
-};
 
 async function waitFor(
   condition: () => boolean,
@@ -492,52 +386,40 @@ describe("daemon retention wiring", () => {
   test("the periodic timer fires on sweep_interval_hours and stop clears it", async () => {
     jest.useFakeTimers();
     const repo = await makeRepo();
-    const db = new HiveDatabase(":memory:");
     const episodic = openStore(join(repo, "episodic.db"));
-    const daemon = new HiveDaemon({
-      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
-      db,
-      spawner: new StubSpawner(),
+    let sweeps = 0;
+    const service = new MemoryRetentionService({
       repoRoot: repo,
-      port: 0,
-      episodicStore: episodic,
-      retention: retentionConfig({ sweep_interval_hours: 1 }),
-    });
-    const sweep = jest
-      .spyOn(daemon, "runMemoryRetentionSweep")
-      .mockResolvedValue(null);
-    jest.spyOn(daemon, "runMaintenance").mockResolvedValue(undefined);
-    jest.spyOn(daemon, "checkWakePaths").mockResolvedValue([]);
-    // start() kicks a real reindex; under fake timers its lock retry would
-    // resolve after stop() and log a spurious closed-database error.
-    jest.spyOn(daemon, "rebuildMemoryIndex").mockResolvedValue({
-      count: 0,
-      migration: {
-        scanned: 0,
-        migrated: 0,
-        flagged: [],
-        backups: [],
-        alreadyMigrated: [],
+      config: retentionConfig({ sweep_interval_hours: 1 }),
+      episodic,
+      serializeMemory: (operation) => operation(),
+      rebuildMemoryIndex: async () => {},
+      runSweep: async () => {
+        sweeps += 1;
+        return null;
       },
+      sweepArtifacts: () => 0,
+      artifactRetentionDays: 30,
+      log: () => {},
     });
     try {
-      daemon.start();
+      service.start();
       // The startup sweep runs immediately so a daemon down past its cadence
       // does not wait a full interval.
-      expect(sweep).toHaveBeenCalledTimes(1);
+      expect(sweeps).toBe(1);
       jest.advanceTimersByTime(3_600_000 - 1);
-      expect(sweep).toHaveBeenCalledTimes(1);
+      expect(sweeps).toBe(1);
       jest.advanceTimersByTime(1);
-      expect(sweep).toHaveBeenCalledTimes(2);
+      expect(sweeps).toBe(2);
       jest.advanceTimersByTime(3_600_000);
-      expect(sweep).toHaveBeenCalledTimes(3);
+      expect(sweeps).toBe(3);
 
-      await daemon.stop();
+      service.close();
       jest.advanceTimersByTime(7_200_000);
-      expect(sweep).toHaveBeenCalledTimes(3);
+      expect(sweeps).toBe(3);
     } finally {
-      await daemon.stop().catch(() => undefined);
-      db.close();
+      service.close();
+      episodic.close();
       jest.useRealTimers();
     }
   });
@@ -555,13 +437,9 @@ describe("daemon retention wiring", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
-      sessionSender: new SilentSessionSender(db),
-      rootProtocol: offlineRootProtocol,
       repoRoot: repo,
       episodicStore: episodic,
-      lifecycle: { idleReap: true, idleReapMinutes: 10 },
       retention: retentionConfig(),
-      removeWorktree: async () => {},
       assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
     });
     db.insertAgent(
@@ -570,18 +448,9 @@ describe("daemon retention wiring", () => {
       }),
     );
     try {
-      // The idle-reap two-step drives killAgentTeardown, which is the session
-      // end the sweep rides (hive_kill's own path).
-      await daemon.reapIdleAgents();
-      const warning = db
-        .listMessages()
-        .find((message) => message.to === "maya");
-      db.transitionMessage(
-        required(warning?.id),
-        "acknowledged",
-        new Date().toISOString(),
-      );
-      await daemon.reapIdleAgents();
+      // killAgentTeardown is the session end this sweep rides (hive_kill's
+      // own path).
+      await killAgentTeardown(daemon, required(db.getAgentByName("maya")));
       expect(db.getAgentByName("maya")?.status).toBe("dead");
 
       // The kill's fire-and-forget sweep deletes the aged event; any events

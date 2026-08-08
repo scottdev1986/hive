@@ -56,7 +56,7 @@
       </article>
     </div>
 
-    <div class="callout"><strong>Where safety actually lives.</strong> None of these guarantees weaken containment, because input was never the enforcement point. Landing requires a current capability epoch through the daemon’s gate; Codex mutations are brokered per-turn on the app-server driver against the exact durable holder, re-proven after every await; write revocation acts on the daemon’s authority records without touching the conversation. A human typing into a revoked writer’s pane converses with a process that still cannot land or mutate anything.</div>
+    <div class="callout"><strong>Where safety actually lives.</strong> None of these guarantees weaken containment, because input was never the enforcement point. Landing requires a current capability epoch through the daemon’s gate; Codex mutations are brokered per-turn on the app-server driver against the exact durable holder, re-proven after every await; write revocation acts on the daemon’s authority records without touching the conversation. A user typing into a revoked writer’s pane converses with a process that still cannot land or mutate anything.</div>
   </div>
 </section>
 
@@ -76,7 +76,7 @@
         <tbody>
           <tr><td>Claude</td><td>Claude Code TUI in tmux</td><td>Lifecycle hooks (SessionStart, UserPromptSubmit, Stop, Notification, PostToolUse) plus the statusline pipe, which is the only surface that carries the context window.</td></tr>
           <tr><td>Codex · TUI driver</td><td>Codex TUI in tmux (readers)</td><td>Native command hooks for turn boundaries; rollout files as the durable sensor. Hook-supplied session ids authenticate the agent name only — they are never identity.</td></tr>
-          <tr><td>Codex · app-server driver</td><td><code>hive codex-app-server-host</code> around <code>codex app-server --stdio</code></td><td>Native JSON-RPC lifecycle: turn started/completed, token usage, rate limits, approvals — per-turn identity evidence (the rollout path the app-server itself names, plus the exact turn id) — and the pane-input bridge (§05) for human typing.</td></tr>
+          <tr><td>Codex · app-server driver</td><td><code>hive codex-app-server-host</code> around <code>codex app-server --stdio</code></td><td>Native JSON-RPC lifecycle: turn started/completed, token usage, rate limits, approvals — per-turn identity evidence (the rollout path the app-server itself names, plus the exact turn id) — and the pane-input bridge (§05) for user typing.</td></tr>
           <tr><td>Grok</td><td>Grok CLI in tmux, session named by Hive up front</td><td>No lifecycle hooks exist. The session’s own artifacts (<code>signals.json</code>, <code>updates.jsonl</code>) are read by the maintenance sweep; status lags at most one sweep.</td></tr>
         </tbody>
       </table>
@@ -153,7 +153,7 @@
     <div class="section-head">
       <div>
         <p class="section-label">05 · Input</p>
-        <h2>The keyboard is the human’s, unconditionally.</h2>
+        <h2>The keyboard is the user’s, unconditionally.</h2>
       </div>
       <p>Every agent pane in the Workspace is a real terminal attached to the agent’s tmux session (plain <code>attach-session</code>, writable). Viewer attachment binds on workspace instance + agent UUID + process incarnation + tmux session — never on provider conversation identity. Windows are viewers, not containers: closing a pane detaches a client and never kills an agent.</p>
     </div>
@@ -190,7 +190,7 @@
         <thead><tr><th>Role</th><th>Claude</th><th>Codex</th><th>Grok</th></tr></thead>
         <tbody>
           <tr><td>Reader</td><td>TUI, deny-listed writes</td><td>TUI (default) or app-server; mutation approvals mechanically denied on app-server</td><td>CLI with semantic-prefix permission rules</td></tr>
-          <tr><td>Writer</td><td>TUI, approval queue in sandboxed mode</td><td><strong>App-server only</strong> (auto-engaged), read-only sandbox, every mutation brokered per-turn: <em>sandboxed</em> queues a one-shot human approval whose insertion validates the exact holder atomically; <em>dangerous</em> auto-allows only after the exact holder/incarnation/epoch/driver/session/thread/turn/applied-identity checks pass twice, with the dial and the live turn binding re-proven synchronously at the final allow boundary — a dial that drops mid-check denies, and a dial that rises never converts a queued human approval</td><td>CLI writer under vendor sandbox rules</td></tr>
+          <tr><td>Writer</td><td>TUI, approval queue in sandboxed mode</td><td><strong>App-server only</strong> (auto-engaged), read-only sandbox, every mutation brokered per-turn: <em>sandboxed</em> queues a one-shot user approval whose insertion validates the exact holder atomically; <em>dangerous</em> auto-allows only after the exact holder/incarnation/epoch/driver/session/thread/turn/applied-identity checks pass twice, with the dial and the live turn binding re-proven synchronously at the final allow boundary — a dial that drops mid-check denies, and a dial that rises never converts a queued user approval</td><td>CLI writer under vendor sandbox rules</td></tr>
         </tbody>
       </table>
     </div>
@@ -277,8 +277,8 @@
         <thead><tr><th>#</th><th>Check</th><th>Proves</th></tr></thead>
         <tbody>
           <tr><td>1</td><td>Spawn a Codex app-server reader; type into its pane before, during, and after the first turn; Ctrl-C mid-turn, then type the next line immediately.</td><td>Bridge delivery, pre-session queueing, confirmed interrupt, next-line freshness.</td></tr>
-          <tr><td>2</td><td>Spawn a Codex writer in <em>sandboxed</em> mode; let it request a mutation; approve one, deny one, Ctrl-C past a third.</td><td>Human approval path; turn-bound settlement; the agent never parks in awaiting-approval.</td></tr>
-          <tr><td>3</td><td>Flip the dial to <em>dangerous</em>; let the same writer mutate.</td><td>Auto-allow on exact identity checks with zero human approval rows.</td></tr>
+          <tr><td>2</td><td>Spawn a Codex writer in <em>sandboxed</em> mode; let it request a mutation; approve one, deny one, Ctrl-C past a third.</td><td>User approval path; turn-bound settlement; the agent never parks in awaiting-approval.</td></tr>
+          <tr><td>3</td><td>Flip the dial to <em>dangerous</em>; let the same writer mutate.</td><td>Auto-allow on exact identity checks with zero user approval rows.</td></tr>
           <tr><td>4</td><td>Pause/resume an app-server reader (credential reissue), then type into the SAME pane.</td><td>Conversation survives authority rotation; a replacement still refuses.</td></tr>
           <tr><td>5</td><td><code>hive status</code> for one agent per vendor within 30s of spawn and after a model change.</td><td>Cross-vendor provenance verdicts; first-turn Codex observation; drift detection.</td></tr>
           <tr><td>6</td><td>Make one vendor artifact unreadable (rename a transcript); sweep; restore it.</td><td>Unknown-on-failure, then recovery — never a stale verdict or a skipped row.</td></tr>

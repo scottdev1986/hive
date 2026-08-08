@@ -1,13 +1,6 @@
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { buildMemoryIndex } from "../adapters/memory";
-import {
-  grokQueenHome,
-  provisionQueenSkills,
-  queenSkillDelivery,
-} from "../adapters/queen-skills";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "../adapters/providers/shared/capability-env";
 import {
   buildClaudeSpawnCommand,
   type ResolvedClaudeExecutable,
@@ -18,47 +11,59 @@ import { resolveWorkingCodexExecutable } from "../adapters/providers/codex-cli";
 import {
   buildGrokSpawnCommand,
   GROK_COMPATIBILITY_ENV,
-  probeGrokDefaultModel,
   resolveWorkingGrokExecutable,
   writeGrokAgentConfig,
 } from "../adapters/providers/grok-cli";
 import {
   buildKimiSpawnCommand,
-  probeKimiDefaultModel,
   resolveWorkingKimiExecutable,
   wrapKimiWithInstructionFile,
   writeKimiAgentConfig,
 } from "../adapters/providers/kimi-cli";
 import {
-  buildCodexMcpExclusionArgs,
-  listInheritedCodexMcpServers,
-} from "../adapters/providers/shared/mcp-scope";
-import {
   buildOpencodeSpawnCommand,
   OPENCODE_HIVE_AGENT,
-  probeOpencodeDefaultModel,
   resolveWorkingOpencodeExecutable,
   writeOpencodeAgentConfig,
 } from "../adapters/providers/opencode-cli";
-import { writeCredential } from "../daemon/credentials";
-import { getHiveHome } from "../daemon/db";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../adapters/providers/shared/capability-env";
+import {
+  buildCodexMcpExclusionArgs,
+  daemonMcpUrl,
+  listInheritedCodexMcpServers,
+} from "../adapters/providers/shared/mcp-scope";
+import {
+  grokQueenHome,
+  provisionQueenSkills,
+  queenSkillDelivery,
+} from "../adapters/queen-skills";
+import { discoverRuntimeCapabilities } from "../daemon/provider-capabilities/snapshot-authority";
+import { writeCredential } from "../daemon/authorization/credentials";
+import { queenBootCapsules } from "../daemon/queen-provider-service/queen-boot-capsule-service";
 import {
   codexInstructionProfileName,
   launchPromptPath,
   wrapGrokWithRulesFile,
   writeCodexInstructionProfile,
   writeLaunchPrompt,
-} from "../daemon/launch-prompt";
-import { hiveCliSpawnArgv } from "../daemon/lifecycle";
-import { orchestratorSessionKey } from "../daemon/instance-identity";
-import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-sessiond";
+} from "../daemon/spawn/launch-prompt";
+import { hiveCliSpawnArgv } from "../daemon/lifecycle/daemon-lifecycle";
+import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-host/sessiond-controller";
 import { mintSessionRequestId } from "../daemon/session-host/locators";
-import { shellJoin } from "../daemon/session-host/shell-session";
-import type { CapabilityProvider } from "../schemas";
-import { normalizeNulText, ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
-import { IS_RELEASE_BUILD } from "../version";
-import { operatorHeaders } from "./credential";
-import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
+import { shellJoin } from "../shared/shell-quote";
+import {
+  agentUiLaunchArgv,
+  protocolProviderArgv,
+} from "../daemon/spawn/spawn-service";
+import { getHiveHome } from "../hive-home/home";
+import { orchestratorSessionKey } from "../hive-home/instance-identity";
+import { buildMemoryIndex } from "../memory-service/memory-store";
+import { ORCHESTRATOR_NAME } from "../schemas/agent";
+import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
+import { IS_RELEASE_BUILD } from "../shared/version";
+import { isTestRunnerEnv } from "./invoker";
+import { UserDaemonClient } from "./user-daemon-client";
+import { QUEEN_POLICY } from "./queen-policy";
 import {
   daemonOrchestratorSessiondControl,
   type OrchestratorSessiondControl,
@@ -71,24 +76,34 @@ export function orchestratorConfigRoot(): string {
   return join(getHiveHome(), "runtime", "orchestrator");
 }
 
-/** The credential-store subject holding the Codex root's local Hive
- * capability. This authorizes Hive control-plane calls; it is not a provider
- * credential and Hive never reads or manages provider secrets. */
+export function orchestratorJournalPath(): string {
+  return join(
+    getHiveHome(),
+    "agent-ui",
+    orchestratorSessionKey(),
+    "outbound.jsonl",
+  );
+}
+
+/** The credential-store subject holding the Codex root's local Hive capability. This authorizes Hive control-plane calls; it is not a provider credential and Hive never reads or manages provider secrets. */
 export const CODEX_ROOT_TOKEN_SUBJECT = "codex-root";
 
-/** Ask the daemon to mint a root capability. Returns null
- * when the daemon does not offer the endpoint yet or refuses — the launch
- * proceeds without a token rather than failing, matching the pre-token
- * behavior until the daemon side lands. */
+/** Ask the daemon to mint a root capability. Returns null when the daemon does not offer the endpoint or refuses; the caller decides how to fail closed. */
 export async function requestCodexRootToken(
   port: number,
 ): Promise<string | null> {
-  const response = await fetch(`http://127.0.0.1:${port}/codex-root-token`, {
-    method: "POST",
-    headers: operatorHeaders(),
-  }).catch(() => null);
-  if (response === null || !response.ok) return null;
-  const body = (await response.json().catch(() => null)) as {
+  const body = (await new UserDaemonClient({
+    port,
+    verifyIdentity: !isTestRunnerEnv(),
+  })
+    .json(
+      "/codex-root-token",
+      {
+        method: "POST",
+      },
+      "return-null",
+    )
+    .catch(() => null)) as {
     token?: string;
   } | null;
   return typeof body?.token === "string" && body.token.length > 0
@@ -96,11 +111,22 @@ export async function requestCodexRootToken(
     : null;
 }
 
-/** Provision the Codex root capability: mint a token and write it
- * to a 0600 file inside the 0700 credentials directory under the resolved
- * Hive home. Only the PATH is returned. The launch shell reads it into the
- * process-local bearer environment Codex supports; the token itself never
- * reaches argv or .codex/config.toml. */
+/** Refresh the root's credential for a new launch: the daemon mints a FRESH orchestrator credential, revoking every predecessor's, and persists it for the vendors whose config reads it from the store. Every vendor calls this per launch — a dead predecessor token can never read or attest in the successor's place. A daemon that cannot mint fails the launch loudly: a root that cannot authenticate as the queen is not a root. */
+export async function provisionQueenRootToken(
+  port: number,
+  request: (port: number) => Promise<string | null> = requestCodexRootToken,
+): Promise<string> {
+  const token = await request(port);
+  if (token === null) {
+    throw new Error(
+      "the Hive daemon could not mint the queen root credential\n" +
+        "Fix: run `hive stop`, then reopen Hive",
+    );
+  }
+  return token;
+}
+
+/** Provision the Codex root capability: mint a token and write it to a 0600 file inside the 0700 credentials directory under the resolved Hive home. Only the PATH is returned. The launch shell reads it into the process-local bearer environment Codex supports; the token itself never reaches argv or .codex/config.toml. */
 export async function provisionCodexRootToken(
   port: number,
   request: (port: number) => Promise<string | null> = requestCodexRootToken,
@@ -127,10 +153,6 @@ export async function prepareOrchestratorConfig(
       });
       return;
     case "codex":
-      // Nothing on disk, and that is the whole configuration: the Codex
-      // orchestrator carries its hive server and sandbox on the `-c` flags
-      // `buildOrchestratorCommand` builds. An empty arm explicitly means no
-      // on-disk configuration.
       return;
     case "grok":
       await writeGrokAgentConfig(orchestratorConfigRoot(), {
@@ -138,23 +160,16 @@ export async function prepareOrchestratorConfig(
       });
       return;
     case "kimi": {
-      // Kimi has no home-override for project config: its `.kimi-code/` is
-      // read from the process cwd, so the config lands where the root runs.
       await writeKimiAgentConfig(cwd, { daemonPort: port });
       return;
     }
     case "opencode": {
-      // opencode's project config is read from the process cwd, so the
-      // config lands where the root runs; the brief rides the hive agent's
-      // {file:} prompt in it, and the queen's role rides the agent's
-      // permission set.
+      // opencode's project config is read from the process cwd, so the config lands where the root runs; the launch context rides the hive agent's {file:} prompt in it, and the queen's role rides the agent's permission set.
       const skills = queenSkillDelivery("opencode", orchestratorConfigRoot());
       await writeOpencodeAgentConfig(cwd, {
         daemonPort: port,
         orchestrator: true,
         instructionPath: launchPromptPath(orchestratorSessionKey()),
-        // opencode has no launch flag for this; the directory reaches her
-        // through the config file Hive already owns.
         ...(skills.directory === null
           ? {}
           : { skillPaths: [skills.directory] }),
@@ -166,39 +181,54 @@ export async function prepareOrchestratorConfig(
   }
 }
 
-export function buildOrchestratorInstructions(
-  memoryIndex = "",
-  recoveryBrief = "",
+export function buildQueenLaunchContext(
+  input: { memoryIndex?: string; bootCapsule?: string } = {},
 ): string {
-  return normalizeNulText(
-    [ORCHESTRATOR_BRIEF, recoveryBrief, memoryIndex]
-      .filter((part) => part !== "")
-      .join("\n\n"),
-  );
+  return queenBootCapsules.composeLaunchContext({
+    policy: QUEEN_POLICY,
+    memoryIndex: input.memoryIndex,
+    bootCapsule: input.bootCapsule,
+  }).text;
 }
 
+export interface OrchestratorCommandOptions {
+  readonly tool: OrchestratorTool;
+  readonly port: number;
+  readonly executable?: string;
+  readonly codexAuthorized?: boolean;
+  readonly codexMcpExclusionArgs?: readonly string[];
+  readonly queenSkillArgs?: readonly string[];
+  readonly effectiveModel?: string;
+  readonly effectiveEffort?: string;
+}
+
+export const CLAUDE_QUEEN_MODEL = "claude-opus-5";
+export const CLAUDE_QUEEN_EFFORT = "high";
+export const CLAUDE_QUEEN_AUTOCOMPACT = "250k";
+
 export function buildOrchestratorCommand(
-  tool: OrchestratorTool,
-  port: number,
-  memoryIndex = "",
-  executable?: string,
-  codexTokenFile = "",
-  recoveryBrief = "",
-  codexMcpExclusionArgs: readonly string[] = [],
-  /** What this vendor needs on the command line to read the queen's own skill
-   * directory (adapters/queen-skills.ts). Empty for the vendors that reach it
-   * through the environment or a config file, and for codex, which has no
-   * isolated directory at all. */
-  queenSkillArgs: readonly string[] = [],
+  options: OrchestratorCommandOptions,
 ): string[] {
-  const _brief = buildOrchestratorInstructions(memoryIndex, recoveryBrief);
+  const {
+    tool,
+    port,
+    executable,
+    codexAuthorized = false,
+    codexMcpExclusionArgs = [],
+    queenSkillArgs = [],
+    effectiveModel,
+    effectiveEffort,
+  } = options;
   switch (tool) {
     case "claude": {
       const configRoot = orchestratorConfigRoot();
       return [
         ...buildClaudeSpawnCommand({
           name: ORCHESTRATOR_NAME,
-          model: "default",
+          model: effectiveModel ?? CLAUDE_QUEEN_MODEL,
+          effort: effectiveEffort ?? CLAUDE_QUEEN_EFFORT,
+          brief: true,
+          autoCompact: CLAUDE_QUEEN_AUTOCOMPACT,
           worktreePath: process.cwd(),
           daemonPort: port,
           readOnly: true,
@@ -211,49 +241,30 @@ export function buildOrchestratorCommand(
           scopedMcpConfigPath: join(configRoot, ".mcp.json"),
           appendSystemPromptFile: launchPromptPath(orchestratorSessionKey()),
         }),
-        // `--setting-sources user` above is what keeps the repository's own
-        // settings out of the queen's session, and it switches off project
-        // skill discovery with them. A plugin directory is the one channel that
-        // still reaches her.
         ...queenSkillArgs,
       ];
     }
     case "codex":
       return [
         executable ?? "codex",
-        // Apps/connectors are a separate Codex feature, not an inherited
-        // mcp_servers table, and can otherwise hold the root at startup on
-        // `codex_apps`. Hive orchestration needs only Hive's own MCP server.
         "-c",
         "features.apps=false",
-        // The root is a Hive coordinator, not a general-purpose Codex
-        // session. Detach addressable MCP servers inherited from the user's
-        // global config for this process only, exactly as Codex agents do.
-        // This prevents an unrelated server's startup from blocking Hive.
         ...codexMcpExclusionArgs,
         "-c",
-        `mcp_servers.hive.url="http://127.0.0.1:${port}/mcp"`,
-        // The root exists to call Hive's capability-scoped orchestration
-        // tools. A prompt here deadlocks unattended delegation;
-        // pre-approve only this Hive-owned server, never inherited MCPs.
+        `mcp_servers.hive.url="${daemonMcpUrl(port)}"`,
+        // The root exists to call Hive's capability-scoped orchestration tools. A prompt here deadlocks unattended delegation; pre-approve only this Hive-owned server, never inherited MCPs.
         "-c",
         'mcp_servers.hive.default_tools_approval_mode="approve"',
         "--profile",
         codexInstructionProfileName(orchestratorSessionKey()),
-        // Codex's supported bearer indirection. The launch shell populates
-        // this process-local variable from the 0600 capability file; neither
-        // the token nor a made-up config key appears in argv.
-        ...(codexTokenFile === ""
+        // Codex's supported bearer indirection. The launch shell populates this process-local variable from the 0600 capability file; neither the token nor a made-up config key appears in argv.
+        ...(!codexAuthorized
           ? []
           : [
               "-c",
               `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(HIVE_CAPABILITY_TOKEN_ENV)}`,
             ]),
-        // The queen's role needs writes for her memory and planning
-        // docs. workspace-write is the finest sandbox codex offers — it
-        // cannot scope subpaths of the workspace — so the
-        // no-implementation-code boundary rides her brief. Network stays on
-        // for gh's board calls.
+        // The queen's role needs writes for her memory. workspace-write is the finest sandbox codex offers — it cannot scope subpaths of the workspace — so the no-implementation-code boundary rides her pinned policy. Network stays on for gh's board calls.
         "--sandbox",
         "workspace-write",
         "-c",
@@ -261,21 +272,16 @@ export function buildOrchestratorCommand(
       ];
     case "grok": {
       const grokExecutable = executable ?? "grok";
-      const model = probeGrokDefaultModel(grokExecutable);
-      if (model === null) {
-        throw new Error("grok models did not report an effective default");
+      if (effectiveModel === undefined) {
+        throw new Error("Grok protocol snapshot has no effective default");
       }
       return [
         "sh",
         "-lc",
-        // Grok can express the queen's role only through --allow/--deny, which are
-        // per-tool only — no per-command gh scope, no per-path write scope —
-        // so the role's grant is a full tool approval and the
-        // no-implementation-code boundary rides her brief.
         wrapGrokWithRulesFile(
           shellJoin(
             buildGrokSpawnCommand({
-              model,
+              model: effectiveModel,
               worktreePath: process.cwd(),
               readOnly: false,
               executable: grokExecutable,
@@ -287,28 +293,22 @@ export function buildOrchestratorCommand(
     }
     case "kimi": {
       const kimiExecutable = executable ?? "kimi";
-      const model = probeKimiDefaultModel();
-      if (model === null) {
-        throw new Error("kimi config did not report an effective default");
+      if (effectiveModel === undefined) {
+        throw new Error("Kimi protocol snapshot has no effective default");
       }
       return [
         "sh",
         "-lc",
-        // Kimi has no
-        // per-launch permission scoping at all (the kimi-adapter gap), so
-        // --yolo auto-approves her tool calls and the
-        // no-implementation-code boundary rides her brief.
+        // Kimi has no read-only argv flag, so the native command uses --yolo. The ACP launch below discards native flags and requests Kimi's manual mode in SessionStart.
         wrapKimiWithInstructionFile(
           shellJoin([
             ...buildKimiSpawnCommand({
-              model,
+              model: effectiveModel,
               readOnly: false,
               dangerous: false,
               executable: kimiExecutable,
             }),
-            // `--skills-dir` replaces kimi's own user and project discovery, so
-            // this is the queen's whole skill surface rather than an addition
-            // to it.
+            // `--skills-dir` replaces kimi's own user and project discovery, so this is the queen's whole skill surface rather than an addition to it.
             ...queenSkillArgs,
           ]),
           launchPromptPath(orchestratorSessionKey()),
@@ -317,15 +317,9 @@ export function buildOrchestratorCommand(
     }
     case "opencode": {
       const opencodeExecutable = executable ?? "opencode";
-      const model = probeOpencodeDefaultModel();
-      if (model === null) {
-        throw new Error("opencode config did not report an effective default");
-      }
-      // The queen's role permission rides agent.hive in the worktree
-      // opencode.json (prepareOrchestratorConfig); no argv change, and the
-      // read-only barrier stays off because the role replaces it.
+      // The queen's role permission rides agent.hive in the worktree opencode.json (prepareOrchestratorConfig); no argv change, and the read-only barrier stays off because the role replaces it. The model is the effective default read from the same cached protocol snapshot as pre-spawn routing.
       return buildOpencodeSpawnCommand({
-        model,
+        model: effectiveModel ?? null,
         readOnly: false,
         dangerous: false,
         executable: opencodeExecutable,
@@ -337,9 +331,23 @@ export function buildOrchestratorCommand(
   }
 }
 
+async function orchestratorDefaultModel(
+  tool: OrchestratorTool,
+): Promise<string | undefined> {
+  if (tool === "claude") return CLAUDE_QUEEN_MODEL;
+  if (tool === "codex") return undefined;
+  const discovery = await discoverRuntimeCapabilities(tool);
+  if (
+    discovery.status === "ok" &&
+    discovery.effectiveDefault.model.state === "known"
+  ) {
+    return discovery.effectiveDefault.model.value;
+  }
+  throw new Error(`${tool} protocol snapshot has no effective default`);
+}
+
 export interface LaunchOrchestratorOptions {
   sessiondControl?: OrchestratorSessiondControl;
-  sessiondSleep?: (milliseconds: number) => Promise<void>;
   resolveClaudeExecutable?: () => ResolvedClaudeExecutable;
   resolveCodexExecutable?: typeof resolveWorkingCodexExecutable;
   resolveGrokExecutable?: typeof resolveWorkingGrokExecutable;
@@ -347,17 +355,38 @@ export interface LaunchOrchestratorOptions {
   resolveOpencodeExecutable?: typeof resolveWorkingOpencodeExecutable;
   listCodexMcpServers?: () => Promise<string[]>;
   provisionCodexToken?: (port: number) => Promise<string | null>;
+  provisionQueenToken?: (port: number) => Promise<string>;
+}
+
+/** What one vendor's root carries in her launch environment. Every provider but claude reads its bearer from HIVE_CAPABILITY_TOKEN — and what it carries is the queen's own orchestrator credential, never the user's: the root authenticates as queen on every vendor, so the user-dial actions stay beyond her reach and her succession tools accept her calls. Claude reads the same credential from the store at MCP connect time, so no token travels in her environment at all. */
+export function orchestratorLaunchEnvironment(
+  tool: OrchestratorTool,
+  tokens: { codexToken: string; queenToken: string },
+): Record<string, string> {
+  if (tool === "claude") return {};
+  if (tool === "codex") {
+    return { [HIVE_CAPABILITY_TOKEN_ENV]: tokens.codexToken };
+  }
+  return {
+    [HIVE_CAPABILITY_TOKEN_ENV]: tokens.queenToken,
+    ...(tool === "grok"
+      ? {
+          GROK_HOME: grokQueenHome(orchestratorConfigRoot()),
+          ...GROK_COMPATIBILITY_ENV,
+        }
+      : {}),
+  };
 }
 
 export async function launchOrchestrator(
   tool: OrchestratorTool,
   port: number,
   cwd = process.cwd(),
-  recoveryBrief = "",
+  bootCapsule = "",
   options: LaunchOrchestratorOptions = {},
+  targetGeneration?: number,
 ): Promise<number> {
-  // Resolve and gate Claude only for the Claude path. A Codex orchestrator
-  // must not require an unrelated Claude installation.
+  // Resolve and gate Claude only for the Claude path. A Codex orchestrator must not require an unrelated Claude installation.
   let providerExecutable: string;
   switch (tool) {
     case "claude": {
@@ -418,9 +447,9 @@ export async function launchOrchestrator(
     default:
       unknownVendor(tool, "orchestrator launch");
   }
-  await prepareOrchestratorConfig(tool, port, cwd);
   let codexTokenFile = "";
   let codexToken = "";
+  let queenToken = "";
   let codexMcpExclusionArgs: string[] = [];
   switch (tool) {
     case "codex": {
@@ -444,27 +473,21 @@ export async function launchOrchestrator(
       break;
     }
     case "claude":
-      // Claude's orchestrator authenticates over the same operator
-      // credential every Claude agent uses; there is no root token to mint.
+      // Claude's root reads her credential at MCP connect time through the headersHelper, which reads the queen credential file the daemon persists. Refreshing it here revokes the predecessor's token before this root boots.
+      await (options.provisionQueenToken ?? provisionQueenRootToken)(port);
       break;
     case "grok":
-      // Grok authenticates through the operator credential written into its
-      // worktree-local project MCP config above.
-      break;
     case "kimi":
-      // Kimi authenticates through the same operator credential, written
-      // into the project `.kimi-code/mcp.json` above.
-      break;
     case "opencode":
-      // opencode authenticates through the same operator credential,
-      // written into the project `opencode.json` above.
+      // These vendors read the queen credential from HIVE_CAPABILITY_TOKEN.
+      queenToken = await (
+        options.provisionQueenToken ?? provisionQueenRootToken
+      )(port);
       break;
     default:
       unknownVendor(tool, "orchestrator root token");
   }
-  // Her skills, before the command that has to name their directory. A vendor
-  // with no isolated path returns `degraded` instead of a directory, and the
-  // launch says which rather than implying a provisioning that never happened.
+  // Her skills, before the command that has to name their directory. A vendor with no isolated path returns `degraded` instead of a directory, and the launch says which rather than implying a provisioning that never happened.
   const queenSkills = await provisionQueenSkills(
     cwd,
     tool,
@@ -476,57 +499,60 @@ export async function launchOrchestrator(
     );
   }
   const memoryIndex = await buildMemoryIndex(cwd).catch(() => "");
-  const orchestratorBrief = buildOrchestratorInstructions(
-    memoryIndex,
-    recoveryBrief,
-  );
-  await writeLaunchPrompt(orchestratorSessionKey(), orchestratorBrief);
+  const launchContext = buildQueenLaunchContext({ memoryIndex, bootCapsule });
+  await writeLaunchPrompt(orchestratorSessionKey(), launchContext);
+  await prepareOrchestratorConfig(tool, port, cwd);
   if (tool === "codex") {
-    await writeCodexInstructionProfile(
-      orchestratorSessionKey(),
-      orchestratorBrief,
-    );
+    await writeCodexInstructionProfile(orchestratorSessionKey(), launchContext);
   }
-  const argv = buildOrchestratorCommand(
+  const effectiveModel = await orchestratorDefaultModel(tool);
+  const effectiveEffort = tool === "claude" ? CLAUDE_QUEEN_EFFORT : undefined;
+  const providerArgv = buildOrchestratorCommand({
     tool,
     port,
-    memoryIndex,
-    providerExecutable,
-    codexTokenFile,
-    recoveryBrief,
+    executable: providerExecutable,
+    codexAuthorized: codexTokenFile !== "",
     codexMcpExclusionArgs,
-    queenSkills.launchArgs,
-  );
-  // Every provider but claude reads its bearer from HIVE_CAPABILITY_TOKEN, so
-  // the operator token stays out of the config files kimi and opencode read
-  // from the user's own project directory.
-  const environment =
-    tool === "claude"
-      ? {}
-      : tool === "codex"
-        ? { [HIVE_CAPABILITY_TOKEN_ENV]: codexToken }
-        : {
-            [HIVE_CAPABILITY_TOKEN_ENV]: (
-              operatorHeaders().Authorization ?? ""
-            ).replace(/^Bearer\s+/, ""),
-            ...(tool === "grok"
-              ? {
-                  GROK_HOME: grokQueenHome(orchestratorConfigRoot()),
-                  ...GROK_COMPATIBILITY_ENV,
-                }
-              : {}),
-          };
+    queenSkillArgs: queenSkills.launchArgs,
+    effectiveModel,
+    effectiveEffort,
+  });
+  const environment = orchestratorLaunchEnvironment(tool, {
+    codexToken,
+    queenToken,
+  });
+  const requestId = mintSessionRequestId();
+  const providerRunId = crypto.randomUUID();
+  const argv = agentUiLaunchArgv({
+    hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
+    subject: ORCHESTRATOR_NAME,
+    provider: tool,
+    executable: providerExecutable,
+    daemonPort: port,
+    providerRunId,
+    worktreePath: cwd,
+    journalPath: orchestratorJournalPath(),
+    model: effectiveModel ?? "default",
+    ...(effectiveEffort === undefined ? {} : { effort: effectiveEffort }),
+    readOnly: true,
+    instructionPath: launchPromptPath(orchestratorSessionKey()),
+    kickoff: "Begin the assigned task.",
+    providerArgv: protocolProviderArgv(tool, providerArgv),
+  });
   const launch = OrchestratorSessiondLaunchSchema.parse({
-    requestId: mintSessionRequestId(),
+    requestId,
+    providerRunId,
     provider: tool,
     cwd,
     argv,
     environment,
     expectedExecutable: providerExecutable,
+    model: effectiveModel ?? null,
+    effort: effectiveEffort ?? null,
+    ...(targetGeneration === undefined ? {} : { targetGeneration }),
   });
   return await runOrchestratorSessiondLaunch(
     launch,
     options.sessiondControl ?? daemonOrchestratorSessiondControl(port),
-    options.sessiondSleep,
   );
 }

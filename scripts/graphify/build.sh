@@ -1,20 +1,4 @@
 #!/usr/bin/env bash
-# Build per-platform graphify bundles that `hive init` downloads
-# (`hive graphify enable` repairs).
-#
-#   scripts/graphify/build.sh [--build-number N] [--arch arm64|x64] [--out DIR]
-#
-# From graphify.lock (regenerated only from graphify.in), each platform slice:
-#   dist/graphify/graphify-<pin>-darwin-{arm64,x64}.tar.zst
-#   dist/graphify/graphify-<pin>-darwin-{arm64,x64}.tar.zst.sha256
-#
-# Signing matches src/release/build.ts:
-#   MACOS_SIGN_IDENTITY set → hardened runtime + graphify entitlements
-#   MACOS_NOTARY_* set (with identity) → notarytool; bare Mach-Os cannot staple
-# With neither set, PyInstaller ad-hoc signs (same as an unsigned Hive release).
-#
-# Requires: uv, zstd, tar; Rosetta 2 for darwin-x64 on arm64 hosts. Interpreter
-# and PyInstaller pins below are part of the reproducibility contract.
 set -euo pipefail
 
 PYTHON_KEY_ARM64="cpython-3.12.8-macos-aarch64-none"
@@ -53,8 +37,6 @@ sign_bundle() { # sign_bundle <bundle-dir>  — Developer ID + hardened runtime
     return 0
   fi
   echo "  signing every Mach-O with '$MACOS_SIGN_IDENTITY' (hardened runtime)"
-  # Libraries first, main executable last, so the outer signature seals a
-  # bundle whose members are already valid.
   find "$dist" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 |
     xargs -0 -n 16 codesign --force --timestamp --options runtime \
       --sign "$MACOS_SIGN_IDENTITY"

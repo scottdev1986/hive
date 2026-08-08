@@ -1,8 +1,13 @@
-import type { AgentRecord, QuotaStatus, QuotaWindowStatus } from "../schemas";
-import { describeAgentName } from "../schemas";
+import { type AgentRecord, describeAgentName } from "../schemas/agent";
+import type { QuotaStatus, QuotaWindowStatus } from "../schemas/quota";
+import { formatContextPercent } from "../usage-service/context-occupancy";
 
 const TASK_WIDTH = 48;
-const FAILURE_WIDTH = 40;
+
+function displayedStatus(agent: AgentRecord): string {
+  const turn = agent.statusDimensions?.turn;
+  return turn?.kind === "observed" ? turn.field.value : agent.status;
+}
 
 function truncate(value: string, width: number): string {
   if (value.length <= width) {
@@ -15,30 +20,13 @@ export function formatStatusTable(agents: AgentRecord[]): string {
   const rows = agents.map((agent) => [
     describeAgentName(agent),
     agent.tool,
-    // The model it is *running*, not the one it was spawned with. A user who
-    // types `/model` mid-session changes the first and not the second, and the
-    // orchestrator reads this table to decide what to route where — so showing
-    // the spawn-time intention would report a model the agent is not running.
     agent.liveModel ?? agent.model,
-    agent.status,
-    // Unknown renders as "—", never as a number and never as 0%. `Math.round(null)`
-    // is 0, which would make an unobservable agent look like an empty one.
-    agent.contextPct === null ? "—" : `${Math.round(agent.contextPct)}%`,
+    displayedStatus(agent),
+    // Unknown renders as "—", never as a number and never as 0%. `Math.round(null)` is 0, which would make an unobservable agent look like an empty one.
+    formatContextPercent(agent.contextPct),
     truncate(agent.taskDescription.replaceAll(/\s+/g, " ").trim(), TASK_WIDTH),
-    truncate(
-      (agent.failureReason ?? "").replaceAll(/\s+/g, " ").trim(),
-      FAILURE_WIDTH,
-    ),
   ]);
-  const headers = [
-    "NAME",
-    "TOOL",
-    "MODEL",
-    "STATUS",
-    "CONTEXT",
-    "TASK",
-    "FAILURE",
-  ];
+  const headers = ["NAME", "TOOL", "MODEL", "STATUS", "CONTEXT", "TASK"];
   const widths = headers.map((header, index) =>
     Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)),
   );
@@ -55,11 +43,7 @@ export function formatStatusTable(agents: AgentRecord[]): string {
     .join("\n");
 }
 
-/**
- * Render one window. A window Hive never measured prints the word `unknown`,
- * and Hive's own in-flight reservation is always marked as the estimate it is.
- * Nothing here can print a capacity number that no provider reported.
- */
+/** Render one window. A window Hive never measured prints the word `unknown`, and Hive's own in-flight reservation is always marked as the estimate it is. Nothing here can print a capacity number that no provider reported. */
 function formatQuotaWindow(label: string, window: QuotaWindowStatus): string {
   if (window.availability === "not-metered") {
     return `  ${label}: not metered [${window.confidence} from ${window.source}]`;

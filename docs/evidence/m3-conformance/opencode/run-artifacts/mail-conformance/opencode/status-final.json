@@ -1,0 +1,61 @@
+{
+  "agents": [
+    {
+      "id": "889c0b40-f157-49e0-b77d-b8e358800541",
+      "name": "david",
+      "tool": "opencode",
+      "model": "openai/gpt-5.6-terra",
+      "category": "simple_coding",
+      "status": "idle",
+      "holdReason": null,
+      "holdResetAt": null,
+      "holdProviderRunId": null,
+      "quotaReservationId": "0de60acd-006a-4055-a3e7-1e5df38f5d5e",
+      "executionIdentity": {
+        "tool": "opencode",
+        "model": "openai/gpt-5.6-terra"
+      },
+      "taskDescription": "At the first safe point, handle the mailbox for your exact assigned name. First call hive_update_status and preserve its mailBacklog result as the notice receipt. Then call hive_mail_poll for your own recipient name. Claim the returned control item and every returned work digest item with handlerId m3-safe-point. After each successful claim, try once to claim that same item with handlerId m3-competing and preserve the expected refusal. Complete each claimed item as completed, then call hive_mail_complete a second time for each with the same handlerId to prove replay. Finally call hive_mail_status for your own recipient and report the tool receipts exactly.",
+      "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-run.RG7Udr/project/.hive/worktrees/david",
+      "branch": "hive/david-at-the-first-safe-point-handle",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "85c9eb608c",
+        "subject": {
+          "kind": "agent",
+          "agentId": "889c0b40-f157-49e0-b77d-b8e358800541"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc290-bb80-75d9-97d0-528962f2c4d2",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "toolSessionId": "ses_03d6f36f1ffe4AjNDovgcyH6K6",
+      "recoveryAttempts": 0,
+      "contextPct": null,
+      "createdAt": "2026-08-02T13:01:32.928Z",
+      "lastEventAt": "2026-08-02T13:03:02.168Z",
+      "capabilityEpoch": 0,
+      "readOnly": true,
+      "writeRevoked": false,
+      "graphifyCalls": null
+    }
+  ],
+  "memory": {
+    "embeddings": {
+      "provider": "local",
+      "model": "bge-small-en-v1.5",
+      "state": "pending",
+      "runtimeDir": "/private/tmp/hvqa-or/tools/embeddings",
+      "vectors": {
+        "articles": 0,
+        "facts": 0,
+        "total": 0
+      }
+    }
+  },
+  "terminalWrites": {
+    "total": 0,
+    "bySession": {}
+  }
+}

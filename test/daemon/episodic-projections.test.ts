@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { HiveDatabase } from "../../src/daemon/db";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { StatusService } from "../../src/daemon/status-service/status-projection-service";
+import { EpisodicStore } from "../../src/memory-service/episodic";
 import {
   DEFAULT_CLASS_BUDGETS,
   type MemoryQueryDeps,
   runMemoryQuery,
-} from "../../src/daemon/episodic-projections";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
-import { StatusStore } from "../../src/daemon/status-store";
-import { TokenUsageStore } from "../../src/daemon/token-usage";
+} from "../../src/memory-service/query";
+import { TokenUsageStore } from "../../src/usage-service/token-usage";
 import { required } from "../required";
 
 const T0 = "2026-07-22T10:00:00.000Z";
@@ -27,8 +27,8 @@ afterEach(() => {
 function harness(options: { episodic?: boolean } = {}) {
   const db = new HiveDatabase(":memory:");
   dbs.push(db);
-  const status = new StatusStore(db, "inst-test");
-  const tokenUsage = new TokenUsageStore(db, []);
+  const status = StatusService.create(db, "inst-test");
+  const tokenUsage = new TokenUsageStore(db);
   const episodic =
     options.episodic === false ? null : track(new EpisodicStore(":memory:"));
   const deps: MemoryQueryDeps = {
@@ -51,7 +51,7 @@ function track<T extends EpisodicStore>(store: T): T {
 let requestCounter = 0;
 
 function report(
-  status: StatusStore,
+  status: StatusService,
   agentId: string,
   input: {
     phase: "implementing" | "blocked" | "complete";
@@ -99,7 +99,7 @@ describe("L0 projections", () => {
     });
     const result = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "agent-now",
         agent: "maya",
@@ -133,7 +133,7 @@ describe("L0 projections", () => {
     });
     const result = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "agent-now",
         agent: "lena",
@@ -166,7 +166,7 @@ describe("L0 projections", () => {
     });
     const result = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "fleet-summary",
       },
@@ -208,7 +208,7 @@ describe("L0 projections", () => {
     });
     const all = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "what-landed",
       },
@@ -221,7 +221,7 @@ describe("L0 projections", () => {
 
     const since = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "what-landed",
         since: T2,
@@ -248,7 +248,7 @@ describe("L0 projections", () => {
     });
     const result = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "who-blocked",
       },
@@ -311,7 +311,7 @@ describe("L0 projections", () => {
 
     const all = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "token-spend",
       },
@@ -336,7 +336,7 @@ describe("L0 projections", () => {
 
     const filtered = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "token-spend",
         agent: "lena",
@@ -353,7 +353,7 @@ describe("L0 projections", () => {
 });
 
 describe("L1 point search", () => {
-  test("finds bounded excerpts across episodic events and current facts", async () => {
+  test("finds bounded excerpts across episodic events", async () => {
     const { episodic, deps } = harness();
     required(episodic).appendEvent({
       ts: T1,
@@ -361,16 +361,9 @@ describe("L1 point search", () => {
       type: "agent.status-reported",
       summary: "Touched the quota tables during the rebase",
     });
-    required(episodic).recordFact({
-      topic: "billing",
-      title: "Quota resets at midnight",
-      body: "The provider quota tables roll over at 00:00 UTC",
-      source: "test",
-      validAt: T0,
-    });
     const result = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "point-search",
         query: "quota",
@@ -381,51 +374,52 @@ describe("L1 point search", () => {
     const kinds = (result.results as Array<{ kind: string }>)
       .map((row) => row.kind)
       .sort();
-    expect(kinds).toEqual(["event", "fact"]);
+    expect(kinds).toEqual(["event"]);
     for (const row of result.results as Array<{ snippet: string }>) {
       expect(row.snippet.toLowerCase()).toContain("quota");
     }
   });
 
-  test("an invalidated fact leaves the point-search surface", async () => {
-    const { episodic, deps } = harness();
-    const fact = required(episodic).recordFact({
-      topic: "deploy",
-      title: "Deploys are manual",
-      body: "Manual deploys only",
-      source: "test",
-      validAt: T0,
+  // Two events that between them cover every query token, neither of which
+  // covers all of them — the shape an ordinary multi-word question meets.
+  function seedPartialOverlapHistory(episodic: EpisodicStore): void {
+    episodic.appendEvent({
+      ts: T1,
+      agent: "agent-maya",
+      type: "agent.status-reported",
+      summary: "The quota tables were touched during a long migration",
     });
-    const before = await runMemoryQuery(
-      deps,
-      { subject: "operator" },
-      {
-        class: "point-search",
-        query: "deploys",
-      },
-      NOW,
-    );
-    expect(before.state).toBe("ok");
+    episodic.appendEvent({
+      ts: T1,
+      agent: "agent-maya",
+      type: "agent.status-reported",
+      summary: "Rebase dropped a commit and nobody noticed for an hour",
+    });
+  }
 
-    required(episodic).invalidateFact(required(fact).id, { at: T1 });
-    // A bare invalidation moves no row counts, so nudge the index with any
-    // append — the disposable index then rebuilds without the dead fact.
-    required(episodic).appendEvent({
-      ts: T2,
-      agent: null,
-      type: "tick",
-      summary: "tock",
-    });
-    const after = await runMemoryQuery(
+  test("a multi-word question no single event covers in full still returns its parts", async () => {
+    const { episodic, deps } = harness();
+    seedPartialOverlapHistory(required(episodic));
+    const result = await runMemoryQuery(
       deps,
-      { subject: "operator" },
-      {
-        class: "point-search",
-        query: "deploys",
-      },
+      { subject: "user" },
+      { class: "point-search", query: "quota rebase commit" },
       NOW,
     );
-    expect(after.state).toBe("empty");
+    expect(result.state).toBe("ok");
+    expect(result.results.length).toBeGreaterThan(0);
+  });
+
+  test("a single-word question still returns the event carrying it", async () => {
+    const { episodic, deps } = harness();
+    seedPartialOverlapHistory(required(episodic));
+    const result = await runMemoryQuery(
+      deps,
+      { subject: "user" },
+      { class: "point-search", query: "quota" },
+      NOW,
+    );
+    expect(result.results).toHaveLength(1);
   });
 });
 
@@ -544,7 +538,7 @@ describe("absent-vs-empty discipline", () => {
     const { deps } = harness({ episodic: false });
     const result = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "agent-history",
         agent: "maya",
@@ -560,7 +554,7 @@ describe("absent-vs-empty discipline", () => {
     const { deps } = harness();
     const history = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "agent-history",
         agent: "maya",
@@ -572,7 +566,7 @@ describe("absent-vs-empty discipline", () => {
 
     const search = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "point-search",
         query: "anything",
@@ -583,7 +577,7 @@ describe("absent-vs-empty discipline", () => {
 
     const spend = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "token-spend",
       },
@@ -596,7 +590,7 @@ describe("absent-vs-empty discipline", () => {
     const { deps } = harness();
     const result = await runMemoryQuery(
       deps,
-      { subject: "operator" },
+      { subject: "user" },
       {
         class: "pitfall-check",
         query: "rebase",
@@ -613,7 +607,7 @@ describe("input validation", () => {
     await expect(
       runMemoryQuery(
         deps,
-        { subject: "operator" },
+        { subject: "user" },
         {
           class: "agent-now",
         },
@@ -623,7 +617,7 @@ describe("input validation", () => {
     await expect(
       runMemoryQuery(
         deps,
-        { subject: "operator" },
+        { subject: "user" },
         {
           class: "point-search",
         },
@@ -633,7 +627,7 @@ describe("input validation", () => {
     await expect(
       runMemoryQuery(
         deps,
-        { subject: "operator" },
+        { subject: "user" },
         {
           class: "pitfall-check",
         },

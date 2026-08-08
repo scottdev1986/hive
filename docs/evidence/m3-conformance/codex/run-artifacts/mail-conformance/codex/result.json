@@ -1,0 +1,75 @@
+{
+  "result": "passed",
+  "vendor": "codex",
+  "model": "gpt-5.3-codex-spark",
+  "completedAt": "2026-08-02T13:14:00.391Z",
+  "agent": {
+    "id": "3f5745b3-096d-46fe-a4ae-f0cfc509eacc",
+    "name": "david",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "51f864cdfa",
+      "subject": {
+        "kind": "agent",
+        "agentId": "3f5745b3-096d-46fe-a4ae-f0cfc509eacc"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc29b-bfeb-74e1-ad04-4dc72677b67a",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    }
+  },
+  "publish": {
+    "controlFirst": {
+      "itemId": "mit_019fc29b-bff8-7000-90b7-6eb3fc9837c9",
+      "lane": "control",
+      "topic": "m3-control",
+      "outcome": "published",
+      "seq": 1,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:13:34.968Z"
+    },
+    "controlReplay": {
+      "itemId": "mit_019fc29b-bff8-7000-90b7-6eb3fc9837c9",
+      "lane": "control",
+      "topic": "m3-control",
+      "outcome": "published",
+      "seq": 1,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:13:34.968Z"
+    },
+    "workFirst": {
+      "itemId": "mit_019fc29b-bffb-7000-9f91-896115409e26",
+      "lane": "work",
+      "topic": "m3-work",
+      "outcome": "published",
+      "seq": 2,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:13:34.971Z"
+    },
+    "workMerged": {
+      "itemId": "mit_019fc29b-bffb-7000-9f91-896115409e26",
+      "lane": "work",
+      "topic": "m3-work",
+      "outcome": "coalesced",
+      "seq": 2,
+      "mergedCount": 1,
+      "acceptedAt": "2026-08-02T13:13:34.972Z"
+    }
+  },
+  "terminalWrites": {
+    "beforeSpawn": {
+      "total": 0,
+      "bySession": {}
+    },
+    "afterSpawn": {
+      "total": 0,
+      "bySession": {}
+    },
+    "final": {
+      "total": 0,
+      "bySession": {}
+    }
+  },
+  "eventCount": 7
+}

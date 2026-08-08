@@ -1,14 +1,7 @@
 import AppKit
 import HiveTerminalKit
 
-/// Settings → Appearance: the terminal theme and the terminal font.
-///
-/// Both selections persist and apply to panes that are already running, so the
-/// user never has to restart a session to see a choice take effect.
-///
-/// There is deliberately no app-appearance control here. Hive follows the
-/// system appearance; the terminal *theme* is content, which is why it can be
-/// pinned independently without becoming an appearance override.
+/// Settings → Appearance: the terminal theme and the terminal font. Both selections persist and apply to panes that are already running, so the user never has to restart a session to see a choice take effect. There is deliberately no app-appearance control here. Hive follows the system appearance; the terminal *theme* is content, which is why it can be pinned independently without becoming an appearance override.
 final class AppearanceSettingsController: SettingsPageController {
 
     private let preferences: HiveAppearancePreferences

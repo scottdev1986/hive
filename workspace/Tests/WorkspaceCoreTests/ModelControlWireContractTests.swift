@@ -57,23 +57,33 @@ final class ModelControlWireContractTests: XCTestCase {
               "status": "ok",
               "records": [{
                 "provider": "grok",
+                "accountFingerprint": "grok:test",
+                "cliVersion": "test-cli",
                 "canonicalId": "grok-future",
+                "variant": null,
                 "launchToken": "grok-future",
-                "hidden": {"state":"known","value":false},
-                "supportsEffort": {"state":"vendor-added-state","value":false},
-                "supportedEffortLevels": {"state":"unknown","reason":"not reported"},
-                "defaultEffort": {"state":"unknown","reason":"not reported"},
+                "aliases": [],
+                "displayName": null,
+                "entitled": {"state":"known","value":true,"surface":"grok.models","observedAt":"2026-07-13T12:00:00.000Z"},
+                "hidden": {"state":"known","value":false,"surface":"grok.models","observedAt":"2026-07-13T12:00:00.000Z"},
+                "supportsEffort": {"state":"vendor-added-state","value":false,"surface":"grok.models","observedAt":"2026-07-13T12:00:00.000Z"},
+                "supportedEffortLevels": {"state":"unknown","reason":"not reported","surface":"grok.models","observedAt":"2026-07-13T12:00:00.000Z"},
+                "defaultEffort": {"state":"unknown","reason":"not reported","surface":"grok.models","observedAt":"2026-07-13T12:00:00.000Z"},
                 "observedAt": "2026-07-13T12:00:00.000Z"
               }],
               "effectiveDefault": {
-                "model": {"state":"known","value":"grok-future"},
-                "effort": {"state":"unknown","reason":"not reported"}
+                "provider": "grok",
+                "model": {"state":"known","value":"grok-future","surface":"grok.models","observedAt":"2026-07-13T12:00:00.000Z"},
+                "effort": {"state":"unknown","reason":"not reported","surface":"grok.models","observedAt":"2026-07-13T12:00:00.000Z"}
               }
             }
           },
           "billing": {},
           "usageSurfaces": {"grok":"vendor-added-surface"},
-          "quota": []
+          "quota": [],
+          "quotaError": null,
+          "tokenUsage": null,
+          "tokenUsageError": null
         }
         """#.data(using: .utf8)!
 
@@ -85,13 +95,6 @@ final class ModelControlWireContractTests: XCTestCase {
             models[0].supportsEffort.unknownReason,
             "unsupported discovered fact state vendor-added-state")
         XCTAssertEqual(snapshot.usageSurfaces["grok"], .unknown("vendor-added-surface"))
-        guard case .unknown(let reason) = MeterDerivation.usage(
-            provider: .grok,
-            surface: snapshot.usageSurfaces["grok"],
-            quota: snapshot.quota,
-            quotaError: snapshot.quotaError)
-        else { return XCTFail("an unknown surface must not fabricate a meter") }
-        XCTAssertTrue(reason.contains("vendor-added-surface"))
     }
 
     func testMalformedProviderAndQuotaSubtreesDoNotBlankValidProviders() throws {
@@ -104,7 +107,10 @@ final class ModelControlWireContractTests: XCTestCase {
           },
           "billing": {},
           "usageSurfaces": {"claude":"metered"},
-          "quota": [{"provider":17}]
+          "quota": [{"provider":17}],
+          "quotaError": null,
+          "tokenUsage": null,
+          "tokenUsageError": null
         }
         """#.data(using: .utf8)!
 
@@ -119,6 +125,55 @@ final class ModelControlWireContractTests: XCTestCase {
         XCTAssertTrue(grokReason.contains("could not read"))
         XCTAssertNil(snapshot.quota)
         XCTAssertTrue(snapshot.quotaError?.contains("could not read") == true)
+    }
+
+    func testOlderDaemonMayOmitSectionsWithoutBlankingTheSnapshot() throws {
+        let wire = #"""
+        {
+          "generatedAt": "2026-07-13T12:00:00.000Z",
+          "providers": {
+            "claude": {"status":"unavailable","reason":"test outage"}
+          }
+        }
+        """#.data(using: .utf8)!
+
+        let snapshot = try ModelControlSnapshot.decode(from: wire)
+        guard case .unavailable(let reason)? = snapshot.providers["claude"] else {
+            return XCTFail("the provider section must survive older sibling sections")
+        }
+        XCTAssertEqual(reason, "test outage")
+        XCTAssertTrue(snapshot.billing.isEmpty)
+        XCTAssertTrue(snapshot.usageSurfaces.isEmpty)
+        XCTAssertNil(snapshot.quota)
+        XCTAssertNil(snapshot.quotaError)
+        XCTAssertNil(snapshot.tokenUsage)
+        XCTAssertNil(snapshot.tokenUsageError)
+    }
+
+    func testMalformedOptionalSectionsDegradeIndependently() throws {
+        let wire = #"""
+        {
+          "generatedAt": "2026-07-13T12:00:00.000Z",
+          "providers": {
+            "claude": {"status":"unavailable","reason":"test outage"}
+          },
+          "billing": "not-an-object",
+          "usageSurfaces": "not-an-object",
+          "quota": [],
+          "quotaError": null,
+          "tokenUsage": {"generatedAt":17},
+          "tokenUsageError": null
+        }
+        """#.data(using: .utf8)!
+
+        let snapshot = try ModelControlSnapshot.decode(from: wire)
+        XCTAssertNotNil(snapshot.providers["claude"])
+        XCTAssertTrue(snapshot.billing.isEmpty)
+        XCTAssertTrue(snapshot.usageSurfaces.isEmpty)
+        XCTAssertEqual(snapshot.quota, [])
+        XCTAssertNil(snapshot.quotaError)
+        XCTAssertNil(snapshot.tokenUsage)
+        XCTAssertTrue(snapshot.tokenUsageError?.contains("could not read") == true)
     }
 
     func testUnknownTokenReadingStateDegradesToUnknown() throws {

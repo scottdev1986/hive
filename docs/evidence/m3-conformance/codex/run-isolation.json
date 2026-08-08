@@ -1,0 +1,295 @@
+{
+  "vendor": "codex",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.codex/packages/standalone/releases/0.146.0-aarch64-apple-darwin/bin/codex",
+  "binaryBefore": {
+    "version": "codex-cli 0.146.0",
+    "device": 16777234,
+    "inode": 245118397,
+    "size": 271056976,
+    "mtimeMs": 1785288494573.023
+  },
+  "operatorBefore": {
+    ".codex": "c1f7637d929b04a492e6abbd69208ba6f13f981e5f23fa821ed81567cd75cc60"
+  },
+  "borrowed": [
+    ".codex/auth.json"
+  ],
+  "artifacts": [
+    {
+      "label": "auth.json",
+      "sourceMetadata": "53f0f9b605d22d4eb209ce6b20e834319f8a6903ae9114b80ede94236fcf036e",
+      "destinationMetadata": "3719eb077979c667bb19bd36eb6830acad40c4cf0ef2af55f56d9865ecc54614",
+      "verification": {
+        "nodes": 1,
+        "files": 1,
+        "directories": 0
+      }
+    }
+  ],
+  "binaryAfter": {
+    "version": "codex-cli 0.146.0",
+    "device": 16777234,
+    "inode": 245118397,
+    "size": 271056976,
+    "mtimeMs": 1785288494573.023
+  },
+  "operatorAfter": {
+    ".codex": "72fd3230f7ed0b9f481de99bc7529d53d36fad1a177fa693db061f049ca2f9e9"
+  },
+  "changedOperatorPaths": [
+    ".codex"
+  ],
+  "changedOperatorNodes": {
+    ".codex": [
+      {
+        "relativePath": "logs_2.sqlite-wal",
+        "before": {
+          "relativePath": "logs_2.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284488351,
+          "mode": 420,
+          "size": 4260112,
+          "mtimeMs": 1785676393813.0554
+        },
+        "after": {
+          "relativePath": "logs_2.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284488351,
+          "mode": 420,
+          "size": 4260112,
+          "mtimeMs": 1785676443812.261
+        }
+      },
+      {
+        "relativePath": "models_cache.json",
+        "before": {
+          "relativePath": "models_cache.json",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119369888,
+          "mode": 420,
+          "size": 314039,
+          "mtimeMs": 1785676383453.3413
+        },
+        "after": {
+          "relativePath": "models_cache.json",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 119369888,
+          "mode": 420,
+          "size": 314039,
+          "mtimeMs": 1785676438090.5398
+        }
+      },
+      {
+        "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+        "before": {
+          "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284511752,
+          "mode": 420,
+          "size": 1158916,
+          "mtimeMs": 1785676393545.2893
+        },
+        "after": {
+          "relativePath": "sessions/2026/08/02/rollout-2026-08-02T08-54-09-019fc289-f90a-7e53-9075-afaaf0dfd6da.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284511752,
+          "mode": 420,
+          "size": 1170201,
+          "mtimeMs": 1785676442941.221
+        }
+      },
+      {
+        "relativePath": "state_5.sqlite-wal",
+        "before": {
+          "relativePath": "state_5.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 283668170,
+          "mode": 420,
+          "size": 4173592,
+          "mtimeMs": 1785676393545.5737
+        },
+        "after": {
+          "relativePath": "state_5.sqlite-wal",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 283668170,
+          "mode": 420,
+          "size": 4173592,
+          "mtimeMs": 1785676438085.5566
+        }
+      },
+      {
+        "relativePath": "tmp/arg0",
+        "before": {
+          "relativePath": "tmp/arg0",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119298999,
+          "mode": 448,
+          "size": 192,
+          "mtimeMs": 1785676334603.2515
+        },
+        "after": {
+          "relativePath": "tmp/arg0",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 119298999,
+          "mode": 448,
+          "size": 192,
+          "mtimeMs": 1785676444825.3591
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0WQkZ1Z",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0WQkZ1Z",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 284847497,
+          "mode": 493,
+          "size": 192,
+          "mtimeMs": 1785676334603.3718
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0WQkZ1Z/.lock",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0WQkZ1Z/.lock",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284847498,
+          "mode": 420,
+          "size": 0,
+          "mtimeMs": 1785676334603.281
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0WQkZ1Z/apply_patch",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0WQkZ1Z/apply_patch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284847499,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676334603.3135
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0WQkZ1Z/applypatch",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0WQkZ1Z/applypatch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284847500,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676334603.3394
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0WQkZ1Z/codex-execve-wrapper",
+        "before": {
+          "relativePath": "tmp/arg0/codex-arg0WQkZ1Z/codex-execve-wrapper",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284847501,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676334603.37
+        },
+        "after": null
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0u6mKnk",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0u6mKnk",
+          "kind": "directory",
+          "device": 16777234,
+          "inode": 284917380,
+          "mode": 493,
+          "size": 192,
+          "mtimeMs": 1785676444825.496
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0u6mKnk/.lock",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0u6mKnk/.lock",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284917381,
+          "mode": 420,
+          "size": 0,
+          "mtimeMs": 1785676444825.391
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0u6mKnk/apply_patch",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0u6mKnk/apply_patch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284917382,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676444825.4224
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0u6mKnk/applypatch",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0u6mKnk/applypatch",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284917383,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676444825.4517
+        }
+      },
+      {
+        "relativePath": "tmp/arg0/codex-arg0u6mKnk/codex-execve-wrapper",
+        "before": null,
+        "after": {
+          "relativePath": "tmp/arg0/codex-arg0u6mKnk/codex-execve-wrapper",
+          "kind": "symlink",
+          "device": 16777234,
+          "inode": 284917384,
+          "mode": 493,
+          "size": 93,
+          "mtimeMs": 1785676444825.4941
+        }
+      }
+    ]
+  },
+  "artifactsAfter": [
+    {
+      "label": "auth.json",
+      "sourceMetadata": "53f0f9b605d22d4eb209ce6b20e834319f8a6903ae9114b80ede94236fcf036e",
+      "destinationMetadata": "3719eb077979c667bb19bd36eb6830acad40c4cf0ef2af55f56d9865ecc54614",
+      "verification": {
+        "nodes": 1,
+        "files": 1,
+        "directories": 0
+      },
+      "error": null
+    }
+  ]
+}

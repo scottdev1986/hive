@@ -123,7 +123,7 @@ final class SessiondPaneReattachTests: XCTestCase {
 
         pane.update(state: PaneState(
             id: "worker", kind: .agent, title: "aria",
-            feedStatus: "idle", status: .running))
+            feedStatus: "idle", status: .running, headerDetail: "idle"))
 
         XCTAssertEqual(pane.terminalFailure?.detail, "renderer disconnected")
         XCTAssertFalse(badge.isHidden, "a healthy feed tick must not hide the failure badge")

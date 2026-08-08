@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   shellSessionLaunch,
   TERMINAL_SHELL,
 } from "../../../src/daemon/session-host/shell-session";
+import { tempRoot } from "../../temp-root";
 
 describe("shell-backed terminal sessions", () => {
   test("starts a login zsh and enters the provider as its first command", () => {
@@ -21,7 +19,6 @@ describe("shell-backed terminal sessions", () => {
     expect(launch.argv.at(-2)).toBe("hive-terminal");
     expect(launch.argv.at(-1)).toBe("codex --model gpt-5.6-sol");
     expect(launch.expectedExecutable).toBe(TERMINAL_SHELL);
-    expect(launch.initialInput).toEqual(new Uint8Array());
   });
 
   test("refuses a command that cannot be entered into a terminal", () => {
@@ -34,7 +31,7 @@ describe("shell-backed terminal sessions", () => {
     const launch = shellSessionLaunch(
       "print -r -- __HIVE_PROVIDER_RAN__; false",
     );
-    const shellHome = mkdtempSync(join(tmpdir(), "hive-shell-session-"));
+    const shellHome = tempRoot("hive-shell-session-");
     const child = Bun.spawn([...launch.argv], {
       cwd: shellHome,
       env: {
@@ -46,6 +43,11 @@ describe("shell-backed terminal sessions", () => {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
+      // Own session, so the shell has no controlling terminal to reach for. An
+      // interactive zsh that can open /dev/tty reads its line editor from there
+      // and never sees the stdin pipe, so the command written below would be
+      // dropped and this test would hang on whatever that terminal does next.
+      detached: true,
     });
     child.stdin.write("print -r -- __HIVE_SHELL_SURVIVED__\nexit\n");
     await child.stdin.end();

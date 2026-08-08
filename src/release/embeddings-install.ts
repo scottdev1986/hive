@@ -1,26 +1,15 @@
-/**
- * Install the embedding runtime from Hive's own release — the no-checkout path.
- *
- * The pin is the running binary's own version: a released `hive` downloads the
- * `embeddings-runtime.tar.gz` asset from the release tag `v<HIVE_VERSION>`,
- * i.e. the exact build the binary itself was cut from. There is no separate
- * embedded sha256 constant (graphify's scheme) because the release manifest is
- * the pin: the artifact's SHA-256 and size come from `hive-release.json`,
- * which is Ed25519-verified against the release key embedded in this binary
- * before any byte is trusted — the same manifest verification posture
- * `hive update` enforces. A build with no embedded key (a source checkout)
- * cannot take this path at all: it has no release version to pin to, and says
- * so instead of guessing.
- *
- * Staging is all-or-nothing, like the updater's: the tarball is unpacked and
- * probe-verified in a sibling staging directory, and only a passing probe
- * swaps it into place with one rename — a failed download, hash mismatch, or
- * broken bundle never disturbs a working install.
- */
+/** Install the embedding runtime from Hive's own release — the no-checkout path. The pin is the running binary's own version: a released `hive` downloads the `embeddings-runtime.tar.gz` asset from the release tag `v<HIVE_VERSION>`, i.e. the exact build the binary itself was cut from. There is no separate embedded sha256 constant (graphify's scheme) because the release manifest is the pin: the artifact's SHA-256 and size come from `hive-release.json`, which is Ed25519-verified against the release key embedded in this binary before any byte is trusted — the same manifest verification posture `hive update` enforces. A build with no embedded key (a source checkout) cannot take this path at all: it has no release version to pin to, and says so instead of guessing. Staging is all-or-nothing, like the updater's: the tarball is unpacked and probe-verified in a sibling staging directory, and only a passing probe swaps it into place with one rename — a failed download, hash mismatch, or broken bundle never disturbs a working install. */
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { githubReleaseSource, type ReleaseSource } from "../update/source";
-import { HIVE_ARCH, HIVE_RELEASE_PUBLIC_KEY, HIVE_VERSION } from "../version";
+import {
+  githubReleaseSource,
+  type ReleaseSource,
+} from "../update-service/source";
+import {
+  HIVE_ARCH,
+  HIVE_RELEASE_PUBLIC_KEY,
+  HIVE_VERSION,
+} from "../shared/version";
 import { EMBEDDINGS_RUNTIME_ASSET } from "./embeddings-runtime";
 import {
   artifactMatches,
@@ -28,6 +17,7 @@ import {
   selectArtifact,
   verifyManifest,
 } from "./manifest";
+import { errorMessage } from "../shared/error-message";
 
 export type EmbeddingsInstallOutcome =
   | { ok: true; detail: string }
@@ -39,18 +29,12 @@ export interface EmbeddingsProbeResult {
 }
 
 export interface EmbeddingsReleaseInstallDeps {
-  /** The running binary's version — the pin. Must be a real release semver. */
   version: string;
   arch: HiveArch;
-  /** The embedded release key(s), exactly as `hive update` uses them. */
   publicKey: string | null;
-  /** Resolve a release into verifiable bytes; injectable so tests never touch
-   * the network. Defaults to GitHub Releases. */
+  /** Resolve a release into verifiable bytes; injectable so tests never touch the network. Defaults to GitHub Releases. */
   source: (version: string) => Promise<ReleaseSource>;
-  /** Where the runtime lands (and where the staging sibling is created). */
   runtimeDir: string;
-  /** Load the staged bundle and embed a probe string; throws on any failure.
-   * Install is only "done" when this passes. */
   probe: (runtimeDir: string) => Promise<EmbeddingsProbeResult>;
 }
 
@@ -91,15 +75,11 @@ export async function installEmbeddingsFromRelease(
     source = await deps.source(deps.version);
   } catch (error) {
     return fail(
-      `could not read the hive ${deps.version} release: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `could not read the hive ${deps.version} release: ${errorMessage(error)}`,
     );
   }
 
-  // The manifest is the pin, and it is verified before it is read — the same
-  // fail-closed posture as `hive update`: an embedded key with a missing or
-  // mismatching signature is a refusal, never a softening to unsigned.
+  // The manifest is the pin, and it is verified before it is read — the same fail-closed posture as `hive update`: an embedded key with a missing or mismatching signature is a refusal, never a softening to unsigned.
   const trust = verifyManifest(
     source.manifestBytes,
     source.signature,
@@ -123,9 +103,7 @@ export async function installEmbeddingsFromRelease(
     bytes = await source.download(EMBEDDINGS_RUNTIME_ASSET);
   } catch (error) {
     return fail(
-      `could not download ${EMBEDDINGS_RUNTIME_ASSET}: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      `could not download ${EMBEDDINGS_RUNTIME_ASSET}: ${errorMessage(error)}`,
     );
   }
   if (!artifactMatches(artifact, bytes)) {
@@ -135,7 +113,6 @@ export async function installEmbeddingsFromRelease(
     );
   }
 
-  // Stage, unpack, and probe beside the live install; the swap is one rename.
   const staging = `${deps.runtimeDir}.staging-${process.pid}`;
   await rm(staging, { recursive: true, force: true });
   await mkdir(staging, { recursive: true });
@@ -157,18 +134,13 @@ export async function installEmbeddingsFromRelease(
     };
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
-    return fail(error instanceof Error ? error.message : String(error));
+    return fail(errorMessage(error));
   }
 }
 
-/** The production dep set: this binary's version, key, and arch. `hive update`
- * passes an explicit `version` — the one it just activated — so the runtime is
- * pinned to the new binary, not the old one still executing the update. */
 export function defaultReleaseInstallDeps(options: {
   runtimeDir: string;
   probe: (runtimeDir: string) => Promise<EmbeddingsProbeResult>;
-  /** Defaults to this binary's own version (the `hive init` /
-   * `hive init` pin). */
   version?: string;
 }): EmbeddingsReleaseInstallDeps {
   return {

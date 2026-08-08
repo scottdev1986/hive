@@ -3,15 +3,23 @@
 // never-break-the-daemon contract (an unwritable log dir is a no-op), plus
 // the daemon-level wiring that lands embedding state transitions in the file.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DaemonLog, daemonLogPath } from "../../src/daemon/daemon-log";
-import { HiveDatabase } from "../../src/daemon/db";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
+import {
+  DaemonLog,
+  daemonLogPath,
+} from "../../src/daemon/observability/daemon-log";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
-import type { AgentRecord } from "../../src/schemas";
+import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import type {
+  Spawner,
+  SpawnRequest,
+} from "../../src/daemon/spawn/spawn-service";
+import { EpisodicStore } from "../../src/memory-service/episodic";
+import type { AgentRecord } from "../../src/schemas/agent";
+import { required } from "../required";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
@@ -34,6 +42,33 @@ async function makeTempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   tempRoots.push(dir);
   return dir;
+}
+
+function git(root: string, ...args: string[]): string {
+  const result = Bun.spawnSync(["git", "-C", root, ...args], {
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Hive Test",
+      GIT_AUTHOR_EMAIL: "hive@example.test",
+      GIT_COMMITTER_NAME: "Hive Test",
+      GIT_COMMITTER_EMAIL: "hive@example.test",
+    },
+  });
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString().trim());
+  return result.stdout.toString().trim();
+}
+
+function readRef(root: string, ref: string): string | null {
+  const result = Bun.spawnSync([
+    "git",
+    "-C",
+    root,
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    ref,
+  ]);
+  return result.exitCode === 0 ? result.stdout.toString().trim() : null;
 }
 
 describe("DaemonLog", () => {
@@ -78,6 +113,76 @@ describe("DaemonLog", () => {
     const log = new DaemonLog(join(blocker, "daemon.log"));
     expect(() => log.write("this line goes nowhere")).not.toThrow();
   });
+
+  test("report() without a stderr redirect: console once and file once", async () => {
+    const home = await makeTempDir("hive-dlog-home-");
+    const path = join(home, "logs", "daemon.log");
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.join(" "));
+    };
+    try {
+      new DaemonLog(path).report("embedded-mode report line");
+    } finally {
+      console.error = original;
+    }
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toContain("embedded-mode report line");
+    const content = await readFile(path, "utf8");
+    expect(content.trim().split("\n").length).toBe(1);
+    expect(content).toContain("embedded-mode report line");
+  });
+
+  test("report() with stderr opened onto the log file writes the line once", async () => {
+    // The deployed daemon's shape: stderr IS the log file, so the console leg
+    // lands in the file through the fd and report() must not append a second
+    // copy. Only a child process can hold that redirect honestly.
+    const home = await makeTempDir("hive-dlog-home-");
+    const path = join(home, "logs", "daemon.log");
+    await mkdir(join(home, "logs"), { recursive: true });
+    const script = join(home, "report-child.ts");
+    await writeFile(
+      script,
+      `import { DaemonLog } from ${JSON.stringify(
+        join(
+          import.meta.dir,
+          "..",
+          "..",
+          "src",
+          "daemon",
+          "observability",
+          "daemon-log.ts",
+        ),
+      )};\nnew DaemonLog(process.argv[2]).report("deployed-mode report line");\n`,
+    );
+    const { openSync, closeSync } = await import("node:fs");
+    const stderr = openSync(path, "a");
+    try {
+      const child = Bun.spawn(["bun", script, path], {
+        stdout: "ignore",
+        stderr,
+        env: {
+          ...process.env,
+          FORCE_COLOR: "0",
+          NO_COLOR: "1",
+          TERM: "dumb",
+        },
+      });
+      expect(await child.exited).toBe(0);
+    } finally {
+      closeSync(stderr);
+    }
+    const content = await readFile(path, "utf8");
+    const lines = content.trim().split("\n");
+    expect(lines.length).toBe(1);
+    expect(lines[0]).toContain("deployed-mode report line");
+    // The fd carried the console leg verbatim, timestamp and all — the same
+    // shape an append would have written.
+    expect(Number.isNaN(Date.parse((lines[0] as string).slice(0, 24)))).toBe(
+      false,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -94,10 +199,16 @@ class UnusedSpawner implements Spawner {
 async function makeDaemon(options: {
   home: string;
   load?: () => Promise<never>;
+  reconcile?: () => Promise<void>;
 }) {
   Bun.env.HIVE_HOME = options.home;
   const repoRoot = await makeTempDir("hive-dlog-repo-");
+  git(repoRoot, "init", "-b", "main");
+  await writeFile(join(repoRoot, "README.md"), "# daemon lifecycle test\n");
+  git(repoRoot, "add", "README.md");
+  git(repoRoot, "commit", "-m", "initial");
   const episodic = new EpisodicStore(":memory:");
+  const reconcile = options.reconcile;
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     spawner: new UnusedSpawner(),
@@ -108,6 +219,17 @@ async function makeDaemon(options: {
     ...(options.load === undefined
       ? {}
       : { memoryEmbeddingLoad: options.load }),
+    ...(reconcile === undefined
+      ? {}
+      : {
+          reconcileOrphanedWorktrees: async () => {
+            await reconcile();
+            return {
+              worktrees: [],
+              preservedRefs: { releasable: [], kept: [] },
+            };
+          },
+        }),
   });
   return { daemon, repoRoot };
 }
@@ -140,6 +262,8 @@ describe("HiveDaemon daemon-log wiring (defect D2)", () => {
       });
       await required(daemon.embeddingIndex).settle();
     } finally {
+      // stop() must drain the startup recovery sweep; otherwise git against
+      // hive-dlog-repo-* lands inside later tests that share this process.
       await daemon.stop();
     }
     const content = await readFile(join(home, "logs", "daemon.log"), "utf8");
@@ -181,6 +305,84 @@ describe("HiveDaemon daemon-log wiring (defect D2)", () => {
       await daemon.stop();
     }
   });
-});
 
-import { required } from "../required";
+  test("stop drains in-flight maintenance before returning", async () => {
+    const home = await makeTempDir("hive-dlog-home-");
+    let markReconcileStarted = () => {};
+    const reconcileStarted = new Promise<void>((resolve) => {
+      markReconcileStarted = resolve;
+    });
+    let releaseReconcile = () => {};
+    const reconcileRelease = new Promise<void>((resolve) => {
+      releaseReconcile = resolve;
+    });
+    let reconcileFinished = false;
+    const { daemon } = await makeDaemon({
+      home,
+      reconcile: async () => {
+        markReconcileStarted();
+        await reconcileRelease;
+        reconcileFinished = true;
+      },
+    });
+    daemon.start();
+    try {
+      await reconcileStarted;
+      let stopped = false;
+      const stopping = daemon.stop().then(() => {
+        stopped = true;
+        expect(reconcileFinished).toBe(true);
+      });
+      await Bun.sleep(50);
+      expect(stopped).toBe(false);
+      releaseReconcile();
+      await stopping;
+      expect(stopped).toBe(true);
+    } finally {
+      releaseReconcile();
+      await daemon.stop();
+    }
+  });
+
+  test("stop drains every admitted settlement write and rejects later writes", async () => {
+    const home = await makeTempDir("hive-dlog-home-");
+    let markReconcileStarted = () => {};
+    const reconcileStarted = new Promise<void>((resolve) => {
+      markReconcileStarted = resolve;
+    });
+    let releaseReconcile = () => {};
+    const reconcileRelease = new Promise<void>((resolve) => {
+      releaseReconcile = resolve;
+    });
+    const { daemon, repoRoot } = await makeDaemon({
+      home,
+      reconcile: async () => {
+        markReconcileStarted();
+        await reconcileRelease;
+      },
+    });
+    const aggregateRef = `refs/hive-settlement-aggregate/${hiveInstanceSuffix()}`;
+    const sweeping = daemon.reconcileOrphanedWorktrees();
+    try {
+      await reconcileStarted;
+      let stopped = false;
+      const stopping = daemon.stop().then(() => {
+        stopped = true;
+      });
+      await Bun.sleep(50);
+      expect(stopped).toBe(false);
+      expect(readRef(repoRoot, aggregateRef)).toBeNull();
+      releaseReconcile();
+      await Promise.all([sweeping, stopping]);
+      expect(stopped).toBe(true);
+      expect(readRef(repoRoot, aggregateRef)).not.toBeNull();
+      await expect(daemon.reconcileOrphanedWorktrees()).rejects.toThrow(
+        "worktree lifecycle service is stopped",
+      );
+    } finally {
+      releaseReconcile();
+      await sweeping.catch(() => undefined);
+      await daemon.stop();
+    }
+  });
+});

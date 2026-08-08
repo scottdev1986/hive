@@ -288,7 +288,6 @@ type RoutingPolicyV3 = {
               <tr><td>Consent</td><td>Provider and model are explicitly enabled under existing inheritance rules.</td><td>Model Control Center</td><td>Refuse; unknown is not permission.</td></tr>
               <tr><td>Catalog resolution</td><td>The provider’s readable catalog claims the exact model or alias.</td><td>Model inventory</td><td>Refuse unless the user supplied both an explicit model and provider pin under the existing explicit-pin rule.</td></tr>
               <tr><td>Entitlement/vendor state</td><td>The model is entitled and not vendor-hidden when those facts are known.</td><td>Model inventory</td><td>Follow the existing AuthorizedLaunch rule; do not invent entitlement.</td></tr>
-              <tr><td>Task requirements</td><td>Measured context window and required provider capabilities satisfy the request.</td><td>AuthorizedLaunch/workflow</td><td>Requirements fail closed.</td></tr>
               <tr><td>Reviewer separation</td><td>A review candidate satisfies the workflow’s author/provider separation constraint.</td><td>Workflow</td><td>Refuse when the workflow requires separation and author identity is unknown.</td></tr>
               <tr><td>Effort</td><td>The exact or resolved effort is supported and launchable.</td><td>Model inventory + adapter</td><td>Provider-controlled remains honest; do not manufacture a level.</td></tr>
               <tr><td>Route health</td><td>No active launch-failure cooldown exists for the exact route.</td><td>Launch health</td><td>No cooldown means eligible.</td></tr>
@@ -697,7 +696,6 @@ type RouteRequest = {
   requestId: string;
   category: RoutingCategory;
   requirements: {
-    minContextTokens: number | null;
     reviewOfProvider: CapabilityProvider | null;
   };
   explicit: {

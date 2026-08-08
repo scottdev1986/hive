@@ -1,85 +1,52 @@
-/**
- * `hive workspace-feed --port <n>` — the Workspace app's status wire.
- *
- * A long-lived child of the app that turns the daemon's `hive_status` into
- * NDJSON on stdout, one JSON object per line and nothing else:
- *
- *   {"v":1,"agents":[...],"autonomy":"sandboxed","orchestrator":{"status":"working"}}
- *                             the full AgentRecord array, the daemon's live
- *                             autonomy dial (omitted when unreadable), and what
- *                             the root is doing (omitted when the daemon cannot
- *                             honestly say — the root has no AgentRecord, so it
- *                             travels beside the array, not inside it) — on the
- *                             first snapshot, on any change, and at least every
- *                             5 s (heartbeat), so a silent wire is
- *                             distinguishable from an unchanged one.
- *   {"v":1,"error":"..."}     the daemon is unreachable — emitted once per
- *                             distinct failure, not per retry, so a dead
- *                             daemon does not scroll the app's log.
- *
- * Polling lives here, not in Swift, because this process already holds the
- * operator credential (0600 file) and the MCP client; the app just decodes
- * lines.
- *
- * The feed retries a dead daemon with backoff and exits non-zero only after
- * 30 s of continuous unreachability — a daemon restart mid-session must look
- * like a hiccup, not a teardown.
- */
+/** `hive workspace-feed --port <n>` — the Workspace app's status wire. A long-lived child of the app that turns the daemon's `hive_status` into NDJSON on stdout, one JSON object per line and nothing else: {"v":1,"agents":[...],"autonomy":"sandboxed","orchestrator":{"status":"working"}} the full AgentRecord array, the daemon's live autonomy dial (omitted when unreadable), and what the root is doing (omitted when the daemon cannot honestly say — the root has no AgentRecord, so it travels beside the array, not inside it) — on the first snapshot, on any change, and at least every 5 s (heartbeat), so a silent wire is distinguishable from an unchanged one. {"v":1,"error":"..."} the daemon is unreachable — emitted once per distinct failure, not per retry, so a dead daemon does not scroll the app's log. {"v":1,"stale":true, the feed is giving up and exiting, so whatever the "reason":"..."} reader is still showing is now unproven. NO READER DECODES THIS YET: the app infers staleness from the stream ending, which cannot distinguish a feed that quit from one that never started. Emitting it regardless keeps the wire self-reporting and is what a reader needs in order to stop rendering a dead roster confidently. Polling lives here, not in Swift, because this process already holds the user credential (0600 file) and the MCP client; the app just decodes lines. The feed retries a dead daemon with backoff and exits non-zero only after 30 s of continuous refusal — a daemon restart mid-session must look like a hiccup, not a teardown. Only a refusal counts toward that deadline. A daemon that answers late is not a dead one: the status timeout climbs toward `FEED_STATUS_TIMEOUT_MAX_MS` while replies keep arriving too slowly, and those waits are charged to no deadline, because a feed that quits on a healthy-but-slow daemon leaves the app showing a roster that is wrong and looks right. */
 
-import { type Autonomy, isAutonomy } from "../config/autonomy";
-import { verifyDaemonInstance } from "../daemon/handshake";
-import { macProcessIdentity } from "../daemon/lifecycle";
+import type { Autonomy } from "../config/autonomy";
 import {
-  type OrchestratorHostKind,
-  type RootSessiondLocator,
-  RootSessiondLocatorSchema,
-} from "../daemon/orchestrator-host";
-import type { OrchestratorSessiondSnapshot } from "../daemon/orchestrator-sessiond";
-import type { OrchestratorStatus } from "../daemon/orchestrator-status";
+  macProcessIdentity,
+  verifyDaemonInstance,
+} from "../daemon/lifecycle/daemon-lifecycle";
+import {
+  type OrchestratorHostStatus,
+  OrchestratorHostStatusSchema,
+} from "../daemon/orchestrator-host/orchestrator-host-contract";
 import {
   type WorkspaceVisibilityInventoryInput,
   WorkspaceVisibilityInventoryInputSchema,
 } from "../daemon/session-host/workspace-visibility";
-import type { AgentRecord } from "../schemas";
-import { operatorFetch } from "./credential";
-import { fetchAgentStatus } from "./mcp";
+import type { AgentRecord } from "../schemas/agent";
+import { AutonomyEnvelopeSchema } from "../schemas/config-schema";
+import { systemNow } from "../shared/clock";
+import { errorMessage } from "../shared/error-message";
+import { abortableSleep } from "../shared/sleep";
+import { daemonErrorDetail, decodeJson } from "./daemon-response";
+import { HiveMcpSession, readAgentStatus } from "./mcp";
+import { UserDaemonClient } from "./user-daemon-client";
+import {
+  presentWorkspaceAgent,
+  presentWorkspaceOrchestrator,
+} from "./workspace-feed-presentation";
 
 export const FEED_VERSION = 1;
 export const FEED_POLL_MS = 1_000;
 export const FEED_HEARTBEAT_MS = 5_000;
 export const FEED_RETRY_MAX_MS = 4_000;
 export const FEED_GIVE_UP_MS = 30_000;
-/** A hung status request must become a reported error, not a silent lapse. */
 export const FEED_STATUS_TIMEOUT_MS = 5_000;
-/** Bounds one visibility publish. sessiond expires a visibility lease after
- * `visibility_expiry_ms` (15 s) and then terminates the host, so an unbounded
- * publish can freeze renewal for every pane until sessiond terminates their
- * hosts at the common deadline.
- * At 5 s a stall costs one renewal, leaving two further attempts inside the
- * lease. */
+/** The ceiling the status timeout may climb to while the daemon answers late. A daemon whose answer simply costs more than the opening budget is still answering, and refusing to wait for it forever is what turns a slow daemon into an unreadable one. Being smaller than `FEED_GIVE_UP_MS` is not what keeps this safe, and reading it that way is a trap: the outage deadline accumulates across attempts, so a ladder of waits each individually under it still sums past it. What keeps the two apart is that a timeout does not touch the outage clock at all. */
+export const FEED_STATUS_TIMEOUT_MAX_MS = 20_000;
+/** Bounds one visibility publish. sessiond expires a visibility lease after `visibility_expiry_ms` (15 s) and then terminates the host, so an unbounded publish can freeze renewal for every pane until sessiond terminates their hosts at the common deadline. At 5 s a stall costs one renewal, leaving two further attempts inside the lease. */
 export const FEED_VISIBILITY_PUBLISH_TIMEOUT_MS = 5_000;
 /** Report a slow publish before it becomes a missed lease renewal. */
 export const FEED_VISIBILITY_PUBLISH_SLOW_MS = 1_000;
 
-export interface WorkspaceOrchestratorSnapshot {
-  readonly status: OrchestratorStatus | null;
-  readonly host: OrchestratorHostKind;
-  readonly hostState: OrchestratorSessiondSnapshot["state"] | null;
-  readonly hostDiagnostic: string | null;
-  readonly sessionLocator: RootSessiondLocator | null;
-}
+export type WorkspaceOrchestratorSnapshot = OrchestratorHostStatus;
 
 export interface WorkspaceFeedDeps {
-  /** Kept inside the retry loop so a daemon that is still starting is a
-   * transient outage, not an immediate feed exit. */
   readonly verifyInstance?: (port: number) => Promise<void>;
   readonly fetchStatus?: (port: number) => Promise<AgentRecord[]>;
-  /** Reads the daemon's live autonomy dial for the app's Agents menu. Errors
-   * degrade to null (field omitted) — the menu goes unknown, the agent list
-   * must not. */
+  /** Reads the daemon's live autonomy dial for the app's Agents menu. Errors degrade to null (field omitted) — the menu goes unknown, the agent list must not. */
   readonly fetchAutonomy?: (port: number) => Promise<Autonomy | null>;
-  /** Reads the root's independent turn status and terminal lifecycle. Errors
-   * degrade to null; an unknowable turn can still carry a sessiond locator. */
+  /** Reads the root's independent turn status and terminal lifecycle. Errors degrade to null; an unknowable turn can still carry a sessiond locator. */
   readonly fetchOrchestrator?: (
     port: number,
   ) => Promise<WorkspaceOrchestratorSnapshot | null>;
@@ -90,14 +57,15 @@ export interface WorkspaceFeedDeps {
   ) => Promise<void>;
   readonly now?: () => number;
   readonly signal?: AbortSignal;
-  /** Overrides FEED_STATUS_TIMEOUT_MS; tests use a short one. */
   readonly statusTimeoutMs?: number;
 }
 
 export interface WorkspaceVisibilityPublishDeps {
   readonly observeProcess?: (pid: number) => Readonly<{ startToken: string }>;
-  readonly post?: typeof operatorFetch;
-  /** Overrides FEED_VISIBILITY_PUBLISH_TIMEOUT_MS; tests use a short one. */
+  readonly post?: (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>;
   readonly timeoutMs?: number;
   readonly now?: () => number;
 }
@@ -111,35 +79,31 @@ export async function registerWorkspaceOwner(
   const processIdentity = (deps.observeProcess ?? macProcessIdentity)(
     workspacePid,
   );
-  const response = await (deps.post ?? operatorFetch)(
-    `http://127.0.0.1:${port}/workspace-owner`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(
-        deps.timeoutMs ?? FEED_VISIBILITY_PUBLISH_TIMEOUT_MS,
-      ),
-      body: JSON.stringify({
-        sessionId: workspaceSessionId,
-        process: {
-          processId: workspacePid,
-          startToken: processIdentity.startToken,
-        },
-      }),
-    },
-  );
+  const client = new UserDaemonClient({
+    port,
+    ...(deps.post === undefined ? {} : { fetch: deps.post }),
+    verifyIdentity: deps.post === undefined,
+  });
+  const response = await client.request("/workspace-owner", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(
+      deps.timeoutMs ?? FEED_VISIBILITY_PUBLISH_TIMEOUT_MS,
+    ),
+    body: JSON.stringify({
+      sessionId: workspaceSessionId,
+      process: {
+        processId: workspacePid,
+        startToken: processIdentity.startToken,
+      },
+    }),
+  });
   if (response.ok) return;
-  const body = (await response.json().catch(() => null)) as {
-    error?: unknown;
-    diagnostic?: unknown;
-  } | null;
-  const detail =
-    typeof body?.diagnostic === "string"
-      ? body.diagnostic
-      : typeof body?.error === "string"
-        ? body.error
-        : `HTTP ${response.status}`;
-  throw new Error(`workspace owner registration failed: ${detail}`);
+  const detail = daemonErrorDetail(
+    await decodeJson(response),
+    `HTTP ${response.status}`,
+  );
+  throw new Error(`workspace owner registration failed: ${detail.message}`);
 }
 
 class WorkspaceVisibilityPublishError extends Error {
@@ -152,21 +116,14 @@ class WorkspaceVisibilityPublishError extends Error {
   }
 }
 
-/** A publish that never came back inside the bound. Distinct from a rejection:
- * nothing is known about whether the daemon applied it. */
+/** A publish that never came back inside the bound. Distinct from a rejection: nothing is known about whether the daemon applied it. */
 export class WorkspaceVisibilityPublishTimeoutError extends Error {
   constructor(readonly milliseconds: number) {
     super(`workspace visibility publish timed out after ${milliseconds}ms`);
   }
 }
 
-/** Publishes exactly one Workspace-authored full inventory with the feed's
- * operator credential. The daemon independently re-reads the same PID/token.
- *
- * Bounded: the request carries an AbortSignal and is raced against its own
- * timer, so a `post` that ignores the signal still cannot hang the caller.
- * Resolves with how long the attempt took, so a stall is measurable live
- * rather than only reconstructable from lease deadlines afterwards. */
+/** Publishes exactly one Workspace-authored full inventory with the feed's user credential. The daemon independently re-reads the same PID/token. Bounded: the request carries an AbortSignal and is raced against its own timer, so a `post` that ignores the signal still cannot hang the caller. Resolves with how long the attempt took, so a stall is measurable live rather than only reconstructable from lease deadlines afterwards. */
 export async function publishWorkspaceVisibility(
   port: number,
   workspaceSessionId: string,
@@ -179,49 +136,43 @@ export async function publishWorkspaceVisibility(
     workspacePid,
   );
   const timeoutMs = deps.timeoutMs ?? FEED_VISIBILITY_PUBLISH_TIMEOUT_MS;
-  const now = deps.now ?? Date.now;
+  const now = deps.now ?? systemNow;
   const startedAt = now();
   const controller = new AbortController();
+  const client = new UserDaemonClient({
+    port,
+    ...(deps.post === undefined ? {} : { fetch: deps.post }),
+    verifyIdentity: deps.post === undefined,
+  });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expiry = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      // Reject before aborting. `abort()` runs its listeners synchronously, so
-      // aborting first lets the request's own AbortError win the race and the
-      // operator sees "aborted" instead of the measured duration.
+      // Reject before aborting. `abort()` runs its listeners synchronously, so aborting first lets the request's own AbortError win the race and the user sees "aborted" instead of the measured duration.
       reject(new WorkspaceVisibilityPublishTimeoutError(timeoutMs));
       controller.abort();
     }, timeoutMs);
   });
   let response: Response;
-  let body: { error?: unknown; diagnostic?: unknown; reason?: unknown } | null;
+  let body: unknown;
   try {
     [response, body] = await Promise.race([
       (async () => {
-        const response = await (deps.post ?? operatorFetch)(
-          `http://127.0.0.1:${port}/workspace-visibility`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: controller.signal,
-            body: JSON.stringify({
-              ...parsed,
-              source: {
-                sessionId: workspaceSessionId,
-                process: {
-                  processId: workspacePid,
-                  startToken: processIdentity.startToken,
-                },
+        const response = await client.request("/workspace-visibility", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            ...parsed,
+            source: {
+              sessionId: workspaceSessionId,
+              process: {
+                processId: workspacePid,
+                startToken: processIdentity.startToken,
               },
-            }),
-          },
-        );
-        const body = response.ok
-          ? null
-          : ((await response.json().catch(() => null)) as {
-              error?: unknown;
-              diagnostic?: unknown;
-              reason?: unknown;
-            } | null);
+            },
+          }),
+        });
+        const body = response.ok ? null : await decodeJson(response);
         return [response, body] as const;
       })(),
       expiry,
@@ -230,31 +181,15 @@ export async function publishWorkspaceVisibility(
     clearTimeout(timer);
   }
   if (response.ok) return { durationMs: now() - startedAt };
-  const detail =
-    typeof body?.diagnostic === "string"
-      ? body.diagnostic
-      : typeof body?.error === "string"
-        ? body.error
-        : `HTTP ${response.status}`;
+  const detail = daemonErrorDetail(body, `HTTP ${response.status}`);
   throw new WorkspaceVisibilityPublishError(
     response.status,
-    typeof body?.reason === "string" ? body.reason : null,
-    detail,
+    detail.reason ?? null,
+    detail.message,
   );
 }
 
-/** Publishes Workspace inventories at most one at a time, newest wins.
- *
- * Each inventory is a *full* snapshot, so a queued one is worthless the moment
- * a newer one arrives: only the latest is kept and the rest are dropped. The
- * at-most-one-in-flight rule is load-bearing: concurrent publishes race the
- * daemon's revision check and loop on conflicts, while chaining every
- * publication lets one hung request block fleet renewal indefinitely.
- * Superseding keeps serialization without the queue.
- *
- * A competing live Workspace source cannot be displaced safely, so one
- * recorded conflict halts this child rather than continuously retrying the
- * same rejected ownership claim. */
+/** Publishes Workspace inventories at most one at a time, newest wins. Each inventory is a *full* snapshot, so a queued one is worthless the moment a newer one arrives: only the latest is kept and the rest are dropped. The at-most-one-in-flight rule is load-bearing: concurrent publishes race the daemon's revision check and loop on conflicts, while chaining every publication lets one hung request block fleet renewal indefinitely. Superseding keeps serialization without the queue. A competing live Workspace source cannot be displaced safely, so one recorded conflict halts this child rather than continuously retrying the same rejected ownership claim. */
 export class WorkspaceVisibilityPublisher {
   private inFlight: Promise<void> | null = null;
   private pending: WorkspaceVisibilityInventoryInput | null = null;
@@ -332,7 +267,7 @@ export class WorkspaceVisibilityPublisher {
     this.write(
       JSON.stringify({
         v: FEED_VERSION,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       }),
     );
   }
@@ -342,77 +277,54 @@ export class WorkspaceVisibilityPublisher {
   }
 }
 
-/** `GET /autonomy` with the operator credential: the live dial, or null when
- * the daemon has no compatible control configured. */
-async function getAutonomy(port: number): Promise<Autonomy | null> {
-  const response = await operatorFetch(`http://127.0.0.1:${port}/autonomy`);
-  if (!response.ok) return null;
-  const body = (await response.json().catch(() => null)) as {
-    autonomy?: unknown;
-  } | null;
-  return isAutonomy(body?.autonomy) ? body.autonomy : null;
+/** `GET /autonomy` with the user credential: the live dial, or null when the daemon has no compatible control configured. */
+async function getAutonomy(daemon: UserDaemonClient): Promise<Autonomy | null> {
+  const body = (await daemon.json(
+    "/autonomy",
+    undefined,
+    "return-null",
+  )) as unknown;
+  const parsed = AutonomyEnvelopeSchema.safeParse(body);
+  return parsed.success ? parsed.data.autonomy : null;
 }
 
-/** `GET /orchestrator-status` with the operator credential: independently
- * measured root turn state and terminal lifecycle. A null turn status stays
- * null; a sessiond locator is present only after its host is ready. */
+/** `GET /orchestrator-status` with the user credential: independently measured root turn state and terminal lifecycle. A null turn status stays null; a sessiond locator is present only after its host is ready. */
 async function getOrchestratorStatus(
-  port: number,
+  daemon: UserDaemonClient,
 ): Promise<WorkspaceOrchestratorSnapshot | null> {
-  const response = await operatorFetch(
-    `http://127.0.0.1:${port}/orchestrator-status`,
+  const body = await daemon.json(
+    "/orchestrator-status",
+    undefined,
+    "return-null",
   );
-  if (!response.ok) return null;
-  return parseWorkspaceOrchestratorSnapshot(
-    await response.json().catch(() => null),
-  );
+  return parseWorkspaceOrchestratorSnapshot(body);
 }
 
-/** The root's turn status and terminal lifecycle are independent. Preserve a
- * ready locator even before the first turn boundary. */
+/** The root's turn status and terminal lifecycle are independent. Preserve a ready locator even before the first turn boundary, and report nothing when neither is known — the app renders an absent snapshot as honest gray. */
 export function parseWorkspaceOrchestratorSnapshot(
   value: unknown,
 ): WorkspaceOrchestratorSnapshot | null {
-  if (typeof value !== "object" || value === null) return null;
-  const body = value as Record<string, unknown>;
-  const status = parseOrchestratorStatus(body.status);
-  const host = body.host === "sessiond" ? "sessiond" : null;
-  const hostState =
-    body.hostState === "awaiting-visibility" ||
-    body.hostState === "running" ||
-    body.hostState === "exited" ||
-    body.hostState === "failed"
-      ? body.hostState
-      : null;
-  const hostDiagnostic =
-    typeof body.hostDiagnostic === "string" ? body.hostDiagnostic : null;
-  const locator = RootSessiondLocatorSchema.safeParse(body.sessionLocator);
-  const sessionLocator = locator.success ? locator.data : null;
-  if (host === null || (status === null && sessionLocator === null))
-    return null;
-  return { status, host, hostState, hostDiagnostic, sessionLocator };
+  const parsed = OrchestratorHostStatusSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const snapshot = parsed.data;
+  return snapshot.status === null && snapshot.sessionLocator === null
+    ? null
+    : snapshot;
 }
 
-/** Keep the feed and daemon lifecycle vocabularies identical. Dropping a
- * valid word here turns measured state into a gray `unknown` header. */
-export function parseOrchestratorStatus(
-  value: unknown,
-): OrchestratorStatus | null {
-  return value === "spawning" ||
-    value === "working" ||
-    value === "idle" ||
-    value === "exited"
-    ? value
-    : null;
+/** A poll that outran its budget, as opposed to one the daemon refused. The two are different faults with different remedies: a refusal means there is nothing to talk to, while a timeout means the answer exists and was not waited for. Only the second is worth retrying with more patience. */
+export class StatusPollTimeoutError extends Error {
+  constructor(readonly milliseconds: number) {
+    super(`status poll timed out after ${milliseconds}ms`);
+    this.name = "StatusPollTimeoutError";
+  }
 }
 
-/** Reject if the work has not finished in time. Its own timer, not the injected
- * `sleep`: a test that stubs sleep to a no-op must not thereby time out every
- * poll. The loser is defused so a slow-but-successful poll cannot reject later. */
+/** Reject if the work has not finished in time. Its own timer, not the injected `sleep`: a test that stubs sleep to a no-op must not thereby time out every poll. The loser is defused so a slow-but-successful poll cannot reject later. */
 function withTimeout<T>(work: Promise<T>, milliseconds: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error(`status poll timed out after ${milliseconds}ms`)),
+      () => reject(new StatusPollTimeoutError(milliseconds)),
       milliseconds,
     );
     work.then(
@@ -428,37 +340,26 @@ function withTimeout<T>(work: Promise<T>, milliseconds: number): Promise<T> {
   });
 }
 
-/** A sleep the shutdown signal can cut short. */
-const abortableSleep = (
-  milliseconds: number,
-  signal?: AbortSignal,
-): Promise<void> =>
-  new Promise((resolve) => {
-    if (signal?.aborted === true) {
-      resolve();
-      return;
-    }
-    const finish = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", finish);
-      resolve();
-    };
-    const timer = setTimeout(finish, milliseconds);
-    signal?.addEventListener("abort", finish, { once: true });
-  });
-
 export async function runWorkspaceFeed(
   port: number,
   deps: WorkspaceFeedDeps = {},
 ): Promise<number> {
   const verifyInstance = deps.verifyInstance ?? (async () => {});
-  const fetchStatus = deps.fetchStatus ?? fetchAgentStatus;
-  const fetchAutonomy = deps.fetchAutonomy ?? getAutonomy;
-  const fetchOrchestrator = deps.fetchOrchestrator ?? getOrchestratorStatus;
+  // One MCP session and one HTTP client for the whole run. The daemon has no channel to announce a roster change, so this stays a poll — but a poll must not rebuild what it reads through: the session is opened once and reconnects only when the daemon it was opened against goes away, and the HTTP client verifies the instance once rather than ahead of every read. The per-tick instance check below is unaffected, so a daemon swap is still caught within one poll.
+  const session = new HiveMcpSession(port);
+  const daemon = new UserDaemonClient({ port });
+  const fetchStatus: (port: number) => Promise<AgentRecord[]> =
+    deps.fetchStatus ?? (() => readAgentStatus(session));
+  const fetchAutonomy: (port: number) => Promise<Autonomy | null> =
+    deps.fetchAutonomy ?? (() => getAutonomy(daemon));
+  const fetchOrchestrator: (
+    port: number,
+  ) => Promise<WorkspaceOrchestratorSnapshot | null> =
+    deps.fetchOrchestrator ?? (() => getOrchestratorStatus(daemon));
   const write =
     deps.write ?? ((line: string) => void process.stdout.write(`${line}\n`));
   const sleep = deps.sleep ?? abortableSleep;
-  const now = deps.now ?? Date.now;
+  const now = deps.now ?? systemNow;
   const signal = deps.signal;
   const statusTimeoutMs = deps.statusTimeoutMs ?? FEED_STATUS_TIMEOUT_MS;
 
@@ -468,62 +369,90 @@ export async function runWorkspaceFeed(
   let unreachableSince: number | null = null;
   let retryMs = FEED_POLL_MS;
   let exitCode = 0;
+  let statusTimeout = statusTimeoutMs;
 
-  while (signal?.aborted !== true) {
-    try {
-      await withTimeout(verifyInstance(port), statusTimeoutMs);
-      const agents = await withTimeout(fetchStatus(port), statusTimeoutMs);
-      // Autonomy rides the same snapshot line so the app's menu tracks the
-      // dial. Best-effort by design: its failure must never take the agent
-      // list down with it.
-      const autonomy = await fetchAutonomy(port).catch(() => null);
-      // Root turn status and terminal lifecycle ride the same line. Best-effort
-      // like autonomy: no turn evidence stays null, while an independently
-      // measured ready locator still reaches Workspace before the first turn.
-      const orchestrator = await fetchOrchestrator(port).catch(() => null);
-      const snapshot = JSON.stringify({ agents, autonomy, orchestrator });
-      const heartbeatDue =
-        lastEmitAt === null || now() - lastEmitAt >= FEED_HEARTBEAT_MS;
-      // A recovery from an error state re-emits even an unchanged snapshot:
-      // the last thing on the wire must never remain a stale error.
-      if (snapshot !== lastSnapshot || heartbeatDue || lastError !== null) {
-        write(
-          JSON.stringify({
-            v: FEED_VERSION,
-            agents,
-            ...(autonomy === null ? {} : { autonomy }),
-            ...(orchestrator === null ? {} : { orchestrator }),
-          }),
-        );
-        lastSnapshot = snapshot;
-        lastEmitAt = now();
+  try {
+    while (signal?.aborted !== true) {
+      try {
+        await withTimeout(verifyInstance(port), statusTimeoutMs);
+        const agents = await withTimeout(fetchStatus(port), statusTimeout);
+        // Autonomy rides the same snapshot line so the app's menu tracks the dial. Best-effort by design: its failure must never take the agent list down with it.
+        const autonomy = await fetchAutonomy(port).catch(() => null);
+        // Root turn status and terminal lifecycle ride the same line. Best-effort like autonomy: no turn evidence stays null, while an independently measured ready locator still reaches Workspace before the first turn.
+        const orchestrator = await fetchOrchestrator(port).catch(() => null);
+        const presentedAgents = agents.map((agent) => ({
+          ...agent,
+          presentation: presentWorkspaceAgent(agent),
+        }));
+        const presentedOrchestrator =
+          orchestrator === null
+            ? null
+            : {
+                ...orchestrator,
+                presentation: presentWorkspaceOrchestrator(orchestrator),
+              };
+        const snapshot = JSON.stringify({
+          agents: presentedAgents,
+          autonomy,
+          orchestrator: presentedOrchestrator,
+        });
+        const heartbeatDue =
+          lastEmitAt === null || now() - lastEmitAt >= FEED_HEARTBEAT_MS;
+        // A recovery from an error state re-emits even an unchanged snapshot: the last thing on the wire must never remain a stale error.
+        if (snapshot !== lastSnapshot || heartbeatDue || lastError !== null) {
+          write(
+            JSON.stringify({
+              v: FEED_VERSION,
+              agents: presentedAgents,
+              ...(autonomy === null ? {} : { autonomy }),
+              ...(presentedOrchestrator === null
+                ? {}
+                : { orchestrator: presentedOrchestrator }),
+            }),
+          );
+          lastSnapshot = snapshot;
+          lastEmitAt = now();
+        }
+        lastError = null;
+        unreachableSince = null;
+        retryMs = FEED_POLL_MS;
+        statusTimeout = statusTimeoutMs;
+        await sleep(FEED_POLL_MS, signal);
+      } catch (error) {
+        const message = errorMessage(error);
+        if (message !== lastError) {
+          write(JSON.stringify({ v: FEED_VERSION, error: message }));
+          lastError = message;
+        }
+        if (error instanceof StatusPollTimeoutError) {
+          // Two clocks, and they must stay separate. This one bounds a single call; the outage deadline below bounds a daemon that will not answer at all. A late answer never spends the outage deadline, because that deadline accumulates across attempts — so counting the escalated waits against it would make waiting longer for an answer the very thing that declares the answerer dead.
+          statusTimeout = Math.min(
+            statusTimeout * 2,
+            FEED_STATUS_TIMEOUT_MAX_MS,
+          );
+        } else {
+          unreachableSince ??= now();
+          if (now() - unreachableSince >= FEED_GIVE_UP_MS) {
+            // The wire's last word: everything the reader is showing is now unproven, and it must not have to infer that from the stream ending.
+            write(
+              JSON.stringify({ v: FEED_VERSION, stale: true, reason: message }),
+            );
+            exitCode = 1;
+            break;
+          }
+        }
+        retryMs = Math.min(retryMs * 2, FEED_RETRY_MAX_MS);
+        await sleep(retryMs, signal);
       }
-      lastError = null;
-      unreachableSince = null;
-      retryMs = FEED_POLL_MS;
-      await sleep(FEED_POLL_MS, signal);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message !== lastError) {
-        write(JSON.stringify({ v: FEED_VERSION, error: message }));
-        lastError = message;
-      }
-      unreachableSince ??= now();
-      if (now() - unreachableSince >= FEED_GIVE_UP_MS) {
-        exitCode = 1;
-        break;
-      }
-      retryMs = Math.min(retryMs * 2, FEED_RETRY_MAX_MS);
-      await sleep(retryMs, signal);
     }
+  } finally {
+    // The held session owns a connection to the daemon; a feed that returns without closing it leaves the process unable to exit.
+    await session.close();
   }
 
   return exitCode;
 }
 
-/** Process wiring for the hidden CLI command: SIGINT, SIGTERM, and the app
- * closing its end of stdin all stop the loop through one AbortController, so
- * every exit path stops cleanly. */
 export async function runWorkspaceFeedCli(
   port: number,
   workspaceSessionId: string,
@@ -531,8 +460,7 @@ export async function runWorkspaceFeedCli(
 ): Promise<number> {
   const controller = new AbortController();
   const stop = (): void => controller.abort();
-  // Capture the launching Workspace once. If it dies, this child may be
-  // reparented; a later process.ppid must never become a new visibility source.
+  // Capture the launching Workspace once. If it dies, this child may be reparented; a later process.ppid must never become a new visibility source.
   const workspacePid = process.ppid;
   await registerWorkspaceOwner(port, workspaceSessionId, workspacePid);
   let input = Buffer.alloc(0);
@@ -581,8 +509,7 @@ export async function runWorkspaceFeedCli(
     process.stdin.off("data", consumeInput);
     process.stdin.off("end", stop);
     process.stdin.off("error", stop);
-    // A resumed stdin holds the event loop open; without this the process
-    // would finish the loop and then never exit.
+    // A resumed stdin holds the event loop open; without this the process would finish the loop and then never exit.
     process.stdin.pause();
   }
 }

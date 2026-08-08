@@ -1,18 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// The three-valued effort control. Three states, three visibly
-/// different treatments — a picker only ever exists when the vendor listed
-/// levels, and the two no-picker states carry different words because they
-/// are different facts:
-/// - known(levels): a popup with exactly those strings, in vendor order
-/// - known-none: "This model has no effort setting."
-/// - unknown(reason): "Effort options unknown — {reason}"
-///
-/// There is deliberately NO "vendor decides" option: a vendor-chosen effort
-/// is a default wearing a different hat, and the user is specific about what
-/// runs. An effort the user has not chosen yet displays as unchosen
-/// ("Set effort…"), never as a hidden delegation.
+/// The three-valued effort control. Three states, three visibly different treatments — a picker only ever exists when the vendor listed levels, and the two no-picker states carry different words because they are different facts: - known(levels): a popup with exactly those strings, in vendor order - known-none: "This model has no effort setting." - unknown(reason): "Effort options unknown — {reason}" There is deliberately NO "vendor decides" option: a vendor-chosen effort is a default wearing a different hat, and the user is specific about what runs. An effort the user has not chosen yet displays as unchosen ("Set effort…"), never as a hidden delegation.
 final class EffortControlView: NSView {
 
     private let popup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -21,7 +10,6 @@ final class EffortControlView: NSView {
     private var hasPlaceholder = false
     var onSelect: ((EffortTarget) -> Void)?
 
-    /// `selection` nil (or provider-controlled) = no explicit choice yet.
     init(axis: EffortAxis, selection: EffortTarget?, enabled: Bool) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -44,8 +32,6 @@ final class EffortControlView: NSView {
                 selectedIndex = index
             }
             if selectedIndex == nil {
-                // No explicit choice yet: say so. The placeholder is not a
-                // pickable value and disappears once the user chooses.
                 hasPlaceholder = true
                 popup.addItem(withTitle: "Set effort…")
                 popup.menu?.addItem(.separator())

@@ -1,12 +1,6 @@
 import Foundation
 import CryptoKit
 
-/// Wire checkpoint envelope: 116-byte `HVTCP001` header + opaque payload.
-///
-/// Field layout matches `SessionProtocolGenerated.Checkpoint` (projected from
-/// `CHECKPOINT_HEADER` in `src/schemas/session-protocol.ts`). The opaque
-/// payload is what `hive_ghostty_surface_restore_checkpoint_v1` consumes
-/// (engine format).
 public struct CheckpointEnvelope: Equatable, Sendable {
     public static let headerBytes = SessionProtocolGenerated.Checkpoint.headerBytes
     public static let magic = SessionProtocolGenerated.Checkpoint.magic
@@ -14,8 +8,7 @@ public struct CheckpointEnvelope: Equatable, Sendable {
     public static let headerBytesField: UInt16 = UInt16(SessionProtocolGenerated.Checkpoint.headerBytes)
     public static let flags: UInt32 = SessionProtocolGenerated.Checkpoint.flags
 
-    /// HVTCP001 field offsets — sourced from the generated projection
-    /// (`SessionProtocolGenerated.Checkpoint.Offset`). Do not hardcode elsewhere.
+    /// HVTCP001 field offsets — sourced from the generated projection (`SessionProtocolGenerated.Checkpoint.Offset`). Do not hardcode elsewhere.
     public typealias FieldOffset = SessionProtocolGenerated.Checkpoint.Offset
 
     public var throughSeq: UInt64
@@ -24,7 +17,6 @@ public struct CheckpointEnvelope: Equatable, Sendable {
     public var rows: UInt32
     public var cellWidthPxFixed: UInt32
     public var cellHeightPxFixed: UInt32
-    /// Raw 32-byte engine build id from the header.
     public var engineBuildId: Data
     public var payloadLength: UInt32
     public var payloadSha256: Data
@@ -58,7 +50,6 @@ public struct CheckpointEnvelope: Equatable, Sendable {
         }
     }
 
-    /// Parse a complete envelope (header + payload) from accumulated SNAPSHOT_BYTES.
     public static func parse(_ data: Data) throws -> CheckpointEnvelope {
         guard data.count >= headerBytes else {
             throw ParseError.tooShort(data.count)
@@ -103,21 +94,13 @@ public struct CheckpointEnvelope: Equatable, Sendable {
         )
     }
 
-    /// True when accumulated bytes contain a full header+payload.
     public static func isComplete(_ data: Data) -> Bool {
         guard data.count >= headerBytes else { return false }
         let payloadLength = Int(readU32(data, FieldOffset.payloadLength))
         return data.count >= headerBytes + payloadLength
     }
 
-    /// How many total bytes (header+payload) are required once the header is present.
-    public static func requiredTotalBytes(_ data: Data) -> Int? {
-        guard data.count >= headerBytes else { return nil }
-        return headerBytes + Int(readU32(data, FieldOffset.payloadLength))
-    }
-
-    /// Build a wire envelope. Callers (including FakeHost) must pass the real
-    /// local engine build id — no default test sentinel.
+    /// Build a wire envelope. Callers (including FakeHost) must pass the real local engine build id — no default test sentinel.
     public static func encode(
         throughSeq: UInt64,
         payload: Data,

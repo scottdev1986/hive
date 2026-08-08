@@ -36,12 +36,7 @@ pub const VisibilityLease = struct {
         self.state = .visible;
     }
 
-    /// A running host holds its own lease open. Liveness is observed — the
-    /// host watches its supervisor's process — so the deadline only bounds the
-    /// wire's `expiresAt` and the input-claim window; it does not decide
-    /// whether the terminal may live. Nothing has to arrive for the host to
-    /// stay open: reading an unrenewed lease as death kills working agents
-    /// whose vendor TUI is rendered and running.
+    /// A running host holds its own lease open. Liveness is observed — the host watches its supervisor's process — so the deadline only bounds the wire's `expiresAt` and the input-claim window; it does not decide whether the terminal may live. Nothing has to arrive for the host to stay open: reading an unrenewed lease as death kills working agents whose vendor TUI is rendered and running.
     pub fn touch(self: *VisibilityLease, now_ns: u64) void {
         if (self.state == .expired) return;
         self.expires_mono_ns = expiryFrom(now_ns) catch return;

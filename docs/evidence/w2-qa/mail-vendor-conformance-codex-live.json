@@ -1,0 +1,26 @@
+{
+  "result": "passed",
+  "vendor": "codex",
+  "model": "gpt-5.3-codex-spark",
+  "completedAt": "2026-08-02T23:00:01.985Z",
+  "settlement": {
+    "itemIds": [
+      "mit_019fc4b4-51f9-7000-bd02-f5831964fc83",
+      "mit_019fc4b4-51fd-7000-8a57-93efa674d968"
+    ],
+    "completedKinds": [
+      "mit_019fc4b4-51f9-7000-bd02-f5831964fc83",
+      "mit_019fc4b4-51fd-7000-8a57-93efa674d968"
+    ],
+    "eventCount": 7
+  },
+  "terminalWrites": {
+    "beforeSpawn": { "total": 0, "bySession": {} },
+    "afterSpawn": { "total": 0, "bySession": {} },
+    "workingBaseline": { "total": 0, "bySession": {} },
+    "final": { "total": 0, "bySession": {} }
+  },
+  "captureComposerNull": true,
+  "eventCount": 7,
+  "proof": "live rig on worktree source d5e17ea4 (dirty rewrites); bind-root + mail-vendor-conformance; exit 0"
+}

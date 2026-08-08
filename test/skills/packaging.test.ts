@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
 import {
+  cp,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,19 +42,25 @@ const repoRoot = join(import.meta.dir, "..", "..");
 const EXPECTED_SHIPPED_SKILLS = [
   "code-review",
   "hive-alignment",
+  "hive-board-conventions",
   "hive-claude",
   "hive-codex",
+  "hive-dispatch",
+  "hive-escalation",
   "hive-grok",
   "hive-kimi",
+  "hive-landing",
+  "hive-mail-discipline",
   "hive-memory",
   "hive-opencode",
+  "hive-succession",
+  "hive-worktree-lifecycle",
   "karpathy-guidelines",
 ];
 
-let workspace: string;
+let workspace: string | undefined;
+let fixtureRoot: string;
 let binary: Buffer;
-/** Set only when the memory corpus below is ours to delete again. */
-let synthesizedMemory: string | undefined;
 
 /**
  * The memory arm of the guard below hunts for the text of `.hive/memory/` inside
@@ -63,17 +70,14 @@ let synthesizedMemory: string | undefined;
  * facts in it are internal. Only the machine Hive is developed on has the real
  * ones.
  *
- * So where the real facts exist we scan those, and where they do not we write a
- * stand-in corpus instead — before the compile, so it is on disk for the build
- * to sweep up if the build is ever going to. Either way the guard runs against
- * real bytes and would still fail on a build that swept the directory into the
- * artifact. What it must never do is run against an empty directory and pass.
+ * The compile runs from a disposable copy of the source tree with a stand-in
+ * corpus beside it. That leaves the checkout untouched while keeping the corpus
+ * in the exact place a build that swept `.hive/memory/` would find it. The guard
+ * must never run against an empty directory and pass.
  */
 async function ensureMemoryCorpus(): Promise<void> {
-  const root = join(repoRoot, ".hive", "memory");
-  if (existsSync(root)) return;
+  const root = join(fixtureRoot, ".hive", "memory");
   await mkdir(root, { recursive: true });
-  synthesizedMemory = root;
   for (let index = 1; index <= 6; index += 1) {
     await writeFile(
       join(root, `stand-in-memory-fact-${index}.md`),
@@ -83,19 +87,37 @@ async function ensureMemoryCorpus(): Promise<void> {
 }
 
 beforeAll(async () => {
-  await ensureMemoryCorpus();
   workspace = await mkdtemp(join(tmpdir(), "hive-packaging-"));
+  fixtureRoot = join(workspace, "repo");
+  await mkdir(fixtureRoot);
+  const installedPackages = join(
+    dirname(Bun.resolveSync("commander", repoRoot)),
+    "..",
+  );
+  await Promise.all([
+    cp(join(repoRoot, "src"), join(fixtureRoot, "src"), { recursive: true }),
+    cp(join(repoRoot, "skills"), join(fixtureRoot, "skills"), {
+      recursive: true,
+    }),
+    cp(join(repoRoot, "graphify.lock"), join(fixtureRoot, "graphify.lock")),
+    symlink(installedPackages, join(fixtureRoot, "node_modules")),
+  ]);
+  await ensureMemoryCorpus();
   const outfile = join(workspace, "hive");
   const build = Bun.spawnSync(
     [
       "bun",
       "build",
       "--compile",
-      join(repoRoot, "src", "cli.ts"),
+      join(fixtureRoot, "src", "cli.ts"),
       "--outfile",
       outfile,
     ],
-    { cwd: repoRoot },
+    // bun leaves a 61 MB `.<id>-00000000.bun-build` scratch copy of its
+    // runtime in the process cwd on every --compile, success included. Run
+    // from the owned workspace so the afterAll removal takes the scratch too;
+    // repoRoot as cwd scattered the scratch beside the checkout.
+    { cwd: workspace },
   );
   if (build.exitCode !== 0) {
     throw new Error(`could not compile the CLI: ${build.stderr.toString()}`);
@@ -104,9 +126,8 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await rm(workspace, { recursive: true, force: true });
-  if (synthesizedMemory)
-    await rm(synthesizedMemory, { recursive: true, force: true });
+  if (workspace !== undefined)
+    await rm(workspace, { recursive: true, force: true });
 });
 
 /** Is this text inside the shipped binary, byte for byte? */
@@ -130,13 +151,42 @@ function shipped(text: string): boolean {
  * rule touches. Those bytes survive bundling intact, and are found if — and only
  * if — the content really is in there.
  */
-function fingerprint(contents: string): string {
+function fingerprint(contents: string, excluded?: string): string {
   return (
     contents
       .split(/[^\x20-\x7E]|["'`\\$]/)
       .map((run) => run.trim())
+      .filter((run) => excluded === undefined || !excluded.includes(run))
       .sort((a, b) => b.length - a.length)[0] ?? ""
   );
+}
+
+interface DevOnlyContent {
+  path: string;
+  contents: string;
+  canonical?: string;
+}
+
+function assertNoDevOnlyLeaks(
+  artifact: Buffer,
+  devOnly: readonly DevOnlyContent[],
+): number {
+  const leaked: string[] = [];
+  let checked = 0;
+  for (const { path, contents, canonical } of devOnly) {
+    const mark = fingerprint(contents, canonical);
+    // Too short to identify one source reliably, so it does not count as a
+    // checked file in the coverage assertion below.
+    if (mark.length < 40) continue;
+    checked += 1;
+    if (artifact.includes(Buffer.from(mark, "utf8"))) leaked.push(path);
+  }
+  if (leaked.length > 0) {
+    throw new Error(
+      `compiled binary contains dev-only fingerprints:\n${leaked.join("\n")}`,
+    );
+  }
+  return checked;
 }
 
 test("the shipped skills directory matches the declared list exactly", async () => {
@@ -179,21 +229,55 @@ test("the compiled binary carries every shipped skill", () => {
   }
 });
 
+test("the packaging guard separates drift from a planted leak", () => {
+  const canonical =
+    "PACKAGING_POSITIVE_CONTROL_SHARED_CANONICAL_TEXT is intentionally the longest run so shared shipped text cannot indict a stale local copy.";
+  const control: DevOnlyContent = {
+    path: join(
+      repoRoot,
+      ".hive",
+      "skills",
+      "packaging-positive-control",
+      "SKILL.md",
+    ),
+    contents: `${canonical}\nPACKAGING_POSITIVE_CONTROL_DEV_ONLY_TEXT_94b73a6c proves the guard rejects text that exists only in local Hive state.`,
+    canonical,
+  };
+  expect(shipped(canonical)).toEqual(false);
+
+  const canonicalArtifact = Buffer.concat([
+    binary,
+    Buffer.from(canonical, "utf8"),
+  ]);
+  const devOnlyMark = fingerprint(control.contents, canonical);
+  const planted = Buffer.concat([
+    canonicalArtifact,
+    Buffer.from(devOnlyMark, "utf8"),
+  ]);
+  expect(() => assertNoDevOnlyLeaks(planted, [control])).toThrow(control.path);
+  expect(() =>
+    assertNoDevOnlyLeaks(canonicalArtifact, [control]),
+  ).not.toThrow();
+});
+
 /**
- * No exemptions, deliberately. Excusing dev text that also appears in a
- * shipped skill lets copied text exempt itself from the guard. The
- * shipped guidance moved *out* of `.hive/skills/` rather than being copied, so
- * there is no dev file whose words are legitimately in the binary, and nothing
- * here needs excusing.
+ * A byte-identical provisioned copy is shipped content in a local tree, not a
+ * leak. A drifted copy can still share long runs with its canonical source, so
+ * only its unique runs can prove that local text reached the binary. This does
+ * not exempt the drift: if one of those unique runs ships, the guard fails.
  */
 test("the compiled binary carries no Hive memory and no dev-only skill", async () => {
   const shippedContent = new Map(
     SHIPPED_SKILLS.map((skill) => [skill.name, skill.content]),
   );
 
-  const devOnly: string[] = [];
-  for (const directory of [".hive/memory", ".hive/skills", ".claude/skills"]) {
-    const root = join(repoRoot, directory);
+  const devOnly: DevOnlyContent[] = [];
+  for (const [rootBase, directory] of [
+    [fixtureRoot, ".hive/memory"],
+    [repoRoot, ".hive/skills"],
+    [repoRoot, ".claude/skills"],
+  ] as const) {
+    const root = join(rootBase, directory);
     const entries = await readdir(root, {
       withFileTypes: true,
       recursive: true,
@@ -211,30 +295,15 @@ test("the compiled binary carries no Hive memory and no dev-only skill", async (
       // depth it sits, and the role/vendor/category buckets under
       // `.hive/skills` put real depth between the root and the skill.
       const canonical = shippedContent.get(basename(entry.parentPath));
-      if (
-        canonical !== undefined &&
-        (await readFile(path, "utf8")) === canonical
-      ) {
-        continue;
-      }
-      devOnly.push(path);
+      const contents = await readFile(path, "utf8");
+      if (canonical !== undefined && contents === canonical) continue;
+      devOnly.push({ path, contents, canonical });
     }
   }
   // Guard the guard: with nothing found, every assertion below would pass while
   // proving nothing whatsoever.
   expect(devOnly.length).toBeGreaterThan(5);
 
-  const leaked: string[] = [];
-  let checked = 0;
-  for (const path of devOnly) {
-    const mark = fingerprint(await readFile(path, "utf8"));
-    // Too short to be evidence of anything. Counted as unchecked rather than
-    // quietly passed, so `checked` below stays an honest coverage number.
-    if (mark.length < 40) continue;
-    checked += 1;
-    if (shipped(mark)) leaked.push(path);
-  }
-
-  expect(leaked).toEqual([]);
+  const checked = assertNoDevOnlyLeaks(binary, devOnly);
   expect(checked).toBeGreaterThan(5);
-});
+}, 15_000);

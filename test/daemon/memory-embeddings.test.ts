@@ -10,9 +10,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeMemoryFact } from "../../src/adapters/memory";
-import { HiveDatabase } from "../../src/daemon/db";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { HiveDaemon } from "../../src/daemon/server";
+import type {
+  Spawner,
+  SpawnRequest,
+} from "../../src/daemon/spawn/spawn-service";
 import {
   cosineSimilarity,
   EMBEDDINGS_RUNTIME_BUNDLE,
@@ -24,13 +27,13 @@ import {
   MemoryEmbeddingService,
   nativeLoadFailure,
   probeExternalRuntime,
-} from "../../src/daemon/memory-embeddings";
-import { MemoryIndex } from "../../src/daemon/memory-index";
-import { buildMemoryRecallBundle } from "../../src/daemon/memory-triggers";
-import { HiveDaemon } from "../../src/daemon/server";
-import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
-import type { AgentRecord } from "../../src/schemas";
-import { HiveConfigSchema } from "../../src/schemas";
+} from "../../src/memory-service/embeddings";
+import { EpisodicStore } from "../../src/memory-service/episodic";
+import { MemoryIndex } from "../../src/memory-service/fts-index";
+import { buildMemoryRecallBundle } from "../../src/memory-service/recall";
+import { writeMemoryFact } from "../../src/memory-service/memory-store";
+import type { AgentRecord } from "../../src/schemas/agent";
+import { HiveConfigSchema } from "../../src/schemas/config-schema";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
@@ -211,17 +214,18 @@ describe("EpisodicStore vector store", () => {
       model: "m",
       vector: Float32Array.from([1]),
     });
-    const pruned = store.pruneMemoryEmbeddings({
-      articles: new Set(["repo:keep-me"]),
-      facts: new Set(["current"]),
-    });
-    expect(pruned).toBe(2);
+    const pruned = store.pruneMemoryEmbeddings(new Set(["repo:keep-me"]));
+    // Only the unlisted ARTICLE row goes. Rows of any other kind are left
+    // alone: nothing writes them any more, so the pass has no basis on which
+    // to call one stale, and deleting them would destroy vectors no code can
+    // rebuild.
+    expect(pruned).toBe(1);
     expect(
       store
         .memoryEmbeddings()
         .map((row) => row.sourceId)
         .sort(),
-    ).toEqual(["current", "keep-me"]);
+    ).toEqual(["current", "invalidated", "keep-me"]);
     store.close();
   });
 
@@ -752,8 +756,9 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
     const written = await daemon.writeMemoryFact(
       writeInput("Prune boundary check", "Body."),
     );
-    // A stale row no source owns (simulating an article removed out of band)
-    // plus an invalidated fact's row: the rebuild prune drops both.
+    // A stale row no article owns (simulating an article removed out of
+    // band) is dropped by the rebuild prune; a row of another kind is not,
+    // because nothing writes those any more and the prune cannot judge them.
     episodic.upsertMemoryEmbedding({
       kind: "article",
       scope: "repo",
@@ -761,25 +766,19 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
       model: "bge-small-en-v1.5",
       vector: Float32Array.from([1, 0, 0, 0]),
     });
-    const fact = episodic.recordFact({
-      topic: "testing",
-      title: "A fact soon invalidated",
-      body: "body",
-      source: "test",
-    });
     episodic.upsertMemoryEmbedding({
       kind: "fact",
       scope: "",
-      sourceId: fact.id,
+      sourceId: "orphaned-fact-vector",
       model: "bge-small-en-v1.5",
       vector: Float32Array.from([1, 0, 0, 0]),
     });
-    episodic.invalidateFact(fact.id);
     await required(daemon.embeddingIndex).settle();
     await daemon.rebuildMemoryIndex();
     const rows = episodic.memoryEmbeddings();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.sourceId).toBe(written.id);
+    expect(rows.map((row) => row.sourceId).sort()).toEqual(
+      ["orphaned-fact-vector", written.id].sort(),
+    );
   });
 });
 

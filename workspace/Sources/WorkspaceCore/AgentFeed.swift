@@ -1,4 +1,5 @@
 import Foundation
+import HiveTerminalKit
 
 public struct AgentSessionSubject: Equatable, Codable {
     public let kind: String
@@ -53,11 +54,115 @@ public struct AgentSessionLocator: Equatable, Codable {
     }
 }
 
-/// One agent as reported by `hive workspace-feed` (NDJSON, one snapshot per
-/// line: `{"v":1,"agents":[...]}`). Decoding is deliberately tolerant: only
-/// `name` is required, unknown fields are ignored, and an absent or unreadable
-/// status stays `unknown` — the feed contract may grow without making an agent
-/// look healthy without evidence.
+public struct FeedPanePresentation: Equatable, Decodable {
+    public let kind: String
+    public let waitingKind: String?
+    public let reason: String?
+    public let lastConfirmed: String?
+
+    public init(
+        kind: String,
+        waitingKind: String? = nil,
+        reason: String? = nil,
+        lastConfirmed: String? = nil
+    ) {
+        self.kind = kind
+        self.waitingKind = waitingKind
+        self.reason = reason
+        self.lastConfirmed = lastConfirmed
+    }
+
+    public func paneStatus(acknowledged: Bool = false) -> PaneStatus {
+        switch kind {
+        case "running": return .running
+        case "waiting":
+            return .waiting(waitingKind == "approval" ? .approval : .userInput)
+        case "completed": return .completed(acknowledged: acknowledged)
+        case "failed": return .failed(acknowledged: acknowledged)
+        case "disconnected":
+            return .disconnected(
+                reason: reason ?? "daemon reported disconnected",
+                lastConfirmed: lastConfirmed ?? "unknown")
+        default: return .unknown
+        }
+    }
+}
+
+public struct FeedAttentionPresentation: Equatable, Decodable {
+    public let id: String
+    public let severity: String
+    public let title: String
+    public let detail: String
+    public let raisedAt: TimeInterval
+
+    public var renderedSeverity: AttentionSeverity? {
+        switch severity {
+        case "waiting": return .waiting
+        case "completed": return .completed
+        case "failed": return .failed
+        case "disconnected": return .disconnected
+        default: return nil
+        }
+    }
+}
+
+public struct AgentFeedPresentation: Equatable, Decodable {
+    public let panePresence: String
+    public let terminalState: String
+    public let headerDetail: String
+    public let paneStatus: FeedPanePresentation
+    public let activity: String
+    public let attention: FeedAttentionPresentation?
+
+    public init(
+        panePresence: String,
+        terminalState: String,
+        headerDetail: String,
+        paneStatus: FeedPanePresentation,
+        activity: String,
+        attention: FeedAttentionPresentation? = nil
+    ) {
+        self.panePresence = panePresence
+        self.terminalState = terminalState
+        self.headerDetail = headerDetail
+        self.paneStatus = paneStatus
+        self.activity = activity
+        self.attention = attention
+    }
+
+    public var renderedActivity: AgentActivity {
+        switch activity {
+        case "working": return .working
+        case "idle": return .idle
+        case "needs-user": return .needsUser
+        case "held": return .held
+        case "spawning": return .spawning
+        case "done": return .done
+        case "failed": return .failed
+        case "disconnected": return .disconnected
+        default: return .unknown
+        }
+    }
+
+    public var renderedTerminalState: WorkspaceTerminalVisibilityState? {
+        WorkspaceTerminalVisibilityState(rawValue: terminalState)
+    }
+
+    public var shouldDisplayPane: Bool {
+        panePresence == "visible"
+    }
+
+    public static let unknown = AgentFeedPresentation(
+        // Membership in the daemon's live `agents` array is enough to retain a
+        // pane, but carries no status or terminal-lifecycle claim.
+        panePresence: "visible",
+        terminalState: "unknown",
+        headerDetail: "unknown",
+        paneStatus: FeedPanePresentation(kind: "unknown"),
+        activity: "unknown")
+}
+
+/// One agent as reported by `hive workspace-feed` (NDJSON, one snapshot per line: `{"v":1,"agents":[...]}`). Decoding is deliberately tolerant: only `name` is required, unknown fields are ignored, and an absent or unreadable status stays `unknown` — the feed contract may grow without making an agent look healthy without evidence.
 public struct AgentSnapshot: Equatable, Decodable {
     public let id: String?
     public let name: String
@@ -66,6 +171,8 @@ public struct AgentSnapshot: Equatable, Decodable {
     public let status: String
     public let taskDescription: String?
     public let contextPct: Double?
+    public let statusDimensions: WorkspaceStatusDimensions?
+    public let presentation: AgentFeedPresentation
     /// ISO datetime; present means the agent is closed and must not get a pane.
     public let closedAt: String?
     public let sessionLocator: AgentSessionLocator?
@@ -73,7 +180,9 @@ public struct AgentSnapshot: Equatable, Decodable {
     public init(id: String? = nil, name: String, tool: String? = nil, model: String? = nil,
                 status: String = "working", taskDescription: String? = nil,
                 contextPct: Double? = nil,
-                closedAt: String? = nil, sessionLocator: AgentSessionLocator? = nil) {
+                closedAt: String? = nil, sessionLocator: AgentSessionLocator? = nil,
+                statusDimensions: WorkspaceStatusDimensions? = nil,
+                presentation: AgentFeedPresentation = .unknown) {
         self.id = id
         self.name = name
         self.tool = tool
@@ -81,13 +190,16 @@ public struct AgentSnapshot: Equatable, Decodable {
         self.status = status
         self.taskDescription = taskDescription
         self.contextPct = contextPct
+        self.statusDimensions = statusDimensions
+        self.presentation = presentation
         self.closedAt = closedAt
         self.sessionLocator = sessionLocator
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, tool, model, status, taskDescription, contextPct
-        case closedAt, sessionLocator
+        case closedAt, sessionLocator, statusDimensions
+        case presentation
     }
 
     public init(from decoder: Decoder) throws {
@@ -99,6 +211,10 @@ public struct AgentSnapshot: Equatable, Decodable {
         status = (try? container.decodeIfPresent(String.self, forKey: .status)) ?? "unknown"
         taskDescription = try? container.decodeIfPresent(String.self, forKey: .taskDescription)
         contextPct = try? container.decodeIfPresent(Double.self, forKey: .contextPct)
+        statusDimensions = try container.decodeIfPresent(
+            WorkspaceStatusDimensions.self, forKey: .statusDimensions)
+        presentation = (try? container.decodeIfPresent(
+            AgentFeedPresentation.self, forKey: .presentation)) ?? .unknown
         closedAt = try? container.decodeIfPresent(String.self, forKey: .closedAt)
         sessionLocator = try container.decodeIfPresent(
             AgentSessionLocator.self, forKey: .sessionLocator)
@@ -109,35 +225,16 @@ public enum WorkspaceTerminalVisibilityState: String, Equatable, Codable {
     case pending, attaching, live, reconnecting, closing, exited, failed
 }
 
-public struct WorkspaceTerminalGeometry: Equatable, Encodable {
-    public let columns: Int
-    public let rows: Int
-    public let widthPx: Int
-    public let heightPx: Int
-    public let cellWidthPx: Double
-    public let cellHeightPx: Double
-
-    public init(columns: Int, rows: Int, widthPx: Int, heightPx: Int,
-                cellWidthPx: Double, cellHeightPx: Double) {
-        self.columns = columns
-        self.rows = rows
-        self.widthPx = widthPx
-        self.heightPx = heightPx
-        self.cellWidthPx = cellWidthPx
-        self.cellHeightPx = cellHeightPx
-    }
-}
-
 public struct WorkspaceVisibleTerminal: Equatable, Encodable {
     public let agentId: String
     public let agentName: String
     public let locator: AgentSessionLocator
     public let state: WorkspaceTerminalVisibilityState
-    public let geometry: WorkspaceTerminalGeometry?
+    public let geometry: TerminalGeometry?
 
     public init(agentId: String, agentName: String, locator: AgentSessionLocator,
                 state: WorkspaceTerminalVisibilityState,
-                geometry: WorkspaceTerminalGeometry? = nil) {
+                geometry: TerminalGeometry? = nil) {
         self.agentId = agentId
         self.agentName = agentName
         self.locator = locator
@@ -157,41 +254,49 @@ public struct WorkspaceVisibilityInventory: Equatable, Encodable {
     }
 }
 
-/// What the orchestrator is doing, as measured by the daemon from the root's own
-/// turn-boundary events. The root is not a spawned agent and has no AgentRecord,
-/// so it travels beside the `agents` array rather than inside it.
-///
-/// A nil `status` is meaningful and must stay meaningful: no turn events, or a
-/// contradictory record, is unknown rather than a fabricated idle word. The
-/// object may still carry an independently measured sessiond host locator.
+/// What the orchestrator is doing, as measured by the daemon from the root's own turn-boundary events. The root is not a spawned agent and has no AgentRecord, so it travels beside the `agents` array rather than inside it. A nil `status` is meaningful and must stay meaningful: no turn events, or a contradictory record, is unknown rather than a fabricated idle word. The object may still carry an independently measured sessiond host locator.
 public struct OrchestratorSnapshot: Equatable, Decodable {
     public let status: String?
     public let host: String?
     public let hostState: String?
     public let hostDiagnostic: String?
     public let sessionLocator: AgentSessionLocator?
+    public let presentation: AgentFeedPresentation
 
     public init(status: String?, host: String? = nil, hostState: String? = nil,
                 hostDiagnostic: String? = nil,
-                sessionLocator: AgentSessionLocator? = nil) {
+                sessionLocator: AgentSessionLocator? = nil,
+                presentation: AgentFeedPresentation = .unknown) {
         self.status = status
         self.host = host
         self.hostState = hostState
         self.hostDiagnostic = hostDiagnostic
         self.sessionLocator = sessionLocator
+        self.presentation = presentation
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case status, host, hostState, hostDiagnostic, sessionLocator, presentation
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
+        host = try container.decodeIfPresent(String.self, forKey: .host)
+        hostState = try container.decodeIfPresent(String.self, forKey: .hostState)
+        hostDiagnostic = try container.decodeIfPresent(
+            String.self, forKey: .hostDiagnostic)
+        sessionLocator = try container.decodeIfPresent(
+            AgentSessionLocator.self, forKey: .sessionLocator)
+        presentation = (try? container.decodeIfPresent(
+            AgentFeedPresentation.self, forKey: .presentation)) ?? .unknown
     }
 }
 
-/// One NDJSON line from the feed: either a snapshot (`agents`, optionally
-/// carrying the daemon's live agent-autonomy dial and the root's own status)
-/// or an error.
 public struct FeedLine: Decodable {
     public let v: Int?
     public let agents: [AgentSnapshot]?
-    /// "sandboxed" or "dangerous"; nil when the daemon didn't report it
-    /// (older feed, or no autonomy control configured).
     public let autonomy: String?
-    /// nil only when neither trustworthy turn status nor root host exists.
     public let orchestrator: OrchestratorSnapshot?
     public let error: String?
 
@@ -221,8 +326,7 @@ public struct FeedLine: Decodable {
         error = (try? container.decodeIfPresent(String.self, forKey: .error)) ?? nil
     }
 
-    /// Parses one line of feed output; returns nil for blank/undecodable lines
-    /// (the feed may interleave diagnostics; the app must never crash on them).
+    /// Parses one line of feed output; returns nil for blank/undecodable lines (the feed may interleave diagnostics; the app must never crash on them).
     public static func parse(_ line: String) -> FeedLine? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8) else { return nil }
@@ -230,61 +334,12 @@ public struct FeedLine: Decodable {
     }
 }
 
-/// Maps daemon status words onto the workspace's semantic pane status.
-/// The raw word still travels to the pane header via `PaneState.feedStatus`;
-/// this mapping only decides border color and attention semantics:
-/// - spawning/working/idle → running (alive and healthy)
-/// - awaiting-approval → waiting(.approval) (amber, attention)
-/// - control-paused/stuck → waiting(.userInput) (amber, attention)
-/// - done → completed (green until acknowledged)
-/// - failed → failed (red + badge until acknowledged)
-/// - dead/exited → disconnected (gray dashed)
-/// - anything unknown → unknown (visible uncertainty, never healthy)
-public enum FeedStatusMap {
-    public static func paneStatus(for raw: String, acknowledged: Bool = false) -> PaneStatus {
-        switch raw {
-        case "spawning", "working", "idle":
-            return .running
-        case "awaiting-approval":
-            return .waiting(.approval)
-        case "control-paused", "stuck":
-            return .waiting(.userInput)
-        case "done":
-            return .completed(acknowledged: acknowledged)
-        case "failed":
-            return .failed(acknowledged: acknowledged)
-        case "dead", "exited":
-            return .disconnected(reason: "process reported \(raw)", lastConfirmed: raw)
-        default:
-            return .unknown
-        }
-    }
-
-    /// Attention severity for a status word, or nil when it needs none.
-    public static func attentionSeverity(for raw: String) -> AttentionSeverity? {
-        switch raw {
-        case "awaiting-approval", "control-paused", "stuck": return .waiting
-        case "done": return .completed
-        case "failed": return .failed
-        case "dead", "exited": return .disconnected
-        default: return nil
-        }
-    }
-}
-
-/// What an agent is actually doing, as measured by the daemon. Its appearance
-/// is the single legend consumed by both the header symbol and status border.
-/// `needsUser` is only ever a measured condition: the daemon sets
-/// awaiting-approval when a pending approval record exists, and
-/// control-paused/stuck when the agent is genuinely blocked on a human. It is
-/// never inferred from idleness or elapsed time — an agent that finished and
-/// an agent stuck waiting on you are different states.
-/// An unrecognized or absent status word is `unknown`, never one of the
-/// working/idle/needsUser states.
+/// What an agent is actually doing, as measured by the daemon. Its appearance is the single legend consumed by both the header symbol and status border. `needsUser` is only ever a measured condition: the daemon sets awaiting-approval when a pending approval record exists, and control-paused/stuck when the agent is genuinely blocked on a user. It is never inferred from idleness or elapsed time — an agent that finished and an agent stuck waiting on you are different states. `held` is the quota drain handler pausing an agent whose provider window is spent; it resumes on its own once the window resets, so it is neither `idle` (no work pending) nor `needsUser` (nothing for a user to do). The hold reason and reset time live in Models & Quota, not here. An unrecognized or absent status word is `unknown`, never one of the working/idle/needsUser/held states.
 public enum AgentActivity: Equatable {
     case working
     case idle
     case needsUser
+    case held
     case spawning
     case done
     case failed
@@ -293,7 +348,7 @@ public enum AgentActivity: Equatable {
 }
 
 public enum StatusColor: Equatable {
-    case green, yellow, orange, blue, purple, red, gray
+    case green, yellow, orange, blue, purple, red, gray, teal
 }
 
 public enum StatusBorder: Equatable {
@@ -318,6 +373,7 @@ extension AgentActivity {
         case .working: return StatusAppearance(color: .green, symbol: "circle.fill", border: .solid)
         case .idle: return StatusAppearance(color: .yellow, symbol: "pause.circle.fill", border: .solid)
         case .needsUser: return StatusAppearance(color: .orange, symbol: "hand.raised.fill", border: .solid)
+        case .held: return StatusAppearance(color: .teal, symbol: "hourglass.circle.fill", border: .solid)
         case .spawning: return StatusAppearance(color: .blue, symbol: "circle.dotted", border: .solid)
         case .done: return StatusAppearance(color: .purple, symbol: "checkmark.circle.fill", border: .solid)
         case .failed: return StatusAppearance(color: .red, symbol: "exclamationmark.circle.fill", border: .solid)
@@ -338,34 +394,7 @@ extension AttentionSeverity {
     }
 }
 
-extension FeedStatusMap {
-    /// Dot colour source: raw daemon status word → measured activity.
-    public static func activity(for raw: String) -> AgentActivity {
-        switch raw {
-        case "working": return .working
-        case "idle": return .idle
-        case "awaiting-approval", "control-paused", "stuck": return .needsUser
-        case "spawning": return .spawning
-        case "done": return .done
-        case "failed": return .failed
-        case "dead", "exited": return .disconnected
-        // The feed-lost sentinel "unknown" and any word this app does not
-        // recognize must say "no signal", not impersonate a real state.
-        default: return .unknown
-        }
-    }
-
-    /// A lost feed is structurally disconnected even though its raw word is
-    /// rewritten to "unknown". Preserve that stronger non-color cue.
-    public static func activity(for raw: String, paneStatus: PaneStatus) -> AgentActivity {
-        if case .disconnected = paneStatus { return .disconnected }
-        return activity(for: raw)
-    }
-}
-
-/// How long a closed agent's pane lingers (showing its final status border)
-/// before the UI closes it. Gives "done"/"failed" a visible beat instead of
-/// vanishing the terminal mid-glance.
+/// How long a closed agent's pane lingers (showing its final status border) before the UI closes it. Gives "done"/"failed" a visible beat instead of vanishing the terminal mid-glance.
 public enum PaneCloseGrace {
     public static let seconds: TimeInterval = 2.0
 }

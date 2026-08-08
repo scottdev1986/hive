@@ -1,12 +1,8 @@
 import AppKit
 import WorkspaceCore
 
-/// HIG-native styling: system semantic colors (adapting to light/dark and
-/// accent), system fonts, SF Symbols. Hyprland inspires the tiling behavior
-/// only — never the visual language.
+/// HIG-native styling: system semantic colors (adapting to light/dark and accent), system fonts, SF Symbols. Hyprland inspires the tiling behavior only — never the visual language.
 enum Theme {
-
-    // MARK: Unified status legend
 
     static func statusColor(for color: StatusColor, subdued: Bool = false) -> NSColor {
         let systemColor: NSColor
@@ -18,6 +14,7 @@ enum Theme {
         case .purple: systemColor = .systemPurple
         case .red: systemColor = .systemRed
         case .gray: systemColor = .systemGray
+        case .teal: systemColor = .systemTeal
         }
         return subdued ? systemColor.withAlphaComponent(0.35) : systemColor
     }
@@ -35,10 +32,7 @@ enum Theme {
         statusColor(for: severity.statusColor)
     }
 
-    // MARK: Fonts
-
     static let bodyFont = NSFont.systemFont(ofSize: 13)
-    static let monoFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
     static let headerFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
     static let captionFont = NSFont.systemFont(ofSize: 11)
 
@@ -48,8 +42,7 @@ enum Theme {
 }
 
 extension NSTextField {
-    /// AppKit treats priorities of 500 or higher as permission to grow the
-    /// window around a label instead of compressing the label in place.
+    /// AppKit treats priorities of 500 or higher as permission to grow the window around a label instead of compressing the label in place.
     func compressHorizontally(
         priority: Float = 490, toolTip: String? = nil
     ) {

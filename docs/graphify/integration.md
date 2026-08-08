@@ -11,7 +11,7 @@ Hive uses Graphify as its local code-structure tool. Workspace launch and every 
 
 Upstream's own published QA accuracy is **45–76%**. That single number is the load-bearing fact of the whole integration: it means a graph answer is a lead, not a truth, and it means graphify can never sit in a path whose failure would be a Hive failure.
 
-So unavailable (offline channel, missing platform bundle), broken (extract failing, server unhealthy), and slow (build in progress, query timeout) all collapse to **one** behavior: Hive retains the previous verified runtime when one exists, the agent runs without graph context otherwise, its brief says so in one line, and no spawn or landing fails. Graphify has no enable/disable lifecycle: launch and init check the channel, and `hive update` checks again after activation. "Loudly noted" is not politeness — a silently missing graph is indistinguishable from a repo with nothing to find, and Hive's protocol is that an absent field is unknown, never false (`SPEC.md`, the accurate-or-unknown rule). Telemetry follows the same rule: `graphifyCalls` is null when unknown, never 0.
+So unavailable (offline channel, missing platform bundle), broken (extract failing, server unhealthy), and slow (build in progress, query timeout) all collapse to **one** behavior: Hive retains the previous verified runtime when one exists, the agent runs without graph context otherwise, its brief says so in one line, and no spawn or landing fails. Graphify has no enable/disable lifecycle: launch and init check the channel, and `hive update` checks again after activation. "Loudly noted" is not politeness — a silently missing graph is indistinguishable from a repo with nothing to find, and Hive's protocol is that an absent field is unknown, never false (the accurate-or-unknown rule). Telemetry follows the same rule: `graphifyCalls` is null when unknown, never 0.
 
 **There is deliberately no land-time enforcement** — no "did you consult the graph" gate. It would be unverifiable in exactly the way Hive's protocol warns about (an MCP call proves an act, not that the answer informed anything), and it would put a 45–76%-accurate oracle in the landing path for no measurable gain.
 
@@ -33,7 +33,7 @@ Two guards, both because over-exclusion is a *silent* failure: a `.graphifyignor
 
 ## Why the serving snapshot exists
 
-The server is pointed at a snapshot under Hive's project state dir, never at the live `graphify-out/graph.json` (`src/daemon/graphify-service.ts:136-150`). The reason is a measured collision (2026-07-12): the serve process re-reads its graph file from disk **on every query**, and `graphify update` **rewrites that file in place** — so serving the live file opened a "graph.json not found" window during every post-landing rebuild, and a freshly spawned agent's first `query_graph` landed inside one. A perfectly healthy server returned a not-found error.
+The server is pointed at a snapshot under Hive's project state dir, never at the live `graphify-out/graph.json` (`src/daemon/graphify-service/graphify-service.ts:136-150`). The reason is a measured collision (2026-07-12): the serve process re-reads its graph file from disk **on every query**, and `graphify update` **rewrites that file in place** — so serving the live file opened a "graph.json not found" window during every post-landing rebuild, and a freshly spawned agent's first `query_graph` landed inside one. A perfectly healthy server returned a not-found error.
 
 "The old server keeps serving the last good graph" is only true when the file it serves is one no rebuild mutates. Each restart refreshes the snapshot (tmp+rename) before the new process comes up.
 
@@ -54,13 +54,13 @@ No constants were changed in response to those four misses. A flip-one-question 
 
 The serializer writes **all nodes before any edge**, and both of Hive's truncation limits cut from the head. So the relational payload — the only provenance-tagged, `file:line`-cited content in the output — is always the part that falls off the end. Measured on this repo's graph: budget 1200 → 51 nodes / **0 edges**; budget 2000 (the schema default) → 86 / **0**; 8000 → 325 / **0**; edges only start appearing near **16000**. Raising the budget alone was a no-op while a 6KB character cap re-truncated the same head — both limits fail in the same direction, and both had to move.
 
-This is why the spawn directive explicitly tells agents `query_graph` with `token_budget: 16000` and names the 2000 default as a trap that "cuts the output off before the cited EDGE lines" (`src/daemon/spawner-impl.ts:591-605`). An agent calling the tool with defaults gets the degraded shape every time and has no way to know it.
+This is why the spawn directive explicitly tells agents `query_graph` with `token_budget: 16000` and names the 2000 default as a trap that "cuts the output off before the cited EDGE lines" (`src/daemon/spawn/spawner-impl.ts:591-605`). An agent calling the tool with defaults gets the degraded shape every time and has no way to know it.
 
 ## Vendor trap: the Codex hook-shape inversion
 
 The installed upstream Codex hook emits nothing, on the claim that Codex rejects Claude's `additionalContext` shape. Measured against **codex 0.144.1** with a mock model provider, the truth is the exact opposite: a PreToolUse `{"systemMessage": …}` is **parsed and then silently dropped** — no error, the text simply never reaches a model request — while the Claude-style `hookSpecificOutput.additionalContext` **is** injected, as a developer message, in both `exec` and the TUI.
 
-Hive shipped the `systemMessage` shape first, and **no Codex agent ever received a nudge.** Both harnesses now get the one shape both honor (`src/adapters/tools/graphify-hook.ts:45-68`). The general lesson is a Hive recurring theme: a vendor accepting your payload without error is not evidence it consumed it.
+Hive shipped the `systemMessage` shape first, and **no Codex agent ever received a nudge.** Both harnesses now get the one shape both honor (`src/adapters/providers/shared/graphify-hook.ts: writeGraphifyHook`). The general lesson is a Hive recurring theme: a vendor accepting your payload without error is not evidence it consumed it.
 
 ## Why the daemon owns one HTTP server per repo
 
@@ -79,10 +79,9 @@ Graphify MCP URL as the TUI driver. The URL crosses the Hive host boundary as
 an explicit process argument; the host then attaches it with a process-local
 Codex config override. Apps/connectors and unrelated inherited MCP servers are
 disabled for that child without changing the user's Codex configuration
-(`src/adapters/tools/codex-app-server.ts`). The layer-1 digest still degrades
+(`src/adapters/providers/codex-app-server/runtime-adapter.ts`). The layer-1 digest still degrades
 independently, so a missing Graphify server never blocks a spawn.
 
 ## See Also
 
 - [Bundling](bundling.md) — how the graphify binary is built, signed, and shipped
-- [SPEC](../../SPEC.md) — the accurate-or-unknown protocol the degradation reporting defers to

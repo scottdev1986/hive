@@ -15,7 +15,7 @@ import {
   readLocalPeerPid,
   resolveSessiondBinary,
   socketFileDescriptor,
-} from "../../src/daemon/sessiond-broker";
+} from "../../src/daemon/session-host/sessiond-broker";
 
 let roots: string[] = [];
 afterEach(() => {

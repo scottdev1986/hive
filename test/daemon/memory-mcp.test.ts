@@ -12,13 +12,18 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { HiveDatabase } from "../../src/daemon/db";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
-import { actingAs } from "../../src/daemon/testing";
-import type { AgentRecord } from "../../src/schemas";
+import type {
+  Spawner,
+  SpawnRequest,
+} from "../../src/daemon/spawn/spawn-service";
+import { actingAs } from "../support/daemon-test-support";
+import type { AgentRecord } from "../../src/schemas/agent";
 
 const tempRoots: string[] = [];
 const previousHome = process.env.HIVE_HOME;
@@ -60,7 +65,7 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
 async function connectedClient(daemon: HiveDaemon): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
-    { fetch: actingAs(daemon, "operator", "operator") },
+    { fetch: actingAs(daemon, "user", "user") },
   );
   const client = new Client({ name: "hive-memory-test", version: "1.0.0" });
   await client.connect(transport);
@@ -75,10 +80,11 @@ function validWrite(overrides: Record<string, unknown> = {}) {
     body: "Test body.",
     source: "agent",
     evidence: "Measured by the MCP integration test",
-    status: "verified",
+    // memory_write always lands unverified: verification is memory_verify's
+    // job, from a session other than the author's.
+    status: "unverified",
     supersedes: [],
     date: "2026-07-12",
-    verified: "2026-07-12",
     ...overrides,
   };
 }
@@ -92,6 +98,28 @@ async function discoverMemoryFiles(root: string): Promise<string[]> {
 }
 
 describe("memory MCP tools", () => {
+  test("an already-cancelled reindex never enters the serialized rebuild", async () => {
+    await makeHome();
+    const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-cancel-repo-"));
+    tempRoots.push(repoRoot);
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      spawner: new UnusedSpawner(),
+      db: new HiveDatabase(":memory:"),
+      repoRoot,
+    });
+    const controller = new AbortController();
+    controller.abort(new Error("reindex cancelled"));
+    try {
+      await expect(
+        daemon.rebuildMemoryIndex(controller.signal),
+      ).rejects.toThrow("reindex cancelled");
+      expect(await discoverMemoryFiles(repoRoot)).toEqual([]);
+    } finally {
+      await daemon.stop();
+    }
+  });
+
   test("memory_write rejects writes missing load-bearing wiki fields", async () => {
     await makeHome();
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
@@ -290,7 +318,6 @@ describe("memory MCP tools", () => {
             body: longBody,
             source: "agent",
             date: "2026-07-10",
-            verified: "2026-07-10",
           }),
         }),
       ) as Record<string, unknown>;
@@ -302,8 +329,7 @@ describe("memory MCP tools", () => {
         path: expect.any(String),
         rawPath: expect.any(String),
         source: "agent",
-        status: "verified",
-        verified: "2026-07-10",
+        status: "unverified",
         // The vector projection's outcome — this daemon has no semantic leg
         // wired, so the write is keyword-searchable only.
         embedding: "unavailable:disabled",
@@ -410,7 +436,7 @@ describe("memory MCP tools", () => {
     }
   });
 
-  test("source and verified provenance flow through memory_write and back on memory_read", async () => {
+  test("source and author provenance flow through memory_write, and self-verification is refused end to end", async () => {
     await makeHome();
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
     tempRoots.push(repoRoot);
@@ -432,25 +458,39 @@ describe("memory MCP tools", () => {
             body: "A derived, re-derivable lesson.",
             source: "init",
             date: "2026-06-01",
-            verified: "2026-06-01",
           }),
         }),
-      ) as { source: string; verified: string; path: string };
+      ) as { source: string; status: string; path: string };
       expect(written.source).toEqual("init");
-      expect(written.verified).toEqual("2026-06-01");
-      // The provenance is persisted to the Markdown file, not just the response.
+      // Nobody has checked it, and the write path can no longer claim they did.
+      expect(written.status).toEqual("unverified");
+      // The provenance is persisted to the Markdown file, not just the
+      // response — including the author the DAEMON supplied. This client acts
+      // as "user" and never sent an author field; the identity comes from
+      // the capability bound to the call.
       const onDisk = await readFile(written.path, "utf8");
       expect(onDisk).toContain("source: init");
-      expect(onDisk).toContain("verified: 2026-06-01");
+      expect(onDisk).toContain("author: user");
+      expect(onDisk).not.toContain("status: verified");
 
       const read = textValue(
         await client.callTool({
           name: "memory_read",
           arguments: { scope: "repo", id: "seeded-fact" },
         }),
-      ) as { source: string; verified: string };
+      ) as { source: string; author: string; status: string };
       expect(read.source).toEqual("init");
-      expect(read.verified).toEqual("2026-06-01");
+      expect(read.author).toEqual("user");
+      expect(read.status).toEqual("unverified");
+
+      // The whole rule, end to end through the real tool surface: the session
+      // that wrote it cannot be the session that verifies it.
+      const selfVerify = await client.callTool({
+        name: "memory_verify",
+        arguments: { scope: "repo", id: "seeded-fact" },
+      });
+      expect(selfVerify.isError).toBe(true);
+      expect(JSON.stringify(selfVerify.content)).toContain("user wrote it");
     } finally {
       await client.close().catch(() => undefined);
       await daemon.stop();
@@ -495,7 +535,7 @@ describe("memory MCP tools", () => {
         "utf8",
       );
       expect(index).toContain(
-        "- [repo/testing] flaky-login-pitfall (2026-07-12) [verified] [pitfall]: " +
+        "- [repo/testing] flaky-login-pitfall (2026-07-12) [unverified] [pitfall]: " +
           "A green login test run proves nothing",
       );
 
@@ -753,7 +793,7 @@ describe("memory MCP tools", () => {
             topic: "testing",
             title: "Durable across a daemon restart",
             date: expect.any(String),
-            status: "verified",
+            status: "unverified",
             tags: [],
             path: expect.any(String),
             snippet: expect.any(String),

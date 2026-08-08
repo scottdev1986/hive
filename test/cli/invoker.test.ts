@@ -9,17 +9,34 @@ import {
 describe("invoker identity (#70)", () => {
   test("walks the parent chain with process names and stops at an unresolvable pid", () => {
     const parents = new Map<number, { ppid: number; command: string }>([
-      [process.ppid, { ppid: 900, command: "zsh" }],
+      [500, { ppid: 900, command: "zsh" }],
       [900, { ppid: 800, command: "zsh" }],
       // 800 is gone: the chain ends honestly.
     ]);
-    const identity = captureInvokerIdentity((pid) => parents.get(pid) ?? null);
+    // The walk starts at a pid this test owns. Keyed on the real parent instead,
+    // the case below would decide the outcome: a runner whose parent has exited
+    // walks from pid 1 and gets nothing, so the fixture would never be reached.
+    const identity = captureInvokerIdentity(
+      (pid) => parents.get(pid) ?? null,
+      500,
+    );
 
     expect(identity.pid).toBe(process.pid);
     expect(identity.ppid).toBe(process.ppid);
-    expect(identity.chain).toEqual([`${process.ppid}:zsh`, "900:zsh"]);
+    expect(identity.chain).toEqual(["500:zsh", "900:zsh"]);
     expect(identity.argv).toEqual(process.argv.slice(2));
     expect(identity.cwd).toBe(process.cwd());
+  });
+
+  test("an orphaned invoker reports no chain at all", () => {
+    // Positive control on the reader: it answers for pid 1, so an empty chain is
+    // the walk refusing to start at init, not a lookup that came back missing.
+    const identity = captureInvokerIdentity(
+      () => ({ ppid: 0, command: "launchd" }),
+      1,
+    );
+
+    expect(identity.chain).toEqual([]);
   });
 
   test("flags an agent worktree cwd; positive control on the flat repo path", () => {

@@ -3,16 +3,16 @@ import {
   OrchestratorSessiondController,
   type OrchestratorSessiondDependencies,
   type OrchestratorSessiondLaunch,
-} from "../../src/daemon/orchestrator-sessiond";
-import type { SessionInspection } from "../../src/daemon/session-host/contract";
+} from "../../src/daemon/orchestrator-host/sessiond-controller";
+import type { SessionInspection } from "../../src/daemon/session-host/session-host-contract";
 import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import { TERMINAL_SHELL } from "../../src/daemon/session-host/shell-session";
 import type {
   HiveTerminalBinding,
   TerminalHostBindingStore,
 } from "../../src/daemon/session-host/terminal-host-binding";
+import type { ProviderRun } from "../../src/schemas/provider-run";
 import { required } from "../required";
-import type { ProviderRun } from "../../src/schemas";
 
 class MemoryBindings implements TerminalHostBindingStore {
   values: HiveTerminalBinding[] = [];
@@ -94,6 +94,10 @@ class MemoryProviderRuns {
 
 const terminalTermination = {
   reconcileProviderRun: () => null,
+  waitForExit: async () => ({
+    kind: "managed-exit" as const,
+    exitCode: null,
+  }),
   terminate: async (locator: HiveTerminalBinding["locator"]) => ({
     locator,
     state: "terminated" as const,
@@ -105,11 +109,14 @@ const terminalTermination = {
 
 const launch: OrchestratorSessiondLaunch = {
   requestId: mintSessionRequestId(1_750_000_000_000),
+  providerRunId: "018f1e90-7b5a-7cc0-8000-0000000007a1",
   provider: "codex",
   cwd: "/repo",
   argv: ["codex", "--no-alt-screen"],
   environment: { HIVE_ROOT_FIXTURE: "1" },
   expectedExecutable: "codex",
+  model: "gpt-5.6-sol",
+  effort: "high",
 };
 
 const visibility = {
@@ -200,7 +207,163 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 20; index += 1) await Promise.resolve();
 }
 
+function terminalWaitHarness(): Readonly<{
+  controller: OrchestratorSessiondController;
+  finishExit: () => void;
+  inspections: () => number;
+}> {
+  const bindings = new MemoryBindings();
+  let exit:
+    | ((value: { kind: "managed-exit"; exitCode: number }) => void)
+    | null = null;
+  let inspections = 0;
+  const controller = new OrchestratorSessiondController({
+    bindings,
+    instanceId: "instance-a",
+    providerRuns: new MemoryProviderRuns(),
+    visibility: {
+      prepareAgentCreation: async () => ({
+        engineBuildId: "engine-a",
+        visibility,
+        geometry,
+      }),
+    },
+    terminalHost: {
+      ...terminalTermination,
+      create: async (spec, policy) => {
+        bindings.bindTerminalHostSession(policy);
+        completeBinding(bindings, policy.locator);
+        return {
+          locator: spec.locator,
+          inspection: inspection(policy.locator, "present"),
+          created: true,
+        };
+      },
+      waitForExit: async () =>
+        await new Promise<{ kind: "managed-exit"; exitCode: number }>(
+          (resolve) => {
+            exit = resolve;
+          },
+        ),
+      inspect: async (value) => {
+        inspections += 1;
+        return inspection(value, "exited");
+      },
+    },
+  });
+  return {
+    controller,
+    finishExit: () => {
+      if (exit === null) throw new Error("monitor is not waiting");
+      exit({ kind: "managed-exit", exitCode: 23 });
+    },
+    inspections: () => inspections,
+  };
+}
+
+async function seedCompletedRoot(): Promise<
+  Readonly<{
+    bindings: MemoryBindings;
+    providerRuns: MemoryProviderRuns;
+  }>
+> {
+  const bindings = new MemoryBindings();
+  const providerRuns = new MemoryProviderRuns();
+  await new OrchestratorSessiondController({
+    bindings,
+    instanceId: "instance-a",
+    providerRuns,
+    visibility: {
+      prepareAgentCreation: async () => ({
+        engineBuildId: "engine-a",
+        visibility,
+        geometry,
+      }),
+    },
+    terminalHost: {
+      ...terminalTermination,
+      create: async (spec, policy) => {
+        bindings.bindTerminalHostSession(policy);
+        completeBinding(bindings, policy.locator);
+        return {
+          locator: spec.locator,
+          inspection: inspection(policy.locator, "present"),
+          created: true,
+        };
+      },
+      inspect: async (value) => inspection(value, "exited"),
+    },
+  }).start(launch);
+  await settle();
+  return { bindings, providerRuns };
+}
+
 describe("OrchestratorSessiondController", () => {
+  test("a terminal transition wakes the exact pending generation", async () => {
+    const harness = terminalWaitHarness();
+    await harness.controller.start(launch);
+    await settle();
+
+    const waiting = harness.controller.waitForTerminal(
+      launch.requestId,
+      10_000,
+    );
+    expect(harness.inspections()).toBe(0);
+    harness.finishExit();
+
+    await expect(waiting).resolves.toMatchObject({
+      requestId: launch.requestId,
+      state: "exited",
+      exitCode: 23,
+    });
+    expect(harness.inspections()).toBe(1);
+  });
+
+  test("an absent exact generation returns immediately for reconnect", async () => {
+    const harness = terminalWaitHarness();
+    await harness.controller.start(launch);
+    await settle();
+
+    await expect(
+      harness.controller.waitForTerminal(
+        mintSessionRequestId(1_750_000_000_100),
+        10_000,
+      ),
+    ).resolves.toBeNull();
+    harness.finishExit();
+  });
+
+  test("a bounded wait returns the current nonterminal snapshot", async () => {
+    const harness = terminalWaitHarness();
+    await harness.controller.start(launch);
+    await settle();
+
+    await expect(
+      harness.controller.waitForTerminal(launch.requestId, 5),
+    ).resolves.toMatchObject({
+      requestId: launch.requestId,
+      state: "running",
+    });
+    harness.finishExit();
+  });
+
+  test("a client disconnect releases its pending wait", async () => {
+    const harness = terminalWaitHarness();
+    await harness.controller.start(launch);
+    await settle();
+    const disconnect = new AbortController();
+
+    const waiting = harness.controller.waitForTerminal(
+      launch.requestId,
+      10_000,
+      disconnect.signal,
+    );
+    disconnect.abort();
+
+    await expect(waiting).resolves.toMatchObject({ state: "running" });
+    harness.finishExit();
+  });
+
   test("failed native create releases its incomplete generation", async () => {
     const bindings = new MemoryBindings();
     const controller = new OrchestratorSessiondController({
@@ -216,7 +379,7 @@ describe("OrchestratorSessiondController", () => {
       },
       terminalHost: {
         ...terminalTermination,
-        create: async (_spec, _input, policy) => {
+        create: async (_spec, policy) => {
           bindings.bindTerminalHostSession(policy);
           throw new Error("native host registration failed");
         },
@@ -251,7 +414,7 @@ describe("OrchestratorSessiondController", () => {
       },
       terminalHost: {
         ...terminalTermination,
-        create: async (spec, input, policy) => {
+        create: async (spec, policy) => {
           expect(spec.geometry).toEqual(geometry);
           expect(spec.environment).toEqual({
             BASE_ENV: "base",
@@ -265,7 +428,6 @@ describe("OrchestratorSessiondController", () => {
           ]);
           expect(spec.argv.at(-1)).toBe("'codex' '--no-alt-screen'");
           expect(spec.expectedExecutable).toBe(TERMINAL_SHELL);
-          expect(input).toEqual(new Uint8Array());
           creates += 1;
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);
@@ -291,9 +453,10 @@ describe("OrchestratorSessiondController", () => {
     expect(providerRuns.values[0]).toMatchObject({
       agentId: null,
       provider: "codex",
-      model: null,
-      effort: null,
+      model: "gpt-5.6-sol",
+      effort: "high",
       launchGrantId: launch.requestId,
+      runId: launch.providerRunId,
     });
     expect(bindings.values[0]?.locator).toEqual(ready.locator);
     expect(controller.snapshot()).toMatchObject({
@@ -319,7 +482,7 @@ describe("OrchestratorSessiondController", () => {
       },
       terminalHost: {
         ...terminalTermination,
-        create: async (spec, _input, policy) => {
+        create: async (spec, policy) => {
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);
           return {
@@ -381,7 +544,7 @@ describe("OrchestratorSessiondController", () => {
       },
       terminalHost: {
         ...terminalTermination,
-        create: async (spec, _input, policy) => {
+        create: async (spec, policy) => {
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);
           return {
@@ -391,6 +554,14 @@ describe("OrchestratorSessiondController", () => {
           };
         },
         inspect: async (value) => inspection(value, "present"),
+        waitForExit: async (_locator, signal) =>
+          await new Promise<{ kind: "aborted" }>((resolve) => {
+            signal.addEventListener(
+              "abort",
+              () => resolve({ kind: "aborted" }),
+              { once: true },
+            );
+          }),
       },
       sleep: async () => await new Promise<void>(() => {}),
     });
@@ -409,6 +580,140 @@ describe("OrchestratorSessiondController", () => {
     });
   });
 
+  test("a managed host cannot silently enter the inherited polling fallback", async () => {
+    const bindings = new MemoryBindings();
+    let inspections = 0;
+    const controller = new OrchestratorSessiondController({
+      bindings,
+      instanceId: "instance-a",
+      providerRuns: new MemoryProviderRuns(),
+      visibility: {
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
+      },
+      terminalHost: {
+        ...terminalTermination,
+        create: async (spec, policy) => {
+          bindings.bindTerminalHostSession(policy);
+          completeBinding(bindings, policy.locator);
+          return {
+            locator: spec.locator,
+            inspection: inspection(policy.locator, "present"),
+            created: true,
+          };
+        },
+        inspect: async (value) => {
+          inspections += 1;
+          return inspection(value, "present");
+        },
+        waitForExit: async () => ({ kind: "inherited" }),
+      },
+    });
+
+    await controller.start(launch);
+    await settle();
+
+    expect(controller.snapshot()).toMatchObject({
+      state: "failed",
+      diagnostic: "queen sessiond managed host lost its exit handle",
+    });
+    expect(inspections).toBe(0);
+  });
+
+  test("a present observation resets the inherited failure budget indefinitely", async () => {
+    const { bindings, providerRuns } = await seedCompletedRoot();
+    let now = 0;
+    let inspections = 0;
+    let sleeps = 0;
+    const controller = new OrchestratorSessiondController({
+      bindings,
+      instanceId: "instance-a",
+      providerRuns,
+      visibility: {
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
+      },
+      terminalHost: {
+        ...terminalTermination,
+        create: async () => {
+          throw new Error("not reached");
+        },
+        inspect: async (value) => {
+          inspections += 1;
+          return inspection(value, inspections === 1 ? "unknown" : "present");
+        },
+        waitForExit: async () => ({ kind: "inherited" }),
+      },
+      inheritedObservationFailureTimeoutMs: 500,
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+        sleeps += 1;
+        if (sleeps >= 8) await new Promise<void>(() => {});
+      },
+    });
+
+    await controller.start(launch);
+    for (let turn = 0; turn < 100 && sleeps < 8; turn += 1) {
+      await Promise.resolve();
+    }
+
+    expect(now).toBe(2_000);
+    expect(controller.snapshot()?.state).toBe("running");
+    expect(inspections).toBe(8);
+    controller.cancel("test cleanup");
+  });
+
+  test("consecutive inherited observation failures exhaust their own budget", async () => {
+    const { bindings, providerRuns } = await seedCompletedRoot();
+    let now = 0;
+    let inspections = 0;
+    const controller = new OrchestratorSessiondController({
+      bindings,
+      instanceId: "instance-a",
+      providerRuns,
+      visibility: {
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
+      },
+      terminalHost: {
+        ...terminalTermination,
+        create: async () => {
+          throw new Error("not reached");
+        },
+        inspect: async (value) => {
+          inspections += 1;
+          if (inspections % 2 === 1) throw new Error("host unavailable");
+          return inspection(value, "unknown");
+        },
+        waitForExit: async () => ({ kind: "inherited" }),
+      },
+      inheritedObservationFailureTimeoutMs: 500,
+      now: () => now,
+      sleep: async (milliseconds) => {
+        now += milliseconds;
+      },
+    });
+
+    await controller.start(launch);
+    await expect(
+      controller.waitForTerminal(launch.requestId, 1_000),
+    ).resolves.toMatchObject({
+      state: "failed",
+      diagnostic: "queen sessiond inherited host could no longer be observed",
+    });
+    expect(inspections).toBe(3);
+  });
+
   test("a daemon restart resumes the same durable root binding without a second create", async () => {
     const bindings = new MemoryBindings();
     const providerRuns = new MemoryProviderRuns();
@@ -423,6 +728,7 @@ describe("OrchestratorSessiondController", () => {
       },
       inspect: async (value: HiveTerminalBinding["locator"]) =>
         inspection(value, "exited"),
+      waitForExit: async () => ({ kind: "inherited" }),
     };
     const firstLocator = (
       await new OrchestratorSessiondController({
@@ -438,7 +744,7 @@ describe("OrchestratorSessiondController", () => {
         },
         terminalHost: {
           ...terminalHost,
-          create: async (spec, _input, policy) => {
+          create: async (spec, policy) => {
             creates += 1;
             bindings.bindTerminalHostSession(policy);
             completeBinding(bindings, policy.locator);
@@ -448,6 +754,7 @@ describe("OrchestratorSessiondController", () => {
               created: true,
             };
           },
+          waitForExit: terminalTermination.waitForExit,
         },
         sleep: async () => {},
       }).start(launch)

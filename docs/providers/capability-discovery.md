@@ -1,8 +1,7 @@
 # Capability discovery
 
 Updated: 2026-07-16
-Sources: Hive source tree, 2026-07-16; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
-Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md) · [Codex 0.144.4 hidden-bootstrap verification](../../raw/codex/codex-0.144.4-hidden-bootstrap-verification.txt)
+Sources: Hive source tree, 2026-07-16
 
 ## Summary
 
@@ -59,7 +58,7 @@ Codex's `model/list` flags exactly one catalog entry `isDefault`. On 2026-07-11 
 
 > **A router that reads the catalog flag and calls it "the default" is describing a different machine than the one it is about to spawn on.**
 
-So the effective default is read from `config/read` on Codex, from the menu's `default` entry on Claude, and from the `* <id> (default)` line of `grok models` stdout on Grok (`src/daemon/capability-discovery.ts:769-775`). Never from `isDefault`.
+So the effective default is read from `config/read` on Codex, from the menu's `default` entry on Claude, and from the `* <id> (default)` line of `grok models` stdout on Grok (`src/daemon/provider-capabilities/discovery.ts:769-775`). Never from `isDefault`.
 
 ## A guessed field name does not error — it reads as "no"
 
@@ -91,7 +90,7 @@ The corollary is why the unknown taxonomy below exists at all: a guessed JSON ke
 | entitlement | **sent by neither** — presence in the account-scoped catalog is the whole of the evidence | |
 | CLI version | **carried by neither catalog** — read from `<cli> --version` | |
 
-So `defaultEffort` is Codex-only, `supportsEffort` is Claude-only, `hidden` is Codex-only, and `entitled` is nobody's. Hive records `entitled: known(true)` for a model it *saw* in the account's catalog (`src/daemon/capability-discovery.ts:148`, `:347`, `:810`) — presence is positive evidence. No vendor will ever send `entitled: false`; unusable models are simply **absent**.
+So `defaultEffort` is Codex-only, `supportsEffort` is Claude-only, `hidden` is Codex-only, and `entitled` is nobody's. Hive records `entitled: known(true)` for a model it *saw* in the account's catalog (`src/daemon/provider-capabilities/discovery.ts:148`, `:347`, `:810`) — presence is positive evidence. No vendor will ever send `entitled: false`; unusable models are simply **absent**.
 
 Four traps, each a plausible mistake:
 
@@ -116,7 +115,7 @@ So a model id has **three** states, and conflating any two of them is a bug:
 | `providerReportedSelectable` | an authenticated, account-scoped call offers it (Claude's `initialize.models[]`, Codex's `model/list`, Grok's `models_cache.json`) | **what every surface in this article yields** |
 | `launchValidated` | a real session accepted it and a real turn came back | proof — and it costs a turn |
 
-Everything discovery gives you is the **middle** state. It is stronger than anything a public catalog offers and it is *weaker than first-turn proof*. Hive still uses that evidence to fail closed before creating a tmux session: the launch gate requires a readable catalog record for the exact model and explicit enablement (`src/daemon/spawner-impl.ts:1571-1605`). That prevents guessed or quietly substituted pins, but it cannot turn the catalog into proof that the vendor will complete a turn. See [../routing/routing-policy.md](../routing/routing-policy.md).
+Everything discovery gives you is the **middle** state. It is stronger than anything a public catalog offers and it is *weaker than first-turn proof*. Hive still uses that evidence to fail closed at launch: the launch gate requires a readable catalog record for the exact model and explicit enablement (`src/daemon/routing-service/authorized-launch.ts: AuthorizedLaunch`). That prevents guessed or quietly substituted pins, but it cannot turn the catalog into proof that the vendor will complete a turn. See [../routing/routing-policy.md](../routing/routing-policy.md).
 
 Hive records this honestly today: a discovered model carries `entitled: known(true)` because it was *seen in the account's catalog* — that is the middle rung asserted as exactly what it is, not as launch proof.
 
@@ -148,26 +147,26 @@ Effort levels are stored as the **raw vendor strings**, never a Hive enum (`src/
 
 ## Grok's catalog: two steps, and exit 0 is not evidence
 
-Grok publishes no app-server metadata RPC. Its catalog is read in two steps (`src/daemon/capability-discovery.ts:691-745`):
+Grok publishes no app-server metadata RPC. Its catalog is read in two steps (`src/daemon/provider-capabilities/discovery.ts:691-745`):
 
 1. run `grok models` (a **real** subcommand — see the billable-subcommand warning above),
 2. then parse the file it refreshes, `~/.grok/models_cache.json` (or `$GROK_HOME`).
 
-The cache entries the code consumes are `id`, `name`, `hidden`, `supports_reasoning_effort`, and `reasoning_efforts[]` (each `{value, default?}`) — schema at `src/daemon/capability-discovery.ts:661-677`. The schemas are `passthrough`, so unknown vendor keys do not invalidate the payload; a `context_window` field is **not** among the ones Hive records today.
+The cache entries the code consumes are `id`, `name`, `hidden`, `supports_reasoning_effort`, and `reasoning_efforts[]` (each `{value, default?}`) — schema at `src/daemon/provider-capabilities/discovery.ts:661-677`. The schemas are `passthrough`, so unknown vendor keys do not invalidate the payload; a `context_window` field is **not** among the ones Hive records today.
 
 The code is **stricter than the research docs were**, in three ways that are all load-bearing:
 
-- **Liveness, not exit code.** `grok models` run offline prints the *cached* catalog and exits 0. So the transport runs it with `--debug --debug-file <tmp>` and requires a measured settings-fetch success line in that debug log before it will trust anything (`grokModelsProvedLive`, `src/daemon/capability-discovery.ts:754-758`, gated at `:736`). Exit 0 is explicitly not accepted as evidence of a live read — the same discipline the billable-subcommand rule teaches, applied to a subcommand that is real.
-- **Runtime behavioral trust.** A new Grok version is not refused merely for being new. Every probe must prove a live remote fetch, parse the expected cache schema, match the cache's `grok_version` to the running CLI, keep every model map key equal to `info.id`, keep effort declarations internally coherent, produce at least one usable record, and name a default that exists in that record set (`src/daemon/capability-discovery.ts`). A protocol-changing update therefore fails closed on the changed behavior, while a routine compatible update needs no Hive release. The CLI identity still comes from a `grok --version` parse whose regex is pinned verbatim in the adapter (`src/adapters/tools/grok.ts:59`). The latest compatible-version measurement is preserved in [the raw verification](../../raw/grok/grok-0.2.101-catalog-verification.txt).
-- **Cache/CLI coherence.** A cache whose `grok_version` does not equal the CLI's own version yields *no records at all* (`src/daemon/capability-discovery.ts:783-787`), and an entry whose `info.id` disagrees with its map key is dropped (`:795`). A stale cache is not a catalog.
+- **Liveness, not exit code.** `grok models` run offline prints the *cached* catalog and exits 0. So the transport runs it with `--debug --debug-file <tmp>` and requires a measured settings-fetch success line in that debug log before it will trust anything (`grokModelsProvedLive`, `src/daemon/provider-capabilities/discovery.ts:754-758`, gated at `:736`). Exit 0 is explicitly not accepted as evidence of a live read — the same discipline the billable-subcommand rule teaches, applied to a subcommand that is real.
+- **Runtime behavioral trust.** A new Grok version is not refused merely for being new. Every probe must prove a live remote fetch, parse the expected cache schema, match the cache's `grok_version` to the running CLI, keep every model map key equal to `info.id`, keep effort declarations internally coherent, produce at least one usable record, and name a default that exists in that record set (`src/daemon/provider-capabilities/discovery.ts`). A protocol-changing update therefore fails closed on the changed behavior, while a routine compatible update needs no Hive release. The CLI identity still comes from a `grok --version` parse whose regex is pinned verbatim in the adapter (`src/adapters/providers/grok-cli.ts: parseGrokCliVersion`).
+- **Cache/CLI coherence.** A cache whose `grok_version` does not equal the CLI's own version yields *no records at all* (`src/daemon/provider-capabilities/discovery.ts:783-787`), and an entry whose `info.id` disagrees with its map key is dropped (`:795`). A stale cache is not a catalog.
 
-Grok's `defaultEffort` is `known` only when some entry in `reasoning_efforts[]` carries `default: true`; otherwise it is `unknown("field-absent")` (`src/daemon/capability-discovery.ts:817-820`) — never `"medium"`.
+Grok's `defaultEffort` is `known` only when some entry in `reasoning_efforts[]` carries `default: true`; otherwise it is `unknown("field-absent")` (`src/daemon/provider-capabilities/discovery.ts:817-820`) — never `"medium"`.
 
 ## What no free surface gives you
 
 No vendor returns a task-quality score, a cross-vendor capability scale, expected tokens or subscription percent for a future task, or a trustworthy mapping from API dollars to subscription capacity. Codex does not publish per-model price or context size in `model/list`. Public model/pricing pages are *enrichment* — they describe the API plane, not a CLI subscription's entitlement — and a web page failing must never make spawning impossible.
 
-Those facts must remain unknown, user-configured, or learned from explicit evals. Inventing them only makes a router confidently wrong. What model judgment Hive *does* apply is user policy, not vendor truth: see [../routing/routing-policy.md](../routing/routing-policy.md) and `../../SPEC.md` §6.
+Those facts must remain unknown, user-configured, or learned from explicit evals. Inventing them only makes a router confidently wrong. What model judgment Hive *does* apply is user policy, not vendor truth: see [../routing/routing-policy.md](../routing/routing-policy.md).
 
 ## See Also
 

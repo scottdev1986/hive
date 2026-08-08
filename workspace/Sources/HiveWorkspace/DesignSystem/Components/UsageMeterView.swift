@@ -1,13 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// One usage window: label, track, value, reset caption.
-///
-/// - `.measured` draws a determinate fill; "0% used" only ever means a real 0.
-/// - `.unknown` draws NO track at all — a dotted rule and "Usage unknown".
-///   There is no code path that renders an empty bar for missing data.
-/// - `.stale` keeps the last percent at reduced contrast, with its age,
-///   under a "Stale reading" badge. Never presented as fresh.
+/// One usage window: label, track, value, reset caption. - `.measured` draws a determinate fill; "0% used" only ever means a real 0. - `.unknown` draws NO track at all — a dotted rule and "Usage unknown". There is no code path that renders an empty bar for missing data. - `.stale` keeps the last percent at reduced contrast, with its age, under a "Stale reading" badge. Never presented as fresh.
 final class UsageMeterView: NSView {
 
     private let titleLabel = NSTextField(labelWithString: "")
@@ -18,8 +12,6 @@ final class UsageMeterView: NSView {
     private let topRow = NSStackView()
     private let stack = NSStackView()
 
-    /// Near-limit thresholds as fractions of remaining capacity. These are
-    /// the shipped config defaults; a later read surface can carry live values.
     private let warningRemainingPct: Double
     private let criticalRemainingPct: Double
 
@@ -41,8 +33,6 @@ final class UsageMeterView: NSView {
         captionLabel.lineBreakMode = .byWordWrapping
         captionLabel.maximumNumberOfLines = 3
 
-        // AppKit may grow the window instead of truncating a label at 500 or
-        // higher. Every label in this width-constrained component stays below it.
         titleLabel.setContentCompressionResistancePriority(.init(490), for: .horizontal)
         valueLabel.setContentCompressionResistancePriority(.init(490), for: .horizontal)
         captionLabel.setContentCompressionResistancePriority(.init(200), for: .horizontal)
@@ -125,8 +115,7 @@ final class UsageMeterView: NSView {
                 "\(MCCCopy.a11yMeter(window.label, percent)), stale reading")
 
         case .unknown(let reason):
-            // No determinate track. The truth is "we cannot tell", and a bar —
-            // even an empty one — would claim measured emptiness.
+            // No determinate track. The truth is "we cannot tell", and a bar — even an empty one — would claim measured emptiness.
             track.isHidden = false
             track.state = .indeterminate
             valueLabel.stringValue = MCCCopy.badgeUsageUnknown
@@ -136,9 +125,6 @@ final class UsageMeterView: NSView {
             setAccessibilityLabel(MCCCopy.a11yMeterUnknown(window.label))
 
         case .notMetered:
-            // No track AT ALL — not even the indeterminate one, which reads as
-            // "unknown" and would blame a probe that answered. The plan has no
-            // such window, so there is nothing to gauge and we say so instead.
             track.isHidden = true
             valueLabel.stringValue = MCCCopy.badgeNotMetered
             valueLabel.textColor = .secondaryLabelColor
@@ -177,10 +163,7 @@ final class UsageMeterView: NSView {
     }
 }
 
-/// The meter's track. Three drawing modes and no fourth:
-/// a colored fill over the track, or a dotted "cannot tell" rule with no
-/// track at all. `fraction == 0` still draws the track (measured empty);
-/// `.indeterminate` draws no track (unknown) — visibly different things.
+/// The meter's track. Three drawing modes and no fourth: a colored fill over the track, or a dotted "cannot tell" rule with no track at all. `fraction == 0` still draws the track (measured empty); `.indeterminate` draws no track (unknown) — visibly different things.
 final class MeterTrackView: NSView {
 
     enum State: Equatable {
@@ -216,7 +199,6 @@ final class MeterTrackView: NSView {
             color.setFill()
             fill.fill()
         case .indeterminate:
-            // Dots, not a bar: nothing here can be read as a fill level.
             let dotDiameter: CGFloat = 3
             let gap: CGFloat = 6
             let y = (bounds.height - dotDiameter) / 2
@@ -232,7 +214,6 @@ final class MeterTrackView: NSView {
 }
 
 extension NSView {
-    /// A zero-content flexible spacer for stack views.
     static func spacer() -> NSView {
         let view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false

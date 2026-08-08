@@ -2,9 +2,7 @@ import AppKit
 import HiveTerminalKit
 import WorkspaceCore
 
-/// One pane: native header bar, content, and the two independent signals the
-/// blueprint separates — a status border (semantic color) and a focus ring
-/// (accent color, inset) that never overwrites it.
+/// One pane: native header bar, content, and the two independent signals the blueprint separates — a status border (semantic color) and a focus ring (accent color, inset) that never overwrites it.
 final class PaneView: NSView {
 
     let paneID: PaneID
@@ -28,24 +26,14 @@ final class PaneView: NSView {
     /// The pane's one terminal surface, driven by its exact sessiond locator.
     private(set) var sessiondTerminal: SessiondPaneTerminal?
 
-    /// The terminal's own failure, held apart from the feed's header text.
-    /// `update(state:)` rewrites detailLabel and re-hides failureBadge on every
-    /// feed tick, so a failure that is not re-applied there is visible for one
-    /// tick and then gone — leaving a pane that reads healthy while nothing is
-    /// attached. Once set, terminal failure remains visible.
     private(set) var terminalFailure: (detail: String, badge: String, evidence: String)?
 
-    /// The renderer is past its escalating retry budget but still reconnecting
-    /// It clears when recovery succeeds instead of latching give-up.
+    /// The renderer is past its escalating retry budget but still reconnecting It clears when recovery succeeds instead of latching give-up.
     private var rendererRecovering: String?
 
-    /// Last header text the feed wrote, so a recovered renderer restores it
-    /// without waiting for the next feed tick.
     private var feedHeaderDescription = ""
 
-    /// Installs the same exact-generation sessiond terminal for Queen or an
-    /// agent. Role changes the session's command and metadata, never the pane
-    /// lifecycle.
+    /// Installs the same exact-generation sessiond terminal for Queen or an agent. Role changes the session's command and metadata, never the pane lifecycle.
     func installSessiondTerminal(_ terminal: SessiondPaneTerminal) {
         if let current = sessiondTerminal {
             guard current.paneLocator != terminal.paneLocator else {
@@ -61,10 +49,7 @@ final class PaneView: NSView {
             terminalView.frame = contentView.bounds
             contentView.addSubview(terminalView)
             sessiondTerminal = terminal
-            // Surface a visible failure on the pane after bounded recovery
-            // instead of a silently frozen frame (fires on the main thread from
-            // the recovery timer). A renderer that is still reconnecting says
-            // so transiently, and only a loss retrying cannot fix latches.
+            // Surface a visible failure on the pane after bounded recovery instead of a silently frozen frame (fires on the main thread from the recovery timer). A renderer that is still reconnecting says so transiently, and only a loss retrying cannot fix latches.
             terminal.onDegraded = { [weak self] evidence in
                 self?.showRendererRecovering(evidence)
             }
@@ -112,8 +97,6 @@ final class PaneView: NSView {
         titleLabel.font = Theme.headerFont
         titleLabel.textColor = .labelColor
         titleLabel.toolTip = title
-        // Middle truncation keeps names tellable-apart under extreme squeeze:
-        // "ab…l"/"ab…y" instead of both collapsing to "ab…".
         titleLabel.lineBreakMode = .byTruncatingMiddle
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -134,9 +117,7 @@ final class PaneView: NSView {
         let closeButton = headerButton(symbol: "xmark", tooltip: "Close Pane",
                                        action: #selector(closeAction))
 
-        // AppKit may grow the window instead of truncating a label whose
-        // compression priority is 500 or higher. Keep both labels below that
-        // threshold; the detail still yields before the pane name.
+        // AppKit may grow the window instead of truncating a label whose compression priority is 500 or higher. Keep both labels below that threshold; the detail still yields before the pane name.
         let spacer = NSView()
         spacer.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
         spacer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
@@ -154,8 +135,7 @@ final class PaneView: NSView {
         }
         headerStack.setVisibilityPriority(.mustHold, for: statusIcon)
         headerStack.setVisibilityPriority(.mustHold, for: titleLabel)
-        // The detail label shrinks to nothing (truncating tail) rather than
-        // detaching, so mild squeezes lose characters, not whole fields.
+        // The detail label shrinks to nothing (truncating tail) rather than detaching, so mild squeezes lose characters, not whole fields.
         headerStack.setVisibilityPriority(.mustHold, for: detailLabel)
         headerStack.setVisibilityPriority(.mustHold, for: spacer)
         headerStack.setVisibilityPriority(NSStackView.VisibilityPriority(500), for: failureBadge)
@@ -197,16 +177,12 @@ final class PaneView: NSView {
             headerSeparator.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
 
             contentView.topAnchor.constraint(equalTo: headerSeparator.bottomAnchor),
-            // The status stroke occupies x/y 2...6 inside the pane. The terminal
-            // must receive only the pixels it can actually draw in; otherwise
-            // its negotiated grid includes edge glyphs hidden by the overlay.
+            // The status stroke occupies x/y 2...6 inside the pane. The terminal must receive only the pixels it can actually draw in; otherwise its negotiated grid includes edge glyphs hidden by the overlay.
             contentView.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 6),
             contentView.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor, constant: -6),
             contentView.bottomAnchor.constraint(equalTo: backgroundView.bottomAnchor, constant: -6),
         ])
 
-        // Status and focus are sibling overlays above the opaque background.
-        // Both pass every click through to the terminal below.
         headerView.wantsLayer = true
         statusBorder.translatesAutoresizingMaskIntoConstraints = false
         addSubview(statusBorder)
@@ -223,7 +199,6 @@ final class PaneView: NSView {
             focusRing.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // Double-click the header promotes (same command as menu/shortcut).
         let doubleClick = NSClickGestureRecognizer(target: self, action: #selector(promoteAction))
         doubleClick.numberOfClicksRequired = 2
         headerView.addGestureRecognizer(doubleClick)
@@ -234,7 +209,6 @@ final class PaneView: NSView {
         click.delaysPrimaryMouseButtonEvents = false
         addGestureRecognizer(click)
 
-        // Accessibility: one group per pane; actions mirror the command model.
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
         setAccessibilityLabel("\(title) pane")
@@ -251,24 +225,16 @@ final class PaneView: NSView {
         return button
     }
 
-    /// CGColors are resolved, not dynamic: re-resolve the header tint whenever
-    /// the pane switches between light and dark.
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyHeaderTint()
     }
 
-    // MARK: State rendering
-
-    /// Records a terminal failure and shows it. Main-thread only (both callers
-    /// fire from the main queue). Module-internal so the durability guard can
-    /// drive it without a live GPU surface.
     func showTerminalFailure(detail: String, badge: String, evidence: String) {
         terminalFailure = (detail, badge, evidence)
         applyTerminalFailure()
     }
 
-    /// Re-asserts the recorded failure over whatever the feed just wrote.
     private func applyTerminalFailure() {
         guard let terminalFailure else {
             applyTransientNotice()
@@ -280,16 +246,13 @@ final class PaneView: NSView {
         detailLabel.toolTip = terminalFailure.evidence
     }
 
-    /// The renderer is past its escalating budget but still reconnecting.
-    /// nil clears it, and it never touches the sticky give-up, which would
-    /// leave a dead-looking pane that is in fact recovering.
+    /// The renderer is past its escalating budget but still reconnecting. nil clears it, and it never touches the sticky give-up, which would leave a dead-looking pane that is in fact recovering.
     func showRendererRecovering(_ evidence: String?) {
         rendererRecovering = evidence
         applyTerminalFailure()
     }
 
-    /// Shows renderer recovery over the feed text, and puts the feed text back
-    /// when it clears. Never touches the failure badge.
+    /// Shows renderer recovery over the feed text, and puts the feed text back when it clears. Never touches the failure badge.
     private func applyTransientNotice() {
         if let rendererRecovering {
             detailLabel.stringValue = "renderer reconnecting…"
@@ -307,8 +270,7 @@ final class PaneView: NSView {
         detailLabel.stringValue = state.headerDescription
         detailLabel.toolTip = state.headerDescription
 
-        let appearance = FeedStatusMap.activity(
-            for: state.feedStatus, paneStatus: state.status).appearance
+        let appearance = state.activity.appearance
         var subdued = false
         if case .completed(let acknowledged) = state.status { subdued = acknowledged }
         let color = Theme.statusColor(for: appearance.color, subdued: subdued)
@@ -338,9 +300,7 @@ final class PaneView: NSView {
         window?.contentView?.setNeedsDisplay(frame)
     }
 
-    /// Amber pulse: a short bounded burst, then steady amber. Purely visual —
-    /// semantic state and attention never depend on it. Reduce Motion skips
-    /// straight to steady.
+    /// Amber pulse: a short bounded burst, then steady amber. Purely visual — semantic state and attention never depend on it. Reduce Motion skips straight to steady.
     private func startBoundedPulse() {
         guard !pulsing, !Theme.reduceMotion else { return }
         pulsing = true
@@ -355,11 +315,9 @@ final class PaneView: NSView {
         pulsing = false
     }
 
-    /// What this pane is actually rendering (smoke introspection).
     var currentFocusIndicator: PaneFocusIndicator { focusIndicator }
 
-    /// Driven by the window's REAL first responder and key state — never by the
-    /// last click. See `ProjectWindowController.refreshFocusIndicators()`.
+    /// Driven by the window's REAL first responder and key state — never by the last click. See `ProjectWindowController.refreshFocusIndicators()`.
     func setFocusIndicator(_ indicator: PaneFocusIndicator) {
         guard indicator != focusIndicator else { return }
         focusIndicator = indicator
@@ -375,7 +333,6 @@ final class PaneView: NSView {
         }
     }
 
-    /// Commits the complete hierarchy after a settled layout change.
     func commitCellGeometry() {
         layoutSubtreeIfNeeded()
     }
@@ -383,8 +340,6 @@ final class PaneView: NSView {
     func focusTerminal() {
         sessiondTerminal?.view?.focusExplicitly()
     }
-
-    // MARK: Actions (all routed through the shared command model)
 
     @objc private func promoteAction() {
         dispatch(.promotePane(paneID))

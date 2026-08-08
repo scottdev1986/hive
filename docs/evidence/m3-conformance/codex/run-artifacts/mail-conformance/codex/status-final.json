@@ -1,0 +1,62 @@
+{
+  "agents": [
+    {
+      "id": "3f5745b3-096d-46fe-a4ae-f0cfc509eacc",
+      "name": "david",
+      "tool": "codex",
+      "model": "gpt-5.3-codex-spark",
+      "category": "simple_coding",
+      "status": "idle",
+      "holdReason": null,
+      "holdResetAt": null,
+      "holdProviderRunId": null,
+      "quotaReservationId": "a67b16a7-e832-48c5-9415-9ba4f7fa5251",
+      "executionIdentity": {
+        "tool": "codex",
+        "model": "gpt-5.3-codex-spark",
+        "effort": "high"
+      },
+      "taskDescription": "At the first safe point, handle the mailbox for your exact assigned name. First call hive_update_status and preserve its mailBacklog result as the notice receipt. Then call hive_mail_poll for your own recipient name. Claim the returned control item and every returned work digest item with handlerId m3-safe-point. After each successful claim, try once to claim that same item with handlerId m3-competing and preserve the expected refusal. Complete each claimed item as completed, then call hive_mail_complete a second time for each with the same handlerId to prove replay. Finally call hive_mail_status for your own recipient and report the tool receipts exactly.",
+      "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project/.hive/worktrees/david",
+      "branch": "hive/david-at-the-first-safe-point-handle",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "51f864cdfa",
+        "subject": {
+          "kind": "agent",
+          "agentId": "3f5745b3-096d-46fe-a4ae-f0cfc509eacc"
+        },
+        "generation": 1,
+        "sessionId": "ses_019fc29b-bfeb-74e1-ad04-4dc72677b67a",
+        "hostKind": "sessiond",
+        "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+      },
+      "toolSessionId": "019fc29b-c0b5-7152-a2de-22cf2bc189b5",
+      "recoveryAttempts": 0,
+      "contextPct": 12,
+      "createdAt": "2026-08-02T13:13:34.955Z",
+      "lastEventAt": "2026-08-02T13:13:58.291Z",
+      "capabilityEpoch": 0,
+      "readOnly": true,
+      "writeRevoked": false,
+      "graphifyCalls": 0
+    }
+  ],
+  "memory": {
+    "embeddings": {
+      "provider": "local",
+      "model": "bge-small-en-v1.5",
+      "state": "pending",
+      "runtimeDir": "/private/tmp/hvqa-dr/tools/embeddings",
+      "vectors": {
+        "articles": 0,
+        "facts": 0,
+        "total": 0
+      }
+    }
+  },
+  "terminalWrites": {
+    "total": 0,
+    "bySession": {}
+  }
+}

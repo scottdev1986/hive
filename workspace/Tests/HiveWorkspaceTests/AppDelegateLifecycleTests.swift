@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import HiveWorkspace
 import WorkspaceCore
+@testable import WorkspaceQAKit
 
 @MainActor
 final class AppDelegateLifecycleTests: XCTestCase {
@@ -75,9 +76,8 @@ final class AppDelegateLifecycleTests: XCTestCase {
         let state = ProjectState(projectID: "project", displayName: "Project")
         let controller = ProjectWindowController(
             state: state, attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp", hivePath: "/usr/bin/false", daemonPort: 1,
-            orchestrator: "claude",
-            instanceID: "instance", instanceHome: "/tmp")
+            hivePath: "/usr/bin/false", daemonPort: 1,
+            instanceHome: "/tmp")
         controller.window?.isReleasedWhenClosed = false
         defer { controller.close() }
         let locator = AgentSessionLocator(
@@ -126,6 +126,82 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertTrue(message.contains("sessionLocator"))
     }
 
+    func testStrictFeedSurfacesNonJSONOutput() async throws {
+        let feed = FeedClient(executable: "/bin/echo", arguments: ["not-json"])
+        let surfaced = expectation(description: "non-JSON feed output")
+        var message = ""
+        feed.onMalformedLine = {
+            message = $0
+            surfaced.fulfill()
+        }
+        defer { feed.stop() }
+
+        try feed.start()
+        await fulfillment(of: [surfaced], timeout: 1)
+
+        XCTAssertEqual(message, "workspace-feed envelope could not be decoded")
+    }
+
+    func testStrictFeedSurfacesInvalidUTF8() async throws {
+        let feed = FeedClient(executable: "/usr/bin/printf", arguments: ["\\377\\n"])
+        let surfaced = expectation(description: "invalid UTF-8 feed output")
+        var message = ""
+        feed.onMalformedLine = {
+            message = $0
+            surfaced.fulfill()
+        }
+        defer { feed.stop() }
+
+        try feed.start()
+        await fulfillment(of: [surfaced], timeout: 1)
+
+        XCTAssertEqual(message, "workspace-feed emitted invalid UTF-8")
+    }
+
+    func testFreshShellPublishesEmptyVisibilityBeforeFirstAgentAdmission() throws {
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: temporary, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+
+        let receipt = temporary.appendingPathComponent("inventory.json")
+        let feedExecutable = temporary.appendingPathComponent("capture-feed")
+        try """
+        #!/bin/sh
+        script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+        IFS= read -r inventory
+        printf '%s\\n' "$inventory" > "$script_dir/inventory.json"
+        """.write(to: feedExecutable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: feedExecutable.path)
+
+        var config = completeConfig()
+        config.projectDirectory = temporary.path
+        config.instanceHome = temporary.path
+        config.feedOverride = feedExecutable.path
+        let launch = try XCTUnwrap(WorkspaceShellLaunch(
+            arguments: [WorkspaceShellLaunch.liveFlag], fixtureState: nil))
+        let delegate = WorkspaceShellDelegate(config: config, launch: launch)
+        let workbench = LiveRunWorkbenchView(terminalFactory: nil)
+        delegate.startLiveRunFeed(workbench: workbench)
+        defer {
+            delegate.applicationWillTerminate(Notification(
+                name: NSApplication.willTerminateNotification))
+        }
+
+        let deadline = Date().addingTimeInterval(1)
+        while !FileManager.default.fileExists(atPath: receipt.path), Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        let data = try Data(contentsOf: receipt)
+        let inventory = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(inventory["inventoryRevision"] as? String, "1")
+        XCTAssertEqual((inventory["terminals"] as? [Any])?.count, 0)
+    }
+
     func testTrackedMenuIsCancelledWhenTheInstanceCloses() {
         _ = NSApplication.shared
         let owner = AppDelegate(config: LaunchConfig())
@@ -138,26 +214,31 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(menu.cancellationCount, 1)
     }
 
-    func testExhaustedFeedRetriesCloseSurfacesBeforeTermination() {
+    /// Regression (fleet death 2026-08-02): a feed that never comes back must
+    /// NEVER terminate the workspace or start the fleet stop — a status-poll
+    /// timeout is an absent heartbeat, not positive evidence of death. The
+    /// workspace stays up in its visible disconnected state and keeps retrying
+    /// with the backoff held at its ceiling. Positive control: a user quit
+    /// still stops the fleet.
+    func testFeedRestartExhaustionNeverTerminatesOrStopsTheFleet() {
         _ = NSApplication.shared
-        let owner = AppDelegate(config: LaunchConfig())
-        let menu = RecordingMenu(title: "Tracked")
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 120, height: 80),
-            styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.orderFront(nil)
-        NotificationCenter.default.post(
-            name: NSMenu.didBeginTrackingNotification, object: menu)
-        var didTerminate = false
+        let owner = AppDelegate(config: completeConfig())
+        var delays: [TimeInterval] = []
+        owner.enqueueFeedRestart = { delay, _ in delays.append(delay) }
+        var stopRequests = 0
+        owner.stopForTermination = { _ in stopRequests += 1 }
 
-        owner.terminateAfterFeedFailure {
-            XCTAssertEqual(menu.cancellationCount, 1)
-            XCTAssertFalse(window.isVisible)
-            didTerminate = true
-        }
+        // Well past the old five-restart kill budget, no snapshot ever arrives.
+        for _ in 0..<8 { owner.scheduleFeedRestart() }
 
-        XCTAssertTrue(didTerminate)
+        XCTAssertEqual(delays, [1, 2, 4, 8, 15, 15, 15, 15],
+                       "retries continue with the backoff held at its ceiling")
+        XCTAssertNil(owner.terminationReason, "a lost feed is not a quit reason")
+        XCTAssertEqual(stopRequests, 0, "feed failure never starts the fleet stop")
+
+        // Positive control: the user's own quit keeps its total shutdown.
+        XCTAssertEqual(owner.applicationShouldTerminate(.shared), .terminateNow)
+        XCTAssertEqual(stopRequests, 1)
     }
 
     func testLastWindowClosedRecordsItsOwnTerminationReason() {
@@ -166,21 +247,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
         XCTAssertTrue(owner.applicationShouldTerminateAfterLastWindowClosed(.shared))
         XCTAssertEqual(owner.terminationReason, .lastWindowClosed)
-    }
-
-    /// A self-quit closes its own windows on the way out, which trips the
-    /// last-window-closed callback. The recorded reason has to stay the cause,
-    /// not become the consequence — otherwise an investigator reads a
-    /// feed-failure death as a deliberate window close.
-    func testFeedFailureKeepsItsReasonWhenClosingWindowsTripsLastWindowClosed() {
-        _ = NSApplication.shared
-        let owner = AppDelegate(config: LaunchConfig())
-
-        owner.terminateAfterFeedFailure {}
-        XCTAssertEqual(owner.terminationReason, .feedFailure)
-
-        _ = owner.applicationShouldTerminateAfterLastWindowClosed(.shared)
-        XCTAssertEqual(owner.terminationReason, .feedFailure)
     }
 
     /// A quit no in-app path claimed, with no Apple Event in flight, is the
@@ -252,7 +318,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
         pane.update(state: PaneState(
             id: "worker", kind: .agent, title: "updated-title",
-            feedStatus: "working", status: .running))
+            feedStatus: "working", status: .running, headerDetail: "working"))
         XCTAssertEqual(title.toolTip, "updated-title")
         XCTAssertTrue(textFields(in: pane).contains {
             $0.stringValue == "working" && $0.toolTip == "working"
@@ -277,6 +343,8 @@ final class AppDelegateLifecycleTests: XCTestCase {
     private func completeConfig() -> LaunchConfig {
         var config = LaunchConfig()
         config.projectDirectory = "/tmp/project"
+        config.projectID = "project-fixture"
+        config.projectName = "project"
         config.port = 1
         config.instanceID = "instance"
         config.instanceHome = "/tmp/hive"

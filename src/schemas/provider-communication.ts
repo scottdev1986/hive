@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CapabilityProviderSchema } from "./capability";
+import { TURN_STATES } from "./status-envelope";
 
 export const ProviderEventSchema = z
   .strictObject({
@@ -62,8 +63,6 @@ export const ActivityEvidenceRefSchema = z
   })
   .readonly();
 
-export type ActivityEvidenceRef = z.infer<typeof ActivityEvidenceRefSchema>;
-
 export const ActivitySnapshotSchema = z
   .strictObject({
     agentId: z.string().min(1),
@@ -79,7 +78,7 @@ export const ActivitySnapshotSchema = z
       "unmanaged",
       "unknown",
     ]),
-    turnState: z.enum(["idle", "working", "waiting", "unknown"]),
+    turnState: z.enum(TURN_STATES),
     phase: z.enum([
       "planning",
       "editing",
@@ -91,7 +90,8 @@ export const ActivitySnapshotSchema = z
     summary: z.string().nullable(),
     evidence: z.array(ActivityEvidenceRefSchema),
     providerEventThrough: z.string().nullable(),
-    outputThrough: z.string(),
+    /** Null when the terminal could not be inspected; never a manufactured 0. */
+    outputThrough: z.string().nullable(),
     completeness: z.enum(["complete", "gap", "unknown"]),
   })
   .readonly();

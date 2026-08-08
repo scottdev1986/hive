@@ -20,10 +20,6 @@ enum SessionProtocolGenerated {
         "ERROR": 0x0003,
         "PING": 0x0004,
         "PONG": 0x0005,
-        "CREATE_BEGIN": 0x0100,
-        "CREATE_INPUT": 0x0101,
-        "CREATE_COMMIT": 0x0102,
-        "CREATED": 0x0103,
         "LIST": 0x0110,
         "LISTED": 0x0111,
         "INSPECT": 0x0112,
@@ -47,7 +43,7 @@ enum SessionProtocolGenerated {
         "ATTACH_READY": 0x020a,
         "CLAIM_ACQUIRE": 0x0300,
         "CLAIM_RESULT": 0x0301,
-        "HUMAN_INPUT": 0x0302,
+        "USER_INPUT": 0x0302,
         "CLAIM_RELEASE": 0x0303,
         "GESTURE_INPUT": 0x0304,
         "INPUT_SUBMIT": 0x0305,
@@ -58,9 +54,11 @@ enum SessionProtocolGenerated {
         "AUTOMATION_CANCEL": 0x0314,
         "HOST_REGISTER": 0x0400,
         "HOST_ADOPT": 0x0401,
-        "GRANT_REGISTER": 0x0402
+        "GRANT_REGISTER": 0x0402,
+        "HOST_CAPTURE": 0x0403,
+        "HOST_CAPTURED": 0x0404
     ]
-    static let rawFrameTypes: Set<String> = ["CREATE_INPUT", "SNAPSHOT_BYTES", "OUTPUT", "HUMAN_INPUT", "AUTOMATION_CHUNK"]
+    static let rawFrameTypes: Set<String> = ["SNAPSHOT_BYTES", "OUTPUT", "USER_INPUT", "AUTOMATION_CHUNK"]
 
     /// HVTCP001 checkpoint envelope (CHECKPOINT_HEADER).
     enum Checkpoint {

@@ -1,0 +1,351 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-recall-r5",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-recall-r5",
+      "freshness": "live",
+      "purpose": "explicit-recall",
+      "query": "retention",
+      "state": "ok",
+      "semantic": "hybrid",
+      "warning": null,
+      "note": "Results carry scope, source status, and rank.",
+      "budget": 800,
+      "tokens": 96,
+      "truncated": false,
+      "omitted": 0,
+      "omittedPitfalls": 0,
+      "omittedArticles": 0,
+      "partitions": [
+        {
+          "class": "pitfall",
+          "reservedTokens": 400,
+          "usedTokens": 0,
+          "kept": 0,
+          "omitted": 0
+        },
+        {
+          "class": "article",
+          "reservedTokens": 400,
+          "usedTokens": 96,
+          "kept": 1,
+          "omitted": 0
+        }
+      ],
+      "rows": [
+        {
+          "rank": 1,
+          "class": "article",
+          "scope": "repo",
+          "topic": "memory",
+          "id": "retention-policy",
+          "date": "2026-07-30",
+          "title": "Retention policy",
+          "snippet": "Aged events are deleted while facts remain.",
+          "status": "verified",
+          "flag": null
+        }
+      ],
+      "triggerPhrase": null,
+      "mutation": "none",
+      "highWaterAdvanced": false
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-recall-r5",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-29T20:00:00.000Z",
+      "sourceRevision": "memory-recall-r5",
+      "freshness": "cached",
+      "purpose": "explicit-recall",
+      "query": "retention",
+      "state": "ok",
+      "semantic": "hybrid",
+      "warning": null,
+      "note": "Results carry scope, source status, and rank.",
+      "budget": 800,
+      "tokens": 96,
+      "truncated": false,
+      "omitted": 0,
+      "omittedPitfalls": 0,
+      "omittedArticles": 0,
+      "partitions": [
+        {
+          "class": "pitfall",
+          "reservedTokens": 400,
+          "usedTokens": 0,
+          "kept": 0,
+          "omitted": 0
+        },
+        {
+          "class": "article",
+          "reservedTokens": 400,
+          "usedTokens": 96,
+          "kept": 1,
+          "omitted": 0
+        }
+      ],
+      "rows": [
+        {
+          "rank": 1,
+          "class": "article",
+          "scope": "repo",
+          "topic": "memory",
+          "id": "retention-policy",
+          "date": "2026-07-30",
+          "title": "Retention policy",
+          "snippet": "Aged events are deleted while facts remain.",
+          "status": "verified",
+          "flag": null
+        }
+      ],
+      "triggerPhrase": null,
+      "mutation": "none",
+      "highWaterAdvanced": false
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-recall-r5",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-29T20:00:00.000Z",
+      "sourceRevision": "memory-recall-r5",
+      "freshness": "cached",
+      "purpose": "explicit-recall",
+      "query": "retention",
+      "state": "ok",
+      "semantic": "hybrid",
+      "warning": null,
+      "note": "Results carry scope, source status, and rank.",
+      "budget": 800,
+      "tokens": 96,
+      "truncated": false,
+      "omitted": 0,
+      "omittedPitfalls": 0,
+      "omittedArticles": 0,
+      "partitions": [
+        {
+          "class": "pitfall",
+          "reservedTokens": 400,
+          "usedTokens": 0,
+          "kept": 0,
+          "omitted": 0
+        },
+        {
+          "class": "article",
+          "reservedTokens": 400,
+          "usedTokens": 96,
+          "kept": 1,
+          "omitted": 0
+        }
+      ],
+      "rows": [
+        {
+          "rank": 1,
+          "class": "article",
+          "scope": "repo",
+          "topic": "memory",
+          "id": "retention-policy",
+          "date": "2026-07-30",
+          "title": "Retention policy",
+          "snippet": "Aged events are deleted while facts remain.",
+          "status": "verified",
+          "flag": null
+        }
+      ],
+      "triggerPhrase": null,
+      "mutation": "none",
+      "highWaterAdvanced": false
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-recall-r5",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "memory-recall-r5-competing"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-recall-r5",
+      "freshness": "live",
+      "purpose": "explicit-recall",
+      "query": "retention",
+      "state": "ok",
+      "semantic": "hybrid",
+      "warning": null,
+      "note": "Results carry scope, source status, and rank.",
+      "budget": 800,
+      "tokens": 96,
+      "truncated": false,
+      "omitted": 0,
+      "omittedPitfalls": 0,
+      "omittedArticles": 0,
+      "partitions": [
+        {
+          "class": "pitfall",
+          "reservedTokens": 400,
+          "usedTokens": 0,
+          "kept": 0,
+          "omitted": 0
+        },
+        {
+          "class": "article",
+          "reservedTokens": 400,
+          "usedTokens": 96,
+          "kept": 1,
+          "omitted": 0
+        }
+      ],
+      "rows": [
+        {
+          "rank": 1,
+          "class": "article",
+          "scope": "repo",
+          "topic": "memory",
+          "id": "retention-policy",
+          "date": "2026-07-30",
+          "title": "Retention policy",
+          "snippet": "Aged events are deleted while facts remain.",
+          "status": "verified",
+          "flag": null
+        }
+      ],
+      "triggerPhrase": null,
+      "mutation": "none",
+      "highWaterAdvanced": false
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-recall-r5",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "memory-recall-r5-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-recall-r5",
+      "freshness": "live",
+      "purpose": "explicit-recall",
+      "query": "retention",
+      "state": "ok",
+      "semantic": "hybrid",
+      "warning": null,
+      "note": "Results carry scope, source status, and rank.",
+      "budget": 800,
+      "tokens": 96,
+      "truncated": false,
+      "omitted": 0,
+      "omittedPitfalls": 0,
+      "omittedArticles": 0,
+      "partitions": [
+        {
+          "class": "pitfall",
+          "reservedTokens": 400,
+          "usedTokens": 0,
+          "kept": 0,
+          "omitted": 0
+        },
+        {
+          "class": "article",
+          "reservedTokens": 400,
+          "usedTokens": 96,
+          "kept": 1,
+          "omitted": 0
+        }
+      ],
+      "rows": [
+        {
+          "rank": 1,
+          "class": "article",
+          "scope": "repo",
+          "topic": "memory",
+          "id": "retention-policy",
+          "date": "2026-07-30",
+          "title": "Retention policy",
+          "snippet": "Aged events are deleted while facts remain.",
+          "status": "verified",
+          "flag": null
+        }
+      ],
+      "triggerPhrase": null,
+      "mutation": "none",
+      "highWaterAdvanced": false
+    }
+  }
+]

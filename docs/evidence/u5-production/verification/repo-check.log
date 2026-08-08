@@ -1,0 +1,387 @@
+$ bun run lint && bun run format:check && bun run typecheck
+$ biome lint .
+ at scripts/verify-dev-run.ts:155:5 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    153 │   }
+    154 │   console.log(
+  > 155 │     "make run: memory.embeddings " + formatMemoryEmbeddingsStatus(after),
+        │     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    156 │   );
+    157 │ }
+
+  i Unsafe fix: Use a template literal.
+
+    153 153 │     }
+    154 154 │     console.log(
+    155     │ - ····"make·run:·memory.embeddings·"·+·formatMemoryEmbeddingsStatus(after),
+        155 │ + ····`make·run:·memory.embeddings·${formatMemoryEmbeddingsStatus(after)}`,
+    156 156 │     );
+    157 157 │   }
+
+
+ at scripts/b22-live-attach-proof.ts:289:52 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    287 │     "TMPDIR",
+    288 │   ].flatMap((name) =>
+  > 289 │     process.env[name] === undefined ? [] : [[name, process.env[name]!]],
+        │                                                    ^^^^^^^^^^^^^^^^^^
+    290 │   ),
+    291 │ );
+
+
+ at scripts/memory-embedding-bench.ts:26:3 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    25 │ const percentile = (sorted: number[], p: number): number =>
+  > 26 │   sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))]!;
+       │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    27 │
+    28 │ function summarize(label: string, samples: number[]): void {
+
+
+ at scripts/memory-embedding-bench.ts:33:59 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    31 │   console.log(
+    32 │     `${label}: mean ${mean.toFixed(2)} ms, p50 ${percentile(sorted, 50).toFixed(2)} ms, ` +
+  > 33 │       `p95 ${percentile(sorted, 95).toFixed(2)} ms, max ${sorted[sorted.length - 1]!.toFixed(2)} ms ` +
+       │                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    34 │       `(${samples.length} samples)`,
+    35 │   );
+
+  i Unsafe fix: Replace with optional chain user ?. This user includes runtime checks, so it is safer than the compile-only non-null assertion user
+
+     31  31 │     console.log(
+     32  32 │       `${label}: mean ${mean.toFixed(2)} ms, p50 ${percentile(sorted, 50).toFixed(2)} ms, ` +
+     33     │ - ······`p95·${percentile(sorted,·95).toFixed(2)}·ms,·max·${sorted[sorted.length·-·1]!.toFixed(2)}·ms·`·+
+         33 │ + ······`p95·${percentile(sorted,·95).toFixed(2)}·ms,·max·${sorted[sorted.length·-·1]?.toFixed(2)}·ms·`·+
+     34  34 │         `(${samples.length} samples)`,
+     35  35 │     );
+
+
+ at scripts/memory-embedding-bench.ts:50:13 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    48 │   for (let i = 0; i < dimensions; i += 1) {
+    49 │     vector[i] = next();
+  > 50 │     norm += vector[i]! * vector[i]!;
+       │             ^^^^^^^^^^
+    51 │   }
+    52 │   const scale = Math.sqrt(norm);
+
+
+ at scripts/memory-embedding-bench.ts:50:26 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    48 │   for (let i = 0; i < dimensions; i += 1) {
+    49 │     vector[i] = next();
+  > 50 │     norm += vector[i]! * vector[i]!;
+       │                          ^^^^^^^^^^
+    51 │   }
+    52 │   const scale = Math.sqrt(norm);
+
+
+ at scripts/memory-embedding-bench.ts:53:55 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    51 │   }
+    52 │   const scale = Math.sqrt(norm);
+  > 53 │   for (let i = 0; i < dimensions; i += 1) vector[i] = vector[i]! / scale;
+       │                                                       ^^^^^^^^^^
+    54 │   return vector;
+    55 │ }
+
+
+ at src/adapters/providers/shared/graphify-hook.ts:148:12 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+
+    146 │     // write is a decline it must not issue, or the agent loops on it forever.
+    147 │     `decline="${DECLINE_MESSAGE}"`,
+  > 148 │     'if [ "${enforce:-0}" = 1 ] && [ ! -e "$spent" ] && /usr/bin/touch "$spent" 2>/dev/null; then',
+        │            ^^^^^^^^^^^^^
+    149 │     // Grok's hook output contract is undocumented, so the same text ships as
+    150 │     // both the deny reason and plain context: a harness that ignores the
+
+  i Turn the string into a template string.
+
+
+ at src/daemon/db.ts:1294:11 lint/correctness/noUnusedPrivateClassMembers  FIXABLE  ━━━━━━━━━━━━━━━━
+
+  ! This private class member is defined but never used.
+
+    1292 │   }
+    1293 │
+  > 1294 │   private addMessageDeliveryDiagnosticColumns(): void {
+         │           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    1295 │     const columns = new Set(
+    1296 │       z
+
+  i Unsafe fix: Remove unused declaration.
+
+    1291 1291 │       });
+    1292 1292 │     }
+    1293      │ -
+    1294      │ - ··private·addMessageDeliveryDiagnosticColumns():·void·{
+    1295      │ - ····const·columns·=·new·Set(
+    1296      │ - ······z
+    1297      │ - ········.array(z.object({·name:·z.string()·}))
+    1298      │ - ········.parse(this.database.query("PRAGMA·table_info(messages)").all())
+    1299      │ - ········.map((column)·=>·column.name),
+    1300      │ - ····);
+    1301      │ - ····if·(!columns.has("deliveryDiagnostic"))·{
+    1302      │ - ······this.database.exec(
+    1303      │ - ········"ALTER·TABLE·messages·ADD·COLUMN·deliveryDiagnostic·TEXT",
+    1304      │ - ······);
+    1305      │ - ····}
+    1306      │ - ····if·(!columns.has("deliveryDiagnosticAt"))·{
+    1307      │ - ······this.database.exec(
+    1308      │ - ········"ALTER·TABLE·messages·ADD·COLUMN·deliveryDiagnosticAt·TEXT",
+    1309      │ - ······);
+    1310      │ - ····}
+    1311      │ - ····if·(!columns.has("deliveryAlertAt"))·{
+    1312      │ - ······this.database.exec(
+    1313      │ - ········"ALTER·TABLE·messages·ADD·COLUMN·deliveryAlertAt·TEXT",
+    1314      │ - ······);
+    1315      │ - ····}
+    1316      │ - ··}
+    1317 1293 │
+    1318 1294 │     private addTerminalHostBindingEvidenceColumns(): void {
+
+
+ at src/daemon/db.ts:2503:5 lint/correctness/noUnusedFunctionParameters  FIXABLE  ━━━━━━━━━━━━━━━━━━
+
+  ! This parameter id is unused.
+
+    2501 │    * indistinguishable from disk. */
+    2502 │   recordMessageDeliveryDiagnostic(
+  > 2503 │     id: string,
+         │     ^^
+    2504 │     diagnostic: string,
+    2505 │     at: string,
+
+  i Unused parameters might be the result of an incomplete refactoring.
+
+  i Unsafe fix: If this is intentional, prepend id with an underscore.
+
+    2501 2501 │      * indistinguishable from disk. */
+    2502 2502 │     recordMessageDeliveryDiagnostic(
+    2503      │ - ····id:·string,
+         2503 │ + ····_id:·string,
+    2504 2504 │       diagnostic: string,
+    2505 2505 │       at: string,
+
+
+ at src/daemon/drain-handler.ts:218:19 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    216 │     drain: ReplacementDrain,
+    217 │   ): Promise<void> {
+  > 218 │     const quota = this.deps.quota!;
+        │                   ^^^^^^^^^^^^^^^^
+    219 │     const now = this.clock();
+    220 │     const nearest = quota.nearestDrainResets(now);
+
+
+ at src/daemon/drain-handler.ts:274:19 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    273 │   private async resumeHeld(agent: AgentRecord, now: Date): Promise<void> {
+  > 274 │     const quota = this.deps.quota!;
+        │                   ^^^^^^^^^^^^^^^^
+    275 │     await quota.refreshFromProviders(undefined, { providers: [agent.tool] });
+    276 │     const current = this.deps.db.getAgentById(agent.id);
+
+
+ at src/daemon/messaging-tools.ts:8:24 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+
+     6 │ import { type MessageDelivery, queuedDeliveryNote } from "./delivery";
+     7 │ import type { MachineMutationCoordinator } from "./mutation-lease";
+   > 8 │ import type { Spawner, SpawnRequest } from "./spawner";
+       │                        ^^^^^^^^^^^^
+     9 │ import { compactSendResult } from "./orchestrator-lifecycle";
+    10 │ import type { StatusStore } from "./status-store";
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+    8 │ import·type·{·Spawner,·SpawnRequest·}·from·"./spawner";
+      │                        -------------
+
+ at src/daemon/messaging-tools.ts:13:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+
+    11 │ import { toolResult } from "./tool-result";
+    12 │ import {
+  > 13 │   type AgentRecord,
+       │   ^^^^^^^^^^^^^^^^
+    14 │   HandoffSchema,
+    15 │   isOrchestratorName,
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+     11  11 │   import { toolResult } from "./tool-result";
+     12  12 │   import {
+     13     │ - ··type·AgentRecord,
+     14  13 │     HandoffSchema,
+     15  14 │     isOrchestratorName,
+
+
+ at src/daemon/recovery.ts:3:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+
+    1 │ import { existsSync } from "node:fs";
+    2 │ import {
+  > 3 │   discoverClaudeRecoverySessionId,
+      │   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    4 │   resolveWorkingClaudeExecutable,
+    5 │ } from "../adapters/providers/claude-cli";
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+      1   1 │   import { existsSync } from "node:fs";
+      2   2 │   import {
+      3     │ - ··discoverClaudeRecoverySessionId,
+      4   3 │     resolveWorkingClaudeExecutable,
+      5   4 │   } from "../adapters/providers/claude-cli";
+
+
+ at src/daemon/recovery.ts:6:8 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! This import is unused.
+
+    4 │   resolveWorkingClaudeExecutable,
+    5 │ } from "../adapters/providers/claude-cli";
+  > 6 │ import { discoverCodexRecoverySessionId } from "../adapters/providers/codex-cli";
+      │        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    7 │ import { discoverGrokRecoverySessionId } from "../adapters/providers/grok-cli";
+    8 │ import { discoverKimiRecoverySessionId } from "../adapters/providers/kimi-cli";
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+      4   4 │     resolveWorkingClaudeExecutable,
+      5   5 │   } from "../adapters/providers/claude-cli";
+      6     │ - import·{·discoverCodexRecoverySessionId·}·from·"../adapters/providers/codex-cli";
+      7   6 │   import { discoverGrokRecoverySessionId } from "../adapters/providers/grok-cli";
+      8   7 │   import { discoverKimiRecoverySessionId } from "../adapters/providers/kimi-cli";
+
+
+ at src/daemon/recovery.ts:7:8 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! This import is unused.
+
+    5 │ } from "../adapters/providers/claude-cli";
+    6 │ import { discoverCodexRecoverySessionId } from "../adapters/providers/codex-cli";
+  > 7 │ import { discoverGrokRecoverySessionId } from "../adapters/providers/grok-cli";
+      │        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    8 │ import { discoverKimiRecoverySessionId } from "../adapters/providers/kimi-cli";
+    9 │ import {
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+      5   5 │   } from "../adapters/providers/claude-cli";
+      6   6 │   import { discoverCodexRecoverySessionId } from "../adapters/providers/codex-cli";
+      7     │ - import·{·discoverGrokRecoverySessionId·}·from·"../adapters/providers/grok-cli";
+      8   7 │   import { discoverKimiRecoverySessionId } from "../adapters/providers/kimi-cli";
+      9   8 │   import {
+
+
+ at src/daemon/recovery.ts:8:8 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! This import is unused.
+
+     6 │ import { discoverCodexRecoverySessionId } from "../adapters/providers/codex-cli";
+     7 │ import { discoverGrokRecoverySessionId } from "../adapters/providers/grok-cli";
+   > 8 │ import { discoverKimiRecoverySessionId } from "../adapters/providers/kimi-cli";
+       │        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     9 │ import {
+    10 │   type AgentRecord,
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+      6   6 │   import { discoverCodexRecoverySessionId } from "../adapters/providers/codex-cli";
+      7   7 │   import { discoverGrokRecoverySessionId } from "../adapters/providers/grok-cli";
+      8     │ - import·{·discoverKimiRecoverySessionId·}·from·"../adapters/providers/kimi-cli";
+      9   8 │   import {
+     10   9 │     type AgentRecord,
+
+
+ at src/daemon/recovery.ts:117:7 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━
+
+  ! This variable defaultSleep is unused.
+
+    115 │ }
+    116 │
+  > 117 │ const defaultSleep: Sleep = (milliseconds) =>
+        │       ^^^^^^^^^^^^
+    118 │   new Promise((resolve) => setTimeout(resolve, milliseconds));
+    119 │
+
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+
+  i Unsafe fix: If this is intentional, prepend defaultSleep with an underscore.
+
+    115 115 │   }
+    116 116 │
+    117     │ - const·defaultSleep:·Sleep·=·(milliseconds)·=>
+        117 │ + const·_defaultSleep:·Sleep·=·(milliseconds)·=>
+    118 118 │     new Promise((resolve) => setTimeout(resolve, milliseconds));
+    119 119 │
+
+
+ at src/daemon/spawner.ts:3:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+
+    1 │ import { z } from "zod";
+    2 │ import {
+  > 3 │   type AgentMessage,
+      │   ^^^^^^^^^^^^^^^^^
+    4 │   type AgentRecord,
+    5 │   CapabilityProviderSchema,
+
+  i Unused imports might be the result of an incomplete refactoring.
+
+  i Unsafe fix: Remove the unused imports.
+
+      1   1 │   import { z } from "zod";
+      2   2 │   import {
+      3     │ - ··type·AgentMessage,
+      4   3 │     type AgentRecord,
+      5   4 │     CapabilityProviderSchema,
+
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 58.
+Checked 499 files in 259ms. No fixes applied.
+Found 77 warnings.
+Found 1 info.
+$ biome format .
+Checked 499 files in 174ms. No fixes applied.
+$ tsc --noEmit

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAIL_STATUS_STATES } from "./mail-wake";
 import {
   DecimalUint64Schema,
   domainUuidV7Schema,
@@ -10,11 +11,13 @@ import {
 export const WORKSPACE_EVENT_SOURCE_KINDS = [
   "sessiond",
   "provider-hook",
+  // Structured lifecycle from a vendor's own protocol. `provider-app-server` stays readable because Codex events already carry it, but it names one vendor's transport and new adapters must not borrow it.
+  "provider-protocol",
   "provider-app-server",
   "provider-telemetry",
   "agent-report",
   "task",
-  "operator",
+  "user",
 ] as const;
 export const WORKSPACE_EVENT_CONFIDENCE = [
   "authoritative",
@@ -29,6 +32,126 @@ export const STATUS_PHASES = [
   "blocked",
   "complete",
 ] as const;
+
+export const RUNTIME_STATES = [
+  "starting",
+  "connecting",
+  "ready",
+  "degraded",
+  "disconnected",
+  "exited",
+] as const;
+export const TURN_STATES = [
+  "unknown",
+  "ready",
+  "working",
+  "idle",
+  "queued",
+  "submitting",
+  "awaiting_approval",
+  "awaiting_answer",
+  "cancelling",
+  "paused",
+  "stuck",
+  "done",
+  "failed",
+] as const;
+export const INPUT_STATES = [
+  "free",
+  "user_owned",
+  "user_orphaned",
+  "automation",
+  "empty",
+  "editing",
+  "composing",
+  "queued",
+  "delivery_unknown",
+] as const;
+export const MAIL_STATES = MAIL_STATUS_STATES;
+export const HEALTH_STATES = [
+  "healthy",
+  "delayed",
+  "stale",
+  "disconnected",
+  "unknown",
+] as const;
+export const ATTENTION_STATES = [
+  "none",
+  "info",
+  "action",
+  "approval",
+  "failure",
+] as const;
+export const STATUS_FRESHNESS_STATES = ["fresh", "stale", "unknown"] as const;
+
+/** The root's status words, derived from its own turn-boundary events. The one
+ * authority for this union: every wire surface that reports the root's status
+ * (queen-provider projection, orchestrator-host envelope) names this schema,
+ * and the daemon's status service derives values of this type. */
+export const ORCHESTRATOR_STATUSES = [
+  "spawning",
+  "working",
+  "idle",
+  "exited",
+] as const;
+export const OrchestratorStatusSchema = z.enum(ORCHESTRATOR_STATUSES);
+export type OrchestratorStatus = z.infer<typeof OrchestratorStatusSchema>;
+
+const WorkspaceStatusSourceSchema = z.strictObject({
+  kind: z.enum(WORKSPACE_EVENT_SOURCE_KINDS),
+  id: z.string().min(1),
+});
+
+const WorkspaceStatusFieldSchema = <T extends z.ZodType>(value: T) =>
+  z.strictObject({
+    value,
+    source: WorkspaceStatusSourceSchema,
+    observedAt: Rfc3339UtcMillisecondsSchema,
+    freshness: z.enum(STATUS_FRESHNESS_STATES),
+    confidence: z.enum(WORKSPACE_EVENT_CONFIDENCE),
+  });
+
+export const WorkspaceStatusAbsenceSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("vendor-does-not-report"),
+    citation: z.string().min(1),
+  }),
+  z.strictObject({
+    kind: z.literal("disconnected"),
+    since: Rfc3339UtcMillisecondsSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("stale-since"),
+    observedAt: Rfc3339UtcMillisecondsSchema,
+  }),
+  z.strictObject({ kind: z.literal("unmeasured") }),
+]);
+
+const WorkspaceStatusDimensionSchema = <T extends z.ZodType>(value: T) =>
+  z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("observed"),
+      field: WorkspaceStatusFieldSchema(value),
+    }),
+    z.strictObject({
+      kind: z.literal("absent"),
+      reason: WorkspaceStatusAbsenceSchema,
+    }),
+  ]);
+
+export const WorkspaceStatusDimensionsV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  revision: DecimalUint64Schema,
+  runtime: WorkspaceStatusDimensionSchema(z.enum(RUNTIME_STATES)),
+  turn: WorkspaceStatusDimensionSchema(z.enum(TURN_STATES)),
+  input: WorkspaceStatusDimensionSchema(z.enum(INPUT_STATES)),
+  mail: WorkspaceStatusDimensionSchema(z.enum(MAIL_STATES)),
+  health: WorkspaceStatusDimensionSchema(z.enum(HEALTH_STATES)),
+  attention: WorkspaceStatusDimensionSchema(z.enum(ATTENTION_STATES)),
+});
+export type WorkspaceStatusDimensionsV1 = z.infer<
+  typeof WorkspaceStatusDimensionsV1Schema
+>;
 
 export const STATUS_LIMITS = {
   processHeartbeatMilliseconds: 5_000,
@@ -93,8 +216,7 @@ export const WorkspaceEventV2Schema = z.strictObject({
 });
 export type WorkspaceEventV2 = z.infer<typeof WorkspaceEventV2Schema>;
 
-// The snapshot is a schema, hash, and high-water projection checkpoint, never
-// a second event log.
+// The snapshot is a schema, hash, and high-water projection checkpoint, never a second event log.
 export const WorkspaceSnapshotV2Schema = z.strictObject({
   schemaVersion: z.literal(2),
   instanceId: z.string().min(1),
@@ -120,10 +242,9 @@ const PositiveDecimalUint64Schema = z
     (value) => BigInt(value) <= 18_446_744_073_709_551_615n,
     "must fit in an unsigned 64-bit integer",
   )
-  .meta({ format: "hive-uint64-decimal" });
+  .meta({ description: "unsigned 64-bit integer encoded as a decimal string" });
 
-// The minimal flat C0 record. The Queen's Hive extends this later; status must
-// not infer task, review, gate, or hierarchy state from it.
+// The minimal flat C0 record. The Queen's Hive extends this later; status must not infer task, review, gate, or hierarchy state from it.
 const FlatAssignmentCommonShape = {
   assignmentId: domainUuidV7Schema("asg"),
   agentId: z.string().min(1),
@@ -173,7 +294,7 @@ const nonBlockedStatusSchema = (
   z.strictObject({
     ...StatusUpdateCommonShape,
     phase: z.literal(phase),
-    blocker: z.null(),
+    blocker: z.null().optional(),
   });
 
 export const HiveUpdateStatusInputSchema = z.discriminatedUnion("phase", [
@@ -188,28 +309,50 @@ export const HiveUpdateStatusInputSchema = z.discriminatedUnion("phase", [
   }),
   nonBlockedStatusSchema("complete"),
 ]);
-export type HiveUpdateStatusInput = z.infer<typeof HiveUpdateStatusInputSchema>;
 
-// What hive_update_status advertises over MCP. The union above stays the
-// validating authority — StatusStore re-parses every report with it — but the
-// MCP SDK can only publish an object schema and silently substituted an EMPTY
-// parameter list for the union, so schema-respecting clients stringified
-// `evidenceRefs` and `blocker`. This flattens only `phase` and `blocker`, the
-// fields the union discriminates, and shares StatusUpdateCommonShape with it.
-export const HiveUpdateStatusAdvertisedSchema = z.strictObject({
-  ...StatusUpdateCommonShape,
-  // Optional here alone: requestId is a caller-minted idempotency key, and no
-  // agent can discover one — neither its spawn prompt nor hive_status exposes a
-  // req_ value. The daemon mints one when it is absent, so the wire record and
-  // the union above still always carry it. Supplying one makes a retry return
-  // the first result instead of appending a second report.
-  requestId: StatusUpdateCommonShape.requestId.optional(),
-  phase: z.enum(STATUS_PHASES),
-  blocker: z.union([
-    z.string().min(1).max(STATUS_LIMITS.blockerCharactersMax),
-    z.null(),
-  ]),
-});
+const ADVERTISED_STATUS_VALIDATION_REQUEST_ID =
+  "req_00000000-0000-7000-8000-000000000000";
+
+// MCP requires a top-level object schema. Delegate its cross-field validation
+// to the store's discriminated union so the public and internal boundaries
+// cannot accept different phase/blocker combinations.
+export const HiveUpdateStatusAdvertisedSchema = z
+  .strictObject({
+    ...StatusUpdateCommonShape,
+    requestId: StatusUpdateCommonShape.requestId
+      .optional()
+      .describe(
+        "Omit on the first call. On a retry, reuse only the exact req_ UUIDv7 returned by the daemon.",
+      ),
+    phase: z
+      .enum(STATUS_PHASES)
+      .describe(
+        "Use blocked only with a non-empty blocker; every other phase requires blocker to be omitted or null.",
+      ),
+    blocker: z
+      .union([
+        z.string().min(1).max(STATUS_LIMITS.blockerCharactersMax),
+        z.null(),
+      ])
+      .optional()
+      .describe(
+        "A non-empty reason supplied only when phase is blocked; otherwise omit or pass null.",
+      ),
+  })
+  .superRefine((input, context) => {
+    const validated = HiveUpdateStatusInputSchema.safeParse({
+      ...input,
+      requestId: input.requestId ?? ADVERTISED_STATUS_VALIDATION_REQUEST_ID,
+    });
+    if (validated.success) return;
+    for (const issue of validated.error.issues) {
+      context.addIssue({
+        code: "custom",
+        path: issue.path,
+        message: issue.message,
+      });
+    }
+  });
 export type HiveUpdateStatusAdvertisedInput = z.infer<
   typeof HiveUpdateStatusAdvertisedSchema
 >;
@@ -224,9 +367,6 @@ export const HiveTerminalObserveInputSchema = z.strictObject({
     .min(STATUS_LIMITS.terminalObservationRowsMin)
     .max(STATUS_LIMITS.terminalObservationRowsMax),
 });
-export type HiveTerminalObserveInput = z.infer<
-  typeof HiveTerminalObserveInputSchema
->;
 
 export const STATUS_WIRE_SCHEMAS = {
   workspaceEventV2: WorkspaceEventV2Schema,

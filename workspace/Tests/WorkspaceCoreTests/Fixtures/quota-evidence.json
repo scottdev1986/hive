@@ -1,0 +1,10 @@
+[
+  {"label":"Provider measurement","state":"measured","value":63,"provenance":"provider API · authoritative","observedAt":"2026-07-30T20:00:00Z","resetsAt":"2026-07-30T23:00:00Z","reason":null},
+  {"label":"Provider silent","state":"unknown","value":null,"provenance":"probe returned no reading","observedAt":null,"resetsAt":null,"reason":"capacity could not be measured"},
+  {"label":"Last known value","state":"stale","value":41,"provenance":"provider API · last successful probe","observedAt":"2026-07-29T20:00:00Z","resetsAt":"2026-07-31T00:00:00Z","reason":"refresh is overdue"},
+  {"label":"Unmetered plan","state":"unmetered","value":null,"provenance":"provider plan metadata","observedAt":"2026-07-30T20:00:00Z","resetsAt":null,"reason":"unconstrained, not free"},
+  {"label":"Local usage estimate","state":"estimated","value":18,"provenance":"Hive local ledger · estimate","observedAt":"2026-07-30T20:01:00Z","resetsAt":null,"reason":"provider total is unavailable"},
+  {"label":"Active reservation","state":"reserved","value":12,"provenance":"Hive reservation ledger","observedAt":"2026-07-30T20:01:30Z","resetsAt":"2026-07-30T20:31:30Z","reason":"capacity held by an active launch"},
+  {"label":"Provider hold","state":"hold","value":null,"provenance":"provider control plane","observedAt":"2026-07-30T20:02:00Z","resetsAt":"2026-07-30T21:02:00Z","reason":"provider cooldown"},
+  {"label":"Proven exclusion","state":"excluded","value":null,"provenance":"routing inspection · pool-excluded","observedAt":"2026-07-30T20:02:00Z","resetsAt":"2026-07-30T21:00:00Z","reason":"quota pool is drained"}
+]

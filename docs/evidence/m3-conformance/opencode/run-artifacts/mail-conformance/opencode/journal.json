@@ -1,0 +1,65 @@
+[
+  {
+    "itemId": "mit_019fc290-bb8d-7000-a71c-96ae0bcf6db3",
+    "kind": "published",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-opencode-control-1785675691586",
+    "at": "2026-08-02T13:01:32.941Z",
+    "detailJson": "{\"recipient\":\"david\",\"lane\":\"control\",\"topic\":\"m3-control\",\"seq\":1,\"recipientGeneration\":null,\"receipt\":{\"itemId\":\"mit_019fc290-bb8d-7000-a71c-96ae0bcf6db3\",\"lane\":\"control\",\"topic\":\"m3-control\",\"outcome\":\"published\",\"seq\":1,\"mergedCount\":0,\"acceptedAt\":\"2026-08-02T13:01:32.941Z\"}}"
+  },
+  {
+    "itemId": "mit_019fc290-bb90-7000-a48b-1d8d8ace621f",
+    "kind": "published",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-opencode-work-1785675691586",
+    "at": "2026-08-02T13:01:32.944Z",
+    "detailJson": "{\"recipient\":\"david\",\"lane\":\"work\",\"topic\":\"m3-work\",\"seq\":2,\"recipientGeneration\":null,\"receipt\":{\"itemId\":\"mit_019fc290-bb90-7000-a48b-1d8d8ace621f\",\"lane\":\"work\",\"topic\":\"m3-work\",\"outcome\":\"published\",\"seq\":2,\"mergedCount\":0,\"acceptedAt\":\"2026-08-02T13:01:32.944Z\"}}"
+  },
+  {
+    "itemId": "mit_019fc290-bb90-7000-a48b-1d8d8ace621f",
+    "kind": "coalesced",
+    "actor": "queen",
+    "actorGeneration": null,
+    "idempotencyKey": "m3-opencode-work-1785675691586-merged",
+    "at": "2026-08-02T13:01:32.945Z",
+    "detailJson": "{\"topic\":\"m3-work\",\"receipt\":{\"itemId\":\"mit_019fc290-bb90-7000-a48b-1d8d8ace621f\",\"lane\":\"work\",\"topic\":\"m3-work\",\"outcome\":\"coalesced\",\"seq\":2,\"mergedCount\":1,\"acceptedAt\":\"2026-08-02T13:01:32.945Z\"}}"
+  },
+  {
+    "itemId": "mit_019fc290-bb8d-7000-a71c-96ae0bcf6db3",
+    "kind": "claimed",
+    "actor": "david",
+    "actorGeneration": 1,
+    "idempotencyKey": null,
+    "at": "2026-08-02T13:02:01.476Z",
+    "detailJson": "{\"handlerId\":\"m3-safe-point\",\"attempt\":1,\"leaseUntil\":\"2026-08-02T13:04:01.476Z\"}"
+  },
+  {
+    "itemId": "mit_019fc290-bb8d-7000-a71c-96ae0bcf6db3",
+    "kind": "completed",
+    "actor": "david",
+    "actorGeneration": 1,
+    "idempotencyKey": null,
+    "at": "2026-08-02T13:02:10.028Z",
+    "detailJson": "{\"handlerId\":\"m3-safe-point\",\"attempt\":1,\"reason\":\"Handled control conformance instruction.\"}"
+  },
+  {
+    "itemId": "mit_019fc290-bb90-7000-a48b-1d8d8ace621f",
+    "kind": "claimed",
+    "actor": "david",
+    "actorGeneration": 1,
+    "idempotencyKey": null,
+    "at": "2026-08-02T13:02:19.653Z",
+    "detailJson": "{\"handlerId\":\"m3-safe-point\",\"attempt\":1,\"leaseUntil\":\"2026-08-02T13:04:19.653Z\"}"
+  },
+  {
+    "itemId": "mit_019fc290-bb90-7000-a48b-1d8d8ace621f",
+    "kind": "completed",
+    "actor": "david",
+    "actorGeneration": 1,
+    "idempotencyKey": null,
+    "at": "2026-08-02T13:02:27.949Z",
+    "detailJson": "{\"handlerId\":\"m3-safe-point\",\"attempt\":1,\"reason\":\"Handled work conformance digest.\"}"
+  }
+]

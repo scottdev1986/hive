@@ -328,6 +328,44 @@ final class InputEncodingTests: XCTestCase {
         XCTAssertEqual(userInputs, ["文:false:false"])
     }
 
+    func testFileDropInsertsShellEscapedPathsThroughHumanTextInput() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+        XCTAssertTrue(terminal.registeredDraggedTypes.contains(.fileURL))
+        let pasteboard = NSPasteboard(name: .init("test-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        let first = NSPasteboardItem()
+        first.setString(
+            "file:///Users/test/my%20file%20(1).txt",
+            forType: .fileURL
+        )
+        let second = NSPasteboardItem()
+        second.setString("file:///Users/test/second.txt", forType: .fileURL)
+        pasteboard.writeObjects([first, second])
+        var userInputs: [String] = []
+        terminal.onUserInput = { characters, command, control in
+            userInputs.append("\(characters):\(command):\(control)")
+        }
+
+        XCTAssertTrue(terminal.acceptFileDrop(from: pasteboard))
+        drainMainRunLoop(until: { !engine.textSent.isEmpty })
+
+        let expected = #"/Users/test/my\ file\ \(1\).txt /Users/test/second.txt"#
+        XCTAssertEqual(engine.textSent, [expected])
+        XCTAssertEqual(userInputs, ["\(expected):false:false"])
+    }
+
+    func testFileDropRejectsPasteboardsWithoutFileURLs() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+        let pasteboard = NSPasteboard(name: .init("test-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        pasteboard.setString("plain text", forType: .string)
+
+        XCTAssertFalse(terminal.acceptFileDrop(from: pasteboard))
+        XCTAssertTrue(engine.textSent.isEmpty)
+    }
+
     func testControlCharacterUsesGhosttysUncontrolledCharacterText() {
         let engine = FakeManualSurface()
         let terminal = makeTerminal(engine)
@@ -411,7 +449,7 @@ final class InputEncodingTests: XCTestCase {
             "navigate_search:previous",
             "end_search",
         ])
-        XCTAssertEqual(userInputs, ["v:true:false"], "paste must protect the human composer")
+        XCTAssertEqual(userInputs, ["v:true:false"], "paste must protect the user composer")
     }
 
     func testShiftNavigationKeysScrollLocallyAndUnmodifiedKeysStayWithProvider() {

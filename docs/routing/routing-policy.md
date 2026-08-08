@@ -8,7 +8,7 @@ Source: Hive source tree, 2026-07-30
 Hive no longer derives routes, and it no longer walks ordered chains. The user's
 routing policy — a revisioned consent document in `hive.db` holding **unordered
 weighted sets** of exact (provider, model, effort) candidates — is the router's
-only source of standing preference. `HiveRouter` (`src/daemon/router.ts`)
+only source of standing preference. `HiveRouter` (`src/daemon/routing-service/router.ts`)
 resolves one route, filters its candidates through factual gates, selects one
 with smooth weighted round-robin, and records the exact decision. Facts filter;
 weights distribute; nothing scores.
@@ -31,10 +31,8 @@ and the rest of the graveyard: [rejected-approaches.md](rejected-approaches.md).
 (`ROUTING_CATEGORIES`): nine task kinds plus `default`, the category a spawn uses
 when nothing more specific applies. Separately from the categories, the document
 carries one `global` route — the answer for any category without a route of its
-own. `long_context` is deliberately **not** a category — it arrives as
-`minContextTokens`, a requirement *modifier*, because a context requirement
-composes with every kind of work rather than replacing it. `hive_spawn` requires
-`category` (`src/daemon/spawner.ts`); there is no `tier` param and no compat
+own. `long_context` is deliberately **not** a category. `hive_spawn` requires
+`category` (`src/daemon/spawn/spawn-service.ts`); there is no `tier` param and no compat
 mapping.
 
 ### A route is an unordered weighted set of exact candidates
@@ -113,7 +111,7 @@ Hive never substitutes another model for a pin.
 
 ## The router
 
-`src/daemon/router.ts` — `HiveRouter.select`. One routed selection: resolve the
+`src/daemon/routing-service/router.ts` — `HiveRouter.select`. One routed selection: resolve the
 route, evaluate every candidate once, pick with smooth weighted round-robin
 inside one transaction. Nothing in the module scores — no quota headroom, no
 price, no inferred model strength, no outcome learning. A wrong choice is
@@ -128,8 +126,8 @@ bounded refusal `{ gate, detail, retryAt }`:
   work under review is refused (`request.requirements.reviewOfProvider`).
 - **The per-spawn launch gate** (`CandidateGate`, built in
   `spawnReserved`) — effort resolution plus the complete `AuthorizedLaunch`
-  mint: `resolution` → `enablement` → `availability` → `capability-floor` →
-  `effort` (`src/daemon/authorized-launch.ts`). An explicitly requested `tool`
+  mint: `resolution` → `enablement` → `availability` → `effort`
+  (`src/daemon/routing-service/authorized-launch.ts`). An explicitly requested `tool`
   narrows the route here rather than in policy.
 - **`route-health`** — an active launch-failure cooldown for the exact route
   (`QuotaService.launchCooldown`), with `retryAt`.
@@ -169,7 +167,7 @@ committed against a replaced document.
 A model-layer launch failure records `launch-failed` on the decision and feeds
 the route-health cooldown — unless it classifies as a vendor drain, which is an
 empty meter, not a broken route (`failSpawnAndCleanup`,
-`src/daemon/spawner-impl.ts`).
+`src/daemon/spawn/spawner-impl.ts`).
 
 ### Handoff rerouting
 
@@ -178,7 +176,7 @@ and persisted as a durable handoff bundle **first**; only then does Hive spawn a
 replacement, passing `excludedPoolIds` with the proven-drained pool so the work
 cannot land back on the route that just demonstrated it cannot continue. A
 refused route (no candidate) falls back to the durable orchestrator notice —
-quota lifecycle and the human decide wait versus preserve; nothing busy-retries.
+quota lifecycle and the user decide wait versus preserve; nothing busy-retries.
 
 ### The invariant that must never be forgotten
 
@@ -236,7 +234,7 @@ parse on every read is what makes corruption LOUD instead of permissive.
 ### Mutations
 
 `RoutingPolicyMutationSchema`, four ops, mapped 1:1 onto the CLI
-(`src/cli/routing-policy.ts`): `set-provider`, `set-model`, `set-effort`, and
+(`src/cli/routing-policy-command.ts`): `set-provider`, `set-model`, `set-effort`, and
 `set-route`. `set-chain` and `set-selection` no longer exist. `set-route`
 replaces one scope's whole route (`global` or a category); `route: null` clears
 the scope back to unconfigured. As a side effect, `set-route` upserts an
@@ -284,13 +282,9 @@ not place — and **both callers read that null as PERMISSION.**
 
 ## Known gaps (real, and unimplemented)
 
-- **There is no coding-capability floor of any kind.** The only floor is
-  `minContextTokens` (the `capabilityFloor` check in `spawnReserved`), which
-  fails closed on an unmeasured window. The invariant "a capability floor blocks
-  even a pin" has nothing else to enforce.
 - **There is no `inspect` surface.** The design spec's read-only
   `RouterService.inspect` (resolved route, evaluations, balances, without
-  selecting) is not built; `routeShares` (`src/daemon/router.ts`) computes the
+  selecting) is not built; `routeShares` (`src/daemon/routing-service/router.ts`) computes the
   normalized share preview, but no CLI or UI calls it yet.
 
 ## See Also
@@ -301,4 +295,3 @@ not place — and **both callers read that null as PERMISSION.**
 - [../design/hive-router.html](../design/hive-router.html) — the router design spec this implementation follows
 - [../providers/capability-discovery.md](../providers/capability-discovery.md) — where exact model ids and effort axes come from
 - [../providers/quota-surfaces.md](../providers/quota-surfaces.md) — the vendor wire facts
-- [../../SPEC.md](../../SPEC.md) §6 — the orchestrator classifies; discovered policy resolves

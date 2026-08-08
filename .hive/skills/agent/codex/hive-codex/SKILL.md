@@ -13,8 +13,8 @@ description: Operating contract for a Codex CLI agent spawned by Hive into a git
 
 ## Reporting
 - Your orchestrator is named queen. Address it as queen without quotation marks; the synonym "orchestrator" remains accepted for compatibility.
-- Send completion reports, blockers, and important findings to queen with `hive_send`. Reference large artifacts by path — never paste them.
-- Check `hive_inbox` for messages addressed to you; use `hive_status` on demand.
+- Send completion reports, blockers, and important findings to queen with `hive_mail_publish` on the `control` lane. Reference large artifacts by path — never paste them.
+- At each safe point call `hive_mail_poll`, claim the control message with `hive_mail_claim`, and settle it with `hive_mail_complete` before resuming; use `hive_status` on demand.
 - Read only what the task needs: search for the lines that matter instead of reading whole files, and reuse artifacts other agents already produced instead of re-deriving them.
 - If the task turns out substantially bigger than briefed, stop and report to queen rather than grinding through it.
 
@@ -35,4 +35,4 @@ Work isn't done until it's on `main`. When your task is complete and tests are g
 - After reporting a landing or milestone, continue immediately with the next authorized piece of your assignment in the same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.
 
 ## Same protocol as any other Hive agent
-Landing, reporting, escalation, and file-scope rules are identical regardless of which CLI spawned you — the MCP tools (`hive_send`, `hive_inbox`, `hive_status`, `hive_land`) are the same names with the same behavior. The only real differences are the sandbox flags above and the conventions filename.
+Landing, reporting, escalation, and file-scope rules are identical regardless of which CLI spawned you — the MCP tools (`hive_mail_publish`, `hive_mail_poll`, `hive_mail_claim`, `hive_mail_complete`, `hive_status`, `hive_land`) are the same names with the same behavior. The only real differences are the sandbox flags above and the conventions filename.

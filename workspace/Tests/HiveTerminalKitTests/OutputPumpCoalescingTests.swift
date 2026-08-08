@@ -113,4 +113,103 @@ final class OutputPumpCoalescingTests: XCTestCase {
         XCTAssertEqual(ackSeqs.last, view.highWater)
         XCTAssertEqual(ackSeqs, ackSeqs.sorted(), "ack high-water never regresses")
     }
+
+    func testDuplicateAckFloodHasBoundedTemporaryMemory() throws {
+        let transport = CountingHostTransport(connectionId: "autorelease-flood")
+        transport.enqueue(WireFrame(type: .welcome))
+        let ready = Data("ready".utf8)
+        transport.enqueue(WireFrame(type: .output, streamSeq: 0, payload: ready))
+
+        let engine = FakeManualSurface()
+        let client = AttachReplayClient(viewerId: "autorelease-flood", engine: engine)
+        let locator = makeTestLocator()
+        let grant = AttachGrant(
+            locator: locator,
+            endpoint: "memory:test",
+            token: "autorelease-flood-token",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+            engineBuildId: HiveTerminalEngineIdentity.current.buildId,
+            checkpointSeq: 0,
+            outputSeq: UInt64(ready.count),
+            operations: ["view"]
+        )
+        let outcome = try client.attach(
+            grant: grant,
+            geometry: geometry,
+            afterSeq: 0,
+            transport: transport
+        )
+        guard case .firstCorrectFrame = outcome else {
+            return XCTFail("expected first correct frame, got \(outcome)")
+        }
+        let binding = try XCTUnwrap(client.binding)
+        let duplicate = WireFrame(type: .output, streamSeq: 0, payload: ready)
+        let baseline = try physicalFootprintBytes()
+
+        let duplicateCount = 30_000
+        for _ in 0..<duplicateCount {
+            XCTAssertEqual(
+                try client.handleFrame(duplicate, frameBinding: binding),
+                .firstCorrectFrame(highWater: UInt64(ready.count), connectionId: binding.connectionId)
+            )
+        }
+
+        let settled = try physicalFootprintBytes()
+        let growth = settled > baseline ? settled - baseline : 0
+        XCTAssertLessThanOrEqual(
+            growth,
+            32 * 1024 * 1024,
+            "temporary JSON acknowledgement objects must drain per frame; growth=\(growth)"
+        )
+        XCTAssertEqual(transport.appliedCount, duplicateCount + 1)
+        XCTAssertEqual(engine.appliedRanges.count, 1)
+    }
+
+    private func physicalFootprintBytes() throws -> UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else {
+            throw NSError(domain: NSMachErrorDomain, code: Int(result))
+        }
+        return info.phys_footprint
+    }
+}
+
+private final class CountingHostTransport: HostTransport {
+    let connectionId: String
+    private(set) var isClosed = false
+    private(set) var appliedCount = 0
+    private var inbound: [WireFrame] = []
+
+    init(connectionId: String) {
+        self.connectionId = connectionId
+    }
+
+    func enqueue(_ frame: WireFrame) {
+        inbound.append(frame)
+    }
+
+    func send(_ frame: WireFrame) throws {
+        guard !isClosed else { throw WireError.closed }
+        if frame.type == .applied { appliedCount += 1 }
+    }
+
+    func receive(timeout: TimeInterval?) throws -> WireFrame? {
+        _ = timeout
+        guard !isClosed else { return nil }
+        guard !inbound.isEmpty else { throw WireError.receiveTimeout }
+        return inbound.removeFirst()
+    }
+
+    func close() {
+        isClosed = true
+        inbound.removeAll()
+    }
 }

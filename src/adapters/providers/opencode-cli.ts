@@ -1,44 +1,33 @@
-import { readFileSync, realpathSync } from "node:fs";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
 import { graphifyHookPath, writeGraphifyHook } from "./shared/graphify-hook";
+import { daemonMcpUrl } from "./shared/mcp-scope";
 import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./shared/orchestrator-role";
 import { isRecord, readProjectConfig } from "./shared/project-config";
 import { resolveProviderExecutable } from "./shared/provider-executable";
-import { selectRecoverySessionId } from "./shared/recovery-session";
 
-/** The agent Hive writes into the worktree's opencode.json: it carries the
- * launch brief as its {file:} system prompt and the read-only barrier as its
- * permission set. */
+/** The agent Hive writes into the worktree's opencode.json: it carries the launch brief as its {file:} system prompt and the read-only barrier as its permission set. */
 export const OPENCODE_HIVE_AGENT = "hive";
 
 export interface OpencodeSpawnOptions {
-  model: string;
+  /** Null launches without `-m`: opencode applies the user's own config default itself, exactly as a bare `opencode` in a terminal would. Worker spawns always pass the routed model; only the root, whose model is the user's own choice, may have nothing to pass. */
+  model: string | null;
   readOnly: boolean;
   dangerous: boolean;
   executable?: string;
-  /** Launch with this configured agent; Hive passes OPENCODE_HIVE_AGENT
-   * whenever the worktree config carries the launch brief. */
+  /** Launch with this configured agent; Hive passes OPENCODE_HIVE_AGENT whenever the worktree config carries the launch brief. */
   agent?: string;
 }
 
 export interface OpencodeAgentConfigOptions {
   daemonPort: number;
   graphifyUrl?: string;
-  /** The 0600 launch-prompt file, referenced from the hive agent's prompt
-   * as `{file:<path>}`. Absent (crash recovery with no prompt on disk)
-   * leaves the agent already on disk untouched. */
+  /** The 0600 launch-prompt file, referenced from the hive agent's prompt as `{file:<path>}`. Absent (crash recovery with no prompt on disk) leaves the agent already on disk untouched. */
   instructionPath?: string;
   readOnly?: boolean;
-  /** The queen's role: Edit scoped to her memory and planning files and
-   * Bash scoped to gh (orchestrator-role.ts), instead of the read-only
-   * barrier. */
+  dangerous?: boolean;
   orchestrator?: boolean;
-  /** Directories opencode reads skills from on top of its own discovery. This
-   * is the queen's channel: opencode offers no launch flag, and her skills are
-   * provisioned outside the checkout (adapters/queen-skills.ts). */
   skillPaths?: readonly string[];
 }
 
@@ -54,55 +43,12 @@ export function resolveWorkingOpencodeExecutable() {
   return resolveProviderExecutable("opencode", [".opencode/bin/opencode"]);
 }
 
-export function opencodeConfigDirectory(
-  home = Bun.env.HOME ?? homedir(),
-): string {
-  return Bun.env.OPENCODE_CONFIG_DIR ?? join(home, ".config", "opencode");
-}
-
-/** opencode's durable session store: one sqlite database holding every
- * session's messages and tool-call parts, not per-session files. */
-export function opencodeDatabasePath(home = Bun.env.HOME ?? homedir()): string {
-  return join(home, ".local", "share", "opencode", "opencode.db");
-}
-
-/**
- * The effective default an unflagged launch runs: the `model` key of the
- * global config. The file is JSONC and `opencode models` never marks a
- * default, so a bare key read is the surface — a parse miss is unknown,
- * never a guess.
- */
-export function probeOpencodeDefaultModel(
-  directory: string = opencodeConfigDirectory(),
-): string | null {
-  for (const name of ["opencode.json", "opencode.jsonc"]) {
-    let source: string;
-    try {
-      source = readFileSync(join(directory, name), "utf8");
-    } catch {
-      continue;
-    }
-    const match = /"model"\s*:\s*"([^"]+)"/.exec(source);
-    if (match?.[1] !== undefined) return match[1];
-  }
-  return null;
-}
-
-/**
- * Hive's (readOnly, dangerous) posture mapped to opencode's surfaces:
- *
- * - readOnly is the reader barrier, expressed on the hive agent in the
- *   worktree config — `edit` (which covers write/edit/patch) and `bash`
- *   denied, everything else (read/grep/glob, MCP tools) at opencode's
- *   permissive default. This mirrors grok's deny Bash/Write/Edit barrier;
- *   opencode has no read-only flag.
- * - !readOnly maps to opencode's defaults: most tools allow, `doom_loop`
- *   and `external_directory` still ask, `.env` reads stay denied.
- * - dangerous maps to `--auto`: auto-approve everything not explicitly
- *   denied, which lifts those remaining prompts.
- */
+/** Hive's (readOnly, dangerous) posture mapped to opencode's surfaces: - readOnly is the reader barrier, expressed on the hive agent in the worktree config — `edit` (which covers write/edit/patch) and `bash` denied, everything else (read/grep/glob, MCP tools) at opencode's permissive default. This mirrors grok's deny Bash/Write/Edit barrier; opencode has no read-only flag. - !readOnly maps to opencode's defaults: most tools allow, `doom_loop` and `external_directory` still ask, and `.env` reads ask. - dangerous maps to `--auto` on the interactive CLI. Native ACP has no corresponding flag, so its hive agent allows those built-in asks in config. */
 function opencodeLaunchArgs(options: OpencodeSpawnOptions): string[] {
-  const argv = [options.executable ?? "opencode", "-m", options.model];
+  const argv = [
+    options.executable ?? "opencode",
+    ...(options.model === null ? [] : ["-m", options.model]),
+  ];
   if (options.agent !== undefined) {
     argv.push("--agent", options.agent);
   }
@@ -116,53 +62,27 @@ export function buildOpencodeSpawnCommand(
   return opencodeLaunchArgs(options);
 }
 
-/** Resume the exact durable session. `-s <id>` continues it directly. */
-export function buildOpencodeResumeCommand(
-  options: OpencodeSpawnOptions,
-  sessionId: string,
-): string[] {
-  const argv = opencodeLaunchArgs(options);
-  argv.splice(1, 0, "-s", sessionId);
-  return argv;
-}
-
-/**
- * Where the plugin lands, relative to the worktree. Exported because worktree
- * reconciliation has to discount it: a file Hive writes into every opencode
- * worktree is not the agent's work, and counting it as such made every such
- * worktree look permanently dirty and therefore unsweepable.
- */
+/** Where the plugin lands, relative to the worktree. Exported because worktree reconciliation has to discount it: a file Hive writes into every opencode worktree is not the agent's work, and counting it as such made every such worktree look permanently dirty and therefore unsweepable. */
 export const OPENCODE_TURN_PLUGIN_PATH = join(
   ".opencode",
   "plugins",
   "hive-turn-events.ts",
 );
 
-/** The graphify gate plugin, Hive-written like the turn plugin above and
- * excluded from stranded-work checks the same way. */
+/** The graphify gate plugin, Hive-written like the turn plugin above and excluded from stranded-work checks the same way. */
 export const OPENCODE_GRAPHIFY_PLUGIN_PATH = join(
   ".opencode",
   "plugins",
   "hive-graphify-gate.ts",
 );
 
-/**
- * opencode has no shell hook surface, but its plugins' `tool.execute.before`
- * runs before every tool call — built-in and MCP alike — and a throw there
- * fails the call with the thrown message as the tool error the model reads.
- * That is a PreToolUse-equivalent, so this plugin adapts it to the shared
- * gate script: it feeds the call as hook-input JSON, and relays only an
- * explicit deny. Everything else — no script, dead graphify, advisory-only
- * output, malformed output — passes the call through untouched, because a
- * nudge failure must never block an agent tool call.
- */
+/** opencode has no shell hook surface, but its plugins' `tool.execute.before` runs before every tool call — built-in and MCP alike — and a throw there fails the call with the thrown message as the tool error the model reads. That is a PreToolUse-equivalent, so this plugin adapts it to the shared gate script: it feeds the call as hook-input JSON, and relays only an explicit deny. Everything else — no script, dead graphify, advisory-only output, malformed output — passes the call through untouched, because a nudge failure must never block an agent tool call. */
 async function writeOpencodeGraphifyGatePlugin(
   worktreePath: string,
   hookScriptPath: string,
 ): Promise<void> {
   const path = join(worktreePath, OPENCODE_GRAPHIFY_PLUGIN_PATH);
   const source = `// Written by Hive. Declines the session's first structural search until the
-// graph gets a look; the shared hook script holds the once-per-session gate.
 export const HiveGraphifyGate = async () => ({
   "tool.execute.before": async (
     input: { tool: string },
@@ -198,11 +118,6 @@ export const HiveGraphifyGate = async () => ({
   await chmod(path, 0o600);
 }
 
-/**
- * OpenCode loads project plugins at startup. Its session.idle event is the
- * provider-owned completion signal, so this plugin reports only that boundary
- * instead of inferring state from terminal output or elapsed time.
- */
 export async function writeOpencodeTurnPlugin(
   worktreePath: string,
   options: OpencodeTurnPluginOptions,
@@ -232,15 +147,7 @@ export async function writeOpencodeTurnPlugin(
   await chmod(path, 0o600);
 }
 
-/**
- * Write the worktree's `opencode.json` — opencode's project config, the
- * analog of claude's `.mcp.json` plus settings. Unrelated keys, servers, and
- * agents are preserved; the `hive` MCP entry and the `hive` agent are
- * Hive-owned and replaced wholesale. The Authorization header names the
- * environment variable holding the bearer rather than the bearer itself, and a
- * missing graphify URL removes a stale endpoint. `oauth: false` stops
- * opencode's OAuth auto-detection from intercepting the static bearer.
- */
+/** Write the worktree's `opencode.json` — opencode's project config, the analog of claude's `.mcp.json` plus settings. Unrelated keys, servers, and agents are preserved; the `hive` MCP entry and the `hive` agent are Hive-owned and replaced wholesale. The Authorization header names the environment variable holding the bearer rather than the bearer itself, and a missing graphify URL removes a stale endpoint. `oauth: false` stops opencode's OAuth auto-detection from intercepting the static bearer. */
 export async function writeOpencodeAgentConfig(
   worktreePath: string,
   options: OpencodeAgentConfigOptions,
@@ -251,11 +158,9 @@ export async function writeOpencodeAgentConfig(
   const mcp = isRecord(existing.mcp) ? existing.mcp : {};
   mcp.hive = {
     type: "remote",
-    url: `http://127.0.0.1:${options.daemonPort}/mcp`,
+    url: daemonMcpUrl(options.daemonPort),
     enabled: true,
     oauth: false,
-    // opencode 1.18.5 substitutes {env:VAR} in config strings at load, so the
-    // live token stays in the environment and out of this project file.
     headers: { Authorization: `Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}` },
   };
   if (options.graphifyUrl === undefined) delete mcp.graphify;
@@ -267,13 +172,7 @@ export async function writeOpencodeAgentConfig(
     };
   }
   existing.mcp = mcp;
-  // The hive agent's own permission block does not bind a subagent spawned
-  // through the `task` tool: that subagent runs as a different agent and falls
-  // back to the global block. opencode merges global with agent rules and lets
-  // agent rules win, so a global barrier contains every agent in this worktree
-  // without loosening the queen's scoped grants. Read-only has to hold for the
-  // whole worktree, not just the primary agent. Keys the project already set
-  // are preserved.
+  // The hive agent's own permission block does not bind a subagent spawned through the `task` tool: that subagent runs as a different agent and falls back to the global block. opencode merges global with agent rules and lets agent rules win, so a global barrier contains every agent in this worktree without loosening the queen's scoped grants. Read-only has to hold for the whole worktree, not just the primary agent. Keys the project already set are preserved.
   if (options.readOnly === true && options.orchestrator !== true) {
     const permission = isRecord(existing.permission) ? existing.permission : {};
     permission.edit = "deny";
@@ -287,31 +186,37 @@ export async function writeOpencodeAgentConfig(
   }
   if (options.instructionPath !== undefined) {
     const agents = isRecord(existing.agent) ? existing.agent : {};
+    const workerPermission = {
+      ...(options.dangerous === true
+        ? {
+            doom_loop: "allow" as const,
+            external_directory: "allow" as const,
+            read: { "*.env": "allow" as const, "*.env.*": "allow" as const },
+          }
+        : {}),
+      ...(options.readOnly === true
+        ? { edit: "deny" as const, bash: "deny" as const }
+        : {}),
+    };
     agents[OPENCODE_HIVE_AGENT] = {
       description: "Hive-managed agent carrying the launch brief",
       mode: "primary",
-      // {file:} is resolved by opencode itself; absolute paths are honored
-      // (verified against opencode 1.18.3), so the brief never leaves the
-      // 0600 launch-prompt file.
+      // {file:} is resolved by opencode itself; absolute paths are honored (verified against opencode 1.18.3), so the brief never leaves the 0600 launch-prompt file.
       prompt: `{file:${options.instructionPath}}`,
       ...(options.orchestrator === true
         ? { permission: ORCHESTRATOR_OPENCODE_PERMISSION }
-        : options.readOnly === true
-          ? { permission: { edit: "deny", bash: "deny" } }
+        : Object.keys(workerPermission).length > 0
+          ? { permission: workerPermission }
           : {}),
     };
     existing.agent = agents;
+    existing.default_agent = OPENCODE_HIVE_AGENT;
   }
   await writeFile(path, `${JSON.stringify(existing, null, 2)}\n`, {
     mode: 0o600,
   });
-  // writeFile's mode only applies at creation, and Hive rewrites whatever
-  // opencode.json the project already had — including any credentials the
-  // user's own servers keep in it.
   await chmod(path, 0o600);
-  // The decline-once gate rides a project plugin (opencode's PreToolUse
-  // surface); a missing URL removes both halves rather than leaving a plugin
-  // that shells out to a deleted script.
+  // The decline-once gate rides a project plugin (opencode's PreToolUse surface); a missing URL removes both halves rather than leaving a plugin that shells out to a deleted script.
   const hookScript = graphifyHookPath(worktreePath, ".opencode");
   await writeGraphifyHook(hookScript, options.graphifyUrl);
   if (options.graphifyUrl === undefined) {
@@ -321,76 +226,4 @@ export async function writeOpencodeAgentConfig(
   } else {
     await writeOpencodeGraphifyGatePlugin(worktreePath, hookScript);
   }
-}
-
-interface OpencodeSessionEntry {
-  id: string;
-  created: number;
-  directory: string;
-}
-
-/**
- * `opencode session list --format json` is project-scoped, so it is spawned
- * inside the worktree itself; the entries still carry an explicit directory
- * that must match (a reused worktree holds its dead predecessors' sessions).
- * An unreadable list is no candidates, never an error: the CLI may be gone
- * even though the agent's row survives.
- */
-async function listOpencodeSessions(
-  worktreePath: string,
-  executable: string,
-  timeoutMs = 10_000,
-): Promise<OpencodeSessionEntry[]> {
-  try {
-    const result = Bun.spawnSync(
-      [executable, "session", "list", "--format", "json"],
-      {
-        cwd: worktreePath,
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "ignore",
-        timeout: timeoutMs,
-        killSignal: "SIGKILL",
-      },
-    );
-    if (result.exitCode !== 0) return [];
-    const parsed: unknown = JSON.parse(result.stdout.toString());
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (entry): entry is OpencodeSessionEntry =>
-        isRecord(entry) &&
-        typeof entry.id === "string" &&
-        typeof entry.created === "number" &&
-        typeof entry.directory === "string",
-    );
-  } catch {
-    return [];
-  }
-}
-
-function canonicalDirectory(path: string): string {
-  const resolved = resolve(path);
-  try {
-    // opencode records the realpath (macOS /tmp → /private/tmp); compare
-    // like with like.
-    return realpathSync.native(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
-export async function discoverOpencodeRecoverySessionId(
-  worktreePath: string,
-  agentCreatedAt: string,
-  executable = "opencode",
-): Promise<string | null> {
-  const target = canonicalDirectory(worktreePath);
-  const artifacts = (await listOpencodeSessions(worktreePath, executable))
-    .filter((entry) => canonicalDirectory(entry.directory) === target)
-    .map((entry) => ({
-      sessionId: entry.id,
-      createdAtMs: entry.created,
-      path: "opencode session list",
-    }));
-  return selectRecoverySessionId("opencode", agentCreatedAt, artifacts);
 }

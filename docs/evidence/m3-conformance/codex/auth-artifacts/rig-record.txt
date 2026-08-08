@@ -1,0 +1,8 @@
+=== up 2026-08-02T13:10:38Z
+src=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen-codex/source sha=d2e95e386c4e6c9a744b131d5d4b2126ee9cbe8a (dirty)
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-auth.FC2eG9/project sha=e1bdbbf3d0c9a340a2755aa54ad78827e415e670
+sessiond=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen-codex/hive-sessiond bytes=3601088 mtime=Aug  2 08:59:23 2026
+port=52381 daemon_pid=87136 owner_pid=87323
+Hive daemon ready: {"engineBuildId":"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1","binaryPath":"/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen-codex/hive","sourceHash":"8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712"}
+source_hash announced=8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712 computed=8a2a358e567276c2ffa189bc97a0d36957c7077004944487176cf322b6661712
+daemon runs the sources under test

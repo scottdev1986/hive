@@ -1,0 +1,13 @@
+{
+  "transactionId": "qa-opencode-user-edit-1785675618507",
+  "stage": "written-to-terminal",
+  "byteRange": {
+    "start": "0",
+    "endExclusive": "37"
+  },
+  "orderedAt": "33",
+  "availableCreditBytes": 131072,
+  "consumedByProcess": "not-claimed",
+  "completeness": "complete",
+  "diagnostic": null
+}

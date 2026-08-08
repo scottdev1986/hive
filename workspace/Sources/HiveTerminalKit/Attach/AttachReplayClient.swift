@@ -1,6 +1,5 @@
 import Foundation
 
-/// Outcome of an attach/replay attempt.
 public enum AttachReplayOutcome: Equatable, Sendable {
     case firstCorrectFrame(highWater: UInt64, connectionId: String)
     case failed(TerminalSurfaceState)
@@ -8,31 +7,7 @@ public enum AttachReplayOutcome: Equatable, Sendable {
     case continueReplay
 }
 
-/// Attach/replay client: speaks the viewer wire protocol to a HOST.
-///
-/// Sequence:
-/// 1. HELLO (viewer role + grant token)
-/// 2. WELCOME (**required** before HOST_ATTACH)
-/// 3. HOST_ATTACH (locator, token, geometry, afterSeq)
-/// 4. SNAPSHOT_BYTES (HVTCP001 envelope, possibly multi-chunk) → restore
-/// 5. OUTPUT frames in order → process_output
-/// 6. APPLIED high-water acknowledgements
-///
-/// Host transport is injected (test double or production UDS).
 public final class AttachReplayClient {
-    private struct PendingInputBatch {
-        let binding: SurfaceBinding
-        let bytes: Data
-    }
-
-    private struct PendingInputRequest {
-        let binding: SurfaceBinding
-        let transactionId: String
-        /// Retained so a transient rejection (expired claim) can be resubmitted
-        /// under a fresh claim instead of dropping the user's keystrokes.
-        let bytes: Data
-    }
-
     private struct PendingResizeRequest {
         let binding: SurfaceBinding
         let geometry: TerminalGeometry
@@ -54,44 +29,21 @@ public final class AttachReplayClient {
     private var attachRequestId: UInt64?
     private var snapshotBuffer = Data()
     private var snapshotStarted = false
-    private var activeClaimToken: String?
-    private var claimRequestId: UInt64?
-    private var claimRetryScheduled = false
-    private var pendingInputBatches: [PendingInputBatch] = []
-    private var pendingInputRequests: [UInt64: PendingInputRequest] = [:]
-    private var releaseAfterPendingInputRequested = false
-    private var inputSequence: UInt64 = 0
     private var resizeRevision: UInt64 = 0
     private var pendingResizeRequests: [UInt64: PendingResizeRequest] = [:]
-    /// Last host answer to a RESIZE, e.g. "applied 61x39" or
-    /// "stale currentRevision=2" — the host refuses resizes silently on the
-    /// wire, so the outcome must be observable here.
+    private let inputRouteLock = NSLock()
+    private var inputTransport: HostTransport?
+    /// Last host answer to a RESIZE, e.g. "applied 61x39" or "stale currentRevision=2" — the host refuses resizes silently on the wire, so the outcome must be observable here.
     public private(set) var lastResizeResult: String?
 
     /// Handshake receive timeout: fail closed rather than HOST_ATTACH blind.
     public var handshakeTimeout: TimeInterval = 5.0
-    public static let resizeQuiescenceNanos: UInt64 = 100_000_000
-    private static let claimRetryDelay: TimeInterval = 0.05
 
-    /// Serializes this client's state across the two threads that reach it.
-    ///
-    /// OUTPUT application runs on the pane's terminal I/O thread (a megabyte of
-    /// VT parsing must never sit on the main queue in front of a keystroke),
-    /// while keystrokes, resizes, and attach still arrive from the main thread.
-    ///
-    /// A lock rather than a serial queue is deliberate: a keystroke dispatched
-    /// onto a serial queue would queue BEHIND the whole pending output backlog,
-    /// which during a flood is exactly the latency we are trying to remove. A
-    /// lock lets a keystroke acquire as soon as the chunk in flight finishes,
-    /// so input overtakes queued output instead of trailing it.
-    ///
-    /// It is recursive because the VT parser re-enters us: terminal reply
-    /// effects (DA/DSR/cursor reports) fire `onWrite` → `handleEncodedWrite`
-    /// synchronously from inside `handleFrame`'s parse, on the same thread.
+    /// Serializes replay and UI state. Interactive input deliberately does not
+    /// take this lock; it must not wait behind a large output chunk's VT parse.
     private let stateLock = NSRecursiveLock()
 
-    /// UI-observable state, read atomically so the view can mirror it onto the
-    /// main thread after an off-main frame application.
+    /// UI-observable state, read atomically so the view can mirror it onto the main thread after an off-main frame application.
     struct UISnapshot {
         let state: TerminalSurfaceState
         let highWater: UInt64
@@ -160,6 +112,7 @@ public final class AttachReplayClient {
         let binding = SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId)
         self.binding = binding
         resetInputState()
+        setInputTransport(transport)
         applicator.bind(binding, highWater: afterSeq)
         highWater = afterSeq
 
@@ -174,7 +127,6 @@ public final class AttachReplayClient {
         try sendJSON(.hello, object: hello, requestId: nextRequestId)
         nextRequestId += 1
 
-        // WELCOME is required before HOST_ATTACH.
         try requireWelcome()
 
         let hostAttach: [String: Any] = [
@@ -198,10 +150,11 @@ public final class AttachReplayClient {
                 }
                 frame = next
             } catch WireError.receiveTimeout {
-                // Open transport, no more frames — end of attach stream phase.
                 break
             }
-            let outcome = try handleHostFrame(frame, binding: binding)
+            let outcome = try autoreleasepool {
+                try handleHostFrame(frame, binding: binding)
+            }
             switch outcome {
             case .firstCorrectFrame:
                 return outcome
@@ -230,9 +183,9 @@ public final class AttachReplayClient {
     func retarget(newBinding: SurfaceBinding, highWater: UInt64 = 0) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        releaseClaimBestEffort()
         transport?.close()
         transport = nil
+        setInputTransport(nil)
         binding = newBinding
         resetInputState()
         applicator.bind(newBinding, highWater: highWater)
@@ -246,130 +199,43 @@ public final class AttachReplayClient {
     func failDeferredPresentation(_ failure: TerminalSurfaceState) {
         stateLock.lock()
         defer { stateLock.unlock() }
-        releaseClaimBestEffort()
         transport?.close()
         transport = nil
+        setInputTransport(nil)
         state = failure
         resetInputState()
-    }
-
-    /// Clean CLAIM_RELEASE (cancel) before closing the viewer transport.
-    /// Best-effort: transport may already be half-dead; host also clears on drop.
-    public func releaseClaimBestEffort() {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard let token = activeClaimToken, let binding, transport != nil else {
-            // Do not skip while a claim is still held: the host keeps that claim
-            // forever, and every daemon inject is denied HumanOrphaned until
-            // operator recovery. Log rather than return in silence if stranded.
-            if let stranded = activeClaimToken {
-                NSLog(
-                    "hive claim: release SKIPPED with claim held token=%@ viewer=%@; host claim will orphan",
-                    stranded,
-                    viewerId
-                )
-            }
-            return
-        }
-        let payload: [String: Any] = [
-            "schemaVersion": 1,
-            "session": sessionReference(binding.locator),
-            "claimToken": token,
-            "kind": "cancel",
-        ]
-        do {
-            try sendJSON(.claimRelease, object: payload, requestId: nextRequestId)
-            nextRequestId += 1
-            NSLog("hive claim: release cancel token=%@ viewer=%@", token, viewerId)
-        } catch {
-            NSLog("hive claim: release send failed viewer=%@ error=%@", viewerId, "\(error)")
-        }
-        activeClaimToken = nil
-        claimRequestId = nil
-        claimPresentation = .free
-    }
-
-    /// End an IME composition without leaving its human claim behind. The
-    /// release waits for both accepted input and an in-flight claim result so a
-    /// late grant cannot become an orphaned host-side claim.
-    public func releaseAfterPendingInput() {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        releaseAfterPendingInputRequested = true
-        // The encoder callback may be queued just behind the NSTextInputClient
-        // composition-end callback. Let that write enqueue before deciding a
-        // cancellation had no committed input.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.stateLock.lock()
-            defer { self.stateLock.unlock() }
-            self.releaseClaimIfInputQuiescent()
-        }
     }
 
     public func handleFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) throws -> AttachReplayOutcome {
         stateLock.lock()
         defer { stateLock.unlock() }
-        guard let binding else { return .rejectedLateFrame }
-        if frameBinding != binding { return .rejectedLateFrame }
-        return try handleHostFrame(frame, binding: binding)
+        return try autoreleasepool {
+            guard let binding else { return .rejectedLateFrame }
+            if frameBinding != binding { return .rejectedLateFrame }
+            return try handleHostFrame(frame, binding: binding)
+        }
     }
 
-    /// Encoder output is held until this exact binding owns a human claim,
-    /// then submitted through the frozen INPUT_SUBMIT JSON operation.
     public func handleEncodedWrite(_ bytes: Data) {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        guard !bytes.isEmpty, let binding, transport != nil else { return }
-        if bytes.count > FrameCodec.inputTransactionMaxBytes {
-            var offset = 0
-            while offset < bytes.count {
-                let end = min(offset + FrameCodec.inputTransactionMaxBytes, bytes.count)
-                handleEncodedWrite(bytes.subdata(in: offset..<end))
-                offset = end
-            }
+        guard !bytes.isEmpty else { return }
+        inputRouteLock.lock()
+        let transport = inputTransport
+        inputRouteLock.unlock()
+        guard let transport, !transport.isClosed else { return }
+
+        if bytes.count <= FrameCodec.streamChunkMaxBytes {
+            try? transport.sendInput(bytes)
             return
         }
-        let batch = PendingInputBatch(binding: binding, bytes: bytes)
-        if activeClaimToken == nil {
-            pendingInputBatches.append(batch)
-            requestClaim()
-            return
+
+        var offset = 0
+        while offset < bytes.count {
+            let end = min(offset + FrameCodec.streamChunkMaxBytes, bytes.count)
+            try? transport.sendInput(bytes.subdata(in: offset..<end))
+            offset = end
         }
-        submitInput(batch)
     }
 
-    public func beginClaimAcquire() throws {
-        guard let binding, transport != nil else { throw WireError.notConnected }
-        guard activeClaimToken == nil, claimRequestId == nil else { return }
-        let requestId = nextRequestId
-        let payload: [String: Any] = [
-            "schemaVersion": 1,
-            "session": sessionReference(binding.locator),
-            "writer": viewerId,
-            "kind": "human",
-            "leaseMilliseconds": 60_000,
-            "idempotencyKey": "claim-\(UUID().uuidString)",
-        ]
-        try sendJSON(.claimAcquire, object: payload, requestId: requestId)
-        claimRequestId = requestId
-        nextRequestId += 1
-        setInputSubmissionState(.waitingForClaim)
-    }
-
-    /// The host orphaned this viewer's claim. It is the human's own claim and
-    /// the host readmits a returning human through operatorResume, so the write
-    /// path stays armed: the next keystroke re-acquires and resumes.
-    public func noteOrphaned(claimId: String) {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        activeClaimToken = nil
-        claimPresentation = .humanOrphaned(viewerId: viewerId, claimId: claimId)
-        setInputSubmissionState(pendingInputBatches.isEmpty ? .idle : .waitingForClaim)
-        scheduleClaimRetry()
-    }
-
-    /// Frozen RESIZE request after geometry quiescence.
     public func sendResize(_ geometry: TerminalGeometry) throws {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -396,7 +262,14 @@ public final class AttachReplayClient {
         nextRequestId += 1
     }
 
-    // MARK: - Internals
+    private func logResizeResult(_ geometry: TerminalGeometry) {
+        NSLog(
+            "hive-terminal RESIZE %dx%d result: %@",
+            geometry.columns,
+            geometry.rows,
+            lastResizeResult ?? "nil"
+        )
+    }
 
     private func requireWelcome() throws {
         guard let transport else { throw WireError.notConnected }
@@ -411,7 +284,6 @@ public final class AttachReplayClient {
             if frame.type == .welcome {
                 return
             }
-            // Ignore unexpected pre-welcome frames other than ERROR.
         }
     }
 
@@ -434,26 +306,7 @@ public final class AttachReplayClient {
                 pendingResizeRequests.removeValue(forKey: frame.requestId)
                 lastResizeResult =
                     "error \(code): \(object["message"] as? String ?? "host refused terminal resize")"
-                NSLog(
-                    "hive-terminal RESIZE %dx%d result: %@",
-                    pending.geometry.columns,
-                    pending.geometry.rows,
-                    lastResizeResult ?? "nil"
-                )
-                return .continueReplay
-            }
-            if frame.requestId == claimRequestId || pendingInputRequests[frame.requestId] != nil {
-                if frame.requestId == claimRequestId {
-                    claimRequestId = nil
-                } else if let pending = pendingInputRequests[frame.requestId] {
-                    pendingInputBatches.append(PendingInputBatch(
-                        binding: pending.binding,
-                        bytes: pending.bytes
-                    ))
-                }
-                pendingInputRequests.removeValue(forKey: frame.requestId)
-                activeClaimToken = nil
-                requestClaim()
+                logResizeResult(pending.geometry)
                 return .continueReplay
             }
             if code == "ENGINE_MISMATCH" || code == "PROTOCOL_MISMATCH" {
@@ -466,8 +319,6 @@ public final class AttachReplayClient {
             return .failed(state)
 
         case .snapshotBegin:
-            // Metadata frame optional; authoritative length/throughSeq are in
-            // the HVTCP001 header inside SNAPSHOT_BYTES.
             snapshotBuffer = Data()
             snapshotStarted = true
             state = .replaying
@@ -555,58 +406,13 @@ public final class AttachReplayClient {
                 return .failed(state)
             }
 
-        case .claimResult:
-            guard frame.requestId == claimRequestId else { return .continueReplay }
-            claimRequestId = nil
-            let object = try FrameCodec.parseJSONObject(frame.payload)
-            guard let result = object["result"] as? [String: Any],
-                  let claimState = result["state"] as? String else {
-                activeClaimToken = nil
-                requestClaim()
-                return .continueReplay
-            }
-            if claimState == "granted",
-               let claim = result["claim"] as? [String: Any],
-               let token = claim["token"] as? String {
-                claimRetryScheduled = false
-                activeClaimToken = token
-                claimPresentation = .humanOwned(viewerId: viewerId, claimId: token)
-                NSLog("hive claim: granted token=%@ viewer=%@", token, viewerId)
-                let batches = pendingInputBatches
-                pendingInputBatches.removeAll()
-                for batch in batches where batch.binding == binding {
-                    submitInput(batch)
-                }
-            } else if claimState == "denied" {
-                activeClaimToken = nil
-                claimPresentation = .free
-                let diagnostic = result["diagnostic"] as? String ?? "human input is owned elsewhere"
-                NSLog("hive claim: denied viewer=%@ diagnostic=%@", viewerId, diagnostic)
-                setInputSubmissionState(.waitingForClaim)
-                scheduleClaimRetry()
-            } else {
-                activeClaimToken = nil
-                claimPresentation = .free
-                let diagnostic = result["diagnostic"] as? String ?? "human input claim is unknown"
-                NSLog("hive claim: unknown viewer=%@ diagnostic=%@", viewerId, diagnostic)
-                setInputSubmissionState(.waitingForClaim)
-                scheduleClaimRetry()
-            }
-            releaseClaimIfInputQuiescent()
-            return .continueReplay
-
         case .applied:
             if let pending = pendingResizeRequests[frame.requestId],
                pending.binding == binding {
                 pendingResizeRequests.removeValue(forKey: frame.requestId)
                 guard let object = try? FrameCodec.parseJSONObject(frame.payload) else {
                     lastResizeResult = "unknown malformed resize receipt"
-                    NSLog(
-                        "hive-terminal RESIZE %dx%d result: %@",
-                        pending.geometry.columns,
-                        pending.geometry.rows,
-                        lastResizeResult ?? "nil"
-                    )
+                    logResizeResult(pending.geometry)
                     return .continueReplay
                 }
                 let result = (object["resultKind"] as? String == "resize")
@@ -624,67 +430,12 @@ public final class AttachReplayClient {
                     lastResizeResult =
                         "\(state) \(result?["diagnostic"] as? String ?? "")"
                 }
-                NSLog(
-                    "hive-terminal RESIZE %dx%d result: %@",
-                    pending.geometry.columns,
-                    pending.geometry.rows,
-                    lastResizeResult ?? "nil"
-                )
+                logResizeResult(pending.geometry)
                 return .continueReplay
-            }
-            guard let pending = pendingInputRequests[frame.requestId],
-                  pending.binding == binding else { return .continueReplay }
-            let object = try FrameCodec.parseJSONObject(frame.payload)
-            guard object["resultKind"] as? String == "input",
-                  let receipt = object["receipt"] as? [String: Any],
-                  let transactionId = receipt["transactionId"] as? String,
-                  transactionId == pending.transactionId,
-                  let stage = receipt["stage"] as? String else {
-                pendingInputRequests.removeValue(forKey: frame.requestId)
-                // The host may already have written an uncorrelated result.
-                // Do not duplicate it and do not freeze later input.
-                setInputSubmissionState(.applied(
-                    transactionId: pending.transactionId,
-                    stage: "unknown"
-                ))
-                releaseClaimIfInputQuiescent()
-                return .continueReplay
-            }
-            pendingInputRequests.removeValue(forKey: frame.requestId)
-            if stage == "rejected" {
-                let diagnostic = receipt["diagnostic"] as? String ?? "host rejected terminal input"
-                // A rejected receipt is complete proof that these bytes were
-                // not written. Keep them and acquire the next available turn
-                // in the host's ordered input stream.
-                NSLog("hive input: %@; re-acquiring and resubmitting viewer=%@", diagnostic, viewerId)
-                activeClaimToken = nil
-                pendingInputBatches.append(PendingInputBatch(
-                    binding: pending.binding,
-                    bytes: pending.bytes
-                ))
-                requestClaim()
-            } else if stage == "unknown" {
-                // The write outcome is uncertain. Replaying could duplicate
-                // input, but fencing would discard every future keystroke.
-                // End only this transaction and keep the terminal writable.
-                setInputSubmissionState(.applied(
-                    transactionId: transactionId,
-                    stage: "unknown"
-                ))
-                releaseClaimIfInputQuiescent()
-            } else {
-                setInputSubmissionState(.applied(transactionId: transactionId, stage: stage))
-                releaseClaimIfInputQuiescent()
             }
             return .continueReplay
 
         case .event:
-            if let object = try? FrameCodec.parseJSONObject(frame.payload),
-               let kind = object["kind"] as? String,
-               kind == "HUMAN_ORPHANED",
-               let claimId = object["claimId"] as? String {
-                noteOrphaned(claimId: claimId)
-            }
             return .continueReplay
 
         default:
@@ -698,49 +449,6 @@ public final class AttachReplayClient {
         return .firstCorrectFrame(highWater: highWater, connectionId: binding.connectionId)
     }
 
-    private func submitInput(_ batch: PendingInputBatch) {
-        guard let binding,
-              binding == batch.binding,
-              let transport,
-              transport.connectionId == binding.connectionId,
-              let claimToken = activeClaimToken else { return }
-        let sequence = inputSequence
-        inputSequence += 1
-        let transactionId = "input-\(viewerId)-\(binding.generation)-\(sequence)"
-        let requestId = nextRequestId
-        let object: [String: Any] = [
-            "schemaVersion": 1,
-            "session": sessionReference(binding.locator),
-            "claimToken": claimToken,
-            "transactionId": transactionId,
-            "idempotencyKey": transactionId,
-            "operation": [
-                "kind": "bytes",
-                "encoding": "base64",
-                "bytes": batch.bytes.base64EncodedString(),
-            ],
-        ]
-        do {
-            try sendJSON(
-                .inputSubmit,
-                object: object,
-                requestId: requestId,
-                flags: [.contentSensitive]
-            )
-            pendingInputRequests[requestId] = PendingInputRequest(
-                binding: binding,
-                transactionId: transactionId,
-                bytes: batch.bytes
-            )
-            nextRequestId += 1
-            setInputSubmissionState(.pending(transactionId: transactionId))
-        } catch {
-            activeClaimToken = nil
-            pendingInputBatches.append(batch)
-            requestClaim()
-        }
-    }
-
     private func sessionReference(_ locator: SessionLocator) -> [String: Any] {
         [
             "key": locator.sessionId,
@@ -749,57 +457,16 @@ public final class AttachReplayClient {
     }
 
     private func resetInputState() {
-        activeClaimToken = nil
-        claimRequestId = nil
-        claimRetryScheduled = false
-        pendingInputBatches.removeAll()
-        pendingInputRequests.removeAll()
-        releaseAfterPendingInputRequested = false
         pendingResizeRequests.removeAll()
         claimPresentation = .free
         setInputSubmissionState(.idle)
         lastResizeResult = nil
     }
 
-    /// A claim can be denied while an automation transaction is between BEGIN
-    /// and COMMIT. Keep the original human bytes queued and re-ask after that
-    /// short exclusive window instead of requiring another keystroke. The
-    /// binding check prevents a delayed retry from crossing a reattach.
-    private func scheduleClaimRetry() {
-        guard !claimRetryScheduled,
-              !pendingInputBatches.isEmpty,
-              activeClaimToken == nil,
-              claimRequestId == nil,
-              let retryBinding = binding,
-              transport != nil else { return }
-        claimRetryScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.claimRetryDelay) { [weak self] in
-            guard let self else { return }
-            self.stateLock.lock()
-            defer { self.stateLock.unlock() }
-            guard self.claimRetryScheduled,
-                  self.binding == retryBinding else { return }
-            self.claimRetryScheduled = false
-            self.requestClaim()
-        }
-    }
-
-    private func requestClaim() {
-        setInputSubmissionState(.waitingForClaim)
-        do {
-            try beginClaimAcquire()
-        } catch {
-            scheduleClaimRetry()
-        }
-    }
-
-    private func releaseClaimIfInputQuiescent() {
-        guard releaseAfterPendingInputRequested,
-              claimRequestId == nil,
-              pendingInputRequests.isEmpty,
-              pendingInputBatches.isEmpty else { return }
-        releaseAfterPendingInputRequested = false
-        releaseClaimBestEffort()
+    private func setInputTransport(_ transport: HostTransport?) {
+        inputRouteLock.lock()
+        inputTransport = transport
+        inputRouteLock.unlock()
     }
 
     private func setInputSubmissionState(_ newState: InputSubmissionState) {
@@ -807,9 +474,6 @@ public final class AttachReplayClient {
         onInputSubmissionStateChange?(newState)
     }
 
-    /// Output acknowledgement — the frozen APPLIED output branch. The
-    /// native header validator requires a nonzero client request id on
-    /// non-unsolicited frames, so acks spend their own request ids.
     private func sendApplied(throughSeq: UInt64) throws {
         guard transport != nil else { return }
         let object: [String: Any] = [

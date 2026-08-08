@@ -1,0 +1,8 @@
+{
+  "result": "failed",
+  "vendor": "grok",
+  "startedAt": "2026-08-02T01:26:39.899Z",
+  "completedAt": "2026-08-02T01:26:40.882Z",
+  "error": "hive_spawn: [\n  {\n    \"type\": \"text\",\n    \"text\": \"Cannot spawn maya: every candidate of the simple_coding route was refused:\\n  grok/grok-4.5 — resolution: grok's model catalog is unreadable\\nEnable a model or edit the route in the Model Control Center.\"\n  }\n]",
+  "agent": null
+}

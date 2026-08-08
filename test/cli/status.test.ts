@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { formatQuotaStatus, formatStatusTable } from "../../src/cli/status";
-import type { AgentRecord } from "../../src/schemas";
+import type { AgentRecord } from "../../src/schemas/agent";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -14,8 +14,6 @@ describe("status table", () => {
         model: "gpt-test",
         category: "simple_coding",
         status: "working",
-        failureReason:
-          "A deliberately long startup failure explaining that the selected model is not supported",
         taskDescription:
           "Implement a deliberately long task description that cannot fit in the status table without truncation",
         worktreePath: "/tmp/maya",
@@ -23,7 +21,6 @@ describe("status table", () => {
         contextPct: 37.6,
         createdAt: timestamp,
         lastEventAt: timestamp,
-        recoveryAttempts: 0,
         capabilityEpoch: 0,
         readOnly: false,
         writeRevoked: false,
@@ -38,7 +35,6 @@ describe("status table", () => {
     expect(header).toContain("STATUS");
     expect(header).toContain("CONTEXT");
     expect(header).toContain("TASK");
-    expect(header).toContain("FAILURE");
     expect(row).toContain("maya");
     expect(row).toContain("codex");
     expect(row).toContain("gpt-test");
@@ -46,7 +42,6 @@ describe("status table", () => {
     expect(row).toContain("38%");
     expect(row).not.toContain("without truncation");
     expect(row).toEndWith("…");
-    expect(row).not.toContain("selected model is not supported");
   });
 
   test("marks a closed holder so a reused name is never ambiguous", () => {
@@ -59,7 +54,6 @@ describe("status table", () => {
       branch: "hive/maya-task",
       contextPct: 0,
       createdAt: timestamp,
-      recoveryAttempts: 0,
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
@@ -87,6 +81,49 @@ describe("status table", () => {
     // The live holder wears the bare name, and only the live holder.
     expect(live).toMatch(/^maya\s/);
     expect(live).not.toContain("closed");
+  });
+
+  test("shows canonical turn status instead of the lifecycle compatibility word", () => {
+    const value: AgentRecord = {
+      id: "agent-maya",
+      name: "maya",
+      tool: "codex",
+      model: "gpt-test",
+      category: "simple_coding",
+      status: "idle",
+      statusDimensions: {
+        schemaVersion: 1,
+        revision: "1",
+        runtime: { kind: "absent", reason: { kind: "unmeasured" } },
+        turn: {
+          kind: "observed",
+          field: {
+            value: "done",
+            source: { kind: "provider-protocol", id: "codex-thread" },
+            observedAt: timestamp,
+            freshness: "fresh",
+            confidence: "authoritative",
+          },
+        },
+        input: { kind: "absent", reason: { kind: "unmeasured" } },
+        mail: { kind: "absent", reason: { kind: "unmeasured" } },
+        health: { kind: "absent", reason: { kind: "unmeasured" } },
+        attention: { kind: "absent", reason: { kind: "unmeasured" } },
+      },
+      taskDescription: "status",
+      worktreePath: "/tmp/maya",
+      branch: "hive/maya",
+      contextPct: null,
+      createdAt: timestamp,
+      lastEventAt: timestamp,
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+    };
+
+    const [, row] = formatStatusTable([value]).split("\n");
+    expect(row).toContain("done");
+    expect(row).not.toContain("idle");
   });
 });
 

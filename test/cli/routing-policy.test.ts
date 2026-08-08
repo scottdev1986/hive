@@ -7,11 +7,15 @@ import {
   parseRouteCandidateArg,
   setProviderPolicy,
   setRoute,
-} from "../../src/cli/routing-policy";
+} from "../../src/cli/routing-policy-command";
 import {
-  OPERATOR_SUBJECT,
+  USER_SUBJECT,
   writeCredential,
-} from "../../src/daemon/credentials";
+} from "../../src/daemon/authorization/credentials";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { machineModelControlDatabase } from "../../src/daemon/routing-service/instance-settings";
+import { RoutingPolicyStore } from "../../src/daemon/routing-policy-store";
+import { HiveDaemon } from "../../src/daemon/server";
 
 describe("route candidate syntax — the CLI half of the Control Center contract", () => {
   test("provider/model parses as a specific target with provider-controlled effort and weight 1", () => {
@@ -111,7 +115,7 @@ describe("Model Control Center daemon pinning", () => {
     process.env.HIVE_HOME = home;
     mkdirSync(home, { recursive: true });
     writeFileSync(join(home, "daemon.port"), "4317\n");
-    writeCredential(OPERATOR_SUBJECT, "operator-test-token");
+    writeCredential(USER_SUBJECT, "user-test-token");
 
     const policy = {
       ...EMPTY_POLICY,
@@ -160,25 +164,36 @@ describe("Model Control Center daemon pinning", () => {
     }
   });
 
-  test("set-route sends one whole route through CAS, clears with zero candidates, and refuses bad input locally", async () => {
+  test("set-route applies and clears CAS revisions in the daemon-owned store", async () => {
     const home = mkdtempSync(join(tmpdir(), "hive-routing-set-route-"));
+    const machineHome = mkdtempSync(
+      join(tmpdir(), "hive-routing-set-route-machine-"),
+    );
     const previousHome = process.env.HIVE_HOME;
+    const previousDefaultHome = process.env.HIVE_DEFAULT_HOME;
     process.env.HIVE_HOME = home;
+    process.env.HIVE_DEFAULT_HOME = machineHome;
     mkdirSync(home, { recursive: true });
     writeFileSync(join(home, "daemon.port"), "4483\n");
-    writeCredential(OPERATOR_SUBJECT, "operator-test-token");
-    const bodies: unknown[] = [];
-    let revision = 0;
+    const db = new HiveDatabase(":memory:");
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: {
+        spawn: async () => {
+          throw new Error("no spawn");
+        },
+      },
+      repoRoot: "/tmp/hive-routing-set-route",
+    });
+    const userToken = daemon.capabilities.mint(USER_SUBJECT, "user").token;
+    writeCredential(USER_SUBJECT, userToken);
+    const policyDatabase = machineModelControlDatabase(db).database;
+    const store = new RoutingPolicyStore(policyDatabase);
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
-      _input,
+      input,
       init,
-    ) => {
-      bodies.push(JSON.parse(String(init?.body)));
-      revision += 1;
-      return new Response(JSON.stringify({ ...EMPTY_POLICY, revision }), {
-        headers: { "content-type": "application/json" },
-      });
-    }) as typeof fetch);
+    ) => daemon.fetch(new Request(input, init))) as typeof fetch);
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     try {
       await setRoute(
@@ -188,26 +203,10 @@ describe("Model Control Center daemon pinning", () => {
         "0",
         4483,
       );
-      await setRoute("complex_coding", "user-weighted", [], "1", 4483);
-      // Bad scope and bad mode refuse locally rather than reach the daemon.
-      await expect(
-        setRoute(
-          "profiling",
-          "hive-equal",
-          ["claude/claude-fable-5"],
-          "2",
-          4483,
-        ),
-      ).rejects.toThrow(/unknown route scope/);
-      await expect(
-        setRoute("global", "ordered", ["claude/claude-fable-5"], "2", 4483),
-      ).rejects.toThrow(/route mode must be/);
-      expect(bodies).toEqual([
-        {
-          op: "set-route",
-          expectedRevision: 0,
-          scope: "complex_coding",
-          route: {
+      expect(store.read()).toMatchObject({
+        revision: 1,
+        categories: {
+          complex_coding: {
             mode: "user-weighted",
             candidates: [
               {
@@ -225,19 +224,36 @@ describe("Model Control Center daemon pinning", () => {
             ],
           },
         },
-        {
-          op: "set-route",
-          expectedRevision: 1,
-          scope: "complex_coding",
-          route: null,
-        },
-      ]);
+      });
+      await setRoute("complex_coding", "user-weighted", [], "1", 4483);
+      expect(store.read()).toMatchObject({ revision: 2, categories: {} });
+      // Bad scope and bad mode refuse locally rather than reach the daemon.
+      await expect(
+        setRoute(
+          "profiling",
+          "hive-equal",
+          ["claude/claude-fable-5"],
+          "2",
+          4483,
+        ),
+      ).rejects.toThrow(/unknown route scope/);
+      await expect(
+        setRoute("global", "ordered", ["claude/claude-fable-5"], "2", 4483),
+      ).rejects.toThrow(/route mode must be/);
+      expect(store.read().revision).toBe(2);
     } finally {
       fetchSpy.mockRestore();
       logSpy.mockRestore();
+      await daemon.stop();
+      policyDatabase.close();
+      db.close();
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
+      if (previousDefaultHome === undefined)
+        delete process.env.HIVE_DEFAULT_HOME;
+      else process.env.HIVE_DEFAULT_HOME = previousDefaultHome;
       rmSync(home, { recursive: true, force: true });
+      rmSync(machineHome, { recursive: true, force: true });
     }
   });
 });

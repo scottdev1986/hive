@@ -1,0 +1,185 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "8", "generation": 1 },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_fixture_turn_end",
+          "seq": "14",
+          "entity": { "kind": "agent", "id": "agent-fixture", "generation": 3 },
+          "entityRevision": "8",
+          "occurredAt": "2026-07-30T14:37:00.000Z",
+          "kind": "turn-end",
+          "source": {
+            "kind": "provider-app-server",
+            "id": "codex",
+            "observedAt": "2026-07-30T14:37:00.000Z",
+            "confidence": "high"
+          },
+          "data": { "status": "idle" }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_fixture_resource",
+          "seq": "13",
+          "entity": { "kind": "agent", "id": "agent-fixture", "generation": 3 },
+          "entityRevision": "7",
+          "occurredAt": "2026-07-30T14:35:00.000Z",
+          "kind": "resource.changed",
+          "source": {
+            "kind": "session-host",
+            "id": "sessiond",
+            "observedAt": "2026-07-30T14:35:00.000Z",
+            "confidence": "high"
+          },
+          "data": { "branch": "dirty" }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_fixture_attached",
+          "seq": "12",
+          "entity": { "kind": "agent", "id": "agent-fixture", "generation": 3 },
+          "entityRevision": "6",
+          "occurredAt": "2026-07-30T14:28:00.000Z",
+          "kind": "session.attached",
+          "source": {
+            "kind": "session-host",
+            "id": "sessiond",
+            "observedAt": "2026-07-30T14:28:00.000Z",
+            "confidence": "high"
+          },
+          "data": { "viewer": "user" }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_fixture_input",
+          "seq": "11",
+          "entity": { "kind": "agent", "id": "agent-fixture", "generation": 3 },
+          "entityRevision": "5",
+          "occurredAt": "2026-07-30T14:02:00.000Z",
+          "kind": "input.claimed",
+          "source": {
+            "kind": "session-host",
+            "id": "sessiond",
+            "observedAt": "2026-07-30T14:02:00.000Z",
+            "confidence": "high"
+          },
+          "data": { "owner": "user" }
+        },
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_fixture_unknown_kind",
+          "seq": "10",
+          "entity": { "kind": "agent", "id": "agent-fixture", "generation": 3 },
+          "entityRevision": "4",
+          "occurredAt": "2026-07-30T13:55:00.000Z",
+          "kind": "vendor.future-signal",
+          "source": {
+            "kind": "provider-app-server",
+            "id": "codex",
+            "observedAt": "2026-07-30T13:55:00.000Z",
+            "confidence": "low"
+          },
+          "data": {}
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": null, "generation": null },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "8", "generation": 1 },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "events": [
+        {
+          "schemaVersion": 2,
+          "eventId": "evt_fixture_stale",
+          "seq": "9",
+          "entity": { "kind": "agent", "id": "agent-fixture", "generation": 3 },
+          "entityRevision": "3",
+          "occurredAt": "2026-07-29T14:00:00.000Z",
+          "kind": "turn-end",
+          "source": {
+            "kind": "provider-app-server",
+            "id": "codex",
+            "observedAt": "2026-07-29T14:00:00.000Z",
+            "confidence": "high"
+          },
+          "data": {}
+        }
+      ]
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "8", "generation": 1 },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "events": []
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": null, "generation": null },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "not-user"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "8", "generation": 1 },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "9"
+    },
+    "value": {
+      "events": []
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": { "revision": "7", "generation": 1 },
+    "observedAt": "2026-07-30T19:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": { "revision": "8", "generation": 1 }
+    },
+    "value": {
+      "events": []
+    }
+  }
+]

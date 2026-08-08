@@ -1,0 +1,8 @@
+=== up 2026-08-01T20:46:48Z
+src=/Users/scottkellar/Projects/hive/.hive/worktrees/anna sha=1aa95e5d528717c80dbb51779e9777cf1f29ffde (clean)
+project=/private/tmp/u5p-d sha=c582615b11e2c776598157317dfb800d5182838c
+sessiond=/Users/scottkellar/Projects/hive/native/sessiond/zig-out/bin/hive-sessiond bytes=3617488 mtime=Jul 31 18:05:13 2026
+port=64968 daemon_pid=29864 owner_pid=30041
+Hive daemon ready: {"engineBuildId":"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1","binaryPath":"/opt/homebrew/Cellar/bun/1.3.14/bin/bun","sourceHash":"eba091e46756683486a71da0ad15f1f8bf858d3c6b404d35eccd7fd35023016d"}
+source_hash announced=eba091e46756683486a71da0ad15f1f8bf858d3c6b404d35eccd7fd35023016d computed=eba091e46756683486a71da0ad15f1f8bf858d3c6b404d35eccd7fd35023016d
+daemon runs the sources under test

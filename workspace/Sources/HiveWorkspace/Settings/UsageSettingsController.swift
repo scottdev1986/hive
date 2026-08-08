@@ -1,15 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// USAGE — provider-reported tokens for the whole Hive session. The control
-/// bucket is exact; worker sessions are deliberately labelled mixed because
-/// their transcripts contain both task work and embedded Hive protocol.
-///
-/// Every figure leads with NEW tokens (see `TokenHeadline`). The provider's raw
-/// input count is cumulative per request — the whole conversation is re-sent
-/// each turn — so it is dominated by cached re-reads and says nothing about
-/// consumption. Cache reads are shown, labelled, beside it; they are never
-/// folded into a headline.
+/// USAGE — provider-reported tokens for the whole Hive session. The control bucket is exact; worker sessions are deliberately labelled mixed because their transcripts contain both task work and embedded Hive protocol. Every figure leads with NEW tokens (see `TokenHeadline`). The provider's raw input count is cumulative per request — the whole conversation is re-sent each turn — so it is dominated by cached re-reads and says nothing about consumption. Cache reads are shown, labelled, beside it; they are never folded into a headline.
 final class UsageSettingsController: SettingsPageController {
 
     override func buildContent() {
@@ -55,11 +47,21 @@ final class UsageSettingsController: SettingsPageController {
         }
 
         for session in usage.sessions {
-            addSession(session, current: session.id == usage.currentSessionId)
+            guard let presentation = dataSource.view?.tokenSession(session.id) else {
+                continue
+            }
+            addSession(
+                session,
+                presentation: presentation,
+                current: session.id == usage.currentSessionId)
         }
     }
 
-    private func addSession(_ session: TokenUsageSession, current: Bool) {
+    private func addSession(
+        _ session: TokenUsageSession,
+        presentation: WorkspaceTokenSessionPresentation,
+        current: Bool
+    ) {
         let card = CardView()
 
         let title = NSTextField(labelWithString: current ? "Current session" : sessionTitle(session))
@@ -77,12 +79,7 @@ final class UsageSettingsController: SettingsPageController {
         card.pinToContentWidth(heading)
 
         let counts = session.fleet.counts
-        let headline = counts?.headline
-        // One basis for the whole card. The fleet aggregate loses its cache
-        // split as soon as any agent's provider does not report one, and mixing
-        // a new-token figure with a cumulative one would make the rows stop
-        // adding up. When the split is gone, every figure here is cumulative
-        // and says so.
+        let headline = presentation.fleet
         let newBasis = headline?.newTokens != nil
         let summary = newBasis
             ? NSStackView(views: [
@@ -112,14 +109,16 @@ final class UsageSettingsController: SettingsPageController {
         addBucket(
             to: card,
             title: "Hive control",
-            detail: controlDetail(session),
+            detail: controlDetail(presentation),
             counts: session.hiveControl.counts,
+            headline: presentation.hiveControl,
             newBasis: newBasis)
         addBucket(
             to: card,
             title: "Worker sessions",
             detail: "Task work plus Hive coordination embedded in worker turns; no provider reports that split.",
             counts: session.workerSessions.counts,
+            headline: presentation.workerSessions,
             newBasis: newBasis)
 
         if !session.unknownSubjects.isEmpty {
@@ -132,7 +131,7 @@ final class UsageSettingsController: SettingsPageController {
             card.pinToContentWidth(unknown)
         }
 
-        let rows = session.usageRows
+        let rows = presentation.rows
         if !rows.isEmpty {
             card.contentStack.addArrangedSubview(NSBox.hdsSeparator())
             let label = NSTextField(labelWithString: "AGENTS")
@@ -156,9 +155,9 @@ final class UsageSettingsController: SettingsPageController {
         title: String,
         detail: String,
         counts: TokenCounts?,
+        headline: TokenHeadline?,
         newBasis: Bool
     ) {
-        let headline = counts?.headline
         let name = NSTextField(labelWithString: title)
         name.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         name.compressHorizontally()
@@ -213,7 +212,7 @@ final class UsageSettingsController: SettingsPageController {
         let reading: String
         let toolTip: String?
         if let counts = usage.counts {
-            let newTokens = newBasis ? counts.headline.newTokens : nil
+            let newTokens = newBasis ? usage.headline?.newTokens : nil
             reading = format(newTokens ?? counts.totalTokens)
             toolTip = "Cumulative across every request, cache reads included: "
                 + format(counts.totalTokens) + " (" + format(counts.inputTokens) + " input, "
@@ -250,10 +249,7 @@ final class UsageSettingsController: SettingsPageController {
         return stack
     }
 
-    /// Cache reads get their own sentence and never a headline: they are the
-    /// same context re-sent to the model each turn, and on a long session they
-    /// dwarf everything the session actually consumed. The raw cumulative
-    /// totals stay on screen — a reader who wants them can still have them.
+    /// Cache reads get their own sentence and never a headline: they are the same context re-sent to the model each turn, and on a long session they dwarf everything the session actually consumed. The raw cumulative totals stay on screen — a reader who wants them can still have them.
     private func cacheDetail(_ headline: TokenHeadline?) -> String {
         guard let headline else { return "No provider reading yet." }
         guard let reads = headline.cacheReadTokens, headline.newTokens != nil else {
@@ -261,9 +257,7 @@ final class UsageSettingsController: SettingsPageController {
                 + "from new input. Input counts every request in full, including context the "
                 + "model has already seen."
         }
-        // The write/fresh split is detail, and Codex does not report it. Say so
-        // rather than implying every new input token was uncached.
-        // The fleet figure mixes providers, so this never says "this provider".
+        // The write/fresh split is detail, and Codex does not report it. Say so rather than implying every new input token was uncached. The fleet figure mixes providers, so this never says "this provider".
         let writes = headline.freshInputTokens.map { fresh in
             "Of the new input, " + format(fresh) + " was uncached and "
                 + format(headline.cacheWriteTokens) + " wrote the cache. "
@@ -278,16 +272,10 @@ final class UsageSettingsController: SettingsPageController {
             + format(headline.cumulativeTotalTokens) + " total."
     }
 
-    private func controlDetail(_ session: TokenUsageSession) -> String {
-        guard let fleet = session.fleet.counts, let control = session.hiveControl.counts else {
+    private func controlDetail(_ presentation: WorkspaceTokenSessionPresentation) -> String {
+        guard let percent = presentation.controlSharePercent else {
             return "Exact Queen tokens."
         }
-        // Both sides of the ratio come from the same basis, or it means nothing.
-        let (orchestrator, total) = fleet.headline.newTokens.flatMap { fleetNew in
-            control.headline.newTokens.map { ($0, fleetNew) }
-        } ?? (control.totalTokens, fleet.totalTokens)
-        guard total > 0 else { return "Exact Queen tokens." }
-        let percent = Double(orchestrator) / Double(total) * 100
         return String(format:
             "Exact Queen tokens; %.1f%% of the known total, a lower bound on Hive overhead.",
             percent)

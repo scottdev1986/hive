@@ -1,0 +1,466 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-maintenance-r9",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-maintenance-r9",
+      "freshness": "live",
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "consolidation": {
+        "state": "ok",
+        "candidates": 2
+      },
+      "jobs": {
+        "state": "ok",
+        "recent": [
+          {
+            "id": "00000008-reindex",
+            "kind": "reindex",
+            "state": "running",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": null,
+            "progress": {
+              "step": "rebuilding index",
+              "done": 0,
+              "total": null
+            },
+            "summary": "",
+            "error": null,
+            "readback": null
+          },
+          {
+            "id": "00000007-retention-sweep",
+            "kind": "retention-sweep",
+            "state": "succeeded",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": "2026-07-30T19:50:02.000Z",
+            "progress": {
+              "step": "reading back",
+              "done": 1,
+              "total": 1
+            },
+            "summary": "deleted 2 aged events, demoted 1 article to stale",
+            "error": null,
+            "readback": {
+              "events": 8,
+              "facts": 4,
+              "ftsRows": 3
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-maintenance-r9",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-29T20:00:00.000Z",
+      "sourceRevision": "memory-maintenance-r9",
+      "freshness": "cached",
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "consolidation": {
+        "state": "ok",
+        "candidates": 2
+      },
+      "jobs": {
+        "state": "ok",
+        "recent": [
+          {
+            "id": "00000008-reindex",
+            "kind": "reindex",
+            "state": "running",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": null,
+            "progress": {
+              "step": "rebuilding index",
+              "done": 0,
+              "total": null
+            },
+            "summary": "",
+            "error": null,
+            "readback": null
+          },
+          {
+            "id": "00000007-retention-sweep",
+            "kind": "retention-sweep",
+            "state": "succeeded",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": "2026-07-30T19:50:02.000Z",
+            "progress": {
+              "step": "reading back",
+              "done": 1,
+              "total": 1
+            },
+            "summary": "deleted 2 aged events, demoted 1 article to stale",
+            "error": null,
+            "readback": {
+              "events": 8,
+              "facts": 4,
+              "ftsRows": 3
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-maintenance-r9",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-29T20:00:00.000Z",
+      "sourceRevision": "memory-maintenance-r9",
+      "freshness": "cached",
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "consolidation": {
+        "state": "ok",
+        "candidates": 2
+      },
+      "jobs": {
+        "state": "ok",
+        "recent": [
+          {
+            "id": "00000008-reindex",
+            "kind": "reindex",
+            "state": "running",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": null,
+            "progress": {
+              "step": "rebuilding index",
+              "done": 0,
+              "total": null
+            },
+            "summary": "",
+            "error": null,
+            "readback": null
+          },
+          {
+            "id": "00000007-retention-sweep",
+            "kind": "retention-sweep",
+            "state": "succeeded",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": "2026-07-30T19:50:02.000Z",
+            "progress": {
+              "step": "reading back",
+              "done": 1,
+              "total": 1
+            },
+            "summary": "deleted 2 aged events, demoted 1 article to stale",
+            "error": null,
+            "readback": {
+              "events": 8,
+              "facts": 4,
+              "ftsRows": 3
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-maintenance-r9",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "memory-maintenance-r9-competing"
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-maintenance-r9",
+      "freshness": "live",
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "consolidation": {
+        "state": "ok",
+        "candidates": 2
+      },
+      "jobs": {
+        "state": "ok",
+        "recent": [
+          {
+            "id": "00000008-reindex",
+            "kind": "reindex",
+            "state": "running",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": null,
+            "progress": {
+              "step": "rebuilding index",
+              "done": 0,
+              "total": null
+            },
+            "summary": "",
+            "error": null,
+            "readback": null
+          },
+          {
+            "id": "00000007-retention-sweep",
+            "kind": "retention-sweep",
+            "state": "succeeded",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": "2026-07-30T19:50:02.000Z",
+            "progress": {
+              "step": "reading back",
+              "done": 1,
+              "total": 1
+            },
+            "summary": "deleted 2 aged events, demoted 1 article to stale",
+            "error": null,
+            "readback": {
+              "events": 8,
+              "facts": 4,
+              "ftsRows": 3
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "memory-maintenance-r9",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "memory-maintenance-r9-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 1,
+      "observedAt": "2026-07-30T20:00:00.000Z",
+      "sourceRevision": "memory-maintenance-r9",
+      "freshness": "live",
+      "config": {
+        "revision": "memory-config-7",
+        "eventsHotDays": 14,
+        "staleAfterDays": 90,
+        "sweepIntervalHours": 12,
+        "wakeBudgetTokens": 1200,
+        "embeddingProvider": "local",
+        "embeddingModel": "fixture-embed-v1"
+      },
+      "indexes": {
+        "fts": {
+          "state": "ok",
+          "articles": 3
+        },
+        "vectors": {
+          "state": "ok",
+          "articles": 2,
+          "facts": 1,
+          "provider": "local",
+          "model": "fixture-embed-v1",
+          "runtime": "ready"
+        }
+      },
+      "consolidation": {
+        "state": "ok",
+        "candidates": 2
+      },
+      "jobs": {
+        "state": "ok",
+        "recent": [
+          {
+            "id": "00000008-reindex",
+            "kind": "reindex",
+            "state": "running",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": null,
+            "progress": {
+              "step": "rebuilding index",
+              "done": 0,
+              "total": null
+            },
+            "summary": "",
+            "error": null,
+            "readback": null
+          },
+          {
+            "id": "00000007-retention-sweep",
+            "kind": "retention-sweep",
+            "state": "succeeded",
+            "requestedBy": "user",
+            "startedAt": "2026-07-30T19:50:00.000Z",
+            "finishedAt": "2026-07-30T19:50:02.000Z",
+            "progress": {
+              "step": "reading back",
+              "done": 1,
+              "total": 1
+            },
+            "summary": "deleted 2 aged events, demoted 1 article to stale",
+            "error": null,
+            "readback": {
+              "events": 8,
+              "facts": 4,
+              "ftsRows": 3
+            }
+          }
+        ]
+      }
+    }
+  }
+]

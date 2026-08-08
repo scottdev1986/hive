@@ -2,7 +2,7 @@
 import PackageDescription
 
 /// GhosttyKit.xcframework is a **build output**, not checked in.
-/// Produce it with `scripts/build-ghosttykit.sh` from the repo root, then materialize:
+/// Produce it with `scripts/native/build-ghosttykit.sh` from the repo root, then materialize:
 ///   workspace/Vendor/GhosttyKit.xcframework  (libghostty.a + Headers; see build notes)
 let ghosttyKitPath = "Vendor/GhosttyKit.xcframework"
 
@@ -10,7 +10,8 @@ let package = Package(
     name: "HiveWorkspace",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "HiveWorkspace", targets: ["HiveWorkspace"]),
+        .executable(name: "HiveWorkspace", targets: ["HiveWorkspaceApp"]),
+        .executable(name: "HiveWorkspaceQA", targets: ["HiveWorkspaceQA"]),
         .library(name: "WorkspaceCore", targets: ["WorkspaceCore"]),
         .library(name: "HiveTerminalKit", targets: ["HiveTerminalKit"]),
         .executable(name: "GhosttyManualIsolationProbe", targets: ["GhosttyManualIsolationProbe"]),
@@ -21,15 +22,18 @@ let package = Package(
     ],
     dependencies: [],
     targets: [
-        .target(name: "WorkspaceCore"),
+        .target(
+            name: "WorkspaceCore",
+            dependencies: ["HiveTerminalKit"]
+        ),
         // Offline-built GhosttyKit binary plus its authoritative C ABI header target.
         .binaryTarget(
             name: "GhosttyKit",
             path: ghosttyKitPath
         ),
-        // C ABI surface for the seven _v1 symbols. `include/hive_ghostty_bridge.h` is a
-        // symlink to repo-root `native/include/hive_ghostty_bridge.h` (one file pins
-        // both halves).
+        // C ABI surface for the seven _v1 symbols.
+        // `include/hive_ghostty_bridge_module.h` is a symlink to repo-root
+        // `native/include/hive_ghostty_bridge.h` (one file pins both halves).
         // HeaderParityTests fails closed if that link ever becomes a drifting fork.
         .target(
             name: "HiveGhosttyC",
@@ -55,7 +59,11 @@ let package = Package(
                 .linkedLibrary("c++"),
             ]
         ),
-        .executableTarget(
+        // The app itself is a library so that both executables below can link
+        // it without duplicating a source file. It keeps this name because the
+        // release build copies its resource bundle by the name SwiftPM derives
+        // from the target (`HiveWorkspace_HiveWorkspace.bundle`).
+        .target(
             name: "HiveWorkspace",
             dependencies: [
                 "WorkspaceCore",
@@ -66,6 +74,30 @@ let package = Package(
             // (src/release/build.ts), so keep the directory `.copy`-stable.
             resources: [.copy("Resources/VendorMarks")]
         ),
+        // The shipped product: an entry point and nothing else. It installs no
+        // QA hooks, which is what keeps the smoke checks and the fixture-corpus
+        // shell out of the binary a user launches from the Dock.
+        .executableTarget(
+            name: "HiveWorkspaceApp",
+            dependencies: ["HiveWorkspace"]
+        ),
+        // The QA harness. Nothing in the shipped product depends on this
+        // target, so nothing in it links into the released .app.
+        .target(
+            name: "WorkspaceQAKit",
+            dependencies: [
+                "HiveWorkspace",
+                "WorkspaceCore",
+                "HiveTerminalKit",
+            ]
+        ),
+        .executableTarget(
+            name: "HiveWorkspaceQA",
+            dependencies: [
+                "HiveWorkspace",
+                "WorkspaceQAKit",
+            ]
+        ),
         .testTarget(
             name: "WorkspaceCoreTests",
             dependencies: ["WorkspaceCore"],
@@ -75,7 +107,9 @@ let package = Package(
         ),
         .testTarget(
             name: "HiveWorkspaceTests",
-            dependencies: ["HiveWorkspace", "HiveTerminalKit", "WorkspaceCore"]
+            dependencies: [
+                "HiveWorkspace", "WorkspaceQAKit", "HiveTerminalKit", "WorkspaceCore",
+            ]
         ),
         .testTarget(
             name: "HiveTerminalKitTests",

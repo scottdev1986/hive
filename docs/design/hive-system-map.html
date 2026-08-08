@@ -1,0 +1,776 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hive system map — who talks to whom, and who owns what</title>
+<style>
+  :root {
+    --ink: #16181d;
+    --ink-soft: #5b6270;
+    --page: #f6f7f9;
+    --card: #ffffff;
+    --rule: #d8dce3;
+
+    --user: #0e7490;      --user-bg: #e0f4f8;
+    --control: #4338ca;    --control-bg: #e8e7fd;
+    --state: #475569;      --state-bg: #e9edf2;
+    --terminal: #b45309;   --terminal-bg: #fdf0dc;
+    --vendor: #15803d;     --vendor-bg: #e3f5e8;
+    --agent: #7e22ce;      --agent-bg: #f3e8fd;
+    --knowledge: #0f766e;  --knowledge-bg: #dff2ef;
+    --test: #64748b;       --test-bg: #eceff3;
+    --warn: #b91c1c;       --warn-bg: #fdeaea;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 28px 96px;
+    background: var(--page);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 1700px; margin: 0 auto; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 19px; margin: 44px 0 12px; letter-spacing: -0.01em; }
+  h3 { font-size: 15px; margin: 26px 0 8px; }
+  p.lede { color: var(--ink-soft); margin: 0 0 24px; max-width: 92ch; }
+  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9em; }
+
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 16px; }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-soft); }
+  .legend i { width: 13px; height: 13px; border-radius: 3px; display: inline-block; border: 1px solid rgba(0,0,0,.18); }
+  .figwrap { overflow-x: auto; }
+  svg { display: block; min-width: 1180px; width: 100%; height: auto; }
+
+  /* diagram */
+  .band { fill: #fbfcfd; stroke: var(--rule); stroke-width: 1; rx: 10; }
+  .band-title { font: 600 12px -apple-system, sans-serif; fill: var(--ink-soft); letter-spacing: .04em; text-transform: uppercase; }
+  .node rect { stroke-width: 1.4; rx: 8; }
+  .node .t { font: 600 13px -apple-system, sans-serif; fill: var(--ink); }
+  .node .s { font: 10.5px ui-monospace, Menlo, monospace; fill: var(--ink-soft); }
+  .node .r { font: 11px -apple-system, sans-serif; fill: var(--ink-soft); }
+  .node { cursor: help; }
+  .node:hover rect { stroke-width: 2.6; }
+
+  .n-user rect { fill: var(--user-bg); stroke: var(--user); }
+  .n-control rect { fill: var(--control-bg); stroke: var(--control); }
+  .n-state rect { fill: var(--state-bg); stroke: var(--state); }
+  .n-terminal rect { fill: var(--terminal-bg); stroke: var(--terminal); }
+  .n-vendor rect { fill: var(--vendor-bg); stroke: var(--vendor); }
+  .n-agent rect { fill: var(--agent-bg); stroke: var(--agent); }
+  .n-knowledge rect { fill: var(--knowledge-bg); stroke: var(--knowledge); }
+  .n-test rect { fill: var(--test-bg); stroke: var(--test); }
+  .n-warn rect { fill: var(--warn-bg); stroke: var(--warn); stroke-dasharray: 5 3; }
+  .n-ghost rect { fill: #ffffff; stroke: var(--vendor); stroke-dasharray: 5 3; }
+
+  .edge { stroke: #6b7280; stroke-width: 1.7; fill: none; }
+  .edge-dash { stroke-dasharray: 6 4; }
+  .chip { cursor: help; }
+  .chip rect { fill: #ffffff; stroke: #9aa2ae; stroke-width: 1; rx: 10; }
+  .chip text { font: 10.5px -apple-system, sans-serif; fill: #303640; text-anchor: middle; }
+  .chip:hover rect { stroke: var(--ink); stroke-width: 1.8; }
+  .micro { font: 9.5px -apple-system, sans-serif; fill: var(--ink-soft); text-anchor: middle; }
+
+  #tip {
+    position: fixed; z-index: 9; pointer-events: none; opacity: 0;
+    max-width: 380px; padding: 8px 10px; border-radius: 7px;
+    background: #16181d; color: #f2f4f7;
+    font: 12px/1.45 ui-monospace, Menlo, monospace;
+    box-shadow: 0 6px 20px rgba(0,0,0,.28);
+    transition: opacity .1s linear;
+  }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--rule); }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); background: #fbfcfd; }
+  tbody tr:hover { background: #fafbfc; }
+  td.cite { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+  td.never { color: #7f1d1d; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; border: 1px solid; }
+  .tag.clean { color: #14532d; border-color: #86c69b; background: var(--vendor-bg); }
+  .tag.blur { color: #7f1d1d; border-color: #e0a3a3; background: var(--warn-bg); }
+
+  .finding { border-left: 3px solid var(--rule); padding: 2px 0 2px 16px; margin: 0 0 22px; }
+  .finding.ok { border-left-color: var(--vendor); }
+  .finding.bad { border-left-color: var(--warn); }
+  .finding h4 { margin: 0 0 5px; font-size: 15px; }
+  .finding p { margin: 0 0 6px; max-width: 96ch; }
+  .finding .src { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ink-soft); }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--rule); color: var(--ink-soft); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Hive system map</h1>
+<p class="lede">
+  One box per component and its single responsibility; every edge labelled with the transport it actually
+  uses. Edges were derived from source — imports, socket paths, spawn argv, HTTP routes — not from the
+  design docs, and each carries its <span class="mono">file:line</span> in a hover tooltip and in the
+  citation table below. Hover any box or edge label to see where it is written down.
+</p>
+
+<div class="panel">
+  <div class="legend">
+    <span><i style="background:var(--user-bg);border-color:var(--user)"></i>User surface</span>
+    <span><i style="background:var(--control-bg);border-color:var(--control)"></i>Control plane (daemon)</span>
+    <span><i style="background:var(--state-bg);border-color:var(--state)"></i>Durable state</span>
+    <span><i style="background:var(--terminal-bg);border-color:var(--terminal)"></i>Terminal plane (sessiond)</span>
+    <span><i style="background:var(--vendor-bg);border-color:var(--vendor)"></i>Vendor plane</span>
+    <span><i style="background:var(--knowledge-bg);border-color:var(--knowledge)"></i>Knowledge plane</span>
+    <span><i style="background:var(--agent-bg);border-color:var(--agent)"></i>Agent hierarchy</span>
+    <span><i style="background:var(--test-bg);border-color:var(--test)"></i>Test harness</span>
+    <span><i style="background:#fff;border-color:var(--warn);border-style:dashed"></i>Cross-cutting / shared</span>
+  </div>
+
+<div class="figwrap">
+<svg viewBox="0 0 1660 1160" role="img" aria-label="Hive component and transport map">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"/>
+    </marker>
+  </defs>
+
+  <!-- ============ band backgrounds ============ -->
+  <rect class="band" x="200" y="30" width="1050" height="96"/>
+  <rect class="band" x="200" y="176" width="1050" height="354"/>
+  <rect class="band" x="200" y="580" width="1050" height="104"/>
+  <rect class="band" x="200" y="734" width="1050" height="210"/>
+  <rect class="band" x="200" y="994" width="1050" height="106"/>
+  <rect class="band" x="1270" y="176" width="370" height="354"/>
+  <rect class="band" x="1270" y="580" width="370" height="300"/>
+
+  <text class="band-title" x="216" y="24">User surfaces</text>
+  <text class="band-title" x="216" y="198">Control plane — hive daemon (Bun, one process per HIVE_HOME)</text>
+  <text class="band-title" x="216" y="600">Durable state</text>
+  <text class="band-title" x="216" y="756">Terminal plane — hive-sessiond host (Zig, one process per agent terminal)</text>
+  <text class="band-title" x="216" y="1014">Vendor processes — one provider CLI per host, inside its PTY</text>
+  <text class="band-title" x="1286" y="198">Vendor &amp; knowledge planes</text>
+  <text class="band-title" x="1286" y="602">Agent hierarchy — lifecycle ownership</text>
+
+  <!-- ============ edges (drawn under nodes) ============ -->
+  <line class="edge" x1="456" y1="110" x2="456" y2="176" marker-end="url(#arrow)"/>
+  <line class="edge" x1="926" y1="110" x2="926" y2="176" marker-end="url(#arrow)"/>
+  <line class="edge" x1="376" y1="530" x2="376" y2="602" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <line class="edge" x1="723" y1="530" x2="723" y2="602" marker-end="url(#arrow)"/>
+  <line class="edge" x1="552" y1="530" x2="552" y2="734" marker-end="url(#arrow)"/>
+  <line class="edge edge-dash" x1="530" y1="734" x2="530" y2="530" marker-end="url(#arrow)"/>
+  <line class="edge" x1="904" y1="530" x2="904" y2="734" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <line class="edge" x1="1070" y1="734" x2="1070" y2="666" marker-end="url(#arrow)"/>
+  <line class="edge" x1="723" y1="944" x2="723" y2="994" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <polyline class="edge" points="226,1032 60,1032 60,281 226,281" marker-end="url(#arrow)"/>
+  <polyline class="edge" points="226,1064 110,1064 110,320 226,320" marker-end="url(#arrow)"/>
+  <polyline class="edge" points="686,78 686,20 1262,20 1262,845 1250,845" marker-end="url(#arrow)"/>
+  <polyline class="edge" points="1211,1048 1240,1048 1240,310 1292,310" marker-end="url(#arrow)"/>
+  <line class="edge" x1="1250" y1="250" x2="1292" y2="250" marker-end="url(#arrow)"/>
+  <line class="edge" x1="1292" y1="395" x2="1212" y2="395" marker-end="url(#arrow)"/>
+  <line class="edge edge-dash" x1="1455" y1="430" x2="1455" y2="444" marker-end="url(#arrow)"/>
+  <line class="edge" x1="1340" y1="666" x2="1340" y2="706" marker-end="url(#arrow)"/>
+  <line class="edge" x1="1340" y1="756" x2="1340" y2="796" marker-end="url(#arrow)"/>
+
+  <text class="micro" x="1271" y="242">spawn</text>
+  <text class="micro" x="1252" y="387">in-process</text>
+  <text class="micro" x="1476" y="440">fs 0600</text>
+
+  <!-- ============ user surfaces ============ -->
+  <g class="node n-user" data-cite="workspace/Sources/HiveWorkspace/FeedClient.swift · src/cli/workspace-feed.ts:1-27 — the app runs `hive workspace-feed --port n` as a long-lived child and decodes NDJSON; attach goes straight to the host over AF_UNIX.">
+    <rect x="226" y="46" width="460" height="64"/>
+    <text class="t" x="246" y="72">Workspace.app — macOS UI (Swift)</text>
+    <text class="s" x="246" y="92">workspace/Sources/{HiveWorkspace,WorkspaceCore,HiveTerminalKit}</text>
+  </g>
+  <g class="node n-user" data-cite="src/cli/ — 35 commands. `hive daemon` runs the daemon; `hive credential` mints per-agent headers; `hive event` is the hook relay; `hive workspace-feed` is the app's status wire.">
+    <rect x="726" y="46" width="400" height="64"/>
+    <text class="t" x="746" y="72">hive CLI — user commands + hook relay</text>
+    <text class="s" x="746" y="92">src/cli/ (cli.ts, daemon.ts, event.ts, credential.ts)</text>
+  </g>
+
+  <!-- ============ daemon ============ -->
+  <g class="node n-control" data-cite="src/daemon/server.ts:5-6 (McpServer + WebStandardStreamableHTTPServerTransport), :3457-3642 (route table), :5830-5858 (authenticate then handle /mcp). 5,901 lines.">
+    <rect x="226" y="216" width="230" height="130"/>
+    <text class="t" x="244" y="244">MCP + HTTP surface</text>
+    <text class="r" x="244" y="264">One Bun server. /mcp,</text>
+    <text class="r" x="244" y="280">/event, /attach-grant,</text>
+    <text class="r" x="244" y="296">/handshake, ~40 routes.</text>
+    <text class="s" x="244" y="324">daemon/server.ts</text>
+  </g>
+  <g class="node n-control" data-cite="src/daemon/authorization/authorization-service.ts:1-2,23 — four roles (user, orchestrator, writer, reader) and the action allowlist each holds; :430-460 is the one gate every tool passes.">
+    <rect x="478" y="216" width="230" height="130"/>
+    <text class="t" x="496" y="244">Authorization</text>
+    <text class="r" x="496" y="264">Four roles, one allowlist</text>
+    <text class="r" x="496" y="280">per role. Every tool call</text>
+    <text class="r" x="496" y="296">passes this gate.</text>
+    <text class="s" x="496" y="324">authorization/authorization-service.ts</text>
+  </g>
+  <g class="node n-control" data-cite="src/mail-service/service.ts: MailRecipientResolver (recipient resolution), src/mail-service/store.ts: MailControlLaneFullError (control lane capacity refuses rather than displaces). Lanes: control (each settled) and work (newest collapses).">
+    <rect x="730" y="216" width="230" height="130"/>
+    <text class="t" x="748" y="244">Mail</text>
+    <text class="r" x="748" y="264">Control + work lanes,</text>
+    <text class="r" x="748" y="280">leases, settlement,</text>
+    <text class="r" x="748" y="296">dead letters.</text>
+    <text class="s" x="748" y="324">mail-broker.ts / mail-store.ts</text>
+  </g>
+  <g class="node n-control" data-cite="src/daemon/hierarchy-store.ts:1 — 'Persistence for the frozen hierarchy records. The daemon is the only writer.' Three independent fences: hierarchyRevision, runEpoch, capabilityEpoch.">
+    <rect x="982" y="216" width="230" height="130"/>
+    <text class="t" x="1000" y="244">Hierarchy records</text>
+    <text class="r" x="1000" y="264">Nodes, bindings, grants,</text>
+    <text class="r" x="1000" y="280">tasks, trains. Daemon is</text>
+    <text class="r" x="1000" y="296">the only writer.</text>
+    <text class="s" x="1000" y="324">daemon/hierarchy-store.ts</text>
+  </g>
+
+  <g class="node n-control" data-cite="src/daemon/routing-service/router.ts:19-25 — 'Facts filter; weights distribute.' Nothing scores: no quota headroom, no price, no inferred model strength, no outcome learning. Model Control snapshot at server.ts:3516.">
+    <rect x="226" y="366" width="230" height="130"/>
+    <text class="t" x="244" y="394">Routing · Quota ·</text>
+    <text class="t" x="244" y="411">Model Control</text>
+    <text class="r" x="244" y="431">Resolve candidates, filter</text>
+    <text class="r" x="244" y="447">on facts, select fairly.</text>
+    <text class="s" x="244" y="474">router.ts / quota.ts</text>
+  </g>
+  <g class="node n-control" data-cite="src/memory-service/library.ts (stable key order for the paginated corpus), src/memory-service/embeddings.ts (local ONNX; AVAILABLE or UNAVAILABLE, never fabricated vectors).">
+    <rect x="478" y="366" width="230" height="130"/>
+    <text class="t" x="496" y="394">Memory</text>
+    <text class="r" x="496" y="414">Articles, episodic store,</text>
+    <text class="r" x="496" y="430">local ONNX embeddings,</text>
+    <text class="r" x="496" y="446">recall + consolidation.</text>
+    <text class="s" x="496" y="474">daemon/memory-*.ts</text>
+  </g>
+  <g class="node n-control" data-cite="src/daemon/recovery/recovery-service.ts:27-29 — RecoveryOutcome is 'reported' | 'skipped'; there is no 'dead' action left. resource-management/teardown.ts:1-14 — a kill walks the real process tree and LOOKS AGAIN before claiming success.">
+    <rect x="730" y="366" width="230" height="130"/>
+    <text class="t" x="748" y="394">Lifecycle: detect</text>
+    <text class="t" x="748" y="411">&amp; report</text>
+    <text class="r" x="748" y="431">Death evidence, sweeps,</text>
+    <text class="r" x="748" y="447">owner-invoked teardown.</text>
+    <text class="s" x="748" y="474">recovery.ts / teardown.ts</text>
+  </g>
+  <g class="node n-control" data-cite="src/daemon/spawn/spawner-impl.ts (3,234 lines) — admission, worktree creation, adapter dispatch, host launch. landing.ts / land-tool.ts — capability-gated fast-forward onto main.">
+    <rect x="982" y="366" width="230" height="130"/>
+    <text class="t" x="1000" y="394">Spawn · Landing</text>
+    <text class="r" x="1000" y="414">Admission, worktree,</text>
+    <text class="r" x="1000" y="430">adapter dispatch, host</text>
+    <text class="r" x="1000" y="446">launch, fast-forward land.</text>
+    <text class="s" x="1000" y="474">spawner-impl.ts / landing.ts</text>
+  </g>
+
+  <!-- ============ durable state ============ -->
+  <g class="node n-state" data-cite="src/daemon/database/hive-database.ts:1 (bun:sqlite); src/hive-home/home.ts:22-24, :53-55 ($HIVE_HOME/hive.db). Domain stores share one writer process.">
+    <rect x="226" y="602" width="300" height="64"/>
+    <text class="t" x="246" y="628">hive.db — SQLite</text>
+    <text class="s" x="246" y="648">$HIVE_HOME/hive.db · daemon/db.ts:1,278</text>
+  </g>
+  <g class="node n-state" data-cite="src/adapters/worktrees.ts — one git worktree per agent under .hive/worktrees/&lt;name&gt;, plus the vendor config the adapters write into it (.claude/, .grok/, .kimi-code/).">
+    <rect x="558" y="602" width="330" height="64"/>
+    <text class="t" x="578" y="628">git worktrees — one per agent</text>
+    <text class="s" x="578" y="648">.hive/worktrees/&lt;agent&gt;/ · adapters/worktrees.ts</text>
+  </g>
+  <g class="node n-state" data-cite="src/daemon/session-host/host-operations.ts:46 (hostDirectory), :70 (hostSocketPath). The host writes its durable record here and binds its socket in a separate short root; the daemon reads the record to find a live terminal.">
+    <rect x="920" y="602" width="300" height="64"/>
+    <text class="t" x="940" y="628">host records + sockets</text>
+    <text class="s" x="940" y="648">$HIVE_HOME/sessiond-state/hosts/&lt;id&gt;/</text>
+  </g>
+
+  <!-- ============ sessiond ============ -->
+  <g class="node n-terminal" data-cite="native/sessiond/src/pty_host.zig:1-5 — 'openpty/fork/execve, process group, geometry, start-token at spawn, ordered write-queue drain, raw read loop. Does NOT own VT parse, checkpoint, attach protocol, or broker grants.'">
+    <rect x="226" y="780" width="230" height="130"/>
+    <text class="t" x="244" y="808">PTY host</text>
+    <text class="r" x="244" y="828">openpty / fork / execve,</text>
+    <text class="r" x="244" y="844">process group, geometry,</text>
+    <text class="r" x="244" y="860">write queue, read loop.</text>
+    <text class="s" x="244" y="888">pty_host.zig</text>
+  </g>
+  <g class="node n-terminal" data-cite="native/sessiond/src/input_arbiter.zig:41-48 (Error.HumanOwned), :144-147 (hasHumanClaim), :73 — automation is refused outright while a user claim stands; provenance is user | automation | terminal.">
+    <rect x="478" y="780" width="230" height="130"/>
+    <text class="t" x="496" y="808">Input arbiter</text>
+    <text class="r" x="496" y="828">Who may write into the</text>
+    <text class="r" x="496" y="844">composer. A user claim</text>
+    <text class="r" x="496" y="860">refuses automation.</text>
+    <text class="s" x="496" y="888">input_arbiter.zig</text>
+  </g>
+  <g class="node n-terminal" data-cite="native/sessiond/src/terminal_state.zig:1-13 — 'Owns: feed every PTY output byte through an injected VT engine … Does NOT own: input arbitration, process kill, viewer grants, PTY open/spawn.' Failed checkpoint yields CHECKPOINT_UNAVAILABLE, never a partial restore.">
+    <rect x="730" y="780" width="230" height="130"/>
+    <text class="t" x="748" y="808">Terminal state (VT)</text>
+    <text class="r" x="748" y="828">Headless VT engine,</text>
+    <text class="r" x="748" y="844">journal.bin, verified</text>
+    <text class="r" x="748" y="860">checkpoints.</text>
+    <text class="s" x="748" y="888">terminal_state.zig</text>
+  </g>
+  <g class="node n-terminal" data-cite="native/sessiond/src/host_core.zig:1325-1336 (enforceSupervisorLoss), :405-450 (SupervisorWatch — 'unobservable is NOT absence'), :453-462 (90 s grace). visibility_lease.zig:39-47 — the lease no longer decides whether a terminal may live.">
+    <rect x="982" y="780" width="230" height="130"/>
+    <text class="t" x="1000" y="808">Supervisor watch</text>
+    <text class="t" x="1000" y="825">+ visibility lease</text>
+    <text class="r" x="1000" y="845">Crash invariant: no live</text>
+    <text class="r" x="1000" y="861">host without a daemon.</text>
+    <text class="s" x="1000" y="888">host_core.zig</text>
+  </g>
+
+  <!-- ============ vendor processes ============ -->
+  <g class="node n-vendor" data-cite="src/adapters/providers/claude-cli.ts + claude-adapter.ts. Hive-owned settings file, absolute binary path, hooks carry the provider run id on argv (claude-cli.ts:68-94).">
+    <rect x="226" y="1016" width="185" height="64"/>
+    <text class="t" x="246" y="1042">claude</text>
+    <text class="s" x="246" y="1062">claude-cli.ts</text>
+  </g>
+  <g class="node n-vendor" data-cite="src/adapters/providers/codex-cli.ts + codex-adapter.ts. Note CODEX_TUI_APPROVAL_KEYS is imported directly by server.ts:18.">
+    <rect x="426" y="1016" width="185" height="64"/>
+    <text class="t" x="446" y="1042">codex</text>
+    <text class="s" x="446" y="1062">codex-cli.ts</text>
+  </g>
+  <g class="node n-vendor" data-cite="src/adapters/providers/grok-cli.ts + grok-adapter.ts. Hook is worktree-local and instance-hashed (:395-396, :271-277); Hive never writes ~/.grok/config.toml (:170) or trusted_folders.toml (:321).">
+    <rect x="626" y="1016" width="185" height="64"/>
+    <text class="t" x="646" y="1042">grok</text>
+    <text class="s" x="646" y="1062">grok-cli.ts</text>
+  </g>
+  <g class="node n-vendor" data-cite="src/adapters/providers/kimi-cli.ts + kimi-adapter.ts. Kimi reads hooks ONLY from its user-level config (:201-204), so the one Hive hook is machine-global — see the blurred-boundary section.">
+    <rect x="826" y="1016" width="185" height="64"/>
+    <text class="t" x="846" y="1042">kimi</text>
+    <text class="s" x="846" y="1062">kimi-cli.ts</text>
+  </g>
+  <g class="node n-vendor" data-cite="src/adapters/providers/opencode-cli.ts + opencode-adapter.ts. Turn and graphify plugins are written into the worktree (adapters/worktrees.ts).">
+    <rect x="1026" y="1016" width="185" height="64"/>
+    <text class="t" x="1046" y="1042">opencode</text>
+    <text class="s" x="1046" y="1062">opencode-cli.ts</text>
+  </g>
+
+  <!-- ============ knowledge / vendor plane ============ -->
+  <g class="node n-knowledge" data-cite="src/daemon/graphify-service/graphify-service.ts:1-14 — one HTTP MCP instance per repo, held (not detached) so it dies with the daemon; serverUrl() is null when down and a spawn then attaches nothing. src/adapters/graphify.ts:1-19 — keyless, scrubbed env, --code-only, no network.">
+    <rect x="1292" y="206" width="326" height="110"/>
+    <text class="t" x="1312" y="234">Graphify MCP server</text>
+    <text class="r" x="1312" y="254">Repo-local code knowledge graph.</text>
+    <text class="r" x="1312" y="270">Daemon-owned child; dies with it.</text>
+    <text class="s" x="1312" y="298">graphify-service/graphify-service.ts</text>
+  </g>
+  <g class="node n-ghost" data-cite="src/adapters/providers/provider-adapter.ts:44-60 — the one provider boundary normal agent creation crosses: prepareWorktree, prepareSpawn, startInitialTurn, discover. provider-registry.ts:9-15 maps all five.">
+    <rect x="1292" y="330" width="326" height="100"/>
+    <text class="t" x="1312" y="358">Vendor adapters (in-process)</text>
+    <text class="r" x="1312" y="378">One AgentAdapter per provider: worktree</text>
+    <text class="r" x="1312" y="394">prep, config, argv, model discovery.</text>
+    <text class="s" x="1312" y="418">adapters/providers/provider-adapter.ts</text>
+  </g>
+  <g class="node n-warn" data-cite="src/adapters/providers/kimi-cli.ts:226-233 writes ~/.kimi-code/config.toml because 'Kimi reads hooks only from its user-level config' (:201-204, :221-224). HOME-keyed at :55-59 — shared by prod, dev and QA and by ordinary Kimi sessions.">
+    <rect x="1292" y="444" width="326" height="72"/>
+    <text class="t" x="1312" y="470">~/.kimi-code/config.toml</text>
+    <text class="r" x="1312" y="490">Machine-global hook file — one for every</text>
+    <text class="r" x="1312" y="506">Hive instance and every Kimi session.</text>
+  </g>
+
+  <!-- ============ hierarchy ============ -->
+  <g class="node n-agent" data-cite="The root orchestrator. Spawns directly; unrestricted close-authority; owns every agent with no lead. src/daemon/authorization/authorization-service.ts:151-182.">
+    <rect x="1300" y="616" width="310" height="50"/>
+    <text class="t" x="1320" y="638">queen (root orchestrator)</text>
+    <text class="s" x="1320" y="656">role: orchestrator · capabilities.ts:151-182</text>
+  </g>
+  <g class="node n-agent" data-cite="Leads spawn inside delegation grants: hive_spawn_many with delegationSpec.authority / allowance / boundaries. DelegationSpec.allowance.owner is defined at schemas/hierarchy-node.ts:155-161.">
+    <rect x="1300" y="706" width="310" height="50"/>
+    <text class="t" x="1320" y="728">leads</text>
+    <text class="s" x="1320" y="746">authority · allowance · boundaries</text>
+  </g>
+  <g class="node n-agent" data-cite="Workers own one worktree and one branch, land through hive_land, and report on the mail lanes. Their lifecycle owner is their lead, or queen when there is no hierarchy evidence (plan §3.1 :190-191).">
+    <rect x="1300" y="796" width="310" height="50"/>
+    <text class="t" x="1320" y="818">workers</text>
+    <text class="s" x="1320" y="836">one worktree · one branch · hive_land</text>
+  </g>
+  <text class="micro" x="1455" y="690" style="text-anchor:middle">spawns — delegationSpec</text>
+  <text class="micro" x="1455" y="780" style="text-anchor:middle">spawns — attenuated grant</text>
+  <text class="micro" x="1455" y="868" style="text-anchor:middle">lifecycle owner is the tier above; only owners destroy</text>
+
+  <!-- ============ QA ============ -->
+  <g class="node n-test" data-cite="qa/README.md:1-5 and the gate section (:40-66): QA_HOME is resolved before matching, ~/.hive and the dev home are refused, the daemon runs from source and its startup hash must equal QA_SRC_ROOT's, teardown proves its own reader before an empty result passes.">
+    <rect x="1270" y="910" width="370" height="190"/>
+    <text class="t" x="1290" y="940">QA harness — isolated rig</text>
+    <text class="r" x="1290" y="962">Its own HIVE_HOME, its own daemon</text>
+    <text class="r" x="1290" y="978">from source, its own target repo.</text>
+    <text class="r" x="1290" y="1000">Refuses ~/.hive and the dev home;</text>
+    <text class="r" x="1290" y="1016">asserts the daemon's source hash.</text>
+    <text class="r" x="1290" y="1038">Shares only the machine's vendor</text>
+    <text class="r" x="1290" y="1054">credential stores (HOME-keyed).</text>
+    <text class="s" x="1290" y="1080">qa/rig.sh · qa/suite.sh · qa/README.md</text>
+  </g>
+
+  <!-- ============ edge labels (on top) ============ -->
+  <g class="chip" data-cite="src/cli/workspace-feed.ts:1-27 — the app runs `hive workspace-feed --port n` as a long-lived child; it emits one JSON object per line on stdout, on change and at least every 5 s. Polling lives in the child because it holds the user credential.">
+    <rect x="391" y="133" width="130" height="20"/><text x="456" y="147">HTTP + NDJSON feed</text>
+  </g>
+  <g class="chip" data-cite="src/cli/credential.ts (userFetch) → the daemon's authenticated HTTP routes; src/daemon/server.ts:3457-3642. The user credential is a 0600 file on disk.">
+    <rect x="856" y="133" width="140" height="20"/><text x="926" y="147">HTTP · user cred</text>
+  </g>
+  <g class="chip" data-cite="src/daemon/database/hive-database.ts:1 (import { Database } from 'bun:sqlite'), :146 (busy timeout); src/hive-home/home.ts:22-24, :53-55 ($HIVE_HOME/hive.db). The daemon is the only writer.">
+    <rect x="336" y="556" width="80" height="20"/><text x="376" y="570">bun:sqlite</text>
+  </g>
+  <g class="chip" data-cite="src/adapters/worktrees.ts — git worktree add/remove plus the vendor config the adapters write into each tree. Foreign-instance worktrees are never touched (:897-903).">
+    <rect x="667" y="556" width="112" height="20"/><text x="723" y="570">git worktree (fs)</text>
+  </g>
+  <g class="chip" data-cite="src/daemon/session-host/host-launcher.ts:14-22, :270-303 — Hive listens on a per-host socket, spawns `hive-sessiond host` (Bun.spawn at :295) pointing at it, and the host dials back with the private HVB1 bootstrap codec. native/sessiond/src/main.zig:40-47: there is no `serve` role and no broker process.">
+    <rect x="484" y="545" width="136" height="20"/><text x="552" y="559">spawn + HVB1 socket</text>
+  </g>
+  <g class="chip" data-cite="native/sessiond/src/host_core.zig:1325-1336 — enforceSupervisorLoss terminates the host when the process that launched it has been observably gone for the whole 90 s grace window (:453-462). 'unobservable' is never read as absence (:425-428).">
+    <rect x="455" y="699" width="150" height="20"/><text x="530" y="713">kill(pid,0) · 90 s grace</text>
+  </g>
+  <g class="chip" data-cite="src/daemon/session-host/host-operations.ts:8-17 — NHOP, a private per-request protocol on the host's own socket (:98, neutralSocketPath): connect, one request, one response, close. No broker, no shared accept loop. Operations: submitInput, resize, attach, inspect, pollExit, reap, terminate (:17-25).">
+    <rect x="842" y="545" width="124" height="20"/><text x="904" y="559">NHOP on host.sock</text>
+  </g>
+  <g class="chip" data-cite="src/daemon/session-host/host-operations.ts:46, :70 — the host owns $HIVE_HOME/sessiond-state/hosts/&lt;id&gt;/ for its durable record, and binds its socket under the separate short socket root the variant record names.">
+    <rect x="1018" y="690" width="104" height="20"/><text x="1070" y="704">fs host records</text>
+  </g>
+  <g class="chip" data-cite="native/sessiond/src/pty_host.zig:1-5 — openpty/fork/execve. One host process owns one provider generation (session_host.zig:1).">
+    <rect x="701" y="959" width="44" height="20"/><text x="723" y="973">PTY</text>
+  </g>
+  <g class="chip" data-cite=".mcp.json — { hive: { type: http, url: http://127.0.0.1:&lt;port&gt;/mcp, headersHelper: 'hive credential --agent &lt;name&gt;' } }. Served at src/daemon/server.ts:3642, authenticated per request at :5830-5858.">
+    <rect x="10" y="699" width="100" height="20"/><text x="60" y="713">MCP over HTTP</text>
+  </g>
+  <g class="chip" data-cite="src/cli/event-command.ts — a vendor hook runs `hive event &lt;kind&gt; --agent … --port …` which POSTs to the daemon's /event route (server.ts:3494) with the agent credential. This is how turn-idle and tool telemetry reach the daemon.">
+    <rect x="47" y="545" width="126" height="20"/><text x="110" y="559">hook → POST /event</text>
+  </g>
+  <g class="chip" data-cite="workspace/Sources/HiveTerminalKit/Attach/UdsHostTransport.swift:31-46 — socket(AF_UNIX, SOCK_STREAM) straight to the host's socket, after the daemon issues an attach grant at src/daemon/session-host/attach-grant-endpoint.ts.">
+    <rect x="948" y="10" width="104" height="20"/><text x="1000" y="24">AF_UNIX attach</text>
+  </g>
+  <g class="chip" data-cite="src/daemon/graphify-service/graphify-service.ts:6-12 — the spawn attaches the graphify server URL to the agent's MCP config, or nothing at all when the server is down. Same Streamable-HTTP MCP transport as the hive server.">
+    <rect x="1190" y="545" width="100" height="20"/><text x="1240" y="559">MCP over HTTP</text>
+  </g>
+</svg>
+</div>
+</div>
+
+<h2>Separation of concerns — the verdict</h2>
+<p class="lede">
+  Short version: <strong>the plane boundaries are real and mostly hold.</strong> The terminal plane
+  states its own scope in source and refuses work outside it; the vendor plane has exactly one
+  interface; authorization is one file. What blurs is concentrated in three places — the daemon's
+  HTTP file, one vendor's machine-global hook, and names that outlived the things they named.
+</p>
+
+<h3>Where the boundaries are clean <span class="tag clean">holds</span></h3>
+
+<div class="finding ok">
+  <h4>1. The terminal plane declares what it does not own — in the code, not a doc</h4>
+  <p>
+    Every sessiond leaf carries an explicit ownership header. <code>pty_host.zig</code>: “Does NOT own
+    VT parse, checkpoint, attach protocol, or broker grants.” <code>terminal_state.zig</code>: “Does NOT
+    own: input arbitration, process kill, viewer grants, PTY open/spawn.” <code>session_host.zig</code>:
+    “this module implements only the host process and its launcher.” This is the strongest
+    separation in the system, because it is enforced where it is stated.
+  </p>
+  <p class="src">native/sessiond/src/pty_host.zig:1-5 · terminal_state.zig:1-13 · session_host.zig:1-4</p>
+</div>
+
+<div class="finding ok">
+  <h4>2. Five vendors, one interface</h4>
+  <p>
+    <code>AgentAdapter</code> is “the one provider boundary used by normal agent creation,” and the
+    registry maps all five providers to it. The spawn spine hands an adapter a write-only
+    <code>AgentTurnInput</code> and “never inspects what is sent” — vendor keystroke semantics stay
+    inside the adapter.
+  </p>
+  <p class="src">src/adapters/providers/provider-adapter.ts:44-60 · provider-registry.ts:9-15</p>
+</div>
+
+<div class="finding ok">
+  <h4>3. Routes are handed decisions, not the authority to decide</h4>
+  <p>
+    The attach-grant route takes three authorization callbacks rather than the capability store,
+    with the reason written down: “passing the store would hand a route the authority to decide what
+    it is allowed to do.” Four roles, one allowlist file, one gate.
+  </p>
+  <p class="src">src/daemon/session-host/attach-grant-endpoint.ts:20-26 · capabilities.ts:1-2,23,430-460</p>
+</div>
+
+<div class="finding ok">
+  <h4>4. One writer for hierarchy state, three independent fences</h4>
+  <p>
+    “The daemon is the only writer.” <code>hierarchyRevision</code>, <code>runEpoch</code> and
+    <code>capabilityEpoch</code> are checked independently — a stale value of any one rejects even
+    when the other two match — and epochs advance only through their dedicated methods.
+  </p>
+  <p class="src">src/daemon/hierarchy-store.ts:1-21</p>
+</div>
+
+<div class="finding ok">
+  <h4>5. The knowledge plane degrades instead of leaking</h4>
+  <p>
+    Graphify runs keyless from a scrubbed allowlist environment with <code>--code-only</code>, by
+    absolute path into Hive's own bundle, never on PATH. Its server is held (not detached) so it dies
+    with the daemon, and when it is down a spawn attaches nothing rather than an unreachable URL.
+    Memory embeddings are local ONNX with no automatic fallback: AVAILABLE or UNAVAILABLE, never a
+    fabricated vector.
+  </p>
+  <p class="src">src/adapters/graphify.ts:1-19 · daemon/graphify-service/graphify-service.ts:1-14 · daemon/memory-embeddings.ts:1-12</p>
+</div>
+
+<div class="finding ok">
+  <h4>6. Lifecycle authority is landing where the rulings put it</h4>
+  <p>
+    The crash-recovery sweep's outcome type is now <code>"reported" | "skipped"</code> — the
+    <code>dead</code> arm is gone. Kill still means positively terminating a process tree and then
+    <em>looking again</em>, because “a signal delivered is an act; a process gone is a state.” And
+    sessiond's one autonomous kill is scoped to processes, never records: it fires only when the
+    daemon that launched the host has been observably absent for a full 90 s, and “unobservable is
+    NOT absence.”
+  </p>
+  <p class="src">src/daemon/recovery/recovery-service.ts:27-29 · resource-management/teardown.ts:1-14 · native/sessiond/src/host_core.zig:405-462,1325-1336</p>
+</div>
+
+<h3>Where the boundaries blur <span class="tag blur">watch</span></h3>
+
+<div class="finding bad">
+  <h4>A. Two vendors have a private door into the daemon's largest file</h4>
+  <p>
+    <code>server.ts</code> is 5,901 lines and imports vendor-specific CLI modules directly:
+    <code>CODEX_TUI_APPROVAL_KEYS</code> from <code>codex-cli</code> and <code>readLiveGrokModel</code>
+    from <code>grok-cli</code>. That is the control plane reaching past the <code>AgentAdapter</code>
+    boundary that exists for exactly this purpose. Two of five vendors are special-cased at the top
+    of the HTTP surface; the other three are not. This is the clearest layering violation on the map.
+  </p>
+  <p class="src">src/daemon/server.ts:18-19 (vs. the boundary at adapters/providers/provider-adapter.ts:44-60)</p>
+</div>
+
+<div class="finding bad">
+  <h4>B. Kimi's hook surface is machine-global; every other vendor's is not</h4>
+  <p>
+    Hive's only Kimi hook lives in <code>~/.kimi-code/config.toml</code>, because “Kimi reads hooks
+    only from this user-level config.” The hook is therefore generic and per-agent identity rides the
+    launch environment — a deliberate mitigation, and the right one. But the file itself is
+    <code>$HOME</code>-keyed, so production, dev and QA Hives share one hook block, and so does every
+    ordinary Kimi session on the machine. Compare grok: a worktree-local, instance-hashed hook at
+    <code>&lt;worktree&gt;/.grok/hooks/hive-&lt;hash&gt;.json</code>, with Hive explicitly declining to
+    write <code>~/.grok/config.toml</code> or <code>trusted_folders.toml</code>. Kimi is the outlier
+    and the cause is a vendor constraint, not a Hive choice — but the blast radius is real and
+    belongs on the map.
+  </p>
+  <p class="src">src/adapters/providers/kimi-cli.ts:55-59,200-204,218-233 · grok-cli.ts:170,271-277,321,395-396</p>
+</div>
+
+<div class="finding bad">
+  <h4>C. Two generation counters, and only one of them is fenced</h4>
+  <p>
+    Stated in source, at the mail tool boundary: “Hive keeps two generation counters with two
+    different writers, and they agree until they do not; the broker fences on exactly one of them,
+    and this is where that one is read.” Ownership of <em>which epoch is authoritative</em> is not
+    settled in one place — it is settled per call site. Cross-cutting state with no single owner is
+    exactly the shape that passes every test until either counter rotates.
+  </p>
+  <p class="src">src/mail-service/mail-tools.ts: MailLiveGenerationLookup</p>
+</div>
+
+<div class="finding bad">
+  <h4>D. Instances are separated in Hive's state and joined in their vendors'</h4>
+  <p>
+    <code>HIVE_HOME</code> isolates the database, worktrees, runtime sockets and the QA rig. Provider
+    credential and session stores are keyed to <code>$HOME</code> instead — <code>~/.claude</code>,
+    <code>~/.codex</code>, <code>~/.grok</code>, <code>~/.kimi-code</code> — so prod, dev and QA agents
+    read and write the same vendor sessions and rollout files. The QA rig documents this as its one
+    deliberate hole: “the real <code>HOME</code> remains available to provider credential stores.”
+    Hive therefore treats provider credential isolation as unavailable rather than implying the
+    per-instance runtime boundary extends to vendor-owned stores.
+  </p>
+  <p class="src">src/adapters/providers/kimi-cli.ts:55-59 · grok-cli.ts:543-545 · qa/README.md:45-47</p>
+</div>
+
+<div class="finding bad">
+  <h4>E. The input arbiter enforces user-priority, not zero-injection</h4>
+  <p>
+    The arbiter refuses automation while a user claim stands (<code>error.HumanOwned</code>) and
+    refuses delivery into an unstable or absent composer. It does <em>not</em> refuse automation
+    outright: <code>Provenance.automation</code> with action <code>.deliver</code> or
+    <code>.submit</code> is an encoded, size-capped write. The standing “no TUI injection, ever”
+    invariant therefore lives above this layer as policy, not below it as a mechanism — worth knowing
+    before treating the arbiter as the enforcement point for it.
+  </p>
+  <p class="src">native/sessiond/src/input_arbiter.zig:41-48,73-76,100-108,144-147</p>
+</div>
+
+<h2>Responsibility table</h2>
+<p class="lede">One concern per component, and the thing it must never do. “Must never” lines are drawn from what the source or the landed lifecycle rulings actually say, not from preference.</p>
+
+<div class="panel">
+<table>
+  <thead>
+    <tr><th style="width:16%">Component</th><th style="width:30%">Owns (single responsibility)</th><th style="width:34%">Must never</th><th style="width:20%">Source</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>daemon</strong></td>
+      <td>Admission, authorization, records, routing, mail, spawn, landing. The only writer of <code>hive.db</code>.</td>
+      <td class="never">Destroy an agent, worktree or branch on its own initiative — it detects and reports; only queen/leads destroy. Never touch a PTY.</td>
+      <td class="cite">server.ts · db.ts:1,278<br>recovery.ts:27-29<br>plan §1 (:9-10)</td>
+    </tr>
+    <tr>
+      <td><strong>sessiond host</strong></td>
+      <td>One provider generation's terminal: PTY, VT state, checkpoints, viewer attach, input arbitration.</td>
+      <td class="never">Decide an agent is done, or write a Hive record. Its one autonomous kill is the crash invariant (no live host without a daemon), and “unobservable” is never read as absence.</td>
+      <td class="cite">session_host.zig:1-4<br>host_core.zig:425-428,<br>1325-1336</td>
+    </tr>
+    <tr>
+      <td><strong>PTY host</strong></td>
+      <td>openpty / fork / execve, process group, geometry, ordered write drain, raw read loop.</td>
+      <td class="never">Own VT parse, checkpoint, the attach protocol, or grants.</td>
+      <td class="cite">pty_host.zig:1-5</td>
+    </tr>
+    <tr>
+      <td><strong>terminal state</strong></td>
+      <td>Headless VT, <code>journal.bin</code>, import-verified checkpoints.</td>
+      <td class="never">Own input arbitration, process kill, viewer grants, or PTY spawn. Never emit a “mostly restored” checkpoint.</td>
+      <td class="cite">terminal_state.zig:1-13</td>
+    </tr>
+    <tr>
+      <td><strong>input arbiter</strong></td>
+      <td>Who may write into the composer, and in what encoding.</td>
+      <td class="never">Let automation write while a user claim stands, or deliver into a composer it has not measured as present and stable.</td>
+      <td class="cite">input_arbiter.zig:41-48,<br>73-76,144-147</td>
+    </tr>
+    <tr>
+      <td><strong>vendor adapters</strong></td>
+      <td>Per-provider worktree prep, config, argv, launch wrapping, model discovery.</td>
+      <td class="never">Hold Hive policy — routing, quota and authorization live in the control plane, not in a vendor module.</td>
+      <td class="cite">provider-adapter.ts:44-60<br>provider-registry.ts:9-15</td>
+    </tr>
+    <tr>
+      <td><strong>mail</strong></td>
+      <td>Durable lanes (control settles one at a time; work collapses to newest), leases, settlement, dead letters.</td>
+      <td class="never">Displace a waiting instruction to make room — a full control lane refuses the publish instead. Never deliver by writing into a terminal.</td>
+      <td class="cite">mail-store.ts:21-31<br>mail-broker.ts:25-31</td>
+    </tr>
+    <tr>
+      <td><strong>memory</strong></td>
+      <td>Durable articles, episodic store, recall, consolidation, local embeddings.</td>
+      <td class="never">Fabricate a vector, crash the daemon, or reorder a paginated walk under a live cursor.</td>
+      <td class="cite">memory-embeddings.ts:1-12<br>memory-library.ts:1-16</td>
+    </tr>
+    <tr>
+      <td><strong>graphify</strong></td>
+      <td>Repo-local code knowledge graph, served per repo over MCP.</td>
+      <td class="never">Reach the network, the user's global config, or their git history; never land on PATH; never leave an unreachable URL in an agent's MCP config.</td>
+      <td class="cite">adapters/graphify.ts:1-19<br>graphify-service/graphify-service.ts:1-14</td>
+    </tr>
+    <tr>
+      <td><strong>routing · quota ·<br>Model Control</strong></td>
+      <td>Resolve the configured candidate set, filter on facts, select fairly, record the decision.</td>
+      <td class="never">Score. No quota headroom, no price, no inferred model strength, no outcome learning — a wrong choice is recovered by handoff, never predicted.</td>
+      <td class="cite">router.ts:19-25<br>server.ts:3507-3520</td>
+    </tr>
+    <tr>
+      <td><strong>Workspace UI</strong></td>
+      <td>The user's window: fleet status, hierarchy projections, live terminals.</td>
+      <td class="never">Mint its own authority — it asks the daemon for an attach grant and only then opens the host socket.</td>
+      <td class="cite">session-host/attach-grant-endpoint.ts:20-26<br>UdsHostTransport.swift:31-46</td>
+    </tr>
+    <tr>
+      <td><strong>CLI</strong></td>
+      <td>User commands, the daemon entry point, credential minting, the hook→daemon event relay.</td>
+      <td class="never">Become a second source of truth — every command goes through the daemon's authenticated routes.</td>
+      <td class="cite">src/cli/ · event.ts<br>credential.ts</td>
+    </tr>
+    <tr>
+      <td><strong>QA harness</strong></td>
+      <td>An isolated Hive an agent can test against: own home, own daemon from source, own target repo.</td>
+      <td class="never">Reach the user's Hive or the dev instance — <code>~/.hive</code> and the dev home are refused, and bring-up fails if the daemon's source hash does not match the tree under test.</td>
+      <td class="cite">qa/README.md:40-66</td>
+    </tr>
+    <tr>
+      <td><strong>queen</strong></td>
+      <td>The fleet: what work happens, who does it, and closing anything without a lead.</td>
+      <td class="never">Leave a death-evidence report unsettled — close or revive, never ignore.</td>
+      <td class="cite">plan §3.1-3.2 (:183-211)</td>
+    </tr>
+    <tr>
+      <td><strong>leads</strong></td>
+      <td>Their own crew: spawning inside a delegation grant, and closing what they opened.</td>
+      <td class="never">Act outside <code>delegationSpec.boundaries</code>, or close an agent their live ownership edge does not cover.</td>
+      <td class="cite">plan §3.3-3.4 (:213-236)</td>
+    </tr>
+    <tr>
+      <td><strong>workers</strong></td>
+      <td>One worktree, one branch, one assignment; land through <code>hive_land</code>.</td>
+      <td class="never">Merge into the primary checkout directly, or leave work stranded without preserving it.</td>
+      <td class="cite">plan §3.2 (:207-209)</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Edge citations</h2>
+<p class="lede">Every edge on the diagram, with the transport and the line of source it was read from.</p>
+
+<div class="panel">
+<table>
+  <thead>
+    <tr><th style="width:26%">From → To</th><th style="width:22%">Transport</th><th style="width:52%">Evidence</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Workspace.app → daemon</td><td>NDJSON over a child process's stdout, one object per line</td><td class="cite">src/cli/workspace-feed.ts:1-27 (`hive workspace-feed --port n`); polling lives in the child because it holds the 0600 user credential</td></tr>
+    <tr><td>Workspace.app → daemon</td><td>HTTP (authenticated routes)</td><td class="cite">src/daemon/server.ts:3457-3642 — /workspace-snapshot, /workspace-visibility, /run-control, /autonomy, …</td></tr>
+    <tr><td>Workspace.app → sessiond host</td><td>AF_UNIX stream, direct to the host socket, after an attach grant</td><td class="cite">workspace/Sources/HiveTerminalKit/Attach/UdsHostTransport.swift:31-46 · grant issued at src/daemon/session-host/attach-grant-endpoint.ts:43+</td></tr>
+    <tr><td>hive CLI → daemon</td><td>HTTP with the user credential</td><td class="cite">src/cli/credential.ts (userFetch) · src/daemon/server.ts:3457+</td></tr>
+    <tr><td>agent (vendor CLI) → daemon</td><td>MCP over HTTP, Streamable HTTP transport, authenticated per request</td><td class="cite">.mcp.json (`http://127.0.0.1:&lt;port&gt;/mcp`, headersHelper `hive credential --agent &lt;name&gt;`) · server.ts:5-6,3642,5830-5858</td></tr>
+    <tr><td>vendor hook → daemon</td><td>HTTP POST /event, agent credential</td><td class="cite">src/cli/event-command.ts:1-30 · server.ts:3494 · claude-cli.ts:90-96 (the run id rides the hook's own argv) · kimi-cli.ts:235-242</td></tr>
+    <tr><td>agent → graphify server</td><td>MCP over HTTP</td><td class="cite">src/daemon/graphify-service/graphify-service.ts:6-12 — serverUrl() is attached at spawn, or nothing is</td></tr>
+    <tr><td>daemon → graphify server</td><td>subprocess, held (not detached)</td><td class="cite">src/daemon/graphify-service/graphify-service.ts:1-14 — dies with the daemon; restarted after each rebuild</td></tr>
+    <tr><td>daemon → hive.db</td><td>SQLite via bun:sqlite, single writer</td><td class="cite">src/daemon/database/hive-database.ts:1, :146; src/hive-home/home.ts:22-24, :53-55</td></tr>
+    <tr><td>daemon → worktrees</td><td>filesystem — git worktree add/remove + vendor config writes</td><td class="cite">src/adapters/worktrees.ts · grok-cli.ts:395-396,479-480 · kimi-cli.ts:292</td></tr>
+    <tr><td>daemon → sessiond host</td><td>process spawn + per-host bootstrap socket (HVB1 codec)</td><td class="cite">src/daemon/session-host/host-launcher.ts:14-22,270-303 (`Bun.spawn([executablePath, "host"])`) · native/sessiond/src/main.zig:44-52</td></tr>
+    <tr><td>daemon ↔ sessiond host</td><td>NHOP request/response on <code>host.sock</code> — connect, one request, one response, close</td><td class="cite">src/daemon/session-host/host-operations.ts:8-17,17-25,98</td></tr>
+    <tr><td>daemon ↔ sessiond host</td><td>session protocol frames (attach, input, resize, welcome)</td><td class="cite">src/daemon/session-host/sessiond-viewer-attach.ts:1-32 · src/schemas/session-protocol.ts</td></tr>
+    <tr><td>sessiond host → daemon</td><td>process observation — <code>kill(pid,0)</code> + start token, 90 s grace</td><td class="cite">native/sessiond/src/host_core.zig:405-450,453-462,1325-1336</td></tr>
+    <tr><td>sessiond host → host dir</td><td>filesystem — durable record under the state root, socket under the short socket root</td><td class="cite">src/daemon/session-host/host-operations.ts:46,70</td></tr>
+    <tr><td>sessiond host ↔ vendor CLI</td><td>PTY (openpty / fork / execve)</td><td class="cite">native/sessiond/src/pty_host.zig:1-5 · session_host.zig:1</td></tr>
+    <tr><td>adapters → daemon spawner</td><td>in-process module call (<code>AgentAdapter</code>)</td><td class="cite">src/adapters/providers/provider-registry.ts:9-22 · provider-adapter.ts:44-60</td></tr>
+    <tr><td>kimi adapter → <code>~/.kimi-code/config.toml</code></td><td>filesystem, mode 0600, machine-global</td><td class="cite">src/adapters/providers/kimi-cli.ts:226-233,55-59</td></tr>
+    <tr><td>queen → leads, leads → workers</td><td><code>hive_spawn_many</code> with <code>delegationSpec</code> (authority / allowance / boundaries)</td><td class="cite">src/schemas/hierarchy-node.ts:155-161</td></tr>
+    <tr><td>agent ↔ agent</td><td>mail lanes over MCP tools — no terminal writes</td><td class="cite">src/mail-service/mail-tools.ts · src/mail-service/service.ts · src/mail-service/store.ts</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Sources and how they were used</h2>
+<div class="panel">
+  <p style="margin-top:0">
+    <strong>Ground truth is the repo.</strong> Every box and every edge above was read out of source —
+    imports, socket paths, spawn argv, HTTP route tables, Zig module headers. Where a design doc and
+    the source disagreed, the source won and the disagreement is written up in the blurred-boundary
+    section.
+  </p>
+  <ul style="margin-bottom:0">
+    <li><code>docs/design/agentic-hierarchy.html</code> — H1–H5, landed. The plan's own §8 audit
+      (:415-439) finds the hierarchy clauses accurate and the lifecycle clauses stale; this map draws
+      the hierarchy, not the stale lifecycle clauses.</li>
+    <li><code>src/mail-service/store.ts</code> and <code>src/mail-service/service.ts</code> — the mail lane,
+      lease, and settlement behavior drawn here.</li>
+  </ul>
+  <p style="margin-bottom:0">
+    <strong>One standing caveat.</strong> This map is the landed state at the commit it was written
+    against: native vendor TUIs inside a PTY, one sessiond host per agent. The terminal plane is under
+    an announced architecture pivot — Hive rendering the terminal itself, with vendor binaries
+    remaining the execution and auth truth over a protocol. That design is in revision and is
+    deliberately not drawn here; when it lands, the PTY edge and the vendor-process band are the parts
+    of this diagram that change.
+  </p>
+</div>
+
+<footer>
+  Self-contained: no external requests. Hand-rolled SVG, inline CSS and ~10 lines of JS for tooltips.
+  Hover any box or edge label for its citation.
+</footer>
+
+</main>
+<div id="tip" role="tooltip"></div>
+<script>
+  const tip = document.getElementById("tip");
+  for (const el of document.querySelectorAll("[data-cite]")) {
+    el.addEventListener("mouseenter", () => {
+      tip.textContent = el.dataset.cite;
+      tip.style.opacity = "1";
+    });
+    el.addEventListener("mousemove", (event) => {
+      tip.style.left = Math.min(event.clientX + 16, window.innerWidth - 400) + "px";
+      tip.style.top = (event.clientY + 16) + "px";
+    });
+    el.addEventListener("mouseleave", () => {
+      tip.style.opacity = "0";
+    });
+  }
+</script>
+</body>
+</html>

@@ -1,39 +1,73 @@
 import { expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { defaultComposerPlaceholder } from "../../../src/cli/agent-ui/agent-ui-exports";
 import { stopHive } from "../../../src/cli/control";
-import { HiveDatabase } from "../../../src/daemon/db";
-import {
-  expectedDaemonHandshake,
-  parseDaemonHandshake,
-} from "../../../src/daemon/handshake";
+import { HiveDatabase } from "../../../src/daemon/database/hive-database";
 import {
   acquireDaemonLock,
   cleanupLifecycleFiles,
+  expectedDaemonHandshake,
   macProcessIdentity,
+  parseDaemonHandshake,
   releaseDaemonLock,
   writeLifecycleFiles,
-} from "../../../src/daemon/lifecycle";
+} from "../../../src/daemon/lifecycle/daemon-lifecycle";
+import { stopSessiondAgentSession } from "../../../src/daemon/resource-management/teardown";
 import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
 } from "../../../src/daemon/session-host/hive-terminal-host";
-import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
 import { SessiondHost } from "../../../src/daemon/session-host/sessiond-host";
 import { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
 import { WorkspaceVisibilityAuthority } from "../../../src/daemon/session-host/workspace-visibility";
-import { HiveSpawner } from "../../../src/daemon/spawner-impl";
-import { stopSessiondAgentSession } from "../../../src/daemon/teardown";
+import { HiveSpawner } from "../../../src/daemon/spawn/spawner-impl";
+import type { AgentRecord } from "../../../src/schemas/agent";
 import {
-  type AgentRecord,
   type CapabilityRecord,
   known,
-  type RoutingPolicy,
-  TERMINAL_LIMITS,
   unknown,
-} from "../../../src/schemas";
+} from "../../../src/schemas/capability";
+import type { RoutingPolicy } from "../../../src/schemas/routing-policy";
+import {
+  FRAME_FLAGS,
+  TERMINAL_LIMITS,
+} from "../../../src/schemas/session-protocol";
 
 const observedAt = "2026-07-18T12:00:00.000Z";
+
+const paneIdentity = (agentName: string) => ({
+  agentName,
+  vendorName: "Codex",
+  vendorId: "codex",
+  model: "gpt-sessiond-live",
+});
+
+/**
+ * One composer frame from the product's own formatter. The probe is checked
+ * against this so it cannot quietly stop matching what `hive agent-ui`
+ * actually paints.
+ */
+function renderedFrontendFrame(agentName: string): string {
+  return defaultComposerPlaceholder(paneIdentity(agentName));
+}
+
+/**
+ * The launch command names the provider, but only the interactive frontend
+ * paints its composer prompt after terminal input is in raw mode.
+ */
+function paneComposerPainted(
+  text: string | null | undefined,
+  agentName: string,
+): boolean {
+  return (
+    text?.includes(defaultComposerPlaceholder(paneIdentity(agentName))) === true
+  );
+}
+
+/** What the shell shows before the frontend draws — the probe must not fire on it. */
+const launchCommandLine = (agentName: string) =>
+  `/opt/hive agent-ui --subject ${agentName} --provider codex --executable /usr/local/bin/codex`;
 
 function codexCapability(): CapabilityRecord {
   return {
@@ -127,15 +161,27 @@ async function waitForExactProcessAbsence(
 
 test("TypeScript gates a real DirectHost, clean stop, and publisher-death survival", async () => {
   const repoRoot = resolve(import.meta.dir, "../../..");
-  // Keep runtime/sessiond/hosts/<session>/host.sock below macOS's 104-byte
-  // AF_UNIX path limit. That per-session path is longer than the broker
-  // socket, so the ceiling on this directory is tighter. Overrunning it dies
-  // as NameTooLong, which surfaces as a host that never dialed rather than as
-  // anything naming a path length.
-  const home = await mkdtemp("/tmp/hsd.");
+  // Use the controlled root directly, both as the home and as sessiond's
+  // runtime root. The root is the one path the sandbox permits writes to, and
+  // it is short enough that the per-session host socket named under it stays
+  // inside macOS's AF_UNIX limit; nesting another temporary directory would
+  // push it past.
+  const home = process.env.HIVE_TEST_ROOT;
+  if (home === undefined) {
+    throw new Error("the live sessiond test requires HIVE_TEST_ROOT");
+  }
   await chmod(home, 0o700);
+  const providerExecutable = join(home, "codex-test-provider");
+  const providerFixture = join(import.meta.dir, "codex-app-server-fixture.ts");
+  await writeFile(
+    providerExecutable,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(providerFixture)} "$@"\n`,
+    { mode: 0o700 },
+  );
   const previousHome = process.env.HIVE_HOME;
+  const previousSessiondRoot = process.env.HIVE_SESSIOND_ROOT;
   process.env.HIVE_HOME = home;
+  process.env.HIVE_SESSIOND_ROOT = home;
   let lockAcquired = false;
   let lifecycleWritten = false;
   let lockReleaseFailed = false;
@@ -150,7 +196,13 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
       hostname: "127.0.0.1",
       port: 0,
       fetch(request) {
-        if (new URL(request.url).pathname !== "/handshake") {
+        const pathname = new URL(request.url).pathname;
+        // The pane reports its provider child before its first draw. Accept the
+        // report so this terminal test can reach the visible readiness proof.
+        if (pathname === "/provider-runtime" && request.method === "POST") {
+          return new Response(null, { status: 204 });
+        }
+        if (pathname !== "/handshake") {
           return new Response("not found", { status: 404 });
         }
         return new Response(handshakeJson, {
@@ -223,7 +275,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
             discoverEngineBuildId: () => host.discoverEngineBuildId(),
           });
         let workspaceVisibility = visibilityAuthority();
-        let admittedAgentName = "maya";
         let admittedVisibility = visibility;
         const registerAndPublishEmptyWorkspace = () => {
           expect(
@@ -284,10 +335,8 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
           isModelEnabled: async () => true,
           sessiond: {
             terminalHost: adapter,
-            prepareAgentCreation: (candidate) =>
-              candidate.agentName === admittedAgentName
-                ? workspaceVisibility.prepareAgentCreation()
-                : Promise.resolve(null),
+            prepareAgentCreation: () =>
+              workspaceVisibility.prepareAgentCreation(),
             admit: (candidate) => workspaceVisibility.admit(candidate),
           },
           stopSession: stopSpawnedSession,
@@ -296,10 +345,11 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
             await mkdir(path, { recursive: true });
             return { path, branch: `hive/${name}-${slug}` };
           },
-          removeWorktree: async () => {},
           unavailableAgentNames: async () => new Set(),
           listCodexMcpServers: async () => [],
           readCodexActivity: async () => null,
+          codexExecutable: providerExecutable,
+          buildMemoryIndex: async () => "",
           sleep: async () => {
             for (const agent of db.listAgents()) {
               if (agent.status === "spawning") {
@@ -352,7 +402,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         const sessiondAgent = await spawner.spawn({
           task: "Exercise the admitted sessiond backend",
           category: "complex_coding",
-          name: "maya",
           tool: "codex",
           model: "gpt-sessiond-live",
         });
@@ -450,112 +499,150 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
           openTerminalRevision: visibility.openTerminalRevision,
         });
 
-        // Real-engine inject: the daemon-side injector performs the actual
-        // viewer wire against the real spawned host — grant → HELLO(viewer) →
-        // HOST_ATTACH → CLAIM_ACQUIRE(automation) → INPUT_SUBMIT — and must
-        // come back with a real receipt. Green here means the wire works
-        // against the engine, so a live-instance stall is environmental and
-        // names itself on the message row.
-        const injector = new SessiondViewerAgentInput(
-          host,
-          `hive-daemon:${handshake.instanceId}`,
-        );
+        // Real-engine user input: the same viewer wire the frontend drives —
+        // grant → HELLO(viewer) → HOST_ATTACH → INPUT_SUBMIT(user) must come
+        // back with a real receipt and visible provider readback.
         const providerRun = db.getActiveProviderRunByTerminal(sessiondLocator);
         if (providerRun === null) {
           throw new Error("sessiond spawner omitted ProviderRun identity");
         }
-        const automatedInput = (text: string, idempotencyKey: string) => ({
-          terminal: sessiondLocator,
-          expectedForeground: {
-            providerRunId: providerRun.runId,
-            pid: providerRun.pid,
-            startToken: providerRun.startToken,
-            processGroupId: providerRun.foregroundProcessGroupId,
-          },
-          bytes: new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`),
-          idempotencyKey,
-        });
+        // Keystrokes only land once the pane reads its terminal in raw mode:
+        // typed into a startup screen still in canonical mode, they are
+        // flushed on the mode switch, not queued. The frontend enables raw
+        // mode before its first draw, so a painted frame is the readback that
+        // the pane is reading keys.
+        //
+        // The probe fires on the frontend's own composer rather than a vendor
+        // TUI glyph. The composer stays visible even when diagnostics scroll
+        // the transcript banner out of view.
+        expect(
+          paneComposerPainted(
+            renderedFrontendFrame(sessiondAgent.name),
+            sessiondAgent.name,
+          ),
+        ).toBe(true);
+        expect(
+          paneComposerPainted(
+            launchCommandLine(sessiondAgent.name),
+            sessiondAgent.name,
+          ),
+        ).toBe(false);
+        expect(paneComposerPainted(null, sessiondAgent.name)).toBe(false);
 
-        // Real-engine orphan discard: acquire a human claim on an attached
-        // viewer, then drop the viewer without CLAIM_RELEASE. The compiled
-        // host must accept INPUT_ORPHAN_DISCARD and return the matching
-        // ORPHAN_DISCARDED response through the shared decoder.
-        const orphanViewerId = "sessiond-live-orphan";
-        const orphanGrant = await host.issueAttach(sessiondLocator, {
-          viewerId: orphanViewerId,
-          geometry: sessiondInspection.geometry,
-          operations: ["view", "human-input"],
+        let composerReady = false;
+        const readyDeadline = Date.now() + 30_000;
+        while (Date.now() < readyDeadline && !composerReady) {
+          const capture = await host
+            .capture(sessiondLocator, { include: "visible-text", maxRows: 200 })
+            .catch(() => null);
+          composerReady = paneComposerPainted(
+            capture?.text,
+            sessiondAgent.name,
+          );
+          if (!composerReady) await Bun.sleep(100);
+        }
+        expect(composerReady).toBe(true);
+        // Measured now, not read from the run: the run identifies the provider
+        // the frontend owns, and a keystroke is fenced to the terminal it is
+        // actually typed into.
+        const terminalForeground = (await adapter.inspect(sessiondLocator))
+          .foreground;
+        if (terminalForeground.state !== "unmanaged") {
+          throw new Error(
+            `terminal foreground identity is unavailable (${terminalForeground.state})`,
+          );
+        }
+        const viewerId = `hive-daemon:${handshake.instanceId}`;
+        const viewerGeometry = {
+          columns: 120,
+          rows: 40,
+          widthPx: 960,
+          heightPx: 640,
+          cellWidthPx: 8,
+          cellHeightPx: 16,
+        };
+        const grant = await host.issueAttach(sessiondLocator, {
+          viewerId,
+          geometry: viewerGeometry,
+          operations: ["view", "user-input"],
         });
-        const orphanViewer = await SessiondViewerAttachClient.attach({
+        const viewer = await SessiondViewerAttachClient.attach({
           locator: sessiondLocator,
-          grant: orphanGrant,
-          geometry: sessiondInspection.geometry,
-          viewerId: orphanViewerId,
+          grant,
+          geometry: viewerGeometry,
+          viewerId,
         });
-        await (
-          orphanViewer as unknown as {
+        const liveMarker = "LIVE-PROOF #68: real-engine user input";
+        try {
+          // The attach client's public surface is automation-only; a user
+          // submission speaks the same INPUT_SUBMIT frame directly.
+          const wire = viewer as unknown as {
             request(
-              requestType: "CLAIM_ACQUIRE",
-              responseType: "CLAIM_RESULT",
+              requestType: string,
+              responseType: string,
               flags: number,
               payload: unknown,
-            ): Promise<unknown>;
-          }
-        ).request("CLAIM_ACQUIRE", "CLAIM_RESULT", 0, {
-          schemaVersion: 1,
-          session: {
-            key: sessiondLocator.sessionId,
-            incarnation: String(sessiondLocator.generation),
-          },
-          writer: orphanViewerId,
-          kind: "human",
-          leaseMilliseconds: 60_000,
-          idempotencyKey: "sessiond-live-orphan-claim",
-        });
-        orphanViewer.close();
-
-        let orphanDecline = "";
-        const orphanDeadline = Date.now() + 5_000;
-        while (Date.now() < orphanDeadline) {
-          const declined = await injector.writeAutomated(
-            automatedInput(
-              "LIVE-PROOF #85: orphan blocks automation",
-              "msg-85-orphan-blocked",
-            ),
+            ): Promise<{ payload: Uint8Array }>;
+          };
+          const appliedFrame = await wire.request(
+            "INPUT_SUBMIT",
+            "APPLIED",
+            FRAME_FLAGS.contentSensitive,
+            {
+              schemaVersion: 1,
+              session: {
+                key: sessiondLocator.sessionId,
+                incarnation: String(sessiondLocator.generation),
+              },
+              provenance: "user",
+              action: "edit",
+              transactionId: "msg-68-live-proof",
+              idempotencyKey: "msg-68-live-proof",
+              expectedForeground: {
+                pid: terminalForeground.pid,
+                startToken: terminalForeground.startToken,
+                processGroupId: terminalForeground.foregroundProcessGroupId,
+              },
+              operation: {
+                kind: "bytes",
+                encoding: "base64",
+                bytes: Buffer.from(liveMarker, "utf8").toString("base64"),
+              },
+            },
           );
-          if (declined.outcome === "declined") orphanDecline = declined.reason;
-          if (orphanDecline.includes("HumanOrphaned")) break;
-          await Bun.sleep(20);
+          const applied = JSON.parse(
+            new TextDecoder().decode(appliedFrame.payload),
+          ) as {
+            resultKind: string;
+            receipt: { stage: string; transactionId: string };
+          };
+          if (applied.resultKind !== "input") {
+            throw new Error(
+              `unexpected input result: ${JSON.stringify(applied)}`,
+            );
+          }
+          expect(["accepted", "queued", "written-to-terminal"]).toContain(
+            applied.receipt.stage,
+          );
+          expect(applied.receipt.transactionId).toBe("msg-68-live-proof");
+        } finally {
+          viewer.close();
         }
-        expect(orphanDecline).toContain("HumanOrphaned");
-        // The viewer dropped without CLAIM_RELEASE, so the draft is abandoned
-        // rather than held: `orphaned` is the non-destructive resolution.
-        const discarded = await host.discardInputOrphan(
-          sessiondLocator,
-          "orphaned",
-        );
-        // The result is a discriminated state, not a boolean: asserting
-        // `discarded` specifically is what keeps a destructive `preempted`
-        // from reading as an ordinary orphan discard.
-        expect(discarded).toMatchObject({
-          state: "discarded",
-          priorOwnerViewerId: orphanViewerId,
-        });
-        expect(discarded.priorClaimId).not.toBeNull();
 
-        const injected = await injector.writeAutomated(
-          automatedInput(
-            "LIVE-PROOF #68: real-engine inject",
-            "msg-68-live-proof",
-          ),
-        );
-        if (injected.outcome !== "injected") {
-          throw new Error(`real-engine inject declined: ${injected.reason}`);
+        // Visible provider readback: the typed bytes land on the real grid.
+        let readback = "";
+        const readbackDeadline = Date.now() + 10_000;
+        while (
+          Date.now() < readbackDeadline &&
+          !readback.includes(liveMarker)
+        ) {
+          const capture = await host
+            .capture(sessiondLocator, { include: "visible-text", maxRows: 200 })
+            .catch(() => null);
+          readback = capture?.text ?? "";
+          if (!readback.includes(liveMarker)) await Bun.sleep(50);
         }
-        expect(["accepted", "queued", "written-to-terminal"]).toContain(
-          injected.receipt.stage,
-        );
-        expect(injected.receipt.transactionId).toBe("msg-68-live-proof");
+        expect(readback).toContain(liveMarker);
 
         expect(
           db
@@ -610,7 +697,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         spawnedHost = null;
         spawnedProvider = null;
 
-        admittedAgentName = "lena";
         admittedVisibility = {
           ...visibility,
           openTerminalRevision: "3",
@@ -621,7 +707,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         const expiryAgent = await spawner.spawn({
           task: "Exercise publisher-death lease expiry",
           category: "complex_coding",
-          name: "lena",
           tool: "codex",
           model: "gpt-sessiond-live",
         });
@@ -656,8 +741,8 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         // Nothing infers a terminal's death, because reading an unrenewed
         // lease as death kills working agents whose vendor TUI is rendered and
         // running. Waiting past the deadline is what proves it no longer
-        // decides — the lease bounds the wire's expiresAt and the input-claim
-        // window, not whether the terminal may live.
+        // decides — the lease bounds the wire's expiresAt, not whether the
+        // terminal may live.
         await Bun.sleep(TERMINAL_LIMITS.visibilityExpiryMilliseconds + 1_000);
         expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
           spawnedHost.startToken,
@@ -696,7 +781,9 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
     } finally {
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
-      await rm(home, { recursive: true, force: true });
+      if (previousSessiondRoot === undefined)
+        delete process.env.HIVE_SESSIOND_ROOT;
+      else process.env.HIVE_SESSIOND_ROOT = previousSessiondRoot;
     }
   }
   if (lockReleaseFailed) {

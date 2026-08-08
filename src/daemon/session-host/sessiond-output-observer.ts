@@ -1,18 +1,12 @@
 import type { TerminalGeometry } from "../../schemas/session-protocol";
-import type { SessionHost, SessionLocator } from "./contract";
+import type { SessionHost, SessionLocator } from "./session-host-contract";
 import { SessiondViewerAttachClient } from "./sessiond-viewer-attach";
 
 export type SessiondOutputObservation = Readonly<{
   locator: SessionLocator;
   outputThrough: string;
-  /**
-   * What the pane is SHOWING — the reconstructed screen, not the tail of the
-   * byte stream that produced it. Every vendor TUI revises what it has already
-   * printed, so the two differ by everything the terminal has overwritten.
-   */
   screen: string;
   completeness: "complete" | "gap";
-  /** Why the observation is empty, when it is. Absent on success. */
   failure?: string;
 }>;
 
@@ -36,8 +30,7 @@ export async function observeSessiondOutput(
     });
     return { locator, ...observed };
   } catch (error) {
-    // Report why observation failed; empty text alone cannot distinguish an
-    // attach, replay, or decode failure from a genuinely empty pane.
+    // Report why observation failed; empty text alone cannot distinguish an attach, replay, or decode failure from a genuinely empty pane.
     return {
       locator,
       outputThrough: grant.outputSeq,

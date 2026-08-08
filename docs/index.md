@@ -1,21 +1,7 @@
 # Knowledge Base Index
 
-Compiled knowledge about Hive, verified against the source tree. Where a document and
-the code disagreed, the code won and the document was corrected. The design authority is
-[SPEC.md](../SPEC.md).
-
-**`raw/` no longer exists in the working tree.** It held immutable measurement
-evidence outside the briefing walk, and was removed in full on 2026-07-26 (156
-uncited files swept during the audit, the remaining 177 deleted by the operator).
-Every byte is still reachable in git history at `f9f01de6` — `git show
-f9f01de6:raw/<path>` retrieves any single file, `git checkout f9f01de6 -- raw/`
-restores the tree. Planning and acceptance records still cite `raw/...` paths in
-roughly 65 places; those are **historical pointers, deliberately left intact**
-rather than rewritten, because editing a signed acceptance record to match a
-later deletion would falsify the record. Read them as "this evidence existed and
-is in history", not as live paths. Do not re-create `raw/` to satisfy them.
-Note this is a different directory from the memory compiler's `.hive/memory/raw`,
-which is untouched and still live.
+Code and operations documentation for Hive. Where a document and the code disagree,
+the code is authoritative and the document must be corrected.
 
 ## routing
 
@@ -57,7 +43,6 @@ The control plane: who may do what, and what happens when state is missing.
 | [Authorization](daemon/authorization.md) | The daemon is the authority boundary even though every agent shares a UID; capabilities and endpoint checks decide which requests may mutate state. | 2026-07-14 |
 | [Database resilience](daemon/database-resilience.md) | Per-instance state and the shared quota ledger fail closed on missing or unreadable evidence, preserving work rather than fabricating an empty world. | 2026-07-14 |
 | [Orchestrator status](daemon/orchestrator-status.md) | queen (the root orchestrator) has no agents row, so structured turn events and process evidence derive its status without terminal scraping. | 2026-07-15 |
-| [sessiond queen restart proof](daemon/sessiond-queen-restart-proof.md) | Opt-in restart gate for the sessiond-hosted root: exact host identity, six communication lanes, visibility expiry/recovery, and root scrolling without converting queued or redrawn state into receipt. | 2026-07-22 |
 | [Multiple concurrent instances](daemon/multi-instance.md) | Per-instance identity, lifecycle, and control state; owner-scoped repository work; serialized landing; one machine-wide quota ledger; and a global mutation lease. | 2026-07-14 |
 | [Agent teardown](daemon/agent-teardown.md) | Terminate the exact daemon-owned sessiond generation, verify process-tree absence, and preserve work whenever cleanup cannot be proved. | 2026-07-23 |
 
@@ -87,6 +72,14 @@ What a spawned agent carries, remembers, and when it should be replaced.
 | --- | --- | --- |
 | [Context and recycling](agents/context-and-recycling.md) | Why percentage thresholds are the wrong unit, what context telemetry can honestly say, and why Hive still lacks the decision-7 recycle actuator. | 2026-07-14 |
 | [Agent memory](agents/memory.md) | Committed instructions and agent-authored durable memory are distinct tracks; Hive keeps scoped, provenance-bearing articles rather than an opaque note pile. | 2026-07-14 |
+
+## data
+
+Landed corpora and the code that derives or consumes them.
+
+| Article | Summary | Updated |
+| --- | --- | --- |
+| [Memory-rank gold-set derivation](research/gold-set-derivation.md) | How the `data/memory-rank-gold-set/` corpus (cut from the tree, preserved in git history) was derived, what each artifact records, and the limits on conclusions drawn from it. | 2026-08-09 |
 
 ## release
 

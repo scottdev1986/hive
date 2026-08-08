@@ -1,6 +1,9 @@
 #!/usr/bin/env bun
 
 import { Command, CommanderError } from "commander";
+import { errorMessage } from "./shared/error-message";
+import { runAgentUi } from "./cli/agent-ui/run";
+import { isRecord } from "./shared/is-record";
 import {
   attachGrantCli,
   autonomyCli,
@@ -19,20 +22,23 @@ import {
 } from "./cli/control";
 import { runCredentialHelper } from "./cli/credential";
 import { runDaemon } from "./cli/daemon";
+import { resolveVariant } from "./hive-home/variant";
+import { homeHoldsOwnedState } from "./hive-home/migration";
+import { daemonInstanceLiveness } from "./daemon/lifecycle/daemon-lifecycle";
+import { hiveInstanceSuffix } from "./hive-home/instance-identity";
 import {
   type HookEventOptions,
   readHookStdin,
   runHiveEvent,
-} from "./cli/event";
-import { ensureEmbeddingsRuntime } from "./cli/embeddings";
-import { provisionGraphifyRuntime, runGraphifyStatus } from "./cli/graphify";
+} from "./cli/event-command";
+import { runGraphifyStatus } from "./cli/graphify-command";
+import { printErrors } from "./cli/observability-command";
 import { runInitCli } from "./cli/init";
 import { memoryConsolidateCli } from "./cli/memory-consolidate";
-import { memorySelfTestCli } from "./cli/memory-self-test";
-import { memoryLiveSelfTestCli } from "./cli/memory-self-test-live";
 import { printModelControlSnapshot } from "./cli/model-control";
 import { runWorkspaceOrchestrator } from "./cli/orchestrator-supervisor";
-import { projectRootOrCwd } from "./cli/project-root";
+import { isDaemonPort } from "./shared/daemon-port";
+import { projectRootOrCwd } from "./daemon/project-identity-core/project-root";
 import { promoteDefaultModelControl } from "./cli/promote-default";
 import { printRouting } from "./cli/routing";
 import {
@@ -42,8 +48,7 @@ import {
   setModelPolicy,
   setProviderPolicy,
   setRoute,
-} from "./cli/routing-policy";
-import { runStatusline } from "./cli/statusline";
+} from "./cli/routing-policy-command";
 import { runUninstall } from "./cli/uninstall";
 import {
   printUpdateStatus,
@@ -58,25 +63,31 @@ import {
 } from "./cli/update-notice";
 import { runWorkspace } from "./cli/workspace";
 import { runWorkspaceFeedCli } from "./cli/workspace-feed";
-import { verifyDaemonInstance } from "./daemon/handshake";
-import { printInstances, selectInstanceFromArgv } from "./daemon/instances";
-import type {
-  MemoryScope,
-  MemorySource,
-  MemoryVerificationStatus,
-} from "./schemas";
 import {
+  verifyDaemonInstance,
+  verifyDaemonInstanceWhenReady,
+} from "./daemon/lifecycle/daemon-lifecycle";
+import {
+  printInstances,
+  selectInstanceFromArgv,
+} from "./daemon/lifecycle/instances";
+import {
+  type MemoryScope,
+  type MemorySource,
+  type MemoryVerificationStatus,
   MemoryVerificationStatusSchema,
   MemoryWriterSourceSchema,
+} from "./schemas/memory";
+import {
   SessionLocatorSchema,
   TerminalGeometrySchema,
-} from "./schemas";
+} from "./schemas/session-protocol";
 import {
   type CapabilityProvider,
   CapabilityProviderSchema,
 } from "./schemas/capability";
-import { repairIdentityFromStagedVersionProbe } from "./update/bootstrap";
-import { versionLine } from "./version";
+import { repairIdentityFromStagedVersionProbe } from "./update-service/bootstrap";
+import { versionLine } from "./shared/version";
 
 export interface EventCliOptions {
   agent?: string;
@@ -116,10 +127,12 @@ function parseMemoryScope(value: string): MemoryScope {
 }
 
 function parseMemorySource(value: string): Exclude<MemorySource, "legacy"> {
-  const parsed = MemoryWriterSourceSchema.safeParse(value);
+  const parsed = MemoryWriterSourceSchema.safeParse(
+    value === "human" ? "user" : value,
+  );
   if (!parsed.success) {
     throw new Error(
-      `Invalid memory source "${value}": expected init, agent, orchestrator, or human`,
+      `Invalid memory source "${value}": expected init, agent, orchestrator, or user`,
     );
   }
   return parsed.data;
@@ -135,15 +148,9 @@ function parseMemoryStatus(value: string): MemoryVerificationStatus {
   return parsed.data;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const errorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
 function parsePort(value: string | undefined): number {
   const port = Number(value);
-  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+  if (!isDaemonPort(port)) {
     throw new Error(`Invalid event port: ${value ?? "missing"}`);
   }
   return port;
@@ -190,8 +197,6 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
     }
     payload.usageSource = usageSource;
   }
-  // Codex's notify payload names the conversation "thread-id"; it is the
-  // session id `codex resume` accepts, so crash recovery records it.
   const toolSessionId =
     parsed["thread-id"] ??
     parsed.threadId ??
@@ -231,22 +236,39 @@ export function createProgram(): Command {
   const program = new Command();
   program
     .name("hive")
-    .description("Coordinate named Claude, Codex, and Grok agents")
+    .description(
+      "Coordinate named Claude Code, Codex, Grok, Kimi Code, and OpenCode agents",
+    )
     .option("--instance <name>", "use a named isolated Hive instance")
     .showHelpAfterError()
     .exitOverride();
 
-  // `hive --version` prints one line because that is what every peer does and
-  // what bug reports need. The richer facts belong to `hive update status`.
   program.version(versionLine(), "-v, --version", "Print the Hive version");
 
-  // Bare `hive` opens the project the shell is in: resolve the repo root, run
-  // the shared session boundary, and hand the app the project and daemon port.
-  // Outside a git repo it launches the app standalone (placeholder window) —
-  // the project-neutral home a Dock click gets. Never a dev Workspace build.
+  // Bare `hive` opens the project the shell is in: resolve the repo root, run the shared session boundary, and hand the app the project and daemon port. Outside a git repo it launches the app standalone (placeholder window) — the project-neutral home a Dock click gets. Never a dev Workspace build.
   program.action(async () => {
     process.exitCode = await runWorkspace();
   });
+
+  program
+    .command("migrate-home", { hidden: true })
+    .description("Migrate this install's prior home before activation")
+    .action(async () => {
+      const config = resolveVariant();
+      const prior = config.priorHomes.find(homeHoldsOwnedState);
+      if (prior === undefined) return;
+      for (const home of [prior, config.home]) {
+        const state = await daemonInstanceLiveness(
+          home,
+          hiveInstanceSuffix(home),
+        );
+        if (state !== "dead") {
+          throw new Error(
+            `Hive cannot migrate the prior home ${prior} to ${config.home} while the daemon at ${home} is ${state}. Stop it and run the installer again.`,
+          );
+        }
+      }
+    });
 
   program
     .command("instances")
@@ -303,12 +325,19 @@ export function createProgram(): Command {
       "--yes",
       "skip the confirmation prompt (required when not on a terminal)",
     )
-    .action(async (options: { repo?: boolean; yes?: boolean }) => {
-      process.exitCode = await runUninstall(projectRootOrCwd(), {
-        ...(options.repo === undefined ? {} : { repo: options.repo }),
-        ...(options.yes === undefined ? {} : { yes: options.yes }),
-      });
-    });
+    .option(
+      "--purge",
+      "retain nothing, overriding this variant's configured retention",
+    )
+    .action(
+      async (options: { repo?: boolean; yes?: boolean; purge?: boolean }) => {
+        process.exitCode = await runUninstall(projectRootOrCwd(), {
+          ...(options.repo === undefined ? {} : { repo: options.repo }),
+          ...(options.yes === undefined ? {} : { yes: options.yes }),
+          ...(options.purge === undefined ? {} : { purge: options.purge }),
+        });
+      },
+    );
 
   const update = program
     .command("update [version]")
@@ -365,9 +394,62 @@ export function createProgram(): Command {
     });
 
   program
+    .command("kimi")
+    .description(
+      "Open Workspace with a Kimi orchestrator (uses Kimi's manual permission mode)",
+    )
+    .action(async () => {
+      process.exitCode = await runWorkspace({ orchestrator: "kimi" });
+    });
+
+  program
+    .command("opencode")
+    .description("Open Workspace with a read-only OpenCode orchestrator")
+    .action(async () => {
+      process.exitCode = await runWorkspace({ orchestrator: "opencode" });
+    });
+
+  program
     .command("status")
     .description("Show Hive agent status")
     .action(printStatus);
+
+  program
+    .command("errors")
+    .description("Audit daemon-recorded Hive failures and warnings")
+    .option("--since <iso>", "only events at or after this ISO timestamp")
+    .option("--until <iso>", "only events at or before this ISO timestamp")
+    .option("--severity <level>", "error or warning")
+    .option(
+      "--source <source>",
+      "mcp-tool, mcp-transport, provider, session, background, or daemon",
+    )
+    .option("--subject <name>", "agent or orchestrator subject")
+    .option("--session <id>", "provider run id or vendor session id")
+    .option("--tool <name>", "MCP tool name")
+    .option("--limit <number>", "maximum events", "100")
+    .option("--json", "print canonical events as JSON")
+    .option("--port <number>", "daemon port")
+    .action(
+      (options: {
+        since?: string;
+        until?: string;
+        severity?: string;
+        source?: string;
+        subject?: string;
+        session?: string;
+        tool?: string;
+        limit?: string;
+        json?: boolean;
+        port?: string;
+      }) => {
+        const { port, ...filters } = options;
+        return printErrors({
+          ...filters,
+          ...(port === undefined ? {} : { port: parsePort(port) }),
+        });
+      },
+    );
 
   const routing = program
     .command("routing")
@@ -599,7 +681,10 @@ export function createProgram(): Command {
   quota
     .command("reconcile")
     .description("Record a manual provider dashboard observation")
-    .requiredOption("--provider <provider>", "claude, codex, or grok")
+    .requiredOption(
+      "--provider <provider>",
+      "claude, codex, grok, kimi, or opencode",
+    )
     .option("--account <account>", "account scope", "default")
     .requiredOption("--pool <pool>", "configured quota pool")
     .requiredOption("--five-hour-used <units>", "used 5-hour units")
@@ -610,7 +695,9 @@ export function createProgram(): Command {
     .action(async (options: QuotaReconcileOptions) => {
       const provider = CapabilityProviderSchema.safeParse(options.provider);
       if (!provider.success)
-        throw new Error("provider must be claude, codex, or grok");
+        throw new Error(
+          "provider must be claude, codex, grok, kimi, or opencode",
+        );
       await recordQuotaObservation({
         provider: provider.data,
         account: options.account,
@@ -636,27 +723,6 @@ export function createProgram(): Command {
     .description("Show pin, install state, and graph freshness for this repo")
     .action(async () => {
       process.exitCode = await runGraphifyStatus(projectRootOrCwd());
-    });
-
-  // The updater calls this private boundary through the newly activated binary.
-  program
-    .command("graphify-runtime-install", { hidden: true })
-    .action(async () => {
-      process.exitCode = await provisionGraphifyRuntime();
-    });
-
-  // Same boundary for embeddings: the activated binary is the runtime's only
-  // consumer, so it is the only process whose probe answers the real question.
-  program
-    .command("embeddings-runtime-install", { hidden: true })
-    .action(async () => {
-      const outcome = await ensureEmbeddingsRuntime();
-      if (outcome.ok) {
-        console.log(outcome.detail);
-      } else {
-        console.error(outcome.reason);
-        process.exitCode = 1;
-      }
     });
 
   const memory = program
@@ -691,7 +757,7 @@ export function createProgram(): Command {
     .requiredOption("--scope <scope>", "repo or global")
     .requiredOption("--topic <topic>", "lowercase kebab-case topic")
     .requiredOption("--body <text>", "fact body (Markdown)")
-    .requiredOption("--source <source>", "init, agent, orchestrator, or human")
+    .requiredOption("--source <source>", "init, agent, orchestrator, or user")
     .requiredOption(
       "--evidence <text>",
       "what was measured or supplied, and where",
@@ -779,41 +845,11 @@ export function createProgram(): Command {
     .action(reindexMemoryCli);
 
   memory
-    .command("self-test")
-    .description(
-      "Golden-canary recall probe: plants canary memories in a throwaway " +
-        "fixture and proves search, read-back, dedup, and delete-guard work " +
-        "(with --strict, any skipped assertion fails — the CI gate form)",
-    )
-    .option(
-      "--live",
-      "also probe the RUNNING daemon over MCP — reported embedding state, " +
-        "write projections, paraphrase recall, FTS round-trip — so a " +
-        "degraded deployed binary fails instead of hiding behind the fixture",
-    )
-    .option(
-      "--strict",
-      "treat every SKIP as a FAIL (exit nonzero) — a skipped assertion " +
-        "never ran, so a strict green run proves the semantic leg actually " +
-        "executed; pair with " +
-        "HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 in CI",
-    )
-    .action(async (options: { live?: boolean; strict?: boolean }) => {
-      const strict = options.strict === true;
-      const fixtureCode = await memorySelfTestCli({ strict });
-      if (options.live !== true) {
-        process.exitCode = fixtureCode;
-        return;
-      }
-      const liveCode = await memoryLiveSelfTestCli({ strict });
-      process.exitCode = fixtureCode === 0 && liveCode === 0 ? 0 : 1;
-    });
-
-  memory
     .command("consolidate")
     .description(
-      "Offline consolidation dedup (report first): pairwise cosine over the " +
-        "memory vector store; --apply supersedes only >=0.95 identical pairs",
+      "Consolidation dedup (report first): pairwise cosine over the memory " +
+        "vector store; --apply uses the live daemon when present and " +
+        "supersedes only >=0.95 identical pairs",
     )
     .option(
       "--apply",
@@ -848,8 +884,6 @@ export function createProgram(): Command {
     .option("--usage-source <source>", "provider, gateway, or estimated")
     .action(async (kind: string, options: EventCliOptions) => {
       try {
-        // Claude hooks deliver session identity on stdin; explicit CLI and
-        // payload options always win over the captured value.
         if (options.instanceId === undefined) {
           throw new Error("--instance-id is required");
         }
@@ -863,22 +897,6 @@ export function createProgram(): Command {
         // Commander option parsing and hook delivery must not break agent turns.
       }
     });
-
-  program
-    .command("statusline")
-    .description("Render an agent status line and forward subscriber quota")
-    .requiredOption("--agent <name>", "agent name")
-    .requiredOption("--port <number>", "daemon port")
-    .requiredOption("--instance-id <id>", "expected Hive instance identity")
-    .action(
-      async (options: { agent: string; port: string; instanceId: string }) => {
-        await verifyDaemonInstance(parsePort(options.port), options.instanceId);
-        const stdin = await Bun.stdin.text().catch(() => "");
-        process.stdout.write(
-          await runStatusline(options.agent, parsePort(options.port), stdin),
-        );
-      },
-    );
 
   program
     .command("credential")
@@ -895,7 +913,7 @@ export function createProgram(): Command {
   program
     .command("recover [name]")
     .description(
-      "Resume crashed agent sessions (all recoverable agents, or one by name)",
+      "Report-only: check which crashed agents' terminal sessions are confirmed dead (all recoverable agents, or one by name)",
     )
     .action(async (name?: string) => {
       await recoverAgentsCli(name);
@@ -906,9 +924,7 @@ export function createProgram(): Command {
     .description("Run the Hive daemon in the foreground")
     .action(runDaemon);
 
-  // The Workspace app's Model Control Center read surface: one JSON document
-  // of capability catalogs, billing guard state, and quota statuses. Hidden
-  // because only the app spawns it.
+  // The Workspace app's Model Control Center read surface: one JSON document of capability catalogs, billing guard state, and quota statuses. Hidden because only the app spawns it.
   program
     .command("model-control-snapshot", { hidden: true })
     .option("--port <number>", "daemon port")
@@ -918,8 +934,68 @@ export function createProgram(): Command {
       ),
     );
 
-  // The Workspace app's status wire: NDJSON agent snapshots on stdout plus the
-  // daemon-side viewer lease. Hidden because only the app spawns it.
+  // The protocol terminal frontend. It owns the pane's alternate screen and speaks to the vendor over pipes, so the only process reading terminal input is this one. Hidden because sessiond spawns it, not a person.
+  program
+    .command("agent-ui", { hidden: true })
+    .requiredOption("--subject <agent>", "agent this pane belongs to")
+    .requiredOption("--provider <vendor>", "installed vendor runtime")
+    .option("--executable <path>", "resolved installed binary")
+    .requiredOption(
+      "--port <number>",
+      "daemon port for mail-ready, protocol session facts, and runtime reports",
+    )
+    .requiredOption("--provider-run-id <id>", "provider run identity")
+    .option("--model <model>", "selected provider model")
+    .option("--effort <effort>", "selected provider effort")
+    .option("--read-only", "use the provider's reduced-authority posture")
+    .option("--instruction <path>", "system instruction file")
+    .option("--provider-argv <json>", "provider protocol argv")
+    .option("--kickoff <text>", "initial protocol submission")
+    .requiredOption("--worktree <path>", "agent worktree")
+    .requiredOption("--journal <path>", "durable outbound journal")
+    .action(
+      async (options: {
+        subject: string;
+        provider: string;
+        executable?: string;
+        port: string;
+        providerRunId: string;
+        model?: string;
+        effort?: string;
+        readOnly?: boolean;
+        instruction?: string;
+        providerArgv?: string;
+        kickoff?: string;
+        worktree: string;
+        journal: string;
+      }) => {
+        process.exitCode = await runAgentUi({
+          subject: options.subject,
+          provider: options.provider,
+          ...(options.executable === undefined
+            ? {}
+            : { executable: options.executable }),
+          daemonPort: parsePort(options.port),
+          providerRunId: options.providerRunId,
+          ...(options.model === undefined ? {} : { model: options.model }),
+          ...(options.effort === undefined ? {} : { effort: options.effort }),
+          readOnly: options.readOnly === true,
+          ...(options.instruction === undefined
+            ? {}
+            : { instructionPath: options.instruction }),
+          ...(options.providerArgv === undefined
+            ? {}
+            : { providerArgv: JSON.parse(options.providerArgv) as string[] }),
+          ...(options.kickoff === undefined
+            ? {}
+            : { kickoff: options.kickoff }),
+          worktreePath: options.worktree,
+          journalPath: options.journal,
+        });
+      },
+    );
+
+  // The Workspace app's status wire: NDJSON agent snapshots on stdout plus the daemon-side viewer lease. Hidden because only the app spawns it.
   program
     .command("workspace-feed", { hidden: true })
     .requiredOption("--port <number>", "daemon port")
@@ -939,17 +1015,18 @@ export function createProgram(): Command {
       },
     );
 
-  // The Workspace master pane calls this private process boundary. Public
-  // `hive claude|codex|grok` launch the app; they must never be invoked from the
-  // pane itself or the app would recursively open another Workspace.
+  // The Workspace master pane calls this private process boundary. Public vendor commands launch the app; they must never be invoked from the pane itself or the app would recursively open another Workspace.
   program
     .command("workspace-orchestrator", { hidden: true })
-    .requiredOption("--tool <tool>", "claude, codex, or grok")
+    .requiredOption("--tool <tool>", "claude, codex, grok, kimi, or opencode")
     .requiredOption("--port <number>", "daemon port")
     .requiredOption("--instance-id <id>", "expected Hive instance identity")
     .action(
       async (options: { tool: string; port: string; instanceId: string }) => {
-        await verifyDaemonInstance(parsePort(options.port), options.instanceId);
+        await verifyDaemonInstanceWhenReady(
+          parsePort(options.port),
+          options.instanceId,
+        );
         const tool = CapabilityProviderSchema.safeParse(options.tool);
         if (!tool.success) {
           throw new Error(`unsupported orchestrator tool: ${options.tool}`);
@@ -968,9 +1045,7 @@ export async function main(argv = process.argv): Promise<number> {
   try {
     selectInstanceFromArgv(argv);
     repairIdentityFromStagedVersionProbe(argv);
-    // The passive update notice trails user-facing commands (npm/gh shape):
-    // the check runs alongside the command, the line prints after it, and a
-    // failed or slow check is silence, never an error or a stall.
+    // The passive update notice trails user-facing commands (npm/gh shape): the check runs alongside the command, the line prints after it, and a failed or slow check is silence, never an error or a stall.
     await withTrailingUpdateNotice(wantsUpdateNotice(argv), () =>
       createProgram().parseAsync(argv),
     );

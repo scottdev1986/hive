@@ -1,13 +1,17 @@
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { buildAgentPrompt } from "../../src/daemon/spawner-impl";
+import { loadAgentStandards } from "../../src/daemon/spawn/agent-standards";
+import { buildAgentPrompt } from "../../src/daemon/spawn/spawner-impl";
 
 const worktree = {
   path: "/repo/.hive/worktrees/maya",
   branch: "hive/maya-graph",
 };
 
+const standards = await loadAgentStandards(join(import.meta.dir, "../.."));
+
 const prompt = (tool: "claude" | "grok" | "codex") =>
-  buildAgentPrompt("maya", "Find the spawner.", worktree, "", {
+  buildAgentPrompt("maya", "Find the spawner.", worktree, "", standards, {
     tool,
     graphifyTools: true,
   });
@@ -36,9 +40,14 @@ describe("graphify spawn directive", () => {
   });
 
   test("says nothing about the graph tools when graphify is off", () => {
-    const off = buildAgentPrompt("maya", "Find the spawner.", worktree, "", {
-      tool: "claude",
-    });
+    const off = buildAgentPrompt(
+      "maya",
+      "Find the spawner.",
+      worktree,
+      "",
+      standards,
+      { tool: "claude" },
+    );
     expect(off).not.toContain("ToolSearch");
     expect(off).not.toContain("graph_locate");
   });

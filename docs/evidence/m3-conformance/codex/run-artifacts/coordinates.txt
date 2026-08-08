@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-dr
+home=/private/tmp/hvqa-dr
+default_home=/private/tmp/hvqa-dr/default
+port=53524
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-codex-run.i6N22R/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen-codex/source
+hive_bin=/private/tmp/hvqa-dr/artifacts/hive-bin

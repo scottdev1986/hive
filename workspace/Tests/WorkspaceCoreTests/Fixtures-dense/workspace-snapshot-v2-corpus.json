@@ -1,0 +1,191 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "8",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 2,
+      "instanceId": "instance-fixture",
+      "seq": "8",
+      "entities": [
+        {
+          "kind": "agent",
+          "id": "agent-fixture",
+          "generation": 3,
+          "entityRevision": "8",
+          "projection": {
+            "activity": "working",
+            "provider": "codex"
+          }
+        }
+      ],
+      "createdAt": "2026-07-30T20:00:00.000Z",
+      "contentSha256": "eb1997d023006dee7b73f50afd5598ec88bde52db8ccfda55bf07f42c373a45c"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "8",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "schemaVersion": 2,
+      "instanceId": "instance-fixture",
+      "seq": "8",
+      "entities": [
+        {
+          "kind": "agent",
+          "id": "agent-fixture",
+          "generation": 3,
+          "entityRevision": "8",
+          "projection": {
+            "activity": "working",
+            "provider": "codex"
+          }
+        }
+      ],
+      "createdAt": "2026-07-30T20:00:00.000Z",
+      "contentSha256": "eb1997d023006dee7b73f50afd5598ec88bde52db8ccfda55bf07f42c373a45c"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "8",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "schemaVersion": 2,
+      "instanceId": "instance-fixture",
+      "seq": "8",
+      "entities": [
+        {
+          "kind": "agent",
+          "id": "agent-fixture",
+          "generation": 3,
+          "entityRevision": "8",
+          "projection": {
+            "activity": "working",
+            "provider": "codex"
+          }
+        }
+      ],
+      "createdAt": "2026-07-30T20:00:00.000Z",
+      "contentSha256": "eb1997d023006dee7b73f50afd5598ec88bde52db8ccfda55bf07f42c373a45c"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "8",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "8-competing"
+    },
+    "value": {
+      "schemaVersion": 2,
+      "instanceId": "instance-fixture",
+      "seq": "8",
+      "entities": [
+        {
+          "kind": "agent",
+          "id": "agent-fixture",
+          "generation": 3,
+          "entityRevision": "8",
+          "projection": {
+            "activity": "working",
+            "provider": "codex"
+          }
+        }
+      ],
+      "createdAt": "2026-07-30T20:00:00.000Z",
+      "contentSha256": "eb1997d023006dee7b73f50afd5598ec88bde52db8ccfda55bf07f42c373a45c"
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "8",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "8-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "schemaVersion": 2,
+      "instanceId": "instance-fixture",
+      "seq": "8",
+      "entities": [
+        {
+          "kind": "agent",
+          "id": "agent-fixture",
+          "generation": 3,
+          "entityRevision": "8",
+          "projection": {
+            "activity": "working",
+            "provider": "codex"
+          }
+        }
+      ],
+      "createdAt": "2026-07-30T20:00:00.000Z",
+      "contentSha256": "eb1997d023006dee7b73f50afd5598ec88bde52db8ccfda55bf07f42c373a45c"
+    }
+  }
+]

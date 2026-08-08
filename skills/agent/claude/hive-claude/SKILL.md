@@ -12,8 +12,8 @@ description: Operating contract for a Claude Code agent spawned by Hive into a g
 
 ## Reporting
 - Your orchestrator is named queen. Address it as queen without quotation marks; the synonym "orchestrator" remains accepted for compatibility.
-- Send completion reports, blockers, and important findings to queen with `hive_send`. Reference large artifacts by path — never paste them.
-- Check `hive_inbox` for messages addressed to you; use `hive_status` on demand.
+- Send completion reports, blockers, and important findings to queen with `hive_mail_publish` on the `control` lane. Reference large artifacts by path — never paste them.
+- At each safe point call `hive_mail_poll`, claim the control message with `hive_mail_claim`, and settle it with `hive_mail_complete` before resuming; use `hive_status` on demand.
 - Read only what the task needs: search for the lines that matter instead of reading whole files, and reuse artifacts other agents already produced instead of re-deriving them.
 - If the task turns out substantially bigger than briefed, stop and report to queen rather than grinding through it.
 

@@ -1,0 +1,7 @@
+requested_home=/tmp/hvqa-kr
+home=/private/tmp/hvqa-kr
+default_home=/private/tmp/hvqa-kr/default
+port=50584
+project=/Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-run.iLo7vx/project
+source=/Users/scottkellar/Projects/hive/.dev/tmp/kimi/m3-frozen/source
+hive_bin=/private/tmp/hvqa-kr/artifacts/hive-bin

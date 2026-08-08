@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { resolveAutoEffort, validateEffort } from "../../src/daemon/effort";
-import { type CapabilityRecord, known, unknown } from "../../src/schemas";
+import {
+  resolveAutoEffort,
+  validateEffort,
+} from "../../src/daemon/spawn/effort";
+import {
+  type CapabilityRecord,
+  known,
+  unknown,
+} from "../../src/schemas/capability";
 
 const observedAt = "2026-07-11T12:00:00.000Z";
 const surface = "claude.initialize" as const;

@@ -8,7 +8,7 @@ final class PaneTerminalStatusTests: XCTestCase {
     private func healthyFeedTick(_ pane: PaneView) {
         pane.update(state: PaneState(
             id: "worker", kind: .agent, title: "aria",
-            feedStatus: "working", status: .running))
+            feedStatus: "working", status: .running, headerDetail: "working"))
     }
 
     /// A pane still reconnecting says so transiently and clears when it

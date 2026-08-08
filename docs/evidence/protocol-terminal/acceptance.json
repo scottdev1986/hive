@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "verdict": "pass",
+  "counts": {
+    "pass": 19,
+    "fail": 0,
+    "missing": 0,
+    "open": 0
+  },
+  "rows": [
+    {
+      "area": "runtime truth",
+      "subject": "kimi",
+      "verdict": "pass",
+      "detail": "kimi/conformance.json: measured against 0.31.1"
+    },
+    {
+      "area": "conformance",
+      "subject": "kimi",
+      "verdict": "pass",
+      "detail": "kimi/conformance.json: 14 steps, 6a-load-same-process-replay accepted by queen 2026-08-02: load-same-process-replay measured no-replay matches the design of record's documented behavior (§4.1 load-vs-resume distinction; §13 omission), measured honestly by ethan's measureLoadReplay rather than assumed; accepted for cutover, subject to Scott's overrule"
+    },
+    {
+      "area": "status",
+      "subject": "kimi steady-state unknowns",
+      "verdict": "pass",
+      "detail": "kimi/conformance.json: none"
+    },
+    {
+      "area": "runtime truth",
+      "subject": "opencode",
+      "verdict": "pass",
+      "detail": "opencode/conformance.json: measured against 1.18.11"
+    },
+    {
+      "area": "conformance",
+      "subject": "opencode",
+      "verdict": "pass",
+      "detail": "opencode/conformance.json: 10 steps, all pass"
+    },
+    {
+      "area": "status",
+      "subject": "opencode steady-state unknowns",
+      "verdict": "pass",
+      "detail": "opencode/conformance.json: none"
+    },
+    {
+      "area": "runtime truth",
+      "subject": "grok",
+      "verdict": "pass",
+      "detail": "grok/conformance.json: measured against 0.2.118"
+    },
+    {
+      "area": "conformance",
+      "subject": "grok",
+      "verdict": "pass",
+      "detail": "grok/conformance.json: 9 steps, all pass"
+    },
+    {
+      "area": "status",
+      "subject": "grok steady-state unknowns",
+      "verdict": "pass",
+      "detail": "grok/conformance.json: none"
+    },
+    {
+      "area": "runtime truth",
+      "subject": "codex",
+      "verdict": "pass",
+      "detail": "codex/conformance-0.146.0.json: measured against 0.146.0"
+    },
+    {
+      "area": "conformance",
+      "subject": "codex",
+      "verdict": "pass",
+      "detail": "codex/conformance-0.146.0.json: 10 steps, all pass"
+    },
+    {
+      "area": "status",
+      "subject": "codex steady-state unknowns",
+      "verdict": "pass",
+      "detail": "codex/conformance-0.146.0.json: none"
+    },
+    {
+      "area": "runtime truth",
+      "subject": "claude",
+      "verdict": "pass",
+      "detail": "claude/conformance.json: measured against 2.1.220"
+    },
+    {
+      "area": "conformance",
+      "subject": "claude",
+      "verdict": "pass",
+      "detail": "claude/conformance.json: 11 steps, all pass"
+    },
+    {
+      "area": "status",
+      "subject": "claude steady-state unknowns",
+      "verdict": "pass",
+      "detail": "claude/conformance.json: none"
+    },
+    {
+      "area": "cutover",
+      "subject": "deletion targets",
+      "verdict": "pass",
+      "detail": "audit.json: empty; nothing of the old architecture is left to delete"
+    },
+    {
+      "area": "mail",
+      "subject": "wake and delivery suites",
+      "verdict": "pass",
+      "detail": "mail-wake/test-run.txt: 2801 tests across 238 files, 0 fail"
+    },
+    {
+      "area": "mail",
+      "subject": "mutation probe integrity",
+      "verdict": "pass",
+      "detail": "mail-wake/mutation-probes.txt: breaking a rule fails tests"
+    },
+    {
+      "area": "mail",
+      "subject": "sinceBrokerSeq migration",
+      "verdict": "pass",
+      "detail": "closed by ava 2026-08-02 (4c59b44d): src/cli/agent-ui/index.ts now documents cursor as the only position a subscribe may resume from, with the re-announcement reasoning, and test/agent-ui-end-to-end.test.ts covers it; the daemon refuses sinceBrokerSeq outright"
+    }
+  ]
+}

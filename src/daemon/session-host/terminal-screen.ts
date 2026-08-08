@@ -1,18 +1,4 @@
-/**
- * What is ON a terminal screen, reconstructed from the bytes that were sent to
- * it.
- *
- * A pane's output stream and its screen are the same thing only for a program
- * that prints and never revises. Every vendor TUI revises: it addresses the
- * cursor, erases regions, and swaps to an alternate screen. Reading the tail of
- * such a stream reports text the terminal has already replaced and can miss
- * text that remains visible elsewhere on the screen.
- *
- * This is a deliberately small VT subset: the sequences a coding TUI actually
- * uses to paint. Anything else is consumed and dropped rather than passed
- * through, because a control sequence rendered as text is worse than a missing
- * one — the reader cannot tell which characters the user would have seen.
- */
+/** What is ON a terminal screen, reconstructed from the bytes that were sent to it. A pane's output stream and its screen are the same thing only for a program that prints and never revises. Every vendor TUI revises: it addresses the cursor, erases regions, and swaps to an alternate screen. Reading the tail of such a stream reports text the terminal has already replaced and can miss text that remains visible elsewhere on the screen. This is a deliberately small VT subset: the sequences a coding TUI actually uses to paint. Anything else is consumed and dropped rather than passed through, because a control sequence rendered as text is worse than a missing one — the reader cannot tell which characters the user would have seen. */
 
 const ESC = 0x1b;
 const BEL = 0x07;
@@ -37,7 +23,6 @@ class Screen {
     for (const row of this.rows) row.fill(" ");
   }
 
-  /** Drop the top line and add a blank one, keeping the NEWEST content. */
   scroll(): void {
     const first = this.rows.shift();
     if (first === undefined) return;
@@ -70,7 +55,6 @@ class Screen {
   }
 }
 
-/** Parameters of a CSI sequence, with a default for the empty case. */
 function parameters(raw: string, fallback: number): number[] {
   const values = raw
     .split(";")
@@ -78,23 +62,10 @@ function parameters(raw: string, fallback: number): number[] {
   return values.map((value) => (Number.isFinite(value) ? value : fallback));
 }
 
-/**
- * A terminal that can be fed a session's bytes in pieces and asked, at any
- * point, what is on its screen.
- *
- * Incremental matters for more than convenience. A viewer receives a pane's
- * output as a series of frames chosen by the host's chunking, not by where
- * escape sequences happen to end, so a parser that starts fresh per chunk
- * prints the tail of a split sequence as literal text. It also removes the
- * reason to cap the input: a screen is bounded by its own rows and columns, so
- * the emulator can consume a megabyte and still occupy one window. Capping the
- * BYTES instead discards the head of the stream — which is precisely where a
- * repainting TUI puts the full-screen paint everything after it revises.
- */
+/** A terminal that can be fed a session's bytes in pieces and asked, at any point, what is on its screen. Incremental matters for more than convenience. A viewer receives a pane's output as a series of frames chosen by the host's chunking, not by where escape sequences happen to end, so a parser that starts fresh per chunk prints the tail of a split sequence as literal text. It also removes the reason to cap the input: a screen is bounded by its own rows and columns, so the emulator can consume a megabyte and still occupy one window. Capping the BYTES instead discards the head of the stream — which is precisely where a repainting TUI puts the full-screen paint everything after it revises. */
 export class TerminalScreen {
   private primary: Screen;
   private alternate: Screen | null = null;
-  /** An escape sequence cut in half by a frame boundary, awaiting its rest. */
   private leftover = "";
   private readonly width: number;
   private readonly height: number;
@@ -109,7 +80,6 @@ export class TerminalScreen {
     return this.alternate ?? this.primary;
   }
 
-  /** Apply the next piece of the stream. */
   write(chunk: string): void {
     const stream = this.leftover + chunk;
     this.leftover = "";
@@ -128,13 +98,11 @@ export class TerminalScreen {
       if (code === ESC) {
         flush();
         if (index + 1 >= stream.length) {
-          // A lone ESC at the boundary: hold it for the next frame.
           this.leftover = stream.slice(index);
           return;
         }
         const next = stream[index + 1];
         if (next === "[") {
-          // CSI: parameters, then a final byte in @..~
           let cursor = index + 2;
           while (
             cursor < stream.length &&
@@ -188,7 +156,6 @@ export class TerminalScreen {
           continue;
         }
         if (next === "M") {
-          // Reverse index: scroll down at the top of the screen.
           const screen = this.active();
           if (screen.cursorRow > 0) screen.cursorRow -= 1;
           index += 2;
@@ -230,7 +197,6 @@ export class TerminalScreen {
         continue;
       }
       if (code < 0x20 && character !== "") {
-        // Any other C0 control paints nothing.
         flush();
         index += 1;
         continue;
@@ -241,7 +207,6 @@ export class TerminalScreen {
     flush();
   }
 
-  /** What the screen is showing now. */
   text(): string {
     return this.active().text();
   }
@@ -312,7 +277,6 @@ export class TerminalScreen {
           }
           return;
         }
-        // mode 1: erase from the start of the display to the cursor.
         for (let i = 0; i < screen.cursorRow; i += 1) screen.rows[i]?.fill(" ");
         screen.rows[screen.cursorRow]?.fill(" ", 0, screen.cursorColumn + 1);
         return;
@@ -330,8 +294,6 @@ export class TerminalScreen {
       case "l": {
         if (!private_) return;
         const [mode] = parameters(raw, 0);
-        // 1049/47/1047 are the alternate screen. Entering gives a blank buffer
-        // and hides the primary; leaving throws the alternate away.
         if (mode === 1049 || mode === 47 || mode === 1047) {
           if (final === "h") this.alternate = new Screen(width, height);
           else this.alternate = null;
@@ -343,25 +305,7 @@ export class TerminalScreen {
         return;
       }
       default:
-        // SGR (m), device queries, and everything else change no cell.
         return;
     }
   }
-}
-
-/**
- * Render `stream` as the screen a terminal of this size would be showing.
- *
- * The stream may begin mid-session — a viewer attaches to a pane that has been
- * running — so an unmatched "leave alternate screen" is normal and simply means
- * the capture started inside one.
- */
-export function renderVisibleScreen(
-  stream: string,
-  columns: number,
-  rows: number,
-): string {
-  const screen = new TerminalScreen(columns, rows);
-  screen.write(stream);
-  return screen.text();
 }

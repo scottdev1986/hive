@@ -2,17 +2,16 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  type MemoryEmbedder,
+  MemoryEmbeddingService,
+} from "../src/memory-service/embeddings";
+import {
   MEMORY_SELF_TEST_CANARY_COUNT,
   memorySelfTestCli,
   plantMemorySelfTestFixture,
   probeMemorySelfTest,
   runMemorySelfTest,
-} from "../src/cli/memory-self-test";
-import { liveSelfTestReport } from "../src/cli/memory-self-test-live";
-import {
-  type MemoryEmbedder,
-  MemoryEmbeddingService,
-} from "../src/daemon/memory-embeddings";
+} from "../src/memory-service/self-test";
 import { OUTSIDE_REPO_TMPDIR } from "./outside-repo-tmpdir";
 
 const tempRoots: string[] = [];
@@ -170,33 +169,6 @@ describe("hive memory self-test", () => {
       report.lines.filter((line) => line.startsWith("SKIP ")),
     ).toHaveLength(2);
     expect(report.lines.some((line) => line.startsWith("FAIL "))).toBe(false);
-  });
-
-  test("--strict composes with --live: a skipped live assertion fails", () => {
-    const skippedRun = [
-      { name: "reported-state", passed: true, detail: "state=ready" },
-      {
-        name: "semantic-recall",
-        passed: false,
-        skipped: true,
-        detail: "(disabled in config)",
-      },
-    ];
-    const strictReport = liveSelfTestReport(skippedRun, true);
-    expect(strictReport.ok).toBe(false);
-    expect(strictReport.lines).toContain(
-      "[live] FAIL semantic-recall — skipped in strict mode ((disabled in config))",
-    );
-    expect(strictReport.lines[0]).toBe(
-      "[live] PASS reported-state — state=ready",
-    );
-
-    // The same assertions without strict keep the honest SKIP, pass-with-note.
-    const defaultReport = liveSelfTestReport(skippedRun);
-    expect(defaultReport.ok).toBe(true);
-    expect(defaultReport.lines).toContain(
-      "[live] SKIP semantic-recall — (disabled in config)",
-    );
   });
 
   test("an injected unavailable service also yields SKIP, not failure", async () => {

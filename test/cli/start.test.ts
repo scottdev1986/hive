@@ -33,14 +33,13 @@ function git(root: string, args: string[]): void {
   });
 }
 
-async function repoWithSpec(): Promise<string> {
+async function bareRepo(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "hive-start-"));
   git(root, ["init"]);
   await writeFile(
     join(root, "package.json"),
     JSON.stringify({ scripts: { test: "bun test" } }),
   );
-  await writeFile(join(root, "SPEC.md"), "# Spec\n\nv1\n");
   git(root, ["add", "-A"]);
   git(root, ["commit", "-m", "init", "--no-gpg-sign"]);
   return root;
@@ -50,7 +49,7 @@ async function repoWithSpec(): Promise<string> {
 // best-effort steps staying best-effort. Daemon bring-up is end-to-end elsewhere.
 describe("startSession", () => {
   test("checks for updates before selecting an instance and bringing its daemon up", async () => {
-    const root = await repoWithSpec();
+    const root = await bareRepo();
     const steps: string[] = [];
     try {
       const session = await startSession({
@@ -88,7 +87,7 @@ describe("startSession", () => {
   });
 
   test("a stale-daemon refusal stops the session before any daemon starts", async () => {
-    const root = await repoWithSpec();
+    const root = await bareRepo();
     let started = false;
     try {
       const promise = startSession({

@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { parseProcessTable, runPs } from "../../src/daemon/resources";
+import { macProcessIdentity } from "../../src/daemon/lifecycle/daemon-lifecycle";
+import {
+  parseProcessTable,
+  runPs,
+} from "../../src/daemon/resource-management/resources";
 import { HostOperationError } from "../../src/daemon/session-host/host-operations";
 import { SessiondWireError } from "../../src/daemon/session-host/sessiond-host";
 import {
@@ -7,10 +11,12 @@ import {
   type ReapDependencies,
   reapCapturedTree,
   stopSessiondAgentSession,
-} from "../../src/daemon/teardown";
-import type { AgentRecord } from "../../src/schemas";
+} from "../../src/daemon/resource-management/teardown";
+import type { AgentRecord } from "../../src/schemas/agent";
+import type { ProviderRun } from "../../src/schemas/provider-run";
 import { TerminationRequestSchema } from "../../src/schemas/session-protocol";
 import { required } from "../required";
+import { spawnTestChild } from "../support/spawn-test-child";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -69,6 +75,15 @@ async function waitForProcess(
     await Bun.sleep(20);
   } while (Date.now() < deadline);
   return false;
+}
+
+function processGroupAlive(processGroupId: number): boolean {
+  try {
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 describe("reapProcessTree", () => {
@@ -244,7 +259,6 @@ describe("reapProcessTree", () => {
       contextPct: null,
       createdAt: "2026-07-13T00:00:00.000Z",
       lastEventAt: "2026-07-13T00:00:00.000Z",
-      recoveryAttempts: 0,
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
@@ -327,6 +341,157 @@ describe("reapProcessTree", () => {
     ).resolves.toEqual({ killed: [], survivors: [] });
   });
 
+  test("refuses VERIFIED teardown when the reported provider group is not gone", async () => {
+    const sessionLocator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-provider" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000102",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const record = {
+      id: "agent-provider",
+      name: "provider",
+      tool: "codex",
+      model: "gpt-5-codex",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "test",
+      worktreePath: "/tmp/provider",
+      branch: "hive/provider-test",
+      sessionLocator,
+      contextPct: null,
+      createdAt: "2026-07-13T00:00:00.000Z",
+      lastEventAt: "2026-07-13T00:00:00.000Z",
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+    } satisfies AgentRecord;
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000103",
+      agentId: record.id,
+      terminal: sessionLocator,
+      provider: record.tool,
+      model: record.model,
+      effort: null,
+      conversationId: null,
+      adapterChild: {
+        pid: 4_200,
+        startToken: "4200:1",
+        processGroupId: 4_200,
+        observedAt: record.createdAt,
+      },
+      protocolReceipt: null,
+      capabilityEpoch: 0,
+      launchGrantId: "grant-provider",
+      startedAt: record.createdAt,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+
+    await expect(
+      stopSessiondAgentSession(record, {
+        terminalHost: {
+          stopProvider: async () => false,
+          terminate: async () => ({
+            locator: sessionLocator,
+            state: "terminated",
+            exit: null,
+            survivors: [],
+            errors: [],
+          }),
+        },
+        readHostPid: async () => null,
+        readProviderRun: () => run,
+      }),
+    ).rejects.toThrow("process group was not positively verified gone");
+  });
+
+  test("a frontend crash mid-turn still reaps a SIGTERM-trapping child group", async () => {
+    const sessionLocator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-crashed-ui" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000104",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const record = {
+      id: "agent-crashed-ui",
+      name: "crashed-ui",
+      tool: "codex",
+      model: "gpt-5-codex",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "test",
+      worktreePath: "/tmp/crashed-ui",
+      branch: "hive/crashed-ui-test",
+      sessionLocator,
+      contextPct: null,
+      createdAt: "2026-07-13T00:00:00.000Z",
+      lastEventAt: "2026-07-13T00:00:00.000Z",
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+    } satisfies AgentRecord;
+    const child = spawnTestChild({
+      executable: "/bin/sh",
+      argv: ["-c", "trap '' TERM; echo ready; sleep 30 & wait"],
+      cwd: process.cwd(),
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    });
+    try {
+      await new Promise<void>((resolve) => {
+        child.stdout.once("data", () => resolve());
+      });
+      const run: ProviderRun = {
+        runId: "018f1e90-7b5a-7cc0-8000-000000000105",
+        agentId: record.id,
+        terminal: sessionLocator,
+        provider: record.tool,
+        model: record.model,
+        effort: null,
+        conversationId: null,
+        adapterChild: {
+          pid: child.pid,
+          startToken: macProcessIdentity(child.pid).startToken,
+          processGroupId: child.pid,
+          observedAt: record.createdAt,
+        },
+        protocolReceipt: null,
+        capabilityEpoch: 0,
+        launchGrantId: "grant-crashed-ui",
+        startedAt: record.createdAt,
+        endedAt: null,
+        state: "running",
+        exitReason: null,
+      };
+      await expect(
+        stopSessiondAgentSession(record, {
+          terminalHost: {
+            stopProvider: async (_locator, expected) => {
+              expect(expected.adapterChild).toEqual(run.adapterChild);
+              await child.shutdown(150);
+              return !processGroupAlive(child.pid);
+            },
+            terminate: async () => {
+              throw new HostOperationError("frontend host already exited");
+            },
+          },
+          readHostPid: async () => null,
+          readProviderRun: () => run,
+        }),
+      ).resolves.toEqual({ killed: [], survivors: [] });
+      expect(processGroupAlive(child.pid)).toBe(false);
+    } finally {
+      if (processGroupAlive(child.pid)) process.kill(-child.pid, "SIGKILL");
+    }
+  });
+
   test("an unreachable host is an already-dead session, but survivors still refuse", async () => {
     const sessionLocator = {
       schemaVersion: 1 as const,
@@ -351,7 +516,6 @@ describe("reapProcessTree", () => {
       contextPct: null,
       createdAt: "2026-07-13T00:00:00.000Z",
       lastEventAt: "2026-07-13T00:00:00.000Z",
-      recoveryAttempts: 0,
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
@@ -419,7 +583,6 @@ describe("reapProcessTree", () => {
       contextPct: null,
       createdAt: "2026-07-13T00:00:00.000Z",
       lastEventAt: "2026-07-13T00:00:00.000Z",
-      recoveryAttempts: 0,
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,

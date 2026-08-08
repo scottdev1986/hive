@@ -1,26 +1,12 @@
-/**
- * `hive update` — check, stage, and (when the team is idle) activate.
- *
- * The command always performs the safe half immediately: check, download,
- * verify, stage. Then it tells the truth about activation. There is no `--now`
- * flag that forces activation over a live team; the daemon owns landing
- * authority and approvals, so "force" would mean killing agents mid-write. A
- * user who genuinely wants that has an honest spelling already: `hive stop &&
- * hive update`. Making destruction a deliberate two-command act rather than a
- * flag is the point.
- *
- * A successful activation also re-provisions the embedding and Graphify
- * runtimes pinned to the new version. Each failure is reported as a loud
- * degraded state, never hidden or turned into a rollback of a healthy binary.
- */
+/** `hive update` — check, stage, and (when the team is idle) activate. The command always performs the safe half immediately: check, download, verify, stage. Then it tells the truth about activation. There is no `--now` flag that forces activation over a live team; the daemon owns landing authority and approvals, so "force" would mean killing agents mid-write. A user who genuinely wants that has an honest spelling already: `hive stop && hive update`. Making destruction a deliberate two-command act rather than a flag is the point. A successful activation also re-provisions the embedding and Graphify runtimes pinned to the new version. Each failure is reported as a loud degraded state, never hidden or turned into a rollback of a healthy binary. */
 import { spawn } from "node:child_process";
-import type { GraphifyOutcome } from "../adapters/graphify";
-import { expectedDaemonHandshake } from "../daemon/handshake";
+import { type GraphifyOutcome, installGraphify } from "../adapters/graphify";
+import { expectedDaemonHandshake } from "../daemon/lifecycle/daemon-lifecycle";
 import {
   type InstanceMutationBlocker,
   instanceMutationBlockers,
-} from "../daemon/instances";
-import { isRunning } from "../daemon/lifecycle";
+} from "../daemon/lifecycle/instances";
+import { isRunning } from "../daemon/lifecycle/daemon-lifecycle";
 import {
   acquireMachineMutationLease,
   type MachineMutationLease,
@@ -34,13 +20,13 @@ import {
   fetchLatestFromGitHub,
   readUpdateCache,
   updatesDisabled,
-} from "../update/check";
+} from "../update-service/check";
 import {
   type DaemonUpdateState,
   explainRefusal,
   inspectDaemonForUpdate,
   restartStaleDaemon,
-} from "../update/daemon";
+} from "../update-service/update-daemon";
 import {
   type ActivationOutcome,
   activateWithHealthCheck,
@@ -50,15 +36,10 @@ import {
   rollback,
   type StageOutcome,
   UpdateError,
-} from "../update/install";
-import {
-  cliPath,
-  currentLink,
-  detectInstallMethod,
-  installRoot,
-} from "../update/paths";
-import { startDownload } from "../update/progress";
-import { githubReleaseSource } from "../update/source";
+} from "../update-service/install";
+import { detectInstallMethod, installRoot } from "../update-service/paths";
+import { startDownload } from "../update-service/progress";
+import { githubReleaseSource } from "../update-service/source";
 import {
   HIVE_ARCH,
   HIVE_COMMIT,
@@ -66,13 +47,16 @@ import {
   HIVE_VERSION,
   IS_RELEASE_BUILD,
   versionLine,
-} from "../version";
-import type { EmbeddingsInstallOutcome } from "./embeddings";
+} from "../shared/version";
+import {
+  type EmbeddingsInstallOutcome,
+  ensureEmbeddingsRuntimeForRelease,
+} from "./embeddings-command";
 import { fetchAgentStatus } from "./mcp";
+import { errorMessage } from "../shared/error-message";
 
 const arch = (): HiveArch => (HIVE_ARCH === "arm64" ? "arm64" : "x64");
 
-/** Live agents, read through the daemon's capability-checked status tool. */
 export async function liveAgentNames(port: number): Promise<readonly string[]> {
   const agents = await fetchAgentStatus(port);
   return agents
@@ -130,11 +114,7 @@ function guardSelfUpdate(): void {
   }
 }
 
-/**
- * The trust posture, stated as a consequence rather than a fact about a
- * variable. "embedded" tells the reader nothing they can act on; "signatures are
- * required" tells them what this binary will and will not install.
- */
+/** The trust posture, stated as a consequence rather than a fact about a variable. "embedded" tells the reader nothing they can act on; "signatures are required" tells them what this binary will and will not install. */
 function describeKeys(): string {
   const keys = releaseKeys(HIVE_RELEASE_PUBLIC_KEY);
   if (keys.length === 0) {
@@ -165,7 +145,6 @@ export async function printUpdateStatus(): Promise<void> {
   console.log(lines.join("\n"));
 }
 
-/** Exit 0 up-to-date, 10 update available — the shape scripts want. */
 export async function runUpdateCheck(): Promise<number> {
   const check = await checkForUpdate({
     fetchLatest: () => fetchLatestFromGitHub(),
@@ -256,12 +235,7 @@ export function globalMutationRefusal(
   );
 }
 
-/**
- * After the symlink moves, the daemon is still executing the old image. The
- * handshake will refuse to reuse it, so the next `hive` would fail rather
- * than adopt a stale control plane. Close the loop here: stop it while it is
- * provably idle so the next start spawns the new binary.
- */
+/** After the symlink moves, the daemon is still executing the old image. The handshake will refuse to reuse it, so the next `hive` would fail rather than adopt a stale control plane. Close the loop here: stop it while it is provably idle so the next start spawns the new binary. */
 async function stopStaleDaemonAfterActivation(): Promise<void> {
   if (!(await isRunning())) return;
   const expected = await expectedDaemonHandshake(process.cwd());
@@ -286,17 +260,6 @@ async function stopStaleDaemonAfterActivation(): Promise<void> {
   );
 }
 
-/**
- * What was actually checked, named one by one.
- *
- * Hive performs three independent integrity checks on every update — the Ed25519
- * signature over the manifest, the SHA-256 of each artifact against that signed
- * manifest, and executing the staged binary to make it state its own version
- * before it can ever be `current`. The line names all three checks because
- * "Downloaded and verified" gives the user no evidence for the trust claim.
- *
- * Keep that detail at the moment of the claim, when the user is deciding.
- */
 function verifiedLine(staged: StageOutcome): string {
   const how = staged.reused ? "already staged" : "staged";
   return `hive ${staged.version} ${how} — verified: Ed25519 signature, SHA-256, binary probed`;
@@ -311,17 +274,12 @@ export interface StagedUpdateActivationDeps {
   activate: () => Promise<ActivationOutcome>;
   ensureBinLink: () => Promise<void>;
   stopStaleDaemon: () => Promise<void>;
-  /** Provision the embedding runtime for the newly activated version.
-   * Embeddings are a required memory component (user ruling 2026-07-22), so a
-   * binary update re-provisions the runtime pinned to the new version. */
   provisionEmbeddings: (version: string) => Promise<EmbeddingsInstallOutcome>;
-  /** Ask the newly activated binary to install its own Graphify runtime. */
   provisionGraphify: (version: string) => Promise<GraphifyOutcome>;
   log: (line: string) => void;
 }
 
 export async function activateStagedUpdate(
-  _version: string,
   deps: StagedUpdateActivationDeps,
 ): Promise<void> {
   const lease = await deps.acquireLease("update");
@@ -356,11 +314,7 @@ export async function activateStagedUpdate(
   }
 }
 
-/**
- * The embeddings half of an update. A good binary is never rolled back over a
- * runtime download: a failure is a loud degraded-state warning naming the
- * consequence and the repair command, and the update still stands.
- */
+/** The embeddings half of an update. A good binary is never rolled back over a runtime download: a failure is a loud degraded-state warning naming the consequence and the repair command, and the update still stands. */
 async function embeddingsUpdateLine(
   version: string,
   deps: StagedUpdateActivationDeps,
@@ -371,7 +325,7 @@ async function embeddingsUpdateLine(
   } catch (error) {
     outcome = {
       ok: false,
-      reason: error instanceof Error ? error.message : String(error),
+      reason: errorMessage(error),
     };
   }
   if (outcome.ok) return `Embeddings: ${outcome.detail}.`;
@@ -392,7 +346,7 @@ async function graphifyUpdateLine(
   } catch (error) {
     outcome = {
       ok: false,
-      reason: error instanceof Error ? error.message : String(error),
+      reason: errorMessage(error),
     };
   }
   if (outcome.ok) return `Graphify: ${outcome.detail}.`;
@@ -401,59 +355,6 @@ async function graphifyUpdateLine(
     `code context is unavailable (${outcome.reason}).`,
     "Fix: run `hive init` again in the repository.",
   ].join("\n");
-}
-
-/**
- * The activated binary provisions its own embedding runtime. Probing in this
- * (old) process would answer "loadable by the updater" — the one context
- * guaranteed to differ from the runtime's consumer, and the exact confusion
- * that shipped a good runtime and then discarded it. The new binary installs
- * the runtime its own release pinned, keeps a healthy install untouched, and
- * its exit is the verdict.
- */
-export async function ensureEmbeddingsRuntimeForRelease(
-  version: string,
-  root = installRoot(),
-  execute: (command: string, args: string[]) => Promise<string> = run,
-): Promise<EmbeddingsInstallOutcome> {
-  try {
-    const output = await execute(cliPath(currentLink(root)), [
-      "embeddings-runtime-install",
-    ]);
-    return {
-      ok: true,
-      detail:
-        output.trim() || `embedding runtime from hive ${version} installed`,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-/** The activated binary checks the shared Graphify channel after Hive moves. */
-export async function ensureGraphifyRuntimeForRelease(
-  version: string,
-  root = installRoot(),
-  execute: (command: string, args: string[]) => Promise<string> = run,
-): Promise<GraphifyOutcome> {
-  try {
-    const output = await execute(cliPath(currentLink(root)), [
-      "graphify-runtime-install",
-    ]);
-    return {
-      ok: true,
-      detail:
-        output.trim() || `Graphify runtime from hive ${version} installed`,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      reason: error instanceof Error ? error.message : String(error),
-    };
-  }
 }
 
 export async function runUpdate(requested?: string): Promise<void> {
@@ -465,8 +366,7 @@ export async function runUpdate(requested?: string): Promise<void> {
   const source = await githubReleaseSource(target);
   const version = source.manifest.version;
 
-  // Always run staged bytes through all three checks. Do not short-circuit on
-  // their presence: an interrupted run may have left them incomplete.
+  // Always run staged bytes through all three checks. Do not short-circuit on their presence: an interrupted run may have left them incomplete.
   const staged = await ensureStaged({
     manifest: source.manifest,
     manifestBytes: source.manifestBytes,
@@ -484,7 +384,7 @@ export async function runUpdate(requested?: string): Promise<void> {
     return;
   }
 
-  await activateStagedUpdate(version, {
+  await activateStagedUpdate({
     acquireLease: acquireMachineMutationLease,
     blockers: () => instanceMutationBlockers(liveAgentNames),
     inspectDaemon: () =>
@@ -496,11 +396,8 @@ export async function runUpdate(requested?: string): Promise<void> {
     ensureBinLink: () => ensureBinLink(root),
     stopStaleDaemon: stopStaleDaemonAfterActivation,
     provisionEmbeddings: (activatedVersion) =>
-      ensureEmbeddingsRuntimeForRelease(activatedVersion, root),
-    provisionGraphify: (activatedVersion) =>
-      ensureGraphifyRuntimeForRelease(activatedVersion, root),
+      ensureEmbeddingsRuntimeForRelease(activatedVersion),
+    provisionGraphify: () => installGraphify(),
     log: console.log,
   });
 }
-
-export { cliPath, currentLink };

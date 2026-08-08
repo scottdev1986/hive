@@ -36,8 +36,8 @@ make run
 |---|---|
 | `make build` | Zig/GhosttyKit/sessiond/Swift build output, ending in `staged: hive 0.0.0 (<sha>, …)`. Stages an unsigned dev release under `.dev/`. |
 | `make run` | A **HiveWorkspace window opens with one full-window terminal pane already running** — the orchestrator ("queen") pane, a Claude TUI. This is a real TTY: type into it. |
-| type into the queen pane | e.g. `spawn an agent named ada to list this repo`. The orchestrator calls `hive_spawn`. |
-| a few seconds later | A **second pane appears** for `ada`, rendering that agent's live session. |
+| type into the queen pane | e.g. `spawn an agent to list this repo`. The orchestrator calls `hive_spawn`; Hive selects and reserves the agent's name. |
+| a few seconds later | A **second pane appears** for the new agent, rendering that agent's live session. |
 
 Terminal number one requires **no agent**. `bootstrapOrchestrator()` runs
 unconditionally at launch (`workspace/Sources/HiveWorkspace/AppDelegate.swift:137`),
@@ -57,9 +57,7 @@ All of these read as "no terminal appeared".
 | `error: too many arguments … got 1: run` + help dump | `hive run`/`hive build` are not commands | `make run`; bare `hive` to launch |
 | 480×200 window: "No project is open. Run `hive` from a project directory" | App launched without the 5-arg contract — a Dock click, or launched outside a git repo (`AppDelegate.swift:79-95`) | Launch via `make run`, or `hive` from inside a git repo |
 | `no dev build staged; run 'make build' first` | `make run` with an empty `.dev/` | `make build` |
-| Window opens, pane area totally blank, no process | Pane geometry never exceeded 40×40 pt, so the child was never spawned (`TerminalPaneView.swift:244-245`) — silent | Make sure the window is key/active and not zero-sized; resize it |
 | Queen pane fine, agent panes never appear | The workspace-feed subprocess is failing; statuses go stale. After 5 restarts the whole app quits | Check the daemon is up; re-run `make run` |
-| Agent pane blank forever, no error | tmux-backed pane polling `until tmux has-session` in an infinite loop (`ProjectWindowController.swift:351-352`) | Session was never created; check daemon logs |
 | Agent pane themed but empty, no error, no badge | Ghostty/sessiond pane: `ghostty_init` or `makeView()` threw and was swallowed to NSLog (`PaneView.swift:60-63`) | Missing/mismatched `GhosttyKit.xcframework` → `make build` |
 | Agent pane with a **red badge / "renderer disconnected"** | sessiond attach failed 6 times: grant refused, locator mismatch, or UDS connect failed | Broker not ready; check `hive-sessiond` |
 | App won't build at all | `workspace/Vendor/GhosttyKit.xcframework` absent — it's a `binaryTarget` build output, not checked in | `make build` |
@@ -67,7 +65,7 @@ All of these read as "no terminal appeared".
 
 Note the preflight's console check (`stat -f '%Su' /dev/console`) passes whenever
 you own the console — it does **not** prove the screen is unlocked. That
-precondition is only ever satisfied by a human at the machine.
+precondition is only ever satisfied by a user at the machine.
 
 ## Is `hive` a supported path to a terminal?
 
@@ -107,12 +105,9 @@ open on all three rows. The daemon-side half is green; nobody has yet recorded a
 run where a real spawned vendor agent rendered a live pane in a normally launched
 app.
 
-The queen pane is a different stack — SwiftTerm, not Ghostty — and is not subject
-to any of that. It works today.
-
 ## What no agent can do for you
 
-The visual confirmation. A rendered terminal is proven only by a human looking at
+The visual confirmation. A rendered terminal is proven only by a user looking at
 a real GUI session with the screen unlocked; the production surface returns nulls
 in a locked screen or a plain agent shell, and headless byte-level tests do not
 substitute. Everything above is verified from source, the Makefile, the installed

@@ -1,0 +1,9 @@
+bun test v1.3.14 (d1632b29)
+
+../../../.dev/tmp/opencode/m3-nina-opencode/source/test/daemon/mail-mcp.test.ts:
+Hive agent reconciliation failed: sessiond locator has no terminal-host binding in this Hive instance
+
+ 10 pass
+ 0 fail
+ 39 expect() calls
+Ran 10 tests across 1 file. [715.00ms]

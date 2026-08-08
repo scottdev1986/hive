@@ -13,6 +13,7 @@ import {
   reduceWorkspaceEvent,
 } from "./fixtures";
 import { GENERATED_FILES, WIRE_SCHEMA_CATALOG } from "./generate";
+import { errorMessage } from "../../src/shared/error-message";
 
 type ConformanceReport = Readonly<{
   validEncodings: Readonly<Record<string, string>>;
@@ -88,7 +89,7 @@ export function runTypeScriptConformance(
       parseFrameHeader(fromHex(item.hex));
       throw new Error(`TypeScript accepted invalid frame: ${item.name}`);
     } catch (error) {
-      const actual = error instanceof Error ? error.message : String(error);
+      const actual = errorMessage(error);
       if (actual !== item.error) throw error;
       invalidHeaders[item.name] = actual;
     }

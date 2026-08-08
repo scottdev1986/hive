@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +44,37 @@ function coordinator(options: {
 }
 
 describe("machine mutation lease", () => {
+  test("the default database path is independent of TMPDIR", () => {
+    const root = mkdtempSync(join(tmpdir(), "hive-mutation-tmpdir-split-"));
+    roots.push(root);
+    const hiveHome = join(root, "home");
+    const probe = join(import.meta.dir, "mutation-lease-path.fixture.ts");
+    const resolvePath = (temporaryDirectory: string) => {
+      mkdirSync(temporaryDirectory);
+      const result = Bun.spawnSync([process.execPath, probe], {
+        env: {
+          ...process.env,
+          HIVE_HOME: hiveHome,
+          TMPDIR: temporaryDirectory,
+        },
+      });
+      expect(result.exitCode).toBe(0);
+      return JSON.parse(result.stdout.toString()) as {
+        tmpdir: string;
+        databasePath: string;
+      };
+    };
+
+    const firstTmpdir = join(root, "first-tmp");
+    const secondTmpdir = join(root, "second-tmp");
+    const first = resolvePath(firstTmpdir);
+    const second = resolvePath(secondTmpdir);
+
+    expect(first.tmpdir).toBe(firstTmpdir);
+    expect(second.tmpdir).toBe(secondTmpdir);
+    expect(first.databasePath).toBe(second.databasePath);
+  });
+
   test("machine uninstall can release its lease after removing Hive home", async () => {
     const root = mkdtempSync(join(tmpdir(), "hive-mutation-uninstall-"));
     roots.push(root);
@@ -330,5 +362,41 @@ describe("machine mutation lease", () => {
     const lease = await updater.acquireLease("update");
     lease.release();
     updater.close();
+  });
+
+  test("a lease held by a malformed pid is reclaimed instead of wedging landing", async () => {
+    const path = databasePath();
+    const planter = coordinator({
+      path,
+      instanceId: "default",
+      instanceHome: "/hive/default",
+      pid: 101,
+      processes: new Map([[101, { state: "live", startedAt: "process-101" }]]),
+    });
+    await planter.acquireLease("update");
+    planter.close();
+
+    const db = new Database(path);
+    db.query(
+      "UPDATE machine_mutation_lease SET holderPid = ? WHERE id = 1",
+    ).run(Number.MAX_SAFE_INTEGER);
+    db.close();
+
+    const daemon = coordinator({
+      path,
+      instanceId: "named",
+      instanceHome: "/hive/named",
+      pid: 101,
+      processes: new Map([
+        [101, { state: "live", startedAt: "process-101" }],
+        [Number.MAX_SAFE_INTEGER, { state: "dead" }],
+      ]),
+    });
+    try {
+      const landing = await daemon.beginOperation("landing");
+      landing.release();
+    } finally {
+      daemon.close();
+    }
   });
 });

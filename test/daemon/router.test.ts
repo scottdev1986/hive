@@ -2,22 +2,24 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   AuthorizedLaunch,
   type LaunchGateChecks,
-} from "../../src/daemon/authorized-launch";
-import { HiveDatabase } from "../../src/daemon/db";
+} from "../../src/daemon/routing-service/authorized-launch";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
   type CandidateGate,
   HiveRouter,
   type LaunchDecision,
-  type RouterDependencies,
   type RouteRefusal,
   type RouteRequest,
+  type RouterDependencies,
   type RouteSelection,
-} from "../../src/daemon/router";
-import type {
-  CapabilityProvider,
-  RouteCandidate,
-  RoutingPolicy,
-} from "../../src/schemas";
+  routeDigest,
+} from "../../src/daemon/routing-service/router";
+import type { CapabilityProvider } from "../../src/schemas/capability";
+import {
+  type RouteCandidate,
+  type RoutingPolicy,
+  routeTargetKey,
+} from "../../src/schemas/routing-policy";
 import { required } from "../required";
 
 const NOW = new Date("2026-07-12T12:00:00.000Z");
@@ -60,7 +62,6 @@ const permissiveChecks: LaunchGateChecks = {
   resolution: () => null,
   enablement: () => null,
   availability: () => null,
-  capabilityFloor: () => null,
   effort: () => ({ refusal: null }),
 };
 
@@ -171,6 +172,14 @@ function balanceRows(
       "SELECT candidateKey, current FROM routing_balance ORDER BY candidateKey",
     )
     .all() as { candidateKey: string; current: number }[];
+}
+
+function rowCount(db: HiveDatabase, table: string): number {
+  return (
+    db.database.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as {
+      n: number;
+    }
+  ).n;
 }
 
 describe("smooth weighted selection", () => {
@@ -396,6 +405,216 @@ describe("route resolution", () => {
       await router.select(request("nothing"), permissiveGate, NOW),
     );
     expect(refusal.kind).toBe("never-configured");
+  });
+});
+
+describe("inspect", () => {
+  test("never-configured: no candidates, empty balance, refusal names the category", async () => {
+    const router = makeRouter(openDb(), policyWith({}));
+    const inspection = await router.inspect(
+      { category: "default", requirements: { reviewOfProvider: null } },
+      permissiveGate,
+      NOW,
+    );
+    expect(inspection.schemaVersion).toBe(1);
+    expect(inspection.scope).toBeNull();
+    expect(inspection.mode).toBeNull();
+    expect(inspection.routeDigest).toBeNull();
+    expect(inspection.candidates).toEqual([]);
+    expect(inspection.balance).toEqual([]);
+    expect(inspection.refusal).toEqual({
+      kind: "never-configured",
+      detail: expect.stringContaining("category default has no route"),
+    });
+  });
+
+  test("resolves category, else global — matching resolveRoute exactly", async () => {
+    const router = makeRouter(
+      openDb(),
+      policyWith({
+        global: { mode: "user-weighted", candidates: [CLAUDE] },
+        categories: {
+          code_review: { mode: "user-weighted", candidates: [CODEX] },
+        },
+      }),
+    );
+    const own = await router.inspect(
+      { category: "code_review", requirements: { reviewOfProvider: null } },
+      permissiveGate,
+      NOW,
+    );
+    expect(own.scope).toBe("code_review");
+    const viaGlobal = await router.inspect(
+      { category: "planning", requirements: { reviewOfProvider: null } },
+      permissiveGate,
+      NOW,
+    );
+    expect(viaGlobal.scope).toBe("global");
+  });
+
+  test("with nothing excluded, every candidate is eligible and liveShare equals configuredShare", async () => {
+    const router = makeRouter(
+      openDb(),
+      policyWith({
+        global: { mode: "user-weighted", candidates: [CLAUDE, CODEX, GROK] },
+      }),
+    );
+    const inspection = await router.inspect(
+      { category: "default", requirements: { reviewOfProvider: null } },
+      permissiveGate,
+      NOW,
+    );
+    expect(inspection.refusal).toBeNull();
+    expect(inspection.routeDigest).toBe(
+      routeDigest({ mode: "user-weighted", candidates: [CLAUDE, CODEX, GROK] }),
+    );
+    expect(inspection.candidates).toHaveLength(3);
+    for (const row of inspection.candidates) {
+      expect(row.eligible).toBe(true);
+      expect(row.liveShare).toBeCloseTo(row.configuredShare, 10);
+    }
+    const claude = required(
+      inspection.candidates.find((row) => row.candidate.provider === "claude"),
+    );
+    expect(claude.configuredShare).toBeCloseTo(0.6, 10);
+    expect(claude.effectiveWeight).toBe(60);
+  });
+
+  // Acceptance row 07: "Exclude one shared quota pool; verify every exact
+  // model governed by that pool becomes ineligible together" — and here,
+  // that the remaining candidates' live share absorbs the excluded share
+  // with no weight edited.
+  test("a drained pool excludes its candidate and redistributes live share, leaving configured shares and weights untouched", async () => {
+    const route = {
+      mode: "user-weighted" as const,
+      candidates: [CLAUDE, CODEX, GROK],
+    };
+    const router = makeRouter(openDb(), policyWith({ global: route }), {
+      drainedPool: (candidate) =>
+        candidate.tool === "grok"
+          ? { pool: "grok-managed", resetsAt: "2099-01-01T00:00:00.000Z" }
+          : null,
+    });
+    const inspection = await router.inspect(
+      { category: "default", requirements: { reviewOfProvider: null } },
+      permissiveGate,
+      NOW,
+    );
+    // Weights are byte-identical to what was configured — nothing edited.
+    expect(route.candidates.map((candidate) => candidate.weight)).toEqual([
+      60, 25, 15,
+    ]);
+    expect(inspection.refusal).toBeNull();
+    const grok = required(
+      inspection.candidates.find((row) => row.candidate.provider === "grok"),
+    );
+    expect(grok.eligible).toBe(false);
+    expect(grok.liveShare).toBe(0);
+    // Configured share is unaffected by the exclusion — it is the stored-weight
+    // preview, not a live redistribution.
+    expect(grok.configuredShare).toBeCloseTo(0.15, 10);
+    expect(grok.refusal).toEqual({
+      gate: "pool-exclusion",
+      detail: "quota pool grok-managed is drained",
+      retryAt: "2099-01-01T00:00:00.000Z",
+    });
+    const claude = required(
+      inspection.candidates.find((row) => row.candidate.provider === "claude"),
+    );
+    const codex = required(
+      inspection.candidates.find((row) => row.candidate.provider === "codex"),
+    );
+    // 60/25/15 configured; with grok excluded the live split is 60/85, 25/85.
+    expect(claude.liveShare).toBeCloseTo(60 / 85, 10);
+    expect(codex.liveShare).toBeCloseTo(25 / 85, 10);
+    // Both grew past their configured share — the exclusion moved weight that
+    // no one edited.
+    expect(claude.liveShare).toBeGreaterThan(claude.configuredShare);
+    expect(codex.liveShare).toBeGreaterThan(codex.configuredShare);
+  });
+
+  test("excluding every candidate reports a top-level no-candidate refusal", async () => {
+    const router = makeRouter(
+      openDb(),
+      policyWith({ global: { mode: "user-weighted", candidates: [GROK] } }),
+      { drainedPool: () => ({ pool: "p", resetsAt: null }) },
+    );
+    const inspection = await router.inspect(
+      { category: "default", requirements: { reviewOfProvider: null } },
+      permissiveGate,
+      NOW,
+    );
+    expect(inspection.refusal).toEqual({
+      kind: "no-candidate",
+      detail: "every candidate of the global route was refused",
+    });
+    expect(required(inspection.candidates[0]).liveShare).toBe(0);
+  });
+
+  test("reads the existing balance without writing to it", async () => {
+    const db = openDb();
+    const weighted = policyWith({
+      global: { mode: "user-weighted", candidates: [CLAUDE, CODEX, GROK] },
+    });
+    const router = makeRouter(db, weighted);
+    await selectProviders(router, 6, "seed");
+    const before = balanceRows(db);
+    expect(before.length).toBeGreaterThan(0);
+    const inspection = await router.inspect(
+      { category: "default", requirements: { reviewOfProvider: null } },
+      permissiveGate,
+      NOW,
+    );
+    expect(inspection.balance.length).toBe(before.length);
+    for (const entry of inspection.balance) {
+      const key = routeTargetKey({
+        provider: entry.provider,
+        model: entry.model,
+      });
+      const row = required(
+        before.find((candidate) => candidate.candidateKey === key),
+      );
+      expect(entry.current).toBe(row.current);
+    }
+    expect(balanceRows(db)).toEqual(before);
+  });
+
+  test("5 repeated inspect() calls write zero rows to launch_decisions or routing_balance", async () => {
+    const db = openDb();
+    const router = makeRouter(
+      db,
+      policyWith({
+        global: { mode: "user-weighted", candidates: [CLAUDE, CODEX, GROK] },
+      }),
+    );
+    const decisionsBefore = rowCount(db, "launch_decisions");
+    const balanceBefore = rowCount(db, "routing_balance");
+    for (let i = 0; i < 5; i += 1) {
+      await router.inspect(
+        { category: "default", requirements: { reviewOfProvider: null } },
+        permissiveGate,
+        NOW,
+      );
+    }
+    expect(rowCount(db, "launch_decisions")).toBe(decisionsBefore);
+    expect(rowCount(db, "routing_balance")).toBe(balanceBefore);
+  });
+
+  test("without a supplied gate, the default policy gate refuses a disabled model", async () => {
+    const policy: RoutingPolicy = {
+      ...policyWith({
+        global: { mode: "user-weighted", candidates: [CLAUDE] },
+      }),
+      providers: { claude: "disabled" },
+    };
+    const router = makeRouter(openDb(), policy);
+    const inspection = await router.inspect({
+      category: "default",
+      requirements: { reviewOfProvider: null },
+    });
+    const claude = required(inspection.candidates[0]);
+    expect(claude.eligible).toBe(false);
+    expect(claude.refusal?.gate).toBe("enablement");
   });
 });
 

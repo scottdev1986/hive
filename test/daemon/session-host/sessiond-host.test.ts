@@ -1,24 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { EventEmitter } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import type { Socket } from "node:net";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HiveDatabase } from "../../../src/daemon/db";
-import type { DaemonHandshake } from "../../../src/daemon/handshake";
-import type { SessionSpec } from "../../../src/daemon/session-host/contract";
+import { HiveDatabase } from "../../../src/daemon/database/hive-database";
+import type {
+  CaptureResult,
+  SessionSpec,
+} from "../../../src/daemon/session-host/session-host-contract";
 import { HiveTerminalHostAdapter } from "../../../src/daemon/session-host/hive-terminal-host";
+import { hostDirectory } from "../../../src/daemon/session-host/host-operations";
 import {
   encodeSessiondFrame,
-  type SessiondBrokerClient,
+  type SessiondControlClient,
   type SessiondControlRequest,
   SessiondCreateAdmissionDisabledError,
-  type SessiondFrame,
   SessiondFrameDecoder,
   SessiondHost,
   SessiondProtocolError,
-  SessiondSocketClient,
-  SessiondWireError,
   SessiondWireNotReadyError,
 } from "../../../src/daemon/session-host/sessiond-host";
 import type { TerminalHostBindingStore } from "../../../src/daemon/session-host/terminal-host-binding";
@@ -34,10 +32,8 @@ import type {
 } from "../../../src/daemon/session-host/terminal-host-contract";
 import {
   CreateBeginPayloadSchema,
-  CreatedPayloadSchema,
   FRAME_FLAGS,
   FRAME_HEADER,
-  FRAME_TYPES,
   SessionSpecSchema,
 } from "../../../src/schemas/session-protocol";
 import { required } from "../../required";
@@ -45,19 +41,6 @@ import { required } from "../../required";
 const session: SessionRef = {
   key: "neutral-session-key",
   incarnation: "neutral-incarnation-1",
-};
-
-const _handshake: DaemonHandshake = {
-  productVersion: "0.0.0-dev",
-  buildHash: "daemon-build-hash",
-  wireProtocol: { min: 1, max: 1 },
-  schemaEpoch: 1,
-  capabilities: ["daemon-handshake-v1"],
-  instanceId: "instance-fixture",
-  hiveUuid: "hive-fixture",
-  identityKey: "identity-fixture",
-  repoFamilyKey: null,
-  generation: 1,
 };
 
 const createRequest: CreateRequest = {
@@ -183,7 +166,7 @@ const pendingBindings: TerminalHostBindingStore = {
   listTerminalHostBindings: (instanceId) =>
     instanceId === brokerLocator.instanceId ? [pendingBinding] : [],
 };
-const createdPayload = CreatedPayloadSchema.parse({
+const createdPayload = {
   schemaVersion: 1,
   locator: brokerLocator,
   created: true,
@@ -220,7 +203,7 @@ const createdPayload = CreatedPayloadSchema.parse({
     evidenceAt: "2026-07-18T01:00:00.000Z",
     diagnosticIds: [],
   },
-});
+} as const;
 
 const launchedRecord = {
   locator: brokerLocator,
@@ -244,28 +227,28 @@ const launchedRecord = {
 };
 
 /** Records what Hive asked for, and answers as a booted host would. */
-function recordingLauncher(outcome: () => unknown = () => launchedRecord): {
+function recordingLauncher(
+  outcome: () => unknown = () => launchedRecord,
+  process: Readonly<{ exited: Promise<number> }> = {
+    exited: new Promise<number>(() => {}),
+  },
+): {
   launch: NonNullable<
     ConstructorParameters<typeof SessiondHost>[0]
   >["launchHost"];
-  requests: Array<{ specJson: string; initialInput: Uint8Array }>;
+  requests: Array<{ specJson: string }>;
 } {
-  const requests: Array<{ specJson: string; initialInput: Uint8Array }> = [];
+  const requests: Array<{ specJson: string }> = [];
   return {
     requests,
-    launch: (async (request: {
-      specJson: string;
-      initialInput: Uint8Array;
-    }) => {
-      requests.push({
-        specJson: request.specJson,
-        initialInput: request.initialInput,
-      });
+    launch: (async (request: { specJson: string }) => {
+      requests.push({ specJson: request.specJson });
       const record = outcome();
       return {
         record,
         hostPid: launchedRecord.hostPid,
         control: { destroy: () => {} },
+        process,
       };
       // biome-ignore lint/suspicious/noExplicitAny: the seam only needs these fields.
     }) as any,
@@ -300,7 +283,7 @@ const claim: ClaimResult = {
   claim: {
     token: "claim-token-1",
     writer: "writer-1",
-    kind: "human",
+    kind: "user",
     leaseExpiresAt: "2026-07-18T01:00:00.000Z",
   },
 };
@@ -410,22 +393,14 @@ const termination: TerminationResult = {
   diagnostics: [],
 };
 
-class RecordingClient implements SessiondBrokerClient {
+class RecordingClient implements SessiondControlClient {
   readonly requests: SessiondControlRequest<unknown>[] = [];
-  readonly creates: Array<
-    Readonly<{
-      beginPayload: typeof createBeginPayload;
-      initialInput: Uint8Array;
-    }>
-  > = [];
   closed = false;
 
   constructor(
     private readonly respond: (
       request: SessiondControlRequest<unknown>,
     ) => unknown,
-    private readonly createRespond: () => unknown = () => createdPayload,
-    readonly engineBuildId: string | null = null,
   ) {}
 
   async request<Result>(
@@ -437,79 +412,9 @@ class RecordingClient implements SessiondBrokerClient {
     );
   }
 
-  async createTransaction(
-    beginPayload: typeof createBeginPayload,
-    initialInput: Uint8Array,
-  ): Promise<typeof createdPayload> {
-    this.creates.push({ beginPayload, initialInput: initialInput.slice() });
-    return CreatedPayloadSchema.parse(this.createRespond());
-  }
-
   close(): void {
     this.closed = true;
   }
-}
-
-class MockSocket extends EventEmitter {
-  readonly writes: Uint8Array[] = [];
-  destroyed = false;
-
-  constructor(
-    private readonly onFrame: (
-      frame: SessiondFrame,
-      socket: MockSocket,
-    ) => void,
-  ) {
-    super();
-  }
-
-  write(chunk: Uint8Array, callback?: (error?: Error | null) => void): boolean {
-    const bytes = new Uint8Array(chunk);
-    this.writes.push(bytes);
-    callback?.(null);
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const typeCode = view.getUint16(FRAME_HEADER.offsets.type);
-    const type = Object.entries(FRAME_TYPES).find(
-      ([, code]) => code === typeCode,
-    )?.[0] as SessiondFrame["type"] | undefined;
-    if (type === undefined)
-      throw new Error(`unexpected frame type ${typeCode}`);
-    const payloadLength = view.getUint32(FRAME_HEADER.offsets.payloadLength);
-    const frame: SessiondFrame = {
-      type,
-      flags: view.getUint16(FRAME_HEADER.offsets.flags),
-      requestId: view.getBigUint64(FRAME_HEADER.offsets.requestId),
-      streamSeq: view.getBigUint64(FRAME_HEADER.offsets.streamSeq),
-      payload: bytes.slice(
-        FRAME_HEADER.bytes,
-        FRAME_HEADER.bytes + payloadLength,
-      ),
-    };
-    queueMicrotask(() => this.onFrame(frame, this));
-    return true;
-  }
-
-  receive(frame: SessiondFrame): void {
-    this.emit("data", encodeSessiondFrame(frame));
-  }
-
-  destroy(): this {
-    this.destroyed = true;
-    return this;
-  }
-}
-
-const encodeJson = (value: unknown): Uint8Array =>
-  new TextEncoder().encode(JSON.stringify(value));
-
-function createdResponse(frame: SessiondFrame): SessiondFrame {
-  return {
-    type: "CREATED",
-    flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-    requestId: frame.requestId,
-    streamSeq: 0n,
-    payload: encodeJson(createdPayload),
-  };
 }
 
 describe("sessiond wire framing", () => {
@@ -591,178 +496,6 @@ describe("sessiond wire framing", () => {
     expect(new SessiondFrameDecoder().push(encoded)).toEqual([]);
   });
 
-  test("writes exact BEGIN then empty-input COMMIT bytes and correlates CREATED to COMMIT", async () => {
-    const socket = new MockSocket((frame, peer) => {
-      if (frame.type === "CREATE_COMMIT") peer.receive(createdResponse(frame));
-    });
-    const client = new SessiondSocketClient(socket as unknown as Socket);
-
-    await expect(
-      client.createTransaction(createBeginPayload, new Uint8Array()),
-    ).resolves.toEqual(createdPayload);
-
-    expect(socket.writes).toEqual([
-      encodeSessiondFrame({
-        type: "CREATE_BEGIN",
-        flags: 0,
-        requestId: 1n,
-        streamSeq: 0n,
-        payload: encodeJson(createBeginPayload),
-      }),
-      encodeSessiondFrame({
-        type: "CREATE_COMMIT",
-        flags: 0,
-        requestId: 2n,
-        streamSeq: 0n,
-        payload: encodeJson({
-          schemaVersion: 1,
-          totalLength: 0,
-          sha256:
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        }),
-      }),
-    ]);
-  });
-
-  test("chunks exact raw CREATE_INPUT bytes at accumulated byte offsets", async () => {
-    const socket = new MockSocket((frame, peer) => {
-      if (frame.type === "CREATE_COMMIT") peer.receive(createdResponse(frame));
-    });
-    const client = new SessiondSocketClient(socket as unknown as Socket);
-    client.setNegotiatedLimits({
-      controlFrameMaxBytes: 262_144,
-      streamChunkMaxBytes: 3,
-      automatedMessageMaxBytes: 8,
-    });
-    const input = new TextEncoder().encode("abcdefg");
-
-    await expect(
-      client.createTransaction(createBeginPayload, input),
-    ).resolves.toEqual(createdPayload);
-
-    expect(socket.writes).toEqual([
-      encodeSessiondFrame({
-        type: "CREATE_BEGIN",
-        flags: 0,
-        requestId: 1n,
-        streamSeq: 0n,
-        payload: encodeJson(createBeginPayload),
-      }),
-      encodeSessiondFrame({
-        type: "CREATE_INPUT",
-        flags: FRAME_FLAGS.contentSensitive,
-        requestId: 2n,
-        streamSeq: 0n,
-        payload: new TextEncoder().encode("abc"),
-      }),
-      encodeSessiondFrame({
-        type: "CREATE_INPUT",
-        flags: FRAME_FLAGS.contentSensitive,
-        requestId: 3n,
-        streamSeq: 3n,
-        payload: new TextEncoder().encode("def"),
-      }),
-      encodeSessiondFrame({
-        type: "CREATE_INPUT",
-        flags: FRAME_FLAGS.contentSensitive,
-        requestId: 4n,
-        streamSeq: 6n,
-        payload: new TextEncoder().encode("g"),
-      }),
-      encodeSessiondFrame({
-        type: "CREATE_COMMIT",
-        flags: 0,
-        requestId: 5n,
-        streamSeq: 0n,
-        payload: encodeJson({
-          schemaVersion: 1,
-          totalLength: 7,
-          sha256:
-            "7d1a54127b222502f5b79b5fb0803061152a44f92b37e23c6527baf665d4da9a",
-        }),
-      }),
-    ]);
-  });
-
-  test("surfaces in_doubt from COMMIT without retrying", async () => {
-    const socket = new MockSocket((frame, peer) => {
-      if (frame.type !== "CREATE_COMMIT") return;
-      peer.receive({
-        type: "ERROR",
-        flags: FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error,
-        requestId: frame.requestId,
-        streamSeq: 0n,
-        payload: encodeJson({
-          schemaVersion: 1,
-          code: "IN_DOUBT",
-          message: "host launch state is indeterminate",
-          diagnosticId: null,
-        }),
-      });
-    });
-    const client = new SessiondSocketClient(socket as unknown as Socket);
-
-    const failure = client
-      .createTransaction(createBeginPayload, new Uint8Array())
-      .catch((error) => error);
-    await expect(failure).resolves.toBeInstanceOf(SessiondWireError);
-    await expect(failure).resolves.toMatchObject({ code: "IN_DOUBT" });
-    expect(socket.writes).toHaveLength(2);
-  });
-
-  test("surfaces an ERROR correlated to no-response CREATE_BEGIN", async () => {
-    const socket = new MockSocket((frame, peer) => {
-      if (frame.type !== "CREATE_BEGIN") return;
-      peer.receive({
-        type: "ERROR",
-        flags: FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error,
-        requestId: frame.requestId,
-        streamSeq: 0n,
-        payload: encodeJson({
-          schemaVersion: 1,
-          code: "NOT_READY",
-          message: "production backend is not ready",
-          diagnosticId: null,
-        }),
-      });
-    });
-    const client = new SessiondSocketClient(socket as unknown as Socket);
-
-    const failure = client
-      .createTransaction(createBeginPayload, new Uint8Array())
-      .catch((error) => error);
-    await expect(failure).resolves.toBeInstanceOf(SessiondWireError);
-    await expect(failure).resolves.toMatchObject({ code: "NOT_READY" });
-    expect(socket.destroyed).toBe(true);
-  });
-
-  test("rejects oversized or overlapping create transactions before writing", async () => {
-    const socket = new MockSocket(() => undefined);
-    const client = new SessiondSocketClient(socket as unknown as Socket);
-    client.setNegotiatedLimits({
-      controlFrameMaxBytes: 262_144,
-      streamChunkMaxBytes: 3,
-      automatedMessageMaxBytes: 3,
-    });
-    const oversized = client
-      .createTransaction(createBeginPayload, new Uint8Array(4))
-      .catch((error) => error);
-    await expect(oversized).resolves.toMatchObject({
-      code: "PAYLOAD_TOO_LARGE",
-    });
-    expect(socket.writes).toEqual([]);
-
-    const first = client.createTransaction(
-      createBeginPayload,
-      new Uint8Array(),
-    );
-    await expect(
-      client.createTransaction(createBeginPayload, new Uint8Array()),
-    ).rejects.toThrow("create transaction is already active");
-    client.close();
-    await expect(first).rejects.toThrow("sessiond connection closed");
-  });
-
   test("creates from a product spec and its pre-bound Workspace visibility", async () => {
     // Hive launches the host itself; the broker is not in this path at all.
     const launcher = recordingLauncher();
@@ -771,9 +504,7 @@ describe("sessiond wire framing", () => {
       adoptHost: (async () => {}) as never,
       pendingBindings,
     });
-    const initialInput = new TextEncoder().encode("initial input\n");
-
-    const result = await host.create(sessionSpec, initialInput);
+    const result = await host.create(sessionSpec);
     expect(result.locator).toEqual(brokerLocator);
     expect(result.created).toBe(true);
     // A terminal that has only just registered has a shell and no provider, so
@@ -793,7 +524,74 @@ describe("sessiond wire framing", () => {
     expect(JSON.parse(required(launcher.requests[0]).specJson)).toEqual(
       createBeginPayload,
     );
-    expect(required(launcher.requests[0]).initialInput).toEqual(initialInput);
+  });
+
+  test("reports whether an exit wait belongs to this daemon instance", async () => {
+    const host = new SessiondHost();
+    await expect(
+      host.waitForHostExit(
+        brokerLocator.sessionId,
+        new AbortController().signal,
+      ),
+    ).resolves.toEqual({ kind: "inherited" });
+  });
+
+  test("a managed host exit wakes its wait with durable child status", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-exit-wait-"));
+    let releaseExit = (_code: number): void => {
+      throw new Error("exit promise was not armed");
+    };
+    const exited = new Promise<number>((resolve) => {
+      releaseExit = resolve;
+    });
+    const host = new SessiondHost({
+      hiveHome: directory,
+      launchHost: recordingLauncher(() => launchedRecord, { exited }).launch,
+      adoptHost: (async () => {}) as never,
+      pendingBindings,
+    });
+
+    try {
+      await host.create(sessionSpec);
+      let settled = false;
+      const waiting = host
+        .waitForHostExit(brokerLocator.sessionId, new AbortController().signal)
+        .then((value) => {
+          settled = true;
+          return value;
+        });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      const stateDirectory = hostDirectory(directory, brokerLocator.sessionId);
+      await mkdir(stateDirectory, { recursive: true });
+      await writeFile(
+        join(stateDirectory, "final.json"),
+        JSON.stringify({ schemaVersion: 1, exitCode: 37 }),
+      );
+      releaseExit(0);
+
+      await expect(waiting).resolves.toEqual({
+        kind: "managed-exit",
+        exitCode: 37,
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("canceling a managed exit wait releases it before host exit", async () => {
+    const host = new SessiondHost({
+      launchHost: recordingLauncher().launch,
+      adoptHost: (async () => {}) as never,
+      pendingBindings,
+    });
+    await host.create(sessionSpec);
+    const abort = new AbortController();
+    const waiting = host.waitForHostExit(brokerLocator.sessionId, abort.signal);
+
+    abort.abort();
+
+    await expect(waiting).resolves.toEqual({ kind: "aborted" });
   });
 
   test("releases the pending binding when the launch fails", async () => {
@@ -813,7 +611,7 @@ describe("sessiond wire framing", () => {
       pendingBindings: bindings,
     });
 
-    await expect(host.create(sessionSpec, new Uint8Array())).rejects.toThrow(
+    await expect(host.create(sessionSpec)).rejects.toThrow(
       /host never registered/,
     );
     // Nothing was created, so the pending binding must not survive as a pane.
@@ -849,11 +647,7 @@ describe("sessiond wire framing", () => {
     );
 
     try {
-      const created = await adapter.create(
-        sessionSpec,
-        new Uint8Array(),
-        pendingBinding,
-      );
+      const created = await adapter.create(sessionSpec, pendingBinding);
       // Evidence is stamped when it is taken, so it is checked as a fresh
       // instant rather than pinned to a fixture's frozen one.
       const evidenceAge =
@@ -944,9 +738,6 @@ describe("sessiond wire framing", () => {
           "SESSIOND_INPUT_STATE_UNAVAILABLE",
         ],
       });
-      // No create reaches a broker: Hive launches the host itself, and the
-      // broker seam here serves only the read and renewal RPCs above.
-      expect(brokers.flatMap((broker) => broker.creates)).toEqual([]);
       // No renewals on the wire at all. A create binds a terminal and returns;
       // keeping it alive is not something the daemon does, so nothing here may
       // put a per-terminal message on the critical path again.
@@ -965,12 +756,60 @@ describe("sessiond wire framing", () => {
 
   test("keeps production sessiond create admission explicitly disabled by default", async () => {
     const host = new SessiondHost({});
-    await expect(
-      host.create(sessionSpec, new Uint8Array()),
-    ).rejects.toBeInstanceOf(SessiondCreateAdmissionDisabledError);
+    await expect(host.create(sessionSpec)).rejects.toBeInstanceOf(
+      SessiondCreateAdmissionDisabledError,
+    );
   });
 
-  test("projects claim, idempotent input, and resize onto an attached neutral host", async () => {
+  test("captures the host-owned grid without attaching a replay viewer", async () => {
+    const priorBinary = process.env.HIVE_SESSIOND_BIN;
+    process.env.HIVE_SESSIOND_BIN = "/bin/echo";
+    try {
+      const measured: CaptureResult = {
+        locator: brokerLocator,
+        outputSeq: "21",
+        columns: 80,
+        rows: 24,
+        rowStart: 4,
+        screen: "alternate",
+        cursor: { row: 22, column: 17, visible: true },
+        text: "measured grid",
+        styledText: "\u001b[7mmeasured grid\u001b[0m",
+        truncated: true,
+        sha256: "a".repeat(64),
+        composer: null,
+      };
+      let requested: unknown = null;
+      const host = new SessiondHost({
+        hiveHome: "/tmp/hive-sessiond-capture-test",
+        captureHost: async (options) => {
+          requested = options;
+          return measured;
+        },
+      });
+      await expect(
+        host.capture(brokerLocator, {
+          include: "visible-text",
+          maxRows: 20,
+          expectedOutputSeq: "21",
+        }),
+      ).resolves.toEqual(measured);
+      expect(requested).toMatchObject({
+        sessionId: brokerLocator.sessionId,
+        locator: brokerLocator,
+        request: {
+          include: "visible-text",
+          maxRows: 20,
+          expectedOutputSeq: "21",
+        },
+      });
+    } finally {
+      if (priorBinary === undefined) delete process.env.HIVE_SESSIOND_BIN;
+      else process.env.HIVE_SESSIOND_BIN = priorBinary;
+    }
+  });
+
+  test("projects provenance-tagged input and resize onto an attached neutral host", async () => {
     const respond = (request: SessiondControlRequest<unknown>) => {
       switch (request.requestType) {
         case "CLAIM_ACQUIRE":
@@ -995,13 +834,14 @@ describe("sessiond wire framing", () => {
     const claimRequest = {
       session,
       writer: "writer-1",
-      kind: "human" as const,
+      kind: "user" as const,
       leaseMilliseconds: 10_000,
       idempotencyKey: "claim-idempotency-1",
     };
     const inputRequest = {
       session,
-      claimToken: "claim-token-1",
+      provenance: "automation" as const,
+      action: "deliver" as const,
       transactionId: receipt.transactionId,
       idempotencyKey: "input-idempotency-1",
       operation: {
@@ -1036,6 +876,8 @@ describe("sessiond wire framing", () => {
     expect(requests[1]?.payload).toMatchObject({
       schemaVersion: 1,
       session,
+      provenance: "automation",
+      action: "deliver",
       transactionId: receipt.transactionId,
       idempotencyKey: "input-idempotency-1",
       operation: {
@@ -1080,7 +922,7 @@ describe("sessiond wire framing", () => {
       host.claimInput({
         session,
         writer: "writer-1",
-        kind: "human",
+        kind: "user",
         leaseMilliseconds: 10_000,
         idempotencyKey: "claim-idempotency-1",
       }),

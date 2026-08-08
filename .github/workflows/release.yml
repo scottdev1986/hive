@@ -1,7 +1,7 @@
 name: release
 
 # One push to main is one patch bump and one release candidate. The exact signed
-# artifacts stay a GitHub prerelease until a human tests that installed version
+# artifacts stay a GitHub prerelease until a user tests that installed version
 # and runs promote-release.yml. Standard install/update paths therefore remain
 # on the previous stable release throughout acceptance.
 on:
@@ -82,13 +82,13 @@ jobs:
         with:
           bun-version: "1.3.14"
 
-      - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile --os=darwin --cpu='*'
 
       - name: Repository check
         run: bun run check
 
       - name: Test
-        run: bun test
+        run: bun run test
 
       # The memory self-test's semantic assertions SKIP unless a
       # real embedder is present, so the default probe above is no gate on the
@@ -114,12 +114,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HIVE_HOME"
-          bun run src/cli.ts memory self-test --strict
+          bun run scripts/release/memory-self-test.ts
 
       # The bump rule is a tested pure function; this step is its adapter.
       - name: Plan the release
         id: plan
-        run: bun run src/release/plan-cli.ts "$GITHUB_SHA"
+        run: bun run scripts/release/plan-cli.ts "$GITHUB_SHA"
 
       - name: Nothing to release
         if: steps.plan.outputs.action != 'release'
@@ -149,8 +149,8 @@ jobs:
           brew install zig@0.15
           brew link --force zig@0.15
           xcodebuild -downloadComponent MetalToolchain
-          scripts/provision-native-toolchain.sh
-          scripts/build-ghosttykit.sh --production
+          scripts/native/provision-native-toolchain.sh
+          scripts/native/build-ghosttykit.sh --production
           commit=$(/usr/bin/plutil -extract ghostty.commit raw -o - native/toolchain-lock.json)
           zig=$(/usr/bin/plutil -extract zig.version raw -o - native/toolchain-lock.json)
           artifact="$HIVE_NATIVE_CACHE/artifacts/ghostty-$commit-zig-$zig"
@@ -318,7 +318,7 @@ jobs:
         if: steps.plan.outputs.action == 'release'
         env:
           HIVE_RELEASE_PUBLIC_KEY: ${{ secrets.HIVE_RELEASE_PUBLIC_KEY }}
-        run: bun run scripts/signing/verify-manifest.ts dist/hive-release.json
+        run: bun run scripts/signing/signing-verify-manifest.ts dist/hive-release.json
 
       # The Gatekeeper gate, on the exact bytes a user downloads: codesign
       # --verify --strict everywhere, codesign --check-notarization on the CLI

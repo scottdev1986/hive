@@ -17,9 +17,16 @@ final class ProjectSwitcherTests: XCTestCase {
         switcher.showPanel()
         defer { NSApp.windows.filter { $0.title == "Projects" }.forEach { $0.close() } }
 
-        XCTAssertTrue(labelValues().contains("1 panes · 1 running"))
+        XCTAssertTrue(labelValues().contains("1 panes"))
 
-        _ = state.apply(feed: [AgentSnapshot(name: "worker", status: "working")])
+        _ = state.apply(feed: [AgentSnapshot(
+            name: "worker", status: "working",
+            presentation: AgentFeedPresentation(
+                panePresence: "visible",
+                terminalState: "live",
+                headerDetail: "working",
+                paneStatus: FeedPanePresentation(kind: "running"),
+                activity: "working"))])
         switcher.refresh()
 
         let refreshedLabels = labelValues()
@@ -42,9 +49,8 @@ final class ProjectSwitcherTests: XCTestCase {
         _ = state.apply(feed: [AgentSnapshot(name: "worker", status: "working")])
         let controller = ProjectWindowController(
             state: state, attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp", hivePath: "/usr/bin/true", daemonPort: 1,
-            orchestrator: "codex",
-            instanceID: "test", instanceHome: "/tmp")
+            hivePath: "/usr/bin/true", daemonPort: 1,
+            instanceHome: "/tmp")
         defer { controller.window?.close() }
         var notifications = 0
         controller.onStateChange = { notifications += 1 }

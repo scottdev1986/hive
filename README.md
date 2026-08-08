@@ -6,7 +6,7 @@
 [![latest](https://img.shields.io/github/v/release/scottdev1986/hive)](https://github.com/scottdev1986/hive/releases/latest)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Hive coordinates Claude Code, Codex, and Grok agents in a native macOS Workspace. A read-only orchestrator named queen delegates work; each worker gets an isolated git worktree, branch, capability, and daemon-owned `sessiond` session. Talk to queen for decomposition and routing; workers report back to queen. The architectural role remains orchestrator, and addressing the root as `orchestrator` is still understood. The daemon owns process lifecycle and merges completed branches into `main` through a serialized fast-forward gate.
+Hive coordinates Claude Code, Codex, Grok, Kimi Code, and OpenCode agents in a native macOS Workspace. An orchestrator named queen delegates work; each worker gets an isolated git worktree, branch, capability, and daemon-owned `sessiond` session. Talk to queen for decomposition and routing; workers report back to queen. The architectural role remains orchestrator, and addressing the root as `orchestrator` is still understood. The daemon owns process lifecycle and merges completed branches into `main` through a serialized fast-forward gate.
 
 Hive combines Graphify's local code graph with local semantic embeddings to give agents useful context before they act. Graphify maps repository structure, symbols, and relationships; embeddings retrieve relevant project memory by meaning. Hive builds and maintains both as part of repository setup, and both operate locally.
 
@@ -14,7 +14,7 @@ Hive is currently a 0.0.x project. Its command and storage contracts may change 
 
 ## Workspace
 
-Run `hive` in an initialized repository to create a fresh Hive instance and open its Workspace window. Running it again creates another isolated instance and another window, even from the same repository. queen is the master pane — the orchestrator that coordinates the team — and worker agents use the same HiveTerminalKit panes attached to daemon-owned `sessiond` sessions. The vendor TUI remains interactive: clicking a pane focuses it, and typing goes directly to that Claude Code, Codex, or Grok session.
+Run `hive` in an initialized repository to create a fresh Hive instance and open its Workspace window. Running it again creates another isolated instance and another window, even from the same repository. queen is the master pane — the orchestrator that coordinates the team — and worker agents use the same HiveTerminalKit panes attached to daemon-owned `sessiond` sessions. The agent UI remains interactive for Claude Code, Codex, Grok, Kimi Code, and OpenCode: clicking a pane focuses it, and typing goes directly to that session.
 
 Agent state comes from structured daemon events, not terminal scraping. Unknown or disconnected state is displayed as unknown rather than inferred from pane contents.
 
@@ -24,7 +24,7 @@ Closing an agent pane detaches that view without killing the agent. Explicit Hiv
 
 - macOS on Apple Silicon or Intel
 - git, installed through its supported distribution for your system
-- At least one signed-in agent CLI: [Claude Code](https://code.claude.com/docs), [Codex](https://developers.openai.com/codex), or [Grok](https://docs.x.ai/build/overview)
+- At least one signed-in agent CLI: [Claude Code](https://code.claude.com/docs), [Codex](https://developers.openai.com/codex), [Grok](https://docs.x.ai/build/overview), [Kimi Code](https://moonshotai.github.io/kimi-code/en/guides/getting-started.html), or [OpenCode](https://opencode.ai/docs/)
 
 The release includes the CLI and Workspace app. Bun, Swift, Python, and `uv` are not required to use an installed release.
 
@@ -48,7 +48,7 @@ hive
 
 `hive init` prepares the repository for Hive: it installs agent skills, builds the required local Graphify code graph, seeds supplied narrative memory, and installs the local embedding runtime. It does not start a daemon or open a Workspace, and it is safe to run again. If Graphify setup is interrupted or offline, run `hive init` again.
 
-Bare `hive` opens the Workspace with Claude as queen's default vendor. To choose another installed vendor for the orchestrator explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
+Bare `hive` opens the Workspace with Claude as queen's default vendor. To choose another installed vendor for the orchestrator explicitly, run `hive codex`, `hive grok`, `hive kimi`, or `hive opencode`; `hive claude` is the explicit Claude spelling. Kimi has no per-launch read-only flag; Hive selects Kimi's manual permission mode, which is best-effort rather than a containment guarantee.
 
 Codex receives Hive's role and protocol bootstrap as developer instructions, so
 a fresh root opens at an empty composer instead of showing the setup wall. A
@@ -77,7 +77,7 @@ The first directory is always `queen` or `agent`: a skill that does not say who 
 | --- | --- |
 | `hive` | Create a fresh isolated instance and open its Workspace |
 | `hive init` | Prepare agent skills, Graphify, memory, and embeddings without starting a daemon |
-| `hive claude`, `hive codex`, `hive grok` | Open the Workspace with queen on that read-only orchestrator vendor |
+| `hive claude`, `hive codex`, `hive grok`, `hive kimi`, `hive opencode` | Open the Workspace with queen on that orchestrator vendor; Kimi uses its best-effort manual permission mode |
 | `hive status` | Show agent name, tool, model, state, context use, task, and failure |
 | `hive kill <agent>` | Stop one agent and preserve any unlanded work |
 | `hive recover [name]` | Resume one or all recoverable crashed sessions |
@@ -118,11 +118,11 @@ Routing is explicit policy, not a compiled model ranking. The Model Control Cent
 
 ## Memory
 
-Hive remembers. Agents do not start blank: project knowledge, session history, and hard-won lessons persist across sessions and are shared by every agent on the project — Claude Code, Codex, and Grok today, with Kimi Code and opencode joining when their adapters land.
+Hive remembers. Agents do not start blank: project knowledge, session history, and hard-won lessons persist across sessions and are shared by every agent on the project — Claude Code, Codex, Grok, Kimi Code, and OpenCode.
 
 Memory has three layers. The curated wiki holds verified project knowledge as Markdown under `.hive/memory` (gitignored automatically by `hive init`). The episodic store keeps a per-project typed history with time-travel semantics — a contradiction stamps a fact invalid rather than deleting it — under `~/.hive/projects/`. Pitfalls are mistakes harvested from failed sessions, verified, and then warned to every future agent.
 
-Recall is summoned, never left to agent goodwill. Every agent is briefed with a ranked memory index at spawn — pitfalls matching the assignment first — and receives a bounded delta of what changed when it wakes. queen or the operator can summon memory explicitly with message triggers the daemon executes: `recall: <question>` searches and injects the results, `note this: <fact>` records an observation, and `document this: <topic>` scaffolds a curated article.
+Recall is summoned, never left to agent goodwill. Every agent is briefed with a ranked memory index at spawn — pitfalls matching the assignment first — and receives a bounded delta of what changed when it wakes. queen or the user can summon memory explicitly with message triggers the daemon executes: `recall: <question>` searches and injects the results, `note this: <fact>` records an observation, and `document this: <topic>` scaffolds a curated article.
 
 Semantic (meaning-based) recall runs locally on Hive's bundled bge-small model (~360 MB RSS warm). The embedding runtime is provisioned by installing Hive, updated by updating Hive, and load-verified by `hive init` — there is no separate command to run. If the machine is offline during setup, install and init both say so and recall uses keyword search until a later `hive init` completes the local runtime.
 
@@ -138,13 +138,14 @@ hive memory consolidate [--apply]          # report, then merge, duplicate memor
 
 Memory behavior is tuned under `[memory]` and `[memory.retention]` in `~/.hive/config.toml`: the wake-delta budget defaults to 300 tokens, episodic events stay hot for 30 days, and verified articles demote to stale after 90 days.
 
-Isolation is structural: each project's memory is scoped by the daemon's own identity, and no agent reads a sibling project. Promotion to global memory is explicit, human-approved, and redaction-checked.
+Isolation is structural: each project's memory is scoped by the daemon's own identity, and no agent reads a sibling project. Promotion to global memory is explicit, user-approved, and redaction-checked.
 
 ## Optional configuration
 
 No configuration file is required.
 
 - `~/.hive/config.toml` controls writer autonomy, the Codex driver, resource limits, and idle-agent reaping. The Workspace Agents menu and `hive autonomy` persist the autonomy value here.
+- `[artifacts] retention_days` in `~/.hive/config.toml` sets how long stored work products survive under `~/.hive/artifacts/<project>/`; the default is 90 days, and the memory retention sweep is what deletes them.
 - Routing policy is stored in Hive's SQLite control store and edited through the Model Control Center or `hive routing`.
 - `~/.hive/quota.toml` can overlay planning estimates, reserves, warning thresholds, refresh cadence, and account/model-specific limits on provider discovery.
 
@@ -231,7 +232,7 @@ launches on its own:
 ```sh
 make build
 HIVE_B22_REAL_SHELL=1 HIVE_B22_NO_APP=0 HIVE_B22_PORT=43117 \
-  bun scripts/b22-live-attach-proof.ts
+  bun scripts/qa/b22-live-attach-proof.ts
 ```
 
 Drop `HIVE_B22_REAL_SHELL=1` for the watched B2.2 ticker instead of a login

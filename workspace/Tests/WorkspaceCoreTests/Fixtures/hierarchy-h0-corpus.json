@@ -1,0 +1,1386 @@
+[
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "1",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "current",
+    "evidence": null,
+    "value": {
+      "specRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "objective": "Freeze the Workspace client contracts",
+        "acceptanceIds": [
+          "U1"
+        ],
+        "scope": "frozen client wires",
+        "nonGoals": [
+          "no daemon mutation implementation"
+        ],
+        "constraints": {
+          "architecture": [
+            "immutable render inputs"
+          ],
+          "security": [
+            "no client-side storage access"
+          ],
+          "outwardEffect": [
+            "schema and fixture changes only"
+          ]
+        },
+        "gatePolicy": {
+          "reviewLocGreenMax": 100,
+          "reviewLocAmberMax": 250,
+          "reviewFilesMax": 10
+        },
+        "evidenceArtifactRefs": [
+          "art_018f4f5e-0000-7000-8000-000000000003"
+        ],
+        "proposer": "queen",
+        "engineerApproval": {
+          "approvedBy": "engineer",
+          "approvedAt": "2026-07-30T20:00:00.000Z"
+        }
+      },
+      "planRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "parentRevision": null,
+        "taskDag": [
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "dependsOn": []
+          },
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "dependsOn": [
+              "task_018f4f5e-0000-7000-8000-0000000000a1"
+            ]
+          }
+        ],
+        "topologyRationale": "the frozen wires are independent fixture modules",
+        "proposer": "queen"
+      },
+      "topologyDecision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "shape": "direct",
+        "decomposition": {
+          "planRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "taskDag": [
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+              "dependsOn": []
+            },
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+              "dependsOn": [
+                "task_018f4f5e-0000-7000-8000-0000000000a1"
+              ]
+            }
+          ]
+        },
+        "coupling": {
+          "sharedFiles": [],
+          "sharedInvariants": [
+            "one immutable projection boundary"
+          ],
+          "interfaceMaturity": "frozen",
+          "dependencyDepth": 0,
+          "expectedIntegrationConflict": "none"
+        },
+        "parallelValue": {
+          "independentWorkUnits": 5,
+          "predictedCriticalPath": "client fixture validation",
+          "expectedWallClockBenefit": "independent wire mirrors compile together"
+        },
+        "coordinationCost": {
+          "leadLoad": "low",
+          "reviewLoad": "one review",
+          "communicationLoad": "low",
+          "ciLoad": "Swift and Bun contract suites",
+          "promotionQueueLoad": "one candidate"
+        },
+        "budgetEvidence": {
+          "reservedSessions": 1,
+          "tokensOrCostEstimate": "bounded",
+          "wallTimeEstimate": "one task",
+          "reviewerCapacity": "one reviewer",
+          "perLeadCrewLimit": 0
+        },
+        "decisionProvenance": {
+          "proposer": "queen",
+          "engineerDecision": {
+            "outcome": "approved",
+            "decidedBy": "engineer",
+            "decidedAt": "2026-07-30T20:00:00.000Z"
+          },
+          "specRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "rationale": "one client task owns the common boundary"
+        }
+      },
+      "runBudget": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "limits": {
+          "activeSessions": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "totalSpawns": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "perLeadCrew": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "reviewerPool": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "vendorQuota": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "tokens": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "costCents": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wallTimeMs": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "ci": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wakeBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "messageBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          }
+        },
+        "anomalyThresholds": {
+          "retryRateMax": 5
+        }
+      },
+      "run": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "repo": "hive",
+        "instanceId": "instance-fixture",
+        "approvedSpec": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "currentPlan": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "topology": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "phase": "P1",
+        "g1": {
+          "state": "approved",
+          "decider": "engineer",
+          "decidedAt": "2026-07-30T20:00:00.000Z",
+          "spec": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "plan": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "topology": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "budget": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "g2": {
+          "state": "pending"
+        },
+        "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "budget": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "runEpoch": 1,
+        "lifecycle": "active"
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unknown",
+    "evidence": null,
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "1",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "stale",
+    "evidence": null,
+    "value": {
+      "specRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "objective": "Freeze the Workspace client contracts",
+        "acceptanceIds": [
+          "U1"
+        ],
+        "scope": "frozen client wires",
+        "nonGoals": [
+          "no daemon mutation implementation"
+        ],
+        "constraints": {
+          "architecture": [
+            "immutable render inputs"
+          ],
+          "security": [
+            "no client-side storage access"
+          ],
+          "outwardEffect": [
+            "schema and fixture changes only"
+          ]
+        },
+        "gatePolicy": {
+          "reviewLocGreenMax": 100,
+          "reviewLocAmberMax": 250,
+          "reviewFilesMax": 10
+        },
+        "evidenceArtifactRefs": [
+          "art_018f4f5e-0000-7000-8000-000000000003"
+        ],
+        "proposer": "queen",
+        "engineerApproval": {
+          "approvedBy": "engineer",
+          "approvedAt": "2026-07-30T20:00:00.000Z"
+        }
+      },
+      "planRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "parentRevision": null,
+        "taskDag": [
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "dependsOn": []
+          },
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "dependsOn": [
+              "task_018f4f5e-0000-7000-8000-0000000000a1"
+            ]
+          }
+        ],
+        "topologyRationale": "the frozen wires are independent fixture modules",
+        "proposer": "queen"
+      },
+      "topologyDecision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "shape": "direct",
+        "decomposition": {
+          "planRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "taskDag": [
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+              "dependsOn": []
+            },
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+              "dependsOn": [
+                "task_018f4f5e-0000-7000-8000-0000000000a1"
+              ]
+            }
+          ]
+        },
+        "coupling": {
+          "sharedFiles": [],
+          "sharedInvariants": [
+            "one immutable projection boundary"
+          ],
+          "interfaceMaturity": "frozen",
+          "dependencyDepth": 0,
+          "expectedIntegrationConflict": "none"
+        },
+        "parallelValue": {
+          "independentWorkUnits": 5,
+          "predictedCriticalPath": "client fixture validation",
+          "expectedWallClockBenefit": "independent wire mirrors compile together"
+        },
+        "coordinationCost": {
+          "leadLoad": "low",
+          "reviewLoad": "one review",
+          "communicationLoad": "low",
+          "ciLoad": "Swift and Bun contract suites",
+          "promotionQueueLoad": "one candidate"
+        },
+        "budgetEvidence": {
+          "reservedSessions": 1,
+          "tokensOrCostEstimate": "bounded",
+          "wallTimeEstimate": "one task",
+          "reviewerCapacity": "one reviewer",
+          "perLeadCrewLimit": 0
+        },
+        "decisionProvenance": {
+          "proposer": "queen",
+          "engineerDecision": {
+            "outcome": "approved",
+            "decidedBy": "engineer",
+            "decidedAt": "2026-07-30T20:00:00.000Z"
+          },
+          "specRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "rationale": "one client task owns the common boundary"
+        }
+      },
+      "runBudget": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "limits": {
+          "activeSessions": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "totalSpawns": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "perLeadCrew": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "reviewerPool": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "vendorQuota": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "tokens": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "costCents": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wallTimeMs": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "ci": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wakeBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "messageBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          }
+        },
+        "anomalyThresholds": {
+          "retryRateMax": 5
+        }
+      },
+      "run": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "repo": "hive",
+        "instanceId": "instance-fixture",
+        "approvedSpec": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "currentPlan": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "topology": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "phase": "P1",
+        "g1": {
+          "state": "approved",
+          "decider": "engineer",
+          "decidedAt": "2026-07-30T20:00:00.000Z",
+          "spec": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "plan": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "topology": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "budget": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "g2": {
+          "state": "pending"
+        },
+        "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "budget": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "runEpoch": 1,
+        "lifecycle": "active"
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "1",
+      "generation": 1
+    },
+    "observedAt": "2026-07-29T20:00:00.000Z",
+    "freshness": "stale",
+    "availability": "disconnected",
+    "evidence": {
+      "kind": "disconnected",
+      "transportLostAt": "2026-07-30T20:00:00.000Z"
+    },
+    "value": {
+      "specRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "objective": "Freeze the Workspace client contracts",
+        "acceptanceIds": [
+          "U1"
+        ],
+        "scope": "frozen client wires",
+        "nonGoals": [
+          "no daemon mutation implementation"
+        ],
+        "constraints": {
+          "architecture": [
+            "immutable render inputs"
+          ],
+          "security": [
+            "no client-side storage access"
+          ],
+          "outwardEffect": [
+            "schema and fixture changes only"
+          ]
+        },
+        "gatePolicy": {
+          "reviewLocGreenMax": 100,
+          "reviewLocAmberMax": 250,
+          "reviewFilesMax": 10
+        },
+        "evidenceArtifactRefs": [
+          "art_018f4f5e-0000-7000-8000-000000000003"
+        ],
+        "proposer": "queen",
+        "engineerApproval": {
+          "approvedBy": "engineer",
+          "approvedAt": "2026-07-30T20:00:00.000Z"
+        }
+      },
+      "planRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "parentRevision": null,
+        "taskDag": [
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "dependsOn": []
+          },
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "dependsOn": [
+              "task_018f4f5e-0000-7000-8000-0000000000a1"
+            ]
+          }
+        ],
+        "topologyRationale": "the frozen wires are independent fixture modules",
+        "proposer": "queen"
+      },
+      "topologyDecision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "shape": "direct",
+        "decomposition": {
+          "planRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "taskDag": [
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+              "dependsOn": []
+            },
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+              "dependsOn": [
+                "task_018f4f5e-0000-7000-8000-0000000000a1"
+              ]
+            }
+          ]
+        },
+        "coupling": {
+          "sharedFiles": [],
+          "sharedInvariants": [
+            "one immutable projection boundary"
+          ],
+          "interfaceMaturity": "frozen",
+          "dependencyDepth": 0,
+          "expectedIntegrationConflict": "none"
+        },
+        "parallelValue": {
+          "independentWorkUnits": 5,
+          "predictedCriticalPath": "client fixture validation",
+          "expectedWallClockBenefit": "independent wire mirrors compile together"
+        },
+        "coordinationCost": {
+          "leadLoad": "low",
+          "reviewLoad": "one review",
+          "communicationLoad": "low",
+          "ciLoad": "Swift and Bun contract suites",
+          "promotionQueueLoad": "one candidate"
+        },
+        "budgetEvidence": {
+          "reservedSessions": 1,
+          "tokensOrCostEstimate": "bounded",
+          "wallTimeEstimate": "one task",
+          "reviewerCapacity": "one reviewer",
+          "perLeadCrewLimit": 0
+        },
+        "decisionProvenance": {
+          "proposer": "queen",
+          "engineerDecision": {
+            "outcome": "approved",
+            "decidedBy": "engineer",
+            "decidedAt": "2026-07-30T20:00:00.000Z"
+          },
+          "specRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "rationale": "one client task owns the common boundary"
+        }
+      },
+      "runBudget": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "limits": {
+          "activeSessions": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "totalSpawns": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "perLeadCrew": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "reviewerPool": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "vendorQuota": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "tokens": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "costCents": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wallTimeMs": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "ci": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wakeBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "messageBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          }
+        },
+        "anomalyThresholds": {
+          "retryRateMax": 5
+        }
+      },
+      "run": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "repo": "hive",
+        "instanceId": "instance-fixture",
+        "approvedSpec": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "currentPlan": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "topology": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "phase": "P1",
+        "g1": {
+          "state": "approved",
+          "decider": "engineer",
+          "decidedAt": "2026-07-30T20:00:00.000Z",
+          "spec": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "plan": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "topology": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "budget": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "g2": {
+          "state": "pending"
+        },
+        "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "budget": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "runEpoch": 1,
+        "lifecycle": "active"
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": null,
+      "generation": null
+    },
+    "observedAt": null,
+    "freshness": "unknown",
+    "availability": "unauthorized",
+    "evidence": {
+      "kind": "unauthorized",
+      "refusalCode": "read-not-authorized"
+    },
+    "value": null
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "1",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "conflicting",
+    "evidence": {
+      "kind": "conflicting",
+      "competingRevision": "1-competing"
+    },
+    "value": {
+      "specRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "objective": "Freeze the Workspace client contracts",
+        "acceptanceIds": [
+          "U1"
+        ],
+        "scope": "frozen client wires",
+        "nonGoals": [
+          "no daemon mutation implementation"
+        ],
+        "constraints": {
+          "architecture": [
+            "immutable render inputs"
+          ],
+          "security": [
+            "no client-side storage access"
+          ],
+          "outwardEffect": [
+            "schema and fixture changes only"
+          ]
+        },
+        "gatePolicy": {
+          "reviewLocGreenMax": 100,
+          "reviewLocAmberMax": 250,
+          "reviewFilesMax": 10
+        },
+        "evidenceArtifactRefs": [
+          "art_018f4f5e-0000-7000-8000-000000000003"
+        ],
+        "proposer": "queen",
+        "engineerApproval": {
+          "approvedBy": "engineer",
+          "approvedAt": "2026-07-30T20:00:00.000Z"
+        }
+      },
+      "planRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "parentRevision": null,
+        "taskDag": [
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "dependsOn": []
+          },
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "dependsOn": [
+              "task_018f4f5e-0000-7000-8000-0000000000a1"
+            ]
+          }
+        ],
+        "topologyRationale": "the frozen wires are independent fixture modules",
+        "proposer": "queen"
+      },
+      "topologyDecision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "shape": "direct",
+        "decomposition": {
+          "planRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "taskDag": [
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+              "dependsOn": []
+            },
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+              "dependsOn": [
+                "task_018f4f5e-0000-7000-8000-0000000000a1"
+              ]
+            }
+          ]
+        },
+        "coupling": {
+          "sharedFiles": [],
+          "sharedInvariants": [
+            "one immutable projection boundary"
+          ],
+          "interfaceMaturity": "frozen",
+          "dependencyDepth": 0,
+          "expectedIntegrationConflict": "none"
+        },
+        "parallelValue": {
+          "independentWorkUnits": 5,
+          "predictedCriticalPath": "client fixture validation",
+          "expectedWallClockBenefit": "independent wire mirrors compile together"
+        },
+        "coordinationCost": {
+          "leadLoad": "low",
+          "reviewLoad": "one review",
+          "communicationLoad": "low",
+          "ciLoad": "Swift and Bun contract suites",
+          "promotionQueueLoad": "one candidate"
+        },
+        "budgetEvidence": {
+          "reservedSessions": 1,
+          "tokensOrCostEstimate": "bounded",
+          "wallTimeEstimate": "one task",
+          "reviewerCapacity": "one reviewer",
+          "perLeadCrewLimit": 0
+        },
+        "decisionProvenance": {
+          "proposer": "queen",
+          "engineerDecision": {
+            "outcome": "approved",
+            "decidedBy": "engineer",
+            "decidedAt": "2026-07-30T20:00:00.000Z"
+          },
+          "specRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "rationale": "one client task owns the common boundary"
+        }
+      },
+      "runBudget": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "limits": {
+          "activeSessions": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "totalSpawns": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "perLeadCrew": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "reviewerPool": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "vendorQuota": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "tokens": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "costCents": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wallTimeMs": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "ci": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wakeBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "messageBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          }
+        },
+        "anomalyThresholds": {
+          "retryRateMax": 5
+        }
+      },
+      "run": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "repo": "hive",
+        "instanceId": "instance-fixture",
+        "approvedSpec": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "currentPlan": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "topology": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "phase": "P1",
+        "g1": {
+          "state": "approved",
+          "decider": "engineer",
+          "decidedAt": "2026-07-30T20:00:00.000Z",
+          "spec": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "plan": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "topology": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "budget": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "g2": {
+          "state": "pending"
+        },
+        "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "budget": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "runEpoch": 1,
+        "lifecycle": "active"
+      }
+    }
+  },
+  {
+    "schemaVersion": 1,
+    "source": {
+      "revision": "1",
+      "generation": 1
+    },
+    "observedAt": "2026-07-30T20:00:00.000Z",
+    "freshness": "current",
+    "availability": "replaced",
+    "evidence": {
+      "kind": "replaced",
+      "supersedingSource": {
+        "revision": "1-replacement",
+        "generation": 2
+      }
+    },
+    "value": {
+      "specRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "objective": "Freeze the Workspace client contracts",
+        "acceptanceIds": [
+          "U1"
+        ],
+        "scope": "frozen client wires",
+        "nonGoals": [
+          "no daemon mutation implementation"
+        ],
+        "constraints": {
+          "architecture": [
+            "immutable render inputs"
+          ],
+          "security": [
+            "no client-side storage access"
+          ],
+          "outwardEffect": [
+            "schema and fixture changes only"
+          ]
+        },
+        "gatePolicy": {
+          "reviewLocGreenMax": 100,
+          "reviewLocAmberMax": 250,
+          "reviewFilesMax": 10
+        },
+        "evidenceArtifactRefs": [
+          "art_018f4f5e-0000-7000-8000-000000000003"
+        ],
+        "proposer": "queen",
+        "engineerApproval": {
+          "approvedBy": "engineer",
+          "approvedAt": "2026-07-30T20:00:00.000Z"
+        }
+      },
+      "planRevision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "parentRevision": null,
+        "taskDag": [
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+            "dependsOn": []
+          },
+          {
+            "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+            "dependsOn": [
+              "task_018f4f5e-0000-7000-8000-0000000000a1"
+            ]
+          }
+        ],
+        "topologyRationale": "the frozen wires are independent fixture modules",
+        "proposer": "queen"
+      },
+      "topologyDecision": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "shape": "direct",
+        "decomposition": {
+          "planRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "taskDag": [
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a1",
+              "dependsOn": []
+            },
+            {
+              "taskId": "task_018f4f5e-0000-7000-8000-0000000000a2",
+              "dependsOn": [
+                "task_018f4f5e-0000-7000-8000-0000000000a1"
+              ]
+            }
+          ]
+        },
+        "coupling": {
+          "sharedFiles": [],
+          "sharedInvariants": [
+            "one immutable projection boundary"
+          ],
+          "interfaceMaturity": "frozen",
+          "dependencyDepth": 0,
+          "expectedIntegrationConflict": "none"
+        },
+        "parallelValue": {
+          "independentWorkUnits": 5,
+          "predictedCriticalPath": "client fixture validation",
+          "expectedWallClockBenefit": "independent wire mirrors compile together"
+        },
+        "coordinationCost": {
+          "leadLoad": "low",
+          "reviewLoad": "one review",
+          "communicationLoad": "low",
+          "ciLoad": "Swift and Bun contract suites",
+          "promotionQueueLoad": "one candidate"
+        },
+        "budgetEvidence": {
+          "reservedSessions": 1,
+          "tokensOrCostEstimate": "bounded",
+          "wallTimeEstimate": "one task",
+          "reviewerCapacity": "one reviewer",
+          "perLeadCrewLimit": 0
+        },
+        "decisionProvenance": {
+          "proposer": "queen",
+          "engineerDecision": {
+            "outcome": "approved",
+            "decidedBy": "engineer",
+            "decidedAt": "2026-07-30T20:00:00.000Z"
+          },
+          "specRevision": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "rationale": "one client task owns the common boundary"
+        }
+      },
+      "runBudget": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "createdAt": "2026-07-30T20:00:00.000Z",
+        "lifecycle": "approved",
+        "limits": {
+          "activeSessions": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "totalSpawns": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "perLeadCrew": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "reviewerPool": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "vendorQuota": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "tokens": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "costCents": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wallTimeMs": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "ci": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "wakeBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          },
+          "messageBudget": {
+            "hard": 10,
+            "soft": 8,
+            "reserved": 2,
+            "used": 1
+          }
+        },
+        "anomalyThresholds": {
+          "retryRateMax": 5
+        }
+      },
+      "run": {
+        "runId": "run_018f4f5e-0000-7000-8000-000000000001",
+        "revision": "1",
+        "repo": "hive",
+        "instanceId": "instance-fixture",
+        "approvedSpec": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "currentPlan": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "topology": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "phase": "P1",
+        "g1": {
+          "state": "approved",
+          "decider": "engineer",
+          "decidedAt": "2026-07-30T20:00:00.000Z",
+          "spec": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "plan": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "topology": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "budget": {
+            "revision": "1",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "g2": {
+          "state": "pending"
+        },
+        "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "budget": {
+          "revision": "1",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "runEpoch": 1,
+        "lifecycle": "active"
+      }
+    }
+  }
+]

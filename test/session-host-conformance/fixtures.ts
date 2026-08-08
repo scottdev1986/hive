@@ -4,7 +4,7 @@ import {
   emptyStatusProjection,
   reduceStatusEvent,
   type StatusReducerProjection,
-} from "../../src/daemon/status-events";
+} from "../../src/daemon/status-service/events";
 import {
   FRAME_FLAGS,
   FRAME_HEADER,
@@ -161,7 +161,6 @@ const fixtureHostRecord = {
 const fixtureHostRecordV1 = {
   schemaVersion: 1,
   ...fixtureHostRecord,
-  socketRelativePath: "host.sock",
   createdAt: FIXTURE_TIME,
 };
 const fixtureAdoptRequest = {
@@ -176,7 +175,7 @@ const fixtureGrantRegistration = {
   schemaVersion: 1,
   grantTokenSha256: `sha256:${"b".repeat(64)}`,
   viewerId: "viewer-fixture",
-  operations: ["view", "human-input", "resize"],
+  operations: ["view", "user-input", "resize"],
   expiresAt: "2026-07-16T12:00:30.000Z",
   geometry: fixtureGeometry,
 };
@@ -203,7 +202,7 @@ const fixtureCreateResult = {
 const fixtureAttachRequest = {
   viewerId: "viewer-fixture",
   geometry: fixtureGeometry,
-  operations: ["view", "human-input", "resize"],
+  operations: ["view", "user-input", "resize"],
 };
 const fixtureAttachGrant = {
   locator: fixtureLocator,
@@ -213,7 +212,7 @@ const fixtureAttachGrant = {
   engineBuildId: "engine-fixture",
   checkpointSeq: "2048",
   outputSeq: "4096",
-  operations: ["view", "human-input", "resize"],
+  operations: ["view", "user-input", "resize"],
 };
 const fixtureVisibilityRequest = {
   workspaceSessionId: "workspace-fixture",
@@ -308,7 +307,7 @@ const fixtureTerminalHostCreateResult = {
 const fixtureTerminalHostClaim = {
   token: "claim-fixture-token",
   writer: "viewer-fixture",
-  kind: "human",
+  kind: "user",
   leaseExpiresAt: "2026-07-16T12:00:15.000Z",
 };
 const fixtureTerminalHostReceipt = {
@@ -567,11 +566,23 @@ const validCases: readonly WireCorpusCase[] = [
       outputSeq: "4096",
       columns: 120,
       rows: 40,
+      rowStart: 0,
       screen: "primary",
       cursor: { row: 4, column: 12, visible: true },
       text: "fixture output",
+      styledText: "fixture output",
       truncated: false,
       sha256: "a".repeat(64),
+      composer: {
+        profile: "codex",
+        present: true,
+        nonempty: false,
+        stable: true,
+        userEditSinceEmpty: false,
+        userOperationInFlight: false,
+        claim: false,
+        invariant: "ok",
+      },
     },
   },
   {
@@ -698,25 +709,6 @@ const validCases: readonly WireCorpusCase[] = [
     },
   },
   {
-    name: "terminal delivery attempt",
-    schema: "terminalDeliveryAttempt",
-    value: {
-      schemaVersion: 1,
-      transactionId: FIXTURE_IDS.transaction,
-      messageId: FIXTURE_IDS.message,
-      locator: fixtureLocator,
-      recipientGeneration: 3,
-      adapter: "codex-tui",
-      priority: "normal",
-      evidence: "transport-written",
-      byteRange: { start: "5000", endExclusive: "5012" },
-      nativeEndpointReceipt: null,
-      startedAt: FIXTURE_TIME,
-      completedAt: "2026-07-16T12:00:00.010Z",
-      evidenceRefs: ["session-event:1"],
-    },
-  },
-  {
     name: "workspace snapshot v2",
     schema: "workspaceSnapshotV2",
     value: {
@@ -753,10 +745,10 @@ const validCases: readonly WireCorpusCase[] = [
     schema: "hv1CapabilityRecord",
     value: {
       id: "018f1e90-7b5a-7cc0-8000-000000000008",
-      subject: "operator",
-      role: "operator",
+      subject: "user",
+      role: "user",
       epoch: 0,
-      constraints: { content: true, scope: "operator" },
+      constraints: { content: true, scope: "user" },
       subjects: ["agent-fixture"],
       issuedAt: FIXTURE_TIME,
       expiresAt: "2026-07-17T12:00:00.000Z",
@@ -830,16 +822,6 @@ const validCases: readonly WireCorpusCase[] = [
     value: fixtureCreateBegin,
   },
   {
-    name: "CREATE_COMMIT digest",
-    schema: "createCommitPayload",
-    value: { schemaVersion: 1, totalLength: 12, sha256: "a".repeat(64) },
-  },
-  {
-    name: "CREATED result",
-    schema: "createdPayload",
-    value: { schemaVersion: 1, ...fixtureCreateResult },
-  },
-  {
     name: "LIST neutral inventory",
     schema: "listPayload",
     value: { schemaVersion: 1 },
@@ -902,11 +884,11 @@ const validCases: readonly WireCorpusCase[] = [
       priorOwnerViewerId: "viewer-a",
       priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-000000000001",
       orphanAgeMilliseconds: "120000",
-      diagnostic: "orphaned human claim discarded",
+      diagnostic: "orphaned user claim discarded",
     },
   },
   {
-    name: "ORPHAN_DISCARDED types a held human preemption",
+    name: "ORPHAN_DISCARDED types a held user preemption",
     schema: "orphanDiscardedPayload",
     value: {
       schemaVersion: 1,
@@ -914,7 +896,7 @@ const validCases: readonly WireCorpusCase[] = [
       priorOwnerViewerId: "viewer-a",
       priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-000000000001",
       orphanAgeMilliseconds: null,
-      diagnostic: "held human claim preempted for delivery",
+      diagnostic: "held user claim preempted for delivery",
     },
   },
   {
@@ -1192,7 +1174,8 @@ const validCases: readonly WireCorpusCase[] = [
     value: {
       schemaVersion: 1,
       session: fixtureTerminalHostSession,
-      claimToken: fixtureTerminalHostClaim.token,
+      provenance: "automation",
+      action: "deliver",
       transactionId: fixtureTerminalHostReceipt.transactionId,
       idempotencyKey: "input-fixture-key",
       operation: { kind: "bytes", encoding: "base64", bytes: "aGVsbG8=" },
@@ -1261,7 +1244,7 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "spec rejects empty argv",
     schema: "sessionSpec",
-    value: { ...(validCases[2]?.value as object), argv: [] },
+    value: { ...(validCases[1]?.value as object), argv: [] },
   },
   {
     name: "inspection rejects invented presence",
@@ -1293,7 +1276,7 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "capture rejects malformed digest",
     schema: "captureResult",
-    value: { ...(validCases[6]?.value as object), sha256: "bad" },
+    value: { ...(validCases[5]?.value as object), sha256: "bad" },
   },
   {
     name: "attach rejects unknown operation",
@@ -1303,17 +1286,17 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "grant requires endpoint",
     schema: "attachGrant",
-    value: { ...(validCases[8]?.value as object), endpoint: "" },
+    value: { ...(validCases[7]?.value as object), endpoint: "" },
   },
   {
     name: "visibility rejects invalid pid",
     schema: "visibilityRequest",
-    value: { ...(validCases[9]?.value as object), workspacePid: 0 },
+    value: { ...(validCases[8]?.value as object), workspacePid: 0 },
   },
   {
     name: "lease rejects inactive state",
     schema: "visibilityLease",
-    value: { ...(validCases[10]?.value as object), state: "expired" },
+    value: { ...(validCases[9]?.value as object), state: "expired" },
   },
   {
     name: "resize rejects negative revision",
@@ -1336,12 +1319,12 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "automation rejects unknown submit",
     schema: "automatedInputMetadata",
-    value: { ...(validCases[12]?.value as object), submit: "enter" },
+    value: { ...(validCases[11]?.value as object), submit: "enter" },
   },
   {
     name: "receipt rejects false read evidence",
     schema: "inputReceipt",
-    value: { ...(validCases[13]?.value as object), state: "read" },
+    value: { ...(validCases[12]?.value as object), state: "read" },
   },
   {
     name: "termination rejects detach",
@@ -1362,13 +1345,13 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "session event rejects wrong version",
     schema: "sessionEvent",
-    value: { ...(validCases[16]?.value as object), schemaVersion: 2 },
+    value: { ...(validCases[15]?.value as object), schemaVersion: 2 },
   },
   {
     name: "workspace event rejects screen source",
     schema: "workspaceEventV2",
     value: {
-      ...(validCases[17]?.value as object),
+      ...(validCases[16]?.value as object),
       source: {
         kind: "terminal-screen",
         id: "screen",
@@ -1402,41 +1385,24 @@ const invalidCases: readonly WireCorpusCase[] = [
     },
   },
   {
-    name: "terminal attempt rejects recipient acknowledgment",
-    schema: "terminalDeliveryAttempt",
-    value: {
-      ...(validCases[20]?.value as object),
-      evidence: "recipient-acknowledged",
-    },
-  },
-  {
-    name: "terminal attempt requires one receipt form",
-    schema: "terminalDeliveryAttempt",
-    value: {
-      ...(validCases[20]?.value as object),
-      byteRange: null,
-      nativeEndpointReceipt: null,
-    },
-  },
-  {
     name: "snapshot rejects malformed digest",
     schema: "workspaceSnapshotV2",
-    value: { ...(validCases[21]?.value as object), contentSha256: "bad" },
+    value: { ...(validCases[19]?.value as object), contentSha256: "bad" },
   },
   {
     name: "assignment generation starts at one",
     schema: "flatAssignment",
-    value: { ...(validCases[22]?.value as object), assignmentGeneration: "0" },
+    value: { ...(validCases[20]?.value as object), assignmentGeneration: "0" },
   },
   {
-    name: "operator scope requires subjects",
+    name: "user scope requires subjects",
     schema: "hv1CapabilityRecord",
-    value: { ...(validCases[23]?.value as object), subjects: undefined },
+    value: { ...(validCases[21]?.value as object), subjects: undefined },
   },
   {
     name: "status update requires stable request id",
     schema: "hiveUpdateStatusInput",
-    value: { ...(validCases[18]?.value as object), requestId: undefined },
+    value: { ...(validCases[17]?.value as object), requestId: undefined },
   },
   {
     name: "HELLO rejects unknown field",
@@ -1467,9 +1433,13 @@ const invalidCases: readonly WireCorpusCase[] = [
     },
   },
   {
-    name: "HostRecordV1 rejects an absolute socket path",
+    // The successor to "rejects an absolute socket path", which went with the field it guarded.
+    // hostRecordV1 needs an invalid case — the corpus asserts every schema has one — and this is
+    // the one that still means something: a record written before socketRelativePath was retired
+    // is refused, because the record no longer carries a socket path in any form.
+    name: "HostRecordV1 rejects the retired socketRelativePath field",
     schema: "hostRecordV1",
-    value: { ...fixtureHostRecordV1, socketRelativePath: "/tmp/host.sock" },
+    value: { ...fixtureHostRecordV1, socketRelativePath: "host.sock" },
   },
   {
     name: "CREATE_BEGIN rejects missing locator",
@@ -1488,20 +1458,6 @@ const invalidCases: readonly WireCorpusCase[] = [
       ...fixtureCreateBegin,
       visibility: { ...fixtureVisibilityRequest, openTerminalRevision: "0" },
     },
-  },
-  {
-    name: "CREATE_COMMIT rejects oversized input",
-    schema: "createCommitPayload",
-    value: {
-      schemaVersion: 1,
-      totalLength: TERMINAL_LIMITS.automatedMessageBytes + 1,
-      sha256: "a".repeat(64),
-    },
-  },
-  {
-    name: "CREATED rejects missing inspection",
-    schema: "createdPayload",
-    value: { schemaVersion: 1, locator: fixtureLocator, created: true },
   },
   {
     name: "LIST rejects Hive scope",
@@ -1849,7 +1805,7 @@ const invalidCases: readonly WireCorpusCase[] = [
     value: {
       schemaVersion: 1,
       writer: "viewer",
-      kind: "human",
+      kind: "user",
       leaseMilliseconds: 1,
       idempotencyKey: "claim",
     },
@@ -1868,7 +1824,8 @@ const invalidCases: readonly WireCorpusCase[] = [
     value: {
       schemaVersion: 1,
       session: fixtureTerminalHostSession,
-      claimToken: fixtureTerminalHostClaim.token,
+      provenance: "automation",
+      action: "deliver",
       transactionId: "terminal-input-fixture",
       idempotencyKey: "input-fixture-key",
       operation: { kind: "bytes", encoding: "base64", bytes: "not base64" },

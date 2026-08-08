@@ -1,19 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// The shared scaffold for a settings page: one NSScrollView, one centered
-/// content column (max 720 pt, page margins, full-width below that), coalesced
-/// rebuilds that preserve scroll position, and the common banner/footer
-/// builders.
-///
-/// Responsive contract: the column is width-bounded by constraints, every row
-/// truncates rather than pushing the layout apart, and nothing here ever
-/// forces the window wider — content that does not fit scrolls.
-///
-/// Threading contract: every daemon read happens in ModelControlDataSource on
-/// a background queue; this controller touches the view tree on the main
-/// thread only. A slow or dead `hive` read renders as a visible loading or
-/// failed state — never a frozen window.
+/// The shared scaffold for a settings page: one NSScrollView, one centered content column (max 720 pt, page margins, full-width below that), coalesced rebuilds that preserve scroll position, and the common banner/footer builders. Responsive contract: the column is width-bounded by constraints, every row truncates rather than pushing the layout apart, and nothing here ever forces the window wider — content that does not fit scrolls. Threading contract: every daemon read happens in ModelControlDataSource on a background queue; this controller touches the view tree on the main thread only. A slow or dead `hive` read renders as a visible loading or failed state — never a frozen window.
 class SettingsPageController: NSViewController {
 
     let dataSource: ModelControlDataSource
@@ -42,13 +30,7 @@ class SettingsPageController: NSViewController {
         contentStack.spacing = Theme.Space.l
         documentView.addSubview(contentStack)
 
-        // A centered reading column: at most 720 pt, at least the window
-        // minus margins — whichever is smaller. The soft full-width
-        // constraint yields to the hard cap, so narrow windows get margins
-        // and wide windows get a column, never a sprawl. Its priority sits
-        // BELOW NSLayoutPriorityWindowSizeStayPut (500): at 500 or above the
-        // layout pass resizes the WINDOW to satisfy it instead of shrinking
-        // the column, which can grow the window past the screen.
+        // A centered reading column: at most 720 pt, at least the window minus margins — whichever is smaller. The soft full-width constraint yields to the hard cap, so narrow windows get margins and wide windows get a column, never a sprawl. Its priority sits BELOW NSLayoutPriorityWindowSizeStayPut (500): at 500 or above the layout pass resizes the WINDOW to satisfy it instead of shrinking the column, which can grow the window past the screen.
         let fullWidth = contentStack.widthAnchor.constraint(
             equalTo: documentView.widthAnchor, constant: -2 * Theme.Space.page)
         fullWidth.priority = .init(490)
@@ -78,8 +60,6 @@ class SettingsPageController: NSViewController {
         rebuild()
     }
 
-    /// Coalesced so a control's own animation (an NSSwitch flip) completes
-    /// before dependent chrome reconciles.
     private func scheduleRebuild() {
         guard !rebuildScheduled else { return }
         rebuildScheduled = true
@@ -95,11 +75,6 @@ class SettingsPageController: NSViewController {
         contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         buildContent()
         buildFooter()
-        // Scroll restoration waits for the normal layout pass. Forcing
-        // layout here (layoutSubtreeIfNeeded) walks up to the window and
-        // makes it adopt the content's fitting width — snapping the window
-        // out of whatever size the user gave it, and once clean off the
-        // screen.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.scrollView.contentView.scroll(to: savedOrigin)
@@ -107,17 +82,12 @@ class SettingsPageController: NSViewController {
         }
     }
 
-    /// Override: the page's sections, added to `contentStack`.
     func buildContent() {}
 
-    /// AppKit scrolls the initial key view into view when the window becomes
-    /// key; a settings page should open at its top regardless.
     func scrollToTop() {
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
-
-    // MARK: Shared pieces
 
     func pinToContent(_ view: NSView) {
         view.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
@@ -138,11 +108,9 @@ class SettingsPageController: NSViewController {
         pinToContent(subtitleLabel)
     }
 
-    /// Loading / failed states plus the provisional banner and policy
-    /// warnings. Every page shows the same truth.
     func addBanners() {
         switch dataSource.loadState {
-        case .loading where dataSource.snapshot == nil:
+        case .loading where dataSource.view == nil:
             let spinner = NSProgressIndicator()
             spinner.style = .spinning
             spinner.controlSize = .small
@@ -179,19 +147,8 @@ class SettingsPageController: NSViewController {
             break
         }
 
-        guard dataSource.snapshot != nil, dataSource.policyLoaded else {
+        guard dataSource.view != nil, dataSource.policyLoaded else {
             return
-        }
-        // A backend that cannot persist says so — a settings screen whose
-        // switches silently do nothing is worse than one that warns.
-        if let reason = dataSource.placeholderReason {
-            let banner = NSTextField(wrappingLabelWithString:
-                "Changes will not persist: \(reason)")
-            banner.font = Theme.Font.callout
-            banner.textColor = .systemOrange
-            banner.compressHorizontally()
-            contentStack.addArrangedSubview(banner)
-            pinToContent(banner)
         }
         if let writeError = dataSource.policyWriteError {
             let banner = NSTextField(wrappingLabelWithString: writeError)
@@ -251,36 +208,16 @@ class SettingsPageController: NSViewController {
         pinToContent(row)
     }
 
-    func sectionLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text.uppercased())
-        label.attributedStringValue = NSAttributedString(
-            string: text.uppercased(),
-            attributes: [
-                .font: Theme.Font.sectionLabel,
-                .foregroundColor: NSColor.secondaryLabelColor,
-                .kern: 0.6,
-            ])
-        label.compressHorizontally()
-        return label
-    }
-
     @objc func refreshTapped(_ sender: Any?) {
-        // Re-probe. If a value that was known becomes unknown, the meter
-        // changes state — the snapshot is replaced wholesale, so nothing
-        // stale can keep wearing a fresh label.
+        // Re-probe. If a value that was known becomes unknown, the meter changes state — the snapshot is replaced wholesale, so nothing stale can keep wearing a fresh label.
         dataSource.refresh()
     }
 }
 
-/// AppKit scroll content wants a flipped view so the page starts at the top.
 final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
-/// TASKS — the routing table, and the screen the window opens on. For each
-/// kind of work: an unordered set of (model @ effort) candidates with a split
-/// mode — the user's weights or an equal share. The atom is a (model @
-/// effort) pair; there is no rank and no fallback ladder anywhere.
 final class TasksSettingsController: SettingsPageController {
 
     override func buildContent() {
@@ -290,7 +227,7 @@ final class TasksSettingsController: SettingsPageController {
                 + "what proportion. " + MCCCopy.routesSubtitle)
         addBanners()
 
-        guard dataSource.snapshot != nil, dataSource.policyLoaded else { return }
+        guard dataSource.view != nil, dataSource.policyLoaded else { return }
 
         let globalCard = CardView()
         let globalSection = RouteSectionView(kind: .global, dataSource: dataSource)
@@ -300,7 +237,7 @@ final class TasksSettingsController: SettingsPageController {
         pinToContent(globalCard)
         contentStack.setCustomSpacing(Theme.Space.xl, after: globalCard)
 
-        for category in TaskCategory.allCases {
+        for category in dataSource.categories {
             let card = CardView()
             let section = RouteSectionView(kind: .category(category), dataSource: dataSource)
             card.contentStack.addArrangedSubview(section)
@@ -311,13 +248,8 @@ final class TasksSettingsController: SettingsPageController {
     }
 }
 
-/// MODELS — the inventory and the consent surface: every provider, every
-/// model, every advertised effort; usage meters and billing state. Enabling
-/// a model here is what makes it assignable under Tasks — and it is the
-/// user's authorisation to spend.
 final class ModelsSettingsController: SettingsPageController {
 
-    /// Which provider cards are expanded; survives data refreshes.
     private var expandedProviders: Set<ProviderID> = []
     private var seededExpansion = false
 
@@ -328,20 +260,18 @@ final class ModelsSettingsController: SettingsPageController {
                 + "it — and to spend real money where a vendor bills for use.")
         addBanners()
 
-        guard let snapshot = dataSource.snapshot else { return }
+        guard dataSource.view != nil else { return }
 
         if !seededExpansion {
-            // First load: open every available provider so the models are
-            // discoverable; the user's collapse choices stick afterwards.
             seededExpansion = true
-            for id in snapshot.providerIDs {
-                if case .available? = snapshot.providers[id.rawValue] {
+            for id in dataSource.providerIDs {
+                if dataSource.providerPresentation(id)?.catalogState == "available" {
                     expandedProviders.insert(id)
                 }
             }
         }
 
-        for id in snapshot.providerIDs {
+        for id in dataSource.providerIDs {
             let card = ProviderCardView(
                 provider: id,
                 dataSource: dataSource,

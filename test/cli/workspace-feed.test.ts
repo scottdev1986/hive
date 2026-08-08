@@ -1,23 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import {
-  buildWorkspaceFeedSnapshotFixture,
-  WORKSPACE_FEED_SNAPSHOT_FIXTURE,
-  workspaceFeedAgentFixture,
-} from "../../scripts/test-fixtures/workspace-feed-snapshot";
-import {
   FEED_GIVE_UP_MS,
   FEED_POLL_MS,
   FEED_RETRY_MAX_MS,
-  parseOrchestratorStatus,
+  FEED_STATUS_TIMEOUT_MAX_MS,
+  FEED_STATUS_TIMEOUT_MS,
   parseWorkspaceOrchestratorSnapshot,
   publishWorkspaceVisibility,
   registerWorkspaceOwner,
   runWorkspaceFeed,
+  StatusPollTimeoutError,
   type WorkspaceOrchestratorSnapshot,
   WorkspaceVisibilityPublisher,
   WorkspaceVisibilityPublishTimeoutError,
 } from "../../src/cli/workspace-feed";
-import type { AgentRecord } from "../../src/schemas";
+import {
+  presentWorkspaceAgent,
+  presentWorkspaceOrchestrator,
+} from "../../src/cli/workspace-feed-presentation";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { HiveDaemon } from "../../src/daemon/server";
+import { WorkspaceVisibilityAuthority } from "../../src/daemon/session-host/workspace-visibility";
+import type { AgentRecord } from "../../src/schemas/agent";
+import {
+  buildWorkspaceFeedSnapshotFixture,
+  WORKSPACE_FEED_SNAPSHOT_FIXTURE,
+  workspaceFeedAgentFixture,
+} from "../fixtures/builders/workspace-feed-snapshot";
 
 const timestamp = "2026-07-10T12:00:00.000Z";
 
@@ -38,7 +47,6 @@ function agent(
     contextPct: 10,
     createdAt: timestamp,
     lastEventAt: timestamp,
-    recoveryAttempts: 0,
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
@@ -143,52 +151,162 @@ const rootLocator = {
   engineBuildId: "engine",
 };
 
-describe("runWorkspaceFeed", () => {
-  test("registers the launching Workspace before publishing inventory", async () => {
-    const requests: Request[] = [];
-    await registerWorkspaceOwner(4483, "workspace-launch", 7210, {
-      observeProcess: () => ({ startToken: "7210:500" }),
-      post: async (input, init) => {
-        requests.push(new Request(input, init));
-        return Response.json({ state: "accepted" });
-      },
+const presentedAgent = (record: AgentRecord) => ({
+  ...record,
+  presentation: presentWorkspaceAgent(record),
+});
+
+const presentedOrchestrator = (record: WorkspaceOrchestratorSnapshot) => ({
+  ...record,
+  presentation: presentWorkspaceOrchestrator(record),
+});
+
+describe("workspace feed presentation", () => {
+  test("unknown raw states fail closed while measured blocks carry attention", () => {
+    expect(
+      presentWorkspaceAgent(
+        agent("future", {
+          status: "unknown",
+        }),
+      ),
+    ).toEqual({
+      panePresence: "visible",
+      terminalState: "live",
+      headerDetail: "unknown",
+      paneStatus: { kind: "unknown" },
+      activity: "unknown",
+      attention: null,
     });
-    expect(requests[0]?.url).toBe("http://127.0.0.1:4483/workspace-owner");
-    expect(await requests[0]?.json()).toEqual({
-      sessionId: "workspace-launch",
-      process: { processId: 7210, startToken: "7210:500" },
+
+    expect(
+      presentWorkspaceAgent(
+        agent("review", {
+          status: "awaiting-approval",
+          lastEventAt: timestamp,
+          taskDescription: "Approve the review",
+        }),
+      ),
+    ).toEqual({
+      panePresence: "visible",
+      terminalState: "live",
+      headerDetail: "awaiting-approval",
+      paneStatus: { kind: "waiting", waitingKind: "approval" },
+      activity: "needs-user",
+      attention: {
+        id: "status-agent:review",
+        severity: "waiting",
+        title: "review is awaiting approval",
+        detail: "Approve the review",
+        raisedAt: Date.parse(timestamp) / 1_000,
+      },
     });
   });
 
-  test("publishes the observed Workspace PID identity with its full inventory", async () => {
-    const requests: Request[] = [];
-    await publishWorkspaceVisibility(
-      4483,
-      "workspace-launch",
-      7210,
-      { schemaVersion: 1, inventoryRevision: "1", terminals: [] },
-      {
-        observeProcess: (pid) => {
-          expect(pid).toBe(7210);
-          return { startToken: "7210:500" };
-        },
-        post: async (input, init) => {
-          requests.push(new Request(input, init));
-          return Response.json({ state: "accepted", inventoryRevision: "1" });
-        },
-      },
-    );
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe("http://127.0.0.1:4483/workspace-visibility");
-    expect(await requests[0]?.json()).toEqual({
-      schemaVersion: 1,
-      source: {
-        sessionId: "workspace-launch",
-        process: { processId: 7210, startToken: "7210:500" },
-      },
-      inventoryRevision: "1",
-      terminals: [],
+  test("dimension evidence and root-host failure are resolved before Swift", () => {
+    const dimensional = presentWorkspaceAgent({
+      ...workspaceFeedAgentFixture,
+      status: "dead",
     });
+    expect(dimensional.paneStatus).toEqual({ kind: "running" });
+    expect(dimensional.activity).toBe("working");
+    expect(dimensional.panePresence).toBe("visible");
+    expect(dimensional.terminalState).toBe("live");
+    expect(dimensional.headerDetail).toBe(
+      "runtime=ready · turn=working · input=free · mail=none · " +
+        "health=healthy · attention=none",
+    );
+    expect(dimensional.attention).toBeNull();
+
+    const closed = presentWorkspaceAgent(agent("retired", { status: "dead" }));
+    expect(closed.panePresence).toBe("closed");
+    expect(closed.terminalState).toBe("exited");
+
+    expect(
+      presentWorkspaceOrchestrator(
+        orchestrator(null, {
+          hostState: "failed",
+        }),
+      ),
+    ).toEqual({
+      panePresence: "visible",
+      terminalState: "failed",
+      headerDetail: "failed",
+      paneStatus: { kind: "failed" },
+      activity: "failed",
+    });
+  });
+});
+
+describe("runWorkspaceFeed", () => {
+  test("register and publish make the real daemon authority current", async () => {
+    const db = new HiveDatabase(":memory:");
+    const authority = new WorkspaceVisibilityAuthority({
+      expectedInstanceId: "workspace-feed-instance",
+      observeProcess: (pid) =>
+        pid === 7210 ? { startToken: "7210:500" } : null,
+      discoverEngineBuildId: async () => "workspace-feed-engine",
+    });
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      workspaceVisibility: authority,
+      spawner: { spawn: async () => agent("unused") },
+      repoRoot: "/tmp/workspace-feed-integration",
+    });
+    const token = daemon.capabilities.mint("user", "user").token;
+    const post = (input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      headers.set("Authorization", `Bearer ${token}`);
+      return daemon.fetch(new Request(input, { ...init, headers }));
+    };
+    const deps = {
+      observeProcess: () => ({ startToken: "7210:500" }),
+      post,
+    };
+    const inventory = {
+      schemaVersion: 1 as const,
+      inventoryRevision: "1",
+      terminals: [
+        {
+          agentId: "agent-feed",
+          agentName: "maya",
+          locator: {
+            schemaVersion: 1 as const,
+            instanceId: "workspace-feed-instance",
+            subject: { kind: "agent" as const, agentId: "agent-feed" },
+            generation: 1,
+            sessionId: "ses_019fe800-0000-7000-8000-000000000001",
+            hostKind: "sessiond" as const,
+            engineBuildId: "workspace-feed-engine",
+          },
+          state: "live" as const,
+        },
+      ],
+    };
+
+    try {
+      await registerWorkspaceOwner(4483, "workspace-launch", 7210, deps);
+      await publishWorkspaceVisibility(
+        4483,
+        "workspace-launch",
+        7210,
+        inventory,
+        deps,
+      );
+
+      expect(authority.ownerRegistered()).toBe(true);
+      expect(authority.sourceVerified()).toBe(true);
+      expect(authority.currentSnapshot()).toEqual({
+        ...inventory,
+        source: {
+          sessionId: "workspace-launch",
+          process: { processId: 7210, startToken: "7210:500" },
+        },
+      });
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
   });
 
   test("records one live-source conflict and stops publishing that inventory", async () => {
@@ -207,10 +325,9 @@ describe("runWorkspaceFeed", () => {
               requests += 1;
               return Response.json(
                 {
-                  state: "rejected",
-                  reason: "source-identity-mismatch",
-                  diagnostic:
+                  error:
                     "another live Workspace source already owns the inventory",
+                  reason: "source-identity-mismatch",
                 },
                 { status: 409 },
               );
@@ -366,10 +483,25 @@ describe("runWorkspaceFeed", () => {
 
   test("preserves every known orchestrator lifecycle word", () => {
     for (const status of ["spawning", "working", "idle", "exited"] as const) {
-      expect(parseOrchestratorStatus(status)).toEqual(status);
+      expect(
+        parseWorkspaceOrchestratorSnapshot({
+          status,
+          host: "sessiond",
+          hostState: null,
+          hostDiagnostic: null,
+          sessionLocator: null,
+        }),
+      ).toEqual(orchestrator(status));
     }
-    expect(parseOrchestratorStatus("running")).toEqual(null);
-    expect(parseOrchestratorStatus(undefined)).toEqual(null);
+    expect(
+      parseWorkspaceOrchestratorSnapshot({
+        status: "running",
+        host: "sessiond",
+        hostState: null,
+        hostDiagnostic: null,
+        sessionLocator: rootLocator,
+      }),
+    ).toBeNull();
   });
 
   test("preserves a pending root locator before any turn status exists", () => {
@@ -378,6 +510,7 @@ describe("runWorkspaceFeed", () => {
         status: null,
         host: "sessiond",
         hostState: "awaiting-visibility",
+        hostDiagnostic: null,
         sessionLocator: rootLocator,
       }),
     ).toEqual(
@@ -392,6 +525,7 @@ describe("runWorkspaceFeed", () => {
         status: null,
         host: "sessiond",
         hostState: null,
+        hostDiagnostic: null,
         sessionLocator: null,
       }),
     ).toBeNull();
@@ -444,7 +578,7 @@ describe("runWorkspaceFeed", () => {
     expect(run.lines).toEqual([
       { v: 1, error: "connect ECONNREFUSED" },
       { v: 1, error: "handshake mismatch" },
-      { v: 1, agents: [JSON.parse(JSON.stringify(maya)) as unknown] },
+      { v: 1, agents: [presentedAgent(maya)] },
     ]);
     expect(run.sleeps.slice(0, 3)).toEqual([
       Math.min(FEED_POLL_MS * 2, FEED_RETRY_MAX_MS),
@@ -484,7 +618,7 @@ describe("runWorkspaceFeed", () => {
     expect(attempts).toEqual(2);
     expect(run.lines).toEqual([
       { v: 1, error: "daemon still starting" },
-      { v: 1, agents: [maya] },
+      { v: 1, agents: [presentedAgent(maya)] },
     ]);
   });
 
@@ -495,7 +629,12 @@ describe("runWorkspaceFeed", () => {
     );
     const run = await runScript(steps);
     expect(run.exitCode).toEqual(1);
-    expect(run.lines).toEqual([{ v: 1, error: "connect ECONNREFUSED" }]);
+    expect(run.lines).toEqual([
+      { v: 1, error: "connect ECONNREFUSED" },
+      // Giving up is said out loud, so a reader is never left inferring it from
+      // the stream ending.
+      { v: 1, stale: true, reason: "connect ECONNREFUSED" },
+    ]);
     const failedFor = run.sleeps.reduce((total, ms) => total + ms, 0);
     expect(failedFor).toBeGreaterThanOrEqual(
       FEED_GIVE_UP_MS - FEED_RETRY_MAX_MS,
@@ -508,6 +647,163 @@ describe("runWorkspaceFeed", () => {
       lastFailure("connect ECONNREFUSED"),
     ]);
     expect(run.exitCode).toEqual(0);
+  });
+
+  test("the status budget doubles to its ceiling and spends no outage deadline", async () => {
+    // The ladder the shipped constants produce: 5s, 10s, 20s, and 20s from
+    // then on. Each rung is under the 30s give-up on its own, which is exactly
+    // why summing them was the mistake — three rungs plus their retry sleeps
+    // pass 30s of accumulated outage, and charging that to the deadline would
+    // let waiting for an answer be what declares the daemon dead.
+    expect(FEED_STATUS_TIMEOUT_MS).toEqual(5_000);
+    expect([
+      FEED_STATUS_TIMEOUT_MS,
+      Math.min(FEED_STATUS_TIMEOUT_MS * 2, FEED_STATUS_TIMEOUT_MAX_MS),
+      Math.min(FEED_STATUS_TIMEOUT_MS * 4, FEED_STATUS_TIMEOUT_MAX_MS),
+      Math.min(FEED_STATUS_TIMEOUT_MS * 8, FEED_STATUS_TIMEOUT_MAX_MS),
+    ]).toEqual([5_000, 10_000, 20_000, 20_000]);
+
+    // Driven at a scaled base so the same ladder runs in milliseconds: a
+    // daemon that never answers at all, which is the worst a slow one can look.
+    const controller = new AbortController();
+    const lines: Array<Record<string, unknown>> = [];
+    let time = 0;
+    let polls = 0;
+    const exitCode = await runWorkspaceFeed(4483, {
+      signal: controller.signal,
+      now: () => time,
+      sleep: async (milliseconds) => {
+        time += milliseconds;
+      },
+      write: (line) => {
+        lines.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      statusTimeoutMs: 50,
+      fetchStatus: async () => {
+        polls += 1;
+        if (polls >= 3) controller.abort();
+        return new Promise<never>(() => {});
+      },
+    });
+
+    expect(lines.map((line) => line.error)).toEqual([
+      "status poll timed out after 50ms",
+      "status poll timed out after 100ms",
+      "status poll timed out after 200ms",
+    ]);
+    expect(exitCode).toEqual(0);
+  });
+
+  test("a daemon that only ever answers late never trips the outage deadline", async () => {
+    // The sequence that survived the first fix: each wait is under the give-up
+    // deadline while their sum is well past it. Rejections are immediate here so
+    // the injected clock can run far beyond 30s without the test waiting for it.
+    const controller = new AbortController();
+    const lines: Array<Record<string, unknown>> = [];
+    let time = 0;
+    let polls = 0;
+    const exitCode = await runWorkspaceFeed(4483, {
+      signal: controller.signal,
+      now: () => time,
+      sleep: async (milliseconds) => {
+        time += milliseconds;
+      },
+      write: (line) => {
+        lines.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      fetchStatus: async () => {
+        polls += 1;
+        if (polls >= 20) controller.abort();
+        throw new StatusPollTimeoutError(FEED_STATUS_TIMEOUT_MS);
+      },
+    });
+
+    // Long past the deadline, and still neither an exit nor a staleness
+    // declaration, because none of that elapsed time was refusal.
+    expect(time).toBeGreaterThan(FEED_GIVE_UP_MS);
+    expect(lines.some((line) => "stale" in line)).toEqual(false);
+    expect(exitCode).toEqual(0);
+  });
+
+  test("a refusal does not buy the patience a late answer earns", async () => {
+    // A refusal is not evidence that anyone is working on an answer, so it must
+    // leave the budget where it was. Were it to escalate, the 70ms poll below
+    // would fit inside a widened budget and succeed; at the untouched 50ms base
+    // it must still time out.
+    const maya = agent("maya");
+    const controller = new AbortController();
+    const lines: Array<Record<string, unknown>> = [];
+    let time = 0;
+    let polls = 0;
+    const exitCode = await runWorkspaceFeed(4483, {
+      signal: controller.signal,
+      now: () => time,
+      sleep: async (milliseconds) => {
+        time += milliseconds;
+      },
+      write: (line) => {
+        lines.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      statusTimeoutMs: 50,
+      fetchStatus: async () => {
+        polls += 1;
+        if (polls >= 2) controller.abort();
+        if (polls === 1) throw new Error("connect ECONNREFUSED");
+        await new Promise((resolve) => setTimeout(resolve, 70));
+        return [maya];
+      },
+    });
+
+    expect(lines.map((line) => line.error)).toEqual([
+      "connect ECONNREFUSED",
+      "status poll timed out after 50ms",
+    ]);
+    expect(lines.some((line) => "agents" in line)).toEqual(false);
+    expect(exitCode).toEqual(0);
+  });
+
+  test("a daemon slower than the poll timeout still reports a spawn and a kill", async () => {
+    // A daemon that is alive and answering correctly, only slower than the
+    // poll allows, is a different fault from one that is gone: its answer is
+    // available, so the roster it feeds must still move. Scaled down from the
+    // observed failure — the ratio of latency to timeout is what decides the
+    // outcome, not the magnitudes — and driven through the real timer because
+    // the injected clock deliberately does not arm it.
+    const maya = agent("maya");
+    const otis = agent("otis");
+    const controller = new AbortController();
+    const lines: Array<Record<string, unknown>> = [];
+    let time = 0;
+    let polls = 0;
+    const exitCode = await runWorkspaceFeed(4483, {
+      signal: controller.signal,
+      now: () => time,
+      sleep: async (milliseconds) => {
+        time += milliseconds;
+      },
+      write: (line) => {
+        lines.push(JSON.parse(line) as Record<string, unknown>);
+      },
+      statusTimeoutMs: 50,
+      fetchStatus: async () => {
+        polls += 1;
+        // Enough polls for the roster to move twice, then stop: a feed that
+        // recovers has no deadline of its own to end the test with.
+        if (polls >= 5) controller.abort();
+        await new Promise((resolve) => setTimeout(resolve, 70));
+        // otis is killed after the first two polls; maya outlives him.
+        return polls <= 2 ? [maya, otis] : [maya];
+      },
+    });
+    const rosters = lines
+      .filter((line): line is { agents: AgentRecord[] } => "agents" in line)
+      .map((line) => line.agents.map((each) => each.name));
+
+    expect(rosters).toContainEqual(["maya", "otis"]);
+    // The half that would have caught the frozen roster: a feed that only ever
+    // adds looks correct until an agent has to disappear.
+    expect(rosters).toContainEqual(["maya"]);
+    expect(exitCode).toEqual(0);
   });
 
   test("the snapshot carries the autonomy dial, and a flip alone re-emits", async () => {
@@ -543,7 +839,8 @@ describe("runWorkspaceFeed", () => {
       async () => null,
       async () => orchestrator("working"),
     );
-    expect(run.lines[0]?.orchestrator).toEqual(orchestrator("working"));
+    const root = orchestrator("working");
+    expect(run.lines[0]?.orchestrator).toEqual(presentedOrchestrator(root));
     // Root sits beside the agent list, never as a fabricated AgentRecord.
     expect(run.lines[0]?.agents).toHaveLength(1);
   });
@@ -577,7 +874,7 @@ describe("runWorkspaceFeed", () => {
       async () => null,
       async () => pending,
     );
-    expect(run.lines[0]?.orchestrator).toEqual(pending);
+    expect(run.lines[0]?.orchestrator).toEqual(presentedOrchestrator(pending));
   });
 
   test("a root-status read that throws degrades to omission, not to a guess", async () => {

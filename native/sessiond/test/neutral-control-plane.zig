@@ -2,9 +2,12 @@ const std = @import("std");
 const generated = @import("session_protocol_generated");
 const neutral_host = @import("neutral_host");
 const process_inspector = @import("process_inspector");
-const control = @import("neutral_control_plane");
+
 const neutral_evidence = @import("neutral_evidence");
 
+const neutral_contract = @import("neutral_contract");
+const neutral_runtime = @import("neutral_runtime");
+const neutral_operations = @import("neutral_operations");
 const c = @cImport({
     @cInclude("sys/wait.h");
     @cInclude("errno.h");
@@ -12,25 +15,25 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 
-const Completeness = control.Completeness;
-const WireWindowSize = control.WireWindowSize;
-const WireReapEvidence = control.WireReapEvidence;
-const WireInspection = control.WireInspection;
-const WireInspectionPayload = control.WireInspectionPayload;
+const Completeness = neutral_evidence.Completeness;
+const WireWindowSize = neutral_evidence.WireWindowSize;
+const WireReapEvidence = neutral_evidence.WireReapEvidence;
+const WireInspection = neutral_evidence.WireInspection;
+const WireInspectionPayload = neutral_evidence.WireInspectionPayload;
 const InspectRequest = neutral_evidence.InspectRequest;
 const TerminateRequest = neutral_evidence.TerminateRequest;
-const TerminalResize = control.TerminalResize;
-const TerminalProvider = control.TerminalProvider;
-const WireTerminationResult = control.WireTerminationResult;
-const WireTerminationPayload = control.WireTerminationPayload;
-const LiveEvidence = control.LiveEvidence;
-const EvidenceProvider = control.EvidenceProvider;
-const EvidenceClock = control.EvidenceClock;
+const TerminalResize = neutral_evidence.TerminalResize;
+const TerminalProvider = neutral_evidence.TerminalProvider;
+const WireTerminationResult = neutral_evidence.WireTerminationResult;
+const WireTerminationPayload = neutral_evidence.WireTerminationPayload;
+const LiveEvidence = neutral_evidence.LiveEvidence;
+const EvidenceProvider = neutral_evidence.EvidenceProvider;
+const EvidenceClock = neutral_evidence.EvidenceClock;
 const makeCheckpoint = neutral_evidence.makeCheckpoint;
 const buildInspection = neutral_evidence.buildInspection;
 const canonicalTermination = neutral_evidence.canonicalTermination;
-const HostOperations = control.HostOperations;
-const Controller = control.Controller;
+const HostOperations = neutral_operations.HostOperations;
+const Controller = neutral_operations.Controller;
 
 test "RFC3339 system clock emits the frozen millisecond UTC shape" {
     var storage: [24]u8 = undefined;
@@ -45,7 +48,7 @@ test "checkpoint projection preserves independent cursors and opaque bytes" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const record: neutral_host.Record = .{
+    const record: neutral_runtime.Record = .{
         .session = .{ .key = "checkpoint-proof", .incarnation = "one" },
         .createIdempotencyKey = "create-checkpoint-proof",
         .requestSha256 = @splat(0),
@@ -86,7 +89,7 @@ test "inspection projects durable measured survivors from termination replay" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var real_platform = process_inspector.RealPlatform.init();
-    const record: neutral_host.Record = .{
+    const record: neutral_runtime.Record = .{
         .session = .{ .key = "survivor-proof", .incarnation = "one" },
         .createIdempotencyKey = "survivor-proof-create",
         .requestSha256 = @splat(0),
@@ -117,7 +120,7 @@ test "create failure projects as lost unknown evidence" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var real_platform = process_inspector.RealPlatform.init();
-    const record: neutral_host.Record = .{
+    const record: neutral_runtime.Record = .{
         .session = .{ .key = "failed-create", .incarnation = "one" },
         .createIdempotencyKey = "failed-create-key",
         .requestSha256 = @splat(0),
@@ -207,11 +210,11 @@ fn cleanupProofProcessTree(root: i32) void {
     _ = c.waitpid(root, &status, c.WNOHANG);
 }
 
-fn runProofHost(root: []const u8, session: neutral_host.SessionRef, ready_fd: std.posix.fd_t) !void {
+fn runProofHost(root: []const u8, session: neutral_contract.SessionRef, ready_fd: std.posix.fd_t) !void {
     const allocator = std.heap.page_allocator;
-    var runtime = try neutral_host.Runtime.open(allocator, root);
+    var runtime = try neutral_runtime.Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
-    var registry = try neutral_host.Registry.open(allocator, &runtime);
+    var registry = try neutral_runtime.Registry.open(allocator, &runtime);
     defer registry.deinit();
 
     const child_pid = try spawnProofProcessTree();
@@ -254,7 +257,7 @@ fn runProofHost(root: []const u8, session: neutral_host.SessionRef, ready_fd: st
         },
     });
 
-    var endpoint = try neutral_host.HostEndpoint.open(allocator, &runtime, session);
+    var endpoint = try neutral_runtime.HostEndpoint.open(allocator, &runtime, session);
     defer endpoint.deinit();
     var real_platform = process_inspector.RealPlatform.init();
     var evidence: ProofEvidence = .{
@@ -296,9 +299,9 @@ test "live neutral session lists inspects and terminates with direct wait replay
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try neutral_host.Runtime.open(allocator, root);
+    var runtime = try neutral_runtime.Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
-    var registry = try neutral_host.Registry.open(allocator, &runtime);
+    var registry = try neutral_runtime.Registry.open(allocator, &runtime);
     defer registry.deinit();
     var create_digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash("control-plane-live-proof", &create_digest, .{});
@@ -315,7 +318,7 @@ test "live neutral session lists inspects and terminates with direct wait replay
     defer allocator.free(session_key);
     const session_incarnation = try allocator.dupe(u8, reserved.session.incarnation);
     defer allocator.free(session_incarnation);
-    const session: neutral_host.SessionRef = .{
+    const session: neutral_contract.SessionRef = .{
         .key = session_key,
         .incarnation = session_incarnation,
     };
@@ -456,10 +459,10 @@ test "live neutral session lists inspects and terminates with direct wait replay
     try testing.expectEqual(@as(u8, 0), std.posix.W.EXITSTATUS(host_status_bits));
     try registry.recover();
     const final = registry.get(session) orelse return error.FinalRecordMissing;
-    try testing.expectEqual(neutral_host.Lifecycle.reaped, final.lifecycle);
+    try testing.expectEqual(neutral_runtime.Lifecycle.reaped, final.lifecycle);
     try testing.expect(final.reap != null and final.reap.?.reaped);
     try testing.expectEqual(
-        @as(@FieldType(neutral_host.ReapEvidence, "authority"), .@"direct-parent"),
+        @as(@FieldType(neutral_contract.ReapEvidence, "authority"), .@"direct-parent"),
         final.reap.?.authority,
     );
     try testing.expect(final.terminationResultJson != null);
@@ -484,13 +487,13 @@ test "pending termination re-execution never signals a start-token-mismatched pi
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try neutral_host.Runtime.open(allocator, root);
+    var runtime = try neutral_runtime.Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
-    var registry = try neutral_host.Registry.open(allocator, &runtime);
+    var registry = try neutral_runtime.Registry.open(allocator, &runtime);
     defer registry.deinit();
     var create_digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash("pending-guard-proof", &create_digest, .{});
-    const window: neutral_host.WindowSize = .{
+    const window: neutral_contract.WindowSize = .{
         .columns = 80,
         .rows = 24,
         .widthPixels = 800,
@@ -498,9 +501,7 @@ test "pending termination re-execution never signals a start-token-mismatched pi
     };
     var real_platform = process_inspector.RealPlatform.init();
 
-    // Session A: the recorded child identity is STALE — the recorded pid now
-    // hosts an unrelated live process whose start token does not match the
-    // record (PID reuse after the original child died mid-termination).
+    // Session A: the recorded child identity is STALE — the recorded pid now hosts an unrelated live process whose start token does not match the record (PID reuse after the original child died mid-termination).
     const reserved_a = switch (try registry.reserve(
         "foreign://neutral/pending-guard-a",
         "create-pending-a",
@@ -511,13 +512,12 @@ test "pending termination re-execution never signals a start-token-mismatched pi
         .existing => return error.UnexpectedCreateReplay,
     };
     const session_a = reserved_a.session;
-    // A Record borrows registry storage that register recycles, so the
-    // session identity used across that mutation must be copied out first.
+    // A Record borrows registry storage that register recycles, so the session identity used across that mutation must be copied out first.
     const session_a_key = try allocator.dupe(u8, session_a.key);
     defer allocator.free(session_a_key);
     const session_a_incarnation = try allocator.dupe(u8, session_a.incarnation);
     defer allocator.free(session_a_incarnation);
-    const stable_a: neutral_host.SessionRef = .{
+    const stable_a: neutral_contract.SessionRef = .{
         .key = session_a_key,
         .incarnation = session_a_incarnation,
     };
@@ -525,8 +525,7 @@ test "pending termination re-execution never signals a start-token-mismatched pi
     defer cleanupProofProcessTree(root_a);
     _ = try registry.register(session_a, .{
         .host = .{ .processId = c.getpid(), .startToken = "host-token" },
-        // Fabricated but syntactically valid: parseStartToken accepts it and
-        // the live process at root_a can never match it.
+        // Fabricated but syntactically valid: parseStartToken accepts it and the live process at root_a can never match it.
         .child = .{ .processId = root_a, .startToken = "1:1" },
         .childSessionId = root_a,
         .childProcessGroupId = root_a,
@@ -549,9 +548,7 @@ test "pending termination re-execution never signals a start-token-mismatched pi
     };
     const canonical_a = try canonicalTermination(allocator, request_a);
     defer allocator.free(canonical_a.bytes);
-    // Simulate the interrupted first attempt: the key is reserved but never
-    // committed, so the retry below takes the .pending branch and re-executes
-    // the full kill sequence against the recorded identity.
+    // Simulate the interrupted first attempt: the key is reserved but never committed, so the retry below takes the .pending branch and re-executes the full kill sequence against the recorded identity.
     switch (try registry.reserveTermination(
         stable_a,
         request_a.idempotencyKey,
@@ -578,8 +575,7 @@ test "pending termination re-execution never signals a start-token-mismatched pi
         .payload = canonical_a.bytes,
     });
     try testing.expect(response_a.accepted);
-    // The recorded identity is gone, but aggregate process-tree ownership
-    // remains unknown because an escape between observations is unprovable.
+    // The recorded identity is gone, but aggregate process-tree ownership remains unknown because an escape between observations is unprovable.
     var parsed_a = try std.json.parseFromSlice(
         WireTerminationPayload,
         allocator,
@@ -591,13 +587,10 @@ test "pending termination re-execution never signals a start-token-mismatched pi
         @as(@FieldType(WireTerminationResult, "state"), .unknown),
         parsed_a.value.state,
     );
-    // ...but the token guard is the whole safety story for that re-execution:
-    // the unrelated process now hosting the recorded pid received no signal.
+    // ...but the token guard is the whole safety story for that re-execution: the unrelated process now hosting the recorded pid received no signal.
     try testing.expect(process_inspector.observeProcessPresent(root_a) != null);
 
-    // Positive control: with a matching start token the SAME pending
-    // re-execution does signal the tree — the guard is selective, not a
-    // blanket refusal to terminate on retry.
+    // Positive control: with a matching start token the SAME pending re-execution does signal the tree — the guard is selective, not a blanket refusal to terminate on retry.
     const reserved_b = switch (try registry.reserve(
         "foreign://neutral/pending-guard-b",
         "create-pending-b",
@@ -612,7 +605,7 @@ test "pending termination re-execution never signals a start-token-mismatched pi
     defer allocator.free(session_b_key);
     const session_b_incarnation = try allocator.dupe(u8, session_b.incarnation);
     defer allocator.free(session_b_incarnation);
-    const stable_b: neutral_host.SessionRef = .{
+    const stable_b: neutral_contract.SessionRef = .{
         .key = session_b_key,
         .incarnation = session_b_incarnation,
     };
@@ -675,6 +668,68 @@ test "pending termination re-execution never signals a start-token-mismatched pi
     try testing.expect(process_inspector.observeProcessPresent(root_b) == null);
 }
 
+test "unchanged host refresh scans once and performs no durable write" {
+    const allocator = std.testing.allocator;
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/nwork-{x}", .{
+        std.crypto.random.int(u64),
+    });
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try neutral_runtime.Runtime.open(allocator, .{ .socket = root, .state = root });
+    defer runtime.deinit();
+    var registry = try neutral_runtime.Registry.open(allocator, &runtime);
+    defer registry.deinit();
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("unchanged-refresh", &digest, .{});
+    const reserved = switch (try registry.reserve(
+        "foreign://neutral/unchanged-refresh",
+        "create-unchanged-refresh",
+        digest,
+        .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    )) {
+        .reserved => |record| record,
+        .existing => return error.UnexpectedCreateReplay,
+    };
+    const session_key = try allocator.dupe(u8, reserved.session.key);
+    defer allocator.free(session_key);
+    const session_incarnation = try allocator.dupe(u8, reserved.session.incarnation);
+    defer allocator.free(session_incarnation);
+    const session: neutral_contract.SessionRef = .{
+        .key = session_key,
+        .incarnation = session_incarnation,
+    };
+    _ = try registry.register(session, .{
+        .host = .{ .processId = 11, .startToken = "host-start" },
+        .child = .{ .processId = 12, .startToken = "child-start" },
+        .childSessionId = 12,
+        .childProcessGroupId = 12,
+        .foregroundProcessGroupId = 12,
+        .terminalIdentity = "/dev/ttys001",
+        .sessionLeader = true,
+        .controllingTerminal = true,
+        .standardStreamsShareTerminal = true,
+        .initialProfileAppliedBeforeExec = true,
+        .initialWindowAppliedBeforeExec = true,
+        .window = reserved.window,
+    });
+    var counts: neutral_runtime.WorkCounts = .{};
+    registry.work_counts = &counts;
+    _ = try registry.update(session, .{
+        .window = reserved.window,
+        .windowRevision = 0,
+        .output = .{},
+        .checkpoints = .{},
+    });
+    try std.testing.expectEqual(@as(usize, 1), counts.recordReads);
+    try std.testing.expectEqual(@as(usize, 1), neutral_runtime.test_baseline_unchanged_writes);
+    try std.testing.expectEqual(@as(usize, 0), counts.durableWrites);
+}
+
 test "controller inspect degrades when the host is unreachable but propagates allocation failure" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
     const testing = std.testing;
@@ -689,9 +744,9 @@ test "controller inspect degrades when the host is unreachable but propagates al
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try neutral_host.Runtime.open(allocator, root);
+    var runtime = try neutral_runtime.Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
-    var registry = try neutral_host.Registry.open(allocator, &runtime);
+    var registry = try neutral_runtime.Registry.open(allocator, &runtime);
     defer registry.deinit();
     var create_digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash("inspect-oom-proof", &create_digest, .{});
@@ -705,18 +760,15 @@ test "controller inspect degrades when the host is unreachable but propagates al
         .existing => return error.UnexpectedCreateReplay,
     };
     const session = reserved.session;
-    // A Record borrows registry storage that register recycles, so the
-    // session identity used across that mutation must be copied out first.
+    // A Record borrows registry storage that register recycles, so the session identity used across that mutation must be copied out first.
     const session_key = try allocator.dupe(u8, session.key);
     defer allocator.free(session_key);
     const session_incarnation = try allocator.dupe(u8, session.incarnation);
     defer allocator.free(session_incarnation);
-    const stable_session: neutral_host.SessionRef = .{
+    const stable_session: neutral_contract.SessionRef = .{
         .key = session_key,
         .incarnation = session_incarnation,
     };
-    // A host is registered but no endpoint is listening, so the live host
-    // call fails with genuine host-unavailability evidence.
     _ = try registry.register(session, .{
         .host = .{ .processId = 11, .startToken = "host-start" },
         .child = .{ .processId = 12, .startToken = "child-start" },
@@ -739,8 +791,7 @@ test "controller inspect degrades when the host is unreachable but propagates al
     defer allocator.free(request_json);
     var real_platform = process_inspector.RealPlatform.init();
 
-    // Host unreachable: the controller degrades to durable record evidence
-    // carrying the unavailability diagnostic.
+    // Host unreachable: the controller degrades to durable record evidence carrying the unavailability diagnostic.
     var controller: Controller = .{
         .allocator = allocator,
         .registry = &registry,
@@ -753,13 +804,7 @@ test "controller inspect degrades when the host is unreachable but propagates al
         std.mem.indexOf(u8, degraded, "neutral-host-control-unavailable") != null,
     );
 
-    // Local allocation failure is not host unavailability: it must surface as
-    // OutOfMemory instead of degrading into the fallback above. The failed
-    // allocation is the session-identity copy the connection attempt makes
-    // (registry.connect allocates from the registry's allocator) before any
-    // socket I/O, while the controller's own allocator — the one the fallback
-    // would use — stays healthy. Returning the degraded response here would
-    // hide the OOM as host-unavailability.
+    // Local allocation failure is not host unavailability: it must surface as OutOfMemory instead of degrading into the fallback above. The failed allocation is the session-identity copy the connection attempt makes (registry.connect allocates from the registry's allocator) before any socket I/O, while the controller's own allocator — the one the fallback would use — stays healthy. Returning the degraded response here would hide the OOM as host-unavailability.
     var failing: FailOnceAllocator = .{ .backing = allocator, .countdown = 0 };
     registry.allocator = failing.allocator();
     var failing_controller: Controller = .{
@@ -771,40 +816,31 @@ test "controller inspect degrades when the host is unreachable but propagates al
     try testing.expectError(error.OutOfMemory, failing_controller.inspect(request_json));
 }
 
-/// A terminal that ACCEPTS every revision and reports a readback deliberately
-/// unequal to the request. Both properties are load-bearing: a permissive
-/// terminal is the only way to prove the control plane enforces the revision
-/// order itself rather than inheriting pty_host's check, and a divergent
-/// readback is the only way to tell a projection that reports what the terminal
-/// said from one that echoes what it was asked for. A real terminal returns the
-/// geometry it was given, so it cannot distinguish those two.
+/// A terminal that ACCEPTS every revision and reports a readback deliberately unequal to the request. Both properties are load-bearing: a permissive terminal is the only way to prove the control plane enforces the revision order itself rather than inheriting pty_host's check, and a divergent readback is the only way to tell a projection that reports what the terminal said from one that echoes what it was asked for. A real terminal returns the geometry it was given, so it cannot distinguish those two.
 const DivergentTerminal = struct {
     ordered_at: u64 = 40,
     fail_with: ?anyerror = null,
     calls: usize = 0,
-    /// When set, the terminal reports itself already at this revision instead
-    /// of applying, exactly as a terminal does after a set whose commit failed.
+    /// When set, the terminal reports itself already at this revision instead of applying, exactly as a terminal does after a set whose commit failed.
     holds_revision: ?u64 = null,
-    held_readback: ?neutral_host.WindowSize = null,
+    held_readback: ?neutral_contract.WindowSize = null,
     applied_revision: ?u64 = null,
 
     fn resize(
         context: *anyopaque,
-        window: neutral_host.WindowSize,
+        window: neutral_contract.WindowSize,
         revision: u64,
     ) anyerror!TerminalResize {
         const self: *DivergentTerminal = @ptrCast(@alignCast(context));
         self.calls += 1;
         if (self.fail_with) |err| return err;
-        const readback: neutral_host.WindowSize = .{
+        const readback: neutral_contract.WindowSize = .{
             .columns = window.columns - 1,
             .rows = window.rows - 1,
             .widthPixels = window.widthPixels,
             .heightPixels = window.heightPixels,
         };
-        // Standing in for a terminal whose own order has already passed this
-        // revision, which is what a set that outlived its failed commit leaves
-        // behind. It answers with the order IT is in.
+        // Standing in for a terminal whose own order has already passed this revision, which is what a set that outlived its failed commit leaves behind. It answers with the order IT is in.
         if (self.holds_revision) |held| return .{ .superseded = .{
             .revision = held,
             .orderedAt = self.ordered_at,
@@ -837,11 +873,11 @@ const SilentEvidence = struct {
 const ResizeProofFixture = struct {
     root_storage: [64]u8 = undefined,
     root: []const u8 = &.{},
-    runtime: neutral_host.Runtime = undefined,
-    registry: neutral_host.Registry = undefined,
+    runtime: neutral_runtime.Runtime = undefined,
+    registry: neutral_runtime.Registry = undefined,
     evidence: SilentEvidence = .{},
     operations: HostOperations = undefined,
-    session: neutral_host.SessionRef = undefined,
+    session: neutral_contract.SessionRef = undefined,
 
     fn open(self: *ResizeProofFixture, allocator: std.mem.Allocator) !void {
         self.root = try std.fmt.bufPrint(&self.root_storage, "/tmp/ncpr-{x}", .{
@@ -851,8 +887,8 @@ const ResizeProofFixture = struct {
         var directory = try std.fs.openDirAbsolute(self.root, .{ .no_follow = true });
         try directory.chmod(0o700);
         directory.close();
-        self.runtime = try neutral_host.Runtime.open(allocator, self.root);
-        self.registry = try neutral_host.Registry.open(allocator, &self.runtime);
+        self.runtime = try neutral_runtime.Runtime.open(allocator, .{ .socket = self.root, .state = self.root });
+        self.registry = try neutral_runtime.Registry.open(allocator, &self.runtime);
         var digest: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash("resize-proof", &digest, .{});
         const reserved = switch (try self.registry.reserve(
@@ -875,8 +911,7 @@ const ResizeProofFixture = struct {
             EvidenceClock.system(),
             null,
         );
-        // The registry recycles record storage, so bind to the copy the
-        // operations made rather than to the reserved record's slices.
+        // The registry recycles record storage, so bind to the copy the operations made rather than to the reserved record's slices.
         self.session = self.operations.session;
     }
 
@@ -907,7 +942,7 @@ const ResizeProofFixture = struct {
         }, .{});
     }
 
-    fn call(self: *ResizeProofFixture, payload: []const u8) !neutral_host.OperationResponse {
+    fn call(self: *ResizeProofFixture, payload: []const u8) !neutral_runtime.OperationResponse {
         return self.operations.handler().call(.{
             .session = self.session,
             .operation = .resize,
@@ -950,15 +985,13 @@ test "neutral resize commits the terminal readback rather than the requested geo
     try std.testing.expectEqualStrings("applied", applied.state);
     try std.testing.expectEqualStrings("3", applied.revision);
     try std.testing.expectEqualStrings("41", applied.orderedAt);
-    // The terminal reported 119x23 for a request of 120x24. The projection must
-    // report what the terminal said.
+    // The terminal reported 119x23 for a request of 120x24. The projection must report what the terminal said.
     try std.testing.expectEqual(@as(u32, 119), applied.readback.columns);
     try std.testing.expectEqual(@as(u32, 23), applied.readback.rows);
     // And it must never claim the foreground application handled the change.
     try std.testing.expectEqualStrings("not-claimed", applied.foregroundProcessObservation);
 
-    // A later inspection answers from the record, so the record must hold the
-    // readback too, not the request.
+    // A later inspection answers from the record, so the record must hold the readback too, not the request.
     const record = fixture.registry.get(fixture.session) orelse return error.SessionMissing;
     try std.testing.expectEqual(@as(u64, 3), record.windowRevision);
     try std.testing.expectEqual(@as(u32, 119), record.window.columns);
@@ -981,8 +1014,7 @@ test "neutral resize enforces the record's revision order against a permissive t
     ));
     try std.testing.expectEqual(@as(usize, 1), terminal.calls);
 
-    // This terminal would accept every one of these. Only the control plane's
-    // own check can refuse them, and it must name the revision in force.
+    // This terminal would accept every one of these. Only the control plane's own check can refuse them, and it must name the revision in force.
     for ([_][]const u8{ "5", "4", "0" }) |revision| {
         const response = try fixture.call(try fixture.request(allocator, 120, revision));
         const Stale = struct { state: []const u8, currentRevision: []const u8 };
@@ -1004,8 +1036,7 @@ test "neutral resize reports an unusable terminal as unknown and mutates nothing
     try fixture.open(std.testing.allocator);
     defer fixture.close();
 
-    // No terminal at all: the control plane does not own one, and must say so
-    // rather than report a resize it cannot have applied.
+    // No terminal at all: the control plane does not own one, and must say so rather than report a resize it cannot have applied.
     const absent = try fixture.call(try fixture.request(allocator, 120, "2"));
     try std.testing.expectEqualStrings("unknown", try resizeState(allocator, absent.payload));
 
@@ -1014,13 +1045,10 @@ test "neutral resize reports an unusable terminal as unknown and mutates nothing
     const failed = try fixture.call(try fixture.request(allocator, 120, "2"));
     try std.testing.expectEqualStrings("unknown", try resizeState(allocator, failed.payload));
 
-    // Neither outcome may leave the record claiming a revision was applied.
     const record = fixture.registry.get(fixture.session) orelse return error.SessionMissing;
     try std.testing.expectEqual(@as(u64, 0), record.windowRevision);
 
-    // A terminal that reports its own supersession is a revision fact, not an
-    // opaque failure, and the record is repaired to the order the terminal is
-    // actually in rather than left behind admitting revisions it refuses.
+    // A terminal that reports its own supersession is a revision fact, not an opaque failure, and the record is repaired to the order the terminal is actually in rather than left behind admitting revisions it refuses.
     terminal.fail_with = null;
     terminal.holds_revision = 9;
     const superseded = try fixture.call(try fixture.request(allocator, 120, "2"));
@@ -1035,11 +1063,7 @@ test "neutral resize reports an unusable terminal as unknown and mutates nothing
 }
 
 test "neutral resize reconciles a set whose commit never landed" {
-    // The terminal applied revision 5 and the commit that should have recorded
-    // it failed, leaving the record at 0. A retry that only trusts the stale
-    // record floor is refused by the terminal and answered `stale` with
-    // currentRevision "0" -- a revision in force NOWHERE, for a resize that
-    // had in fact applied. The control plane must recover the terminal's order.
+    // The terminal applied revision 5 and the commit that should have recorded it failed, leaving the record at 0. A retry that only trusts the stale record floor is refused by the terminal and answered `stale` with currentRevision "0" -- a revision in force NOWHERE, for a resize that had in fact applied. The control plane must recover the terminal's order.
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1063,8 +1087,7 @@ test "neutral resize reconciles a set whose commit never landed" {
     const applied = try std.json.parseFromSliceLeaky(Applied, allocator, response.payload, .{
         .ignore_unknown_fields = true,
     });
-    // The caller is owed the receipt it missed, not a refusal for a resize that
-    // did apply.
+    // The caller is owed the receipt it missed, not a refusal for a resize that did apply.
     try std.testing.expectEqualStrings("applied", applied.state);
     try std.testing.expectEqualStrings("5", applied.revision);
     try std.testing.expectEqual(@as(u32, 119), applied.readback.columns);
@@ -1074,8 +1097,7 @@ test "neutral resize reconciles a set whose commit never landed" {
     try std.testing.expectEqual(@as(u64, 5), repaired.windowRevision);
     try std.testing.expectEqual(@as(u32, 119), repaired.window.columns);
 
-    // A terminal genuinely AHEAD of the request is still stale, and reports its
-    // own number rather than the record's.
+    // A terminal genuinely AHEAD of the request is still stale, and reports its own number rather than the record's.
     terminal.holds_revision = 8;
     const ahead = try fixture.call(try fixture.request(allocator, 120, "6"));
     const Stale = struct { state: []const u8, currentRevision: []const u8 };
@@ -1117,10 +1139,7 @@ test "neutral resize is fenced by the session reference it names" {
     try std.testing.expectEqual(@as(usize, 0), terminal.calls);
 }
 
-/// Fails exactly ONE allocation: the first `countdown` allocations succeed, the
-/// next one returns null, and every allocation after that succeeds again.
-/// std.testing.FailingAllocator fails every allocation from its index onward,
-/// which cannot express "the host call fails but the fallback has memory".
+/// Fails exactly ONE allocation: the first `countdown` allocations succeed, the next one returns null, and every allocation after that succeeds again. std.testing.FailingAllocator fails every allocation from its index onward, which cannot express "the host call fails but the fallback has memory".
 const FailOnceAllocator = struct {
     backing: std.mem.Allocator,
     countdown: usize,

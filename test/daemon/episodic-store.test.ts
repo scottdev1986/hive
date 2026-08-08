@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { HiveDatabase } from "../../src/daemon/db";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
-import { projectHiveUuid } from "../../src/daemon/project-state";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { projectStateDir } from "../../src/daemon/project-identity-core/state";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { AgentRecord } from "../../src/schemas";
+import { EpisodicStore } from "../../src/memory-service/episodic";
+import type { AgentRecord } from "../../src/schemas/agent";
+import { tempRoot } from "../temp-root";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
 const T2 = "2026-07-22T12:00:00.000Z";
 
-const tempDir = () => mkdtempSync(join(tmpdir(), "hive-episodic-test-"));
+const tempDir = () => tempRoot("hive-episodic-test-");
 const projectRoot = () => {
   const root = tempDir();
   const initialized = Bun.spawnSync(["git", "init", "--quiet", root]);
@@ -47,29 +47,60 @@ describe("EpisodicStore location and lifecycle", () => {
     process.env.HIVE_HOME = home;
     try {
       const root = projectRoot();
-      const hiveUuid = projectHiveUuid(root);
       const first = track(EpisodicStore.forProjectRoot(root));
-      expect(first.path).toBe(join(home, "projects", hiveUuid, "episodic.db"));
+      expect(first.path).toBe(join(projectStateDir(root), "episodic.db"));
       expect(existsSync(first.path)).toBe(true);
-      first.recordFact({
-        topic: "routing",
-        title: "WP1 landed",
-        body: "Episodic store exists",
-        source: "test",
-        validAt: T0,
+      first.appendEvent({
+        ts: T0,
+        agent: "agent-a",
+        type: "routing",
+        summary: "WP1 landed",
       });
       first.close();
 
       // Restart: a fresh store instance over the same project identity reads
       // what the previous session wrote — the consolidation acceptance point.
       const reopened = track(EpisodicStore.forProjectRoot(root));
-      const facts = reopened.currentFacts();
-      expect(facts).toHaveLength(1);
-      expect(facts[0]?.title).toBe("WP1 landed");
+      const events = reopened.eventsFor();
+      expect(events).toHaveLength(1);
+      expect(events[0]?.summary).toBe("WP1 landed");
     } finally {
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
     }
+  });
+
+  test("the doorkeeper bit survives a store restart", () => {
+    const path = join(tempDir(), "episodic.db");
+    const first = track(new EpisodicStore(path));
+    const schemaVersion = first.readMeta("schemaVersion");
+    expect(["2", "3"]).toContain(schemaVersion as string);
+    if (schemaVersion === "2") {
+      first.close();
+      return;
+    }
+    expect(
+      first.observeMemoryCandidate({
+        signature: "error:sessiond:rangeerror",
+        observedAt: T0,
+        firstObservationReceipt: { key: "test.receipt", value: "1" },
+      }),
+    ).toBe("rejected");
+    first.close();
+
+    const reopened = track(new EpisodicStore(path));
+    expect(
+      reopened.observeMemoryCandidate({
+        signature: "error:sessiond:rangeerror",
+        observedAt: T1,
+        firstObservationReceipt: { key: "test.receipt", value: "2" },
+      }),
+    ).toBe("admitted");
+    expect(reopened.memoryAdmissionStats()).toEqual({
+      seenCandidates: 1,
+      rejectedTotal: 1,
+      lastRejectedAt: T0,
+    });
   });
 
   test("two project identities get two stores with no cross-reads", () => {
@@ -82,109 +113,18 @@ describe("EpisodicStore location and lifecycle", () => {
       const storeB = track(EpisodicStore.forProjectRoot(rootB));
       expect(storeA.path).not.toBe(storeB.path);
 
-      storeA.recordFact({
-        topic: "routing",
-        title: "project A belief",
-        body: "Only A knows this",
-        source: "test",
-        validAt: T0,
-      });
       storeA.appendEvent({
         agent: "agent-a",
         type: "test",
         summary: "A event",
       });
 
-      expect(storeA.currentFacts()).toHaveLength(1);
       expect(storeA.eventsFor()).toHaveLength(1);
-      expect(storeB.currentFacts()).toHaveLength(0);
       expect(storeB.eventsFor()).toHaveLength(0);
     } finally {
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
     }
-  });
-});
-
-describe("EpisodicStore bi-temporal facts", () => {
-  test("invalidated facts leave currentFacts but stay readable as of their valid time", () => {
-    const store = track(new EpisodicStore(":memory:"));
-    const fact = store.recordFact({
-      topic: "deploy",
-      title: "Deploys go through CI",
-      body: "All deploys are CI-driven",
-      source: "test",
-      validAt: T0,
-    });
-    expect(store.currentFacts().map((current) => current.id)).toEqual([
-      fact.id,
-    ]);
-    expect(store.factsAsOf(T0)).toHaveLength(1);
-
-    const invalidated = store.invalidateFact(fact.id, { at: T1 });
-    expect(invalidated?.invalidAt).toBe(T1);
-    expect(store.currentFacts()).toHaveLength(0);
-    // History is intact: before the invalidation the fact was believed.
-    expect(store.factsAsOf(T0).map((current) => current.id)).toEqual([fact.id]);
-    expect(store.factsAsOf(T2)).toHaveLength(0);
-    // Invalidating again is a no-op, not a second stamp.
-    expect(store.invalidateFact(fact.id, { at: T2 })).toBeNull();
-  });
-
-  test("contradiction is a new row plus an invalid_at stamp and a supersedes pointer", () => {
-    const store = track(new EpisodicStore(":memory:"));
-    const old = store.recordFact({
-      kind: "decision",
-      topic: "memory",
-      title: "Store is per-install",
-      body: "One store per install",
-      source: "test",
-      validAt: T0,
-    });
-    const replacement = store.recordFact({
-      kind: "decision",
-      topic: "memory",
-      title: "Store is per-project",
-      body: "One store per project identity",
-      source: "test",
-      validAt: T1,
-      supersedesId: old.id,
-    });
-
-    expect(replacement.supersedesId).toBe(old.id);
-    // The old row was stamped, not deleted: it is gone from the present but
-    // fully readable in the past.
-    const current = store.currentFacts();
-    expect(current.map((fact) => fact.id)).toEqual([replacement.id]);
-    const before = store.factsAsOf(T0);
-    expect(before.map((fact) => fact.id)).toEqual([old.id]);
-    expect(before[0]?.invalidAt).toBe(T1);
-    expect(store.factsAsOf(T2).map((fact) => fact.id)).toEqual([
-      replacement.id,
-    ]);
-  });
-
-  test("invalidateFact links the superseding row back to the invalidated one", () => {
-    const store = track(new EpisodicStore(":memory:"));
-    const old = store.recordFact({
-      topic: "quota",
-      title: "v1",
-      body: "old",
-      source: "test",
-      validAt: T0,
-    });
-    const next = store.recordFact({
-      topic: "quota",
-      title: "v2",
-      body: "new",
-      source: "test",
-      validAt: T1,
-    });
-    store.invalidateFact(old.id, { supersededBy: next.id, at: T1 });
-    const after = store.factsAsOf(T2);
-    expect(after).toHaveLength(1);
-    expect(after[0]?.id).toBe(next.id);
-    expect(after[0]?.supersedesId).toBe(old.id);
   });
 });
 
@@ -245,7 +185,6 @@ const agent = (name = "maya"): AgentRecord => ({
   contextPct: null,
   createdAt: T0,
   lastEventAt: T0,
-  recoveryAttempts: 0,
   capabilityEpoch: 0,
   readOnly: false,
   writeRevoked: false,
@@ -269,7 +208,7 @@ const daemonHarness = (episodic: EpisodicStore) => {
 };
 
 describe("daemon ingestion into the episodic store", () => {
-  test("a status report through the daemon path lands an events row", () => {
+  test("a status report through the daemon path lands an events row", async () => {
     const episodic = track(new EpisodicStore(":memory:"));
     const { daemon } = daemonHarness(episodic);
     const assignment = daemon.status.currentAssignment("agent-maya");
@@ -295,6 +234,7 @@ describe("daemon ingestion into the episodic store", () => {
       },
       new Date(T1),
     );
+    await Bun.sleep(10);
 
     const events = episodic.eventsFor({ agent: "agent-maya" });
     expect(events).toHaveLength(1);
@@ -304,28 +244,31 @@ describe("daemon ingestion into the episodic store", () => {
     const provenance = JSON.parse(required(events[0]?.provenance)) as {
       eventId: string;
       seq: string;
+      data: Record<string, unknown>;
     };
     expect(provenance.eventId).toStartWith("evt_");
+    expect(provenance.data.phase).toBe("implementing");
   });
 
-  test("the terminal observation audit lands an events row", () => {
+  test("the terminal observation audit lands an events row", async () => {
     const episodic = track(new EpisodicStore(":memory:"));
     const { daemon } = daemonHarness(episodic);
     daemon.status.appendObservationAudit({
       reader: "hive",
-      readerRole: "operator",
+      readerRole: "user",
       subjectAgentId: "agent-maya",
       subjectGeneration: 1,
       rowCount: 24,
       reason: "capability:cap-fixture",
       observedAt: T1,
     });
+    await Bun.sleep(10);
     const events = episodic.eventsFor({ agent: "agent-maya" });
     expect(events).toHaveLength(1);
     expect(events[0]?.type).toBe("terminal.content-observed");
   });
 
-  test("an episodic write failure never breaks the status write", () => {
+  test("an episodic write failure never breaks the status write", async () => {
     const episodic = track(new EpisodicStore(":memory:"));
     const { daemon } = daemonHarness(episodic);
     const errors: string[] = [];
@@ -338,7 +281,7 @@ describe("daemon ingestion into the episodic store", () => {
       episodic.close();
       const event = daemon.status.appendObservationAudit({
         reader: "hive",
-        readerRole: "operator",
+        readerRole: "user",
         subjectAgentId: "agent-maya",
         subjectGeneration: 1,
         rowCount: 24,
@@ -348,6 +291,7 @@ describe("daemon ingestion into the episodic store", () => {
       // The primary record was written and published despite the failure.
       expect(event.kind).toBe("terminal.content-observed");
       expect(daemon.status.listEvents()).toHaveLength(1);
+      await Bun.sleep(10);
       expect(
         errors.some((message) => message.includes("episodic ingest failed")),
       ).toBe(true);
@@ -360,7 +304,7 @@ describe("daemon ingestion into the episodic store", () => {
     const episodic = new EpisodicStore(":memory:");
     const { daemon } = daemonHarness(episodic);
     await daemon.stop();
-    expect(() => episodic.currentFacts()).toThrow();
+    expect(() => episodic.eventsFor()).toThrow();
   });
 });
 

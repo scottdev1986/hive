@@ -1,0 +1,30 @@
+{
+  "vendor": "grok",
+  "phase": "prepared",
+  "binary": "/Users/scottkellar/.opencode/bin/grok",
+  "binaryBefore": {
+    "version": "grok 0.2.118 (1e1687c1cf6a) [stable]",
+    "device": 16777234,
+    "inode": 147606983,
+    "size": 516,
+    "mtimeMs": 1784242335399.3567
+  },
+  "operatorBefore": {
+    ".grok": "8f1b6e01292e6dbf2d0a08773ba54760acdb679b7f78ca51e5b43a5e33299092"
+  },
+  "borrowed": [
+    ".grok/auth.json"
+  ],
+  "artifacts": [
+    {
+      "label": "auth.json",
+      "sourceMetadata": "ada5ed50ea82ff9c5579c2ead0198b4dfdae1a0268023c6dbe37332ebfeecc76",
+      "destinationMetadata": "6474278905b858421c3a86d071ef2237b5791deda6aee7164a80a975e93e5f46",
+      "verification": {
+        "nodes": 1,
+        "files": 1,
+        "directories": 0
+      }
+    }
+  ]
+}

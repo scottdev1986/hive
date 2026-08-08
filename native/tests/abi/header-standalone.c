@@ -9,13 +9,7 @@ typedef struct { char prefix; hive_ghostty_semantic_row_s value; } hive_row_stru
 typedef struct { char prefix; hive_ghostty_semantic_snapshot_s value; } hive_snapshot_struct_align_probe;
 typedef struct { char prefix; void *value; } hive_pointer_align_probe;
 
-/* Gate 4 (M1-B1): freeze every wire-visible value and layout of the
- * Hive-owned fork contract. These are the CONTRACT constants — Swift's
- * GhosttyBridgeResult raw values and BridgeEvent mapping assume them —
- * so an upstream or patch renumbering must fail this build, not silently
- * reinterpret checkpoints/results at runtime. (Divide-by-zero-on-false
- * idiom rather than _Static_assert: -Weverything's -Wpre-c11-compat
- * rejects the latter even under -std=c11.) */
+/* Gate 4 (M1-B1): freeze every wire-visible value and layout of the Hive-owned fork contract. These are the CONTRACT constants — Swift's GhosttyBridgeResult raw values and BridgeEvent mapping assume them — so an upstream or patch renumbering must fail this build, not silently reinterpret checkpoints/results at runtime. (Divide-by-zero-on-false idiom rather than _Static_assert: -Weverything's -Wpre-c11-compat rejects the latter even under -std=c11.) */
 enum {
   hive_result_success_is_0 = 1 / (GHOSTTY_SUCCESS == 0),
   hive_result_oom_is_m1 = 1 / (GHOSTTY_OUT_OF_MEMORY == -1),
@@ -30,21 +24,12 @@ enum {
   hive_event_clipboard_denied_is_5 = 1 / (HIVE_GHOSTTY_EVENT_CLIPBOARD_DENIED == 5),
   hive_event_close_request_is_6 = 1 / (HIVE_GHOSTTY_EVENT_CLOSE_REQUEST == 6),
 
-  /* The enum's REPRESENTATION is ABI, not just its values: the Zig
-   * trampoline writes this field as a c_int (4 bytes). The offset/size
-   * asserts below cannot catch a representation drift on their own — with
-   * an 8-byte enum, offsetof(bytes) == sizeof(void *) still holds and the
-   * struct size is unchanged, but the type field would overlap what Zig
-   * wrote as padding (cross-vendor review brenda, 2026-07-18). */
+  /* The enum's REPRESENTATION is ABI, not just its values: the Zig trampoline writes this field as a c_int (4 bytes). The offset/size asserts below cannot catch a representation drift on their own — with an 8-byte enum, offsetof(bytes) == sizeof(void *) still holds and the struct size is unchanged, but the type field would overlap what Zig wrote as padding (cross-vendor review brenda, 2026-07-18). */
   hive_event_enum_is_c_int_sized = 1 / (sizeof(hive_ghostty_event_e) == 4),
   hive_event_enum_is_c_int_aligned =
       1 / (offsetof(hive_event_align_probe, value) ==
            offsetof(hive_int_align_probe, value)),
 
-  /* Layout of the only aggregate Hive defines on the wire. Field order,
-   * offsets, and the 4-byte enum→pointer padding are ABI: the Zig
-   * trampoline writes this struct byte-for-byte (the check script passes
-   * -Wno-padded because this padding is asserted here as contract). */
   hive_event_struct_type_first = 1 / (offsetof(hive_ghostty_event_s, type) == 0),
   hive_event_struct_padding_is_4 =
       1 / (offsetof(hive_ghostty_event_s, bytes) - sizeof(hive_ghostty_event_e) == 4),

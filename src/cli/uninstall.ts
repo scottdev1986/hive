@@ -1,45 +1,7 @@
-/**
- * `hive uninstall` — remove Hive completely; `--repo` removes what Hive put
- * in (and derived for) the current repo and nothing machine-wide.
- *
- * Complete removal is the acceptance test for Hive's whole repo-local
- * posture: if uninstall leaves residue, the posture was a lie. The inventory
- * below is everything Hive writes, audited from the writers themselves:
- *
- *   Repo-level (`--repo`):
- *   - shipped skills in `.claude/skills/` and `.agents/skills/` — removed
- *     only when byte-identical to what Hive ships; an edited copy is the
- *     human's and is reported, not deleted (the same rule install obeys)
- *   - agent worktrees under `.hive/worktrees/` and their `hive/*` branches
- *     (worktree-local `.mcp.json`, vendor configs, graphify hook scripts,
- *     and per-worktree skills all live inside them and go with them)
- *   - leaked orchestrator runtime config in the primary checkout
- *     (`.mcp.json`, `.claude/settings.local.json`, `.codex/*`) — the same
- *     signature-matched repair every session boundary runs
- *   - `graphify-out/` and Hive's generated `.graphifyignore`
- *   - the project's derived-state dir `~/.hive/projects/<uuid>/` (serving
- *     snapshot and init stamp)
- *
- *   Machine-level (no flag):
- *   - `~/.hive` — state, memory, the graphify tool under `tools/`, and any
- *     skills the user authored under `~/.hive/skills` (the confirmation
- *     names this; it is the one place user-authored content lives)
- *   - installed releases (`~/.local/share/hive`) and the `~/.local/bin/hive`
- *     link — only when Hive owns the install; a source or unmanaged binary is
- *     named and left alone
- *
- * Deliberately not removed: `AGENTS.md` (scaffolded only on request and then
- * edited by humans — it is the user's document) and repo-level skills in
- * OTHER repos, which a machine-wide uninstall cannot know about; the
- * confirmation says to run `--repo` in each repo first if wanted.
- *
- * Both forms confirm before acting (destructive), on the TTY; `--yes` is the
- * scriptable spelling, and a non-TTY run without it refuses rather than
- * guessing.
- */
+/** `hive uninstall` removes Hive-owned integration without treating the command as authority to discard unsettled work. Repo uninstall asks the live settlement service to close exact-safe cases before stopping it, then removes byte-identical skills, leaked runtime config, graph output, and derived project state. Any remaining worktree, branch, edited skill, or user file stays and is named. Machine uninstall removes the shared Hive home and managed install only after its separate live-team and mutation-lease checks. */
 import { existsSync } from "node:fs";
 import { readdir, readFile, rm, rmdir } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   type CommandRunner,
   GRAPHIFY_IGNORE_MARKER,
@@ -47,37 +9,37 @@ import {
   runCommand,
 } from "../adapters/graphify";
 import { nativeSkillDirectory, type SkillTool } from "../adapters/skills";
-import {
-  branchOwner,
-  clearBranchOwnership,
-  listWorktrees,
-} from "../adapters/worktrees";
+import { listHiveBranches, listWorktrees } from "../adapters/worktrees";
 import {
   expectedDaemonHandshake,
   readDaemonHandshake,
-} from "../daemon/handshake";
-import {
-  hiveInstanceSuffix,
-  isDefaultHiveHome,
-} from "../daemon/instance-identity";
+} from "../daemon/lifecycle/daemon-lifecycle";
+import { resolveVariant, type VariantConfig } from "../hive-home/variant";
 import {
   type InstanceMutationBlocker,
   instanceMutationBlockers,
   listInstances,
-  machineHiveHome,
-} from "../daemon/instances";
-import { daemonInstanceLiveness, readDaemonPort } from "../daemon/lifecycle";
+} from "../daemon/lifecycle/instances";
+import {
+  daemonInstanceLiveness,
+  readDaemonPort,
+} from "../daemon/lifecycle/daemon-lifecycle";
 import {
   acquireMachineMutationLease,
   type MachineMutationLease,
   type MachineMutationPurpose,
 } from "../daemon/mutation-lease";
-import { projectStateDir } from "../daemon/project-state";
-import { CAPABILITY_PROVIDERS } from "../schemas";
+import { projectStateDir } from "../daemon/project-identity-core/state";
+import { CAPABILITY_PROVIDERS } from "../schemas/capability";
+import { errorMessage } from "../shared/error-message";
 import { SHIPPED_SKILLS, shippedSkillAddresses } from "../skills/shipped";
-import { binLink, detectInstallMethod, installRoot } from "../update/paths";
+import {
+  binLink,
+  detectInstallMethod,
+  installRoot,
+} from "../update-service/paths";
 import { stopHive } from "./control";
-import { fetchAgentStatus } from "./mcp";
+import { fetchAgentStatus, requestSettlementSweep } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { type ConfirmFn, confirmOnTty } from "./prompt";
 
@@ -85,11 +47,10 @@ export interface UninstallDeps {
   run: CommandRunner;
   confirm: ConfirmFn;
   log: (line: string) => void;
-  /** Clean up this instance's sessions after every daemon has exited. */
   stopCurrentInstance: () => Promise<void>;
-  /** Whether the selected instance's live daemon serves the repo being
-   * uninstalled. A foreign daemon must never be signaled. */
+  /** Whether the selected instance's live daemon serves the repo being uninstalled. A foreign daemon must never be signaled. */
   currentInstanceOwnsProject: (root: string) => Promise<boolean>;
+  settleCurrentProject: () => Promise<unknown>;
   liveTeams: () => Promise<readonly InstanceMutationBlocker[]>;
   stopInstances: () => Promise<void>;
   acquireLease: (
@@ -141,6 +102,12 @@ export const defaultUninstallDeps: UninstallDeps = {
       return false;
     }
   },
+  settleCurrentProject: async () => {
+    const port = readDaemonPort();
+    if (port === null)
+      throw new Error("the project daemon has no readable port");
+    return requestSettlementSweep(port);
+  },
   liveTeams: () =>
     instanceMutationBlockers(async (port) => {
       const agents = await fetchAgentStatus(port);
@@ -151,19 +118,6 @@ export const defaultUninstallDeps: UninstallDeps = {
   stopInstances,
   acquireLease: acquireMachineMutationLease,
 };
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function commandFailure(
-  action: string,
-  result: Awaited<ReturnType<CommandRunner>>,
-): Error {
-  const detail =
-    result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`;
-  return new Error(`${action}: ${detail}`);
-}
 
 function liveTeamRefusal(blockers: readonly InstanceMutationBlocker[]): string {
   return (
@@ -178,9 +132,7 @@ function liveTeamRefusal(blockers: readonly InstanceMutationBlocker[]): string {
   );
 }
 
-/** Confirm a destructive plan: explicit `--yes` wins, a TTY is asked
- * (default no), and a non-TTY without `--yes` refuses with the scriptable
- * spelling — a destructive default is never guessed. */
+/** Confirm a destructive plan: explicit `--yes` wins, a TTY is asked (default no), and a non-TTY without `--yes` refuses with the scriptable spelling — a destructive default is never guessed. */
 async function confirmed(
   plan: string[],
   question: string,
@@ -199,12 +151,27 @@ async function confirmed(
   return answer;
 }
 
-/**
- * Remove the base skills Hive installed into `.hive/skills`, where they sit
- * beside the user's own. Only byte-identical copies are Hive's to remove; an
- * edited one is the human's and is reported instead, and their own skills are
- * never candidates at all — a name Hive does not ship is not looked at.
- */
+async function removeOwnedSkillCopy(
+  directory: string,
+  displayPath: string,
+  shippedContent: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
+    () => null,
+  );
+  if (current === null) return;
+  if (current !== shippedContent) {
+    log(
+      `Left ${displayPath}: it differs from what Hive ships, so it is yours.`,
+    );
+    return;
+  }
+  await rm(directory, { recursive: true, force: true });
+  log(`Removed ${displayPath}.`);
+}
+
+/** Remove the base skills Hive installed into `.hive/skills`, where they sit beside the user's own. Only byte-identical copies are Hive's to remove; an edited one is the user's and is reported instead, and their own skills are never candidates at all — a name Hive does not ship is not looked at. */
 async function removeBaseSkills(
   root: string,
   log: (line: string) => void,
@@ -215,26 +182,12 @@ async function removeBaseSkills(
     for (const address of shippedSkillAddresses(skill)) {
       const directory = join(skillsRoot, address, skill.name);
       const relativePath = join(".hive", "skills", address, skill.name);
-      const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
-        () => null,
-      );
-      if (current === null) continue;
-      if (current === skill.content) {
-        await rm(directory, { recursive: true, force: true });
-        log(`Removed ${relativePath}.`);
-      } else {
-        log(
-          `Left ${relativePath}: it differs from what Hive ships, so it is yours.`,
-        );
-      }
+      await removeOwnedSkillCopy(directory, relativePath, skill.content, log);
     }
   }
-  // The address directories Hive created, emptied by the removals above. Only
-  // when empty: a bucket holding the user's own skills is theirs.
   for (const address of new Set(
     SHIPPED_SKILLS.flatMap(shippedSkillAddresses),
   )) {
-    // Deepest first, so `agent/claude` is gone before `agent` is tried.
     const parts = address.split("/");
     for (let depth = parts.length; depth > 0; depth -= 1) {
       await rmdir(join(skillsRoot, ...parts.slice(0, depth))).catch(() => {});
@@ -242,9 +195,7 @@ async function removeBaseSkills(
   }
 }
 
-/** Remove shipped skills from one vendor directory of the primary checkout.
- * Only byte-identical copies are Hive's to remove; an edited skill is the
- * human's and is reported instead. */
+/** Remove shipped skills from one vendor directory of the primary checkout. Only byte-identical copies are Hive's to remove; an edited skill is the user's and is reported instead. */
 async function removeShippedSkills(
   root: string,
   tool: SkillTool,
@@ -253,118 +204,53 @@ async function removeShippedSkills(
   const nativeDirectory = nativeSkillDirectory(tool);
   const nativeRoot = join(root, nativeDirectory);
   if (!existsSync(nativeRoot)) return;
-  // Check every skill Hive ships for this vendor, not one audience's subset.
-  // Filtering by audience can orphan Hive-owned copies.
   for (const skill of SHIPPED_SKILLS.filter((skill) =>
     skill.tools.includes(tool),
   )) {
     const directory = join(nativeRoot, skill.name);
-    const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
-      () => null,
+    await removeOwnedSkillCopy(
+      directory,
+      join(nativeDirectory, skill.name),
+      skill.content,
+      log,
     );
-    if (current === null) continue;
-    if (current === skill.content) {
-      await rm(directory, { recursive: true, force: true });
-      log(`Removed ${join(nativeDirectory, skill.name)}.`);
-    } else {
-      log(
-        `Left ${join(nativeDirectory, skill.name)}: it differs from what Hive ships, so it is yours.`,
-      );
-    }
   }
-  // Directories Hive may have created, removed only when now empty — an
-  // empty vendor dir in a stranger's repo is litter either way.
   for (const dir of [nativeRoot, join(root, dirname(nativeDirectory))]) {
     await rmdir(dir).catch(() => {});
   }
 }
 
-/** Remove only this instance's worktrees and branches. */
-async function removeWorktreesAndBranches(
+async function reportUnsettledWork(
   root: string,
-  run: CommandRunner,
   log: (line: string) => void,
-): Promise<void> {
+): Promise<number> {
   const container = resolve(root, ".hive", "worktrees");
-  const instanceId = hiveInstanceSuffix();
-  const allowLegacy = isDefaultHiveHome();
   const worktrees = await listWorktrees(root);
-  const worktreeMarker = `${join(".hive", "worktrees")}/`;
-  const registered = new Map(
-    worktrees
-      .filter((worktree) => worktree.path.includes(worktreeMarker))
-      .map((worktree) => [basename(worktree.path), worktree]),
+  const registered = worktrees.filter(
+    (worktree) => dirname(resolve(worktree.path)) === container,
   );
-  const entries = await readdir(container).catch(() => [] as string[]);
-  for (const entry of entries) {
-    const path = resolve(container, entry);
-    const worktree = registered.get(entry);
-    const owner =
-      worktree?.branch === null || worktree?.branch === undefined
-        ? undefined
-        : await branchOwner(root, worktree.branch);
-    const owned = owner === instanceId || (owner === undefined && allowLegacy);
-    if (!owned) {
-      log(`Left sibling-owned worktree ${path}.`);
-      continue;
-    }
-    const removed = await run(["git", "worktree", "remove", "--force", path], {
-      cwd: root,
-      timeoutMs: 30_000,
-    });
-    if (removed.exitCode !== 0 && allowLegacy && worktree === undefined) {
-      // An unregistered worktree directory is safely attributable only when
-      // the caller explicitly allows the default-instance fallback.
-      await rm(path, { recursive: true, force: true });
-    } else if (removed.exitCode !== 0) {
-      throw commandFailure(
-        `Git could not remove owned worktree ${path}`,
-        removed,
-      );
-    }
-    log(`Removed worktree ${path}.`);
+  for (const worktree of registered) {
+    log(
+      `Left protected settlement worktree ${worktree.path} (${worktree.branch ?? "detached"}).`,
+    );
   }
-  const pruned = await run(["git", "worktree", "prune"], {
-    cwd: root,
-    timeoutMs: 30_000,
-  });
-  if (pruned.exitCode !== 0) {
-    throw commandFailure("Git could not prune removed worktrees", pruned);
+  const diskEntries = await readdir(container).catch(() => [] as string[]);
+  const registeredPaths = new Set(
+    registered.map((worktree) => resolve(worktree.path)),
+  );
+  for (const entry of diskEntries) {
+    const path = resolve(container, entry);
+    if (!registeredPaths.has(path)) {
+      log(`Left unregistered settlement path ${path} for inspection.`);
+    }
   }
   await rmdir(container).catch(() => {});
-  await rmdir(join(root, ".hive")).catch(() => {
-    // Only removed when empty: `.hive/skills` and other user content stay.
-  });
-
-  const branches = await run(
-    ["git", "branch", "--list", "hive/*", "--format", "%(refname:short)"],
-    { cwd: root, timeoutMs: 30_000 },
-  );
-  if (branches.exitCode !== 0) {
-    throw commandFailure("Git could not list Hive branches", branches);
+  await rmdir(join(root, ".hive")).catch(() => {});
+  const branches = await listHiveBranches(root);
+  for (const branch of branches) {
+    log(`Left protected settlement branch ${branch}.`);
   }
-  for (const branch of branches.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)) {
-    const owner = await branchOwner(root, branch);
-    if (owner !== instanceId && !(owner === undefined && allowLegacy)) {
-      log(`Left sibling-owned branch ${branch}.`);
-      continue;
-    }
-    const deleted = await run(["git", "branch", "-D", branch], {
-      cwd: root,
-      timeoutMs: 30_000,
-    });
-    if (deleted.exitCode !== 0) {
-      throw commandFailure(
-        `Git could not delete owned branch ${branch}`,
-        deleted,
-      );
-    }
-    await clearBranchOwnership(root, branch);
-    log(`Deleted branch ${branch}.`);
-  }
+  return registered.length + diskEntries.length + branches.length;
 }
 
 export async function runUninstallRepo(
@@ -375,7 +261,7 @@ export async function runUninstallRepo(
   const plan = [
     `This removes Hive from ${root}:`,
     "  - stops the selected daemon only when its handshake proves it serves this project",
-    "  - deletes this instance's agent worktrees and hive/* branches (its unlanded agent work is lost)",
+    "  - asks the settlement service to release exact-safe worktrees and branches; unprovable work stays protected",
     "  - removes the skills Hive installed (edited copies are yours and stay)",
     "  - removes Hive's entries from .mcp.json, .claude/settings.local.json, and .codex/",
     "  - deletes graphify-out/, the generated .graphifyignore, and this repo's derived state under ~/.hive/projects/",
@@ -389,6 +275,7 @@ export async function runUninstallRepo(
 
   if (await deps.currentInstanceOwnsProject(root)) {
     try {
+      await deps.settleCurrentProject();
       await deps.stopCurrentInstance();
     } catch (error) {
       deps.log(
@@ -398,8 +285,9 @@ export async function runUninstallRepo(
       return 1;
     }
   }
+  let unsettled = 0;
   try {
-    await removeWorktreesAndBranches(root, deps.run, deps.log);
+    unsettled = await reportUnsettledWork(root, deps.log);
   } catch (error) {
     deps.log(
       `Repo uninstall stopped before cleanup completed: ${errorMessage(error)}\n` +
@@ -415,8 +303,6 @@ export async function runUninstallRepo(
   const repaired = await repairLeakedProjectConfig(root);
   for (const path of repaired) deps.log(`Removed Hive's entries from ${path}.`);
   await rm(graphOutDir(root), { recursive: true, force: true });
-  // Only Hive's generated .graphifyignore (identified by its marker line) is
-  // Hive's to delete; a user-authored one stays — the same rule purge obeys.
   const ignorePath = join(root, ".graphifyignore");
   const ignoreContent = await readFile(ignorePath, "utf8").catch(() => null);
   if (ignoreContent?.startsWith(GRAPHIFY_IGNORE_MARKER)) {
@@ -426,16 +312,75 @@ export async function runUninstallRepo(
   const stateDir = projectStateDir(root);
   await rm(stateDir, { recursive: true, force: true });
   deps.log(`Removed ${stateDir}.`);
-  deps.log("Hive is removed from this repo. `hive init` brings it back.");
+  deps.log(
+    unsettled === 0
+      ? "Hive is removed from this repo. `hive init` brings it back."
+      : `Hive's repo integration is removed; ${unsettled} protected settlement item(s) remain until their cases are resolved.`,
+  );
   return 0;
 }
 
+/**
+ * The paths this uninstall will actually delete, in the words the user needs before consenting.
+ *
+ * `instances/` is listed entry by entry because a home that holds named instances takes every one
+ * of them with it, and a plan that says only "the home" does not let anyone consent to that. The
+ * two sessiond roots are named because they are the install's and are removed with it — the socket
+ * root sits outside the home so a bind address fits in `sun_path`, which is exactly why leaving it
+ * to a sweep of the home left it behind.
+ */
+async function homeRemovalPlan(config: VariantConfig): Promise<string[]> {
+  const lines = [
+    config.retention.length === 0
+      ? `  - deletes ${config.home} — all Hive state, memory, the graphify tool, and any skills you authored under ${join(config.home, "skills")}`
+      : `  - clears ${config.home}, keeping ${config.retention.join(", ")}`,
+  ];
+  const instancesRoot = join(config.home, "instances");
+  if (existsSync(instancesRoot)) {
+    for (const name of await readdir(instancesRoot)) {
+      lines.push(
+        `  - deletes ${join(instancesRoot, name)}, a separate Hive install inside that home`,
+      );
+    }
+  }
+  lines.push(
+    `  - deletes this install's sessiond roots, ${config.socketRoot} and ${config.sessiondStateRoot}`,
+  );
+  return lines;
+}
+
+/**
+ * Empty a home of everything this variant does not retain.
+ *
+ * Entries are removed one at a time from a directory listing rather than by recursing into the
+ * home, so a symlink is unlinked instead of followed. That distinction is the whole safety property
+ * here: several retained names are links into the user's own home, and following one would delete
+ * the store it points at rather than the link to it.
+ *
+ * The home directory itself goes only when nothing was kept, which is what `rmdir` refusing a
+ * non-empty directory already says — so there is no second rule deciding it.
+ */
+async function clearHome(config: VariantConfig): Promise<void> {
+  if (!existsSync(config.home)) return;
+  const retained = config.retention.map((pattern) => new Bun.Glob(pattern));
+  for (const entry of await readdir(config.home)) {
+    if (retained.some((pattern) => pattern.match(entry))) continue;
+    await rm(join(config.home, entry), { recursive: true, force: true });
+  }
+  await rmdir(config.home).catch(() => {});
+}
+
 export async function runUninstallMachine(
-  options: { yes?: boolean } = {},
+  options: { yes?: boolean; purge?: boolean } = {},
   deps: UninstallDeps = defaultUninstallDeps,
 ): Promise<number> {
   const method = detectInstallMethod(process.execPath);
-  const hiveHome = machineHiveHome();
+  const resolved = resolveVariant();
+  // Purge is this same uninstall with the variant's retention overridden to nothing — dev's
+  // destroy-everything command (`make clean-all`), not a second deletion path. On prod it is
+  // idempotent rather than dead, because prod's configured retention is already empty.
+  const config: VariantConfig =
+    options.purge === true ? { ...resolved, retention: [] } : resolved;
   const blockers = await deps.liveTeams();
   if (blockers.length > 0) {
     deps.log(liveTeamRefusal(blockers));
@@ -444,10 +389,17 @@ export async function runUninstallMachine(
   const plan = [
     "This removes Hive from this machine:",
     "  - stops every idle daemon and this instance's leftover sessions",
-    `  - deletes ${hiveHome} — all Hive state, memory, the graphify tool, and any skills you authored under ${join(hiveHome, "skills")}`,
+    ...(await homeRemovalPlan(config)),
+    // A purge of a retaining variant is a wider deletion than the variant's own uninstall, and a
+    // plan that does not say so cannot be consented to.
+    ...(options.purge === true && resolved.retention.length > 0
+      ? [
+          `  - overrides this variant's configured retention (${resolved.retention.join(", ")}): a purge keeps nothing`,
+        ]
+      : []),
     ...(method === "native"
       ? [
-          `  - deletes the installed releases (${installRoot()}) and the \`hive\` command (${binLink()})`,
+          `  - deletes the installed releases (${installRoot()}) and the \`${config.binName}\` command (${binLink()})`,
         ]
       : [
           `  - leaves the hive binary alone: this install is ${method}, not Hive-managed`,
@@ -492,14 +444,58 @@ export async function runUninstallMachine(
       );
       return 1;
     }
-    await rm(hiveHome, { recursive: true, force: true });
-    deps.log(`Removed ${hiveHome}.`);
+    await clearHome(config);
+    deps.log(
+      config.retention.length === 0
+        ? `Removed ${config.home}.`
+        : `Cleared ${config.home}, keeping ${config.retention.join(", ")}.`,
+    );
+    // The identity marker lives outside the home precisely so it survives the home's deletion,
+    // so clearing the home cannot reach it and a purge must take it separately. A surviving
+    // marker is recorded, not returned on: the operator asked for everything gone, and stopping
+    // here would leave the sessiond roots and the install in place while the report named one
+    // file. Every remaining removal is attempted first; the exit code still says the purge
+    // failed, because a marker left behind re-arms the guard against the home the purge just
+    // emptied — the next run reads it, finds no database, and refuses to start.
+    let purgeFailure: string | null = null;
+    if (options.purge === true) {
+      let markerError: unknown = null;
+      try {
+        await rm(config.databaseIdentityPath, { force: true });
+      } catch (error) {
+        markerError = error;
+      }
+      if (existsSync(config.databaseIdentityPath)) {
+        purgeFailure =
+          `the database identity marker ${config.databaseIdentityPath} survived` +
+          (markerError === null ? "" : ` (${errorMessage(markerError)})`);
+      }
+    }
+    for (const root of [config.socketRoot, config.sessiondStateRoot]) {
+      await rm(root, { recursive: true, force: true });
+    }
+    deps.log(`Removed ${config.socketRoot} and ${config.sessiondStateRoot}.`);
     if (method === "native") {
       await rm(installRoot(), { recursive: true, force: true });
       await rm(binLink(), { force: true });
       deps.log(`Removed ${installRoot()} and ${binLink()}.`);
     }
-    deps.log("Hive is removed.");
+    if (purgeFailure !== null) {
+      const alsoRemoved =
+        method === "native"
+          ? `${config.socketRoot}, ${config.sessiondStateRoot}, ${installRoot()} and ${binLink()}`
+          : `${config.socketRoot} and ${config.sessiondStateRoot}`;
+      deps.log(
+        `Purge incomplete: ${purgeFailure}. Everything else the purge takes was removed: the home, ${alsoRemoved}.` +
+          "\nFix: remove the marker by hand; while it remains, the next run refuses the empty home this purge made.",
+      );
+      return 1;
+    }
+    deps.log(
+      config.retention.length === 0
+        ? "Hive is removed."
+        : `${config.binName} is removed; what it kept is still in ${config.home}.`,
+    );
     return 0;
   } finally {
     lease.release();
@@ -508,7 +504,7 @@ export async function runUninstallMachine(
 
 export async function runUninstall(
   root: string,
-  options: { repo?: boolean; yes?: boolean } = {},
+  options: { repo?: boolean; yes?: boolean; purge?: boolean } = {},
   deps: UninstallDeps = defaultUninstallDeps,
 ): Promise<number> {
   return options.repo === true

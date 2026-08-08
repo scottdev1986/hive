@@ -9,17 +9,17 @@ Why Hive ships through its own native installer — and what the shell bootstrap
 
 ## The one thing code cites this document for
 
-`src/update/source.ts:4-8` and `src/update/check.ts:102-108` both cite this distribution article as the recorded rationale for a knowing deviation. The deviation:
+`src/update-service/source.ts:4-8` and `src/update-service/check.ts:102-108` both cite this distribution article as the recorded rationale for a knowing deviation. The deviation:
 
 > GitHub Releases should hold immutable bytes; a small CDN-backed endpoint should express mutable channel and rollout policy. Do not make every client scrape the GitHub "latest" API or trust a moving asset without a signed policy document.
 
-**The shipped updater does exactly what that sentence forbids.** It reads `releases/latest` and the `hive-release.json` asset attached to it (`src/update/source.ts:105-164`, `src/update/check.ts:102-138`). There is no channel endpoint. The choice was between a knowing deviation and no updater at all, and it is confined to `src/update/source.ts`, which exists as the seam — introducing the channel document changes that file and nothing else.
+**The shipped updater does exactly what that sentence forbids.** It reads `releases/latest` and the `hive-release.json` asset attached to it (`src/update-service/source.ts:105-164`, `src/update-service/check.ts:102-138`). There is no channel endpoint. The choice was between a knowing deviation and no updater at all, and it is confined to `src/update-service/source.ts`, which exists as the seam — introducing the channel document changes that file and nothing else.
 
 The deviation is **recorded, not rationalized**. Until it closes: channel and rollout policy are inferred from a mutable API, and the manifest's `channel` field is written but never read. Native updates trust TLS only for transport: the embedded Hive release key authenticates the manifest before its hashes authorize any artifact. The shell bootstrap cannot perform that Ed25519 check, so its first-install boundary remains TLS plus GitHub Release hosting. The signed manifest exists; authentication in the bootstrap and the channel document do not.
 
 ## What the installer actually verifies — and does not
 
-`install.sh` requires a non-empty `hive-release.json.sig`, checks every artifact's SHA-256 against the release manifest, proves the binary runs, and only then points `~/.local/bin/hive` at it (`install.sh:74-129`). It preserves the exact manifest bytes and whitespace-normalized signature in `release-verification.json`; portable shell does not claim to verify Ed25519. A later `hive update rollback` re-verifies that material with the installed binary's embedded key before it can reactivate the version (`install.sh:102-106`, `src/update/install.ts:543-603`). A release with missing or empty signature material is refused before installation, with no bypass flag.
+`install.sh` requires a non-empty `hive-release.json.sig`, checks every artifact's SHA-256 against the release manifest, proves the binary runs, and only then points `~/.local/bin/hive` at it (`install.sh:74-129`). It preserves the exact manifest bytes and whitespace-normalized signature in `release-verification.json`; portable shell does not claim to verify Ed25519. A later `hive update rollback` re-verifies that material with the installed binary's embedded key before it can reactivate the version (`install.sh:102-106`, `src/update-service/install.ts:543-603`). A release with missing or empty signature material is refused before installation, with no bypass flag.
 
 The design called for the installer to verify the manifest signature, the Developer ID signature, and the Team ID. **It does none of those cryptographic checks.** The script says so itself (`install.sh:82-84`, `:102-104`): it requires and preserves the manifest signature, but the installed Hive binary performs Ed25519 verification only when that version is later considered for rollback. So the first install is anchored on TLS + GitHub Release hosting + SHA-256 against an *unverified* manifest, plus the requirement that signature material be present; every subsequent update through `hive update` is anchored on the embedded key and is fail-closed. **This remains a real gap**: an attacker who can serve a forged manifest, matching bytes, and non-empty fake signature material defeats the shell installer, because the script cannot authenticate the document it reads.
 
@@ -32,10 +32,10 @@ The installer is never part of development-build acceptance on a machine with an
 Recorded so nobody re-derives them from the research doc as though they were behavior:
 
 - **Manifest fields** "artifact URL, supported macOS, minimum updater version, rollout percentage" — absent. The real field list is `src/release/manifest.ts:49-75`.
-- **The health check** was specified to open the database read/write, bind the MCP endpoint, and perform a no-op transaction, keeping a DB snapshot and a grace period. It is `hive --version`, checked for the string `hive` (`src/cli/update.ts:87-92`). Retention is three version directories (`src/update/install.ts:408-468`), not a database snapshot.
-- **An external updater helper** asking the old daemon to "prepare for update" (checkpoint WAL, record state, close listeners, exit) — not built. A stale, provably idle daemon is simply SIGTERM'd and waited on (`src/update/daemon.ts:145-203`).
+- **The health check** was specified to open the database read/write, bind the MCP endpoint, and perform a no-op transaction, keeping a DB snapshot and a grace period. It is `hive --version`, checked for the string `hive` (`src/cli/update.ts:87-92`). Retention is three version directories (`src/update-service/install.ts:408-468`), not a database snapshot.
+- **An external updater helper** asking the old daemon to "prepare for update" (checkpoint WAL, record state, close listeners, exit) — not built. A stale, provably idle daemon is simply SIGTERM'd and waited on (`src/update-service/update-daemon.ts:145-203`).
 - **Background fetch and stage, jittered background checks, and a deterministic 5% → 25% → 100% rollout** keyed on an anonymous install ID — none built. There is one ring.
-- **A LaunchAgent for dormant machines** — deliberately out. The promise is Claude Code's promise: updates happen while you use the tool. SPEC's "launchd is v2 polish" line stays true.
+- **A LaunchAgent for dormant machines** — deliberately out. The promise is Claude Code's promise: updates happen while you use the tool. Launchd remains v2 polish.
 
 ## Why a native installer, measured against four precedents
 
@@ -57,7 +57,7 @@ Good notification quality; poor automatic-update quality. The notifier cannot re
 
 Claude Code makes the weakness concrete: its npm package now installs the same native binary through per-platform optional dependencies, yet the native installer remains recommended, global npm updates can fail when the prefix is not writable, and the documented update command must explicitly request `@latest` because an ordinary global update can respect the old semver range. **Moving the runtime into the package did not give npm native-install update semantics.**
 
-For Hive it would also contradict SPEC's "single binary, no runtime prerequisite" story unless it were a bootstrap wrapper — and a bootstrap wrapper adds a registry supply-chain and lifecycle-script layer without improving the final install.
+For Hive it would also contradict Hive's "single binary, no runtime prerequisite" story unless it were a bootstrap wrapper — and a bootstrap wrapper adds a registry supply-chain and lifecycle-script layer without improving the final install.
 
 ## Why Sparkle loses
 
@@ -103,4 +103,3 @@ Of these, manifest signing, the Apple signing identity, and the disable switch e
 - [versioning-and-release.md](versioning-and-release.md) — the contract, the pipeline, signing, and activation; authoritative on conflict
 - [update-experience.md](update-experience.md) — the notice, the commands, and the ecosystem notice survey
 - [../daemon/database-resilience.md](../daemon/database-resilience.md) — the state a daemon restart at activation must preserve
-- [../../SPEC.md](../../SPEC.md) — single binary, no runtime prerequisite; launchd deferred

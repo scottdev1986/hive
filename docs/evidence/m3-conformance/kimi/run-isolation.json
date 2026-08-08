@@ -1,0 +1,139 @@
+{
+  "vendor": "kimi",
+  "phase": "verified",
+  "binary": "/Users/scottkellar/.kimi-code/bin/kimi",
+  "binaryBefore": {
+    "version": "0.31.1",
+    "device": 16777234,
+    "inode": 270670450,
+    "size": 161389504,
+    "mtimeMs": 1785506649108.469
+  },
+  "operatorBefore": {
+    ".kimi-code": "a84d462d8dab2aaded48724e67c5040f926e355bd18e75e3fbaa9f26afb81007"
+  },
+  "borrowed": [
+    ".kimi-code/credentials",
+    ".kimi-code/oauth",
+    ".kimi-code/config.toml"
+  ],
+  "operatorAdjustments": [
+    ".kimi-code/config.toml: prepended default_permission_mode = \"yolo\" so the unattended QA agent can call tools"
+  ],
+  "artifacts": [
+    {
+      "label": "credentials",
+      "sourceMetadata": "7da14dd5f550ce6e828315c8e8ccd63ab27ac09684ac08be75a428a1d72a743d",
+      "destinationMetadata": "05dc6f4b0f8c13bcea7deb6607f2109d3f474b078fda98292e24676f545a7306",
+      "verification": {
+        "nodes": 2,
+        "files": 1,
+        "directories": 1
+      }
+    },
+    {
+      "label": "oauth",
+      "sourceMetadata": "4a9d0f5d6bc6b205c045b6719148819065cc37dc551930bda173383fb17afbe0",
+      "destinationMetadata": "6af7336e33168d39d0b4a11ef3503931256b1c0b86f2a3b5d655108d4035868d",
+      "verification": {
+        "verification": null,
+        "error": "detached credential node is writable: ."
+      }
+    },
+    {
+      "label": "config.toml",
+      "sourceMetadata": "ef8747e0fb816301affbd275cfdf6697840183870e70a16fa39370338bc84475",
+      "destinationMetadata": "537e65cdb50034c16bdde5174065bd9a7dfe097af5e0d864f8cb43e1563981e4",
+      "verification": {
+        "verification": null,
+        "error": "detached credential node is writable: ."
+      }
+    }
+  ],
+  "binaryAfter": {
+    "version": "0.31.1",
+    "device": 16777234,
+    "inode": 270670450,
+    "size": 161389504,
+    "mtimeMs": 1785506649108.469
+  },
+  "operatorAfter": {
+    ".kimi-code": "5056144df808309442f2928cde13635436ffe508b62c07feb041c9ff94b4ca68"
+  },
+  "changedOperatorPaths": [
+    ".kimi-code"
+  ],
+  "changedOperatorNodes": {
+    ".kimi-code": [
+      {
+        "relativePath": "sessions/wd_maya_26c669e773b5/session_8d5edb02-a80c-44fd-93a9-e726d0fccf9a/agents/main/wire.jsonl",
+        "before": {
+          "relativePath": "sessions/wd_maya_26c669e773b5/session_8d5edb02-a80c-44fd-93a9-e726d0fccf9a/agents/main/wire.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284516029,
+          "mode": 420,
+          "size": 1534285,
+          "mtimeMs": 1785680911858.038
+        },
+        "after": {
+          "relativePath": "sessions/wd_maya_26c669e773b5/session_8d5edb02-a80c-44fd-93a9-e726d0fccf9a/agents/main/wire.jsonl",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284516029,
+          "mode": 420,
+          "size": 1541207,
+          "mtimeMs": 1785680942569.3984
+        }
+      },
+      {
+        "relativePath": "sessions/wd_maya_26c669e773b5/session_8d5edb02-a80c-44fd-93a9-e726d0fccf9a/logs/kimi-code.log",
+        "before": {
+          "relativePath": "sessions/wd_maya_26c669e773b5/session_8d5edb02-a80c-44fd-93a9-e726d0fccf9a/logs/kimi-code.log",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284524742,
+          "mode": 420,
+          "size": 45803,
+          "mtimeMs": 1785680911858.0203
+        },
+        "after": {
+          "relativePath": "sessions/wd_maya_26c669e773b5/session_8d5edb02-a80c-44fd-93a9-e726d0fccf9a/logs/kimi-code.log",
+          "kind": "file",
+          "device": 16777234,
+          "inode": 284524742,
+          "mode": 420,
+          "size": 46052,
+          "mtimeMs": 1785680929073.1013
+        }
+      }
+    ]
+  },
+  "artifactsAfter": [
+    {
+      "label": "credentials",
+      "sourceMetadata": "7da14dd5f550ce6e828315c8e8ccd63ab27ac09684ac08be75a428a1d72a743d",
+      "destinationMetadata": "05dc6f4b0f8c13bcea7deb6607f2109d3f474b078fda98292e24676f545a7306",
+      "verification": {
+        "nodes": 2,
+        "files": 1,
+        "directories": 1
+      },
+      "error": null
+    },
+    {
+      "label": "oauth",
+      "sourceMetadata": "4a9d0f5d6bc6b205c045b6719148819065cc37dc551930bda173383fb17afbe0",
+      "destinationMetadata": "6af7336e33168d39d0b4a11ef3503931256b1c0b86f2a3b5d655108d4035868d",
+      "verification": null,
+      "error": "detached credential node is writable: ."
+    },
+    {
+      "label": "config.toml",
+      "sourceMetadata": "ef8747e0fb816301affbd275cfdf6697840183870e70a16fa39370338bc84475",
+      "destinationMetadata": "c8062d333d4773bd28f3abdd8c590cbeb5f7d5d7f2fa98b42da9c967ebe6bafc",
+      "verification": null,
+      "error": "detached credential node is writable: ."
+    }
+  ]
+}

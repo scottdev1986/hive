@@ -57,7 +57,7 @@ implementation file must stop for a boundary decision before implementation.
 
 Generated bindings, tests, fixtures, and build wiring do not count toward those three limits. They remain reviewable release inputs and may not hide implementation logic. One Swift wrapper fences the C ABI on the Hive side.
 
-The bridge may create a manual surface without a child PTY, accept contiguous ordered output, return Ghostty-encoded human input through a bounded callback, inject text/paste through the same encoder, emit the six declared surface events, import/export a complete opaque checkpoint for the exact engine build, and return one caller-owned semantic snapshot. That snapshot is the seventh and final public v1 operation: it captures viewport text/rows, UTF-16 cursor and selection truth, scrollbar state, and locked terminal geometry under one mutex acquisition because stock independent reads can tear across renderer/termio mutation. The renderer copy must not generate canonical PTY query replies.
+The bridge may create a manual surface without a child PTY, accept contiguous ordered output, return Ghostty-encoded user input through a bounded callback, inject text/paste through the same encoder, emit the six declared surface events, import/export a complete opaque checkpoint for the exact engine build, and return one caller-owned semantic snapshot. That snapshot is the seventh and final public v1 operation: it captures viewport text/rows, UTF-16 cursor and selection truth, scrollbar state, and locked terminal geometry under one mutex acquisition because stock independent reads can tear across renderer/termio mutation. The renderer copy must not generate canonical PTY query replies.
 
 No Hive window management, navigation, hierarchy, settings UI, message policy, process management, provider behavior, authorization rule, or product identity may enter the Ghostty tree. A need for any of those is a design failure, not permission to spend more patch budget.
 
@@ -71,7 +71,7 @@ The protected assets are:
 
 - terminal bytes, captures, pasted text, clipboard data, checkpoints, message bodies, and provider environment secrets;
 - exact instance, subject, generation, PID/start-token, process-group, executable/build, socket, output-sequence, and visibility-lease identity;
-- the sole PTY master and ordered human/automated input path;
+- the sole PTY master and ordered user/automated input path;
 - lifecycle authority, message receipts, status source/confidence, and exit/survivor evidence; and
 - the source pin, patch, headers, symbols, helper/framework bytes, signatures, licenses, and SBOM.
 

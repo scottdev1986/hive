@@ -2,16 +2,21 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { HiveDatabase } from "../../src/daemon/db";
-import { DEFAULT_CLASS_BUDGETS } from "../../src/daemon/episodic-projections";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
-import { projectStateDir } from "../../src/daemon/project-state";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { projectStateDir } from "../../src/daemon/project-identity-core/state";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
-import { type AuthorizedFetch, actingAs } from "../../src/daemon/testing";
-import type { AgentRecord } from "../../src/schemas";
+import type {
+  Spawner,
+  SpawnRequest,
+} from "../../src/daemon/spawn/spawn-service";
+import { type AuthorizedFetch, actingAs } from "../support/daemon-test-support";
+import { EpisodicStore } from "../../src/memory-service/episodic";
+import { DEFAULT_CLASS_BUDGETS } from "../../src/memory-service/query";
+import type { AgentRecord } from "../../src/schemas/agent";
 import { required } from "../required";
 
 const T0 = "2026-07-22T10:00:00.000Z";
@@ -73,7 +78,6 @@ const agent = (name: string): AgentRecord => ({
   contextPct: null,
   createdAt: T0,
   lastEventAt: T0,
-  recoveryAttempts: 0,
   capabilityEpoch: 0,
   readOnly: false,
   writeRevoked: false,
@@ -222,9 +226,7 @@ describe("memory_query MCP tool", () => {
       new Date(T1),
     );
 
-    const client = await connectedClient(
-      actingAs(daemon, "operator", "operator"),
-    );
+    const client = await connectedClient(actingAs(daemon, "user", "user"));
     try {
       const now = await query(client, { class: "agent-now", agent: "maya" });
       expect(now.state).toBe("ok");
@@ -339,7 +341,7 @@ describe("memory_query MCP tool", () => {
     const repoRoot = await makeRepo();
     const without = daemonFixture({ repoRoot, episodic: null, agents: [] });
     const clientWithout = await connectedClient(
-      actingAs(without.daemon, "operator", "operator"),
+      actingAs(without.daemon, "user", "user"),
     );
     try {
       const absent = await query(clientWithout, {
@@ -358,7 +360,7 @@ describe("memory_query MCP tool", () => {
       agents: [],
     });
     const clientWith = await connectedClient(
-      actingAs(withStore.daemon, "operator", "operator"),
+      actingAs(withStore.daemon, "user", "user"),
     );
     try {
       const empty = await query(clientWith, {
@@ -381,9 +383,7 @@ describe("memory_query MCP tool", () => {
       episodic: new EpisodicStore(":memory:"),
       agents: [],
     });
-    const client = await connectedClient(
-      actingAs(daemon, "operator", "operator"),
-    );
+    const client = await connectedClient(actingAs(daemon, "user", "user"));
     try {
       await client.callTool({
         name: "memory_write",
@@ -395,10 +395,9 @@ describe("memory_query MCP tool", () => {
           body: "The rebase script exits zero even when it dropped a commit.",
           source: "agent",
           evidence: "Incident replay in the MCP test",
-          status: "verified",
+          status: "unverified",
           supersedes: [],
           date: "2026-07-22",
-          verified: "2026-07-22",
         },
       });
       // A non-pitfall article matching the same terms must NOT surface.
@@ -411,10 +410,9 @@ describe("memory_query MCP tool", () => {
           body: "The rebase script saves ten minutes a day.",
           source: "agent",
           evidence: "Daily use",
-          status: "verified",
+          status: "unverified",
           supersedes: [],
           date: "2026-07-22",
-          verified: "2026-07-22",
         },
       });
 
@@ -434,6 +432,101 @@ describe("memory_query MCP tool", () => {
         query: "kubernetes",
       });
       expect(missing.state).toBe("empty");
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  });
+
+  // Ten short, term-dense articles rank above one long pitfall that carries
+  // the term once. pitfall-check reads the top 8, so filtering to pitfalls
+  // after the query discarded the only pitfall there was and reported an
+  // empty it never measured.
+  async function seedPitfallBuriedCorpus(
+    client: Client,
+    options: { withPitfall: boolean },
+  ): Promise<void> {
+    for (let index = 0; index < 10; index += 1) {
+      await client.callTool({
+        name: "memory_write",
+        arguments: {
+          scope: "repo",
+          topic: "testing",
+          title: `Rebase notes ${index}`,
+          body: "Rebase rebase rebase.",
+          source: "agent",
+          evidence: "Planted by the pitfall-check window test",
+          status: "unverified",
+          supersedes: [],
+          date: "2026-07-22",
+        },
+      });
+    }
+    if (!options.withPitfall) return;
+    await client.callTool({
+      name: "memory_write",
+      arguments: {
+        scope: "repo",
+        topic: "testing",
+        kind: "pitfall",
+        title: "Retried work silently loses commits",
+        body:
+          "A long account of an incident in which work was replayed after a " +
+          "conflict was resolved by hand, the tooling reported success, and " +
+          "the commits that had been picked earlier were quietly discarded " +
+          "without any warning to the user who had asked for the rebase " +
+          "and who then shipped the truncated history to everybody else.",
+        source: "agent",
+        evidence: "Planted by the pitfall-check window test",
+        status: "unverified",
+        supersedes: [],
+        date: "2026-07-22",
+      },
+    });
+  }
+
+  test("pitfall-check finds a pitfall that ranks below the query window", async () => {
+    await makeHome();
+    const { daemon } = daemonFixture({
+      repoRoot: await makeRepo(),
+      episodic: new EpisodicStore(":memory:"),
+      agents: [],
+    });
+    const client = await connectedClient(actingAs(daemon, "user", "user"));
+    try {
+      await seedPitfallBuriedCorpus(client, { withPitfall: true });
+
+      const found = await query(client, {
+        class: "pitfall-check",
+        query: "rebase",
+      });
+      expect(found.state).toBe("ok");
+      expect(
+        found.results.map((row) => (row as { title: string }).title),
+      ).toContain("Retried work silently loses commits");
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  });
+
+  test("pitfall-check reports empty only when the corpus really holds no matching pitfall", async () => {
+    await makeHome();
+    const { daemon } = daemonFixture({
+      repoRoot: await makeRepo(),
+      episodic: new EpisodicStore(":memory:"),
+      agents: [],
+    });
+    const client = await connectedClient(actingAs(daemon, "user", "user"));
+    try {
+      // The same corpus with the pitfall removed: articles still match the
+      // query, so this is the one case where "empty" is the truth.
+      await seedPitfallBuriedCorpus(client, { withPitfall: false });
+
+      const empty = await query(client, {
+        class: "pitfall-check",
+        query: "rebase",
+      });
+      expect(empty.state).toBe("empty");
+      expect(empty.results).toEqual([]);
     } finally {
       await client.close().catch(() => undefined);
     }
@@ -478,22 +571,11 @@ describe("two-way nonce isolation with positive controls", () => {
       type: "agent.status-reported",
       summary: `blocked on the ${NONCE_A} quota`,
     });
-    storeA.recordFact({
-      topic: "billing",
-      title: `decision ${NONCE_A}`,
-      body: `The ${NONCE_A} quota resets at midnight`,
-      source: "test",
-      validAt: T0,
-    });
     seedTokenRows(a.db, "agent-ada");
 
-    const queenA = await connectedClient(
-      actingAs(a.daemon, "operator", "operator"),
-    );
+    const queenA = await connectedClient(actingAs(a.daemon, "user", "user"));
     const adaA = await connectedClient(actingAs(a.daemon, "ada", "writer"));
-    const queenB = await connectedClient(
-      actingAs(b.daemon, "operator", "operator"),
-    );
+    const queenB = await connectedClient(actingAs(b.daemon, "user", "user"));
     const adaB = await connectedClient(actingAs(b.daemon, "ada", "writer"));
     try {
       await queenA.callTool({
@@ -506,10 +588,9 @@ describe("two-way nonce isolation with positive controls", () => {
           body: `Retrying ${NONCE_A} mid-rebase drops commits.`,
           source: "agent",
           evidence: "Isolation fixture",
-          status: "verified",
+          status: "unverified",
           supersedes: [],
           date: "2026-07-22",
-          verified: "2026-07-22",
         },
       });
 
@@ -577,9 +658,7 @@ describe("two-way nonce isolation with positive controls", () => {
       // Storage asserted separately from query: B's store holds nothing of
       // A's, and no file anywhere in B's scope carries NONCE_A bytes.
       expect(JSON.stringify(storeB.eventsFor())).not.toContain(NONCE_A);
-      expect(JSON.stringify(storeB.currentFacts())).not.toContain(NONCE_A);
       expect(JSON.stringify(storeA.eventsFor())).toContain(NONCE_A);
-      expect(JSON.stringify(storeA.currentFacts())).toContain(NONCE_A);
       expect(await fileBytesContain(projectStateDir(rootB), NONCE_A)).toBe(
         false,
       );
@@ -598,13 +677,6 @@ describe("two-way nonce isolation with positive controls", () => {
         type: "agent.status-reported",
         summary: `blocked on the ${NONCE_B} quota`,
       });
-      storeB.recordFact({
-        topic: "billing",
-        title: `decision ${NONCE_B}`,
-        body: `The ${NONCE_B} quota resets at midnight`,
-        source: "test",
-        validAt: T0,
-      });
       await queenB.callTool({
         name: "memory_write",
         arguments: {
@@ -615,10 +687,9 @@ describe("two-way nonce isolation with positive controls", () => {
           body: `Retrying ${NONCE_B} mid-rebase drops commits.`,
           source: "agent",
           evidence: "Isolation fixture",
-          status: "verified",
+          status: "unverified",
           supersedes: [],
           date: "2026-07-22",
-          verified: "2026-07-22",
         },
       });
       const pointB = await query(queenB, {

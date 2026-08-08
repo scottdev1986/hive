@@ -15,11 +15,30 @@
 set -eu
 
 REPO="${HIVE_REPO:-scottdev1986/hive}"
-ROOT="${HIVE_INSTALL_ROOT:-$HOME/.local/share/hive}"
 BIN_DIR="${HIVE_BIN_DIR:-$HOME/.local/bin}"
-VERSION="${1:-latest}"
+VARIANT=prod
+FROM_BUILD=""
+REF=""
+VERSION=latest
 
 die() { printf 'install: %s\n' "$1" >&2; exit 1; }
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --variant) [ "$#" -ge 2 ] || die "--variant requires a value"; VARIANT="$2"; shift 2 ;;
+    --from-build) [ "$#" -ge 2 ] || die "--from-build requires a directory"; FROM_BUILD="$2"; shift 2 ;;
+    --ref) [ "$#" -ge 2 ] || die "--ref requires a git ref"; REF="$2"; shift 2 ;;
+    --*) die "unknown option $1" ;;
+    *) [ "$VERSION" = latest ] || die "only one version may be specified"; VERSION="$1"; shift ;;
+  esac
+done
+case "$VARIANT" in prod|dev|qa) ;; *) die "unknown variant $VARIANT" ;; esac
+[ -z "$FROM_BUILD" ] || [ "$VARIANT" != prod ] || die "--from-build is not allowed for prod"
+[ -z "$REF" ] || [ "$VARIANT" = qa ] || die "--ref is only allowed for qa"
+BIN_NAME=hive
+[ "$VARIANT" = prod ] || BIN_NAME="hive-$VARIANT"
+ROOT="${HIVE_INSTALL_ROOT:-$HOME/.local/share/$BIN_NAME}"
+BIN_LINK="${HIVE_BIN_LINK:-$BIN_DIR/$BIN_NAME}"
 
 # This installer is Darwin-only. BSD mv's -h is the no-follow half of the
 # atomic rename: without it, a `current` symlink to a directory is followed and
@@ -43,12 +62,14 @@ case "$(uname -m)" in
   *) die "unsupported architecture $(uname -m)" ;;
 esac
 
-command -v curl >/dev/null 2>&1 || die "curl is required"
-command -v shasum >/dev/null 2>&1 || die "shasum is required"
+if [ -z "$FROM_BUILD" ]; then
+  command -v curl >/dev/null 2>&1 || die "curl is required"
+  command -v shasum >/dev/null 2>&1 || die "shasum is required"
+fi
 
-if [ "$VERSION" = "latest" ]; then
+if [ -z "$FROM_BUILD" ] && [ "$VERSION" = "latest" ]; then
   API="https://api.github.com/repos/$REPO/releases/latest"
-else
+elif [ -z "$FROM_BUILD" ]; then
   API="https://api.github.com/repos/$REPO/releases/tags/v$VERSION"
 fi
 
@@ -60,26 +81,37 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-printf 'Resolving %s...\n' "$VERSION"
-curl -fsSL -H 'Accept: application/vnd.github+json' "$API" > "$TMP/release.json" ||
-  die "no published release for $VERSION"
-
-TAG="$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$TMP/release.json" | head -1)"
-[ -n "$TAG" ] || die "release has no tag"
-RESOLVED="${TAG#v}"
-BASE="https://github.com/$REPO/releases/download/$TAG"
+if [ -z "$FROM_BUILD" ]; then
+  printf 'Resolving %s...\n' "$VERSION"
+  curl -fsSL -H 'Accept: application/vnd.github+json' "$API" > "$TMP/release.json" ||
+    die "no published release for $VERSION"
+  TAG="$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' "$TMP/release.json" | head -1)"
+  [ -n "$TAG" ] || die "release has no tag"
+  RESOLVED="${TAG#v}"
+  BASE="https://github.com/$REPO/releases/download/$TAG"
+else
+  [ -d "$FROM_BUILD" ] || die "build directory does not exist: $FROM_BUILD"
+  RESOLVED="$VERSION"
+  [ "$RESOLVED" != latest ] || RESOLVED="0.0.0-$VARIANT"
+  printf 'Installing unverified local %s build from %s.\n' "$VARIANT" "$FROM_BUILD"
+fi
 
 fetch() { curl -fsSL "$BASE/$1" -o "$TMP/$1" || die "could not download $1"; }
 fetch_optional() { curl -fsSL "$BASE/$1" -o "$TMP/$1"; }
 
-fetch hive-release.json
-fetch_optional hive-release.json.sig 2>/dev/null ||
-  die "release has no Hive manifest signature"
-signature="$(tr -d '[:space:]' < "$TMP/hive-release.json.sig")"
-[ -n "$signature" ] || die "release manifest signature is empty"
-fetch "hive-darwin-$ARCH"
-fetch "hive-sessiond-darwin-$ARCH"
-fetch HiveWorkspace.tar.gz
+if [ -z "$FROM_BUILD" ]; then
+  fetch hive-release.json
+  fetch_optional hive-release.json.sig 2>/dev/null || die "release has no Hive manifest signature"
+  signature="$(tr -d '[:space:]' < "$TMP/hive-release.json.sig")"
+  [ -n "$signature" ] || die "release manifest signature is empty"
+  fetch "hive-darwin-$ARCH"
+  fetch "hive-sessiond-darwin-$ARCH"
+  fetch HiveWorkspace.tar.gz
+else
+  cp "$FROM_BUILD/hive-darwin-$ARCH" "$TMP/hive-darwin-$ARCH" || die "build has no hive-darwin-$ARCH"
+  cp "$FROM_BUILD/hive-sessiond-darwin-$ARCH" "$TMP/hive-sessiond-darwin-$ARCH" || die "build has no hive-sessiond-darwin-$ARCH"
+  cp "$FROM_BUILD/HiveWorkspace.tar.gz" "$TMP/HiveWorkspace.tar.gz" || die "build has no HiveWorkspace.tar.gz"
+fi
 
 # Every artifact digest must match the manifest. The manifest arrives over TLS;
 # `hive update` also verifies its Ed25519 signature against the embedded key.
@@ -93,9 +125,11 @@ verify() {
   got="$(shasum -a 256 "$TMP/$1" | cut -d' ' -f1)"
   [ "$want" = "$got" ] || die "$1 sha256 mismatch (expected $want, got $got)"
 }
-verify "hive-darwin-$ARCH"
-verify "hive-sessiond-darwin-$ARCH"
-verify HiveWorkspace.tar.gz
+if [ -z "$FROM_BUILD" ]; then
+  verify "hive-darwin-$ARCH"
+  verify "hive-sessiond-darwin-$ARCH"
+  verify HiveWorkspace.tar.gz
+fi
 
 VERSION_DIR="$ROOT/versions/$RESOLVED"
 mkdir -p "$ROOT/versions" "$BIN_DIR"
@@ -108,8 +142,10 @@ tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$STAGING_DIR"
 
 # Exact manifest bytes + normalized signature for offline rollback. This shell
 # does not verify Ed25519; the installed binary does before rollback.
-manifest_base64="$(base64 < "$TMP/hive-release.json" | tr -d '\n')"
-printf '{\n  "schema": 1,\n  "manifestBase64": "%s",\n  "signature": "%s"\n}\n' "$manifest_base64" "$signature" > "$STAGING_DIR/release-verification.json"
+if [ -z "$FROM_BUILD" ]; then
+  manifest_base64="$(base64 < "$TMP/hive-release.json" | tr -d '\n')"
+  printf '{\n  "schema": 1,\n  "manifestBase64": "%s",\n  "signature": "%s"\n}\n' "$manifest_base64" "$signature" > "$STAGING_DIR/release-verification.json"
+fi
 
 # Prove the staged binary runs before it can become `current`.
 reported="$("$STAGING_DIR/hive" --version 2>/dev/null || true)"
@@ -132,7 +168,12 @@ intended_dir="$(cd "$VERSION_DIR" 2>/dev/null && pwd -P || true)"
 [ -n "$intended_dir" ] || die "staged version $VERSION_DIR does not resolve"
 [ "$active_dir" = "$intended_dir" ] ||
   die "current resolved to '${active_dir:-nothing}', expected '$intended_dir'"
-replace_symlink "$ROOT/current/hive" "$BIN_DIR/hive"
+if [ "$VARIANT" != prod ]; then
+  HIVE_BUILD_VARIANT="$VARIANT" \
+  HIVE_HOME="${HIVE_HOME:-}" \
+  "$VERSION_DIR/hive" migrate-home || die "home migration failed"
+fi
+replace_symlink "$ROOT/current/hive" "$BIN_LINK"
 
 printf '{\n  "active": "%s",\n  "previous": %s\n}\n' "$RESOLVED" \
   "$([ -n "${PREVIOUS:-}" ] && printf '"%s"' "$PREVIOUS" || printf 'null')" \
@@ -145,8 +186,9 @@ printf '{\n  "active": "%s",\n  "previous": %s\n}\n' "$RESOLVED" \
 # memory is degraded product, not a broken install. Silent gap is never OK.
 EMBEDDINGS_DIR="${HIVE_EMBEDDINGS_HOME:-${HIVE_HOME:-$HOME/.hive}/tools/embeddings}"
 embeddings_note=""
-printf 'Fetching the embedding runtime...\n'
-if ! fetch_optional embeddings-runtime.tar.gz 2>/dev/null; then
+if [ -n "$FROM_BUILD" ]; then
+  embeddings_note="local builds provision embeddings through hive init"
+elif ! printf 'Fetching the embedding runtime...\n' || ! fetch_optional embeddings-runtime.tar.gz 2>/dev/null; then
   embeddings_note="the release publishes no embeddings-runtime.tar.gz, or it could not be downloaded"
 elif [ "$(digest_in_manifest embeddings-runtime.tar.gz)" != \
   "$(shasum -a 256 "$TMP/embeddings-runtime.tar.gz" | cut -d' ' -f1)" ]; then

@@ -1,212 +1,117 @@
 import { describe, expect, test } from "bun:test";
-import { OrchestratorLaunchFailedError } from "../../src/cli/orchestrator-sessiond";
-import {
-  buildOrchestratorRecoveryBrief,
-  superviseOrchestratorSession,
-} from "../../src/cli/orchestrator-supervisor";
-import type { AgentRecord } from "../../src/schemas";
-import { required } from "../required";
+import { superviseOrchestratorSession } from "../../src/cli/orchestrator-supervisor";
+import type { PrepareQueenLaunchResponse } from "../../src/schemas/run-checkpoint";
 
-function agent(
-  name: string,
-  status: AgentRecord["status"] = "working",
-): AgentRecord {
+const DIGEST = `sha256:${"a".repeat(64)}`;
+
+function prepared(
+  requestId: string,
+  generation: number,
+): PrepareQueenLaunchResponse {
   return {
-    id: `agent-${name}`,
-    name,
-    tool: "codex",
-    model: "gpt-5.6-sol",
-    category: "complex_coding",
-    status,
-    taskDescription: `Implement ${name}'s part of the recovery`,
-    worktreePath: `/repo/.hive/worktrees/${name}`,
-    branch: `hive/${name}-recovery`,
-    recoveryAttempts: 0,
-    contextPct: null,
-    createdAt: "2026-07-13T12:00:00.000Z",
-    lastEventAt: "2026-07-13T13:00:00.000Z",
-    capabilityEpoch: 0,
-    readOnly: false,
-    writeRevoked: false,
+    succession: {
+      successionId: `qsc_00000000-0000-7000-8000-${String(generation).padStart(12, "0")}`,
+      instanceId: "instance",
+      revision: String(generation),
+      createdAt: "2026-08-10T00:00:00.000Z",
+      reason: generation === 1 ? "initial-boot" : "root-exit-with-live-agents",
+      reasonDetail: "test",
+      priorRootGeneration: generation - 1,
+      newRootGeneration: null,
+      proof: { kind: "no-checkpoint", detail: "none" },
+      snapshot: [],
+      replies: [],
+      discrepancies: [],
+      launchRequestId: requestId,
+      bootCapsuleDigest: DIGEST,
+      attestation: null,
+    },
+    targetGeneration: generation,
+    bootCapsule: `capsule generation ${generation}`,
+    bootCapsuleDigest: DIGEST,
+    bootstrap: [],
+    snapshot: [],
   };
 }
 
-describe("orchestrator session supervisor", () => {
-  test("a typed sessiond launch failure is loud and retries only through sessiond", async () => {
-    const launches: string[] = [];
-    const reports: string[] = [];
+describe("universal queen launch preparation", () => {
+  test("initial boot prepares before launch and passes the boot capsule and generation", async () => {
+    const calls: string[] = [];
     const result = await superviseOrchestratorSession({
-      launch: async (brief) => {
-        launches.push(brief);
-        if (launches.length === 1) {
-          throw new OrchestratorLaunchFailedError(
-            "sessiond broker unavailable",
-          );
-        }
+      initialTool: "claude",
+      desiredTool: async () => null,
+      prepareLaunch: async (request) => {
+        calls.push(`prepare:${request.reason}`);
+        return prepared(request.requestId, 1);
+      },
+      launch: async (_tool, launch) => {
+        calls.push(`launch:${launch.bootCapsule}:${launch.targetGeneration}`);
         return 0;
       },
-      fetchAgents: async () => (launches.length === 1 ? [agent("maya")] : []),
-      sendRecoveryPing: async () => {},
+      reportLaunchFailure: async () => {},
+      fetchAgents: async () => [],
       sleep: async () => {},
-      now: (() => {
-        let now = 0;
-        return () => (now += 60_000);
-      })(),
-      report: (message) => {
-        reports.push(message);
-      },
+      now: () => 20_000,
+      report: () => {},
     });
-
     expect(result).toBe(0);
-    expect(launches).toHaveLength(2);
-    expect(reports).toContain(
-      "[hive] ORCHESTRATOR_LAUNCH_FAILED: sessiond broker unavailable",
-    );
-    expect(launches[1]).toContain("BACKUP ORCHESTRATOR");
-  });
-
-  test("does not replace a startup or finished-session root when no agents are live", async () => {
-    const launches: string[] = [];
-    const pings: string[] = [];
-    const reports: string[] = [];
-    const exitCode = await superviseOrchestratorSession({
-      launch: async (brief) => {
-        launches.push(brief);
-        return 17;
-      },
-      fetchAgents: async () => [agent("maya", "done")],
-      sendRecoveryPing: async (name) => {
-        pings.push(name);
-      },
-      sleep: async () => {},
-      now: (() => {
-        let now = 0;
-        return () => (now += 60_000);
-      })(),
-      report: (message) => {
-        reports.push(message);
-      },
-    });
-
-    expect(exitCode).toEqual(17);
-    expect(launches).toEqual([""]);
-    expect(pings).toEqual([]);
-    expect(reports).toEqual([
-      "[hive] orchestrator exited with code 17; no live agents remain",
+    expect(calls).toEqual([
+      "prepare:initial-boot",
+      "launch:capsule generation 1:1",
     ]);
   });
 
-  test("starts a labelled backup and asks every live agent for current work", async () => {
-    const launches: string[] = [];
-    const pings: Array<{ name: string; body: string }> = [];
-    const exitCodes = [9, 0];
-    const exitCode = await superviseOrchestratorSession({
-      launch: async (brief) => {
-        launches.push(brief);
-        return required(exitCodes.shift());
+  test("a root exit with live workers prepares the next launch without a post-exit compiler", async () => {
+    let launches = 0;
+    const reasons: string[] = [];
+    const result = await superviseOrchestratorSession({
+      initialTool: "claude",
+      desiredTool: async () => null,
+      prepareLaunch: async (request) => {
+        reasons.push(request.reason);
+        return prepared(request.requestId, reasons.length);
       },
+      launch: async () => (++launches === 1 ? 9 : 0),
+      reportLaunchFailure: async () => {},
       fetchAgents: async () =>
-        launches.length === 1
-          ? [agent("maya"), agent("noah", "idle"), agent("closed", "dead")]
+        launches === 1
+          ? [
+              {
+                id: "agent-1",
+                name: "maya",
+                status: "working",
+                branch: "hive/maya",
+                worktreePath: "/repo/maya",
+                lastEventAt: "2026-08-10T00:00:00.000Z",
+              } as never,
+            ]
           : [],
-      sendRecoveryPing: async (name, body) => {
-        pings.push({ name, body });
-      },
       sleep: async () => {},
-      now: (() => {
-        let now = 0;
-        return () => (now += 60_000);
-      })(),
+      now: () => launches * 20_000,
       report: () => {},
     });
-
-    expect(exitCode).toEqual(0);
-    expect(launches).toHaveLength(2);
-    expect(launches[0]).toEqual("");
-    expect(launches[1]).toContain("BACKUP ORCHESTRATOR");
-    expect(launches[1]).toContain("exit code 9");
-    expect(launches[1]).toContain("maya | codex/gpt-5.6-sol | working");
-    expect(launches[1]).toContain("hive/maya-recovery");
-    expect(launches[1]).toContain("/repo/.hive/worktrees/maya");
-    expect(launches[1]).toContain("noah | codex/gpt-5.6-sol | idle");
-    expect(launches[1]).not.toContain("closed | codex");
-    expect(pings.map((ping) => ping.name)).toEqual(["maya", "noah"]);
-    for (const ping of pings) {
-      expect(ping.body).toContain("previous orchestrator exited");
-      expect(ping.body).toContain("branch and worktree");
-      expect(ping.body).toContain("files you are changing");
-      expect(ping.body).toContain("blockers");
-    }
+    expect(result).toBe(0);
+    expect(reasons).toEqual(["initial-boot", "root-exit-with-live-agents"]);
   });
 
-  test("treats unreadable daemon state as unknown and waits before deciding", async () => {
-    const events: string[] = [];
-    let reads = 0;
-    const exitCode = await superviseOrchestratorSession({
-      launch: async (brief) => {
-        events.push(`launch:${brief === "" ? "primary" : "backup"}`);
-        return 4;
+  test("provider steering prepares a provider-change launch", async () => {
+    let launches = 0;
+    const reasons: string[] = [];
+    const result = await superviseOrchestratorSession({
+      initialTool: "claude",
+      desiredTool: async () => (launches === 1 ? "codex" : null),
+      prepareLaunch: async (request) => {
+        reasons.push(request.reason);
+        return prepared(request.requestId, reasons.length);
       },
-      fetchAgents: async () => {
-        reads += 1;
-        events.push(`read:${reads}`);
-        if (reads === 1) throw new Error("daemon unavailable");
-        return [];
-      },
-      sendRecoveryPing: async () => {},
-      sleep: async () => {
-        events.push("sleep");
-      },
-      now: (() => {
-        let now = 0;
-        return () => (now += 60_000);
-      })(),
-      report: (message) => {
-        events.push(`report:${message}`);
-      },
-    });
-
-    expect(exitCode).toEqual(4);
-    expect(events[0]).toEqual("launch:primary");
-    expect(events).toContain("read:1");
-    expect(events).toContain("sleep");
-    expect(events).toContain("read:2");
-    expect(events.filter((event) => event === "launch:backup")).toEqual([]);
-    expect(
-      events.some((event) => event.includes("cannot determine whether")),
-    ).toEqual(true);
-  });
-
-  test("reports an unconfirmed ping in the backup brief without blocking recovery", async () => {
-    const launches: string[] = [];
-    await superviseOrchestratorSession({
-      launch: async (brief) => {
-        launches.push(brief);
-        return 0;
-      },
-      fetchAgents: async () =>
-        launches.length === 1 ? [agent("maya"), agent("noah")] : [],
-      sendRecoveryPing: async (name) => {
-        if (name === "noah") throw new Error("delivery unavailable");
-      },
+      launch: async () => (++launches === 1 ? 1 : 0),
+      reportLaunchFailure: async () => {},
+      fetchAgents: async () => [],
       sleep: async () => {},
-      now: (() => {
-        let now = 0;
-        return () => (now += 60_000);
-      })(),
+      now: () => launches * 20_000,
       report: () => {},
     });
-
-    expect(launches[1]).toContain("Recovery request durably recorded: maya");
-    expect(launches[1]).toContain("Recovery request NOT confirmed: noah");
-  });
-
-  test("bounds task text included in a recovery brief", () => {
-    const long = agent("maya");
-    long.taskDescription = "x".repeat(1_000);
-    const brief = buildOrchestratorRecoveryBrief(2, 137, [long], []);
-    expect(brief.length).toBeLessThan(2_000);
-    expect(brief).toContain("backup generation 2");
-    expect(brief).toContain("exit code 137");
+    expect(result).toBe(0);
+    expect(reasons).toEqual(["initial-boot", "provider-change"]);
   });
 });

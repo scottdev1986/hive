@@ -8,9 +8,8 @@ import XCTest
 ///
 /// Decoding must degrade NARROWLY — an unknown effort mode costs its own
 /// field and an unknown router mode costs its route's editor, never the whole
-/// document. A strict throw on one unrecognised value fails the document,
-/// Settings falls back to the provisional store, and every setting silently
-/// stops persisting.
+/// document. Effective routing state and the category catalog are supplied by
+/// the daemon-owned Workspace view, not interpreted from this raw document.
 final class RoutingPolicyWireContractTests: XCTestCase {
 
     private func wireFixture() throws -> Data {
@@ -29,8 +28,8 @@ final class RoutingPolicyWireContractTests: XCTestCase {
 
         XCTAssertEqual(document.schemaVersion, 3)
         XCTAssertEqual(document.revision, 6)
-        XCTAssertEqual(document.providerState(ProviderID("claude")), .enabled)
-        XCTAssertEqual(document.providerState(ProviderID("grok")), .disabled)
+        XCTAssertEqual(document.providers["claude"], "enabled")
+        XCTAssertEqual(document.providers["grok"], "disabled")
 
         // never-configured and hive-decides are REAL daemon values, and they
         // mean "the user has not chosen" — which is nil, not a fabricated
@@ -66,46 +65,16 @@ final class RoutingPolicyWireContractTests: XCTestCase {
         XCTAssertEqual(global.candidates.count, 2)
     }
 
-    /// THE CATEGORY PARITY GUARD, and the drift it exists to make impossible.
-    ///
-    /// `standard_coding` sat in the daemon's schema for months while this enum
-    /// had never heard of it. Settings builds one card per TaskCategory.allCases,
-    /// so the route simply had no card: the user could not see it, could not
-    /// configure it, and the daemon routed real work through it anyway — which
-    /// is how a standard_coding spawn came to refuse every candidate with no
-    /// way for the user to fix it. Both suites were green the whole time,
-    /// because each side only ever checked its own half.
-    ///
-    /// The fixture is the handshake. Its keys are pinned to the daemon's full
-    /// category set by the TS twin (routing-policy.wire-contract.test.ts), so
-    /// this assertion transitively pins THIS enum to the daemon's schema. Add a
-    /// category on either side alone and one of the two tests goes red.
-    func testEveryDaemonCategoryIsNameableByThisApp() throws {
+    func testEveryRouteInTheRawDocumentRemainsReadableByIdentifier() throws {
         let document = try RoutingPolicyDocument.decode(from: try wireFixture())
-
-        let wireCategories = Set(document.categories.keys)
-        let appCategories = Set(TaskCategory.allCases.map(\.rawValue))
-
-        XCTAssertEqual(
-            appCategories, wireCategories,
-            """
-            TaskCategory and the daemon's routing categories have drifted. \
-            A daemon category this app cannot name is a route the user can \
-            neither see nor edit while work routes through it; an app category \
-            the daemon does not know is a control that writes a route the \
-            daemon will reject.
-            """)
+        XCTAssertTrue(document.categories.keys.contains("standard_coding"))
         XCTAssertNotNil(
             document.global,
             "the global route must survive the wire like any category's")
-
-        // Every category the app offers resolves to the route the daemon sent:
-        // parity of NAMES is not parity of READS.
-        for category in TaskCategory.allCases {
-            let route = document.route(for: category)
-            XCTAssertEqual(
-                route?.candidates.isEmpty, false,
-                "\(category.rawValue) decoded to no route — the card would render blank")
+        for (identifier, route) in document.categories {
+            XCTAssertFalse(
+                route.candidates.isEmpty,
+                "\(identifier) decoded to no route")
         }
     }
 
@@ -132,11 +101,12 @@ final class RoutingPolicyWireContractTests: XCTestCase {
         let document = try RoutingPolicyDocument.decode(from: Data(json.utf8))
 
         XCTAssertEqual(document.revision, 11)
-        XCTAssertEqual(document.providerState(ProviderID("claude")), .enabled)
+        XCTAssertEqual(document.providers["claude"], "enabled")
         XCTAssertEqual(
-            document.modelState(provider: ProviderID("claude"), model: "claude-opus-4-8").state,
-            .enabled,
-            "an unknown effort mode must not cost the row its enablement")
+            document.modelRow(
+                provider: ProviderID("claude"), model: "claude-opus-4-8")?.state,
+            "enabled",
+            "an unknown effort mode must not cost the raw row its state")
         XCTAssertNil(
             document.modelEffort(provider: ProviderID("claude"), model: "claude-opus-4-8"),
             "an effort this build cannot name reads as no choice — never as a guess")
@@ -157,6 +127,28 @@ final class RoutingPolicyWireContractTests: XCTestCase {
             (try JSONSerialization.jsonObject(with: reencoded) as? [String: Any])?["mode"]
                 as? String)
         XCTAssertEqual(mode, "thinking-budget")
+    }
+
+    func testUnknownCandidateEffortCostsOnlyItsRouteEditor() throws {
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try wireFixture()) as? [String: Any])
+        var categories = try XCTUnwrap(json["categories"] as? [String: Any])
+        var planning = try XCTUnwrap(categories["planning"] as? [String: Any])
+        var candidates = try XCTUnwrap(planning["candidates"] as? [[String: Any]])
+        candidates[0]["effort"] = ["mode": "thinking-budget"]
+        planning["candidates"] = candidates
+        categories["planning"] = planning
+        json["categories"] = categories
+
+        let document = try RoutingPolicyDocument.decode(
+            from: JSONSerialization.data(withJSONObject: json))
+        let route = try XCTUnwrap(document.route(for: .planning))
+        XCTAssertEqual(route.candidates[0].effort, .unknown("thinking-budget"))
+        XCTAssertFalse(route.writable)
+        XCTAssertEqual(
+            document.route(for: .complexCoding)?.writable,
+            true,
+            "the unknown candidate must not blank or freeze another route")
     }
 
     /// The honest half of the contract: what genuinely IS required still

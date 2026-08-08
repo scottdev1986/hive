@@ -1,11 +1,15 @@
 const std = @import("std");
 const neutral_host = @import("neutral_host");
-const neutral_control_plane = @import("neutral_control_plane");
+
 const process_inspector = @import("process_inspector");
 const protocol = @import("protocol");
 const pty_host = @import("pty_host");
 const generated = @import("session_protocol_generated");
 
+const neutral_contract = @import("neutral_contract");
+const neutral_runtime = @import("neutral_runtime");
+const neutral_evidence = @import("neutral_evidence");
+const neutral_operations = @import("neutral_operations");
 const c = @cImport({
     @cInclude("signal.h");
     @cInclude("sys/wait.h");
@@ -17,11 +21,7 @@ pub fn main() !void {
     const allocator = debug_allocator.allocator();
     try neutral_host.proveLiveLifecycle(allocator);
 
-    // Bind the two suites. neutral_host stays project-neutral and cannot see
-    // the Hive wire schema; this layer imports both, so the create results the
-    // host actually commits are validated against the schema generated from
-    // src/schemas/session-protocol.ts. Without this the native side can be
-    // green against its own shapes while disagreeing with the wire.
+    // Bind the two suites. neutral_host stays project-neutral and cannot see the Hive wire schema; this layer imports both, so the create results the host actually commits are validated against the schema generated from src/schemas/session-protocol.ts. Without this the native side can be green against its own shapes while disagreeing with the wire.
     const documents = try neutral_host.proveCreateResultDocuments(allocator);
     defer documents.deinit(allocator);
     for ([_][]const u8{ documents.running, documents.refused }) |document| {
@@ -35,11 +35,7 @@ pub fn main() !void {
     try proveControllerCreate(allocator);
 }
 
-/// The frozen `create` handler, end to end and on the wire's terms: a request
-/// document that the frozen request schema accepts goes in, a real replacement
-/// is launched, and the result document is validated against the frozen result
-/// schema. Both directions are checked here rather than in the control plane's
-/// own tests because that module deliberately cannot see the Hive wire schema.
+/// The frozen `create` handler, end to end and on the wire's terms: a request document that the frozen request schema accepts goes in, a real replacement is launched, and the result document is validated against the frozen result schema. Both directions are checked here rather than in the control plane's own tests because that module deliberately cannot see the Hive wire schema.
 fn proveControllerCreate(allocator: std.mem.Allocator) !void {
     var root_storage: [64]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/ncc-{x}", .{
@@ -51,20 +47,20 @@ fn proveControllerCreate(allocator: std.mem.Allocator) !void {
     try root_directory.chmod(0o700);
     root_directory.close();
 
-    var runtime = try neutral_host.Runtime.open(allocator, root);
+    var runtime = try neutral_runtime.Runtime.open(allocator, .{ .socket = root, .state = root });
     defer runtime.deinit();
-    var registry = try neutral_host.Registry.open(allocator, &runtime);
+    var registry = try neutral_runtime.Registry.open(allocator, &runtime);
     defer registry.deinit();
     var pty = try pty_host.PtyHost.init(allocator);
     defer pty.deinit();
     var direct = neutral_host.DirectHost.init(allocator, &registry, &pty);
     defer direct.deinit();
     var platform = process_inspector.RealPlatform.init();
-    var controller: neutral_control_plane.Controller = .{
+    var controller: neutral_operations.Controller = .{
         .allocator = allocator,
         .registry = &registry,
         .platform = platform.platform(),
-        .clock = neutral_control_plane.EvidenceClock.system(),
+        .clock = neutral_evidence.EvidenceClock.system(),
         .host = direct.host(),
     };
 
@@ -131,8 +127,7 @@ fn proveControllerCreate(allocator: std.mem.Allocator) !void {
     if (!std.mem.eql(u8, parsed.value.session.key, "foreign://neutral/controller-create"))
         return error.ControllerCreateWrongSession;
 
-    // The same idempotency key must replay the committed document verbatim
-    // rather than launching a second replacement.
+    // The same idempotency key must replay the committed document verbatim rather than launching a second replacement.
     const replayed = try controller.create(request);
     defer allocator.free(replayed);
     if (!std.mem.eql(u8, created, replayed)) return error.ControllerCreateReplayDiverged;
@@ -147,43 +142,34 @@ fn proveControllerCreate(allocator: std.mem.Allocator) !void {
     _ = c.waitpid(child_pid, &status, 0);
 }
 
-/// Drives `resize` over the route the PRODUCT takes: Controller.resize, across
-/// the neutral Client/Endpoint transport, into a HostOperations bound to a REAL
-/// terminal. Calling handler().call on a hand-built operations object is not
-/// enough: the shipped host could bind no terminal and answer every resize
-/// `unknown` while that path still passed — this golden requires the real
-/// client/server wiring.
-///
-/// The geometry asserted is what the terminal reported through TIOCGWINSZ after
-/// the set, so a projection that echoed the request cannot pass, and a
-/// superseded revision comes back as `stale` naming the revision in force.
+/// Drives `resize` over the route the PRODUCT takes: Controller.resize, across the neutral Client/Endpoint transport, into a HostOperations bound to a REAL terminal. Calling handler().call on a hand-built operations object is not enough: the shipped host could bind no terminal and answer every resize `unknown` while that path still passed — this golden requires the real client/server wiring. The geometry asserted is what the terminal reported through TIOCGWINSZ after the set, so a projection that echoed the request cannot pass, and a superseded revision comes back as `stale` naming the revision in force.
 fn proveResizeOverTheRealRoute(
     allocator: std.mem.Allocator,
-    runtime: *neutral_host.Runtime,
-    registry: *neutral_host.Registry,
+    runtime: *neutral_runtime.Runtime,
+    registry: *neutral_runtime.Registry,
     pty: *pty_host.PtyHost,
     platform: process_inspector.Platform,
-    session: neutral_host.SessionRef,
+    session: neutral_contract.SessionRef,
 ) !void {
-    var endpoint = try neutral_host.HostEndpoint.open(allocator, runtime, session);
+    var endpoint = try neutral_runtime.HostEndpoint.open(allocator, runtime, session);
     defer endpoint.deinit();
     var evidence: GoldenEvidence = .{};
     var terminal: PtyTerminal = .{ .pty = pty };
-    var operations = try neutral_control_plane.HostOperations.init(
+    var operations = try neutral_operations.HostOperations.init(
         allocator,
         registry,
         endpoint.session,
         platform,
         evidence.provider(),
-        neutral_control_plane.EvidenceClock.system(),
+        neutral_evidence.EvidenceClock.system(),
         terminal.provider(),
     );
     defer operations.deinit();
-    var controller: neutral_control_plane.Controller = .{
+    var controller: neutral_operations.Controller = .{
         .allocator = allocator,
         .registry = registry,
         .platform = platform,
-        .clock = neutral_control_plane.EvidenceClock.system(),
+        .clock = neutral_evidence.EvidenceClock.system(),
     };
 
     const window = .{
@@ -200,8 +186,7 @@ fn proveResizeOverTheRealRoute(
         .idempotencyKey = "controller-resize-1",
     }, .{});
     defer allocator.free(request);
-    // The wire request carries no schemaVersion, so validate the frozen shape
-    // the caller actually sends rather than the transport envelope.
+    // The wire request carries no schemaVersion, so validate the frozen shape the caller actually sends rather than the transport envelope.
     const wire_request = try std.json.Stringify.valueAlloc(allocator, .{
         .session = session,
         .window = window,
@@ -215,18 +200,13 @@ fn proveResizeOverTheRealRoute(
         wire_request,
     )) return error.ResizeRequestViolatesWireSchema;
 
-    // Controller.resize connects over the endpoint socket and blocks until the
-    // host answers, so the host is served from another thread. This is the same
-    // client/server split the product runs; nothing here reaches the handler.
+    // Controller.resize connects over the endpoint socket and blocks until the host answers, so the host is served from another thread. This is the same client/server split the product runs; nothing here reaches the handler.
     var server: EndpointServer = .{ .endpoint = &endpoint, .operations = &operations };
     const applied = try server.round(&controller, request);
     defer allocator.free(applied);
     try validateResizeResult(allocator, applied);
 
-    // The outcome fields are optional HERE only so the state check reports the
-    // real problem: an unbound terminal answers `unknown`, and a struct that
-    // demanded `revision` would fail as a parse error rather than naming it.
-    // Both are required below once the state is known to be `applied`.
+    // The outcome fields are optional HERE only so the state check reports the real problem: an unbound terminal answers `unknown`, and a struct that demanded `revision` would fail as a parse error rather than naming it. Both are required below once the state is known to be `applied`.
     const Applied = struct {
         state: []const u8,
         revision: ?[]const u8 = null,
@@ -243,23 +223,13 @@ fn proveResizeOverTheRealRoute(
     if (readback.columns != window.columns or readback.rows != window.rows)
         return error.ResizeReadbackDiverged;
 
-    // The durable record must now hold what the TERMINAL reported, because a
-    // later inspection answers from it.
+    // The durable record must now hold what the TERMINAL reported, because a later inspection answers from it.
     const record = registry.get(session) orelse return error.ResizeSessionMissing;
     if (record.windowRevision != 7) return error.ResizeRevisionNotCommitted;
     if (record.window.columns != window.columns or record.window.rows != window.rows)
         return error.ResizeWindowNotCommitted;
 
-    // PARTIAL IDEMPOTENCY -- pins what the implementation does today, and
-    // deliberately does NOT certify it as the full contract.
-    //
-    // Full receipt replay needs durable per-session receipt storage
-    // (idempotency key + request digest + the applied receipt). Without that,
-    // an identical replay is answered `stale` naming the revision in force.
-    // That answer is TRUTHFUL -- revision 7 really is current, and no second
-    // mutation happened, which is the guarantee that protects the terminal.
-    // It is not full receipt replay. The assertion below pins the current
-    // behavior so a change is visible, and must not be read as the target.
+    // PARTIAL IDEMPOTENCY -- pins what the implementation does today, and deliberately does NOT certify it as the full contract. Full receipt replay needs durable per-session receipt storage (idempotency key + request digest + the applied receipt). Without that, an identical replay is answered `stale` naming the revision in force. That answer is TRUTHFUL -- revision 7 really is current, and no second mutation happened, which is the guarantee that protects the terminal. It is not full receipt replay. The assertion below pins the current behavior so a change is visible, and must not be read as the target.
     const replayed = try server.round(&controller, request);
     defer allocator.free(replayed);
     try validateResizeResult(allocator, replayed);
@@ -271,8 +241,7 @@ fn proveResizeOverTheRealRoute(
     // The invariant that must hold either way: a replay never mutates again.
     if (pty.resizeRevision() != 7) return error.ResizeReplayMutatedAgain;
     if (std.mem.eql(u8, replay_parsed.value.state, "applied")) {
-        // Receipt replay path: the contract target, not a regression -- but
-        // it must be the SAME revision, not a new mutation.
+        // Receipt replay path: the contract target, not a regression -- but it must be the SAME revision, not a new mutation.
         return;
     }
     if (!std.mem.eql(u8, replay_parsed.value.state, "stale")) return error.ResizeReplayNotStale;
@@ -282,8 +251,7 @@ fn proveResizeOverTheRealRoute(
 }
 
 fn validateResizeResult(allocator: std.mem.Allocator, payload: []const u8) !void {
-    // Strip the transport envelope: the frozen result schema is strict, and
-    // schemaVersion belongs to the operation frame rather than the result.
+    // Strip the transport envelope: the frozen result schema is strict, and schemaVersion belongs to the operation frame rather than the result.
     var parsed = try std.json.parseFromSlice(std.json.Value, allocator, payload, .{});
     defer parsed.deinit();
     _ = parsed.value.object.swapRemove("schemaVersion");
@@ -296,16 +264,15 @@ fn validateResizeResult(allocator: std.mem.Allocator, payload: []const u8) !void
     )) return error.ResizeResultViolatesWireSchema;
 }
 
-/// The real terminal behind the neutral seam. pty_host owns the ordered set and
-/// the post-set readback; the control plane only projects what it returns.
+/// The real terminal behind the neutral seam. pty_host owns the ordered set and the post-set readback; the control plane only projects what it returns.
 const PtyTerminal = struct {
     pty: *pty_host.PtyHost,
 
     fn resize(
         context: *anyopaque,
-        window: neutral_host.WindowSize,
+        window: neutral_contract.WindowSize,
         revision: u64,
-    ) anyerror!neutral_control_plane.TerminalResize {
+    ) anyerror!neutral_evidence.TerminalResize {
         const self: *PtyTerminal = @ptrCast(@alignCast(context));
         const receipt = self.pty.resize(.{
             .columns = window.columns,
@@ -327,16 +294,15 @@ const PtyTerminal = struct {
         } };
     }
 
-    fn provider(self: *PtyTerminal) neutral_control_plane.TerminalProvider {
+    fn provider(self: *PtyTerminal) neutral_evidence.TerminalProvider {
         return .{ .context = self, .resizeFn = resize };
     }
 };
 
-/// One request/response round over the real transport: the host serves on a
-/// thread while Controller.resize drives the client side.
+/// One request/response round over the real transport: the host serves on a thread while Controller.resize drives the client side.
 const EndpointServer = struct {
-    endpoint: *neutral_host.HostEndpoint,
-    operations: *neutral_control_plane.HostOperations,
+    endpoint: *neutral_runtime.HostEndpoint,
+    operations: *neutral_operations.HostOperations,
     served: ?anyerror = null,
 
     fn serve(self: *EndpointServer) void {
@@ -347,7 +313,7 @@ const EndpointServer = struct {
 
     fn round(
         self: *EndpointServer,
-        controller: *neutral_control_plane.Controller,
+        controller: *neutral_operations.Controller,
         request: []const u8,
     ) ![]u8 {
         self.served = null;
@@ -359,7 +325,7 @@ const EndpointServer = struct {
     }
 };
 
-fn geometryToWindow(geometry: pty_host.Geometry) neutral_host.WindowSize {
+fn geometryToWindow(geometry: pty_host.Geometry) neutral_contract.WindowSize {
     return .{
         .columns = geometry.columns,
         .rows = geometry.rows,
@@ -369,11 +335,11 @@ fn geometryToWindow(geometry: pty_host.Geometry) neutral_host.WindowSize {
 }
 
 const GoldenEvidence = struct {
-    fn measure(_: *anyopaque, _: std.mem.Allocator) !neutral_control_plane.LiveEvidence {
+    fn measure(_: *anyopaque, _: std.mem.Allocator) !neutral_evidence.LiveEvidence {
         return .{};
     }
 
-    fn provider(self: *GoldenEvidence) neutral_control_plane.EvidenceProvider {
+    fn provider(self: *GoldenEvidence) neutral_evidence.EvidenceProvider {
         return .{ .context = self, .measureFn = measure };
     }
 };

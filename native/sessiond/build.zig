@@ -1,15 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-// Build-time enforcement of the declared toolchain constraint (the exact pin
-// lives in native/toolchain-lock.json: zig.version = 0.15.2; the floor is
-// this package's minimum_zig_version). The ceiling is real, not preference:
-// the vendored Ghostty tree (vendor/ghostty) does not build on Zig 0.16 —
-// 0.16 removed std.Build APIs it uses (Step.Compile.linkLibrary/linkLibC as
-// methods, Io.Dir.readFileAlloc signature, third-party pkg build scripts).
-// Fail here with instructions instead of surfacing those as inscrutable
-// errors. This must stay `comptime`: a runtime check would never execute on
-// an incompatible zig because build() itself fails semantic analysis first.
+// Build-time enforcement of the declared toolchain constraint (the exact pin lives in native/toolchain-lock.json: zig.version = 0.15.2; the floor is this package's minimum_zig_version). The ceiling is real, not preference: the vendored Ghostty tree (vendor/ghostty) does not build on Zig 0.16 — 0.16 removed std.Build APIs it uses (Step.Compile.linkLibrary/linkLibC as methods, Io.Dir.readFileAlloc signature, third-party pkg build scripts). Fail here with instructions instead of surfacing those as inscrutable errors. This must stay `comptime`: a runtime check would never execute on an incompatible zig because build() itself fails semantic analysis first.
 comptime {
     const v = builtin.zig_version;
     if (v.major != 0 or v.minor != 15) @compileError(std.fmt.comptimePrint(
@@ -125,44 +117,15 @@ pub fn build(b: *std.Build) void {
     daemon_identity_module.addImport("session_protocol_generated", generated);
     daemon_identity_module.addImport("protocol", test_module);
     _ = addTest(b, test_step, daemon_identity_module);
-    const broker_transport_module = b.createModule(.{
-        .root_source_file = b.path("src/broker_transport.zig"),
+    const session_types_module = b.createModule(.{
+        .root_source_file = b.path("src/session_types.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    broker_transport_module.addImport("session_protocol_generated", generated);
-    const broker_record_module = b.createModule(.{
-        .root_source_file = b.path("src/broker_record.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    broker_record_module.addImport("daemon_identity", daemon_identity_module);
-    broker_record_module.addImport("session_protocol_generated", generated);
-    broker_record_module.addImport("protocol", test_module);
-    const broker_module = b.createModule(.{
-        .root_source_file = b.path("src/broker.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    broker_module.addImport("session_protocol_generated", generated);
-    broker_module.addImport("protocol", test_module);
-    broker_module.addImport("boot_envelope", boot_envelope_module);
-    broker_module.addImport("daemon_identity", daemon_identity_module);
-    broker_module.addImport("broker_transport", broker_transport_module);
-    broker_module.addImport("broker_record", broker_record_module);
-    broker_module.addImport("wall_clock", wall_clock_module);
-    const broker_tests = addTest(b, test_step, broker_module);
-    broker_tests.linkLibrary(ghostty_vt);
-    const broker_api_module = b.createModule(.{
-        .root_source_file = b.path("test/broker-api.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    broker_api_module.addImport("broker", broker_module);
-    const broker_api_tests = addTest(b, test_step, broker_api_module);
-    broker_api_tests.linkLibrary(ghostty_vt);
+    session_types_module.addImport("daemon_identity", daemon_identity_module);
+    const session_types_tests = addTest(b, test_step, session_types_module);
+    session_types_tests.linkLibrary(ghostty_vt);
 
     // WP4 Part A: standalone input arbiter + process inspector (no broker/PTY).
     const input_arbiter_module = b.createModule(.{
@@ -187,8 +150,6 @@ pub fn build(b: *std.Build) void {
     process_inspector_api_module.addImport("process_inspector", process_inspector_module);
     _ = addTest(b, test_step, process_inspector_api_module);
 
-    // WP4-B Track γ: headless VT + journal/checkpoint (export-double testable pre-TG2).
-    // Shared HVTCP001 fixture lives under native/tests/abi (C + Zig dual-source lock).
     const hvtcp001_fixture = b.createModule(.{
         .root_source_file = b.path("../tests/abi/hvtcp001_header.zig"),
         .target = target,
@@ -211,7 +172,6 @@ pub fn build(b: *std.Build) void {
     terminal_state_module.addImport("checkpoint_format", checkpoint_format_module);
     _ = addTest(b, test_step, terminal_state_module);
 
-    // WP4-B Track β: PTY host leaf (integrates process_inspector for spawn snapshot).
     const pty_host_module = b.createModule(.{
         .root_source_file = b.path("src/pty_host.zig"),
         .target = target,
@@ -239,6 +199,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     neutral_contract_module.addImport("pty_host", pty_host_module);
+    neutral_contract_module.addImport("session_protocol_generated", generated);
+    const security_helpers_module = b.createModule(.{
+        .root_source_file = b.path("src/security_helpers.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
     const neutral_runtime_module = b.createModule(.{
         .root_source_file = b.path("src/neutral_runtime.zig"),
         .target = target,
@@ -246,6 +213,8 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     neutral_runtime_module.addImport("neutral_contract", neutral_contract_module);
+    neutral_runtime_module.addImport("session_protocol_generated", generated);
+    neutral_runtime_module.addImport("security_helpers", security_helpers_module);
     const neutral_host_module = b.createModule(.{
         .root_source_file = b.path("src/neutral_host.zig"),
         .target = target,
@@ -257,21 +226,6 @@ pub fn build(b: *std.Build) void {
     neutral_host_module.addImport("neutral_contract", neutral_contract_module);
     neutral_host_module.addImport("neutral_runtime", neutral_runtime_module);
     _ = addTest(b, test_step, neutral_host_module);
-    const broker_host_client_module = b.createModule(.{
-        .root_source_file = b.path("src/broker_host_client.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    broker_host_client_module.addImport("broker_record", broker_record_module);
-    broker_host_client_module.addImport("broker_transport", broker_transport_module);
-    broker_host_client_module.addImport("daemon_identity", daemon_identity_module);
-    broker_host_client_module.addImport("neutral_host", neutral_host_module);
-    broker_host_client_module.addImport("process_inspector", process_inspector_module);
-    broker_host_client_module.addImport("session_protocol_generated", generated);
-    broker_host_client_module.addImport("protocol", test_module);
-    broker_host_client_module.addImport("wall_clock", wall_clock_module);
-    broker_module.addImport("broker_host_client", broker_host_client_module);
     const neutral_host_golden_module = b.createModule(.{
         .root_source_file = b.path("test/neutral-host-golden.zig"),
         .target = target,
@@ -279,8 +233,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     neutral_host_golden_module.addImport("neutral_host", neutral_host_module);
-    // The golden layer validates committed create results against the frozen
-    // wire schema; the neutral module itself must not depend on either.
+    // The golden layer validates committed create results against the frozen wire schema; the neutral module itself must not depend on either.
     neutral_host_golden_module.addImport("protocol", test_module);
     neutral_host_golden_module.addImport("session_protocol_generated", generated);
     neutral_host_golden_module.addImport("pty_host", pty_host_module);
@@ -302,7 +255,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    neutral_evidence_module.addImport("neutral_host", neutral_host_module);
+    neutral_evidence_module.addImport("neutral_contract", neutral_contract_module);
+    neutral_evidence_module.addImport("neutral_runtime", neutral_runtime_module);
     neutral_evidence_module.addImport("process_inspector", process_inspector_module);
     neutral_evidence_module.addImport("session_protocol_generated", generated);
     neutral_evidence_module.addImport("wall_clock", wall_clock_module);
@@ -313,31 +267,20 @@ pub fn build(b: *std.Build) void {
     });
     neutral_operations_module.addImport("neutral_evidence", neutral_evidence_module);
     neutral_operations_module.addImport("neutral_host", neutral_host_module);
+    neutral_operations_module.addImport("neutral_contract", neutral_contract_module);
+    neutral_operations_module.addImport("neutral_runtime", neutral_runtime_module);
     neutral_operations_module.addImport("process_inspector", process_inspector_module);
     neutral_operations_module.addImport("session_protocol_generated", generated);
-    const neutral_control_plane_module = b.createModule(.{
-        .root_source_file = b.path("src/neutral_control_plane.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    neutral_control_plane_module.addImport("neutral_evidence", neutral_evidence_module);
-    neutral_control_plane_module.addImport("neutral_operations", neutral_operations_module);
-    broker_host_client_module.addImport("neutral_control_plane", neutral_control_plane_module);
-    broker_module.addImport("neutral_control_plane", neutral_control_plane_module);
-    broker_module.addImport("neutral_host", neutral_host_module);
-    broker_module.addImport("process_inspector", process_inspector_module);
     const neutral_control_plane_test_module = b.createModule(.{
         .root_source_file = b.path("test/neutral-control-plane.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    neutral_control_plane_test_module.addImport(
-        "neutral_control_plane",
-        neutral_control_plane_module,
-    );
     neutral_control_plane_test_module.addImport("neutral_evidence", neutral_evidence_module);
+    neutral_control_plane_test_module.addImport("neutral_operations", neutral_operations_module);
+    neutral_control_plane_test_module.addImport("neutral_contract", neutral_contract_module);
+    neutral_control_plane_test_module.addImport("neutral_runtime", neutral_runtime_module);
     neutral_control_plane_test_module.addImport("neutral_host", neutral_host_module);
     neutral_control_plane_test_module.addImport(
         "process_inspector",
@@ -354,14 +297,12 @@ pub fn build(b: *std.Build) void {
         "Run frozen neutral LIST/INSPECT/TERMINATE operation tests",
     );
     neutral_control_plane_step.dependOn(&run_neutral_control_plane_tests.step);
-    // Declared here because the golden module is created before this one: the
-    // golden binds the frozen create handler to the wire schema, which neither
-    // the control plane nor the neutral host may see for itself.
-    neutral_host_golden_module.addImport("neutral_control_plane", neutral_control_plane_module);
+    neutral_host_golden_module.addImport("neutral_evidence", neutral_evidence_module);
+    neutral_host_golden_module.addImport("neutral_operations", neutral_operations_module);
+    neutral_host_golden_module.addImport("neutral_contract", neutral_contract_module);
+    neutral_host_golden_module.addImport("neutral_runtime", neutral_runtime_module);
     neutral_host_golden_module.addImport("process_inspector", process_inspector_module);
 
-    // A1 contract-freeze-facing real-host discriminators. Keep the named step
-    // for focused qualification and include it in the ordinary native suite.
     const pending_a1_module = b.createModule(.{
         .root_source_file = b.path("test/pending-a1-contract.zig"),
         .target = target,
@@ -392,8 +333,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    host_record_module.addImport("broker", broker_module);
     host_record_module.addImport("protocol", test_module);
+    host_record_module.addImport("session_types", session_types_module);
     host_record_module.addImport("session_protocol_generated", generated);
     const host_wire_module = b.createModule(.{
         .root_source_file = b.path("src/host_wire.zig"),
@@ -407,44 +348,36 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    host_registration_module.addImport("boot_envelope", boot_envelope_module);
-    host_registration_module.addImport("broker", broker_module);
-    host_registration_module.addImport("executable_identity", executable_identity_module);
     host_registration_module.addImport("host_record", host_record_module);
     host_registration_module.addImport("host_wire", host_wire_module);
     host_registration_module.addImport("protocol", test_module);
+    host_registration_module.addImport("session_types", session_types_module);
     host_registration_module.addImport("session_protocol_generated", generated);
-    host_registration_module.addImport("wall_clock", wall_clock_module);
     const host_runtime_module = b.createModule(.{
         .root_source_file = b.path("src/host_runtime.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    host_runtime_module.addImport("boot_envelope", boot_envelope_module);
-    host_runtime_module.addImport("broker", broker_module);
-    host_runtime_module.addImport("host_record", host_record_module);
-    host_runtime_module.addImport("host_registration", host_registration_module);
     host_runtime_module.addImport("host_wire", host_wire_module);
     host_runtime_module.addImport("protocol", test_module);
     host_runtime_module.addImport("session_protocol_generated", generated);
-    host_runtime_module.addImport("visibility_lease", visibility_lease_module);
+    host_runtime_module.addImport("security_helpers", security_helpers_module);
     const host_core_module = b.createModule(.{
         .root_source_file = b.path("src/host_core.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
-    host_core_module.addImport("broker", broker_module);
     host_core_module.addImport("final_evidence", final_evidence_module);
     host_core_module.addImport("host_record", host_record_module);
     host_core_module.addImport("host_registration", host_registration_module);
     host_core_module.addImport("input_arbiter", input_arbiter_module);
-    host_core_module.addImport("neutral_control_plane", neutral_control_plane_module);
-    host_core_module.addImport("neutral_host", neutral_host_module);
+    host_core_module.addImport("neutral_evidence", neutral_evidence_module);
     host_core_module.addImport("process_inspector", process_inspector_module);
     host_core_module.addImport("protocol", test_module);
     host_core_module.addImport("pty_host", pty_host_module);
+    host_core_module.addImport("session_types", session_types_module);
     host_core_module.addImport("session_protocol_generated", generated);
     host_core_module.addImport("terminal_state", terminal_state_module);
     host_core_module.addImport("visibility_lease", visibility_lease_module);
@@ -456,15 +389,20 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    session_host_module.addImport("broker", broker_module);
     session_host_module.addImport("boot_envelope", boot_envelope_module);
+    session_host_module.addImport("daemon_identity", daemon_identity_module);
     session_host_module.addImport("session_protocol_generated", generated);
     session_host_module.addImport("protocol", test_module);
+    session_host_module.addImport("session_types", session_types_module);
     session_host_module.addImport("input_arbiter", input_arbiter_module);
     session_host_module.addImport("process_inspector", process_inspector_module);
     session_host_module.addImport("pty_host", pty_host_module);
     session_host_module.addImport("neutral_host", neutral_host_module);
-    session_host_module.addImport("neutral_control_plane", neutral_control_plane_module);
+    session_host_module.addImport("neutral_contract", neutral_contract_module);
+    session_host_module.addImport("neutral_runtime", neutral_runtime_module);
+    session_host_module.addImport("neutral_evidence", neutral_evidence_module);
+    session_host_module.addImport("neutral_operations", neutral_operations_module);
+    session_host_module.addImport("checkpoint_format", checkpoint_format_module);
     session_host_module.addImport("terminal_state", terminal_state_module);
     session_host_module.addImport("terminal_adapter", terminal_adapter_module);
     session_host_module.addImport("wall_clock", wall_clock_module);
@@ -472,43 +410,14 @@ pub fn build(b: *std.Build) void {
     session_host_module.addImport("final_evidence", final_evidence_module);
     session_host_module.addImport("host_record", host_record_module);
     session_host_module.addImport("host_wire", host_wire_module);
-    session_host_module.addImport("executable_identity", executable_identity_module);
     session_host_module.addImport("host_registration", host_registration_module);
     session_host_module.addImport("host_runtime", host_runtime_module);
     session_host_module.addImport("host_core", host_core_module);
+    session_host_module.addImport("security_helpers", security_helpers_module);
     session_host_module.addIncludePath(ghostty.path("include"));
     session_host_module.addIncludePath(b.path("../include"));
     const session_host_tests = addTest(b, test_step, session_host_module);
     session_host_tests.linkLibrary(ghostty_vt);
-
-    const real_host_golden_module = b.createModule(.{
-        .root_source_file = b.path("test/real-host-golden.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    real_host_golden_module.addImport("broker", broker_module);
-    real_host_golden_module.addImport("session_protocol_generated", generated);
-    real_host_golden_module.addImport("process_inspector", process_inspector_module);
-    real_host_golden_module.addImport("protocol", test_module);
-    real_host_golden_module.addImport("session_host", session_host_module);
-    const real_host_golden = b.addExecutable(.{
-        .name = "sessiond-real-host-golden",
-        .root_module = real_host_golden_module,
-    });
-    real_host_golden.linkLibrary(ghostty_vt);
-    const run_real_host_golden = b.addRunArtifact(real_host_golden);
-    test_step.dependOn(&run_real_host_golden.step);
-
-    const stub_module = b.createModule(.{
-        .root_source_file = b.path("test/stub_host.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    stub_module.addImport("broker", broker_module);
-    const stub_tests = addTest(b, test_step, stub_module);
-    stub_tests.linkLibrary(ghostty_vt);
 
     const wall_clock_test_module = b.createModule(.{
         .root_source_file = b.path("test/wall-clock.zig"),
@@ -524,7 +433,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    probe_module.addImport("broker", broker_module);
+    probe_module.addImport("daemon_identity", daemon_identity_module);
     const probe = b.addExecutable(.{
         .name = "sessiond-identity-probe",
         .root_module = probe_module,
@@ -538,9 +447,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .strip = if (optimize == .ReleaseFast) true else null,
     });
-    executable_module.addImport("broker", broker_module);
     executable_module.addImport("session_host", session_host_module);
+    executable_module.addImport("session_types", session_types_module);
     const executable = b.addExecutable(.{
         .name = "hive-sessiond",
         .root_module = executable_module,

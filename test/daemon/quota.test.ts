@@ -1,21 +1,25 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HiveDatabase } from "../../src/daemon/db";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
-import { calendarWeekBounds, QuotaService } from "../../src/daemon/quota";
-import {
-  migrateDefaultQuotaLedger,
-  QuotaDatabase,
-  QuotaLedgerUnknownError,
-} from "../../src/daemon/quota-ledger";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
+import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import {
   type QuotaConfig,
   QuotaConfigSchema,
   type QuotaLimit,
-} from "../../src/schemas";
+  type QuotaObservation,
+  QuotaObservationSchema,
+} from "../../src/schemas/quota";
+import { QuotaService } from "../../src/usage-service/usage-quota";
+import { mergeObservationWindows } from "../../src/usage-service/quota-observation-merge";
+import {
+  migrateDefaultQuotaLedger,
+  QuotaDatabase,
+} from "../../src/usage-service/quota-ledger";
+import { QuotaLedgerUnknownError } from "../../src/usage-service/quota-ledger-records";
+import { calendarWeekBounds } from "../../src/usage-service/quota-windows";
 import { required } from "../required";
 import {
   authorizeForQuotaTest,
@@ -23,8 +27,11 @@ import {
 } from "./authorized-launch.test-support";
 
 const roots: string[] = [];
+const originalDefaultHome = process.env.HIVE_DEFAULT_HOME;
 
 afterEach(async () => {
+  if (originalDefaultHome === undefined) delete process.env.HIVE_DEFAULT_HOME;
+  else process.env.HIVE_DEFAULT_HOME = originalDefaultHome;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -451,10 +458,11 @@ describe("quota persistence and reservations", () => {
   test("migrates the default instance's intact quota history into quota.db once", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-quota-migration-"));
     roots.push(root);
+    process.env.HIVE_DEFAULT_HOME = root;
     const legacyPath = join(root, "hive.db");
     const legacyDb = new HiveDatabase(legacyPath);
-    const defaultInstance = hiveInstanceSuffix(join(homedir(), ".hive"));
-    const defaultHome = join(homedir(), ".hive");
+    const defaultInstance = hiveInstanceSuffix(root);
+    const defaultHome = root;
     const legacy = new QuotaLedger(legacyDb, defaultInstance, defaultHome);
     const reservation = legacy.insertUnboundedReservation({
       id: "legacy-reservation",
@@ -477,10 +485,10 @@ describe("quota persistence and reservations", () => {
     );
     legacyDb.close();
 
-    const quotaDb = new QuotaDatabase(join(root, "quota.db"));
+    const quotaDb = new QuotaDatabase();
     const migrated = new QuotaLedger(quotaDb, "instance-b");
-    migrateDefaultQuotaLedger(quotaDb, legacyPath);
-    migrateDefaultQuotaLedger(quotaDb, legacyPath);
+    migrateDefaultQuotaLedger(quotaDb);
+    migrateDefaultQuotaLedger(quotaDb);
     expect(migrated.getReservation(reservation.id)).toMatchObject({
       instanceId: defaultInstance,
       status: "reconciled",
@@ -649,7 +657,6 @@ describe("quota persistence and reservations", () => {
       quotaReservationId: reservation.id,
       createdAt: "2026-07-09T12:00:00.000Z",
       lastEventAt: "2026-07-09T12:00:00.000Z",
-      recoveryAttempts: 0,
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
@@ -662,7 +669,6 @@ describe("quota persistence and reservations", () => {
           throw new Error("unused");
         },
       },
-      sessionSender: { async sendSessionMessage() {} },
       quota: service,
     });
     await daemon.processEvent({
@@ -958,5 +964,69 @@ describe("spend is ordered against a reading by sequence, not by the clock", () 
     report(ledger, 99, observedAt);
     expect(after(ledger)).toBe(1);
     db.close();
+  });
+});
+
+describe("a window the reading did not gauge", () => {
+  const scope = {
+    provider: "claude" as const,
+    account: "personal",
+    pool: "claude-premium",
+  };
+  const gaugedAt = "2026-07-11T14:00:00.000Z";
+  const priorAt = "2026-07-10T14:00:00.000Z";
+
+  // A reading that gauges only the weekly window. The five-hour window keeps
+  // its never-observed nulls, so its Used field is dead weight: what lands is
+  // decided by the merge, not by what the caller put there.
+  const weeklyOnlyReading = (fiveHourUsed: number): QuotaObservation =>
+    QuotaObservationSchema.parse({
+      ...scope,
+      fiveHourUsed,
+      weeklyUsed: 11,
+      observedAt: gaugedAt,
+      source: "provider",
+      confidence: "authoritative",
+      weeklyObservedAt: gaugedAt,
+      weeklySource: "provider",
+      weeklyConfidence: "authoritative",
+    });
+
+  // Guards the deletion of recordDiscoveredReading's carry-forward pre-fill,
+  // which read the prior row outside the upsert's transaction only to copy its
+  // ungauged windows into the incoming row. The ungauged window's null
+  // ObservedAt can never win the merge's recency check, so the copy never
+  // survived to the stored row.
+  test("an ungauged window keeps the prior row's own number whether the incoming row pre-filled it or zeroed it", () => {
+    const prior = QuotaObservationSchema.parse({
+      ...scope,
+      fiveHourUsed: 42,
+      weeklyUsed: 7,
+      observedAt: priorAt,
+      source: "provider",
+      confidence: "authoritative",
+      fiveHourObservedAt: priorAt,
+      fiveHourSource: "provider",
+      fiveHourConfidence: "authoritative",
+      weeklyObservedAt: priorAt,
+      weeklySource: "provider",
+      weeklyConfidence: "authoritative",
+    });
+    const preFilled = mergeObservationWindows(prior, weeklyOnlyReading(42));
+    const zeroed = mergeObservationWindows(prior, weeklyOnlyReading(0));
+    expect(preFilled).toEqual(zeroed);
+    // Pin what they equal, so the equivalence cannot pass on a shared wrong
+    // answer: the prior measurement and its provenance survive for the
+    // ungauged window, and the gauged weekly window advances.
+    expect(zeroed.fiveHourUsed).toBe(42);
+    expect(zeroed.fiveHourObservedAt).toBe(priorAt);
+    expect(zeroed.weeklyUsed).toBe(11);
+    expect(zeroed.weeklyObservedAt).toBe(gaugedAt);
+  });
+
+  test("with no prior row the ungauged window lands as never-observed", () => {
+    const merged = mergeObservationWindows(null, weeklyOnlyReading(0));
+    expect(merged.fiveHourUsed).toBe(0);
+    expect(merged.fiveHourObservedAt).toBeNull();
   });
 });

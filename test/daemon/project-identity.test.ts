@@ -13,7 +13,7 @@ import { join } from "node:path";
 import {
   repairLegacyMountEvidence,
   resolveHandshakeProject,
-} from "../../src/daemon/project-identity";
+} from "../../src/daemon/project-identity-core/project-identity-daemon";
 
 import {
   evidenceMatches,
@@ -21,7 +21,7 @@ import {
   LedgerCapability,
   ProjectRegistry,
   resolveOrCreate,
-} from "../../src/daemon/project-identity-core";
+} from "../../src/daemon/project-identity-core/project-identity-service";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 const originalHiveHome = process.env.HIVE_HOME;

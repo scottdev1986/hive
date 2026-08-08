@@ -5,14 +5,19 @@
 // config writer into a fixture worktree and asserts the produced config, the
 // auth delivery channel, that no capability token ever reaches an argv, and
 // the spawn-time prompt's memory surface.
-// Live-agent recall proofs stay environment-gated
-// (HIVE_LIVE_MEMORY_CONFORMANCE=1), the repo's existing live e2e pattern;
-// this suite is the static half of the vendor matrix.
-import { afterEach, describe, expect, test } from "bun:test";
+// This suite is the static vendor matrix; live behavior belongs to the
+// provider conformance suites that exercise an actual session.
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "../src/adapters/providers/shared/capability-env";
 import {
   buildClaudeSpawnCommand,
   writeClaudeAgentConfig,
@@ -25,17 +30,84 @@ import {
   buildGrokSpawnCommand,
   writeGrokAgentConfig,
 } from "../src/adapters/providers/grok-cli";
-import { ROLE_GRANTS } from "../src/daemon/capabilities";
-import { buildAgentPrompt } from "../src/daemon/spawner-impl";
-import type { CapabilityProvider } from "../src/schemas";
+import {
+  buildKimiSpawnCommand,
+  writeKimiAgentConfig,
+} from "../src/adapters/providers/kimi-cli";
+import {
+  buildOpencodeSpawnCommand,
+  writeOpencodeAgentConfig,
+} from "../src/adapters/providers/opencode-cli";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../src/adapters/providers/shared/capability-env";
+import {
+  type AgentStandards,
+  loadAgentStandards,
+} from "../src/daemon/spawn/agent-standards";
+import { ROLE_GRANTS } from "../src/daemon/authorization/authorization-service";
+import {
+  buildAgentPrompt,
+  memoryIndexDigest,
+} from "../src/daemon/spawn/spawner-impl";
+import {
+  buildMemoryIndex,
+  writeMemoryFact,
+} from "../src/memory-service/memory-store";
+import {
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+} from "../src/schemas/capability";
 
 const DAEMON_PORT = 4747;
 const HIVE_URL = `http://127.0.0.1:${DAEMON_PORT}/mcp`;
 const AGENT = "conformance-agent";
 const TOKEN = "conformance-token-0123456789abcdef";
-const MEMORY_MARKER = "HIVE-MEMORY-INDEX-MARKER";
+const FIXTURE_ARTICLE = "vendor-conformance-fixture-article";
 
 const tempRoots: string[] = [];
+
+// The memory surface every vendor's prompt is measured against: an index the
+// real builder produced from real articles on disk. A marker string handed to
+// buildAgentPrompt only proves the argument came back out, and the builder
+// returns "" when it finds no rows — so a spawn whose memory never loaded
+// yields a prompt a marker test cannot tell from a healthy one.
+let fixtureIndex = "";
+let fixtureStandards: AgentStandards;
+let fixtureRoots: string[] = [];
+let previousHiveHome: string | undefined;
+
+beforeAll(async () => {
+  const root = await mkdtemp(join(tmpdir(), "hive-vendor-memory-repo-"));
+  const home = await mkdtemp(join(tmpdir(), "hive-vendor-memory-home-"));
+  fixtureRoots = [root, home];
+  // Global memory joins the index from HIVE_HOME. Pointed at an empty
+  // directory the fixture owns, so the user's own articles can neither
+  // crowd the fixture row out of the index nor change it between runs.
+  previousHiveHome = process.env.HIVE_HOME;
+  process.env.HIVE_HOME = home;
+  await writeMemoryFact(root, {
+    scope: "repo",
+    id: FIXTURE_ARTICLE,
+    title: "Vendor conformance fixture article",
+    topic: "testing",
+    body: "The index each vendor's prompt is checked against holds this row.",
+    source: "agent",
+    evidence: "Written by the vendor conformance suite.",
+    status: "unverified",
+    kind: "article",
+    supersedes: [],
+    date: "2026-07-25",
+  });
+  fixtureIndex = await buildMemoryIndex(root);
+  fixtureStandards = await loadAgentStandards(join(import.meta.dir, ".."));
+});
+
+afterAll(async () => {
+  if (previousHiveHome === undefined) delete process.env.HIVE_HOME;
+  else process.env.HIVE_HOME = previousHiveHome;
+  await Promise.all(
+    fixtureRoots.map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -44,6 +116,23 @@ afterEach(async () => {
       .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
+
+/**
+ * The memory surface one spawn prompt must carry: the index's own rows, and
+ * the digest that names the index they came from.
+ *
+ * `index` is the index as built from disk, never the prompt's own contents, so
+ * a prompt that lost the block cannot satisfy this by agreeing with itself.
+ * Shared with the vacuity probe below, which asserts this exact function
+ * refuses a prompt built with an empty index — the check and its proof cannot
+ * drift apart while they are the same function.
+ */
+function assertMemorySurface(prompt: string, index: string): void {
+  expect(prompt).toContain(FIXTURE_ARTICLE);
+  expect(prompt).toContain(
+    `Memory index digest sha256:${memoryIndexDigest(index)}`,
+  );
+}
 
 async function makeWorktree(): Promise<string> {
   const worktree = await mkdtemp(join(tmpdir(), "hive-vendor-conformance-"));
@@ -170,7 +259,64 @@ const VENDORS: readonly VendorRow[] = [
       // surface is the tail of the prompt.
       const directive = prompt.indexOf("Grok safety facts");
       expect(directive).toBeGreaterThanOrEqual(0);
-      expect(directive).toBeLessThan(prompt.indexOf(MEMORY_MARKER));
+      expect(directive).toBeLessThan(prompt.indexOf(FIXTURE_ARTICLE));
+    },
+  },
+  {
+    vendor: "kimi",
+    writeConfig: (worktree) =>
+      writeKimiAgentConfig(worktree, { daemonPort: DAEMON_PORT }),
+    spawnArgv: () =>
+      buildKimiSpawnCommand({
+        model: "default",
+        readOnly: false,
+        dangerous: false,
+      }),
+    inspectConfig: async (worktree) => {
+      const config = JSON.parse(
+        await readFile(join(worktree, ".kimi-code", "mcp.json"), "utf8"),
+      ) as { mcpServers?: Record<string, Record<string, unknown>> };
+      const hive = config.mcpServers?.hive;
+      expect(hive).toBeDefined();
+      expect(hive?.url).toBe(HIVE_URL);
+      // Kimi's channel: the project config names the environment variable the
+      // launch shell exports from the credential file, never the bearer.
+      expect(hive?.bearerTokenEnvVar).toBe(HIVE_CAPABILITY_TOKEN_ENV);
+      expect(JSON.stringify(config)).not.toContain(TOKEN);
+    },
+  },
+  {
+    vendor: "opencode",
+    writeConfig: (worktree) =>
+      writeOpencodeAgentConfig(worktree, {
+        daemonPort: DAEMON_PORT,
+        readOnly: false,
+      }),
+    spawnArgv: () =>
+      buildOpencodeSpawnCommand({
+        model: "default",
+        readOnly: false,
+        dangerous: false,
+      }),
+    inspectConfig: async (worktree) => {
+      const config = JSON.parse(
+        await readFile(join(worktree, "opencode.json"), "utf8"),
+      ) as { mcp?: Record<string, Record<string, unknown>> };
+      const hive = config.mcp?.hive;
+      expect(hive).toBeDefined();
+      expect(hive?.type).toBe("remote");
+      expect(hive?.url).toBe(HIVE_URL);
+      // A server opencode never enables delivers no memory at all, so the
+      // enablement is part of the wiring rather than a detail of it.
+      expect(hive?.enabled).toBe(true);
+      // opencode's channel: a {env:} reference it substitutes at config load,
+      // with OAuth auto-detection off so the static bearer is what it sends.
+      expect(hive?.oauth).toBe(false);
+      const headers = hive?.headers as Record<string, string> | undefined;
+      expect(headers?.Authorization).toBe(
+        `Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}`,
+      );
+      expect(JSON.stringify(config)).not.toContain(TOKEN);
     },
   },
 ];
@@ -197,14 +343,59 @@ describe("vendor memory conformance (HM-4 static matrix)", () => {
           AGENT,
           "Conformance task",
           { path: worktree, branch: "hive/conformance" },
-          `Memory index:\n${MEMORY_MARKER}`,
+          fixtureIndex,
+          fixtureStandards,
           { tool: row.vendor },
         );
-        expect(prompt).toContain(MEMORY_MARKER);
+        assertMemorySurface(prompt, fixtureIndex);
+        expect(prompt).toContain("separation of concerns");
+        expect(prompt).toContain(
+          "Comments refer only to code, never to documents.",
+        );
+        expect(prompt).toContain("Use the code-comments skill");
+        expect(prompt).toContain(
+          "Never run `make clean`, `make build`, or `make run`",
+        );
+        expect(prompt).toContain("Skills live in the primary checkout");
         row.inspectPrompt?.(prompt);
       });
     });
   }
+
+  // `VENDORS` is an array, so a vendor Hive can spawn but this matrix never
+  // covers is not a type error anywhere — it is simply a row nobody wrote, and
+  // the suite stays green while a whole adapter goes unmeasured. This guard is
+  // the only thing that fails when the registry grows or a row is deleted.
+  test("every vendor in the capability registry has a conformance row", () => {
+    expect(VENDORS.length).toBe(CAPABILITY_PROVIDERS.length);
+    expect(VENDORS.map((row) => row.vendor).toSorted()).toEqual(
+      [...CAPABILITY_PROVIDERS].toSorted(),
+    );
+  });
+
+  // The vacuity probe for the per-vendor prompt assertion above. buildAgentPrompt
+  // omits the memory block entirely when the index is empty, and the builder
+  // returns "" whenever it finds no rows, so total injection failure is the
+  // failure mode most likely to reach a real spawn unnoticed. Both halves run
+  // here: the same helper, on prompts that differ only in the index it was
+  // given. Without the passing half, a helper that threw for some unrelated
+  // reason would read as a working probe.
+  test("the prompt memory assertion refuses a spawn whose index arrived empty", async () => {
+    const worktree = await makeWorktree();
+    const promptWith = (index: string): string =>
+      buildAgentPrompt(
+        AGENT,
+        "Conformance task",
+        { path: worktree, branch: "hive/conformance" },
+        index,
+        fixtureStandards,
+        { tool: "claude" },
+      );
+    expect(() =>
+      assertMemorySurface(promptWith(fixtureIndex), fixtureIndex),
+    ).not.toThrow();
+    expect(() => assertMemorySurface(promptWith(""), fixtureIndex)).toThrow();
+  });
 
   // Role-level, so it holds for every vendor at once: the spawner mints
   // writer and reader capabilities from these grants.
@@ -217,24 +408,3 @@ describe("vendor memory conformance (HM-4 static matrix)", () => {
     expect(ROLE_GRANTS.reader.actions).not.toContain("memory:delete");
   });
 });
-
-// The live half of the vendor matrix (real CLIs, real spawns, in-transcript
-// recall proofs) runs only on explicit request — the repo's live e2e
-// pattern. Skipped by default.
-const live = process.env.HIVE_LIVE_MEMORY_CONFORMANCE === "1";
-const liveSuite = live ? describe : describe.skip;
-
-liveSuite(
-  "vendor memory conformance, live (HIVE_LIVE_MEMORY_CONFORMANCE=1)",
-  () => {
-    for (const row of VENDORS) {
-      test(`${row.vendor} CLI answers --version (live proof precondition)`, () => {
-        const result = Bun.spawnSync([row.vendor, "--version"], {
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        expect(result.exitCode).toBe(0);
-      });
-    }
-  },
-);

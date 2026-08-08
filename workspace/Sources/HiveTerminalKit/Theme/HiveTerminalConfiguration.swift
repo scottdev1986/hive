@@ -19,22 +19,13 @@ public enum HiveTerminalFont: String, CaseIterable, Sendable {
     }
 }
 
-/// The authored colors of a first-party Hive theme.
-///
-/// This is the single source for both the emitted configuration and the
-/// measured contrast table: the generator below derives every `background`,
-/// `foreground`, and `palette` line from these values, so a color that is not
-/// measured cannot reach the engine and a color that is not shipped cannot be
-/// measured.
+/// The authored colors of a first-party Hive theme. This is the single source for both the emitted configuration and the measured contrast table: the generator below derives every `background`, `foreground`, and `palette` line from these values, so a color that is not measured cannot reach the engine and a color that is not shipped cannot be measured.
 struct HiveTerminalPalette: Equatable, Sendable {
-    /// ANSI slots conventionally used for de-emphasis. They carry the 3:1 floor
-    /// rather than 4.5:1; every other slot carries 4.5:1.
+    /// ANSI slots conventionally used for de-emphasis. They carry the 3:1 floor rather than 4.5:1; every other slot carries 4.5:1.
     static let deEmphasisIndices: Set<Int> = [0, 8]
 
     let background: String
     let foreground: String
-    /// Exactly the ANSI 16. Indices 16-255 stay at the engine's standard values
-    /// because hosted programs hardcode the standard 256-color cube.
     let ansi: [String]
 
     var configurationLines: [String] {
@@ -46,8 +37,6 @@ struct HiveTerminalPalette: Equatable, Sendable {
 struct HiveTerminalTheme: Equatable, Sendable {
     let identifier: String
     let configurationLines: [String]
-    /// The authored colors, when this theme is a first-party paired theme.
-    /// Raw-line themes used as test fixtures carry none.
     let palette: HiveTerminalPalette?
 
     init(identifier: String, configurationLines: [String]) {
@@ -56,9 +45,7 @@ struct HiveTerminalTheme: Equatable, Sendable {
         self.palette = nil
     }
 
-    /// Cursor and selection resolve against the cell beneath them rather than
-    /// from authored hex, which removes the invisible-cursor-on-one-theme bug
-    /// class. `bold-color` is emitted; its deprecated alias never is.
+    /// Cursor and selection resolve against the cell beneath them rather than from authored hex, which removes the invisible-cursor-on-one-theme bug class. `bold-color` is emitted; its deprecated alias never is.
     init(identifier: String, comment: String, palette: HiveTerminalPalette) {
         self.identifier = identifier
         self.palette = palette
@@ -85,9 +72,7 @@ struct HiveTerminalTheme: Equatable, Sendable {
         )
     )
 
-    /// The light mode is a real design rather than an inverted dark one, but it
-    /// is authored against the dark mode: each slot keeps its hue family and
-    /// takes the lightness that its own background demands.
+    /// The light mode is a real design rather than an inverted dark one, but it is authored against the dark mode: each slot keeps its hue family and takes the lightness that its own background demands.
     static let hiveLight = HiveTerminalTheme(
         identifier: "hive-light",
         comment: "Hive C1 light theme. Colors are inline; no user theme lookup occurs.",
@@ -101,9 +86,7 @@ struct HiveTerminalTheme: Equatable, Sendable {
         )
     )
 
-    /// Increased-contrast variants. Apple warns that Increase Contrast in Dark
-    /// Mode can *reduce* dark-on-dark contrast, so these are verified to raise
-    /// every entry's measured ratio against their base rather than assumed to.
+    /// Increased-contrast variants. Apple warns that Increase Contrast in Dark Mode can *reduce* dark-on-dark contrast, so these are verified to raise every entry's measured ratio against their base rather than assumed to.
     static let hiveDarkHighContrast = HiveTerminalTheme(
         identifier: "hive-dark-high-contrast",
         comment: "Hive C1 dark theme, increased-contrast variant.",
@@ -130,20 +113,12 @@ struct HiveTerminalTheme: Equatable, Sendable {
         )
     )
 
-    /// The four first-party themes, paired base-to-increased-contrast.
     static let firstPartyPairs: [(base: HiveTerminalTheme, increasedContrast: HiveTerminalTheme)] = [
         (hiveDark, hiveDarkHighContrast),
         (hiveLight, hiveLightHighContrast),
     ]
 }
 
-/// Which terminal theme the user has chosen.
-///
-/// This is a *content* choice, not an app-appearance override: Hive follows the
-/// system appearance unconditionally for chrome, and `.system` keeps the
-/// terminal theme matching it. Pinning a dark terminal theme inside a light
-/// appearance is long-standing terminal-profile convention and says nothing
-/// about the app's appearance, so no app-appearance setting is offered.
 public enum HiveTerminalThemeSelection: String, CaseIterable, Sendable {
     case system
     case dark
@@ -164,8 +139,6 @@ public enum HiveTerminalAppearance: Sendable {
 }
 
 extension HiveTerminalTheme {
-    /// Resolves the theme actually pushed to a surface. Increase Contrast
-    /// selects the increased-contrast variant of whichever mode won.
     static func resolve(
         selection: HiveTerminalThemeSelection,
         appearance: HiveTerminalAppearance,
@@ -184,14 +157,10 @@ extension HiveTerminalTheme {
     }
 }
 
-/// The generated Ghostty configuration for Hive-owned terminal surfaces.
-/// Theme lines stay first so the later product and security policy wins.
 enum HiveTerminalConfiguration {
     static let horizontalPaddingPoints = 10
     static let verticalPaddingPoints = 8
     static let scrollbackLimitBytes = 48 * 1024 * 1024
-    /// Derived from the theme actually being pushed. A constant background here
-    /// would report the dark value while a light theme was on the wire.
     static func liveLogFingerprint(theme: HiveTerminalTheme) -> String {
         let background = theme.palette?.background ?? "custom"
         return "background=\(background) font-size=13"

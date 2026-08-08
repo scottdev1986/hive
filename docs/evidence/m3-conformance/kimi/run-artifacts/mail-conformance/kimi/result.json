@@ -1,0 +1,89 @@
+{
+  "result": "passed",
+  "vendor": "kimi",
+  "model": "kimi-code/k3",
+  "completedAt": "2026-08-02T14:31:10.876Z",
+  "agent": {
+    "id": "7a8caa8d-920a-46cf-8a0a-f3a509cfe0d5",
+    "name": "david",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "7316881bde",
+      "subject": {
+        "kind": "agent",
+        "agentId": "7a8caa8d-920a-46cf-8a0a-f3a509cfe0d5"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc2e0-d12c-71d6-83db-71bf0c5274c4",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    }
+  },
+  "publish": {
+    "controlFirst": {
+      "itemId": "mit_019fc2e1-056f-7000-85bf-29bd618535f1",
+      "lane": "control",
+      "topic": "m3-control",
+      "outcome": "published",
+      "seq": 1,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T14:29:14.735Z"
+    },
+    "controlReplay": {
+      "itemId": "mit_019fc2e1-056f-7000-85bf-29bd618535f1",
+      "lane": "control",
+      "topic": "m3-control",
+      "outcome": "published",
+      "seq": 1,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T14:29:14.735Z"
+    },
+    "workFirst": {
+      "itemId": "mit_019fc2e1-0572-7000-8af7-60c0252081e1",
+      "lane": "work",
+      "topic": "m3-work",
+      "outcome": "published",
+      "seq": 2,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T14:29:14.738Z"
+    },
+    "workMerged": {
+      "itemId": "mit_019fc2e1-0572-7000-8af7-60c0252081e1",
+      "lane": "work",
+      "topic": "m3-work",
+      "outcome": "coalesced",
+      "seq": 2,
+      "mergedCount": 1,
+      "acceptedAt": "2026-08-02T14:29:14.739Z"
+    }
+  },
+  "terminalWrites": {
+    "beforeSpawn": {
+      "total": 2,
+      "bySession": {
+        "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9": 2
+      }
+    },
+    "afterSpawn": {
+      "total": 2,
+      "bySession": {
+        "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9": 2
+      }
+    },
+    "workingBaseline": {
+      "total": 4,
+      "bySession": {
+        "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9": 2,
+        "ses_019fc2e0-d12c-71d6-83db-71bf0c5274c4": 2
+      }
+    },
+    "final": {
+      "total": 4,
+      "bySession": {
+        "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9": 2,
+        "ses_019fc2e0-d12c-71d6-83db-71bf0c5274c4": 2
+      }
+    }
+  },
+  "eventCount": 7
+}

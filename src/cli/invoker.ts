@@ -1,27 +1,15 @@
-// Who is invoking this CLI process — captured at the origin because the audit
-// row is the only record that survives a teardown cascade. A bare ppid is
-// useless once the parent exits, so record enough identity to attribute a
-// teardown from the audit row alone.
-//
-// This is accident prevention, not a security boundary: a same-UID process can
-// read the operator credential and lie about all of it (credentials.ts says
-// the same). What it buys is that every HONEST caller — every test runner,
-// build script, Workspace teardown and human shell — is decisively
-// attributable from its audit row alone.
+// Who is invoking this CLI process — captured at the origin because the audit row is the only record that survives a teardown cascade. A bare ppid is useless once the parent exits, so record enough identity to attribute a teardown from the audit row alone. This is accident prevention, not a security boundary: a same-UID process can read the user credential and lie about all of it (credentials.ts says the same). What it buys is that every HONEST caller — every test runner, build script, Workspace teardown and user shell — is decisively attributable from its audit row alone.
 import { spawnSync } from "node:child_process";
 
 export interface InvokerIdentity {
   readonly pid: number;
   readonly ppid: number;
-  /** `process.argv.slice(2)` — [] is the signature of an in-process library
-   * call (bun test, a bun script), never of a shell `hive stop`. */
+  /** `process.argv.slice(2)` — [] is the signature of an in-process library call (bun test, a bun script), never of a shell `hive stop`. */
   readonly argv: readonly string[];
   readonly cwd: string;
-  /** Parent chain as `pid:command`, nearest first, bounded depth. A pid whose
-   * parent cannot be resolved ends the chain honestly rather than guessing. */
+  /** Parent chain as `pid:command`, nearest first, bounded depth. A pid whose parent cannot be resolved ends the chain honestly rather than guessing. */
   readonly chain: readonly string[];
-  /** Whether the invoking process runs inside a Hive agent worktree.
-   * Agent shells hold no fleet authority. */
+  /** Whether the invoking process runs inside a Hive agent worktree. Agent shells hold no fleet authority. */
   readonly agentWorktree: boolean;
 }
 
@@ -33,8 +21,6 @@ export function isAgentWorktreePath(path: string): boolean {
   );
 }
 
-/** One `ps` read: a pid's parent and command. Null when the pid is gone or
- * `ps` is unavailable — the chain simply ends there. */
 function readProcess(pid: number): { ppid: number; command: string } | null {
   const result = spawnSync("ps", ["-p", String(pid), "-o", "ppid=,comm="], {
     encoding: "utf8",
@@ -53,10 +39,12 @@ export function captureInvokerIdentity(
   readParent: (
     pid: number,
   ) => { ppid: number; command: string } | null = readProcess,
+  /** Where the walk starts. Explicit so a caller can chain pids it controls rather than whichever parent this process happens to have; nothing in the CLI has reason to pass it. */
+  origin: number = process.ppid,
 ): InvokerIdentity {
   const cwd = process.cwd();
   const chain: string[] = [];
-  let current = process.ppid;
+  let current = origin;
   for (let depth = 0; depth < CHAIN_DEPTH && current > 1; depth += 1) {
     const parent = readParent(current);
     if (parent === null) break;
@@ -73,9 +61,7 @@ export function captureInvokerIdentity(
   };
 }
 
-/** The provenance string a kill carries to the daemon's audit log. Compact —
- * the daemon truncates reasons at 1024 bytes and a kill must never be refused
- * because its provenance is long. */
+/** The provenance string a kill carries to the daemon's audit log. Compact — the daemon truncates reasons at 1024 bytes and a kill must never be refused because its provenance is long. */
 export function formatInvokerOrigin(
   subcommand: "kill" | "stop",
   invoker: InvokerIdentity,
@@ -88,8 +74,7 @@ export function formatInvokerOrigin(
   );
 }
 
-/** `bun test` stamps NODE_ENV=test. Inside a test-runner process, a lethal
- * default must never reach through the ambient environment. */
+/** `bun test` stamps NODE_ENV=test. Inside a test-runner process, a lethal default must never reach through the ambient environment. */
 export function isTestRunnerEnv(): boolean {
   return process.env.NODE_ENV === "test";
 }

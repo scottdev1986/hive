@@ -1,0 +1,75 @@
+{
+  "result": "passed",
+  "vendor": "opencode",
+  "model": "openai/gpt-5.6-terra",
+  "completedAt": "2026-08-02T13:03:03.569Z",
+  "agent": {
+    "id": "889c0b40-f157-49e0-b77d-b8e358800541",
+    "name": "david",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "85c9eb608c",
+      "subject": {
+        "kind": "agent",
+        "agentId": "889c0b40-f157-49e0-b77d-b8e358800541"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc290-bb80-75d9-97d0-528962f2c4d2",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    }
+  },
+  "publish": {
+    "controlFirst": {
+      "itemId": "mit_019fc290-bb8d-7000-a71c-96ae0bcf6db3",
+      "lane": "control",
+      "topic": "m3-control",
+      "outcome": "published",
+      "seq": 1,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:01:32.941Z"
+    },
+    "controlReplay": {
+      "itemId": "mit_019fc290-bb8d-7000-a71c-96ae0bcf6db3",
+      "lane": "control",
+      "topic": "m3-control",
+      "outcome": "published",
+      "seq": 1,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:01:32.941Z"
+    },
+    "workFirst": {
+      "itemId": "mit_019fc290-bb90-7000-a48b-1d8d8ace621f",
+      "lane": "work",
+      "topic": "m3-work",
+      "outcome": "published",
+      "seq": 2,
+      "mergedCount": 0,
+      "acceptedAt": "2026-08-02T13:01:32.944Z"
+    },
+    "workMerged": {
+      "itemId": "mit_019fc290-bb90-7000-a48b-1d8d8ace621f",
+      "lane": "work",
+      "topic": "m3-work",
+      "outcome": "coalesced",
+      "seq": 2,
+      "mergedCount": 1,
+      "acceptedAt": "2026-08-02T13:01:32.945Z"
+    }
+  },
+  "terminalWrites": {
+    "beforeSpawn": {
+      "total": 0,
+      "bySession": {}
+    },
+    "afterSpawn": {
+      "total": 0,
+      "bySession": {}
+    },
+    "final": {
+      "total": 0,
+      "bySession": {}
+    }
+  },
+  "eventCount": 7
+}

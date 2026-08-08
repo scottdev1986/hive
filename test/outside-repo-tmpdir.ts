@@ -1,13 +1,12 @@
 import { realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 
 /**
  * Temp base for fixtures that must NOT sit inside a Git repository.
  *
- * The dev instance runs with `TMPDIR=<repo>/.dev/tmp` (Makefile `DEV_ENV`), and every
- * process it spawns inherits it, so everything `os.tmpdir()` hands out there is a path
- * inside this checkout's worktree. A fixture built at such a path *is* in a repository:
- * `git rev-parse` walks up to this repo, and an assertion of the form "this directory is
- * not a repo" silently measures this repo instead of the fixture. Resolved once, so a
- * fixture path compares equal to the physical path git reports back.
+ * The bounded test runner supplies a TMPDIR outside the checkout. A fixture
+ * built below the dev instance's `<repo>/.dev/tmp` would still be in this Git
+ * repository, so `git rev-parse` would silently measure the checkout instead.
+ * Resolved once so fixture paths equal the physical paths Git reports back.
  */
-export const OUTSIDE_REPO_TMPDIR = realpathSync.native("/tmp");
+export const OUTSIDE_REPO_TMPDIR = realpathSync.native(tmpdir());

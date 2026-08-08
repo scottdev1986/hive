@@ -1,0 +1,46 @@
+{
+  "result": "failed",
+  "vendor": "opencode",
+  "startedAt": "2026-08-02T13:00:18.510Z",
+  "completedAt": "2026-08-02T13:01:26.378Z",
+  "error": "publishing wrote into an empty composer: {\n  \"before\": {\n    \"profile\": \"opencode\",\n    \"present\": true,\n    \"nonempty\": false,\n    \"stable\": true,\n    \"userEditSinceEmpty\": false,\n    \"userOperationInFlight\": false,\n    \"claim\": false,\n    \"invariant\": \"ok\"\n  },\n  \"after\": {\n    \"profile\": \"opencode\",\n    \"present\": true,\n    \"nonempty\": false,\n    \"stable\": true,\n    \"userEditSinceEmpty\": false,\n    \"userOperationInFlight\": false,\n    \"claim\": false,\n    \"invariant\": \"ok\"\n  }\n}\n",
+  "agent": {
+    "id": "9c9a9ddf-3185-46d1-92ef-8e909df462db",
+    "name": "maya",
+    "tool": "opencode",
+    "model": "openai/gpt-5.6-terra",
+    "category": "simple_coding",
+    "status": "working",
+    "holdReason": null,
+    "holdResetAt": null,
+    "holdProviderRunId": null,
+    "quotaReservationId": "9e8c4252-a1d0-488c-8c11-836225ba8a8b",
+    "executionIdentity": {
+      "tool": "opencode",
+      "model": "openai/gpt-5.6-terra"
+    },
+    "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+    "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-opencode-run.RG7Udr/project/.hive/worktrees/maya",
+    "branch": "hive/maya-wait-quietly-for-a-terminal-de",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "85c9eb608c",
+      "subject": {
+        "kind": "agent",
+        "agentId": "9c9a9ddf-3185-46d1-92ef-8e909df462db"
+      },
+      "generation": 1,
+      "sessionId": "ses_019fc28f-9e27-7a74-8b09-4180a6534b69",
+      "hostKind": "sessiond",
+      "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+    },
+    "recoveryAttempts": 0,
+    "contextPct": null,
+    "createdAt": "2026-08-02T13:00:19.879Z",
+    "lastEventAt": "2026-08-02T13:00:19.879Z",
+    "capabilityEpoch": 0,
+    "readOnly": true,
+    "writeRevoked": false,
+    "graphifyCalls": null
+  }
+}

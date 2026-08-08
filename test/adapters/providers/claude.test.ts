@@ -18,19 +18,16 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  buildClaudeResumeCommand,
   buildClaudeSpawnCommand,
   claudeConfigPath,
   claudeExecutableCandidates,
-  claudeProjectDirectory,
-  discoverClaudeRecoverySessionId,
   resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "../../../src/adapters/providers/claude-cli";
 import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/providers/shared/graphify-hook";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
-import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
+import { hiveInstanceSuffix } from "../../../src/hive-home/instance-identity";
+import { tempRootAsync as tempDir } from "../../temp-root";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -115,6 +112,23 @@ describe("Claude adapter", () => {
     expect(buildClaudeSpawnCommand(base)).not.toContain("--effort");
   });
 
+  test("enables the explicit user channel and bounded autocompaction when requested", () => {
+    const command = buildClaudeSpawnCommand({
+      name: "queen",
+      model: "claude-opus-5",
+      effort: "high",
+      brief: true,
+      autoCompact: "250k",
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: true,
+    });
+
+    expect(command).toContain("--brief");
+    expect(command).toContain("--autocompact");
+    expect(command[command.indexOf("--autocompact") + 1]).toBe("250k");
+  });
+
   describe("spawn-scoped MCP surface", () => {
     const base = {
       name: "agent-3",
@@ -194,15 +208,6 @@ describe("Claude adapter", () => {
       expect(command).not.toContain("--setting-sources");
       expect(command).not.toContain("--settings");
     });
-
-    test("a resumed session keeps the same scoped surface", () => {
-      const command = buildClaudeResumeCommand(
-        { ...base, scopedMcpConfigPath: "/tmp/worktree/.mcp.json" },
-        "session-9",
-      );
-      expect(command.slice(0, 3)).toEqual(["claude", "--resume", "session-9"]);
-      expect(command).toContain("--strict-mcp-config");
-    });
   });
 
   test("uses the daemon-resolved executable instead of a launcher PATH", () => {
@@ -264,117 +269,6 @@ describe("Claude adapter", () => {
         readOnly: false,
       }),
     ).toEqual(["claude"]);
-  });
-
-  test("builds a resume argv that replays the spawn flags with --resume", () => {
-    expect(
-      buildClaudeResumeCommand(
-        {
-          name: "agent-3",
-          model: "sonnet",
-          worktreePath: "/tmp/worktree",
-          daemonPort: 4317,
-          readOnly: false,
-        },
-        "0189-session",
-      ),
-    ).toEqual(["claude", "--resume", "0189-session", "--model", "sonnet"]);
-  });
-
-  test("keeps resumed session flags before the appended system prompt", () => {
-    const command = buildClaudeResumeCommand(
-      {
-        name: "agent-3",
-        model: "sonnet",
-        worktreePath: "/tmp/worktree",
-        daemonPort: 4317,
-        readOnly: false,
-        appendSystemPromptFile: "/tmp/root-instructions",
-      },
-      "0189-session",
-    );
-    expect(command.slice(0, 3)).toEqual(["claude", "--resume", "0189-session"]);
-    expect(command.at(-2)).toBe("--append-system-prompt-file");
-    expect(command.at(-1)).toBe("/tmp/root-instructions");
-  });
-
-  test("derives the transcript project directory from the munged worktree path", () => {
-    expect(
-      claudeProjectDirectory("/repo/.hive/worktrees/maya", "/home/u"),
-    ).toEqual("/home/u/.claude/projects/-repo--hive-worktrees-maya");
-  });
-
-  test("recovery discovery uses internal creation evidence and refuses ambiguity", async () => {
-    const fakeHome = join(tempRoot, "claude-recovery-home");
-    const projectDir = claudeProjectDirectory(worktreePath, fakeHome);
-    await mkdir(projectDir, { recursive: true });
-    const transcript = (
-      sessionId: string,
-      timestampKey: string,
-      timestamp: string,
-    ) =>
-      `${JSON.stringify({
-        type: "user",
-        sessionId,
-        cwd: worktreePath,
-        [timestampKey]: timestamp,
-      })}\n`;
-    await writeFile(
-      join(projectDir, "predecessor.jsonl"),
-      transcript("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
-    );
-
-    expect(
-      await discoverClaudeRecoverySessionId(
-        worktreePath,
-        "2026-07-13T12:00:00.000Z",
-        fakeHome,
-      ),
-    ).toBeNull();
-    await writeFile(
-      join(projectDir, "current.jsonl"),
-      transcript("current", "timestamp", "2026-07-13T12:00:01.000Z"),
-    );
-    await writeFile(
-      join(projectDir, "predecessor.jsonl"),
-      transcript("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
-    );
-
-    expect(
-      await discoverClaudeRecoverySessionId(
-        worktreePath,
-        "2026-07-13T12:00:00.000Z",
-        fakeHome,
-      ),
-    ).toBe("current");
-
-    await writeFile(
-      join(projectDir, "second-current.jsonl"),
-      transcript("second-current", "timestamp", "2026-07-13T12:00:02.000Z"),
-    );
-    expect(
-      discoverClaudeRecoverySessionId(
-        worktreePath,
-        "2026-07-13T12:00:00.000Z",
-        fakeHome,
-      ),
-    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
-    await rm(join(projectDir, "second-current.jsonl"));
-
-    await writeFile(
-      join(projectDir, "unknown-evidence.jsonl"),
-      transcript("unknown-evidence", "timestmp", "2026-07-13T12:00:03.000Z"),
-    );
-    expect(
-      discoverClaudeRecoverySessionId(
-        worktreePath,
-        "2026-07-13T12:00:00.000Z",
-        fakeHome,
-      ),
-    ).rejects.toMatchObject({
-      name: "RecoverySessionDiscoveryError",
-      reason: "invalid-evidence",
-    });
   });
 
   // Checked-in literal of hook events Claude Code 2.1.220 dispatches. Do not
@@ -485,7 +379,7 @@ describe("Claude adapter", () => {
 
     // bypassPermissions in settings starts the session already in bypass mode.
     // --dangerously-skip-permissions would instead raise a blocking acceptance
-    // dialog that no human is there to answer (verified on claude 2.1.206),
+    // dialog that no user is there to answer (verified on claude 2.1.206),
     // so the launch argv must stay free of it.
     expect(settings.permissions.defaultMode).toEqual("bypassPermissions");
     expect(settings.permissions.allow).toBeUndefined();
@@ -551,7 +445,7 @@ describe("Claude adapter", () => {
     ["NotebookEdit", "modifies notebook files"],
     ["EnterWorktree", "creates a git worktree on disk"],
   ])("a read-only session denies %s, which %s", async (tool) => {
-    const worktreePath = await mkdtemp(join(tmpdir(), "hive-readonly-"));
+    const worktreePath = await tempDir("hive-readonly-");
     await writeClaudeAgentConfig(worktreePath, {
       name: "reader",
       daemonPort: 4317,
@@ -651,7 +545,7 @@ describe("Claude adapter", () => {
     });
   });
 
-  test("board tools are the queen's role: gh, and writes scoped to memory and planning", async () => {
+  test("board tools are the queen's role: gh, and writes scoped to memory only", async () => {
     await writeClaudeAgentConfig(worktreePath, {
       name: "orchestrator",
       daemonPort: 4317,
@@ -662,10 +556,9 @@ describe("Claude adapter", () => {
     const permissions = await readPermissions(worktreePath);
     expect(permissions).toEqual({
       defaultMode: "default",
-      // Only NotebookEdit stays denied: the grant is gh-for-the-board plus
-      // Edit/Write scoped to her own memory and planning docs. Every other
-      // command and path still raises a prompt.
-      deny: ["NotebookEdit"],
+      // Native Agent bypasses Hive's board and lifecycle, so Queen delegates
+      // only through hive_spawn.
+      deny: ["NotebookEdit", "Agent"],
       allow: [
         "Read",
         "Glob",
@@ -674,10 +567,13 @@ describe("Claude adapter", () => {
         "Bash(gh:*)",
         "Edit(.hive/**)",
         "Write(.hive/**)",
-        "Edit(planning/**)",
-        "Write(planning/**)",
       ],
     });
+    // Positive lock: memory stays granted; planning/ is not a writable home.
+    expect(permissions.allow).toContain("Edit(.hive/**)");
+    expect(permissions.allow).toContain("Write(.hive/**)");
+    expect(permissions.allow).not.toContain("Edit(planning/**)");
+    expect(permissions.allow).not.toContain("Write(planning/**)");
 
     // The negative control the shared constant demands: a revoked writer
     // restarted read-only asks for no board tools and must keep losing its
@@ -716,9 +612,13 @@ describe("Claude adapter", () => {
     });
 
     const permissions = await readPermissions(worktreePath);
-    expect(permissions.deny).toEqual(["NotebookEdit"]);
+    expect(permissions.deny).toEqual(["NotebookEdit", "Agent"]);
     expect(permissions.allow).toContain("Bash(gh:*)");
-    expect(permissions.allow).toContain("Edit(planning/**)");
+    // Positive lock: memory stays granted; planning/ is not a writable home.
+    expect(permissions.allow).toContain("Edit(.hive/**)");
+    expect(permissions.allow).toContain("Write(.hive/**)");
+    expect(permissions.allow).not.toContain("Edit(planning/**)");
+    expect(permissions.allow).not.toContain("Write(planning/**)");
   });
 
   test("a graphify URL becomes an http entry; its absence removes a stale one", async () => {
@@ -960,7 +860,7 @@ describe("Claude adapter", () => {
     );
   });
 
-  test("registers the statusLine command that forwards subscriber quota", async () => {
+  test("does not install a statusLine scrape hook", async () => {
     await writeClaudeAgentConfig(worktreePath, {
       name: "maya",
       daemonPort: 4317,
@@ -971,17 +871,14 @@ describe("Claude adapter", () => {
         join(worktreePath, ".claude", "settings.local.json"),
         "utf8",
       ),
-    ) as { statusLine: { type: string; command: string } };
+    ) as { statusLine?: unknown };
 
-    expect(settings.statusLine).toEqual({
-      type: "command",
-      command: `hive statusline --agent maya --port 4317 --instance-id ${hiveInstanceSuffix()}`,
-    });
+    expect(settings.statusLine).toBeUndefined();
   });
 });
 
 describe("Claude Hive integration", () => {
-  test("binds hooks, status, and credentials to this exact Hive build", async () => {
+  test("binds hooks and credentials to this exact Hive build", async () => {
     const hive = "/tmp/Hive Acceptance/versions/0.0.0/hive";
     await writeClaudeAgentConfig(worktreePath, {
       name: "maya",
@@ -996,7 +893,7 @@ describe("Claude Hive integration", () => {
       ),
     ) as {
       hooks: { SessionStart: Array<{ hooks: Array<{ command: string }> }> };
-      statusLine: { command: string };
+      statusLine?: unknown;
     };
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
@@ -1010,7 +907,7 @@ describe("Claude Hive integration", () => {
     expect(settings.hooks.SessionStart[0]?.hooks[0]?.command).toStartWith(
       `'${hive}' event session-start`,
     );
-    expect(settings.statusLine.command).toStartWith(`'${hive}' statusline`);
+    expect(settings.statusLine).toBeUndefined();
     expect(mcp.mcpServers.hive?.headersHelper).toStartWith(
       `'${hive}' credential`,
     );
@@ -1063,7 +960,7 @@ describe("unattended launch state", () => {
       ),
     );
     // Without this the CLI opens on "WARNING: Claude Code running in Bypass
-    // Permissions mode" and waits for a human that is never there.
+    // Permissions mode" and waits for a user that is never there.
     expect(settings.skipDangerousModePermissionPrompt).toBe(true);
     expect(settings.permissions.defaultMode).toBe("bypassPermissions");
   });
@@ -1110,7 +1007,7 @@ describe("unattended launch state", () => {
       hasCompletedProjectOnboarding: true,
       projectOnboardingSeenCount: 1,
     });
-    // Exactly one project key, and no global flag: the operator's own sessions
+    // Exactly one project key, and no global flag: the user's own sessions
     // and every other repository keep their existing trust state.
     expect(Object.keys(config.projects)).toEqual([worktreePath]);
     expect(config.hasCompletedOnboarding).toBeUndefined();

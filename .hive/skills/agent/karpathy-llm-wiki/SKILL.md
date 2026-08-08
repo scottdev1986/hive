@@ -8,7 +8,7 @@ description: "Use when building or maintaining a personal LLM-powered knowledge 
 Build and maintain a personal knowledge base using LLMs. You manage two directories: `raw/` (immutable source material) and `wiki/` (compiled knowledge articles). Sources go into raw/, you compile them into wiki articles, and the wiki compounds over time.
 
 Core ideas from Karpathy:
-- "The LLM writes and maintains the wiki; the human reads and asks questions."
+- "The LLM writes and maintains the wiki; the user reads and asks questions."
 - "The wiki is a persistent, compounding artifact."
 
 ## Architecture

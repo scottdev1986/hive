@@ -139,7 +139,7 @@ test "pending A1/F: lost parent wait authority is unknown rather than fabricated
     try std.testing.expectEqual(pty_host.ExitState.unknown, exit.state);
     try std.testing.expect(!exit.reaped);
     try std.testing.expect(exit.exit_code == null);
-    host.pid = -1;
+    try std.testing.expect(host.pid <= 0);
 }
 
 test "pending A1/B: launch failures carry layer and OS code evidence" {
@@ -355,12 +355,7 @@ test "pending A1/D: resize receipt matches independent TIOCGWINSZ readback" {
     );
 }
 
-// Qualification row D on a real terminal: interleaved input and burst resize
-// must preserve one mutation order with monotonic revisions and an applied
-// readback, and the foreground application must still observe the FINAL
-// geometry. Ordering is read from the host's own sequence, and the final
-// SIGWINCH is read from the child's `stty size` rather than assumed — the host
-// cannot see the notification itself, so the child has to report it.
+// Qualification row D on a real terminal: interleaved input and burst resize must preserve one mutation order with monotonic revisions and an applied readback, and the foreground application must still observe the FINAL geometry. Ordering is read from the host's own sequence, and the final SIGWINCH is read from the child's `stty size` rather than assumed — the host cannot see the notification itself, so the child has to report it.
 test "THV1-REAL-D: burst resize interleaves input and foreground observes final SIGWINCH" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
 
@@ -370,20 +365,12 @@ test "THV1-REAL-D: burst resize interleaves input and foreground observes final 
         .argv = &[_][]const u8{
             "/bin/sh",
             "-c",
-            // The trap must survive a burst of SIGWINCH, so the loop body is the
-            // `read` BUILTIN: a trapped signal interrupts a builtin and the trap
-            // runs, whereas a foreground external command (`cat`) makes the
-            // shell defer every trap until that command exits — which reports no
-            // geometry at all. A trapped signal makes `read` return >128, so
-            // continue on an interrupt and stop only on real end-of-input.
+            // The trap must survive a burst of SIGWINCH, so the loop body is the `read` BUILTIN: a trapped signal interrupts a builtin and the trap runs, whereas a foreground external command (`cat`) makes the shell defer every trap until that command exits — which reports no geometry at all. A trapped signal makes `read` return >128, so continue on an interrupt and stop only on real end-of-input.
             "trap '/bin/stty size' WINCH; printf 'READY\\n'; while :; do IFS= read -r line; status=$?; " ++
                 "if [ $status -gt 128 ]; then continue; elif [ $status -ne 0 ]; then break; fi; done",
         },
         .envp = &[_][]const u8{},
-        // Canonical with echo on purpose: the TERMINAL then echoes each accepted
-        // transaction, so the input evidence below is the terminal's own
-        // readback and does not depend on the shell winning a race with the
-        // resize burst that is deliberately interrupting it.
+        // Canonical with echo on purpose: the TERMINAL then echoes each accepted transaction, so the input evidence below is the terminal's own readback and does not depend on the shell winning a race with the resize burst that is deliberately interrupting it.
         .terminal_profile = .{ .input_mode = .canonical, .echo = true },
         .geometry = .{ .columns = 90, .rows = 30, .width_px = 900, .height_px = 600 },
     });
@@ -414,13 +401,9 @@ test "THV1-REAL-D: burst resize interleaves input and foreground observes final 
         try std.testing.expect(receipt.readback.eql(requested));
         previous_order = receipt.ordered_at;
     }
-    // 30 + 12 rows by 90 + 12 columns: the LAST geometry, so seeing it proves
-    // the burst coalesced to a truthful final revision rather than a stale one.
+    // 30 + 12 rows by 90 + 12 columns: the LAST geometry, so seeing it proves the burst coalesced to a truthful final revision rather than a stale one.
     try collectUntil(&host, &output, "42 102");
-    // Every interleaved transaction reached the terminal, in order. This is the
-    // terminal's own readback, not a claim about the foreground application
-    // consuming the bytes — the host cannot observe that, so the test does not
-    // assert it any more than the resize receipt has a field for it.
+    // Every interleaved transaction reached the terminal, in order. This is the terminal's own readback, not a claim about the foreground application consuming the bytes — the host cannot observe that, so the test does not assert it any more than the resize receipt has a field for it.
     var searched: usize = 0;
     for (1..13) |revision| {
         var expected_storage: [32]u8 = undefined;
@@ -490,15 +473,7 @@ test "THV1-REAL-E: XOFF stops and XON resumes real PTY output" {
     try std.testing.expect(resumed);
 }
 
-// Qualification row F on a real terminal: normal AND signaled exit must retain
-// every tail byte, and output closure must order separately from exit and from
-// the authoritative reap — three orderings, not one event.
-//
-// Closure is observed FIRST, and that order is deliberate rather than
-// convenient: draining is also what lets a child finish writing, so reaping
-// before reading would deadlock on any tail larger than the terminal buffer
-// instead of qualifying anything. The row is therefore "closure, then exit and
-// reap, with the tail complete", NOT "reap before drain".
+// Qualification row F on a real terminal: normal AND signaled exit must retain every tail byte, and output closure must order separately from exit and from the authoritative reap — three orderings, not one event. Closure is observed FIRST, and that order is deliberate rather than convenient: draining is also what lets a child finish writing, so reaping before reading would deadlock on any tail larger than the terminal buffer instead of qualifying anything. The row is therefore "closure, then exit and reap, with the tail complete", NOT "reap before drain".
 test "THV1-REAL-F: a complete PTY tail drain precedes separately ordered exit and reap" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
 
@@ -517,10 +492,7 @@ test "THV1-REAL-F: a complete PTY tail drain precedes separately ordered exit an
             .running => {},
             .exec_failed => return error.TestUnexpectedResult,
         }
-        // Output closure comes FIRST and on its own terms. Draining is also what
-        // lets a child finish writing, so a test that refused to read until
-        // after the reap would deadlock on any tail larger than the terminal
-        // buffer rather than qualify anything.
+        // Output closure comes FIRST and on its own terms. Draining is also what lets a child finish writing, so a test that refused to read until after the reap would deadlock on any tail larger than the terminal buffer rather than qualify anything.
         var tail: std.ArrayList(u8) = .{};
         defer tail.deinit(std.testing.allocator);
         var closed = false;
@@ -537,10 +509,7 @@ test "THV1-REAL-F: a complete PTY tail drain precedes separately ordered exit an
         }
         try std.testing.expect(closed);
 
-        // Exit and the authoritative reap are then observed SEPARATELY from that
-        // closure — three orderings, not one event. The poll is bounded so a
-        // child that never exits fails this row loudly instead of hanging the
-        // whole native suite on an unbounded wait.
+        // Exit and the authoritative reap are then observed SEPARATELY from that closure — three orderings, not one event. The poll is bounded so a child that never exits fails this row loudly instead of hanging the whole native suite on an unbounded wait.
         var exit: pty_host.ExitEvidence = undefined;
         var reaped = false;
         for (0..3000) |_| {

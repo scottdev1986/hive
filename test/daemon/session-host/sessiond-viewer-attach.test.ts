@@ -1,10 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   AttachGrant,
   SessionLocator,
-} from "../../../src/daemon/session-host/contract";
+} from "../../../src/daemon/session-host/session-host-contract";
 import {
   encodeSessiondFrame,
   type SessiondFrame,
@@ -12,8 +14,8 @@ import {
   SessiondWireError,
 } from "../../../src/daemon/session-host/sessiond-host";
 import { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
-import type { TerminalGeometry } from "../../../src/schemas/session-protocol";
 import {
+  type TerminalGeometry,
   FRAME_FLAGS,
   type FRAME_TYPES,
 } from "../../../src/schemas/session-protocol";
@@ -22,7 +24,7 @@ import { required } from "../../required";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
-/** Let in-flight best-effort frames (CLAIM_RELEASE, OUTPUT acks) reach the host. */
+/** Let in-flight OUTPUT acknowledgements reach the host. */
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 50));
 
 const locator: SessionLocator = {
@@ -53,7 +55,7 @@ function grantFor(endpoint: string): AttachGrant {
     engineBuildId: "engine-fixture",
     checkpointSeq: "0",
     outputSeq: "0",
-    operations: ["view", "human-input"],
+    operations: ["view", "user-input"],
   };
 }
 
@@ -77,22 +79,6 @@ function welcomePayload(): Uint8Array {
       },
     }),
   );
-}
-
-function claimResult(state: "granted" | "denied"): Uint8Array {
-  const result =
-    state === "granted"
-      ? {
-          state: "granted",
-          claim: {
-            token: "claim-token-1",
-            writer: "hive-daemon:fixture",
-            kind: "automation",
-            leaseExpiresAt: "2026-07-20T21:01:00.000Z",
-          },
-        }
-      : { state: "denied", owner: null, diagnostic: "input already claimed" };
-  return textEncoder.encode(JSON.stringify({ schemaVersion: 1, result }));
 }
 
 function inputReceipt(): Uint8Array {
@@ -126,7 +112,6 @@ function errorPayload(): Uint8Array {
 }
 
 type FakeHostOptions = Readonly<{
-  claim?: "granted" | "denied";
   errorOnInput?: boolean;
   /** Bytes to stream as one OUTPUT frame after HOST_ATTACH. */
   streamOutput?: Uint8Array;
@@ -141,9 +126,15 @@ type FakeHost = Readonly<{
 }>;
 
 async function startFakeHost(options: FakeHostOptions = {}): Promise<FakeHost> {
-  const endpoint = `/tmp/hvva-${crypto.randomUUID().slice(0, 8)}.sock`;
+  const endpoint = join(
+    tmpdir(),
+    `hvva-${crypto.randomUUID().slice(0, 8)}.sock`,
+  );
   const received: SessiondFrame[] = [];
+  const connections = new Set<Socket>();
   const server: Server = createServer((socket: Socket) => {
+    connections.add(socket);
+    socket.on("close", () => connections.delete(socket));
     const decoder = new SessiondFrameDecoder();
     socket.on("data", (chunk) => {
       let frames: SessiondFrame[];
@@ -167,6 +158,7 @@ async function startFakeHost(options: FakeHostOptions = {}): Promise<FakeHost> {
     received,
     close: () =>
       new Promise<void>((resolve) => {
+        for (const socket of connections) socket.destroy();
         server.close(() => {
           rmSync(endpoint, { force: true });
           resolve();
@@ -223,14 +215,6 @@ function respond(
         }),
       );
       return;
-    case "CLAIM_ACQUIRE":
-      respondFrame(
-        socket,
-        "CLAIM_RESULT",
-        frame.requestId,
-        claimResult(options.claim ?? "granted"),
-      );
-      return;
     case "INPUT_SUBMIT":
       if (options.errorOnInput === true) {
         socket.write(
@@ -247,7 +231,7 @@ function respond(
       respondFrame(socket, "APPLIED", frame.requestId, inputReceipt());
       return;
     default:
-      // CLAIM_RELEASE, APPLIED acks, PONG — nothing to answer.
+      // APPLIED acks and PONG need no response.
       return;
   }
 }
@@ -272,15 +256,14 @@ async function attachTo(options: FakeHostOptions = {}): Promise<{
   return { host, client };
 }
 
-test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns the receipt", async () => {
+test("completes HELLO→HOST_ATTACH→INPUT_SUBMIT and returns the receipt", async () => {
   const { host, client } = await attachTo();
   const result = await client.injectAutomated({
     session: { key: locator.sessionId, incarnation: "1" },
-    writer: "hive-daemon:fixture",
     transactionId: "msg-1",
     idempotencyKey: "msg-1",
     bytes: textEncoder.encode("hello agent\n"),
-    leaseMilliseconds: 60_000,
+    action: "deliver",
   });
   client.close();
   await settle();
@@ -293,13 +276,7 @@ test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns t
   const types = host.received.map((frame) => frame.type);
   expect(types).toContain("HELLO");
   expect(types).toContain("HOST_ATTACH");
-  expect(types).toContain("CLAIM_ACQUIRE");
   expect(types).toContain("INPUT_SUBMIT");
-  // The claim holds and is cleanly released on the same connection.
-  expect(types).toContain("CLAIM_RELEASE");
-
-  const claim = required(host.received.find((f) => f.type === "CLAIM_ACQUIRE"));
-  expect(JSON.parse(textDecoder.decode(claim.payload)).kind).toBe("automation");
 
   const submit = required(host.received.find((f) => f.type === "INPUT_SUBMIT"));
   expect(submit.flags).toBe(FRAME_FLAGS.contentSensitive);
@@ -308,7 +285,9 @@ test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns t
   expect(Buffer.from(submitBody.operation.bytes, "base64").toString()).toBe(
     "hello agent\n",
   );
-  expect(submitBody.claimToken).toBe("claim-token-1");
+  expect(submitBody.provenance).toBe("automation");
+  expect(submitBody.action).toBe("deliver");
+  expect(submitBody.claimToken).toBeUndefined();
 });
 
 test("reads the screen from the start of the retained journal", async () => {
@@ -397,41 +376,15 @@ test("a replay that does not start where we asked is reported as a gap", async (
   expect(observed.completeness).toBe("gap");
 });
 
-test("declines with the arbiter's reason and never submits when the claim is denied (never-steal)", async () => {
-  const { host, client } = await attachTo({ claim: "denied" });
-  const result = await client.injectAutomated({
-    session: { key: locator.sessionId, incarnation: "1" },
-    writer: "hive-daemon:fixture",
-    transactionId: "msg-1",
-    idempotencyKey: "msg-1",
-    bytes: textEncoder.encode("hello agent\n"),
-    leaseMilliseconds: 60_000,
-  });
-  client.close();
-
-  // The decline carries the arbiter's own diagnostic out: without it, a denied
-  // claim and a broken wire are indistinguishable to the caller.
-  expect(result).toEqual({
-    kind: "claim-declined",
-    detail: "claim denied: input already claimed",
-  });
-  const types = host.received.map((frame) => frame.type);
-  expect(types).toContain("CLAIM_ACQUIRE");
-  expect(types).not.toContain("INPUT_SUBMIT");
-  // No claim was granted, so there is nothing to release.
-  expect(types).not.toContain("CLAIM_RELEASE");
-});
-
-test("rechecks prompt identity after claim acquisition and before input submit", async () => {
+test("rechecks prompt identity before input submit", async () => {
   const { host, client } = await attachTo();
   let checks = 0;
   const result = await client.injectAutomated({
     session: { key: locator.sessionId, incarnation: "1" },
-    writer: "hive-daemon:fixture",
     transactionId: "approval:stale",
     idempotencyKey: "approval:stale",
     bytes: textEncoder.encode("y"),
-    leaseMilliseconds: 60_000,
+    action: "keys",
     isPromptPending: () => {
       checks += 1;
       return false;
@@ -443,9 +396,7 @@ test("rechecks prompt identity after claim acquisition and before input submit",
   expect(result).toEqual({ kind: "stale" });
   expect(checks).toBe(1);
   const types = host.received.map((frame) => frame.type);
-  expect(types).toContain("CLAIM_ACQUIRE");
   expect(types).not.toContain("INPUT_SUBMIT");
-  expect(types).toContain("CLAIM_RELEASE");
 });
 
 test("acknowledges a streamed OUTPUT frame with the APPLIED high-water so the host does not backpressure", async () => {
@@ -454,11 +405,10 @@ test("acknowledges a streamed OUTPUT frame with the APPLIED high-water so the ho
   // Give the OUTPUT frame time to arrive and be acknowledged before the RPC.
   await client.injectAutomated({
     session: { key: locator.sessionId, incarnation: "1" },
-    writer: "hive-daemon:fixture",
     transactionId: "msg-1",
     idempotencyKey: "msg-1",
     bytes: textEncoder.encode("hi\n"),
-    leaseMilliseconds: 60_000,
+    action: "deliver",
   });
   client.close();
   await settle();
@@ -479,11 +429,10 @@ test("rejects the inject when the host returns a typed ERROR for INPUT_SUBMIT", 
   await expect(
     client.injectAutomated({
       session: { key: locator.sessionId, incarnation: "1" },
-      writer: "hive-daemon:fixture",
       transactionId: "msg-1",
       idempotencyKey: "msg-1",
       bytes: textEncoder.encode("hi\n"),
-      leaseMilliseconds: 60_000,
+      action: "deliver",
     }),
   ).rejects.toBeInstanceOf(SessiondWireError);
   client.close();

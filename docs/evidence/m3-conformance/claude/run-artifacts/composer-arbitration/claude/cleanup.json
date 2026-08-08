@@ -1,0 +1,147 @@
+[
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent\":{\"id\":\"039a446a-1474-4c9d-90b7-33c052040e82\",\"name\":\"maya\",\"tool\":\"claude\",\"model\":\"claude-haiku-4-5-20251001\",\"category\":\"simple_coding\",\"status\":\"dead\",\"holdReason\":null,\"holdResetAt\":null,\"holdProviderRunId\":null,\"closedAt\":\"2026-08-02T13:12:42.690Z\",\"quotaReservationId\":\"24f45ae2-b49c-4d89-88ee-2b1affc8f2ba\",\"executionIdentity\":{\"tool\":\"claude\",\"model\":\"claude-haiku-4-5-20251001\"},\"taskDescription\":\"Wait quietly for a terminal delivery test. Do not use tools or modify files.\",\"worktreePath\":\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya\",\"branch\":\"hive/maya-wait-quietly-for-a-terminal-de\",\"sessionLocator\":{\"schemaVersion\":1,\"instanceId\":\"f4b6c72bae\",\"subject\":{\"kind\":\"agent\",\"agentId\":\"039a446a-1474-4c9d-90b7-33c052040e82\"},\"generation\":1,\"sessionId\":\"ses_019fc29a-d9b7-7c49-9393-564b536a78ef\",\"hostKind\":\"sessiond\",\"engineBuildId\":\"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1\"},\"toolSessionId\":\"c2260ed6-0621-4566-9622-86d689012390\",\"recoveryAttempts\":0,\"contextPct\":null,\"contextWindow\":200000,\"createdAt\":\"2026-08-02T13:12:36.023Z\",\"lastEventAt\":\"2026-08-02T13:12:42.690Z\",\"capabilityEpoch\":0,\"readOnly\":true,\"writeRevoked\":false},\"cleaned\":{\"sessionId\":\"ses_019fc29a-d9b7-7c49-9393-564b536a78ef\",\"worktreePath\":null,\"branch\":null},\"reaped\":{\"killed\":[{\"pid\":97624,\"command\":\"/Users/scottkellar/Projects/hive/.dev/tmp/claude/m3-frozen/hive-sessiond host\"},{\"pid\":97625,\"command\":\"/bin/zsh -l -i -c hive_terminal_command=\\\"$1\\\"\\\\012if [[ -n \\\"${HISTFILE:-}\\\" ]]; then\\\\012  print -s -- \\\"$hive_terminal_command\\\"\\\\012  fc -AI \\\"$HISTFILE\\\" 2>/dev/null || true\\\\012fi\\\\012eval \\\"$hive_terminal_command\\\"\\\\012exec /bin/zsh -l -i hive-terminal '/Users/scottkellar/.local/share/claude/versions/2.1.220' '--model' 'claude-haiku-4-5-20251001' '--permission-mode' 'default' '--mcp-config' '/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya/.mcp.json' '--strict-mcp-config' '--append-system-prompt-file' '/private/tmp/hvqa-cr/runtime/prompts/ses_019fc29a-d9b7-7c49-9393-564b536a78ef.txt' 'Begin the assigned task.'\"},{\"pid\":97628,\"command\":\"/Users/scottkellar/.local/share/claude/versions/2.1.220 --model claude-haiku-4-5-20251001 --permission-mode default --mcp-config /Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya/.mcp.json --strict-mcp-config --append-system-prompt-file /private/tmp/hvqa-cr/runtime/prompts/ses_019fc29a-d9b7-7c49-9393-564b536a78ef.txt Begin the assigned task.\"},{\"pid\":97705,\"command\":\"caffeinate -i -t 300\"}],\"survivors\":[]},\"preserved\":null,\"stranded\":null}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "agent": {
+          "id": "039a446a-1474-4c9d-90b7-33c052040e82",
+          "name": "maya",
+          "tool": "claude",
+          "model": "claude-haiku-4-5-20251001",
+          "category": "simple_coding",
+          "status": "dead",
+          "holdReason": null,
+          "holdResetAt": null,
+          "holdProviderRunId": null,
+          "closedAt": "2026-08-02T13:12:42.690Z",
+          "quotaReservationId": "24f45ae2-b49c-4d89-88ee-2b1affc8f2ba",
+          "executionIdentity": {
+            "tool": "claude",
+            "model": "claude-haiku-4-5-20251001"
+          },
+          "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+          "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya",
+          "branch": "hive/maya-wait-quietly-for-a-terminal-de",
+          "sessionLocator": {
+            "schemaVersion": 1,
+            "instanceId": "f4b6c72bae",
+            "subject": {
+              "kind": "agent",
+              "agentId": "039a446a-1474-4c9d-90b7-33c052040e82"
+            },
+            "generation": 1,
+            "sessionId": "ses_019fc29a-d9b7-7c49-9393-564b536a78ef",
+            "hostKind": "sessiond",
+            "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+          },
+          "toolSessionId": "c2260ed6-0621-4566-9622-86d689012390",
+          "recoveryAttempts": 0,
+          "contextPct": null,
+          "contextWindow": 200000,
+          "createdAt": "2026-08-02T13:12:36.023Z",
+          "lastEventAt": "2026-08-02T13:12:42.690Z",
+          "capabilityEpoch": 0,
+          "readOnly": true,
+          "writeRevoked": false
+        },
+        "cleaned": {
+          "sessionId": "ses_019fc29a-d9b7-7c49-9393-564b536a78ef",
+          "worktreePath": null,
+          "branch": null
+        },
+        "reaped": {
+          "killed": [
+            {
+              "pid": 97624,
+              "command": "/Users/scottkellar/Projects/hive/.dev/tmp/claude/m3-frozen/hive-sessiond host"
+            },
+            {
+              "pid": 97625,
+              "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal '/Users/scottkellar/.local/share/claude/versions/2.1.220' '--model' 'claude-haiku-4-5-20251001' '--permission-mode' 'default' '--mcp-config' '/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya/.mcp.json' '--strict-mcp-config' '--append-system-prompt-file' '/private/tmp/hvqa-cr/runtime/prompts/ses_019fc29a-d9b7-7c49-9393-564b536a78ef.txt' 'Begin the assigned task.'"
+            },
+            {
+              "pid": 97628,
+              "command": "/Users/scottkellar/.local/share/claude/versions/2.1.220 --model claude-haiku-4-5-20251001 --permission-mode default --mcp-config /Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya/.mcp.json --strict-mcp-config --append-system-prompt-file /private/tmp/hvqa-cr/runtime/prompts/ses_019fc29a-d9b7-7c49-9393-564b536a78ef.txt Begin the assigned task."
+            },
+            {
+              "pid": 97705,
+              "command": "caffeinate -i -t 300"
+            }
+          ],
+          "survivors": []
+        },
+        "preserved": null,
+        "stranded": null
+      }
+    }
+  },
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent\":{\"id\":\"039a446a-1474-4c9d-90b7-33c052040e82\",\"name\":\"maya\",\"tool\":\"claude\",\"model\":\"claude-haiku-4-5-20251001\",\"category\":\"simple_coding\",\"status\":\"dead\",\"holdReason\":null,\"holdResetAt\":null,\"holdProviderRunId\":null,\"closedAt\":\"2026-08-02T13:12:42.690Z\",\"quotaReservationId\":\"24f45ae2-b49c-4d89-88ee-2b1affc8f2ba\",\"executionIdentity\":{\"tool\":\"claude\",\"model\":\"claude-haiku-4-5-20251001\"},\"taskDescription\":\"Wait quietly for a terminal delivery test. Do not use tools or modify files.\",\"worktreePath\":null,\"branch\":null,\"sessionLocator\":{\"schemaVersion\":1,\"instanceId\":\"f4b6c72bae\",\"subject\":{\"kind\":\"agent\",\"agentId\":\"039a446a-1474-4c9d-90b7-33c052040e82\"},\"generation\":1,\"sessionId\":\"ses_019fc29a-d9b7-7c49-9393-564b536a78ef\",\"hostKind\":\"sessiond\",\"engineBuildId\":\"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1\"},\"toolSessionId\":\"c2260ed6-0621-4566-9622-86d689012390\",\"recoveryAttempts\":0,\"contextPct\":null,\"contextWindow\":200000,\"createdAt\":\"2026-08-02T13:12:36.023Z\",\"lastEventAt\":\"2026-08-02T13:12:43.736Z\",\"capabilityEpoch\":0,\"readOnly\":true,\"writeRevoked\":false},\"cleaned\":{\"sessionId\":\"ses_019fc29a-d9b7-7c49-9393-564b536a78ef\",\"worktreePath\":\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya\",\"branch\":\"hive/maya-wait-quietly-for-a-terminal-de\"},\"reaped\":{\"killed\":[],\"survivors\":[]},\"preserved\":null,\"stranded\":null}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "agent": {
+          "id": "039a446a-1474-4c9d-90b7-33c052040e82",
+          "name": "maya",
+          "tool": "claude",
+          "model": "claude-haiku-4-5-20251001",
+          "category": "simple_coding",
+          "status": "dead",
+          "holdReason": null,
+          "holdResetAt": null,
+          "holdProviderRunId": null,
+          "closedAt": "2026-08-02T13:12:42.690Z",
+          "quotaReservationId": "24f45ae2-b49c-4d89-88ee-2b1affc8f2ba",
+          "executionIdentity": {
+            "tool": "claude",
+            "model": "claude-haiku-4-5-20251001"
+          },
+          "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+          "worktreePath": null,
+          "branch": null,
+          "sessionLocator": {
+            "schemaVersion": 1,
+            "instanceId": "f4b6c72bae",
+            "subject": {
+              "kind": "agent",
+              "agentId": "039a446a-1474-4c9d-90b7-33c052040e82"
+            },
+            "generation": 1,
+            "sessionId": "ses_019fc29a-d9b7-7c49-9393-564b536a78ef",
+            "hostKind": "sessiond",
+            "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+          },
+          "toolSessionId": "c2260ed6-0621-4566-9622-86d689012390",
+          "recoveryAttempts": 0,
+          "contextPct": null,
+          "contextWindow": 200000,
+          "createdAt": "2026-08-02T13:12:36.023Z",
+          "lastEventAt": "2026-08-02T13:12:43.736Z",
+          "capabilityEpoch": 0,
+          "readOnly": true,
+          "writeRevoked": false
+        },
+        "cleaned": {
+          "sessionId": "ses_019fc29a-d9b7-7c49-9393-564b536a78ef",
+          "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-claude-run.lbMFmy/project/.hive/worktrees/maya",
+          "branch": "hive/maya-wait-quietly-for-a-terminal-de"
+        },
+        "reaped": {
+          "killed": [],
+          "survivors": []
+        },
+        "preserved": null,
+        "stranded": null
+      }
+    }
+  }
+]

@@ -4,11 +4,8 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { HV1_CAPABILITY_WIRE_SCHEMAS } from "../../src/schemas/capability";
 import {
-  MESSAGE_TERMINAL_CONTRACT,
-  MESSAGE_TERMINAL_WIRE_SCHEMAS,
-} from "../../src/schemas/message-envelope";
-import {
   CHECKPOINT_HEADER,
+  DECIMAL_UINT64_PATTERN,
   FRAME_FLAGS,
   FRAME_HEADER,
   FRAME_TYPES,
@@ -51,7 +48,6 @@ export const WIRE_SCHEMA_CATALOG = {
   ...SESSION_WIRE_SCHEMAS,
   ...STATUS_WIRE_SCHEMAS,
   ...HV1_CAPABILITY_WIRE_SCHEMAS,
-  ...MESSAGE_TERMINAL_WIRE_SCHEMAS,
 } as const;
 
 const BYTE_CODEC_SCHEMA_NAMES = new Set([
@@ -64,13 +60,43 @@ const BYTE_CODEC_SCHEMA_NAMES = new Set([
 const prettyJson = (value: unknown): string =>
   `${JSON.stringify(value, null, 2)}\n`;
 
+/**
+ * Marks every u64-decimal string in an emitted schema with the format the
+ * Swift validator bounds-checks.
+ *
+ * The pattern alone cannot express the bound: it admits twenty digits, and the
+ * largest twenty-digit numbers are past what a u64 holds. TypeScript rejects
+ * those through a zod refinement, and refinements do not survive into JSON
+ * Schema — so without this, Swift accepts a value TypeScript refuses and the
+ * two sides silently disagree.
+ *
+ * It is applied here rather than on the schema itself because these same schemas
+ * are served as MCP tool inputs, and `format` is not a keyword Moonshot accepts:
+ * putting it there would cost Kimi the entire tool list to fix a conformance
+ * fixture.
+ */
+function markUint64Formats(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(markUint64Formats);
+  if (typeof value !== "object" || value === null) return value;
+  const entries = Object.entries(value as Record<string, unknown>).map(
+    ([key, nested]) => [key, markUint64Formats(nested)],
+  );
+  const marked = Object.fromEntries(entries) as Record<string, unknown>;
+  if (marked.type === "string" && marked.pattern === DECIMAL_UINT64_PATTERN) {
+    return { ...marked, format: "hive-uint64-decimal" };
+  }
+  return marked;
+}
+
 function renderSchemaDocument(): string {
   const schemas = Object.fromEntries(
     Object.entries(WIRE_SCHEMA_CATALOG).map(([name, schema]) => [
       name,
-      z.toJSONSchema(
-        schema,
-        BYTE_CODEC_SCHEMA_NAMES.has(name) ? { io: "input" } : undefined,
+      markUint64Formats(
+        z.toJSONSchema(
+          schema,
+          BYTE_CODEC_SCHEMA_NAMES.has(name) ? { io: "input" } : undefined,
+        ),
       ),
     ]),
   );
@@ -80,13 +106,11 @@ function renderSchemaDocument(): string {
       "src/schemas/session-protocol.ts",
       "src/schemas/status-envelope.ts",
       "src/schemas/capability.ts",
-      "src/schemas/message-envelope.ts",
     ],
     schemas,
     contract: {
       session: SESSION_PROTOCOL_CONTRACT,
       status: STATUS_CONTRACT,
-      messageTerminalBinding: MESSAGE_TERMINAL_CONTRACT,
     },
   });
 }
@@ -599,6 +623,10 @@ const zigIdentifier = (value: string): string => {
   const name = zigName(value);
   return name === "error" ? `@"${name}"` : name;
 };
+const zigWireIdentifier = (value: string): string => {
+  const name = zigName(value);
+  return name === value ? name : `@"${value}"`;
+};
 const zigUsizeConstants = (
   value: Record<string, number>,
   indent: string,
@@ -609,6 +637,88 @@ const zigUsizeConstants = (
         `${indent}pub const ${zigName(name)}: usize = ${number};`,
     )
     .join("\n");
+
+const zigEnum = (
+  name: string,
+  values: readonly string[],
+): string => `pub const ${name} = enum {
+${values.map((value) => `    ${zigWireIdentifier(value)},`).join("\n")}
+};`;
+
+const zigStruct = (
+  name: string,
+  fields: Readonly<Record<string, string>>,
+): string => `pub const ${name} = struct {
+${Object.entries(fields)
+  .map(([field, type]) => `    ${field}: ${type},`)
+  .join("\n")}
+};`;
+
+function renderZigPayloadTypes(): string {
+  return [
+    zigEnum("InputProvenance", ["user", "automation", "terminal"]),
+    zigEnum("InputAction", [
+      "edit",
+      "submit",
+      "cancel",
+      "gesture",
+      "deliver",
+      "keys",
+    ]),
+    zigEnum("TerminalHostCompleteness", [
+      "complete",
+      "partial",
+      "unavailable",
+      "unknown",
+    ]),
+    zigEnum("TerminalHostReapAuthority", [
+      "direct-parent",
+      "durable-parent-record",
+      "unavailable",
+    ]),
+    zigStruct("TerminalGeometry", {
+      columns: "u32",
+      rows: "u32",
+      widthPx: "u32",
+      heightPx: "u32",
+      cellWidthPx: "f64",
+      cellHeightPx: "f64",
+    }),
+    zigStruct("TerminalHostWindowSize", {
+      columns: "u32",
+      rows: "u32",
+      widthPixels: "u32",
+      heightPixels: "u32",
+    }),
+    zigStruct("TerminalHostProcessIdentity", {
+      processId: "i32",
+      startToken: "[]const u8",
+    }),
+    zigStruct("TerminalHostJobControlEvidence", {
+      sessionLeader: "bool",
+      controllingTerminal: "bool",
+      standardStreamsShareTerminal: "bool",
+      childSessionId: "i32",
+      childProcessGroupId: "i32",
+      foregroundProcessGroupId: "i32",
+      terminalIdentity: "[]const u8",
+      initialProfileAppliedBeforeExec: "bool",
+      initialWindowAppliedBeforeExec: "bool",
+      completeness: "TerminalHostCompleteness",
+    }),
+    zigStruct("TerminalHostExitStatus", {
+      code: "?i32",
+      signal: "?i32",
+      observedAt: "[]const u8",
+    }),
+    zigStruct("TerminalHostReapEvidence", {
+      authority: "TerminalHostReapAuthority",
+      reaped: "bool",
+      status: "?TerminalHostExitStatus",
+      completeness: "TerminalHostCompleteness",
+    }),
+  ].join("\n\n");
+}
 
 function renderZig(): string {
   const frameTypes = Object.entries(FRAME_TYPES)
@@ -675,6 +785,8 @@ pub const ghostty_bridge_event = enum(u8) {
 ${bridgeEvents}
 };
 
+${renderZigPayloadTypes()}
+
 pub const checkpoint = struct {
     pub const magic = "${CHECKPOINT_HEADER.magic}";
     pub const version: u16 = ${CHECKPOINT_HEADER.version};
@@ -709,7 +821,6 @@ pub const limits = struct {
     pub const missed_pong_intervals: u8 = ${TERMINAL_LIMITS.missedPongIntervalsBeforeDetach};
 };
 
-// Payloads remain schema-driven; no hand-maintained Zig payload structs live here.
 pub const schema_fixture = @embedFile("session-protocol.schema.json");
 pub const wire_corpus_fixture = @embedFile("session-protocol-corpus.json");
 pub const reducer_corpus_fixture = @embedFile("reducer-parity-corpus.json");

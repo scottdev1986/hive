@@ -1,6 +1,6 @@
 ---
 name: code-comments
-description: Write clear, plain-spoken code comments and documentation that lives alongside the code. Use when writing or reviewing code that needs inline documentation—file headers, function docs, architectural decisions, or explanatory comments. Optimized for both human readers and AI coding assistants who benefit from co-located context.
+description: Write clear, plain-spoken code comments and documentation that lives alongside the code. Use when writing or reviewing code that needs inline documentation—file headers, function docs, architectural decisions, or explanatory comments. Optimized for both user readers and AI coding assistants who benefit from co-located context.
 ---
 
 # Code Comments

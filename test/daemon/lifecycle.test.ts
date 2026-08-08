@@ -8,9 +8,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DaemonHandshake } from "../../src/daemon/handshake";
-import { handshakeMismatch } from "../../src/daemon/handshake";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
+import type { DaemonHandshake } from "../../src/daemon/lifecycle/daemon-lifecycle";
+import {
+  expectedDaemonHandshake,
+  handshakeMismatch,
+} from "../../src/daemon/lifecycle/daemon-lifecycle";
+import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { IS_RELEASE_BUILD } from "../../src/shared/version";
 import {
   acquireDaemonLock,
   cleanupLifecycleFiles,
@@ -21,11 +25,12 @@ import {
   getPortFilePath,
   hiveCliSpawnArgv,
   isRunning,
+  ensureStarted,
   probeDaemonReuse,
   readConfiguredPort,
   releaseDaemonLock,
   writeLifecycleFiles,
-} from "../../src/daemon/lifecycle";
+} from "../../src/daemon/lifecycle/daemon-lifecycle";
 
 const fixtureProcessIdentity = (pid: number) => ({
   startToken: `${pid}:0`,
@@ -47,6 +52,9 @@ const handshake: DaemonHandshake = {
 
 describe("respawning as the daemon", () => {
   test("names this exact CLI build before adding a subcommand", () => {
+    const sourceArgv = hiveCliSpawnArgv(false, process.execPath);
+    expect(sourceArgv[1]).toBe(join(import.meta.dir, "../../src/cli.ts"));
+    expect(existsSync(sourceArgv[1] as string)).toBe(true);
     expect(
       hiveCliSpawnArgv(false, "/usr/local/bin/bun", "/repo/src/cli.ts"),
     ).toEqual(["/usr/local/bin/bun", "/repo/src/cli.ts"]);
@@ -292,6 +300,7 @@ describe("daemon lifecycle", () => {
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-owner-"));
     process.env.HIVE_HOME = home;
     const instanceId = hiveInstanceSuffix(home);
+    const killSpy = spyOn(process, "kill").mockReturnValue(true);
     try {
       expect(await daemonInstanceLiveness(home, instanceId)).toEqual("dead");
       await acquireDaemonLock();
@@ -306,6 +315,7 @@ describe("daemon lifecycle", () => {
       releaseDaemonLock();
       expect(await daemonInstanceLiveness(home, instanceId)).toEqual("dead");
     } finally {
+      killSpy.mockRestore();
       rmSync(home, { recursive: true, force: true });
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
@@ -401,6 +411,94 @@ describe("daemon lifecycle", () => {
         port: 4317,
         reason: "project identity (HiveUUID)",
       });
+    } finally {
+      fetchSpy.mockRestore();
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("recognizes a matching daemon whose startup maintenance is not ready", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-starting-"));
+    process.env.HIVE_HOME = home;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) =>
+      Promise.resolve(
+        String(input).endsWith("/health")
+          ? Response.json(
+              {
+                ok: false,
+                maintenance: { status: "unknown" },
+              },
+              { status: 503 },
+            )
+          : Response.json(handshake),
+      )) as typeof fetch);
+    try {
+      writeLifecycleFiles(4317);
+      expect(await probeDaemonReuse(handshake)).toEqual({
+        state: "starting",
+        port: 4317,
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      rmSync(home, { recursive: true, force: true });
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+    }
+  });
+
+  test("waits for a matching starting daemon instead of spawning a duplicate", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-wait-"));
+    process.env.HIVE_HOME = home;
+    const expected = await expectedDaemonHandshake(process.cwd());
+    let healthChecks = 0;
+    // Work left pending by an earlier file can reach this process-wide fetch
+    // spy, so it answers only for this test's port and passes the rest through.
+    const realFetch = globalThis.fetch;
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (!url.startsWith("http://127.0.0.1:4317/")) {
+        return realFetch(input, init);
+      }
+      if (url.endsWith("/health")) {
+        healthChecks += 1;
+        return Promise.resolve(
+          healthChecks === 1
+            ? Response.json(
+                { ok: false, maintenance: { status: "unknown" } },
+                { status: 503 },
+              )
+            : Response.json({ ok: true }),
+        );
+      }
+      return Promise.resolve(Response.json(expected));
+    }) as typeof fetch);
+    const daemonArgv = daemonSpawnArgv(IS_RELEASE_BUILD, process.execPath);
+    let spawned = false;
+    const spawn = ((
+      _argv: string[],
+      options?: { env?: Record<string, string | undefined> },
+    ) => {
+      spawned = true;
+      throw new Error(
+        `must not spawn a duplicate daemon for ${options?.env?.HIVE_HOME}`,
+      );
+    }) as unknown as typeof Bun.spawn;
+    try {
+      writeLifecycleFiles(4317);
+      expect(await ensureStarted(spawn)).toBe(4317);
+      expect(spawned).toBe(false);
+      expect(healthChecks).toBe(2);
+      expect(() => spawn(daemonArgv, { env: { HIVE_HOME: home } })).toThrow(
+        `must not spawn a duplicate daemon for ${home}`,
+      );
+      expect(spawned).toBe(true);
     } finally {
       fetchSpy.mockRestore();
       rmSync(home, { recursive: true, force: true });

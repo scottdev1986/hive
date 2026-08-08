@@ -1,0 +1,70 @@
+{
+  "vendor": "opencode",
+  "installedVersion": "1.18.11",
+  "sourcePin": "1882c33827cf0ce5c948b69ab5a87ed8f6790cf8",
+  "executable": "opencode",
+  "spawn": [
+    "opencode",
+    "acp"
+  ],
+  "spawnNote": "User config and plugins ENABLED. --pure is test-only isolation and was NOT used for this fixture.",
+  "capturedAt": "2026-08-02T17:58:00Z",
+  "initialize": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "protocolVersion": 1,
+      "agentCapabilities": {
+        "loadSession": true,
+        "mcpCapabilities": {
+          "http": true,
+          "sse": true
+        },
+        "promptCapabilities": {
+          "embeddedContext": true,
+          "image": true
+        },
+        "sessionCapabilities": {
+          "close": {},
+          "fork": {},
+          "list": {},
+          "resume": {}
+        }
+      },
+      "authMethods": [
+        {
+          "description": "Run `opencode auth login` in the terminal",
+          "name": "Login with opencode",
+          "id": "opencode-login"
+        }
+      ],
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.11"
+      }
+    }
+  },
+  "measured_capabilities_from_handshake": {
+    "loadSession": true,
+    "sessionCapabilities": [
+      "close",
+      "fork",
+      "list",
+      "resume"
+    ],
+    "promptCapabilities": {
+      "embeddedContext": true,
+      "image": true
+    },
+    "mcpCapabilities": {
+      "http": true,
+      "sse": true
+    },
+    "authMethods": [
+      "opencode-login"
+    ]
+  },
+  "documented_gaps": {
+    "undo_redo_via_acp": "ABSENT \u2014 OpenCode docs say /undo and /redo are not supported through ACP; adapter must never advertise them (\u00a78.3 / \u00a74.1)"
+  }
+}

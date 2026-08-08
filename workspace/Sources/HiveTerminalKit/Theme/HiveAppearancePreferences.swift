@@ -1,14 +1,7 @@
 import AppKit
 import Foundation
 
-/// The user's terminal appearance choices, persisted across launches.
-///
-/// These are local presentation preferences, not routing policy, so they live
-/// in `UserDefaults` rather than round-tripping through the daemon.
-///
-/// A change posts `didChangeNotification` so running panes can reconfigure
-/// themselves; a write that does not change the value posts nothing, because a
-/// selector that re-pushes on every redraw would thrash the engine.
+/// The user's terminal appearance choices, persisted across launches. These are local presentation preferences, not routing policy, so they live in `UserDefaults` rather than round-tripping through the daemon. A change posts `didChangeNotification` so running panes can reconfigure themselves; a write that does not change the value posts nothing, because a selector that re-pushes on every redraw would thrash the engine.
 public final class HiveAppearancePreferences {
     public static let didChangeNotification = Notification.Name(
         "hive.terminal.appearancePreferencesDidChange")
@@ -31,9 +24,7 @@ public final class HiveAppearancePreferences {
         self.notificationCenter = notificationCenter
     }
 
-    /// An absent key reads as the default, and so does a value that no longer
-    /// names a case — a preference file written by a future or corrupted build
-    /// must not crash the terminal or leave it unthemed.
+    /// An absent key reads as the default, and so does a value that no longer names a case — a preference file written by a future or corrupted build must not crash the terminal or leave it unthemed.
     public var themeSelection: HiveTerminalThemeSelection {
         get {
             defaults.string(forKey: Key.themeSelection)
@@ -56,9 +47,7 @@ public final class HiveAppearancePreferences {
         notificationCenter.post(name: Self.didChangeNotification, object: self)
     }
 
-    /// The theme a surface should be running, given the appearance state it is
-    /// drawn in. `HiveTerminalTheme` stays internal to the kit: callers outside
-    /// it choose a *selection*, never a palette.
+    /// The theme a surface should be running, given the appearance state it is drawn in. `HiveTerminalTheme` stays internal to the kit: callers outside it choose a *selection*, never a palette.
     func resolvedTheme(for state: HiveTerminalAppearanceState) -> HiveTerminalTheme {
         HiveTerminalTheme.resolve(
             selection: themeSelection,
@@ -68,20 +57,7 @@ public final class HiveAppearancePreferences {
     }
 }
 
-/// The appearance state a surface resolves its theme against.
-///
-/// Light/dark comes from the appearance the view is drawn in. Increase Contrast
-/// does NOT: it is an accessibility display option, not an appearance variant.
-/// `NSAppearance(named: .accessibilityHighContrastAqua)` reports its own name
-/// as plain `NSAppearanceNameAqua`, and `bestMatch` maps every high-contrast
-/// name onto its base, so no appearance read can recover it. The only reader is
-/// `NSWorkspace`, which this kit may not reference.
-///
-/// Increased-contrast theme variants and resolution are shipped and measured.
-/// The live signal (and re-push when the user toggles it mid-session) belongs
-/// with an accessibility-options observer outside this kit. Call sites pass
-/// `false` explicitly rather than defaulting it somewhere it would look wired
-/// and be inert.
+/// The appearance state a surface resolves its theme against. Light/dark comes from the appearance the view is drawn in. Increase Contrast does NOT: it is an accessibility display option, not an appearance variant. `NSAppearance(named: .accessibilityHighContrastAqua)` reports its own name as plain `NSAppearanceNameAqua`, and `bestMatch` maps every high-contrast name onto its base, so no appearance read can recover it. The only reader is `NSWorkspace`, which this kit may not reference. Increased-contrast theme variants and resolution are shipped and measured. The live signal (and re-push when the user toggles it mid-session) belongs with an accessibility-options observer outside this kit. Call sites pass `false` explicitly rather than defaulting it somewhere it would look wired and be inert.
 struct HiveTerminalAppearanceState: Equatable {
     let appearance: HiveTerminalAppearance
     let increasedContrast: Bool

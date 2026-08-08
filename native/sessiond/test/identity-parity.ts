@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { macProcessIdentity } from "../../../src/daemon/lifecycle";
+import { macProcessIdentity } from "../../../src/daemon/lifecycle/daemon-lifecycle";
 
 test("TypeScript and Zig encode the same live process identity", async () => {
   const root = resolve(import.meta.dir, "../../..");

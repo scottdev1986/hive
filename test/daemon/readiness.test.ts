@@ -4,7 +4,7 @@ import {
   QUIET_LIMIT,
   waitForMcpReporting,
   watchForProofOfLife,
-} from "../../src/daemon/readiness";
+} from "../../src/daemon/spawn/readiness";
 
 /**
  * A pane that redraws like a real TUI: the Codex composer increments
@@ -25,7 +25,7 @@ function deps(over: Partial<ProofOfLifeDeps> = {}): ProofOfLifeDeps {
   return {
     hasSession: async () => true,
     capturePane: frozen("idle"),
-    lastEventAt: () => null,
+    newestEventSeq: () => null,
     codexActivity: async () => null,
     // The healthy default: the agent hive launched is running in its pane.
     launchedProcessAlive: async () => true,
@@ -35,7 +35,8 @@ function deps(over: Partial<ProofOfLifeDeps> = {}): ProofOfLifeDeps {
   };
 }
 
-const BASELINE = "2026-07-11T00:00:00.000Z";
+/** The store's sequence at the moment the watch starts. */
+const BASELINE = "4";
 
 describe("proof of life", () => {
   test("a model that only thinks is alive — the bug that made deep-tier Codex unspawnable", async () => {
@@ -260,7 +261,7 @@ describe("proof of life", () => {
     expect(proof.alive).toBe(true);
   });
 
-  test("an idle agent whose turn ended is alive via its hook event, not its pane", async () => {
+  test("an idle agent whose turn ended is alive via its lifecycle event, not its pane", async () => {
     // The middle state, and the reason a frozen pane can never mean death on its
     // own: a finished turn goes pane-static within seconds.
     let polls = 0;
@@ -269,13 +270,43 @@ describe("proof of life", () => {
       BASELINE,
       deps({
         capturePane: frozen("done, awaiting input"),
-        lastEventAt: () => {
+        newestEventSeq: () => {
           polls += 1;
-          return polls >= 3 ? "2026-07-11T00:00:05.000Z" : BASELINE;
+          return polls >= 3 ? "8" : BASELINE;
         },
       }),
     );
-    expect(proof).toEqual({ alive: true, signal: "hook event" });
+    expect(proof).toEqual({ alive: true, signal: "lifecycle event" });
+  });
+
+  test("a stream that was already this long is not a new event", async () => {
+    // The false LIFE the row clock produced. Every daemon-side write to the
+    // agent row moved that clock — a failed launch, a revocation, the stuck
+    // marker — and the watch read the movement as the agent reporting in. A
+    // sequence that never advances says exactly what it means: nothing new.
+    const proof = await watchForProofOfLife(
+      "s",
+      "12",
+      deps({
+        capturePane: frozen("idle"),
+        newestEventSeq: () => "12",
+        launchedProcessAlive: async () => false,
+        quietLimit: 2,
+      }),
+    );
+    expect(proof.alive).toBe(false);
+  });
+
+  test("an agent's first ever event counts against an empty stream", async () => {
+    const proof = await watchForProofOfLife(
+      "s",
+      null,
+      deps({
+        capturePane: frozen("idle"),
+        newestEventSeq: () => "1",
+      }),
+    );
+    expect(proof).toEqual({ alive: true, signal: "lifecycle event" });
   });
 
   test("a rollout write proves life, but stale activity does not rescue a dead process", async () => {
@@ -350,11 +381,11 @@ describe("proof of life", () => {
         capturePane: async () => {
           throw new Error("pane unavailable");
         },
-        // The session is up and a hook event lands; a capture failure must not
-        // outvote that.
-        lastEventAt: () => {
+        // The session is up and a lifecycle event lands; a capture failure must
+        // not outvote that.
+        newestEventSeq: () => {
           polls += 1;
-          return polls >= 2 ? "2026-07-11T00:00:05.000Z" : BASELINE;
+          return polls >= 2 ? "8" : BASELINE;
         },
       }),
     );

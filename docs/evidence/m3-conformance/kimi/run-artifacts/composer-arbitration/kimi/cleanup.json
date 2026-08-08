@@ -1,0 +1,141 @@
+[
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent\":{\"id\":\"7befef12-5a4b-4583-9dc5-1d841f8d9f4a\",\"name\":\"maya\",\"tool\":\"kimi\",\"model\":\"kimi-code/k3\",\"category\":\"simple_coding\",\"status\":\"dead\",\"holdReason\":null,\"holdResetAt\":null,\"holdProviderRunId\":null,\"closedAt\":\"2026-08-02T14:28:58.183Z\",\"quotaReservationId\":\"af4a01e5-98ef-4be0-a1d2-5e2f9def25e4\",\"executionIdentity\":{\"tool\":\"kimi\",\"model\":\"kimi-code/k3\",\"effort\":\"high\"},\"taskDescription\":\"Wait quietly for a terminal delivery test. Do not use tools or modify files.\",\"worktreePath\":\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-run.iLo7vx/project/.hive/worktrees/maya\",\"branch\":\"hive/maya-wait-quietly-for-a-terminal-de\",\"sessionLocator\":{\"schemaVersion\":1,\"instanceId\":\"7316881bde\",\"subject\":{\"kind\":\"agent\",\"agentId\":\"7befef12-5a4b-4583-9dc5-1d841f8d9f4a\"},\"generation\":1,\"sessionId\":\"ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9\",\"hostKind\":\"sessiond\",\"engineBuildId\":\"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1\"},\"recoveryAttempts\":0,\"contextPct\":null,\"createdAt\":\"2026-08-02T14:28:42.289Z\",\"lastEventAt\":\"2026-08-02T14:28:58.183Z\",\"capabilityEpoch\":0,\"readOnly\":true,\"writeRevoked\":false},\"cleaned\":{\"sessionId\":\"ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9\",\"worktreePath\":null,\"branch\":null},\"reaped\":{\"killed\":[{\"pid\":62829,\"command\":\"/Users/scottkellar/Projects/hive/.dev/tmp/kimi/m3-frozen/hive-sessiond host\"},{\"pid\":62830,\"command\":\"/bin/zsh -l -i -c hive_terminal_command=\\\"$1\\\"\\\\012if [[ -n \\\"${HISTFILE:-}\\\" ]]; then\\\\012  print -s -- \\\"$hive_terminal_command\\\"\\\\012  fc -AI \\\"$HISTFILE\\\" 2>/dev/null || true\\\\012fi\\\\012eval \\\"$hive_terminal_command\\\"\\\\012exec /bin/zsh -l -i hive-terminal mkdir -p .kimi-code && install -m 600 '/private/tmp/hvqa-kr/runtime/prompts/ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9.txt' '.kimi-code/AGENTS.md' && HIVE_AGENT_NAME='maya' HIVE_DAEMON_PORT='50584' HIVE_INSTANCE_ID='7316881bde' HIVE_PROVIDER_RUN_ID='79405d82-6dd5-424b-8c2e-5a1b46b28b4a' HIVE_CAPABILITY_TOKEN=\\\"$(cat '/private/tmp/hvqa-kr/credentials/maya.cap')\\\" KIMI_MODEL_THINKING_EFFORT='high' '/Users/scottkellar/.kimi-code/bin/kimi' '-m' 'kimi-code/k3'\"},{\"pid\":62835,\"command\":\"kimi-code\"}],\"survivors\":[]},\"preserved\":null,\"stranded\":null}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "agent": {
+          "id": "7befef12-5a4b-4583-9dc5-1d841f8d9f4a",
+          "name": "maya",
+          "tool": "kimi",
+          "model": "kimi-code/k3",
+          "category": "simple_coding",
+          "status": "dead",
+          "holdReason": null,
+          "holdResetAt": null,
+          "holdProviderRunId": null,
+          "closedAt": "2026-08-02T14:28:58.183Z",
+          "quotaReservationId": "af4a01e5-98ef-4be0-a1d2-5e2f9def25e4",
+          "executionIdentity": {
+            "tool": "kimi",
+            "model": "kimi-code/k3",
+            "effort": "high"
+          },
+          "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+          "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-run.iLo7vx/project/.hive/worktrees/maya",
+          "branch": "hive/maya-wait-quietly-for-a-terminal-de",
+          "sessionLocator": {
+            "schemaVersion": 1,
+            "instanceId": "7316881bde",
+            "subject": {
+              "kind": "agent",
+              "agentId": "7befef12-5a4b-4583-9dc5-1d841f8d9f4a"
+            },
+            "generation": 1,
+            "sessionId": "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9",
+            "hostKind": "sessiond",
+            "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+          },
+          "recoveryAttempts": 0,
+          "contextPct": null,
+          "createdAt": "2026-08-02T14:28:42.289Z",
+          "lastEventAt": "2026-08-02T14:28:58.183Z",
+          "capabilityEpoch": 0,
+          "readOnly": true,
+          "writeRevoked": false
+        },
+        "cleaned": {
+          "sessionId": "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9",
+          "worktreePath": null,
+          "branch": null
+        },
+        "reaped": {
+          "killed": [
+            {
+              "pid": 62829,
+              "command": "/Users/scottkellar/Projects/hive/.dev/tmp/kimi/m3-frozen/hive-sessiond host"
+            },
+            {
+              "pid": 62830,
+              "command": "/bin/zsh -l -i -c hive_terminal_command=\"$1\"\\012if [[ -n \"${HISTFILE:-}\" ]]; then\\012  print -s -- \"$hive_terminal_command\"\\012  fc -AI \"$HISTFILE\" 2>/dev/null || true\\012fi\\012eval \"$hive_terminal_command\"\\012exec /bin/zsh -l -i hive-terminal mkdir -p .kimi-code && install -m 600 '/private/tmp/hvqa-kr/runtime/prompts/ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9.txt' '.kimi-code/AGENTS.md' && HIVE_AGENT_NAME='maya' HIVE_DAEMON_PORT='50584' HIVE_INSTANCE_ID='7316881bde' HIVE_PROVIDER_RUN_ID='79405d82-6dd5-424b-8c2e-5a1b46b28b4a' HIVE_CAPABILITY_TOKEN=\"$(cat '/private/tmp/hvqa-kr/credentials/maya.cap')\" KIMI_MODEL_THINKING_EFFORT='high' '/Users/scottkellar/.kimi-code/bin/kimi' '-m' 'kimi-code/k3'"
+            },
+            {
+              "pid": 62835,
+              "command": "kimi-code"
+            }
+          ],
+          "survivors": []
+        },
+        "preserved": null,
+        "stranded": null
+      }
+    }
+  },
+  {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent\":{\"id\":\"7befef12-5a4b-4583-9dc5-1d841f8d9f4a\",\"name\":\"maya\",\"tool\":\"kimi\",\"model\":\"kimi-code/k3\",\"category\":\"simple_coding\",\"status\":\"dead\",\"holdReason\":null,\"holdResetAt\":null,\"holdProviderRunId\":null,\"closedAt\":\"2026-08-02T14:28:58.183Z\",\"quotaReservationId\":\"af4a01e5-98ef-4be0-a1d2-5e2f9def25e4\",\"executionIdentity\":{\"tool\":\"kimi\",\"model\":\"kimi-code/k3\",\"effort\":\"high\"},\"taskDescription\":\"Wait quietly for a terminal delivery test. Do not use tools or modify files.\",\"worktreePath\":null,\"branch\":null,\"sessionLocator\":{\"schemaVersion\":1,\"instanceId\":\"7316881bde\",\"subject\":{\"kind\":\"agent\",\"agentId\":\"7befef12-5a4b-4583-9dc5-1d841f8d9f4a\"},\"generation\":1,\"sessionId\":\"ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9\",\"hostKind\":\"sessiond\",\"engineBuildId\":\"6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1\"},\"recoveryAttempts\":0,\"contextPct\":null,\"createdAt\":\"2026-08-02T14:28:42.289Z\",\"lastEventAt\":\"2026-08-02T14:28:59.233Z\",\"capabilityEpoch\":0,\"readOnly\":true,\"writeRevoked\":false},\"cleaned\":{\"sessionId\":\"ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9\",\"worktreePath\":\"/Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-run.iLo7vx/project/.hive/worktrees/maya\",\"branch\":\"hive/maya-wait-quietly-for-a-terminal-de\"},\"reaped\":{\"killed\":[],\"survivors\":[]},\"preserved\":null,\"stranded\":null}"
+      }
+    ],
+    "structuredContent": {
+      "result": {
+        "agent": {
+          "id": "7befef12-5a4b-4583-9dc5-1d841f8d9f4a",
+          "name": "maya",
+          "tool": "kimi",
+          "model": "kimi-code/k3",
+          "category": "simple_coding",
+          "status": "dead",
+          "holdReason": null,
+          "holdResetAt": null,
+          "holdProviderRunId": null,
+          "closedAt": "2026-08-02T14:28:58.183Z",
+          "quotaReservationId": "af4a01e5-98ef-4be0-a1d2-5e2f9def25e4",
+          "executionIdentity": {
+            "tool": "kimi",
+            "model": "kimi-code/k3",
+            "effort": "high"
+          },
+          "taskDescription": "Wait quietly for a terminal delivery test. Do not use tools or modify files.",
+          "worktreePath": null,
+          "branch": null,
+          "sessionLocator": {
+            "schemaVersion": 1,
+            "instanceId": "7316881bde",
+            "subject": {
+              "kind": "agent",
+              "agentId": "7befef12-5a4b-4583-9dc5-1d841f8d9f4a"
+            },
+            "generation": 1,
+            "sessionId": "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9",
+            "hostKind": "sessiond",
+            "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+          },
+          "recoveryAttempts": 0,
+          "contextPct": null,
+          "createdAt": "2026-08-02T14:28:42.289Z",
+          "lastEventAt": "2026-08-02T14:28:59.233Z",
+          "capabilityEpoch": 0,
+          "readOnly": true,
+          "writeRevoked": false
+        },
+        "cleaned": {
+          "sessionId": "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9",
+          "worktreePath": "/Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-run.iLo7vx/project/.hive/worktrees/maya",
+          "branch": "hive/maya-wait-quietly-for-a-terminal-de"
+        },
+        "reaped": {
+          "killed": [],
+          "survivors": []
+        },
+        "preserved": null,
+        "stranded": null
+      }
+    }
+  }
+]

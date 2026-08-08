@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import {
-  accountBillingFromCodexRateLimits,
-  accountBillingFromUsage,
-  spendRisk,
-} from "../../src/daemon/usage-credits";
+import { accountBillingFromUsage } from "../../src/usage-service/usage-credits/claude";
+import { accountBillingFromCodexRateLimits } from "../../src/usage-service/usage-credits/codex";
+import { accountBillingFromGrokBilling } from "../../src/usage-service/usage-credits/grok";
+import { spendRisk } from "../../src/usage-service/usage-credits/policy";
 
 const AT = "2026-07-12T00:00:00.000Z";
 
@@ -23,7 +22,6 @@ const LIVE = {
       is_enabled: false,
       monthly_limit: null,
       used_credits: null,
-      disabled_reason: null,
     },
     spend: {
       enabled: false,
@@ -60,6 +58,21 @@ const LIVE_CODEX = {
       secondary: { usedPercent: 3, windowDurationMins: 10080, resetsAt: 2 },
       credits: null,
     },
+  },
+};
+
+const LIVE_GROK = {
+  subscription_tier: "supergrok",
+  config: {
+    creditUsagePercent: 0,
+    currentPeriod: {
+      type: "weekly",
+      start: "2026-07-06T00:00:00Z",
+      end: "2026-07-13T00:00:00Z",
+    },
+    onDemandCap: { val: 0 },
+    onDemandUsed: { val: 0 },
+    prepaidBalance: { val: 0 },
   },
 };
 
@@ -123,6 +136,22 @@ describe("the positive control: the reader sees real values before it trusts an 
       reason: "malformed",
     });
   });
+
+  test("out-of-range percentages are not billing facts", () => {
+    const billing = accountBillingFromUsage(
+      {
+        ...LIVE,
+        rate_limits: {
+          ...LIVE.rate_limits,
+          five_hour: { utilization: -5 },
+          seven_day: { utilization: 101 },
+          model_scoped: [],
+        },
+      },
+      AT,
+    );
+    expect(billing.generalUtilization.state).toBe("unknown");
+  });
 });
 
 describe("Codex paid overflow uses the same guard without inventing auto-top-up state", () => {
@@ -185,6 +214,63 @@ describe("Codex paid overflow uses the same guard without inventing auto-top-up 
     expect(risk.state).toBe("would-spend");
     expect(risk.detail).toContain("auto-top-up");
     expect(risk.detail).toContain("may purchase credits");
+  });
+
+  test("out-of-range windows are not billing facts", () => {
+    const billing = accountBillingFromCodexRateLimits(
+      {
+        ...LIVE_CODEX,
+        rateLimits: {
+          ...LIVE_CODEX.rateLimits,
+          primary: { ...LIVE_CODEX.rateLimits.primary, usedPercent: 101 },
+          secondary: { ...LIVE_CODEX.rateLimits.secondary, usedPercent: -1 },
+        },
+      },
+      AT,
+    );
+    expect(billing.generalUtilization.state).toBe("unknown");
+  });
+});
+
+describe("Grok billing uses the quota reader's one percentage interpretation", () => {
+  test("zero money rails disable overflow and retain the weekly gauge", () => {
+    const billing = accountBillingFromGrokBilling(LIVE_GROK, AT);
+    expect(billing.creditsEnabled).toMatchObject({
+      state: "known",
+      value: false,
+    });
+    expect(billing.generalUtilization).toMatchObject({
+      state: "known",
+      value: 0,
+    });
+  });
+
+  test("a positive money rail enables overflow", () => {
+    const billing = accountBillingFromGrokBilling(
+      {
+        ...LIVE_GROK,
+        config: {
+          ...LIVE_GROK.config,
+          prepaidBalance: { val: 10 },
+        },
+      },
+      AT,
+    );
+    expect(billing.creditsEnabled).toMatchObject({
+      state: "known",
+      value: true,
+    });
+  });
+
+  test("an out-of-range gauge remains unknown", () => {
+    const billing = accountBillingFromGrokBilling(
+      {
+        ...LIVE_GROK,
+        config: { ...LIVE_GROK.config, creditUsagePercent: 101 },
+      },
+      AT,
+    );
+    expect(billing.generalUtilization.state).toBe("unknown");
   });
 });
 
@@ -261,6 +347,7 @@ describe("the spend guard keys on MONEY, never on a model name", () => {
   test("an exhausted pool with UNREADABLE credits resolves to ASK, never to spend", () => {
     const murky = accountBillingFromUsage(
       {
+        ...LIVE,
         rate_limits: {
           five_hour: { utilization: 100 },
           model_scoped: [{ display_name: "Fable", utilization: 100 }],
@@ -273,7 +360,7 @@ describe("the spend guard keys on MONEY, never on a model name", () => {
   });
 
   test("no plan reading at all is unknown, and unknown asks", () => {
-    const blind = accountBillingFromUsage({ rate_limits: {} }, AT);
+    const blind = accountBillingFromUsage({ ...LIVE, rate_limits: {} }, AT);
     expect(spendRisk(blind, "Fable").state).toBe("unknown");
     expect(spendRisk(blind, "Fable").detail).toContain(
       "will not spend your money",

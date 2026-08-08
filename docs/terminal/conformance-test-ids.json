@@ -33,15 +33,15 @@
       "requirement": "I3",
       "title": "Single PTY writer",
       "owners": ["sessiond service"],
-      "proof": "Instrument every PTY write during mixed human, automated, renderer-effect, reconnect, and fault traffic; require one host arbiter and one total byte order."
+      "proof": "Instrument every PTY write during mixed user, automated, renderer-effect, reconnect, and fault traffic; require one host arbiter and one total byte order."
     },
     {
       "id": "TST.TERM.INV.I04",
       "kind": "invariant",
       "requirement": "I4",
-      "title": "Human draft priority",
+      "title": "User draft priority",
       "owners": ["sessiond service", "HiveTerminalKit"],
-      "proof": "Inject typing, paste, IME, mouse, automated transactions, disconnects, and lease expiry at every claim boundary; automation must never enter while the human claim is held or uncertain."
+      "proof": "Inject typing, paste, IME, mouse, automated transactions, disconnects, and lease expiry at every claim boundary; automation must never enter while the user claim is held or uncertain."
     },
     {
       "id": "TST.TERM.INV.I05",
@@ -65,7 +65,7 @@
       "requirement": "I7",
       "title": "No focus steal",
       "owners": ["HiveTerminalKit"],
-      "proof": "Emit output, status, message, attention, attach, and recovery events into key and non-key windows; first responder changes only after explicit human navigation."
+      "proof": "Emit output, status, message, attention, attach, and recovery events into key and non-key windows; first responder changes only after explicit user navigation."
     },
     {
       "id": "TST.TERM.INV.I08",
@@ -161,7 +161,7 @@
       "id": "TST.TERM.SLO.02",
       "kind": "release-slo",
       "requirement": "SLO-02",
-      "title": "Human input acceptance latency",
+      "title": "User input acceptance latency",
       "owners": ["HiveTerminalKit", "sessiond service"],
       "proof": "Timestamp 10,000 local key, text, IME, paste, and mouse events; Hive overhead to PTY-write-queue acceptance must be p95 at most 8 ms and p99 at most 16 ms."
     },
@@ -470,7 +470,7 @@
       "requirement": "TerminalView paste",
       "title": "Claimed bounded paste",
       "owners": ["HiveTerminalKit", "sessiond service"],
-      "proof": "Paste from 1 byte through 1 MiB acquires the human claim, honors bracketed-paste mode and clipboard policy, remains exact-target and ordered, and never enters content logs."
+      "proof": "Paste from 1 byte through 1 MiB acquires the user claim, honors bracketed-paste mode and clipboard policy, remains exact-target and ordered, and never enters content logs."
     },
     {
       "id": "TST.TERM.LEGACY.SWIFTTERM.MOUSE",
@@ -478,7 +478,7 @@
       "requirement": "TerminalView mouse reporting",
       "title": "Native mouse encoding",
       "owners": ["HiveTerminalKit", "sessiond service"],
-      "proof": "Clicks, drags, motion, and wheels at pane edges and scaled geometry encode the correct terminal cell/mode under a human claim without wrong-target bytes."
+      "proof": "Clicks, drags, motion, and wheels at pane edges and scaled geometry encode the correct terminal cell/mode under a user claim without wrong-target bytes."
     },
     {
       "id": "TST.TERM.LEGACY.SWIFTTERM.MALFORMED_MOTION",
@@ -524,7 +524,7 @@
       "id": "TST.TERM.LEGACY.SWIFTTERM.COMPOSER_SIGNAL",
       "kind": "legacy-postcondition",
       "requirement": "Workspace key/paste composer classification",
-      "title": "Human composer claim signals",
+      "title": "User composer claim signals",
       "owners": ["HiveTerminalKit", "Hive daemon", "sessiond service"],
       "proof": "First editing key, paste, IME start, deletion, or edit command acquires/renews the claim; submit/cancel releases only after ordered acknowledgement and selection changes do not retarget composition."
     },

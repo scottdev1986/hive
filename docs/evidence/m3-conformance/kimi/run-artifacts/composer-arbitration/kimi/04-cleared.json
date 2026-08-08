@@ -1,0 +1,38 @@
+{
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "7316881bde",
+    "subject": {
+      "kind": "agent",
+      "agentId": "7befef12-5a4b-4583-9dc5-1d841f8d9f4a"
+    },
+    "generation": 1,
+    "sessionId": "ses_019fc2e0-86b1-7024-a6fa-ce58d420aab9",
+    "hostKind": "sessiond",
+    "engineBuildId": "6e34032563f7a103faf7b70859d41c83374fe34948ecffd85e30160a516b11e1"
+  },
+  "outputSeq": "5365",
+  "columns": 80,
+  "rows": 24,
+  "rowStart": 0,
+  "screen": "primary",
+  "cursor": {
+    "row": 20,
+    "column": 5,
+    "visible": false
+  },
+  "text": " ╭────────────────────────────────────────────────────────────────────────────╮\n │                                                                            │\n │  ▐█▛█▛█▌  Welcome to Kimi Code!                                            │\n │  ▐█████▌  Send /help for help information.                                 │\n │                                                                            │\n │  Directory: /Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-run.iLo7vx/p…│\n │  Session:   session_b10106fc-9b81-46c6-bd90-d5dd2fb14583                   │\n │  Model:     K3                                                             │\n │  Version:   0.31.1                                                         │\n │  MCP:       1 connected                                                    │\n │                                                                            │\n ╰────────────────────────────────────────────────────────────────────────────╯\n \n ✦ Use Kimi K3 with High thinking effort - for the best balance between token\n                                         spend and capability\n   Run /model to switch to K3 and set thinking effort to High\n \n   MCP server \"hive\" connected · 47 tools (http)                               \n \n ╭────────────────────────────────────────────────────────────────────────────╮\n │ >                                                                          │\n ╰────────────────────────────────────────────────────────────────────────────╯\n yolo  K3 thinking: high  …/.hive/worktrees/maya  hive/maya-wait-quietly-for-a…\n                                                             context: 0% (0/1M)",
+  "styledText": " ╭────────────────────────────────────────────────────────────────────────────╮\r\n │                                                                            │\r\n │  ▐█▛█▛█▌  Welcome to Kimi Code!                                            │\r\n │  ▐█████▌  Send /help for help information.                                 │\r\n │                                                                            │\r\n │  Directory: /Users/scottkellar/Projects/hive/.dev/tmp/m3-kimi-run.iLo7vx/p…│\r\n │  Session:   session_b10106fc-9b81-46c6-bd90-d5dd2fb14583                   │\r\n │  Model:     K3                                                             │\r\n │  Version:   0.31.1                                                         │\r\n │  MCP:       1 connected                                                    │\r\n │                                                                            │\r\n ╰────────────────────────────────────────────────────────────────────────────╯\r\n \r\n ✦ Use Kimi K3 with High thinking effort - for the best balance between token\r\n                                         spend and capability\r\n   Run /model to switch to K3 and set thinking effort to High\r\n \r\n   MCP server \"hive\" connected · 47 tools (http)                               \r\n \r\n ╭────────────────────────────────────────────────────────────────────────────╮\r\n │ > \u001b[0m\u001b[7m \u001b[0m                                                                        │\r\n ╰────────────────────────────────────────────────────────────────────────────╯\r\n yolo  K3 thinking: high  …/.hive/worktrees/maya  hive/maya-wait-quietly-for-a…\r\n                                                             context: 0% (0/1M)",
+  "truncated": false,
+  "sha256": "271d100b01b8da233a1d5294c0d51a738793f41c41e1972d98ae669314eda689",
+  "composer": {
+    "profile": "kimi",
+    "present": true,
+    "nonempty": false,
+    "stable": true,
+    "userEditSinceEmpty": false,
+    "userOperationInFlight": false,
+    "claim": false,
+    "invariant": "ok"
+  }
+}

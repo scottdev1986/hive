@@ -1,9 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// Sanitized project cards: name, provider/model, aggregate agent states, and
-/// warnings — never another project's transcript content. Selecting a card
-/// activates its project window.
+/// Sanitized project cards: name, provider/model, aggregate agent states, and warnings — never another project's transcript content. Selecting a card activates its project window.
 final class ProjectSwitcherController: NSObject {
 
     private var cardProviders: [() -> ProjectState.SwitcherCard] = []

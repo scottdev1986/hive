@@ -73,7 +73,7 @@ role.
 cd workspace
 swift build
 swift test
-../scripts/b3-smoke.sh
+../scripts/qa/b3-smoke.sh
 ```
 
 The B3 smoke stands up the real `sessiond` substrate headlessly and verifies
