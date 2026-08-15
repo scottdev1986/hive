@@ -215,12 +215,15 @@ struct LiveRunWorkbenchViewTests {
         #expect(visibility == ["id-a:1", "id-a:2"])
     }
 
-    @Test("Run hierarchy rows use a top-origin clip view")
+    @Test("Live session rows use a truthful label and top-origin clip view")
     func railClipViewIsFlipped() throws {
         let view = LiveRunWorkbenchView(terminalFactory: nil)
         let scrollView = try #require(firstSubview(of: NSScrollView.self, in: view))
+        let labels = textFields(in: view).map(\.stringValue)
 
         #expect(scrollView.contentView.isFlipped)
+        #expect(labels.contains("SESSIONS"))
+        #expect(!labels.contains("RUN HIERARCHY"))
     }
 
     private func projection(_ agents: [String]) throws -> LiveRunProjection {
@@ -276,6 +279,11 @@ struct LiveRunWorkbenchViewTests {
             if let match = firstSubview(of: type, in: subview) { return match }
         }
         return nil
+    }
+
+    private func textFields(in view: NSView) -> [NSTextField] {
+        let nested = view.subviews.flatMap { textFields(in: $0) }
+        return (view as? NSTextField).map { [$0] } ?? nested
     }
 }
 

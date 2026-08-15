@@ -220,7 +220,7 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func makeRail() -> NSView {
-        let heading = sectionLabel("RUN HIERARCHY")
+        let heading = sectionLabel("SESSIONS")
         let summary = NSTextField(labelWithString: "typed status · one live viewer")
         summary.font = Theme.Font.caption
         summary.textColor = .secondaryLabelColor
