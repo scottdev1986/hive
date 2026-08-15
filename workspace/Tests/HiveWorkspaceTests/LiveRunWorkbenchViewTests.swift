@@ -194,6 +194,7 @@ struct LiveRunWorkbenchViewTests {
 
         controller.perform(ShellCommand.detachTerminalView)
         #expect(controller.installedLiveRunTerminalCount == 0)
+        #expect(controller.currentState.activeRoute == .modelsQuota)
         controller.perform(ShellCommand.attachLiveTerminal)
         #expect(controller.installedLiveRunTerminalCount == 1)
         #expect(controller.selectedLiveRunLocator?.generation == 4)

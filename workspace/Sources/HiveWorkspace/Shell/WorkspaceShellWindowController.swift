@@ -108,7 +108,7 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
         liveRunWorkbench?.setRouteVisible(false)
         liveRunWorkbench = workbench
         workbench.setRouteVisible(state.activeRoute == .liveRun)
-        if state.activeRoute != .liveRun { render() }
+        render()
     }
 
     func detachLiveRunViewer() {
@@ -251,8 +251,10 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
                 render()
                 return
             }
+            state.navigate(to: .modelsQuota)
             liveRunWorkbench?.setRouteVisible(false)
             state.record(outcome: .localPerformed(command))
+            render()
             return
         }
         let outcome = dispatcher.dispatch(command, state: &state)
