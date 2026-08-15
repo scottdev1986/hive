@@ -237,13 +237,16 @@ struct ShellLiveStore {
         // the daemon's cursors survive concurrent writes, and silently jumping
         // back would hide the rows the reader was looking at.
         let libraryStep = previous?.memory.library?.trail.last ?? .first
+        let libraryFilter = previous?.memory.library?.filter ?? MemoryLibraryFilter()
         let memoryLibrary = await MemoryLibraryGateway(client: client)
-            .fetch(step: libraryStep)
+            .fetch(step: libraryStep, filter: libraryFilter)
         state.apply(
             screen: MemoryScreenPresenter.library(memoryLibrary),
             for: .memoryLibrary)
         if let page = memoryLibrary.value {
-            state.observe(libraryPage: page, from: project, step: libraryStep)
+            state.observe(
+                libraryPage: page, from: project,
+                step: libraryStep, filter: libraryFilter)
         }
         do {
             let memoryRecall = try await MemoryRecallGateway(client: client)

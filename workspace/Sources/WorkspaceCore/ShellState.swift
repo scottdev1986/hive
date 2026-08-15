@@ -145,7 +145,8 @@ public struct ShellState: Equatable {
             observe(
                 libraryPage: library.page,
                 from: library.project,
-                step: library.trail.last ?? .first)
+                step: library.trail.last ?? .first,
+                filter: library.filter)
         }
     }
 
@@ -155,9 +156,10 @@ public struct ShellState: Equatable {
     public mutating func observe(
         libraryPage page: MemoryLibraryProjection,
         from project: ProjectID,
-        step: MemoryLibraryStep
+        step: MemoryLibraryStep,
+        filter: MemoryLibraryFilter = MemoryLibraryFilter()
     ) {
-        memory.observe(page: page, from: project, step: step)
+        memory.observe(page: page, from: project, step: step, filter: filter)
     }
 
     /// Installs a new hierarchy observation without replacing selection or expansion history. Passing nil explicitly clears the hierarchy; refusal gateways retain any prior observation before this boundary.

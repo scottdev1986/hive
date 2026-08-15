@@ -109,6 +109,55 @@ final class MemoryLibraryPagerTests: XCTestCase {
         XCTAssertFalse(pager.trail.contains(.cursor("alpha-c2")))
     }
 
+    /// The daemon filters before it slices, so a cursor minted under one filter
+    /// names a position in a list that is no longer on screen. Changing the
+    /// filter must restart the walk rather than resume it at the old key.
+    func testChangingTheFilterRestartsTheWalkInsteadOfResumingIt() throws {
+        let everyRow = MemoryLibraryFilter()
+        let pitfallsOnly = MemoryLibraryFilter(kinds: ["pitfall"])
+        var pager = MemoryLibraryPager(
+            project: "alpha",
+            page: try page(["a1"], nextCursor: "c2", total: 9),
+            filter: everyRow)
+        pager.observe(
+            try page(["a2"], nextCursor: "c3", total: 9),
+            from: "alpha", step: .cursor("c2"), filter: everyRow)
+        XCTAssertEqual(pager.pageNumber, 2, "positive control: the unfiltered walk moved")
+
+        pager.observe(
+            try page(["p1"], nextCursor: "pitfall-c2", total: 2),
+            from: "alpha", step: .first, filter: pitfallsOnly)
+
+        XCTAssertEqual(pager.filter, pitfallsOnly)
+        XCTAssertEqual(pager.pageNumber, 1)
+        XCTAssertEqual(pager.trail, [.first])
+        XCTAssertFalse(
+            pager.trail.contains(.cursor("c2")),
+            "a cursor from the unfiltered list must not survive into the filtered walk")
+        XCTAssertEqual(pager.nextStep, .cursor("pitfall-c2"))
+
+        // Returning to the same filter still walks that filter's own pages.
+        pager.observe(
+            try page(["p2"], nextCursor: nil, total: 2),
+            from: "alpha", step: .cursor("pitfall-c2"), filter: pitfallsOnly)
+        XCTAssertEqual(pager.pageNumber, 2)
+        XCTAssertEqual(pager.trail, [.first, .cursor("pitfall-c2")])
+    }
+
+    func testAnEmptyFilterIsEveryRow() {
+        XCTAssertTrue(MemoryLibraryFilter().isEveryRow)
+        XCTAssertFalse(MemoryLibraryFilter(scopes: ["repo"]).isEveryRow)
+        // The options are the wire's own vocabularies, not a second list.
+        XCTAssertEqual(
+            MemoryLibraryFilter.kindOptions,
+            ["article", "pitfall", "fact", "digest", "raw-ref"])
+        XCTAssertEqual(MemoryLibraryFilter.scopeOptions, ["repo", "global", "project"])
+        XCTAssertEqual(
+            MemoryLibraryFilter.statusOptions,
+            ["verified", "unverified", "stale", "conflicted",
+             "current", "compiled", "immutable"])
+    }
+
     func testShellStateStartsAWalkOnceAndThenExtendsIt() throws {
         var state = ShellState()
         XCTAssertNil(state.memory.library)

@@ -20,15 +20,24 @@ struct MemoryLibraryGateway {
     /// The daemon pages this wire itself: it mints `nextCursor` and reads back the
     /// cursor it minted. This client passes one through and never composes an
     /// offset of its own, so a page is always one the store actually served.
-    static func read(step: MemoryLibraryStep) -> WorkspaceReadEndpoint<MemoryLibraryProjection> {
-        WorkspaceReadEndpoint<MemoryLibraryProjection>(
+    static func read(
+        step: MemoryLibraryStep,
+        filter: MemoryLibraryFilter
+    ) -> WorkspaceReadEndpoint<MemoryLibraryProjection> {
+        var queryItems: [URLQueryItem] = []
+        if case .cursor(let cursor) = step {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        // The wire takes each filter as a repeated parameter and reads an absent
+        // one as "every row", so an empty selection sends nothing at all.
+        for (name, values) in [
+            ("kind", filter.kinds), ("scope", filter.scopes), ("status", filter.statuses),
+        ] {
+            queryItems += values.sorted().map { URLQueryItem(name: name, value: $0) }
+        }
+        return WorkspaceReadEndpoint<MemoryLibraryProjection>(
             path: "memory/library",
-            queryItems: {
-                switch step {
-                case .first: return []
-                case .cursor(let cursor): return [URLQueryItem(name: "cursor", value: cursor)]
-                }
-            }(),
+            queryItems: queryItems,
             source: { ProjectionSource(revision: $0.sourceRevision) },
             observedAt: { $0.observedAt })
     }
@@ -36,9 +45,10 @@ struct MemoryLibraryGateway {
     let client: WorkspaceDaemonClient
 
     func fetch(
-        step: MemoryLibraryStep = .first
+        step: MemoryLibraryStep = .first,
+        filter: MemoryLibraryFilter = MemoryLibraryFilter()
     ) async -> ClientProjection<MemoryLibraryProjection> {
-        let projection = await client.fetch(Self.read(step: step))
+        let projection = await client.fetch(Self.read(step: step, filter: filter))
         return classifyCached(projection, freshness: projection.value?.freshness)
     }
 }

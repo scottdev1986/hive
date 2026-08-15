@@ -9,7 +9,7 @@ final class MemoryOverviewScreenView: NSView {
         setAccessibilityIdentifier("memory-overview-screen")
         var sections: [NSView] = []
         if let overview {
-            sections.append(MemoryScreenParts.section("Recall health", [
+            sections.append(MemoryScreenParts.section("Curated wiki", [
                 MemoryScreenParts.storeCard(
                     name: "Wiki", identifier: "memory-store-wiki",
                     state: overview.wiki.state,
@@ -29,7 +29,8 @@ final class MemoryOverviewScreenView: NSView {
                         ("Unverified pitfalls", String(scope.unverifiedPitfalls)),
                         ("Raw observations", String(scope.rawObservations)),
                     ])
-            } + [
+            }))
+            sections.append(MemoryScreenParts.section("Episodic store", [
                 MemoryScreenParts.storeCard(
                     name: "Episodic", identifier: "memory-store-episodic",
                     state: overview.episodic.state,
@@ -46,7 +47,7 @@ final class MemoryOverviewScreenView: NSView {
                 "Lifecycle policy",
                 [MemoryScreenParts.configCard(overview.config)]))
             sections.append(MemoryScreenParts.section(
-                "User attention",
+                "Known integrity gaps",
                 [MemoryScreenParts.gapsCard(overview.gaps)]))
             sections.append(MemoryScreenParts.section(
                 "Recent memory operations",
@@ -69,13 +70,16 @@ final class MemoryLibraryScreenView: NSView {
         screen: ShellScreenProjection,
         pager: MemoryLibraryPager?,
         actionsEnabled: Bool,
-        onPage: @escaping (MemoryLibraryStep) -> Void
+        onPage: @escaping (MemoryLibraryStep) -> Void,
+        onFilter: @escaping (MemoryLibraryFilter) -> Void
     ) {
         super.init(frame: .zero)
         setAccessibilityIdentifier("memory-library-screen")
         var controls: [NSView] = []
         var sections: [NSView] = []
         if let pager {
+            controls.append(MemoryScreenParts.filterControls(
+                filter: pager.filter, enabled: actionsEnabled, onFilter: onFilter))
             let page = pager.page
             sections.append(MemoryScreenParts.section("Library", [
                 MemoryScreenParts.storeCard(
@@ -433,6 +437,60 @@ enum MemoryScreenParts {
             card.pinToContentWidth(row)
         }
         return card
+    }
+
+    /// One popup per filter the wire accepts, each carrying the daemon's own
+    /// vocabulary. There is no sort control: the library is ordered by row key
+    /// so a page walk cannot renumber under a concurrent write, and offering a
+    /// newest-first the wire refuses would be offering something that does not
+    /// exist.
+    static func filterControls(
+        filter: MemoryLibraryFilter,
+        enabled: Bool,
+        onFilter: @escaping (MemoryLibraryFilter) -> Void
+    ) -> NSView {
+        func popup(
+            _ identifier: String,
+            _ everyRowTitle: String,
+            _ options: [String],
+            _ selected: Set<String>,
+            _ apply: @escaping (Set<String>) -> MemoryLibraryFilter
+        ) -> NSPopUpButton {
+            let button = NSPopUpButton(frame: .zero, pullsDown: false)
+            button.addItems(withTitles: [everyRowTitle] + options)
+            button.selectItem(at: selected.sorted().first.flatMap {
+                options.firstIndex(of: $0).map { $0 + 1 }
+            } ?? 0)
+            button.isEnabled = enabled
+            button.setAccessibilityIdentifier(identifier)
+            ShellButtonTarget.shared.register(button) { [weak button] in
+                guard let index = button?.indexOfSelectedItem else { return }
+                onFilter(apply(index == 0 ? [] : [options[index - 1]]))
+            }
+            button.target = ShellButtonTarget.shared
+            button.action = #selector(ShellButtonTarget.fire(_:))
+            return button
+        }
+        let stack = NSStackView(views: [
+            popup(
+                "memory-library-filter-kind", "All kinds",
+                MemoryLibraryFilter.kindOptions, filter.kinds,
+                { MemoryLibraryFilter(
+                    kinds: $0, scopes: filter.scopes, statuses: filter.statuses) }),
+            popup(
+                "memory-library-filter-scope", "All scopes",
+                MemoryLibraryFilter.scopeOptions, filter.scopes,
+                { MemoryLibraryFilter(
+                    kinds: filter.kinds, scopes: $0, statuses: filter.statuses) }),
+            popup(
+                "memory-library-filter-status", "Any status",
+                MemoryLibraryFilter.statusOptions, filter.statuses,
+                { MemoryLibraryFilter(
+                    kinds: filter.kinds, scopes: filter.scopes, statuses: $0) }),
+        ])
+        stack.orientation = .horizontal
+        stack.spacing = Theme.Space.s
+        return stack
     }
 
     static func pageControls(

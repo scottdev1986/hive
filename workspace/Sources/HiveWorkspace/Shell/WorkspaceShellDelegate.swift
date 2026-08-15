@@ -78,14 +78,15 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                         }
                     }
                 }
-                controller.memoryLibraryPageHandler = { [weak self, weak controller] step in
+                controller.memoryLibraryPageHandler = {
+                    [weak self, weak controller] step, filter in
                     guard let self else { return }
                     Task { @MainActor in
                         let store = ShellLiveStore(config: self.config)
                         do {
                             let client = try await store.makeClient()
                             let projection = await MemoryLibraryGateway(client: client)
-                                .fetch(step: step)
+                                .fetch(step: step, filter: filter)
                             controller?.apply {
                                 let presented = MemoryScreenPresenter.library(projection)
                                 $0.apply(screen: MemoryScreenPresenter.retainingValue(
@@ -97,7 +98,8 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                                 // daemon never served.
                                 if let page = projection.value {
                                     $0.observe(
-                                        libraryPage: page, from: store.project, step: step)
+                                        libraryPage: page, from: store.project,
+                                        step: step, filter: filter)
                                 }
                             }
                         } catch {

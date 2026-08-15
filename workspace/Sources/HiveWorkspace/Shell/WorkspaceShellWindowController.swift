@@ -29,7 +29,7 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
     var policyWriteHandler: ((ShellPolicyWrite) -> Void)?
     var queenProviderSwapHandler: (() -> Void)?
     var memoryRecallHandler: ((String) -> Void)?
-    var memoryLibraryPageHandler: ((MemoryLibraryStep) -> Void)?
+    var memoryLibraryPageHandler: ((MemoryLibraryStep, MemoryLibraryFilter) -> Void)?
     var memoryJobHandler: ((MemoryJobKind) -> Void)?
     private var memoryActionBanner: ShellBanner?
     private var routerCategory: TaskCategory?
@@ -370,7 +370,15 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
                 pager: state.memory.library,
                 actionsEnabled: screen.availability == .current
                     && memoryLibraryPageHandler != nil,
-                onPage: { [weak self] step in self?.memoryLibraryPageHandler?(step) })
+                onPage: { [weak self] step in
+                    self?.memoryLibraryPageHandler?(
+                        step, self?.state.memory.library?.filter ?? MemoryLibraryFilter())
+                },
+                // A filter change restarts the walk: the cursors on screen name
+                // positions in the list that is being replaced.
+                onFilter: { [weak self] filter in
+                    self?.memoryLibraryPageHandler?(.first, filter)
+                })
         case (.memoryRecallLab, _):
             panel = MemoryRecallScreenView(
                 screen: screen,

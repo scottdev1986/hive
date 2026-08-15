@@ -17,7 +17,7 @@ public enum MemoryPayloadFreshness: String, Codable, Equatable, Sendable {
     case cached
 }
 
-public enum MemoryScope: String, Codable, Equatable, Sendable {
+public enum MemoryScope: String, Codable, CaseIterable, Equatable, Sendable {
     case repo
     case global
 }
@@ -39,7 +39,7 @@ public enum MemoryArticleSource: String, Codable, Equatable, Sendable {
     case legacy
 }
 
-public enum MemoryArticleStatus: String, Codable, Equatable, Sendable {
+public enum MemoryArticleStatus: String, Codable, CaseIterable, Equatable, Sendable {
     case verified
     case unverified
     case stale
@@ -516,7 +516,9 @@ public enum MemoryLibraryItem: Codable, Equatable, Sendable {
     case digest(MemoryLibraryDigest)
     case rawReference(MemoryLibraryRawReference)
 
-    private enum Kind: String, Codable {
+    /// The wire's discriminator, and the one list of row kinds this client has:
+    /// the decoder and the library screen's kind filter read the same cases.
+    public enum Kind: String, Codable, CaseIterable, Equatable, Sendable {
         case article, pitfall, fact, digest
         case rawReference = "raw-ref"
     }

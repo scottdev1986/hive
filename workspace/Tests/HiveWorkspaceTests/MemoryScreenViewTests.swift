@@ -217,13 +217,74 @@ final class MemoryScreenViewTests: XCTestCase {
             screen: screen(.current),
             pager: state.memory.library,
             actionsEnabled: true,
-            onPage: { _ in })
+            onPage: { _ in },
+            onFilter: { _ in })
         view.layoutSubtreeIfNeeded()
         XCTAssertEqual(
             (find(view, "memory-library-page") as? NSTextField)?.stringValue, "Page 1")
         XCTAssertFalse(
             labels(view).joined(separator: " ").contains("alpha-"),
             "beta's screen must show none of alpha's rows")
+    }
+
+    /// The filter reaches the daemon as the repeated parameters its wire accepts,
+    /// an unset filter sends nothing at all, and picking one asks for the first
+    /// page of the new list rather than resuming at a cursor from the old one.
+    func testLibraryFiltersReachTheWireAndRestartTheWalk() async throws {
+        nonisolated(unsafe) var urls: [URLComponents] = []
+        let client = WorkspaceDaemonClient(
+            baseURL: URL(string: "http://127.0.0.1:1")!,
+            authorization: "Bearer fixture",
+            loader: { request in
+                urls.append(URLComponents(
+                    url: request.url!, resolvingAgainstBaseURL: false)!)
+                let body = """
+                {"schemaVersion":1,"observedAt":"2026-07-30T20:00:00.000Z",
+                 "sourceRevision":"r1","freshness":"live","state":"ok",
+                 "items":[],"nextCursor":null,"total":0}
+                """
+                return (Data(body.utf8), HTTPURLResponse(
+                    url: request.url!, statusCode: 200,
+                    httpVersion: nil, headerFields: nil)!)
+            })
+
+        _ = await MemoryLibraryGateway(client: client).fetch()
+        XCTAssertNil(
+            urls.last?.queryItems,
+            "an unset filter must send nothing: the wire reads absent as every row")
+
+        _ = await MemoryLibraryGateway(client: client).fetch(
+            step: .cursor("c2"),
+            filter: MemoryLibraryFilter(
+                kinds: ["pitfall"], scopes: ["repo", "global"], statuses: ["unverified"]))
+        let sent = try XCTUnwrap(urls.last?.queryItems)
+            .map { "\($0.name)=\($0.value ?? "")" }
+        XCTAssertEqual(
+            sent,
+            ["cursor=c2", "kind=pitfall", "scope=global", "scope=repo",
+             "status=unverified"])
+
+        // Picking a filter in the view asks for .first, never the held cursor.
+        nonisolated(unsafe) var filtered: [MemoryLibraryFilter] = []
+        let state = try ShellFixtureStore(directory: fixtureDirectory)
+            .loadState(scenario: .current)
+        let view = MemoryLibraryScreenView(
+            screen: screen(.current),
+            pager: state.memory.library,
+            actionsEnabled: true,
+            onPage: { _ in XCTFail("a filter change is not a page step") },
+            onFilter: { filtered.append($0) })
+        view.layoutSubtreeIfNeeded()
+        let kind = try XCTUnwrap(
+            find(view, "memory-library-filter-kind") as? NSPopUpButton)
+        XCTAssertEqual(
+            kind.itemTitles,
+            ["All kinds"] + MemoryLibraryFilter.kindOptions,
+            "the popup offers the wire's own vocabulary")
+        kind.selectItem(withTitle: "pitfall")
+        ShellButtonTarget.shared.fire(kind)
+
+        XCTAssertEqual(filtered, [MemoryLibraryFilter(kinds: ["pitfall"])])
     }
 
     func testLibraryPageControlsOfferOnlyStepsTheDaemonNamed() throws {
@@ -235,7 +296,8 @@ final class MemoryScreenViewTests: XCTestCase {
             screen: screen(.current),
             pager: pager,
             actionsEnabled: true,
-            onPage: { steps.append($0) })
+            onPage: { steps.append($0) },
+            onFilter: { _ in })
         view.layoutSubtreeIfNeeded()
 
         let previous = try XCTUnwrap(find(view, "memory-library-previous") as? NSButton)
@@ -414,7 +476,7 @@ final class MemoryScreenViewTests: XCTestCase {
             MemoryOverviewScreenView(screen: screen(.unknown), overview: nil),
             MemoryLibraryScreenView(
                 screen: screen(.unknown), pager: nil,
-                actionsEnabled: false, onPage: { _ in }),
+                actionsEnabled: false, onPage: { _ in }, onFilter: { _ in }),
             MemoryRecallScreenView(
                 screen: screen(.unknown), preview: nil,
                 actionsEnabled: false, onInspect: { _ in }),
