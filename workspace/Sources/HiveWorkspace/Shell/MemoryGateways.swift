@@ -17,15 +17,28 @@ struct MemoryOverviewGateway {
 }
 
 struct MemoryLibraryGateway {
-    static let read = WorkspaceReadEndpoint<MemoryLibraryProjection>(
-        path: "memory/library",
-        source: { ProjectionSource(revision: $0.sourceRevision) },
-        observedAt: { $0.observedAt })
+    /// The daemon pages this wire itself: it mints `nextCursor` and reads back the
+    /// cursor it minted. This client passes one through and never composes an
+    /// offset of its own, so a page is always one the store actually served.
+    static func read(step: MemoryLibraryStep) -> WorkspaceReadEndpoint<MemoryLibraryProjection> {
+        WorkspaceReadEndpoint<MemoryLibraryProjection>(
+            path: "memory/library",
+            queryItems: {
+                switch step {
+                case .first: return []
+                case .cursor(let cursor): return [URLQueryItem(name: "cursor", value: cursor)]
+                }
+            }(),
+            source: { ProjectionSource(revision: $0.sourceRevision) },
+            observedAt: { $0.observedAt })
+    }
 
     let client: WorkspaceDaemonClient
 
-    func fetch() async -> ClientProjection<MemoryLibraryProjection> {
-        let projection = await client.fetch(Self.read)
+    func fetch(
+        step: MemoryLibraryStep = .first
+    ) async -> ClientProjection<MemoryLibraryProjection> {
+        let projection = await client.fetch(Self.read(step: step))
         return classifyCached(projection, freshness: projection.value?.freshness)
     }
 }

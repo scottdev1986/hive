@@ -8,7 +8,7 @@ public struct PaneID: Hashable, Comparable, Codable, CustomStringConvertible, Ex
     public static func < (lhs: PaneID, rhs: PaneID) -> Bool { lhs.raw < rhs.raw }
 }
 
-public struct ProjectID: Hashable, Comparable, Codable, CustomStringConvertible, ExpressibleByStringLiteral {
+public struct ProjectID: Hashable, Comparable, Codable, Sendable, CustomStringConvertible, ExpressibleByStringLiteral {
     public let raw: String
     public init(_ raw: String) { self.raw = raw }
     public init(stringLiteral value: String) { self.raw = value }

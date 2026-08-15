@@ -223,6 +223,14 @@ public enum MemoryJobFact: Codable, Equatable, Sendable {
         case .string(let string): try value.encode(string)
         }
     }
+
+    public var display: String {
+        switch self {
+        case .integer(let integer): return String(integer)
+        case .number(let number): return String(number)
+        case .string(let string): return string
+        }
+    }
 }
 
 public struct MemoryJobReceipt: Codable, Equatable, Sendable {

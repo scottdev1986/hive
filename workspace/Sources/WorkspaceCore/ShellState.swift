@@ -25,6 +25,8 @@ public struct ShellState: Equatable {
     public private(set) var modelControl: ModelControlSnapshot?
     public private(set) var modelControlView: WorkspaceModelControlView?
     public private(set) var queenProvider: QueenProviderEditor?
+    /// The observed values behind the four Memory screens. Empty until a daemon read produced one.
+    public private(set) var memory: MemoryScreensState
     public private(set) var outerHorizon: OuterHorizonScreenState?
     /// A Live Run read refusal is not transport loss. The last hierarchy remains on screen and this warning names the refused replacement.
     public private(set) var outerHorizonWarning: ShellBanner?
@@ -46,6 +48,7 @@ public struct ShellState: Equatable {
         modelControl: ModelControlSnapshot? = nil,
         modelControlView: WorkspaceModelControlView? = nil,
         queenProvider: QueenProviderEditor? = nil,
+        memory: MemoryScreensState = MemoryScreensState(),
         outerHorizon: OuterHorizonScreenState? = nil,
         outerHorizonWarning: ShellBanner? = nil,
         policyWriteRefusal: String? = nil,
@@ -63,6 +66,7 @@ public struct ShellState: Equatable {
         self.modelControlView = modelControlView
         self.modelControl = modelControlView?.snapshot ?? modelControl
         self.queenProvider = queenProvider
+        self.memory = memory
         self.outerHorizon = outerHorizon
         self.outerHorizonWarning = outerHorizonWarning
         self.policyWriteRefusal = policyWriteRefusal
@@ -123,6 +127,37 @@ public struct ShellState: Equatable {
 
     public mutating func apply(queenProvider editor: QueenProviderEditor?) {
         queenProvider = editor
+    }
+
+    public mutating func editMemory(_ edit: (inout MemoryScreensState) -> Void) {
+        edit(&memory)
+    }
+
+    /// Takes refreshed Memory observations into the values on screen. A read that
+    /// produced nothing keeps the last observed value: the screen's own
+    /// availability already says the read failed, and dropping the value would
+    /// turn a refusal into an empty store.
+    public mutating func refresh(memory refreshed: MemoryScreensState) {
+        if let overview = refreshed.overview { memory.overview = overview }
+        if let recall = refreshed.recall { memory.recall = recall }
+        if let maintenance = refreshed.maintenance { memory.maintenance = maintenance }
+        if let library = refreshed.library {
+            observe(
+                libraryPage: library.page,
+                from: library.project,
+                step: library.trail.last ?? .first)
+        }
+    }
+
+    /// Takes one observed library page into the walk on screen. A page for
+    /// another project replaces the walk rather than extending it, because a
+    /// cursor only means anything to the store that minted it.
+    public mutating func observe(
+        libraryPage page: MemoryLibraryProjection,
+        from project: ProjectID,
+        step: MemoryLibraryStep
+    ) {
+        memory.observe(page: page, from: project, step: step)
     }
 
     /// Installs a new hierarchy observation without replacing selection or expansion history. Passing nil explicitly clears the hierarchy; refusal gateways retain any prior observation before this boundary.

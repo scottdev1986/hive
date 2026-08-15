@@ -57,6 +57,9 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                                 $0.apply(screen: MemoryScreenPresenter.retainingValue(
                                     from: $0.screens[.memoryRecallLab],
                                     on: presented), for: .memoryRecallLab)
+                                if let preview = projection.value {
+                                    $0.editMemory { $0.recall = preview }
+                                }
                             }
                             controller?.showMemoryActionBanner(nil)
                         } catch MemoryRecallGateway.GatewayError
@@ -75,6 +78,37 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                         }
                     }
                 }
+                controller.memoryLibraryPageHandler = { [weak self, weak controller] step in
+                    guard let self else { return }
+                    Task { @MainActor in
+                        let store = ShellLiveStore(config: self.config)
+                        do {
+                            let client = try await store.makeClient()
+                            let projection = await MemoryLibraryGateway(client: client)
+                                .fetch(step: step)
+                            controller?.apply {
+                                let presented = MemoryScreenPresenter.library(projection)
+                                $0.apply(screen: MemoryScreenPresenter.retainingValue(
+                                    from: $0.screens[.memoryLibrary],
+                                    on: presented), for: .memoryLibrary)
+                                // A page that did not arrive leaves the walk where it
+                                // was: the screen's availability already says the read
+                                // failed, so replacing rows here would claim a page the
+                                // daemon never served.
+                                if let page = projection.value {
+                                    $0.observe(
+                                        libraryPage: page, from: store.project, step: step)
+                                }
+                            }
+                        } catch {
+                            controller?.apply {
+                                $0.apply(screen: MemoryScreenPresenter.retainingValue(
+                                    from: $0.screens[.memoryLibrary],
+                                    on: Self.lostScreen(error)), for: .memoryLibrary)
+                            }
+                        }
+                    }
+                }
                 controller.memoryJobHandler = { [weak self, weak controller] kind in
                     guard let self, let controller else { return }
                     Task { @MainActor in
@@ -86,6 +120,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                                 $0.apply(
                                     screen: MemoryScreenPresenter.maintenance(result.readBack),
                                     for: .memoryMaintenance)
+                                $0.editMemory { $0.maintenance = result.readBack.value }
                             }
                             controller.showMemoryActionBanner(ShellBanner(
                                 severity: .info,
@@ -105,6 +140,9 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                                 $0.apply(screen: MemoryScreenPresenter.retainingValue(
                                     from: $0.screens[.memoryMaintenance],
                                     on: presented), for: .memoryMaintenance)
+                                if let value = projection.value {
+                                    $0.editMemory { $0.maintenance = value }
+                                }
                             }
                             controller.showMemoryActionBanner(ShellBanner(
                                 severity: .warning,
@@ -412,6 +450,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
         }
         current.refresh(router: refreshed.router)
         current.refresh(queenProvider: refreshed.queenProvider)
+        current.refresh(memory: refreshed.memory)
         current.apply(modelControl: refreshed.modelControlView)
         if let screen = refreshed.screens[.liveRun] {
             current.acceptOuterHorizon(

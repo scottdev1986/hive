@@ -29,6 +29,7 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
     var policyWriteHandler: ((ShellPolicyWrite) -> Void)?
     var queenProviderSwapHandler: (() -> Void)?
     var memoryRecallHandler: ((String) -> Void)?
+    var memoryLibraryPageHandler: ((MemoryLibraryStep) -> Void)?
     var memoryJobHandler: ((MemoryJobKind) -> Void)?
     private var memoryActionBanner: ShellBanner?
     private var routerCategory: TaskCategory?
@@ -361,18 +362,26 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
                     policyWriteHandler?(.route(category))
                 })
         case (.memoryOverview, _):
-            panel = MemoryOverviewScreenView(screen: screen)
+            panel = MemoryOverviewScreenView(
+                screen: screen, overview: state.memory.overview)
         case (.memoryLibrary, _):
-            panel = MemoryLibraryScreenView(screen: screen)
+            panel = MemoryLibraryScreenView(
+                screen: screen,
+                pager: state.memory.library,
+                actionsEnabled: screen.availability == .current
+                    && memoryLibraryPageHandler != nil,
+                onPage: { [weak self] step in self?.memoryLibraryPageHandler?(step) })
         case (.memoryRecallLab, _):
             panel = MemoryRecallScreenView(
                 screen: screen,
+                preview: state.memory.recall,
                 actionsEnabled: screen.availability == .current
                     && memoryRecallHandler != nil,
                 onInspect: { [weak self] query in self?.memoryRecallHandler?(query) })
         case (.memoryMaintenance, _):
             panel = MemoryMaintenanceScreenView(
                 screen: screen,
+                maintenance: state.memory.maintenance,
                 actionsEnabled: screen.availability == .current
                     && memoryJobHandler != nil,
                 onStart: { [weak self] kind in self?.memoryJobHandler?(kind) })

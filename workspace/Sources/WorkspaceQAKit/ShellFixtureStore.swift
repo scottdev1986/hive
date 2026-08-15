@@ -46,6 +46,8 @@ public struct ShellFixtureStore {
         .memoryMaintenance: "memory-maintenance-corpus",
     ]
     static let absentCorpus = "shell-absent-screens-corpus"
+    /// The corpus is one project's frozen reading, so its library walk is keyed to one project.
+    static let fixtureProject = ProjectID("fixture")
 
     public func loadState(scenario: ProjectionAvailability) throws -> ShellState {
         var state = ShellState()
@@ -95,21 +97,27 @@ public struct ShellFixtureStore {
         state.apply(
             screen: MemoryScreenPresenter.overview(memoryOverview),
             for: .memoryOverview)
+        state.editMemory { $0.overview = memoryOverview.value }
         let memoryLibrary: ClientProjection<MemoryLibraryProjection> = try loadRow(
             named: Self.wiredRoutes[.memoryLibrary]!, availability: scenario)
         state.apply(
             screen: MemoryScreenPresenter.library(memoryLibrary),
             for: .memoryLibrary)
+        if let page = memoryLibrary.value {
+            state.observe(libraryPage: page, from: Self.fixtureProject, step: .first)
+        }
         let memoryRecall: ClientProjection<MemoryRecallPreview> = try loadRow(
             named: Self.wiredRoutes[.memoryRecallLab]!, availability: scenario)
         state.apply(
             screen: MemoryScreenPresenter.recall(memoryRecall),
             for: .memoryRecallLab)
+        state.editMemory { $0.recall = memoryRecall.value }
         let memoryMaintenance: ClientProjection<MemoryMaintenanceProjection> = try loadRow(
             named: Self.wiredRoutes[.memoryMaintenance]!, availability: scenario)
         state.apply(
             screen: MemoryScreenPresenter.maintenance(memoryMaintenance),
             for: .memoryMaintenance)
+        state.editMemory { $0.maintenance = memoryMaintenance.value }
         let absent = try loadAbsentScreens()
         for route in ShellRoute.allCases where state.screens[route] == nil {
             guard let row = absent[route] else {

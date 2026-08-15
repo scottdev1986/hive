@@ -85,6 +85,13 @@ private struct ProviderProbeRefreshRequest: Encodable {}
 struct ShellLiveStore {
     let config: LaunchConfig
 
+    /// The project this shell is bound to. Library cursors are minted by one
+    /// project's store and mean nothing to another's, so the page walk is keyed
+    /// by this rather than by a page number this client counted.
+    var project: ProjectID {
+        ProjectID(config.projectID ?? config.projectDirectory ?? "unidentified-project")
+    }
+
     enum LiveError: LocalizedError {
         case incompleteLaunch
         case credential(String)
@@ -225,16 +232,26 @@ struct ShellLiveStore {
         state.apply(
             screen: MemoryScreenPresenter.overview(memoryOverview),
             for: .memoryOverview)
-        let memoryLibrary = await MemoryLibraryGateway(client: client).fetch()
+        state.editMemory { $0.overview = memoryOverview.value }
+        // A refresh re-reads the page the walk is standing on, not page one:
+        // the daemon's cursors survive concurrent writes, and silently jumping
+        // back would hide the rows the reader was looking at.
+        let libraryStep = previous?.memory.library?.trail.last ?? .first
+        let memoryLibrary = await MemoryLibraryGateway(client: client)
+            .fetch(step: libraryStep)
         state.apply(
             screen: MemoryScreenPresenter.library(memoryLibrary),
             for: .memoryLibrary)
+        if let page = memoryLibrary.value {
+            state.observe(libraryPage: page, from: project, step: libraryStep)
+        }
         do {
             let memoryRecall = try await MemoryRecallGateway(client: client)
                 .fetch(query: "memory")
             state.apply(
                 screen: MemoryScreenPresenter.recall(memoryRecall),
                 for: .memoryRecallLab)
+            state.editMemory { $0.recall = memoryRecall.value }
         } catch MemoryRecallGateway.GatewayError.refused(let status, let detail) {
             state.apply(
                 screen: MemoryScreenPresenter.recallRefusal(
@@ -250,6 +267,7 @@ struct ShellLiveStore {
         state.apply(
             screen: MemoryScreenPresenter.maintenance(memoryMaintenance),
             for: .memoryMaintenance)
+        state.editMemory { $0.maintenance = memoryMaintenance.value }
 
         state.apply(inspector: ShellInspectorPresenter.present(
             ShellInspectorPresenter.Inputs(
