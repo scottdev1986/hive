@@ -23,27 +23,23 @@ final class WorkspaceShellLaunchTests: XCTestCase {
             "/tmp/corpus")
     }
 
-    /// The shipped executable installs no fixture loader. Without one, the
-    /// directory flag is not a launch it can make — this is what keeps the
-    /// frozen-corpus shell out of the product, not a runtime check.
-    func testWithoutAFixtureLoaderTheDirectoryFlagLaunchesNothing() {
-        XCTAssertNil(WorkspaceShellLaunch(
-            arguments: ["--workspace-shell", "/tmp/corpus"], fixtureState: nil))
+    func testWithoutAFixtureLoaderTheShellUsesTheLiveDaemon() {
+        XCTAssertTrue(WorkspaceShellLaunch(
+            arguments: ["--workspace-shell", "/tmp/corpus"], fixtureState: nil).isLive)
     }
 
     func testAFixtureLoaderLaunchesTheShellAgainstFixtures() {
         let launch = WorkspaceShellLaunch(
             arguments: ["--workspace-shell", "/tmp/corpus"],
             fixtureState: fixtureLoader())
-        XCTAssertNotNil(launch)
-        XCTAssertFalse(launch?.isLive ?? true)
+        XCTAssertFalse(launch.isLive)
     }
 
     func testLiveSourceIsAnExplicitDifferentFlag() {
         let launch = WorkspaceShellLaunch(
             arguments: ["--workspace-shell-live"], fixtureState: nil)
-        XCTAssertEqual(launch?.isLive, true)
-        XCTAssertNil(WorkspaceShellLaunch(arguments: [], fixtureState: nil))
+        XCTAssertTrue(launch.isLive)
+        XCTAssertTrue(WorkspaceShellLaunch(arguments: [], fixtureState: nil).isLive)
     }
 
     /// Asking for both is a contradiction, and it resolves to the daemon. A
@@ -52,7 +48,7 @@ final class WorkspaceShellLaunchTests: XCTestCase {
         let launch = WorkspaceShellLaunch(
             arguments: ["--workspace-shell", "/tmp/corpus", "--workspace-shell-live"],
             fixtureState: fixtureLoader())
-        XCTAssertEqual(launch?.isLive, true)
+        XCTAssertTrue(launch.isLive)
     }
 
     /// Fullscreen belongs to the screenshot tour, not to anyone who opens the
@@ -61,11 +57,11 @@ final class WorkspaceShellLaunchTests: XCTestCase {
         XCTAssertEqual(
             WorkspaceShellLaunch(
                 arguments: ["--workspace-shell", "/tmp/corpus"],
-                fixtureState: fixtureLoader())?.fullscreen,
+                fixtureState: fixtureLoader()).fullscreen,
             false)
         XCTAssertEqual(
             WorkspaceShellLaunch(
-                arguments: ["--workspace-shell-live"], fixtureState: nil)?.fullscreen,
+                arguments: ["--workspace-shell-live"], fixtureState: nil).fullscreen,
             false)
     }
 
@@ -75,19 +71,19 @@ final class WorkspaceShellLaunchTests: XCTestCase {
                 arguments: [
                     "--workspace-shell", "/tmp/corpus", "--workspace-shell-fullscreen",
                 ],
-                fixtureState: fixtureLoader())?.fullscreen,
+                fixtureState: fixtureLoader()).fullscreen,
             true)
         XCTAssertEqual(
             WorkspaceShellLaunch(
                 arguments: ["--workspace-shell-live", "--workspace-shell-fullscreen"],
-                fixtureState: nil)?.fullscreen,
+                fixtureState: nil).fullscreen,
             true)
     }
 
-    /// The flag names a mode, not a source: on its own it must not conjure a
-    /// shell launch out of an argv that never asked for one.
-    func testFullscreenAloneDoesNotLaunchTheShell() {
-        XCTAssertNil(WorkspaceShellLaunch(
-            arguments: ["--workspace-shell-fullscreen"], fixtureState: nil))
+    func testFullscreenAloneKeepsTheDefaultLiveShell() {
+        let launch = WorkspaceShellLaunch(
+            arguments: ["--workspace-shell-fullscreen"], fixtureState: nil)
+        XCTAssertTrue(launch.isLive)
+        XCTAssertTrue(launch.fullscreen)
     }
 }

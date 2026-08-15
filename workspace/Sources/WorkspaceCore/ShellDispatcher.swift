@@ -5,11 +5,21 @@ import Foundation
 public typealias ShellMutationTransport =
     (ShellCommand, MutationIntent<ShellIntentBody>) -> MutationResult<ShellMutationPostState>
 
+public enum ShellIntentTransport: Equatable, Sendable {
+    case unavailable
+    case viewer
+}
+
 public struct ShellDispatcher {
     private let transport: ShellMutationTransport
+    private let intentTransport: (ShellIntentBody) -> ShellIntentTransport
 
-    public init(transport: @escaping ShellMutationTransport) {
+    public init(
+        transport: @escaping ShellMutationTransport,
+        intentTransport: @escaping (ShellIntentBody) -> ShellIntentTransport = { _ in .unavailable }
+    ) {
         self.transport = transport
+        self.intentTransport = intentTransport
     }
 
     /// Route navigation for surfaces that carry a destination rather than a menu command (the sidebar). Same state writes as a routed command.
@@ -46,6 +56,10 @@ public struct ShellDispatcher {
         case .local(.unavailableSurface(let reason)):
             outcome = .surfaceUnavailable(command, reason: reason)
         case .intent(let body):
+            if intentTransport(body) == .viewer {
+                outcome = .localPerformed(command)
+                break
+            }
             guard let expected = state.mutationExpectation else {
                 outcome = .surfaceUnavailable(
                     command,

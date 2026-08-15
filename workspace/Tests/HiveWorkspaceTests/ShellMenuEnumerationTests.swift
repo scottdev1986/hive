@@ -221,6 +221,15 @@ final class ShellMenuEnumerationTests: XCTestCase {
                     controller.currentState.lastOutcome, .routed(route))
             case .intent:
                 controller.performShellCommand(makeItem(command))
+                if command == .attachLiveTerminal || command == .detachTerminalView {
+                    guard case .surfaceUnavailable(let observed, _) =
+                        controller.currentState.lastOutcome else {
+                        XCTFail("\(command) did not resolve against the viewer")
+                        continue
+                    }
+                    XCTAssertEqual(observed, command)
+                    continue
+                }
                 guard case .mutationResolved(let result) =
                     controller.currentState.lastOutcome
                 else {
