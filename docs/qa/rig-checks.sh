@@ -193,7 +193,7 @@ expect_refusal() {
   fi
 }
 
-echo "[1/6] resolved-home gate: prod, dev, symlink, then a real QA home"
+echo "[1/7] resolved-home gate: prod, dev, symlink, then a real QA home"
 PRIMARY_RESOLVED="$(cd "$PRIMARY_CHECKOUT" && pwd -P)"
 DEV_HOME="$HOME/.hive/instances/dev-$(printf '%s' "$PRIMARY_RESOLVED" | /usr/bin/shasum -a 256 | cut -c1-10)"
 expect_refusal "user home" "$HOME/.hive" "protected user home"
@@ -252,7 +252,7 @@ else
   fail "default-home controls disagree: unfixed=$unfixed_default_resolved isolated=$isolated_default_resolved"
 fi
 
-echo "[2/6] up publishes coordinates and full source-hash evidence; down is empty"
+echo "[2/7] up publishes coordinates and full source-hash evidence; down is empty"
 up_out="$(QA_HOME="$CHECK_HOME" QA_PROJECT="$CHECK_REPO" QA_SKIP_POLICY=1 "$RIG" up 2>&1)"
 up_code=$?
 echo "$up_out" | sed 's/^/    /'
@@ -369,7 +369,7 @@ else
   fail "processes remain bound after down: $bound_after"
 fi
 
-echo "[3/6] run preserves command status and always tears down"
+echo "[3/7] run preserves command status and always tears down"
 run_out="$(QA_HOME="$CHECK_HOME" QA_PROJECT="$CHECK_REPO" QA_SKIP_POLICY=1 "$RIG" run sh -c '[ "$HIVE_QA_HOME" = "$1" ] && [ "$HIVE_QA_PROJECT" = "$2" ] || exit 3
     [ "$HIVE_HOME" = "$1" ] && [ "$HIVE_DEFAULT_HOME" = "$1/default" ] || exit 5
     case "$HIVE_QA_PORT" in ""|*[!0-9]*) exit 4;; esac
@@ -474,7 +474,7 @@ else
   fail "swap-probe symlink was not removed"
 fi
 
-echo "[4/6] owned descendants are swept; foreign look-alikes, stale, and sibling processes are untouched"
+echo "[4/7] owned descendants are swept; foreign look-alikes, stale, and sibling processes are untouched"
 python3 -c 'import time; time.sleep(600)' "bun test foreign-lookalike" &
 foreign_pid=$!
 track_test_pid "$foreign_pid" || { fail "could not record foreign look-alike identity"; exit 1; }
@@ -659,7 +659,7 @@ else
 fi
 forget_test_pid "$ancestor_fixture_pid" || true
 
-echo "[5/6] an unrecorded TERM-ignoring binding makes down fail"
+echo "[5/7] an unrecorded TERM-ignoring binding makes down fail"
 QA_LEAK_HOME="$CHECK_HOME" python3 - <<'PY' &
 import os
 import signal
