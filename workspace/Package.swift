@@ -2,8 +2,8 @@
 import PackageDescription
 
 /// GhosttyKit.xcframework is a **build output**, not checked in.
-/// Produce it with `scripts/native/build-ghosttykit.sh` from the repo root, then materialize:
-///   workspace/Vendor/GhosttyKit.xcframework  (libghostty.a + Headers; see build notes)
+/// Materialize it and Gate 6's checkpoint fixtures with
+/// `scripts/native/stage-ghosttykit.sh` from the repo root before running SwiftPM.
 let ghosttyKitPath = "Vendor/GhosttyKit.xcframework"
 
 let package = Package(
