@@ -25,6 +25,7 @@ SYMLINK_FIXTURE=""
 RACE_LINK=""
 NON_QA_TARGET=""
 SIBLING_HOME=""
+PLANT_HOME=""
 
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; failures=$((failures + 1)); }
@@ -64,6 +65,99 @@ identity_for_pid() {
   process_alive "$1" || return 1
   token="$(process_start "$1")" || return 1
   printf '%s:%s\n' "$1" "$token"
+}
+
+# Every database under the pinned default home must hold only what this rig put
+# there. Prints one reason per violation and returns 1; silent and 0 when clean.
+#
+# This replaces an older proxy — "no hive.db exists there" — which the daemon
+# made false without making anything unsafe: it now seeds a provisional routing
+# baseline into its own default instance at bring-up. The proxy could not tell
+# a database the rig created from one carried in, so it was traded for the
+# property it stood for. Three things are asked of every database, and an
+# imported one cannot satisfy any of them:
+#
+#   identity   A database that has ever served as an instance stamps a
+#              databaseIdentity into meta, and copying the file copies the
+#              stamp. The default home's databases must carry none.
+#   provenance Hive records where state came from — quota.db keeps the path of
+#              the database it migrated from. Any recorded path naming a Hive
+#              home must name THIS rig's, never ~/.hive, a dev instance, or
+#              another rig.
+#   history    Imported state was written before it was imported. No timestamp
+#              stored anywhere may predate this home's own creation.
+#
+# Emptiness is deliberately NOT asked: the seeded baseline is legitimate, and a
+# check that demanded zero rows would fail on a healthy rig and teach the next
+# reader to relax it.
+default_home_holds_only_this_rig() {
+  local home="$1" birth
+  birth="$(python3 -c 'import os,sys; s=os.stat(sys.argv[1]); print(getattr(s,"st_birthtime",s.st_ctime))' "$home")" \
+    || { echo "cannot read the birth time of $home"; return 1; }
+  python3 - "$home" "$birth" <<'PY'
+import datetime, glob, os, re, sqlite3, sys
+
+home, birth = sys.argv[1], float(sys.argv[2])
+birth_at = datetime.datetime.fromtimestamp(birth, datetime.timezone.utc)
+default_dir = os.path.join(home, "default")
+reasons = []
+
+INSTANT = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)$")
+# A recorded location is a whole cell that is an absolute path, not a mention
+# inside prose. Hive stores provenance that way — quota.db keeps the migrated-
+# from database as the entire value of its meta row — and matching prose
+# instead produces false alarms on real content: a vendor capability snapshot
+# legitimately quotes "~/.hive/memory" inside a skill description.
+STORED_PATH = re.compile(r"^/[^\s]*$")
+NAMES_A_HOME = re.compile(r"\.hive|hvqa-")
+
+databases = sorted(glob.glob(os.path.join(default_dir, "*.db")))
+if not databases:
+    print(f"no database under {default_dir}: nothing was inspected")
+    raise SystemExit(1)
+
+for path in databases:
+    name = os.path.basename(path)
+    # Read-only, and opened through SQLite so the write-ahead log is replayed:
+    # the main file here is one page while the content lives in the -wal, so a
+    # reader that only stats the file sees an empty database that is not empty.
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        row = con.execute(
+            "SELECT value FROM meta WHERE key = 'databaseIdentity'"
+        ).fetchone() if con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'"
+        ).fetchone() else None
+        if row:
+            reasons.append(f"{name} carries databaseIdentity {row[0]}: it has served as an instance")
+        tables = [r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+        for table in tables:
+            for record in con.execute(f'SELECT * FROM "{table}"'):
+                for cell in record:
+                    if not isinstance(cell, str):
+                        continue
+                    value = cell.strip()
+                    if (STORED_PATH.match(value) and NAMES_A_HOME.search(value)
+                            and not os.path.realpath(value).startswith(
+                                os.path.realpath(home))):
+                        reasons.append(
+                            f"{name}.{table} records a Hive location outside this rig: {value}")
+                    if INSTANT.match(cell.strip()):
+                        stamped = datetime.datetime.fromisoformat(
+                            cell.strip().replace("Z", "+00:00"))
+                        if stamped < birth_at:
+                            reasons.append(
+                                f"{name}.{table} holds {cell.strip()}, "
+                                f"written before this home existed ({birth_at.isoformat()})")
+    finally:
+        con.close()
+
+for reason in sorted(set(reasons)):
+    print(reason)
+raise SystemExit(1 if reasons else 0)
+PY
 }
 
 identity_matches() {
@@ -142,7 +236,7 @@ cleanup() {
       echo "rig checks: retaining $home because teardown is not clean" >&2
     fi
   done
-  for path in "$CHECK_HOME" "$TREE_HOME" "$DEFAULT_HOME" "$RACE_HOME" "$CHECK_REPO" "$SIBLING_HOME" "$SYMLINK_SCOPE" "$NON_QA_TARGET"; do
+  for path in "$CHECK_HOME" "$TREE_HOME" "$DEFAULT_HOME" "$RACE_HOME" "$CHECK_REPO" "$SIBLING_HOME" "$SYMLINK_SCOPE" "$NON_QA_TARGET" "$PLANT_HOME"; do
     case "$retained_homes" in *" $path "*) continue;; esac
     remove_scratch_tree "$path" || status=1
   done
@@ -349,14 +443,138 @@ for bound_pid in $bound_before; do
     || fence_env_ok=0
 done
 default_open="$(lsof -n -P -a -p "$daemon_pid" +D "$CHECK_RESOLVED/default" -Fp 2>/dev/null | sed -n 's/^p//p')"
+imported="$(default_home_holds_only_this_rig "$CHECK_HOME" 2>&1)"
+imported_code=$?
 if [ "$daemon_ready" -eq 1 ] && [ "$default_open" = "$daemon_pid" ] &&
    [ -f "$CHECK_HOME/default/quota.db" ] && [ -z "$protected_open" ] &&
    [ "$fence_env_ok" -eq 1 ] &&
-   [ ! -e "$CHECK_HOME/default/hive.db" ]; then
+   [ "$imported_code" -eq 0 ]; then
   pass "QA daemon is fenced from user/dev homes and imported no live database"
 else
-  fail "QA process reached protected state or missed its default-home fence: $protected_open"
+  fail "QA process reached protected state or missed its default-home fence:" \
+    "protected=[$protected_open] default_open=$default_open fence_env=$fence_env_ok" \
+    "imported=[$imported]"
 fi
+
+# The fence check above is an isolation control, so it is worth nothing until it
+# has been seen to refuse. Each plant below violates exactly one of the three
+# properties, and the clean plant proves a green verdict comes from inspecting
+# the databases rather than from failing to look at them.
+plant_dir="$(mktemp -d /tmp/hvqa-p.XXXXXX)" || exit 1
+PLANT_HOME="$plant_dir"
+mkdir -p "$plant_dir/default"
+python3 - "$CHECK_HOME" "$plant_dir" <<'PY'
+import os, shutil, sqlite3, sys
+
+rig_home, plant = sys.argv[1], sys.argv[2]
+
+def copy_database(source, target):
+    # The write-ahead log has to come too: the main file of a live Hive database
+    # is a single page, so copying it alone would plant an empty database and
+    # the control would prove nothing. Opening the source read-only is not an
+    # option either — SQLite needs to create shared memory for a WAL database
+    # and fails with "unable to open database file" — so the pair is copied and
+    # the COPY is checkpointed into one self-contained file.
+    shutil.copy(source, target)
+    if os.path.exists(source + "-wal"):
+        shutil.copy(source + "-wal", target + "-wal")
+    con = sqlite3.connect(target)
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    con.execute("PRAGMA journal_mode=DELETE")
+    con.close()
+    for suffix in ("-wal", "-shm"):
+        if os.path.exists(target + suffix):
+            os.remove(target + suffix)
+    rows = sqlite3.connect(f"file:{target}?mode=ro", uri=True)
+    try:
+        planted = rows.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+        identity = rows.execute(
+            "SELECT COUNT(*) FROM meta WHERE key='databaseIdentity'").fetchone()[0]
+    finally:
+        rows.close()
+    # A control that planted an empty or identity-less file would pass the check
+    # it is supposed to break, and would look like the check working.
+    if planted == 0 or identity == 0:
+        raise SystemExit(
+            f"plant is not a real instance database: tables={planted} identity={identity}")
+
+# A genuinely real, populated database: this rig's own instance database, which
+# has served an instance and therefore carries its identity.
+copy_database(os.path.join(rig_home, "hive.db"),
+              os.path.join(plant, "default", "populated.db"))
+
+# A database that records where its state came from — a home that is not ours.
+con = sqlite3.connect(os.path.join(plant, "default", "imported.db"))
+con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+con.execute("INSERT INTO meta VALUES ('defaultHiveQuotaMigrationV1', ?)",
+            (os.path.expanduser("~/.hive/default/hive.db"),))
+con.commit()
+con.close()
+
+# A database whose history predates this home: state written before the home it
+# now sits in could not have been produced here.
+con = sqlite3.connect(os.path.join(plant, "default", "stale.db"))
+con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, at TEXT)")
+con.execute("INSERT INTO events VALUES (1, '2019-01-01T00:00:00.000Z')")
+con.commit()
+con.close()
+
+# The control for the control: schema and rows this rig could have written.
+con = sqlite3.connect(os.path.join(plant, "default", "native.db"))
+con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+con.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, at TEXT)")
+con.commit()
+con.close()
+PY
+
+expect_plant_refusal() {
+  local label="$1" keep="$2" expected="$3" scratch out code
+  scratch="$(mktemp -d /tmp/hvqa-q.XXXXXX)" || return 1
+  mkdir -p "$scratch/default"
+  cp "$PLANT_HOME/default/$keep" "$scratch/default/$keep"
+  out="$(default_home_holds_only_this_rig "$scratch" 2>&1)"
+  code=$?
+  if [ "$code" -eq 0 ]; then
+    fail "planted $label was ACCEPTED by the fence check"
+  elif printf '%s' "$out" | grep -Fq "$expected"; then
+    pass "planted $label was refused: $(printf '%s' "$out" | head -1)"
+  else
+    # Refused, but not for the reason under test — a crash and a correct
+    # refusal both exit nonzero, and calling that a pass would be the same
+    # mistake as calling it an acceptance.
+    fail "planted $label was refused for the wrong reason (wanted '$expected'): $out"
+  fi
+  remove_scratch_tree "$scratch" || fail "could not remove plant scratch $scratch"
+}
+
+expect_plant_refusal "a real populated instance database" populated.db "databaseIdentity"
+expect_plant_refusal "a database naming another Hive home" imported.db "outside this rig"
+expect_plant_refusal "a database with history older than this home" stale.db "before this home existed"
+
+native_scratch="$(mktemp -d /tmp/hvqa-q.XXXXXX)" || exit 1
+mkdir -p "$native_scratch/default"
+cp "$PLANT_HOME/default/native.db" "$native_scratch/default/native.db"
+native_out="$(default_home_holds_only_this_rig "$native_scratch" 2>&1)"
+native_code=$?
+if [ "$native_code" -eq 0 ] && [ -z "$native_out" ]; then
+  pass "a database this rig could have written was accepted"
+else
+  fail "clean plant was refused (exit $native_code): $native_out"
+fi
+remove_scratch_tree "$native_scratch" || fail "could not remove clean plant scratch"
+
+empty_scratch="$(mktemp -d /tmp/hvqa-q.XXXXXX)" || exit 1
+mkdir -p "$empty_scratch/default"
+empty_out="$(default_home_holds_only_this_rig "$empty_scratch" 2>&1)"
+empty_code=$?
+if [ "$empty_code" -ne 0 ] && printf '%s' "$empty_out" | grep -Fq "nothing was inspected"; then
+  pass "a default home with no database is refused rather than silently green"
+else
+  fail "an uninspectable default home passed (exit $empty_code): $empty_out"
+fi
+remove_scratch_tree "$empty_scratch" || fail "could not remove empty plant scratch"
+remove_scratch_tree "$plant_dir" || fail "could not remove plant home"
 if QA_HOME="$CHECK_HOME" "$RIG" down; then
   pass "down completed"
 else
