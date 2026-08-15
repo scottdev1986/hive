@@ -481,6 +481,32 @@ rig_up() {
   chmod +x "$hive_bin" \
     || { rig_down || true; refuse "could not publish executable hive-bin at $hive_bin"; }
 
+  # Feed override for the U5 live proof: a rig-bound shim, so the harness hands
+  # the app one path instead of reconstructing an interpreter invocation. The
+  # bridge is found beside this script rather than through the checkout, so the
+  # reference survives a move of the QA tree.
+  local feed_bridge="$ARTIFACTS/u5-workspace-feed-bridge"
+  {
+    printf '%s\n' '#!/usr/bin/env bash'
+    printf '%s\n' "exec bun run $(printf '%q' "$QA_DIR")/u5-workspace-feed-bridge.ts \"\$@\""
+  } > "$feed_bridge"
+  chmod +x "$feed_bridge" \
+    || { rig_down || true; refuse "could not publish executable feed bridge at $feed_bridge"; }
+
+  # The U5 rendezvous paths. These are ADDRESSES, not files: the live harness
+  # refuses to start if a ready or release marker already exists, so publishing
+  # a path whose file survived a previous run would make a dead run look alive.
+  # The rig home is created fresh per bring-up and torn down after, so nothing
+  # here can be inherited; the check below states that rather than assuming it.
+  local u5_ready="$ARTIFACTS/u5-app-ready.json"
+  local u5_release="$ARTIFACTS/u5-app-release.json"
+  local u5_receipt="$ARTIFACTS/u5-app-feed-receipt.json"
+  local stale
+  for stale in "$u5_ready" "$u5_release" "$u5_receipt"; do
+    [ ! -e "$stale" ] \
+      || { rig_down || true; refuse "u5 rendezvous path is not fresh: $stale"; }
+  done
+
   {
     echo "requested_home=$QA_HOME_REQUESTED"
     echo "home=$QA_HOME"
@@ -489,12 +515,17 @@ rig_up() {
     echo "project=$QA_PROJECT"
     echo "source=$QA_SRC_ROOT"
     echo "hive_bin=$hive_bin"
+    echo "u5_feed_bridge=$feed_bridge"
+    echo "u5_ready_path=$u5_ready"
+    echo "u5_release_path=$u5_release"
+    echo "u5_feed_receipt=$u5_receipt"
   } > "$ARTIFACTS/coordinates.txt"
 
   echo "rig: up — home=$QA_HOME port=$port daemon_pid=$daemon_pid project=$QA_PROJECT"
   echo "rig: source $src_sha ($src_dirty); record in $ARTIFACTS/rig-record.txt"
   echo "rig: published coordinates in $ARTIFACTS/coordinates.txt"
   echo "rig: published hive-bin=$hive_bin"
+  echo "rig: published u5 feed bridge=$feed_bridge and three fresh rendezvous paths"
 }
 
 run_cleanup() {
