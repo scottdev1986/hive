@@ -152,6 +152,7 @@ WSUI-02|yes|W
 WSUI-03|yes|W
 WSUI-04|yes|W
 WSUI-05|yes|W
+WSUI-06|yes|W
 EOF
 )"
 # Derived from the catalog above and never restated. A second copy of this
@@ -611,7 +612,7 @@ publish_workspace_ui_rows() {
     # its ids missing, where an incomplete-matrix error would hide the cause.
     log "workspace-ui leg emitted no rows (see $artifacts/leg.log)"
     local rid
-    for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05; do
+    for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05 WSUI-06; do
       write_row "$out" "$rid" "fixture" "broken" "yes" "$source_sha" \
         "workspace-ui leg emitted no rows" "leg.log"
     done

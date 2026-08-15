@@ -38,8 +38,19 @@ SCENARIOS=(current unknown stale disconnected unauthorized conflicting replaced)
 # test input, never a contract: the legs read the route set out of the binary's
 # own report, so no screen is named in an assertion and there is no per-screen
 # exception list to keep in step with the shell.
-FORGED_ROUTES=(run router models tokens queen memory-overview memory-library
+FORGED_ROUTES=(run router models queen memory-overview memory-library
   memory-recall memory-maintenance)
+
+# Destinations the transition retires. Tokens is omitted because the usage
+# service attributes to a whole-orchestrator bucket the design forbids, and
+# Autonomy because its config document carries no revision, so no honest
+# compare-and-swap exists. Both are omitted by the cutover rule rather than
+# shipped disabled, which makes their reappearance the regression to catch.
+#
+# This strengthens the omission rule rather than excusing a screen from it, so
+# it is the opposite of the per-screen exception list the other legs refuse to
+# carry: nothing here lets a route off a check.
+RETIRED_ROUTES=(tokens autonomy)
 
 die() { echo "workspace-ui: $*" >&2; exit 1; }
 log() { echo "workspace-ui: $*" >&2; }
@@ -92,7 +103,7 @@ build_qa_binary() {
 # each of them as broken with the same reason.
 emit_refusal_rows() {
   local reason="$1" rid
-  for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05; do
+  for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05 WSUI-06; do
     printf 'ROW|%s|broken|%s\n' "$rid" "$reason"
   done
 }
@@ -209,12 +220,13 @@ collect() {
 
 assert_rows() {
   local proofs="$1"
-  python3 - "$proofs" "${SCENARIOS[*]}" <<'PY'
+  python3 - "$proofs" "${SCENARIOS[*]}" "${RETIRED_ROUTES[*]}" <<'PY'
 import sys
 from pathlib import Path
 
 proofs = Path(sys.argv[1])
 scenarios = sys.argv[2].split()
+retired = set(sys.argv[3].split())
 
 def read(label):
     """The measured line, its exit code, and the availability map it carries.
@@ -393,6 +405,23 @@ row("WSUI-05", ok05, f"unsandboxed-read={open_home}",
     f"sandboxed-read={denied_home}", "proofs/fixture-nohome.line",
     *(faults[:4] or ["the fixture shell rendered identically with the home denied"]))
 
+# WSUI-06 — no retired destination is reachable in the shipped shell. Tokens
+# and Autonomy are omitted by the cutover rule, so their reappearance is the
+# regression that rule exists to catch, and it must be read off the running
+# binary rather than the source: a route deleted from the enum but still built
+# into the window would pass a source-level check and fail here.
+faults, ok06 = [], True
+if not inventory:
+    faults.append("no-inventory-to-check")
+    ok06 = False
+present = sorted(set(inventory) & retired)
+if present:
+    faults.append(f"retired-route-present={','.join(present)}")
+    ok06 = False
+row("WSUI-06", ok06, f"retired={','.join(sorted(retired))}",
+    f"inventory={len(inventory)}", "proofs/fixture-current.line",
+    *(faults[:4] or ["no retired destination was reachable"]))
+
 broken = 0
 for rid, verdict, evidence in rows:
     if verdict == "broken":
@@ -497,6 +526,7 @@ probe_forged_healthy() {
   require_working "$rows" WSUI-02 "forged-healthy"
   require_working "$rows" WSUI-04 "forged-healthy"
   require_working "$rows" WSUI-05 "forged-healthy"
+  require_working "$rows" WSUI-06 "forged-healthy"
   echo "PROBE OK: forged-healthy (only WSUI-03 moved)"
   rm -rf "$work"
 }
@@ -523,6 +553,7 @@ probe_forged_counters() {
   require_working "$rows" WSUI-03 "forged-counters"
   require_working "$rows" WSUI-04 "forged-counters"
   require_working "$rows" WSUI-05 "forged-counters"
+  require_working "$rows" WSUI-06 "forged-counters"
   echo "PROBE OK: forged-counters (only WSUI-02 moved)"
   rm -rf "$work"
 }
@@ -545,10 +576,10 @@ probe_end_state_reachable() {
   local rows="$work/rows.txt"
   assert_rows "$proofs" >"$rows" 2>&1 || true
   local rid
-  for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05; do
+  for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05 WSUI-06; do
     require_working "$rows" "$rid" "end-state-reachable"
   done
-  echo "PROBE OK: end-state-reachable (all five rows green on the end state)"
+  echo "PROBE OK: end-state-reachable (every row green on the end state)"
   rm -rf "$work"
 }
 
