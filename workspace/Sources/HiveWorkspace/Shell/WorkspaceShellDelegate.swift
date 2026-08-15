@@ -527,7 +527,12 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
         state: ShellState
     ) async -> Never {
         controller.window?.layoutIfNeeded()
-        let wired = state.screens.values.filter { $0.contract == .frozen }.count
+        // Only a declared screen whose projection is frozen counts. Counting any
+        // frozen contract let an empty availability panel raise the score, which
+        // made a hollow screen read as done.
+        let wired = ShellScreenRegistry.screens.filter {
+            state.screens[$0.route]?.contract == .frozen
+        }.count
         // Active-screen banner kept for the existing proof greps. Live QA also needs every route's availability: activeRoute defaults to Live Run, which has no live endpoint and therefore never shows the false "disconnected" state that 404s raise on Task Router and siblings. Field name is availability-<route>, not banner-<route>, so a consumer cannot mistake the availability enum for rendered banner text.
         let banner = state.activeScreen?.banner != nil
             ? state.activeScreen?.availability.rawValue ?? "none"

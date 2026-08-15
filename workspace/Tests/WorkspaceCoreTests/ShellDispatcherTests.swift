@@ -46,7 +46,7 @@ final class ShellDispatcherTests: XCTestCase {
         let dispatcher = ShellDispatcher(transport: transport.transport)
         var state = makeState()
 
-        for (command, route) in [(ShellCommand.openSettings, ShellRoute.taskRouter),
+        for (command, route) in [(ShellCommand.showTaskRouter, ShellRoute.taskRouter),
                                  (.memoryLibrary, .memoryLibrary),
                                  (.showQueenProvider, .queen),
                                  (.showLiveRun, .liveRun)] as [(ShellCommand, ShellRoute)] {
@@ -185,20 +185,24 @@ final class ShellDispatcherTests: XCTestCase {
         XCTAssertEqual(state.lastOutcome, .localPerformed(.toggleInspector))
     }
 
-    func testUnbuiltSurfacesReportWhyInsteadOfPretending() {
+    /// Enter Full Terminal used to refuse with a reason that sounded honest
+    /// while describing a capability the app has: the Live Run workbench really
+    /// does host the viewer. It is a real local destination now, and no command
+    /// may claim a surface is unbuilt when it is not.
+    func testEnterFullTerminalReachesTheViewerInsteadOfRefusingIt() {
         let transport = RecordingTransport()
         let dispatcher = ShellDispatcher(transport: transport.transport)
         var state = makeState()
 
-        for command in [ShellCommand.enterFullTerminal] {
-            let outcome = dispatcher.dispatch(command, state: &state)
-            guard case .surfaceUnavailable(let surfaced, let reason) = outcome else {
-                XCTFail("\(command) must not succeed silently")
-                return
+        let outcome = dispatcher.dispatch(.enterFullTerminal, state: &state)
+
+        XCTAssertEqual(outcome, .localPerformed(.enterFullTerminal))
+        XCTAssertEqual(ShellCommand.enterFullTerminal.resolution, .local(.enterFullTerminal))
+        XCTAssertTrue(transport.sent.isEmpty, "a local surface must never mint an intent")
+        for command in ShellCommand.allCases {
+            if case .local(.unavailableSurface) = command.resolution {
+                XCTFail("\(command) still claims a surface this build has")
             }
-            XCTAssertEqual(surfaced, command)
-            XCTAssertFalse(reason.isEmpty)
-            XCTAssertTrue(transport.sent.isEmpty)
         }
     }
 

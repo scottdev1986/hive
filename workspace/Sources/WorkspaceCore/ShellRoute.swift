@@ -1,4 +1,7 @@
-// ShellRoute.swift The screen destinations of the new Workspace shell. The sidebar and the menus both navigate through these identifiers, so a destination the shell does not have (Communications, Gates, Show Projects) cannot reappear as a side effect of adding a screen — it has to be added here, deliberately.
+// ShellRoute.swift The screen destinations of the new Workspace shell. There is a case here only for a screen ShellScreenRegistry declares, so a destination the shell does not have — Communications, Gates, Show Projects, and now Tokens and Autonomy, whose services cannot supply an honest contract — cannot reappear as a side effect of adding a route: it has to be declared, deliberately, with the renderer and menu entry the compiler then demands.
+//
+// Title and nav group are not repeated here. They are read from the one
+// declaration, so the sidebar, the menus and this enum cannot drift apart.
 
 import Foundation
 
@@ -6,25 +9,21 @@ public enum ShellRoute: String, Codable, CaseIterable, Equatable, Hashable, Send
     case liveRun = "run"
     case taskRouter = "router"
     case modelsQuota = "models"
-    case tokens
     case queen
     case memoryOverview = "memory-overview"
     case memoryLibrary = "memory-library"
     case memoryRecallLab = "memory-recall"
     case memoryMaintenance = "memory-maintenance"
 
-    public var title: String {
-        switch self {
-        case .liveRun: return "Live Run"
-        case .taskRouter: return "Task Router"
-        case .modelsQuota: return "Models & Quota"
-        case .tokens: return "Tokens"
-        case .queen: return "Queen Provider"
-        case .memoryOverview: return "Memory Overview"
-        case .memoryLibrary: return "Memory Library"
-        case .memoryRecallLab: return "Recall Lab"
-        case .memoryMaintenance: return "Memory Maintenance"
-        }
+    public var title: String { ShellScreenRegistry.declaration(for: self).title }
+
+    public var navGroup: ShellNavGroup {
+        ShellScreenRegistry.declaration(for: self).group
+    }
+
+    /// The menu item that names this destination.
+    public var command: ShellCommand {
+        ShellScreenRegistry.declaration(for: self).command
     }
 }
 
@@ -36,25 +35,6 @@ public enum ShellNavGroup: String, CaseIterable, Equatable, Sendable {
 
     public var title: String { rawValue }
 
-    public var routes: [ShellRoute] {
-        switch self {
-        case .workspace: return [.liveRun]
-        case .modelControl: return [.taskRouter, .modelsQuota, .tokens]
-        case .runtime: return [.queen]
-        case .memory:
-            return [.memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance]
-        }
-    }
-}
-
-extension ShellRoute {
-    public var navGroup: ShellNavGroup {
-        switch self {
-        case .liveRun: return .workspace
-        case .taskRouter, .modelsQuota, .tokens: return .modelControl
-        case .queen: return .runtime
-        case .memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance:
-            return .memory
-        }
-    }
+    /// The screens declared in this group. A group with none renders nothing.
+    public var routes: [ShellRoute] { ShellScreenRegistry.routes(in: self) }
 }

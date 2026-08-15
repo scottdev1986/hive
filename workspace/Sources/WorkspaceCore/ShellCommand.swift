@@ -36,6 +36,10 @@ public struct ShellKeyModifiers: OptionSet, Equatable, Hashable, Sendable {
 public enum ShellLocalAction: Equatable, Sendable {
     case aboutPanel
     case detachWorkspace
+    /// Hand the window to the terminal viewer the Live Run workbench hosts. The
+    /// surface exists in live mode, so this is a real destination rather than a
+    /// refusal that sounds honest while describing a capability the app has.
+    case enterFullTerminal
     case toggleAttentionDrawer
     case toggleInspector
     case unavailableSurface(reason: String)
@@ -51,7 +55,8 @@ public enum ShellCommandResolution: Equatable, Sendable {
 
 public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
     case aboutHive = "about-hive"
-    case openSettings = "open-settings"
+    case showTaskRouter = "show-task-router"
+    case showModelsQuota = "show-models-quota"
     case openMemoryManager = "open-memory-manager"
     case detachWorkspace = "detach-workspace"
     case stopHive = "stop-hive"
@@ -98,8 +103,10 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
 
     public var menu: ShellMenu {
         switch self {
-        case .aboutHive, .openSettings, .openMemoryManager, .detachWorkspace, .stopHive:
+        case .aboutHive, .openMemoryManager, .detachWorkspace, .stopHive:
             return .hive
+        case .showTaskRouter, .showModelsQuota:
+            return .view
         case .undo, .redo, .cut, .copy, .paste, .selectAll:
             return .edit
         case .showLiveRun, .toggleAttention, .toggleInspector, .enterFullTerminal:
@@ -124,7 +131,8 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
     public var title: String {
         switch self {
         case .aboutHive: return "About Hive Workspace"
-        case .openSettings: return "Settings…"
+        case .showTaskRouter: return "Task Router"
+        case .showModelsQuota: return "Models & Quota"
         case .openMemoryManager: return "Memory Manager…"
         case .detachWorkspace: return "Detach Workspace"
         case .stopHive: return "Stop Hive…"
@@ -165,7 +173,7 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .selectQueenGrok: return "Select Grok…"
         case .selectQueenKimi: return "Select Kimi Code…"
         case .selectQueenOpenCode: return "Select OpenCode…"
-        case .showQueenProvider: return "Queen Provider…"
+        case .showQueenProvider: return "Queen Provider"
         case .minimizeWindow: return "Minimize"
         case .zoomWindow: return "Zoom"
         }
@@ -173,7 +181,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
 
     public var keyEquivalent: ShellKeyEquivalent? {
         switch self {
-        case .openSettings: return ShellKeyEquivalent(",")
         case .openMemoryManager, .memoryOverview: return ShellKeyEquivalent("M")
         case .detachWorkspace: return ShellKeyEquivalent("q")
         case .undo: return ShellKeyEquivalent("z")
@@ -183,6 +190,8 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .paste: return ShellKeyEquivalent("v")
         case .selectAll: return ShellKeyEquivalent("a")
         case .showLiveRun: return ShellKeyEquivalent("1")
+        case .showTaskRouter: return ShellKeyEquivalent("2")
+        case .showModelsQuota: return ShellKeyEquivalent("3")
         case .toggleAttention: return ShellKeyEquivalent("a", [.command, .option])
         case .toggleInspector: return ShellKeyEquivalent("i", [.command, .option])
         case .enterFullTerminal: return ShellKeyEquivalent("f", [.command, .control])
@@ -199,7 +208,8 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
     public var resolution: ShellCommandResolution {
         switch self {
         case .aboutHive: return .local(.aboutPanel)
-        case .openSettings: return .route(.taskRouter)
+        case .showTaskRouter: return .route(.taskRouter)
+        case .showModelsQuota: return .route(.modelsQuota)
         case .openMemoryManager, .memoryOverview: return .route(.memoryOverview)
         case .detachWorkspace: return .local(.detachWorkspace)
         case .stopHive: return .intent(.stopHive)
@@ -212,10 +222,7 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .showLiveRun: return .route(.liveRun)
         case .toggleAttention: return .local(.toggleAttentionDrawer)
         case .toggleInspector: return .local(.toggleInspector)
-        case .enterFullTerminal:
-            return .local(.unavailableSurface(
-                reason: "Full Terminal needs the live terminal workbench, which "
-                    + "is not in this build. No terminal surface exists yet."))
+        case .enterFullTerminal: return .local(.enterFullTerminal)
         case .attachLiveTerminal: return .intent(.attachViewer)
         case .detachTerminalView: return .intent(.detachViewer)
         case .pauseProvider: return .intent(.pauseProvider)

@@ -26,18 +26,18 @@ final class WorkspaceShellViewTests: XCTestCase {
             .path
     }
 
+    /// The sidebar shows the declared screens, with nothing filtered out of it:
+    /// a screen the shell does not have is not declared at all.
     private var fixtureSidebarRoutes: [ShellRoute] {
-        ShellNavGroup.allCases.flatMap(\.routes).filter { $0 != .tokens }
+        ShellScreenRegistry.screens.map(\.route)
     }
 
     private func makeController(
-        scenario: ProjectionAvailability = .current,
-        route: ShellRoute? = nil
+        scenario: ProjectionAvailability = .current
     ) throws -> WorkspaceShellWindowController {
         _ = NSApplication.shared
-        var state = try ShellFixtureStore(directory: fixtureDirectory)
+        let state = try ShellFixtureStore(directory: fixtureDirectory)
             .loadState(scenario: scenario)
-        if let route { state.navigate(to: route) }
         let controller = WorkspaceShellWindowController(
             context: ShellSidebarView.Context(
                 projectName: "hive",
@@ -211,18 +211,19 @@ final class WorkspaceShellViewTests: XCTestCase {
         XCTAssertEqual(banners?.isHidden, true, "a current projection raises no banner")
     }
 
-    func testUnwiredScreensStateWhatIsAbsentAndWhy() throws {
-        let controller = try makeController(route: .tokens)
-        XCTAssertNil(findView(
-            in: controller.window!.contentView!, identifier: "shell-nav-tokens"))
-        XCTAssertNil(findView(
-            in: controller.window!.contentView!, identifier: "shell-nav-autonomy"))
-        let text = allText(in: controller.window!.contentView!).joined(separator: "\n")
-        XCTAssertTrue(text.contains("open contract gap"))
-        XCTAssertEqual(
-            controller.currentState.activeScreen?.facts,
-            [ShellScreenFact(label: "Contract", value: "contract-gap")])
-        XCTAssertNil(controller.currentState.activeScreen?.banner)
+    func testAScreenWithNoHonestContractIsOnNoSurfaceAtAll() throws {
+        let controller = try makeController()
+        let content = controller.window!.contentView!
+        // Neither omitted screen is a nav row. The defect this replaces hid one
+        // of them and left the other clickable with nothing behind it.
+        for omitted in ["tokens", "autonomy"] {
+            XCTAssertNil(
+                findView(in: content, identifier: "shell-nav-\(omitted)"),
+                "\(omitted) must not be a nav row")
+        }
+        // The positive control: a declared screen IS a nav row, so the two
+        // absences above are facts about those screens, not a broken search.
+        XCTAssertNotNil(findView(in: content, identifier: "shell-nav-run"))
         // Queen is a frozen wire. Navigating there must show the observed
         // projection, not an absent-row contract gap.
         controller.performShellCommand(commandItem(.showQueenProvider))
@@ -237,7 +238,7 @@ final class WorkspaceShellViewTests: XCTestCase {
         guard let host = findView(
             in: controller.window!.contentView!, identifier: "shell-screen-host")
         else { return XCTFail("no screen host") }
-        for command in [ShellCommand.showQueenProvider, .memoryOverview, .openSettings] {
+        for command in [ShellCommand.showQueenProvider, .memoryOverview, .showTaskRouter] {
             controller.performShellCommand(commandItem(command))
             XCTAssertEqual(host.subviews.count, 1, "one active screen, always")
         }
@@ -339,8 +340,9 @@ final class WorkspaceShellViewTests: XCTestCase {
                 accuracy: 1,
                 "the scrolled document must match its viewport at \(width)")
 
-            // Distinct screen implementations use different internal
-            // constraints, so both have to be measured.
+            // A screen built from its own controls and one built from the
+            // shared availability panel are bounded by different constraints,
+            // so both have to be measured.
             for route in ["router", "queen"] {
                 let nav = try XCTUnwrap(findView(
                     in: content, identifier: "shell-nav-\(route)") as? NSButton)
@@ -369,11 +371,15 @@ final class WorkspaceShellViewTests: XCTestCase {
     }
 
     func testSparseScreenFillsItsViewportWithoutManufacturingScroll() throws {
-        let controller = try makeController(scenario: .unknown, route: .tokens)
+        let controller = try makeController(scenario: .unknown)
         guard let window = controller.window, let content = window.contentView else {
             return XCTFail("no window")
         }
         window.setContentSize(NSSize(width: 1440, height: 900))
+        window.layoutIfNeeded()
+        let sparse = try XCTUnwrap(findView(
+            in: content, identifier: "shell-nav-queen") as? NSButton)
+        sparse.performClick(nil)
         window.layoutIfNeeded()
 
         let scrollView = try XCTUnwrap(findView(

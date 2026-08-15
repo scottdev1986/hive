@@ -16,7 +16,6 @@ final class ShellSidebarView: NSView {
 
     init(
         context: Context,
-        routes: Set<ShellRoute>,
         onSelect: @escaping (ShellRoute) -> Void
     ) {
         self.onSelect = onSelect
@@ -42,7 +41,7 @@ final class ShellSidebarView: NSView {
         stack.addArrangedSubview(Self.contextBlock(context))
         stack.setCustomSpacing(Theme.Space.l, after: stack.arrangedSubviews[0])
 
-        for (index, group) in ShellNavGroup.allCases.enumerated() {
+        for (index, group) in ShellScreenRegistry.groups.enumerated() {
             let groupLabel = NSTextField(labelWithString: group.title.uppercased())
             groupLabel.font = Theme.Font.sectionLabel
             groupLabel.textColor = .tertiaryLabelColor
@@ -52,7 +51,7 @@ final class ShellSidebarView: NSView {
                     Theme.Space.m,
                     after: stack.arrangedSubviews[stack.arrangedSubviews.count - 2])
             }
-            for route in group.routes where routes.contains(route) {
+            for route in group.routes {
                 let button = Self.navButton(route: route) { [weak self] in
                     self?.onSelect(route)
                 }
@@ -150,7 +149,6 @@ final class ShellSidebarView: NSView {
         case .liveRun: return "play.rectangle"
         case .taskRouter: return "arrow.triangle.branch"
         case .modelsQuota: return "gauge"
-        case .tokens: return "number"
         case .queen: return "crown"
         case .memoryOverview: return "book"
         case .memoryLibrary: return "books.vertical"

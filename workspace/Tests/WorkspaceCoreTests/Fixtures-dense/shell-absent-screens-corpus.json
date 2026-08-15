@@ -10,22 +10,6 @@
     "availability": "unknown",
     "evidence": null,
     "value": {
-      "route": "tokens",
-      "contractState": "contract-gap",
-      "reason": "The token attribution projection is an open contract gap: it was never frozen, so this screen stays omitted rather than invent values or revive the legacy whole-Queen bucket."
-    }
-  },
-  {
-    "schemaVersion": 1,
-    "source": {
-      "revision": null,
-      "generation": null
-    },
-    "observedAt": null,
-    "freshness": "unknown",
-    "availability": "unknown",
-    "evidence": null,
-    "value": {
       "route": "queen",
       "contractState": "new-control",
       "reason": "The live-Queen provider projection has no frozen client wire in this build, so the observed provider is unknown. The selection commands still dispatch and report honestly."

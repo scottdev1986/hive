@@ -39,10 +39,7 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
         self.state = state
         routerCategory = state.modelControlView?.routing.categories.first
         dispatcher = ShellDispatcher(transport: shellUnavailableTransport)
-        sidebar = ShellSidebarView(
-            context: context,
-            routes: Self.sidebarRoutes(for: state),
-            onSelect: { _ in })
+        sidebar = ShellSidebarView(context: context, onSelect: { _ in })
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -63,15 +60,6 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    private static func sidebarRoutes(for state: ShellState) -> Set<ShellRoute> {
-        var routes = Set(ShellRoute.allCases)
-        if let contract = state.screens[.tokens]?.contract,
-           case .notFrozen = contract {
-            routes.remove(.tokens)
-        }
-        return routes
-    }
 
     var navButtonCount: Int { sidebar.navButtonsInOrder.count }
 
@@ -238,6 +226,12 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
             NSApp.orderFrontStandardAboutPanel(nil)
         case .localPerformed(.detachWorkspace):
             NSApp.terminate(nil)
+        case .localPerformed(.enterFullTerminal):
+            // The viewer the Live Run workbench already hosts, shown full-window.
+            // The command is only offered when that workbench is installed, so
+            // this never navigates to a terminal that does not exist.
+            state.navigate(to: .liveRun)
+            window?.toggleFullScreen(nil)
         default:
             break
         }
@@ -306,6 +300,11 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
         }
         let screen = state.activeScreen ?? .notFrozen(
             "No projection has been applied for this screen in this build.")
+        // Exhaustive over the route on purpose: a screen declared in the
+        // registry with no view here is a compile error, not a generic panel at
+        // runtime. A case may still fall back to the availability panel when its
+        // own typed projection has not arrived — that is a screen without a
+        // reading, not a screen without an implementation.
         let panel: NSView
         switch (state.activeRoute, state.router) {
         case (.liveRun, _) where liveRunWorkbench != nil:
@@ -393,7 +392,7 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
                 actionsEnabled: screen.availability == .current
                     && memoryJobHandler != nil,
                 onStart: { [weak self] kind in self?.memoryJobHandler?(kind) })
-        default:
+        case (.taskRouter, _), (.liveRun, _), (.queen, _):
             panel = ShellAvailabilityPanel(route: state.activeRoute, screen: screen)
         }
         screenHost.addSubview(panel)
