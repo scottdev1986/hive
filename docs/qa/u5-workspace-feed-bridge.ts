@@ -3,7 +3,7 @@
 // this process only avoids competing with the rig's daemon-lifetime owner.
 
 import { readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { z } from "zod";
 import { publishWorkspaceVisibility } from "../../src/cli/workspace-feed";
 import { SessionLocatorSchema } from "../../src/schemas/session-protocol";
