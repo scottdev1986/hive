@@ -41,16 +41,6 @@ SCENARIOS=(current unknown stale disconnected unauthorized conflicting replaced)
 FORGED_ROUTES=(run router models queen memory-overview memory-library
   memory-recall memory-maintenance)
 
-# Destinations the transition retires. Tokens is omitted because the usage
-# service attributes to a whole-orchestrator bucket the design forbids, and
-# Autonomy because its config document carries no revision, so no honest
-# compare-and-swap exists. Both are omitted by the cutover rule rather than
-# shipped disabled, which makes their reappearance the regression to catch.
-#
-# This strengthens the omission rule rather than excusing a screen from it, so
-# it is the opposite of the per-screen exception list the other legs refuse to
-# carry: nothing here lets a route off a check.
-RETIRED_ROUTES=(tokens autonomy)
 
 die() { echo "workspace-ui: $*" >&2; exit 1; }
 log() { echo "workspace-ui: $*" >&2; }
@@ -59,6 +49,7 @@ usage() {
   echo "usage: qa/workspace-ui.sh run <artifacts> <home> <port> <hive-bin>" >&2
   echo "       qa/workspace-ui.sh probe forged-healthy|forged-counters" >&2
   echo "       qa/workspace-ui.sh probe end-state-reachable|corpus-gap" >&2
+  echo "       qa/workspace-ui.sh probe screen-registry" >&2
   echo "       qa/workspace-ui.sh probe sandbox-blind <artifacts> <home> <port> <hive-bin>" >&2
   exit 2
 }
@@ -220,13 +211,12 @@ collect() {
 
 assert_rows() {
   local proofs="$1"
-  python3 - "$proofs" "${SCENARIOS[*]}" "${RETIRED_ROUTES[*]}" <<'PY'
+  python3 - "$proofs" "${SCENARIOS[*]}" <<'PY'
 import sys
 from pathlib import Path
 
 proofs = Path(sys.argv[1])
 scenarios = sys.argv[2].split()
-retired = set(sys.argv[3].split())
 
 def read(label):
     """The measured line, its exit code, and the availability map it carries.
@@ -238,7 +228,14 @@ def read(label):
     line_path = proofs / f"{label}.line"
     if not line_path.exists():
         return "", 127, {}, {}
-    line = line_path.read_text(encoding="utf-8").strip()
+    # The run now prints one SHELL-SCREEN line per declared screen before its
+    # summary, so the summary is selected by name rather than by being the only
+    # line in the file. A refusal prints SHELL-PROOF FAIL and is matched too.
+    text = line_path.read_text(encoding="utf-8")
+    line = next(
+        (candidate.strip() for candidate in text.splitlines()
+         if candidate.startswith("SHELL-PROOF ")),
+        text.strip().splitlines()[0].strip() if text.strip() else "")
     code_path = proofs / f"{label}.exit"
     code = int(code_path.read_text().strip()) if code_path.exists() else 127
     fields = {}
@@ -256,6 +253,25 @@ def read(label):
 def control(name):
     path = proofs / f"control-{name}.txt"
     return path.read_text(encoding="utf-8").strip() if path.exists() else "ABSENT"
+
+def read_declarations(label):
+    """The screens this build declares, and the count it claims to have printed.
+
+    Returns (slugs, claimed). `claimed` is None when the run printed no
+    terminator, which is how a truncated run and a build with no registry are
+    both kept distinguishable from a genuinely short list.
+    """
+    path = proofs / f"{label}.line"
+    if not path.exists():
+        return [], None
+    slugs, claimed = [], None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("SHELL-SCREEN "):
+            slugs.append(line[len("SHELL-SCREEN "):].split("|", 1)[0])
+        elif line.startswith("SHELL-PROOF-END screens="):
+            tail = line[len("SHELL-PROOF-END screens="):].strip()
+            claimed = int(tail) if tail.isdigit() else None
+    return slugs, claimed
 
 rows = []
 def row(rid, ok, *evidence):
@@ -405,22 +421,43 @@ row("WSUI-05", ok05, f"unsandboxed-read={open_home}",
     f"sandboxed-read={denied_home}", "proofs/fixture-nohome.line",
     *(faults[:4] or ["the fixture shell rendered identically with the home denied"]))
 
-# WSUI-06 — no retired destination is reachable in the shipped shell. Tokens
-# and Autonomy are omitted by the cutover rule, so their reappearance is the
-# regression that rule exists to catch, and it must be read off the running
-# binary rather than the source: a route deleted from the enum but still built
-# into the window would pass a source-level check and fail here.
+# WSUI-06 — the shell's route inventory is exactly the availability registry's
+# declared list. One assertion catches both directions: a screen the cutover
+# omitted that reappears, and a declared screen the shell quietly stopped
+# building. It names no screen, so it needs no maintenance when the declared set
+# changes, and it covers omissions this leg was never told about.
+#
+# Read off the running binary rather than the route enum on purpose: a screen
+# deleted from the enum but still built into the window passes a source-level
+# check and fails here.
 faults, ok06 = [], True
-if not inventory:
-    faults.append("no-inventory-to-check")
+declared, claimed = read_declarations("fixture-current")
+if claimed is None:
+    # No terminator: either a truncated run or a build with no registry. Both
+    # are failures to measure, never an empty list standing in for an answer.
+    faults.append("no-declaration-terminator")
     ok06 = False
-present = sorted(set(inventory) & retired)
-if present:
-    faults.append(f"retired-route-present={','.join(present)}")
+elif claimed != len(declared):
+    faults.append(f"declared-count={claimed}-but-{len(declared)}-lines-read")
     ok06 = False
-row("WSUI-06", ok06, f"retired={','.join(sorted(retired))}",
-    f"inventory={len(inventory)}", "proofs/fixture-current.line",
-    *(faults[:4] or ["no retired destination was reachable"]))
+elif not declared:
+    faults.append("shell-declares-no-screens")
+    ok06 = False
+elif not inventory:
+    faults.append("no-inventory-to-compare")
+    ok06 = False
+else:
+    undeclared = sorted(set(inventory) - set(declared))
+    unbuilt = sorted(set(declared) - set(inventory))
+    if undeclared:
+        faults.append(f"built-but-not-declared={','.join(undeclared)}")
+        ok06 = False
+    if unbuilt:
+        faults.append(f"declared-but-not-built={','.join(unbuilt)}")
+        ok06 = False
+row("WSUI-06", ok06, f"declared={len(declared)}", f"inventory={len(inventory)}",
+    "proofs/fixture-current.line",
+    *(faults[:4] or ["the inventory is exactly the declared list"]))
 
 broken = 0
 for rid, verdict, evidence in rows:
@@ -477,9 +514,20 @@ require_working() {
 }
 
 # forge_proof <proofs> <label> <scenario> <wired> <nav> <value> <exit>
+# forge_proof <proofs> <label> <scenario> <wired> <nav> <value> <exit> [declared...]
+# Declarations default to the same routes the proof line reports; a probe that
+# wants them to disagree passes its own list.
 forge_proof() {
   local proofs="$1" label="$2" scenario="$3" wired="$4" nav="$5" value="$6" code="$7"
+  shift 7
+  local -a declared=("$@")
+  [ "${#declared[@]}" -gt 0 ] || declared=("${FORGED_ROUTES[@]}")
   {
+    local declaration
+    for declaration in "${declared[@]}"; do
+      printf 'SHELL-SCREEN %s|show-%s|Group|Title %s\n' \
+        "$declaration" "$declaration" "$declaration"
+    done
     printf 'SHELL-PROOF routes=%d wired=%s scenario=%s active=run nav=%s' \
       "${#FORGED_ROUTES[@]}" "$wired" "$scenario" "$nav"
     printf ' drawer=hidden banner=none'
@@ -488,6 +536,7 @@ forge_proof() {
       printf ' availability-%s=%s' "$route" "$value"
     done
     printf '\n'
+    printf 'SHELL-PROOF-END screens=%d\n' "${#declared[@]}"
   } >"$proofs/$label.line"
   printf '%s\n' "$code" >"$proofs/$label.exit"
 }
@@ -583,6 +632,63 @@ probe_end_state_reachable() {
   rm -rf "$work"
 }
 
+# WSUI-06 derives its expectation from the shell's own declarations, so it must
+# be shown to fail in BOTH directions — otherwise it would pass just as happily
+# against a hardcoded list, which is the thing it replaced. The third case is
+# the one that keeps it honest when a run dies: a truncated declaration must be
+# a failure to measure, never a short list.
+probe_screen_registry() {
+  local work proofs rows n
+  work="$(mktemp -d -t wsui-registry)"
+  proofs="$work/proofs"
+  n=${#FORGED_ROUTES[@]}
+
+  forge_case() {
+    local dir="$1"
+    shift
+    mkdir -p "$dir"
+    local scenario
+    for scenario in "${SCENARIOS[@]}"; do
+      proofs="$dir" forge_proof "$dir" "fixture-$scenario" "$scenario" \
+        "$n" "$n" "$scenario" 0 "$@"
+    done
+    forge_io_readings "$dir" "$n" "$n"
+  }
+
+  # A screen the registry declares that the shell never built.
+  forge_case "$proofs/ghost" "${FORGED_ROUTES[@]}" phantom-screen
+  rows="$work/ghost.txt"
+  assert_rows "$proofs/ghost" >"$rows" 2>&1 || true
+  require_broken "$rows" WSUI-06 "declared-but-not-built"
+  grep -q 'declared-but-not-built=phantom-screen' "$rows" \
+    || die "declared-but-not-built: the row did not name the undeclared screen"
+
+  # A screen the shell built that the registry does not declare.
+  forge_case "$proofs/undeclared" "${FORGED_ROUTES[@]:1}"
+  rows="$work/undeclared.txt"
+  assert_rows "$proofs/undeclared" >"$rows" 2>&1 || true
+  require_broken "$rows" WSUI-06 "built-but-not-declared"
+  grep -q "built-but-not-declared=${FORGED_ROUTES[0]}" "$rows" \
+    || die "built-but-not-declared: the row did not name the surplus screen"
+
+  # A run cut off before it closed its declaration list.
+  forge_case "$proofs/truncated" "${FORGED_ROUTES[@]}"
+  local label
+  for label in fixture-current fixture-nonet fixture-nohome; do
+    grep -v '^SHELL-PROOF-END ' "$proofs/truncated/$label.line" \
+      >"$proofs/truncated/$label.trimmed"
+    mv "$proofs/truncated/$label.trimmed" "$proofs/truncated/$label.line"
+  done
+  rows="$work/truncated.txt"
+  assert_rows "$proofs/truncated" >"$rows" 2>&1 || true
+  require_broken "$rows" WSUI-06 "truncated-declaration"
+  grep -q 'no-declaration-terminator' "$rows" \
+    || die "truncated-declaration: the row did not name the missing terminator"
+
+  echo "PROBE OK: screen-registry (both directions and a truncated run)"
+  rm -rf "$work"
+}
+
 probe_corpus_gap() {
   local work
   work="$(mktemp -d -t wsui-corpus)"
@@ -647,6 +753,7 @@ case "$mode" in
       forged-healthy) probe_forged_healthy ;;
       forged-counters) probe_forged_counters ;;
       end-state-reachable) probe_end_state_reachable ;;
+      screen-registry) probe_screen_registry ;;
       corpus-gap) probe_corpus_gap ;;
       sandbox-blind) shift; probe_sandbox_blind "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
       *) usage ;;
