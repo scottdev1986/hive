@@ -1,17 +1,17 @@
 # Hive Workspace
 
-The Swift/AppKit workspace window for one Hive project. The Queen and every
-agent use the same terminal path: Hive creates an ordinary interactive login
-shell, starts the selected provider TUI as its first command, and the Workspace
-attaches a `HiveTerminalView` to that session through `sessiond`.
+The Swift/AppKit Workspace is one native Shell for observing and controlling a
+Hive project. Its sidebar, menus, routes, and renderer share one declared-screen
+registry. Screens without an honest daemon contract are absent rather than shown
+as disabled placeholders.
 
-The pane layout and headers come from the `hive workspace-feed` NDJSON stream.
-Terminal rendering, input, resizing, and scrollback stay in the shared
-HiveTerminalKit/sessiond stack.
+Live Run hosts one `HiveTerminalView` backed by the selected agent-ui session.
+The daemon owns each session; changing selection or leaving Live Run detaches the
+viewer without terminating the session.
 
 ## Launch contract
 
-The CLI launches the app; users do not need to open it directly:
+The CLI launches the app with project and daemon identity:
 
 ```sh
 open -a HiveWorkspace --args \
@@ -19,87 +19,74 @@ open -a HiveWorkspace --args \
   --port <daemon port> \
   --instance-id <instance id> \
   --instance-home <abs instance home> \
-  --hive <abs hive binary> \
-  [--orchestrator claude|codex|grok]
+  --hive <abs hive binary>
 ```
 
-- `--project` is the project window and the working directory for its shells.
+- `--project` identifies the project shown in the Shell.
 - `--port`, `--instance-id`, and `--instance-home` identify the daemon instance.
-- `--hive` is the exact Hive binary used for the feed and Queen supervisor.
-- `--orchestrator` selects the Queen provider; the default is Claude.
-- `--feed <binary>` is the process-boundary override used by tests.
-- `--smoke` runs the headless Workspace checks.
+- `--hive` is the exact Hive binary used for daemon reads and terminal attach.
 
-A Dock launch without the complete contract shows the project-neutral home
-window.
+The Shell is the only launch surface. Missing or invalid launch data produces a
+visible Shell fault; it never opens the retained pane-era UI as a fallback.
+
+The separate `HiveWorkspaceQA` executable adds frozen-corpus and smoke hooks.
+The shipped executable does not link those hooks.
 
 ## Terminal lifecycle
 
-Queen and agent panes differ only in the command and instructions supplied to
-their shell:
-
-1. The daemon asks `sessiond` to create the session.
-2. The session starts `/bin/zsh -l -i`.
-3. That shell runs the provider's normal CLI command.
-4. The Workspace attaches the pane to the exact session locator from the feed.
-5. Exiting the provider returns the same pane to an interactive zsh prompt.
-
-Provider instructions are passed through the provider's own supported layer:
-Claude uses `--append-system-prompt-file`, Codex uses an ephemeral profile with
-`developer_instructions`, and Grok uses `--rules`.
-
-Closing a pane detaches its view. It does not terminate the daemon-owned
-session. Explicit Hive lifecycle operations own session termination and process
-cleanup.
-
-## Feed and pane reconciliation
-
-`hive workspace-feed --port <n> ...` emits one JSON object per line. The app
-uses each live agent's identity, status, display metadata, and exact `sessiond`
-locator.
-
-- A new live record creates and attaches one pane.
-- A changed locator replaces the old attachment with the new generation.
-- A closed or missing agent keeps its final status briefly, then its pane closes.
-- A failed feed marks pane state untrusted; it never invents healthy state.
-
-The Queen uses the same feed/locator contract as every agent, so renderer,
-input, resize, scrollback, reconnect, and teardown behavior cannot diverge by
-role.
+1. The daemon asks `sessiond` to create an interactive zsh session.
+2. Hive's agent-ui starts beneath that retained shell for the selected provider.
+3. Live Run reads the exact session locator from the strict workspace feed.
+4. The workbench attaches at most one Ghostty viewer to that generation.
+5. Selection changes detach the prior viewer without killing either session.
+6. Stopping the provider returns the same PTY to zsh; terminal termination is a
+   separate explicit lifecycle action.
 
 ## Run and verify
+
+`GhosttyKit.xcframework` is gitignored build output. Materialize it at
+`workspace/Vendor/GhosttyKit.xcframework` before running SwiftPM. The repository
+build tooling owns that staging step; do not commit the framework.
 
 ```sh
 cd workspace
 swift build
 swift test
-../scripts/qa/b3-smoke.sh
 ```
 
-The B3 smoke stands up the real `sessiond` substrate headlessly and verifies
-create, attach, input, resize readiness, detach-without-kill, and clean
-teardown.
+To exercise the frozen Shell proof through the built QA binary:
+
+```sh
+HIVE_SHELL_PROOF=1 .build/debug/HiveWorkspaceQA \
+  --workspace-shell Tests/WorkspaceCoreTests/Fixtures
+```
+
+A complete run ends with `SHELL-PROOF-END screens=<count>`. Consumers must
+require that terminator and compare its count with the emitted `SHELL-SCREEN`
+lines; process exit alone is not proof that the run completed.
 
 ## Code layout
 
-- `Sources/WorkspaceCore` contains the feed contract, pane state reducer,
-  layout tree, navigation, status, and commands.
-- `Sources/HiveWorkspace` contains AppKit windows, feed wiring, pane chrome,
-  and `HiveTerminalView` attachment.
-- `HiveTerminalKit` provides the shared terminal renderer and session client.
+- `Sources/WorkspaceCore` owns typed projections, Shell routes, commands, state,
+  and the declared-screen registry.
+- `Sources/HiveWorkspace/Shell` owns the AppKit Shell, daemon gateways, and Live
+  Run workbench.
+- `HiveTerminalKit` provides the shared Ghostty renderer and session client.
+- `WorkspaceQAKit` provides hooks linked only by `HiveWorkspaceQA`.
+
+The pane-era AppDelegate, pane grid, project switcher, spatial navigation, and
+standalone Settings code remain compiled and tested for a later coordinated
+deletion. They are unreachable from both shipped and QA launch entry points.
 
 ## Keyboard map
 
 | Command | Keys |
 | --- | --- |
-| Promote focused pane to master | ⌘↩ (or double-click pane header) |
-| Return Queen to Master | ⇧⌘↩ |
-| Focus Queen | ⌘0 |
-| Move focus spatially | ⌥⌘←/→/↑/↓ |
-| Acknowledge focused pane | ⇧⌘K |
-| Close pane (detach, never kill) | ⇧⌘W |
-| Attention queue | ⌥⌘A |
-| Projects | ⇧⌘P |
-
-Approve, deny, and message actions occur in the native provider TUI by typing
-in its terminal pane.
+| Live Run | ⌘1 |
+| Task Router | ⌘2 |
+| Models & Quota | ⌘3 |
+| Attach selected live terminal | Return |
+| Enter full terminal | ⌃⌘F |
+| Attention drawer | ⌥⌘A |
+| Inspector | ⌥⌘I |
+| Detach Workspace | ⌘Q |
