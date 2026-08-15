@@ -31,42 +31,70 @@ WS_ROOT="${WSUI_WORKSPACE:-$SRC_ROOT/workspace}"
 VENDOR_SOURCE="${WORKSPACE_ROOT:-$PRIMARY_CHECKOUT/workspace}"
 FIXTURE_CORPUS="${FIXTURE_CORPUS:-$WS_ROOT/Tests/WorkspaceCoreTests/Fixtures}"
 
-# Every availability row the fixture store can serve, and the ten shell routes.
+# Every availability row the fixture store can serve.
 SCENARIOS=(current unknown stale disconnected unauthorized conflicting replaced)
-ROUTES=(run router models tokens queen autonomy memory-overview memory-library
+
+# Route slugs used ONLY to synthesise forged proof lines in the probes. This is
+# test input, never a contract: the legs read the route set out of the binary's
+# own report, so no screen is named in an assertion and there is no per-screen
+# exception list to keep in step with the shell.
+FORGED_ROUTES=(run router models tokens queen memory-overview memory-library
   memory-recall memory-maintenance)
-# Screens with no frozen daemon wire in this build. They render an absent row
-# from shell-absent-screens-corpus.json and must never report a healthy state.
-UNWIRED=(tokens autonomy)
 
 die() { echo "workspace-ui: $*" >&2; exit 1; }
 log() { echo "workspace-ui: $*" >&2; }
 
 usage() {
   echo "usage: qa/workspace-ui.sh run <artifacts> <home> <port> <hive-bin>" >&2
-  echo "       qa/workspace-ui.sh probe forged-proof|corpus-gap|sandbox-blind" >&2
+  echo "       qa/workspace-ui.sh probe forged-healthy|forged-counters" >&2
+  echo "       qa/workspace-ui.sh probe end-state-reachable|corpus-gap" >&2
+  echo "       qa/workspace-ui.sh probe sandbox-blind <artifacts> <home> <port> <hive-bin>" >&2
   exit 2
 }
 
 # --- building the binary under test ---------------------------------------
 
+# Sets BINARY on success. On refusal it sets BUILD_REFUSAL to one line naming
+# the remedy and returns 1; the leg turns that into broken rows rather than a
+# skip, because a leg that quietly did not run reads exactly like a green one.
+#
+# It stages nothing. GhosttyKit.xcframework is a gitignored build output that
+# no fresh worktree carries, and staging it is the build's job, not QA's — a
+# suite that silently repaired its own inputs could never report that a clean
+# checkout cannot build.
 build_qa_binary() {
   local artifacts="$1"
-  [ -d "$WS_ROOT" ] || die "no workspace source at $WS_ROOT"
-  if [ ! -d "$WS_ROOT/Vendor/GhosttyKit.xcframework" ]; then
-    [ -d "$VENDOR_SOURCE/Vendor/GhosttyKit.xcframework" ] \
-      || die "GhosttyKit.xcframework is absent from both $WS_ROOT and $VENDOR_SOURCE"
-    log "staging GhosttyKit from $VENDOR_SOURCE"
-    mkdir -p "$WS_ROOT/Vendor"
-    /usr/bin/ditto "$VENDOR_SOURCE/Vendor/GhosttyKit.xcframework" \
-      "$WS_ROOT/Vendor/GhosttyKit.xcframework" \
-      || die "could not stage GhosttyKit into $WS_ROOT/Vendor"
+  BUILD_REFUSAL=""
+  if [ ! -d "$WS_ROOT" ]; then
+    BUILD_REFUSAL="no-workspace-source-at:$WS_ROOT"
+    return 1
   fi
-  ( cd "$WS_ROOT" && swift build --product HiveWorkspaceQA ) \
-    >"$artifacts/build.log" 2>&1 \
-    || die "swift build --product HiveWorkspaceQA failed: $(tail -5 "$artifacts/build.log")"
+  if [ ! -d "$WS_ROOT/Vendor/GhosttyKit.xcframework" ]; then
+    BUILD_REFUSAL="GhosttyKit not staged; run: mkdir -p $WS_ROOT/Vendor && ln -s $VENDOR_SOURCE/Vendor/GhosttyKit.xcframework $WS_ROOT/Vendor/GhosttyKit.xcframework"
+    return 1
+  fi
+  # Build inside this checkout's own .build: concurrent SwiftPM runs sharing
+  # one build directory block on each other's lock.
+  if ! ( cd "$WS_ROOT" && swift build --product HiveWorkspaceQA ) \
+    >"$artifacts/build.log" 2>&1; then
+    BUILD_REFUSAL="swift build --product HiveWorkspaceQA failed: $(tail -3 "$artifacts/build.log" | tr '\n|' '  ')"
+    return 1
+  fi
   BINARY="$WS_ROOT/.build/debug/HiveWorkspaceQA"
-  [ -x "$BINARY" ] || die "no HiveWorkspaceQA at $BINARY after a successful build"
+  if [ ! -x "$BINARY" ]; then
+    BUILD_REFUSAL="no HiveWorkspaceQA at $BINARY after a successful build"
+    return 1
+  fi
+  return 0
+}
+
+# Every row this leg owns, so a refusal before any measurement still reports
+# each of them as broken with the same reason.
+emit_refusal_rows() {
+  local reason="$1" rid
+  for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05; do
+    printf 'ROW|%s|broken|%s\n' "$rid" "$reason"
+  done
 }
 
 # --- collecting measured proof lines ---------------------------------------
@@ -181,15 +209,12 @@ collect() {
 
 assert_rows() {
   local proofs="$1"
-  python3 - "$proofs" "${SCENARIOS[*]}" "${ROUTES[*]}" "${UNWIRED[*]}" <<'PY'
+  python3 - "$proofs" "${SCENARIOS[*]}" <<'PY'
 import sys
 from pathlib import Path
 
 proofs = Path(sys.argv[1])
 scenarios = sys.argv[2].split()
-routes = sys.argv[3].split()
-unwired = set(sys.argv[4].split())
-wired = [r for r in routes if r not in unwired]
 
 def read(label):
     """The measured line, its exit code, and the availability map it carries.
@@ -224,90 +249,100 @@ rows = []
 def row(rid, ok, *evidence):
     rows.append((rid, "working" if ok else "broken", [str(e) for e in evidence]))
 
-# WSUI-01 — every registered screen renders from the frozen corpus, in every
-# availability row the corpus can serve.
-faults, ok01 = [], True
+# WSUI-01 — the inventory is complete and describes itself. No screen is named
+# here: the route set is read out of the binary's own report, so this cannot go
+# stale when a screen is added or omitted, and it cannot pass on an empty world
+# — an empty or shrinking set is a disagreement, not a silence.
+faults, ok01, seen_sets = [], True, {}
 for scenario in scenarios:
     line, code, fields, avail = read(f"fixture-{scenario}")
-    if code != 0 or not line.startswith("SHELL-PROOF "):
+    if code != 0 or not line.startswith("SHELL-PROOF routes="):
         faults.append(f"{scenario}:exit={code}")
         ok01 = False
         continue
-    if fields.get("routes") != str(len(routes)):
-        faults.append(f"{scenario}:routes={fields.get('routes')}")
+    if not avail:
+        faults.append(f"{scenario}:no-route-reported")
         ok01 = False
-    missing = [r for r in routes if r not in avail]
-    if missing:
-        faults.append(f"{scenario}:absent-field={','.join(missing)}")
+        continue
+    if fields.get("routes") != str(len(avail)):
+        faults.append(
+            f"{scenario}:routes={fields.get('routes')}-but-{len(avail)}-reported")
         ok01 = False
-    unreported = [r for r, v in avail.items() if v == "missing"]
+    unreported = sorted(r for r, v in avail.items() if v == "missing")
     if unreported:
         faults.append(f"{scenario}:missing-screen={','.join(unreported)}")
         ok01 = False
-    extra = [r for r in avail if r not in routes]
-    if extra:
-        faults.append(f"{scenario}:unknown-route={','.join(extra)}")
-        ok01 = False
-row("WSUI-01", ok01, f"scenarios={len(scenarios)}", f"routes={len(routes)}",
+    seen_sets[scenario] = frozenset(avail)
+distinct = set(seen_sets.values())
+if len(distinct) > 1:
+    faults.append(f"route-set-varies-by-scenario:{len(distinct)}-sets")
+    ok01 = False
+inventory = sorted(next(iter(distinct))) if len(distinct) == 1 else []
+row("WSUI-01", ok01, f"scenarios={len(scenarios)}", f"routes={len(inventory)}",
     "proofs/fixture-<scenario>.line",
     *(faults[:6] or ["every route reported a state in every row"]))
 
-# WSUI-02 — a screen with no frozen contract never claims health. The claim is
-# an absence, so it is read off the two screens that are known to be unwired:
-# if the corpus ever wires them, `wired` moves off 8 and this row goes red
-# rather than passing vacuously.
+# WSUI-02 — nothing is exposed without an honest contract, and everything
+# exposed is reachable: the three counters the shell derives independently —
+# routes it registers, screens whose wire is frozen, and rows it puts in the
+# sidebar — must be the same number. A screen with no contract raises `routes`
+# above `wired`; a screen dropped from the sidebar drops `nav` below `routes`.
+# Neither can be excused per screen, which is the point: an exception list is
+# how the omission rule grew two implementations in the first place.
+#
+# `wired` alone is an overstating counter — it counts any screen whose generic
+# contract is frozen, so a hollow panel raises it. Requiring agreement with two
+# counters it does not control is what makes it safe to read here.
 faults, ok02 = [], True
 for scenario in scenarios:
-    _, code, fields, avail = read(f"fixture-{scenario}")
+    _, code, fields, _ = read(f"fixture-{scenario}")
     if code != 0:
         faults.append(f"{scenario}:exit={code}")
         ok02 = False
         continue
-    if fields.get("wired") != str(len(wired)):
-        faults.append(f"{scenario}:wired={fields.get('wired')}")
+    counters = {name: fields.get(name) for name in ("routes", "wired", "nav")}
+    if None in counters.values() or len(set(counters.values())) != 1:
+        faults.append(
+            f"{scenario}:routes={counters['routes']}"
+            f"-wired={counters['wired']}-nav={counters['nav']}")
         ok02 = False
-    for route in sorted(unwired):
-        if avail.get(route) != "unknown":
-            faults.append(f"{scenario}:{route}={avail.get(route)}")
-            ok02 = False
-row("WSUI-02", ok02, f"unwired={','.join(sorted(unwired))}",
-    f"wired={len(wired)}", "proofs/fixture-<scenario>.line",
-    *(faults[:6] or ["no unwired screen claimed a state in any row"]))
+row("WSUI-02", ok02, "routes==wired==nav", "proofs/fixture-<scenario>.line",
+    *(faults[:6] or ["the three counters agreed in every row"]))
 
-# WSUI-03 — a fault holds on every wired screen and none of them renders as
-# healthy while it holds.
+# WSUI-03 — a fault holds on every screen the shell exposes, and none of them
+# renders as healthy while it holds. Every route the binary reported is checked,
+# so a screen that ignores the injected state cannot be excused by naming it.
 faults, ok03 = [], True
 for scenario in scenarios:
     if scenario == "current":
         continue
     _, code, _, avail = read(f"fixture-{scenario}")
-    if code != 0:
+    if code != 0 or not avail:
         faults.append(f"{scenario}:exit={code}")
         ok03 = False
         continue
-    for route in wired:
-        seen = avail.get(route)
-        if seen != scenario:
-            faults.append(f"{scenario}:{route}={seen}")
+    for route in sorted(avail):
+        if avail[route] != scenario:
+            faults.append(f"{scenario}:{route}={avail[route]}")
             ok03 = False
-row("WSUI-03", ok03, f"faults={len(scenarios) - 1}", f"screens={len(wired)}",
+row("WSUI-03", ok03, f"faults={len(scenarios) - 1}", f"screens={len(inventory)}",
     "proofs/fixture-<scenario>.line",
-    *(faults[:6] or ["every wired screen held every injected fault"]))
+    *(faults[:6] or ["every screen held every injected fault"]))
 
 # WSUI-04 — the fixture view layer reaches no network. Three readings, because
 # the interesting one is an absence: the render is unchanged with the network
 # denied, the profile provably blocks a real connection, and the live launch
 # that does use the network visibly loses it under the same profile.
 faults, ok04 = [], True
-_, base_code, _, base_avail = read("fixture-current")
+_, base_code, base_fields, base_avail = read("fixture-current")
 _, net_code, net_fields, net_avail = read("fixture-nonet")
 if net_code != 0:
     faults.append(f"denied-network-exit={net_code}")
     ok04 = False
-if net_avail != base_avail or base_code != 0:
+if net_avail != base_avail or base_code != 0 or not base_avail:
     faults.append("render-changed-without-network")
     ok04 = False
-if net_fields.get("wired") != str(len(wired)):
+if net_fields.get("wired") != base_fields.get("wired"):
     faults.append(f"denied-network-wired={net_fields.get('wired')}")
     ok04 = False
 open_read, denied_read = control("net-open"), control("net-denied")
@@ -341,10 +376,10 @@ _, home_code, home_fields, home_avail = read("fixture-nohome")
 if home_code != 0:
     faults.append(f"denied-home-exit={home_code}")
     ok05 = False
-if home_avail != base_avail or base_code != 0:
+if home_avail != base_avail or base_code != 0 or not base_avail:
     faults.append("render-changed-without-home")
     ok05 = False
-if home_fields.get("wired") != str(len(wired)):
+if home_fields.get("wired") != base_fields.get("wired"):
     faults.append(f"denied-home-wired={home_fields.get('wired')}")
     ok05 = False
 open_home, denied_home = control("home-open"), control("home-denied")
@@ -370,11 +405,19 @@ PY
 run_leg() {
   local artifacts="$1" home="$2" port="$3" hive_bin="$4"
   [ -n "$artifacts" ] && [ -n "$home" ] && [ -n "$port" ] && [ -n "$hive_bin" ] || usage
-  [ -d "$home" ] || die "rig home $home does not exist"
-  [ -x "$hive_bin" ] || die "no hive binary at $hive_bin"
-  [ -d "$FIXTURE_CORPUS" ] || die "no fixture corpus at $FIXTURE_CORPUS"
   mkdir -p "$artifacts"
-  build_qa_binary "$artifacts"
+  local refusal=""
+  [ -d "$home" ] || refusal="rig home does not exist:$home"
+  [ -n "$refusal" ] || [ -x "$hive_bin" ] || refusal="no hive binary at:$hive_bin"
+  [ -n "$refusal" ] || [ -d "$FIXTURE_CORPUS" ] || refusal="no fixture corpus at:$FIXTURE_CORPUS"
+  if [ -z "$refusal" ] && ! build_qa_binary "$artifacts"; then
+    refusal="$BUILD_REFUSAL"
+  fi
+  if [ -n "$refusal" ]; then
+    log "refusing to measure: $refusal"
+    emit_refusal_rows "$refusal"
+    return 1
+  fi
   log "measuring shell proofs corpus=$FIXTURE_CORPUS binary=$BINARY"
   collect "$artifacts/proofs" "$home" "$port" "$hive_bin"
   assert_rows "$artifacts/proofs"
@@ -395,49 +438,117 @@ require_broken() {
   echo "PROBE BITES: $what -> $rid broken"
 }
 
-probe_forged_proof() {
-  local work
-  work="$(mktemp -d -t wsui-forged)"
-  local proofs="$work/proofs"
-  mkdir -p "$proofs"
-  # A shell that ignores the injected fault and renders every screen healthy —
-  # the exact defect WSUI-02 and WSUI-03 exist to catch. It exits 0, so a leg
-  # that trusted the exit code would call this a pass.
-  local scenario
-  for scenario in "${SCENARIOS[@]}"; do
-    {
-      printf 'SHELL-PROOF routes=10 wired=10 scenario=%s active=run nav=10' "$scenario"
-      printf ' drawer=hidden banner=none'
-      local route
-      for route in "${ROUTES[@]}"; do
-        printf ' availability-%s=current' "$route"
-      done
-      printf '\n'
-    } >"$proofs/fixture-$scenario.line"
-    printf '0\n' >"$proofs/fixture-$scenario.exit"
-  done
-  cp "$proofs/fixture-current.line" "$proofs/fixture-nonet.line"
-  cp "$proofs/fixture-current.exit" "$proofs/fixture-nonet.exit"
-  cp "$proofs/fixture-current.line" "$proofs/fixture-nohome.line"
-  cp "$proofs/fixture-current.exit" "$proofs/fixture-nohome.exit"
-  cp "$proofs/fixture-current.line" "$proofs/live-open.line"
-  cp "$proofs/fixture-current.exit" "$proofs/live-open.exit"
-  cp "$proofs/fixture-current.line" "$proofs/live-nonet.line"
-  cp "$proofs/fixture-current.exit" "$proofs/live-nonet.exit"
+# The other half of a red control. WSUI-02 and WSUI-03 assert the end state and
+# are red against today's shell, so "red" alone cannot tell a real finding from
+# a checker that can never pass. Each probe names the rows that must stay green.
+require_working() {
+  local rows="$1" rid="$2" what="$3"
+  grep -q "^ROW|$rid|working|" "$rows" \
+    || die "$what: $rid must stay green, or the corruption was not targeted ($rows)"
+}
+
+# forge_proof <proofs> <label> <scenario> <wired> <nav> <value> <exit>
+forge_proof() {
+  local proofs="$1" label="$2" scenario="$3" wired="$4" nav="$5" value="$6" code="$7"
+  {
+    printf 'SHELL-PROOF routes=%d wired=%s scenario=%s active=run nav=%s' \
+      "${#FORGED_ROUTES[@]}" "$wired" "$scenario" "$nav"
+    printf ' drawer=hidden banner=none'
+    local route
+    for route in "${FORGED_ROUTES[@]}"; do
+      printf ' availability-%s=%s' "$route" "$value"
+    done
+    printf '\n'
+  } >"$proofs/$label.line"
+  printf '%s\n' "$code" >"$proofs/$label.exit"
+}
+
+# The readings the two IO rows need, all healthy, so a probe aimed elsewhere
+# does not turn them red as collateral and blur what it proved.
+forge_io_readings() {
+  local proofs="$1" wired="$2" nav="$3"
+  forge_proof "$proofs" fixture-nonet current "$wired" "$nav" current 0
+  forge_proof "$proofs" fixture-nohome current "$wired" "$nav" current 0
+  forge_proof "$proofs" live-open current "$wired" "$nav" current 0
+  forge_proof "$proofs" live-nonet current "$wired" "$nav" disconnected 0
   printf 'CONNECTED\n' >"$proofs/control-net-open.txt"
   printf 'DENIED\n' >"$proofs/control-net-denied.txt"
   printf 'READ\n' >"$proofs/control-home-open.txt"
   printf 'DENIED\n' >"$proofs/control-home-denied.txt"
+}
+
+probe_forged_healthy() {
+  local work
+  work="$(mktemp -d -t wsui-healthy)"
+  local proofs="$work/proofs"
+  mkdir -p "$proofs"
+  # A shell that ignores the injected fault and renders every screen healthy —
+  # the exact defect WSUI-03 exists to catch. Its counters agree and it exits 0,
+  # so a leg reading the exit code, or the counters alone, would call it a pass.
+  local n=${#FORGED_ROUTES[@]} scenario
+  for scenario in "${SCENARIOS[@]}"; do
+    forge_proof "$proofs" "fixture-$scenario" "$scenario" "$n" "$n" current 0
+  done
+  forge_io_readings "$proofs" "$n" "$n"
   local rows="$work/rows.txt"
   assert_rows "$proofs" >"$rows" 2>&1 || true
-  require_broken "$rows" WSUI-02 "forged-proof"
-  require_broken "$rows" WSUI-03 "forged-proof"
-  require_broken "$rows" WSUI-04 "forged-proof"
-  # The routes are all present and all named, so the inventory row is the
-  # control that the corruption was targeted rather than total.
-  grep -q '^ROW|WSUI-01|working|' "$rows" \
-    || die "forged-proof: WSUI-01 must stay green, or the probe proves nothing"
-  echo "PROBE OK: forged-proof (WSUI-01 unaffected)"
+  require_broken "$rows" WSUI-03 "forged-healthy"
+  require_working "$rows" WSUI-01 "forged-healthy"
+  require_working "$rows" WSUI-02 "forged-healthy"
+  require_working "$rows" WSUI-04 "forged-healthy"
+  require_working "$rows" WSUI-05 "forged-healthy"
+  echo "PROBE OK: forged-healthy (only WSUI-03 moved)"
+  rm -rf "$work"
+}
+
+probe_forged_counters() {
+  local work
+  work="$(mktemp -d -t wsui-counters)"
+  local proofs="$work/proofs"
+  mkdir -p "$proofs"
+  # A shell that registers more screens than it has contracts for, and puts
+  # fewer in the sidebar than it registers — a screen shipped without an honest
+  # wire and a screen that exists but cannot be reached. Every state is
+  # otherwise correct, so only WSUI-02 may move.
+  local n=${#FORGED_ROUTES[@]} scenario
+  for scenario in "${SCENARIOS[@]}"; do
+    forge_proof "$proofs" "fixture-$scenario" "$scenario" \
+      "$((n - 2))" "$((n - 1))" "$scenario" 0
+  done
+  forge_io_readings "$proofs" "$((n - 2))" "$((n - 1))"
+  local rows="$work/rows.txt"
+  assert_rows "$proofs" >"$rows" 2>&1 || true
+  require_broken "$rows" WSUI-02 "forged-counters"
+  require_working "$rows" WSUI-01 "forged-counters"
+  require_working "$rows" WSUI-03 "forged-counters"
+  require_working "$rows" WSUI-04 "forged-counters"
+  require_working "$rows" WSUI-05 "forged-counters"
+  echo "PROBE OK: forged-counters (only WSUI-02 moved)"
+  rm -rf "$work"
+}
+
+# The inverse control for the two end-state rows: they are red against today's
+# shell, so this proves they are capable of green rather than structurally red.
+probe_end_state_reachable() {
+  local work
+  work="$(mktemp -d -t wsui-endstate)"
+  local proofs="$work/proofs"
+  mkdir -p "$proofs"
+  # The shell as it must be once the omission and the availability registry
+  # land: every registered screen has a contract, every one is in the sidebar,
+  # and every one holds the injected fault.
+  local n=${#FORGED_ROUTES[@]} scenario
+  for scenario in "${SCENARIOS[@]}"; do
+    forge_proof "$proofs" "fixture-$scenario" "$scenario" "$n" "$n" "$scenario" 0
+  done
+  forge_io_readings "$proofs" "$n" "$n"
+  local rows="$work/rows.txt"
+  assert_rows "$proofs" >"$rows" 2>&1 || true
+  local rid
+  for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05; do
+    require_working "$rows" "$rid" "end-state-reachable"
+  done
+  echo "PROBE OK: end-state-reachable (all five rows green on the end state)"
   rm -rf "$work"
 }
 
@@ -457,7 +568,7 @@ if len(kept) == len(rows):
     raise SystemExit("corpus has no autonomy absent row to remove")
 open(path, "w", encoding="utf-8").write(json.dumps(kept, indent=2))
 PY
-  build_qa_binary "$work"
+  build_qa_binary "$work" || die "$BUILD_REFUSAL"
   local proofs="$work/proofs"
   mkdir -p "$proofs"
   local scenario
@@ -482,7 +593,7 @@ probe_sandbox_blind() {
   local artifacts="$1" home="$2" port="$3" hive_bin="$4"
   [ -n "$artifacts" ] && [ -n "$home" ] && [ -n "$port" ] && [ -n "$hive_bin" ] || usage
   mkdir -p "$artifacts"
-  build_qa_binary "$artifacts"
+  build_qa_binary "$artifacts" || die "$BUILD_REFUSAL"
   # Swap the network profile for one that denies nothing. Every reading stays
   # identical except the control, which now connects — and the leg must red,
   # because a profile that blocks nothing cannot witness an absence.
@@ -502,7 +613,9 @@ case "$mode" in
   run) run_leg "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
   probe)
     case "${1:-}" in
-      forged-proof) probe_forged_proof ;;
+      forged-healthy) probe_forged_healthy ;;
+      forged-counters) probe_forged_counters ;;
+      end-state-reachable) probe_end_state_reachable ;;
       corpus-gap) probe_corpus_gap ;;
       sandbox-blind) shift; probe_sandbox_blind "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
       *) usage ;;
