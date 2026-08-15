@@ -4,12 +4,10 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
     private static let tasksItem = NSToolbarItem.Identifier("hive.settings.tasks")
     private static let modelsItem = NSToolbarItem.Identifier("hive.settings.models")
-    private static let usageItem = NSToolbarItem.Identifier("hive.settings.usage")
     private static let appearanceItem = NSToolbarItem.Identifier("hive.settings.appearance")
 
     private var tasksController: TasksSettingsController!
     private var modelsController: ModelsSettingsController!
-    private var usageController: UsageSettingsController!
     private var appearanceController: AppearanceSettingsController!
     private(set) var dataSource: ModelControlDataSource!
 
@@ -23,7 +21,6 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
             makeDaemonClient: makeDaemonClient)
         let tasks = TasksSettingsController(dataSource: dataSource)
         let models = ModelsSettingsController(dataSource: dataSource)
-        let usage = UsageSettingsController(dataSource: dataSource)
         let appearance = AppearanceSettingsController(dataSource: dataSource)
 
         let width = CGFloat(initialWidth ?? 880)
@@ -42,9 +39,8 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
         tasksController = tasks
         modelsController = models
-        usageController = usage
         appearanceController = appearance
-        for page in [tasks, models, usage, appearance] as [NSViewController] {
+        for page in [tasks, models, appearance] as [NSViewController] {
             container.addChild(page)
             page.view.translatesAutoresizingMaskIntoConstraints = false
             container.view.addSubview(page.view)
@@ -97,14 +93,13 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private func select(page: SettingsPageController) {
         currentSection = page === tasksController ? "tasks"
             : page === modelsController ? "models"
-            : page === appearanceController ? "appearance" : "usage"
+            : "appearance"
         tasksController.view.isHidden = page !== tasksController
         modelsController.view.isHidden = page !== modelsController
-        usageController.view.isHidden = page !== usageController
         appearanceController.view.isHidden = page !== appearanceController
         window?.title = page === tasksController ? "Settings — Tasks"
             : page === modelsController ? "Settings — Models"
-            : page === appearanceController ? "Settings — Appearance" : "Settings — Usage"
+            : "Settings — Appearance"
     }
 
     func show() {
@@ -124,13 +119,12 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
             }
             self.tasksController.scrollToTop()
             self.modelsController.scrollToTop()
-            self.usageController.scrollToTop()
             self.appearanceController.scrollToTop()
         }
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.tasksItem, Self.modelsItem, Self.usageItem, Self.appearanceItem]
+        [Self.tasksItem, Self.modelsItem, Self.appearanceItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -160,12 +154,6 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
                 systemSymbolName: "cpu",
                 accessibilityDescription: "Models and providers")
             item.action = #selector(showModels(_:))
-        case Self.usageItem:
-            item.label = "Usage"
-            item.image = NSImage(
-                systemSymbolName: "chart.bar.xaxis",
-                accessibilityDescription: "Session token usage")
-            item.action = #selector(showUsage(_:))
         case Self.appearanceItem:
             item.label = "Appearance"
             item.image = NSImage(
@@ -181,20 +169,17 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
     @objc private func showTasks(_ sender: Any?) { select(page: tasksController) }
     @objc private func showModels(_ sender: Any?) { select(page: modelsController) }
-    @objc private func showUsage(_ sender: Any?) { select(page: usageController) }
     @objc private func showAppearance(_ sender: Any?) { select(page: appearanceController) }
 
-    static let knownSections = ["tasks", "models", "usage", "appearance"]
+    static let knownSections = ["tasks", "models", "appearance"]
 
     func select(section: String) {
         if !Self.knownSections.contains(section) {
             NSLog("hive settings: unknown section %@, falling back to tasks", section)
         }
         let page: SettingsPageController = section == "models" ? modelsController
-            : section == "usage" ? usageController
             : section == "appearance" ? appearanceController : tasksController
         window?.toolbar?.selectedItemIdentifier = section == "models" ? Self.modelsItem
-            : section == "usage" ? Self.usageItem
             : section == "appearance" ? Self.appearanceItem : Self.tasksItem
         select(page: page)
     }
