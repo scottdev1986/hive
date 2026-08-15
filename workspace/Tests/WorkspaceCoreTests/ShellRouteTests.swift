@@ -52,12 +52,22 @@ final class ShellRouteTests: XCTestCase {
             ])
     }
 
-    func testNoRetiredDestinationIsARoute() {
+    /// Two different doors have to stay shut. The enumeration is what the shell
+    /// walks, and `init?(rawValue:)` is what a decoded wire value and a fixture
+    /// row go through — a slug that no longer enumerates but still parses would
+    /// re-enter through Codable rather than through the sidebar.
+    func testNoRetiredDestinationIsARouteOrParsesAsOne() {
         for retired in Self.retiredRouteIdentifiers {
             XCTAssertFalse(
                 ShellRoute.allCases.contains { $0.rawValue == retired },
                 "retired destination \(retired) must never be a shell route")
+            XCTAssertNil(
+                ShellRoute(rawValue: retired),
+                "retired destination \(retired) must not parse into a destination")
         }
+        // The positive control: a live slug does parse, so the nils above are
+        // facts about those slugs rather than a parser that rejects everything.
+        XCTAssertEqual(ShellRoute(rawValue: "memory-overview"), .memoryOverview)
     }
 
     func testNavGroupsPartitionEveryRouteExactlyOnce() {
