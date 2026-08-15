@@ -36,25 +36,30 @@ export function requireU5WorkspaceApp(
   executablePath: string;
   readyPath: string;
   releasePath: string;
+  feedReceiptPath: string;
 } {
   const executablePath = env.HIVE_QA_U5_APP_EXECUTABLE;
   const readyPath = env.HIVE_QA_U5_APP_READY_PATH;
   const releasePath = env.HIVE_QA_U5_APP_RELEASE_PATH;
+  const feedReceiptPath = env.HIVE_QA_U5_APP_FEED_RECEIPT;
   if (
     executablePath === undefined ||
     executablePath.length === 0 ||
     readyPath === undefined ||
     readyPath.length === 0 ||
     releasePath === undefined ||
-    releasePath.length === 0
+    releasePath.length === 0 ||
+    feedReceiptPath === undefined ||
+    feedReceiptPath.length === 0
   ) {
     throw new Error(
       "U5 Workspace SIGKILL proof requires HIVE_QA_U5_APP_EXECUTABLE, " +
-        "HIVE_QA_U5_APP_READY_PATH, and HIVE_QA_U5_APP_RELEASE_PATH for a " +
+        "HIVE_QA_U5_APP_READY_PATH, HIVE_QA_U5_APP_RELEASE_PATH, and " +
+        "HIVE_QA_U5_APP_FEED_RECEIPT for a " +
         "prebuilt Workspace app; the rig never invokes make run",
     );
   }
-  return { executablePath, readyPath, releasePath };
+  return { executablePath, readyPath, releasePath, feedReceiptPath };
 }
 
 export function classifyViewerReadback(

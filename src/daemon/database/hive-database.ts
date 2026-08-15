@@ -39,6 +39,7 @@ export class HiveDatabase implements DatabaseHost {
   completeTerminalHostSession!: RuntimeStore["completeTerminalHostSession"];
   renewTerminalHostVisibility!: RuntimeStore["renewTerminalHostVisibility"];
   recordTerminalHostTermination!: RuntimeStore["recordTerminalHostTermination"];
+  recordTerminalHostTerminationEvidence!: RuntimeStore["recordTerminalHostTerminationEvidence"];
   getTerminalHostBindingByLocator!: RuntimeStore["getTerminalHostBindingByLocator"];
   listTerminalHostBindings!: RuntimeStore["listTerminalHostBindings"];
   insertProviderRun!: RuntimeStore["insertProviderRun"];
@@ -201,6 +202,8 @@ export class HiveDatabase implements DatabaseHost {
       this.runtime.renewTerminalHostVisibility.bind(this.runtime);
     this.recordTerminalHostTermination =
       this.runtime.recordTerminalHostTermination.bind(this.runtime);
+    this.recordTerminalHostTerminationEvidence =
+      this.runtime.recordTerminalHostTerminationEvidence.bind(this.runtime);
     this.getTerminalHostBindingByLocator =
       this.runtime.getTerminalHostBindingByLocator.bind(this.runtime);
     this.listTerminalHostBindings = this.runtime.listTerminalHostBindings.bind(

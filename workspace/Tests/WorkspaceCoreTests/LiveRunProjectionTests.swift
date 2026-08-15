@@ -78,4 +78,52 @@ struct LiveRunProjectionTests {
             #expect(session.locatorFact?.label == "unknown")
         }
     }
+
+    @Test("Decodes exact Live Run process-control facts and refuses impossible variants")
+    func controlProjection() throws {
+        let data = Data(#"""
+        {"schemaVersion":1,"observedAt":"2026-08-15T20:00:00.000Z",
+         "agentId":"id-a","agentName":"a","provider":"codex",
+         "locator":{"schemaVersion":1,"instanceId":"rig",
+           "subject":{"kind":"agent","agentId":"id-a"},"generation":3,
+           "sessionId":"ses_018f1e90-7b5a-7cc0-8000-000000000001",
+           "hostKind":"sessiond","engineBuildId":"engine"},
+         "providerRun":{"state":"running","runId":"018f1e90-7b5a-7cc0-8000-000000000902",
+           "provider":"codex","process":{"pid":4100,"startToken":"4100:1",
+           "processGroupId":4100,"observedAt":"2026-08-15T20:00:00.000Z"}},
+         "shell":{"state":"retained","root":{"pid":4000,"startToken":"4000:1",
+           "processGroupId":4000},"foreground":"provider"},
+         "inputOwner":{"state":"owned","writer":"workspace-a","kind":"user",
+           "leaseExpiresAt":"2026-08-15T20:05:00.000Z"},
+         "processCensus":{"state":"complete","source":"sessiond-process-tree",
+           "members":[{"pid":4000,"startToken":"4000:1"},{"pid":4100,"startToken":"4100:1"}],
+           "observedAt":"2026-08-15T20:00:00.000Z"},
+         "termination":{"state":"not-requested"},
+         "controls":{"stopProvider":{"enabled":true,"reason":null},
+           "terminateTerminal":{"enabled":true,"reason":null}}}
+        """#.utf8)
+
+        let projection = try JSONDecoder().decode(
+            LiveRunControlProjection.self, from: data)
+
+        #expect(projection.locator.generation == 3)
+        #expect(projection.providerRun.runID?.hasPrefix("018f1e90") == true)
+        #expect(projection.providerRun.process?.pid == 4100)
+        #expect(projection.shell.root?.pid == 4000)
+        #expect(projection.shell.foreground == .provider)
+        #expect(projection.inputOwner.writer == "workspace-a")
+        #expect(projection.processCensus.members.count == 2)
+        #expect(projection.termination.state == .notRequested)
+        #expect(projection.controls.stopProvider.enabled)
+        #expect(projection.controls.terminateTerminal.enabled)
+
+        let impossible = Data(String(decoding: data, as: UTF8.self)
+            .replacingOccurrences(
+                of: #"{"state":"not-requested"}"#,
+                with: #"{"state":"not-requested","completedAt":"2026-08-15T20:00:00.000Z"}"#)
+            .utf8)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(LiveRunControlProjection.self, from: impossible)
+        }
+    }
 }

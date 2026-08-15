@@ -141,3 +141,374 @@ public struct LiveRunProjection: Equatable {
             .map(LiveRunSessionSummary.init(agent:))
     }
 }
+
+public struct LiveRunProcessIdentity: Codable, Equatable, Sendable {
+    public let pid: Int
+    public let startToken: String
+}
+
+public struct LiveRunShellRoot: Codable, Equatable, Sendable {
+    public let pid: Int
+    public let startToken: String
+    public let processGroupId: Int
+}
+
+public struct LiveRunProviderProcessIdentity: Codable, Equatable, Sendable {
+    public let pid: Int
+    public let startToken: String
+    public let processGroupId: Int
+    public let observedAt: String
+}
+
+public struct LiveRunProviderRunFact: Codable, Equatable, Sendable {
+    public enum State: String, Codable, Sendable {
+        case running
+        case absent
+        case unknown
+    }
+
+    public let state: State
+    public let runID: String?
+    public let provider: ProviderID?
+    public let process: LiveRunProviderProcessIdentity?
+    public let reason: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case state
+        case runID = "runId"
+        case provider
+        case process
+        case reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(State.self, forKey: .state)
+        runID = try container.decodeIfPresent(String.self, forKey: .runID)
+        provider = try container.decodeIfPresent(ProviderID.self, forKey: .provider)
+        process = try container.decodeIfPresent(
+            LiveRunProviderProcessIdentity.self, forKey: .process)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        let valid = switch state {
+        case .running:
+            runID?.isEmpty == false && provider != nil && process != nil && reason == nil
+        case .absent:
+            runID == nil && provider == nil && process == nil && reason == nil
+        case .unknown:
+            runID == nil && provider == nil && process == nil && reason?.isEmpty == false
+        }
+        guard valid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .state, in: container,
+                debugDescription: "invalid ProviderRun fact for state \(state.rawValue)")
+        }
+    }
+}
+
+public struct LiveRunShellFact: Codable, Equatable, Sendable {
+    public enum State: String, Codable, Sendable {
+        case retained
+        case terminated
+        case unknown
+    }
+
+    public enum Foreground: String, Codable, Sendable {
+        case provider
+        case shell
+        case other
+    }
+
+    public let state: State
+    public let root: LiveRunShellRoot?
+    public let foreground: Foreground?
+    public let reason: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case state, root, foreground, reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(State.self, forKey: .state)
+        root = try container.decodeIfPresent(LiveRunShellRoot.self, forKey: .root)
+        foreground = try container.decodeIfPresent(Foreground.self, forKey: .foreground)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        let valid = switch state {
+        case .retained:
+            root != nil && foreground != nil && reason == nil
+        case .terminated:
+            root == nil && foreground == nil && reason == nil
+        case .unknown:
+            root == nil && foreground == nil && reason?.isEmpty == false
+        }
+        guard valid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .state, in: container,
+                debugDescription: "invalid shell fact for state \(state.rawValue)")
+        }
+    }
+}
+
+public struct LiveRunInputOwnerFact: Codable, Equatable, Sendable {
+    public enum State: String, Codable, Sendable {
+        case free
+        case owned
+        case unknown
+    }
+
+    public enum Kind: String, Codable, Sendable {
+        case user
+        case automation
+    }
+
+    public let state: State
+    public let writer: String?
+    public let kind: Kind?
+    public let leaseExpiresAt: String?
+    public let reason: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case state, writer, kind, leaseExpiresAt, reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(State.self, forKey: .state)
+        writer = try container.decodeIfPresent(String.self, forKey: .writer)
+        kind = try container.decodeIfPresent(Kind.self, forKey: .kind)
+        leaseExpiresAt = try container.decodeIfPresent(String.self, forKey: .leaseExpiresAt)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        let valid = switch state {
+        case .free:
+            writer == nil && kind == nil && leaseExpiresAt == nil && reason == nil
+        case .owned:
+            writer?.isEmpty == false && kind != nil
+                && leaseExpiresAt?.isEmpty == false && reason == nil
+        case .unknown:
+            writer == nil && kind == nil && leaseExpiresAt == nil
+                && reason?.isEmpty == false
+        }
+        guard valid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .state, in: container,
+                debugDescription: "invalid input-owner fact for state \(state.rawValue)")
+        }
+    }
+}
+
+public struct LiveRunProcessCensusFact: Codable, Equatable, Sendable {
+    public enum State: String, Codable, Sendable {
+        case complete
+        case terminated
+        case unknown
+    }
+
+    public let state: State
+    public let source: String?
+    public let members: [LiveRunProcessIdentity]
+    public let observedAt: String?
+    public let reason: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case state, source, members, observedAt, reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(State.self, forKey: .state)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        members = try container.decodeIfPresent(
+            [LiveRunProcessIdentity].self, forKey: .members) ?? []
+        observedAt = try container.decodeIfPresent(String.self, forKey: .observedAt)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        let valid = switch state {
+        case .complete:
+            source == "sessiond-process-tree" && observedAt?.isEmpty == false
+                && reason == nil
+        case .terminated:
+            source == nil && members.isEmpty && observedAt == nil && reason == nil
+        case .unknown:
+            source == nil && members.isEmpty && observedAt == nil
+                && reason?.isEmpty == false
+        }
+        guard valid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .state, in: container,
+                debugDescription: "invalid process census for state \(state.rawValue)")
+        }
+    }
+}
+
+public struct LiveRunTerminationSurvivor: Codable, Equatable, Sendable {
+    public let pid: Int
+    public let startToken: String
+    public let reason: String
+}
+
+public struct LiveRunTerminationFact: Codable, Equatable, Sendable {
+    public enum State: String, Codable, Sendable {
+        case notRequested = "not-requested"
+        case terminated
+        case survivors
+        case unknown
+    }
+
+    public let state: State
+    public let completedAt: String?
+    public let survivors: [LiveRunTerminationSurvivor]
+    public let reason: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case state, completedAt, survivors, reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(State.self, forKey: .state)
+        completedAt = try container.decodeIfPresent(String.self, forKey: .completedAt)
+        survivors = try container.decodeIfPresent(
+            [LiveRunTerminationSurvivor].self, forKey: .survivors) ?? []
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        let valid = switch state {
+        case .notRequested:
+            completedAt == nil && survivors.isEmpty && reason == nil
+        case .terminated:
+            completedAt?.isEmpty == false && survivors.isEmpty && reason == nil
+        case .survivors:
+            completedAt?.isEmpty == false && !survivors.isEmpty && reason == nil
+        case .unknown:
+            completedAt == nil && survivors.isEmpty && reason?.isEmpty == false
+        }
+        guard valid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .state, in: container,
+                debugDescription: "invalid termination fact for state \(state.rawValue)")
+        }
+    }
+}
+
+public struct LiveRunControlAvailability: Codable, Equatable, Sendable {
+    public let enabled: Bool
+    public let reason: String?
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        guard enabled ? reason == nil : reason?.isEmpty == false else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .reason, in: container,
+                debugDescription: "enabled controls have no refusal reason; disabled controls require one")
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, reason
+    }
+}
+
+public struct LiveRunControlSet: Codable, Equatable, Sendable {
+    public let stopProvider: LiveRunControlAvailability
+    public let terminateTerminal: LiveRunControlAvailability
+}
+
+public struct LiveRunControlProjection: Codable, Equatable, Sendable {
+    public let schemaVersion: Int
+    public let observedAt: String
+    public let agentID: String
+    public let agentName: String
+    public let provider: ProviderID
+    public let locator: AgentSessionLocator
+    public let providerRun: LiveRunProviderRunFact
+    public let shell: LiveRunShellFact
+    public let inputOwner: LiveRunInputOwnerFact
+    public let processCensus: LiveRunProcessCensusFact
+    public let termination: LiveRunTerminationFact
+    public let controls: LiveRunControlSet
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, observedAt
+        case agentID = "agentId"
+        case agentName, provider, locator, providerRun, shell, inputOwner
+        case processCensus, termination, controls
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        observedAt = try container.decode(String.self, forKey: .observedAt)
+        agentID = try container.decode(String.self, forKey: .agentID)
+        agentName = try container.decode(String.self, forKey: .agentName)
+        provider = try container.decode(ProviderID.self, forKey: .provider)
+        locator = try container.decode(AgentSessionLocator.self, forKey: .locator)
+        providerRun = try container.decode(LiveRunProviderRunFact.self, forKey: .providerRun)
+        shell = try container.decode(LiveRunShellFact.self, forKey: .shell)
+        inputOwner = try container.decode(LiveRunInputOwnerFact.self, forKey: .inputOwner)
+        processCensus = try container.decode(
+            LiveRunProcessCensusFact.self, forKey: .processCensus)
+        termination = try container.decode(LiveRunTerminationFact.self, forKey: .termination)
+        controls = try container.decode(LiveRunControlSet.self, forKey: .controls)
+        guard schemaVersion == 1,
+              !observedAt.isEmpty,
+              !agentID.isEmpty,
+              locator.subject.kind == "agent",
+              locator.subject.agentId == agentID,
+              locator.generation > 0,
+              locator.hostKind == "sessiond",
+              locator.engineBuildId?.isEmpty == false
+        else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .locator, in: container,
+                debugDescription: "Live Run control projection has no exact agent locator")
+        }
+    }
+}
+
+public enum LiveRunControlOperation: String, Codable, Equatable, Sendable {
+    case stopProvider = "stop-provider"
+    case terminateTerminal = "terminate-terminal"
+}
+
+public struct LiveRunControlBody: Codable, Equatable, Sendable {
+    public let operation: LiveRunControlOperation
+    public let agentID: String
+    public let locator: AgentSessionLocator
+    public let expectedShellRoot: LiveRunShellRoot
+    public let expectedProviderRunID: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case operation
+        case agentID = "agentId"
+        case locator, expectedShellRoot
+        case expectedProviderRunID = "expectedProviderRunId"
+    }
+
+    public init(
+        operation: LiveRunControlOperation,
+        projection: LiveRunControlProjection
+    ) throws {
+        guard let root = projection.shell.root else {
+            throw LiveRunControlBodyError.unverifiedShell
+        }
+        let providerRunID: String?
+        switch operation {
+        case .stopProvider:
+            guard let runID = projection.providerRun.runID else {
+                throw LiveRunControlBodyError.unverifiedProviderRun
+            }
+            providerRunID = runID
+        case .terminateTerminal:
+            providerRunID = nil
+        }
+        self.operation = operation
+        agentID = projection.agentID
+        locator = projection.locator
+        expectedShellRoot = root
+        expectedProviderRunID = providerRunID
+    }
+}
+
+public enum LiveRunControlBodyError: Error, Equatable {
+    case unverifiedShell
+    case unverifiedProviderRun
+}

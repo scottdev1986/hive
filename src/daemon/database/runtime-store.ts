@@ -31,6 +31,8 @@ import {
   HiveTerminalCreateEvidenceSchema,
   type HiveTerminalTerminationAudit,
   HiveTerminalTerminationAuditSchema,
+  type HiveTerminalTerminationEvidence,
+  HiveTerminalTerminationEvidenceSchema,
   TerminalHostBindingConflictError,
 } from "../session-host/terminal-host-binding";
 
@@ -39,6 +41,7 @@ const StoredTerminalHostBindingRowSchema = z.object({
   visibilityJson: z.string().min(1),
   createEvidenceJson: z.string().nullable(),
   terminationAuditJson: z.string().nullable(),
+  terminationEvidenceJson: z.string().nullable(),
 });
 
 const StoredProviderRunRowSchema = z.object({
@@ -119,6 +122,9 @@ function parseTerminalHostBindingRow(row: unknown): HiveTerminalBinding {
     ...(stored.terminationAuditJson === null
       ? {}
       : { terminationAudit: JSON.parse(stored.terminationAuditJson) }),
+    ...(stored.terminationEvidenceJson === null
+      ? {}
+      : { terminationEvidence: JSON.parse(stored.terminationEvidenceJson) }),
   });
 }
 
@@ -177,6 +183,7 @@ export class RuntimeStore {
       DELETE FROM terminal_host_bindings
       WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
         AND createEvidenceJson IS NULL AND terminationAuditJson IS NULL
+        AND terminationEvidenceJson IS NULL
     `)
         .run(value.instanceId, value.sessionId, value.generation).changes > 0
     );
@@ -293,6 +300,32 @@ export class RuntimeStore {
     });
   }
 
+  recordTerminalHostTerminationEvidence(
+    locator: HiveTerminalBinding["locator"],
+    evidence: HiveTerminalTerminationEvidence,
+  ): HiveTerminalBinding {
+    const value = HiveTerminalTerminationEvidenceSchema.parse(evidence);
+    return this.transaction(() => {
+      const binding = this.getTerminalHostBindingByLocator(locator);
+      if (binding === null) {
+        throw new Error("terminal host locator binding does not exist");
+      }
+      this.database
+        .query(`
+        UPDATE terminal_host_bindings
+        SET terminationEvidenceJson = ?
+        WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
+      `)
+        .run(
+          JSON.stringify(value),
+          binding.locator.instanceId,
+          binding.locator.sessionId,
+          binding.locator.generation,
+        );
+      return { ...binding, terminationEvidence: value };
+    });
+  }
+
   getTerminalHostBindingByLocator(
     locator: HiveTerminalBinding["locator"],
   ): HiveTerminalBinding | null {
@@ -300,7 +333,8 @@ export class RuntimeStore {
       HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
     const row = this.database
       .query(`
-      SELECT locatorJson, visibilityJson, createEvidenceJson, terminationAuditJson
+      SELECT locatorJson, visibilityJson, createEvidenceJson, terminationAuditJson,
+             terminationEvidenceJson
       FROM terminal_host_bindings
       WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
     `)
@@ -312,7 +346,8 @@ export class RuntimeStore {
     const value = z.string().min(1).parse(instanceId);
     return this.database
       .query(`
-      SELECT locatorJson, visibilityJson, createEvidenceJson, terminationAuditJson
+      SELECT locatorJson, visibilityJson, createEvidenceJson, terminationAuditJson,
+             terminationEvidenceJson
       FROM terminal_host_bindings
       WHERE locatorInstanceId = ?
       ORDER BY locatorSessionId, locatorGeneration

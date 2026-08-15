@@ -125,6 +125,22 @@ export interface ProviderRunStore {
   ): ProviderRun | null;
 }
 
+export type TerminalControlInspection = Readonly<{
+  terminal: SessionInspection;
+  inputOwner: Readonly<{
+    writer: string;
+    kind: "user" | "automation";
+    leaseExpiresAt: string;
+  }> | null;
+  foregroundProcessGroupId: number | null;
+  processCensus: Readonly<{
+    completeness: NeutralSessionInspection["completeness"];
+    members: readonly Readonly<{ pid: number; startToken: string }>[];
+    evidenceAt: string;
+    diagnostics: readonly string[];
+  }>;
+}>;
+
 export class TerminalHostBindingNotFoundError extends Error {
   constructor() {
     super(
@@ -513,6 +529,61 @@ export class HiveTerminalHostAdapter {
     return this.projectInspection(binding, inspection);
   }
 
+  async inspectControl(
+    locator: HiveTerminalBinding["locator"],
+  ): Promise<TerminalControlInspection> {
+    const binding = this.requireBinding(locator);
+    const session = await this.findLiveSession(locator);
+    if (session === null) {
+      const terminal = this.projectAbsentInspection(binding);
+      return {
+        terminal,
+        inputOwner: null,
+        foregroundProcessGroupId: null,
+        processCensus: {
+          completeness: "unavailable",
+          members: [],
+          evidenceAt: terminal.evidenceAt,
+          diagnostics: terminal.diagnosticIds,
+        },
+      };
+    }
+    const inspection = await this.host.inspect(session);
+    if (!sameSession(inspection.session, session)) {
+      throw new TerminalHostBindingMismatchError();
+    }
+    const members = new Map<
+      string,
+      Readonly<{ pid: number; startToken: string }>
+    >();
+    for (const process of [inspection.child, ...inspection.descendants]) {
+      if (process === null) continue;
+      members.set(`${process.processId}:${process.startToken}`, {
+        pid: process.processId,
+        startToken: process.startToken,
+      });
+    }
+    return {
+      terminal: this.projectInspection(binding, inspection),
+      inputOwner:
+        inspection.inputOwner === null
+          ? null
+          : {
+              writer: inspection.inputOwner.writer,
+              kind: inspection.inputOwner.kind,
+              leaseExpiresAt: inspection.inputOwner.leaseExpiresAt,
+            },
+      foregroundProcessGroupId:
+        inspection.jobControl?.foregroundProcessGroupId ?? null,
+      processCensus: {
+        completeness: inspection.completeness,
+        members: [...members.values()],
+        evidenceAt: inspection.evidenceAt,
+        diagnostics: inspection.diagnostics,
+      },
+    };
+  }
+
   async terminate(
     locator: HiveTerminalBinding["locator"],
     request: TerminationRequest,
@@ -535,7 +606,7 @@ export class HiveTerminalHostAdapter {
           "terminal-absent",
         );
       }
-      return {
+      const projected: TerminationResult = {
         locator,
         state: "terminated",
         exit: null,
@@ -548,6 +619,11 @@ export class HiveTerminalHostAdapter {
           },
         ],
       };
+      this.bindings.recordTerminalHostTerminationEvidence(locator, {
+        completedAt: this.now().toISOString(),
+        result: projected,
+      });
+      return projected;
     }
     this.bindings.recordTerminalHostTermination(locator, {
       reason: request.reason,
@@ -564,6 +640,10 @@ export class HiveTerminalHostAdapter {
       idempotencyKey: terminationIdempotencyKey(request.requestId, session),
     });
     const projected = this.projectTermination(locator, result);
+    this.bindings.recordTerminalHostTerminationEvidence(locator, {
+      completedAt: this.now().toISOString(),
+      result: projected,
+    });
     if (projected.state === "terminated") {
       const active = this.providerRuns.getActiveProviderRunByTerminal(locator);
       if (active !== null) {

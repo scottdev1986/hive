@@ -236,6 +236,7 @@ import {
   runVmStat,
 } from "./resource-management/resources";
 import { RoutingService } from "./routing-service/routing-service";
+import { liveRunControlEndpoint } from "./live-run-control/live-run-control-endpoint";
 import { attachGrantEndpoint as attachGrantRoute } from "./session-host/attach-grant-endpoint";
 import {
   HiveTerminalHostAdapter,
@@ -2244,6 +2245,24 @@ export class HiveDaemon {
     }
     if (url.pathname === "/workspace-snapshot" && request.method === "GET") {
       return this.workspaceSnapshotEndpoint(request);
+    }
+    if (
+      url.pathname === "/live-run-control" &&
+      (request.method === "GET" || request.method === "POST")
+    ) {
+      return liveRunControlEndpoint(
+        {
+          db: this.db,
+          terminalHost: this.terminalHost,
+          terminateAgent: (agent) => this.killAgentTeardown(agent),
+          now: () => new Date(),
+          authenticate: (req, route) => this.authenticate(req, route),
+          authorize: (capability, route, action, subject, audit, reason) =>
+            this.authorize(capability, route, action, subject, audit, reason),
+          denied: (decision) => this.denied(decision),
+        },
+        request,
+      );
     }
     if (url.pathname === "/agent-ui/quota" && request.method === "GET") {
       return this.agentUiQuotaEndpoint(request);

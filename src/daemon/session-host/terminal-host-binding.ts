@@ -4,6 +4,7 @@ import {
   SessionLocatorSchema,
   SessionSpecSchema,
   TerminationRequestSchema,
+  TerminationResultSchema,
   type VisibilityLeaseSchema,
   VisibilityRequestSchema,
 } from "../../schemas/session-protocol";
@@ -37,6 +38,17 @@ export type HiveTerminalTerminationAudit = z.infer<
   typeof HiveTerminalTerminationAuditSchema
 >;
 
+export const HiveTerminalTerminationEvidenceSchema = z
+  .strictObject({
+    completedAt: SessionInspectionSchema.unwrap().shape.evidenceAt,
+    result: TerminationResultSchema,
+  })
+  .readonly();
+
+export type HiveTerminalTerminationEvidence = z.infer<
+  typeof HiveTerminalTerminationEvidenceSchema
+>;
+
 /** Hive-owned policy bound to one exact sessiond locator. */
 export const HiveTerminalBindingSchema = z
   .strictObject({
@@ -46,6 +58,7 @@ export const HiveTerminalBindingSchema = z
     visibility: VisibilityRequestSchema,
     createEvidence: HiveTerminalCreateEvidenceSchema.optional(),
     terminationAudit: HiveTerminalTerminationAuditSchema.optional(),
+    terminationEvidence: HiveTerminalTerminationEvidenceSchema.optional(),
   })
   .readonly();
 
@@ -69,6 +82,10 @@ export interface TerminalHostBindingStore {
   recordTerminalHostTermination(
     locator: HiveTerminalBinding["locator"],
     audit: HiveTerminalTerminationAudit,
+  ): HiveTerminalBinding;
+  recordTerminalHostTerminationEvidence(
+    locator: HiveTerminalBinding["locator"],
+    evidence: HiveTerminalTerminationEvidence,
   ): HiveTerminalBinding;
   getTerminalHostBindingByLocator(
     locator: HiveTerminalBinding["locator"],

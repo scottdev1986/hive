@@ -132,6 +132,7 @@ class HiveSchemaMigrator {
         visibilityJson TEXT NOT NULL,
         createEvidenceJson TEXT,
         terminationAuditJson TEXT,
+        terminationEvidenceJson TEXT,
         PRIMARY KEY (locatorInstanceId, locatorSessionId, locatorGeneration)
       );
       CREATE TABLE IF NOT EXISTS provider_runs (
@@ -612,6 +613,11 @@ class HiveSchemaMigrator {
     if (!columns.has("terminationAuditJson")) {
       this.database.exec(
         "ALTER TABLE terminal_host_bindings ADD COLUMN terminationAuditJson TEXT",
+      );
+    }
+    if (!columns.has("terminationEvidenceJson")) {
+      this.database.exec(
+        "ALTER TABLE terminal_host_bindings ADD COLUMN terminationEvidenceJson TEXT",
       );
     }
   }

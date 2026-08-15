@@ -1,7 +1,7 @@
 import Foundation
 import HiveTerminalKit
 
-public struct AgentSessionSubject: Equatable, Codable {
+public struct AgentSessionSubject: Equatable, Codable, Sendable {
     public let kind: String
     public let agentId: String?
 
@@ -11,7 +11,7 @@ public struct AgentSessionSubject: Equatable, Codable {
     }
 }
 
-public struct AgentSessionLocator: Equatable, Codable {
+public struct AgentSessionLocator: Equatable, Codable, Sendable {
     public let schemaVersion: Int
     public let instanceId: String
     public let subject: AgentSessionSubject
