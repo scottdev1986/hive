@@ -56,15 +56,12 @@ public enum WorkspaceLaunch {
             app.appearance = NSAppearance(
                 named: appearance == "light" ? .aqua : .darkAqua)
         }
-        let delegate: NSApplicationDelegate
-        if let shellLaunch {
-            delegate = WorkspaceShellDelegate(config: config, launch: shellLaunch)
-        } else {
-            delegate = AppDelegate(config: config, qa: qa)
-        }
+        let delegate: NSApplicationDelegate = WorkspaceShellDelegate(
+            config: config,
+            launch: shellLaunch)
         app.delegate = delegate
         let smokeVisible = ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1"
-        let backgroundOnly = (config.smoke && !smokeVisible) || shellLaunch?.proofMode == true
+        let backgroundOnly = (config.smoke && !smokeVisible) || shellLaunch.proofMode
         app.setActivationPolicy(backgroundOnly ? .accessory : .regular)
         app.run()
     }

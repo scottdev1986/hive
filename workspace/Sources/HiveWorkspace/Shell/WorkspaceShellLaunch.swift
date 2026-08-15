@@ -1,4 +1,7 @@
-// WorkspaceShellLaunch.swift The development hook: `--workspace-shell-live` at launch swaps the pane-era app for the new native shell against the running daemon. The parsing lives here — inside the shell's own module — so the pane-era launch path never learns the flag exists; WorkspaceLaunch holds the one branch, and it goes away when the new shell becomes the default launch. The frozen-corpus counterpart is a QA build's `--workspace-shell <dir>`: nothing here parses it, and the loader arrives already built as `fixtureState`.
+// WorkspaceShellLaunch.swift The launch configuration for the Workspace shell.
+// The shipped app always uses the live daemon. A QA build may inject a frozen
+// corpus loader selected by `--workspace-shell <dir>`; the shipped executable
+// does not link that parser or loader.
 
 import AppKit
 import WorkspaceCore
@@ -19,7 +22,7 @@ struct WorkspaceShellLaunch {
     /// Live and fixtures stay mutually distinguishable: an invocation that asks for both gets the live daemon, never a silent fixture fallback.
     var isLive: Bool { fixtureState == nil }
 
-    init?(arguments: [String], fixtureState: FixtureShellLoader?) {
+    init(arguments: [String], fixtureState: FixtureShellLoader?) {
         var live = false
         var fullscreen = false
         for argument in arguments {
@@ -29,7 +32,6 @@ struct WorkspaceShellLaunch {
                 fullscreen = true
             }
         }
-        guard live || fixtureState != nil else { return nil }
         self.fixtureState = live ? nil : fixtureState
         self.fullscreen = fullscreen
         let environment = ProcessInfo.processInfo.environment

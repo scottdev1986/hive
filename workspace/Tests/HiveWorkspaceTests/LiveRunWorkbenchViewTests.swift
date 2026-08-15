@@ -176,6 +176,29 @@ struct LiveRunWorkbenchViewTests {
         #expect(scrollView.contentView.isFlipped)
     }
 
+    @Test("Shell attach and detach commands consume the workbench's exact locator")
+    func shellCommandsUseSelectedLocator() throws {
+        let workbench = LiveRunWorkbenchView { session in
+            FakeSurface(locator: session.locator!)
+        }
+        workbench.apply(try projection([
+            agent("a", provider: "claude", generation: 4),
+        ]))
+        let controller = WorkspaceShellWindowController(
+            context: .init(
+                projectName: "Hive",
+                projectPath: "/tmp/hive",
+                instanceLabel: "rig"),
+            state: ShellState(workspaceSource: ProjectionSource(revision: "7")))
+        controller.installLiveRunWorkbench(workbench)
+
+        controller.perform(ShellCommand.detachTerminalView)
+        #expect(controller.installedLiveRunTerminalCount == 0)
+        controller.perform(ShellCommand.attachLiveTerminal)
+        #expect(controller.installedLiveRunTerminalCount == 1)
+        #expect(controller.selectedLiveRunLocator?.generation == 4)
+    }
+
     private func projection(_ agents: [String]) throws -> LiveRunProjection {
         let line = try #require(FeedLine.parse(
             "{\"v\":1,\"agents\":[\(agents.joined(separator: ","))]}"))

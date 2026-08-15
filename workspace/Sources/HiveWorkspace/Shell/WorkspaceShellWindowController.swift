@@ -38,7 +38,14 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
     init(context: ShellSidebarView.Context, state: ShellState) {
         self.state = state
         routerCategory = state.modelControlView?.routing.categories.first
-        dispatcher = ShellDispatcher(transport: shellUnavailableTransport)
+        dispatcher = ShellDispatcher(
+            transport: shellUnavailableTransport,
+            intentTransport: {
+                switch $0 {
+                case .attachViewer, .detachViewer: return .viewer
+                default: return .unavailable
+                }
+            })
         sidebar = ShellSidebarView(context: context, onSelect: { _ in })
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
@@ -64,6 +71,10 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
     var navButtonCount: Int { sidebar.navButtonsInOrder.count }
 
     var currentState: ShellState { state }
+    var selectedLiveRunLocator: AgentSessionLocator? { liveRunWorkbench?.selectedLocator }
+    var installedLiveRunTerminalCount: Int {
+        liveRunWorkbench?.installedTerminalCount ?? 0
+    }
 
     func apply(_ mutation: (inout ShellState) -> Void) {
         mutation(&state)
@@ -96,7 +107,8 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
     func installLiveRunWorkbench(_ workbench: LiveRunWorkbenchView) {
         liveRunWorkbench?.setRouteVisible(false)
         liveRunWorkbench = workbench
-        render()
+        workbench.setRouteVisible(state.activeRoute == .liveRun)
+        if state.activeRoute != .liveRun { render() }
     }
 
     func detachLiveRunViewer() {
@@ -219,7 +231,30 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
         render()
     }
 
-    private func perform(_ command: ShellCommand) {
+    func perform(_ command: ShellCommand) {
+        if command == .attachLiveTerminal {
+            state.navigate(to: .liveRun)
+            liveRunWorkbench?.setRouteVisible(true)
+            state.record(outcome: liveRunWorkbench?.selectedLocator == nil
+                ? .surfaceUnavailable(
+                    command,
+                    reason: "No exact-generation Live Run session is selected.")
+                : .localPerformed(command))
+            render()
+            return
+        }
+        if command == .detachTerminalView {
+            guard liveRunWorkbench?.installedTerminalCount == 1 else {
+                state.record(outcome: .surfaceUnavailable(
+                    command,
+                    reason: "No exact-generation terminal viewer is attached."))
+                render()
+                return
+            }
+            liveRunWorkbench?.setRouteVisible(false)
+            state.record(outcome: .localPerformed(command))
+            return
+        }
         let outcome = dispatcher.dispatch(command, state: &state)
         switch outcome {
         case .localPerformed(.aboutHive):
