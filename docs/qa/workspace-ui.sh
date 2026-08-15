@@ -19,9 +19,9 @@
 # nothing.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-# This script lives at <checkout>/docs/qa, so the checkout is two levels up.
-SRC_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$SCRIPT_DIR/repo-root.sh"
+SRC_ROOT="$(qa_repo_root "$SCRIPT_DIR")" || exit 2
 PRIMARY_CHECKOUT="/Users/scottkellar/Projects/hive"
 
 # The Swift sources under test are this checkout's, so a leg run on a branch

@@ -9,6 +9,7 @@ import { publishWorkspaceVisibility } from "../../src/cli/workspace-feed";
 import { SessionLocatorSchema } from "../../src/schemas/session-protocol";
 import { WorkspaceVisibilityInventoryInputSchema } from "../../src/daemon/session-host/workspace-visibility";
 import { requiredQaCoordinates } from "./qa-client";
+import { qaRepoRoot } from "./repo-root";
 
 const ReadySchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -58,7 +59,7 @@ const qaHome = realpathSync(coordinates.home);
 const project = realpathSync(coordinates.project);
 const artifacts = realpathSync(coordinates.artifacts);
 const sourceRoot = realpathSync(coordinates.sourceRoot);
-const scriptSourceRoot = realpathSync(join(import.meta.dir, ".."));
+const scriptSourceRoot = qaRepoRoot(import.meta.dir);
 
 if (home !== qaHome) {
   throw new Error(`HIVE_HOME does not match HIVE_QA_HOME: ${home} != ${qaHome}`);

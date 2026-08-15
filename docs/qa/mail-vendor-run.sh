@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+QA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$QA_DIR/repo-root.sh"
+ROOT="$(qa_repo_root "$QA_DIR")" || exit 2
 PRIMARY_ROOT="$(dirname "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)")"
 USER_HOME="${M3_USER_HOME:-$HOME}"
 BUILD_ROOT="${M3_BUILD_ROOT:-/Users/scottkellar/Projects/hive/.dev/tmp/opencode/m3-frozen}"
@@ -116,7 +118,7 @@ run_phase() {
     M3_VENDOR_HOME="$vendor_home" M3_ISOLATION_EVIDENCE="$isolation_evidence" \
     M3_USER_BASELINE="$user_baseline" \
     M3_SKIP_BORROW="$skip_borrow" \
-    bun run "$ROOT/qa/mail-vendor-isolation.ts" prepare "$vendor"
+    bun run "$QA_DIR/mail-vendor-isolation.ts" prepare "$vendor"
   qa_project="$vendor_home/project"
   mkdir -m 700 "$qa_project"
   git -C "$qa_project" init -q
@@ -126,9 +128,9 @@ run_phase() {
     commit -qm "fixture root"
 
   if [ "$phase" = auth ]; then
-    phase_command=(bun run "$ROOT/qa/mail-vendor-conformance.ts")
+    phase_command=(bun run "$QA_DIR/mail-vendor-conformance.ts")
   else
-    phase_command=(bash "$ROOT/qa/mail-vendor-suite.sh")
+    phase_command=(bash "$QA_DIR/mail-vendor-suite.sh")
   fi
   set +e
   HOME="$vendor_home" TMPDIR="$vendor_home/tmp" \
@@ -142,7 +144,7 @@ run_phase() {
     QA_SESSIOND_BIN="$SESSIOND_BIN" QA_PROJECT="$qa_project" \
     QA_SKIP_POLICY=1 QA_VENDOR="$vendor" QA_ROUTE_CANDIDATE="$candidate" \
     M3_AUTH_PROBE="$([ "$phase" = auth ] && echo 1 || echo 0)" \
-    "$ROOT/qa/rig.sh" run "${phase_command[@]}"
+    "$QA_DIR/rig.sh" run "${phase_command[@]}"
   run_status=$?
   set -e
 
@@ -150,7 +152,7 @@ run_phase() {
   HOME="$USER_HOME" M3_USER_HOME="$USER_HOME" \
     M3_VENDOR_HOME="$vendor_home" M3_ISOLATION_EVIDENCE="$isolation_evidence" \
     M3_USER_BASELINE="$user_baseline" \
-    bun run "$ROOT/qa/mail-vendor-isolation.ts" verify "$vendor" \
+    bun run "$QA_DIR/mail-vendor-isolation.ts" verify "$vendor" \
     > "$vendor_evidence/$phase-verify.log" 2>&1
   verify_status=$?
   set -e
@@ -164,7 +166,7 @@ run_phase() {
   HOME="$USER_HOME" M3_USER_HOME="$USER_HOME" \
     M3_VENDOR_HOME="$vendor_home" M3_ISOLATION_EVIDENCE="$isolation_evidence" \
     M3_USER_BASELINE="$user_baseline" \
-    bun run "$ROOT/qa/mail-vendor-isolation.ts" release "$vendor"
+    bun run "$QA_DIR/mail-vendor-isolation.ts" release "$vendor"
   rm -rf "$vendor_home"
   rm -rf "$user_state"
   [ ! -e "$vendor_home" ] || refuse "vendor credential tree survived teardown"

@@ -12,7 +12,9 @@
 set -euo pipefail
 
 PORT=""
-SRC_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+QA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$QA_DIR/repo-root.sh"
+SRC_ROOT="$(qa_repo_root "$QA_DIR")" || exit 2
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --port) PORT="$2"; shift 2 ;;

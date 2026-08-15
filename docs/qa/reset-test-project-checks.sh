@@ -3,7 +3,9 @@
 # remove one cleanup or verification clause at a time.
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$SELF_DIR/repo-root.sh"
+ROOT="$(qa_repo_root "$SELF_DIR")" || exit 2
 SOURCE_PROJECT="/Users/scottkellar/Projects/hive-test-project"
 SEED="346d619cb64af48c93a465551f36c82176362f71"
 SCOPE=""
@@ -148,8 +150,8 @@ if ! git clone -q --no-hardlinks "$SOURCE_PROJECT" "$PROJECT" ||
 fi
 git -C "$PROJECT" config user.email qa-reset-check@invalid
 git -C "$PROJECT" config user.name "QA reset check"
-cp "$ROOT/qa/reset-test-project.sh" "$ROOT/qa/test-project-seed" \
-  "$ROOT/qa/test-project-persistence.allow" "$QA_DIR/" || exit 1
+cp "$SELF_DIR/reset-test-project.sh" "$SELF_DIR/test-project-seed" \
+  "$SELF_DIR/test-project-persistence.allow" "$QA_DIR/" || exit 1
 sed -i '' "s#$SOURCE_PROJECT#$PROJECT#g" \
   "$QA_DIR/reset-test-project.sh" "$QA_DIR/test-project-seed" || exit 1
 chmod +x "$QA_DIR/reset-test-project.sh"

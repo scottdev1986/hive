@@ -6,8 +6,10 @@
 # QA-looking alias in the shared /tmp namespace.
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
-RIG="$ROOT/qa/rig.sh"
+QA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$QA_DIR/repo-root.sh"
+ROOT="$(qa_repo_root "$QA_DIR")" || exit 2
+RIG="$QA_DIR/rig.sh"
 PRIMARY_CHECKOUT="/Users/scottkellar/Projects/hive"
 DEFAULT_PROJECT="/Users/scottkellar/Projects/hive-test-project"
 
@@ -689,10 +691,21 @@ else
   fail "down stayed red after leak cleanup"
 fi
 
-echo "[6/6] default target is hive-test-project"
+echo "[6/7] default target is hive-test-project"
 before_state="$(git -C "$DEFAULT_PROJECT" status --porcelain)"
-default_out="$(QA_HOME="$DEFAULT_HOME" "$RIG" up 2>&1)"
+# QA_SRC_ROOT is stripped rather than merely left unset: this leg exists to
+# exercise the DEFAULT source root, and inheriting an ambient override from the
+# caller is how that path went untested while the tree moved under it.
+default_out="$(env -u QA_SRC_ROOT QA_HOME="$DEFAULT_HOME" "$RIG" up 2>&1)"
 default_code=$?
+# The resolved source root is published in the coordinates, not on stdout, and
+# the coordinates are what every consumer reads.
+default_source="$(sed -n 's/^source=//p' "$DEFAULT_HOME/artifacts/coordinates.txt" 2>/dev/null)"
+if [ "$default_code" -eq 0 ] && [ "$default_source" = "$ROOT" ]; then
+  pass "up with no QA_SRC_ROOT resolved its own checkout ($ROOT)"
+else
+  fail "default source root was '${default_source:-none}', expected $ROOT (exit $default_code)"
+fi
 if [ "$default_code" -eq 0 ] &&
    printf '%s' "$default_out" | grep -Fq "project=$DEFAULT_PROJECT"; then
   pass "default up aimed at hive-test-project and printed its coordinates"
@@ -710,6 +723,36 @@ if [ "$before_state" = "$after_state" ]; then
 else
   fail "hive-test-project working tree changed"
 fi
+
+echo "[7/7] the checkout root is derived and validated, never assumed"
+# Every script in this tree gets its root from qa_repo_root. A root that is
+# merely wrong is the dangerous case: it is passed to the daemon, the CLI and
+# the u5 isolation gate, so it must refuse rather than answer. Both directions
+# are exercised, because "the resolver said no" and "the resolver never ran"
+# look identical from a single failing call.
+if resolved="$(qa_repo_root "$QA_DIR")" && [ "$resolved" = "$ROOT" ]; then
+  pass "resolver found this checkout from the QA tree ($resolved)"
+else
+  fail "resolver did not find this checkout from $QA_DIR (got '${resolved:-}')"
+fi
+WRONG_ROOT="$(mktemp -d /tmp/hvqa-wrongroot.XXXXXX)" || exit 1
+mkdir -p "$WRONG_ROOT/docs/qa" || exit 1
+# A tree that looks like the QA tree and sits under no checkout at all. This is
+# the shape the move created: docs/ has neither package.json nor src/cli.ts.
+if wrong="$(qa_repo_root "$WRONG_ROOT/docs/qa" 2>/dev/null)"; then
+  fail "resolver accepted a directory under no checkout and returned '$wrong'"
+else
+  pass "resolver refused a directory under no checkout"
+fi
+# Captured rather than piped: under `set -o pipefail` the refusal's own nonzero
+# status would fail the pipeline even when grep matched, and the check would
+# report the opposite of what it measured.
+wrong_message="$(qa_repo_root "$WRONG_ROOT/docs/qa" 2>&1 || true)"
+case "$wrong_message" in
+  *package.json*src/cli.ts*) pass "refusal names the marker it looked for" ;;
+  *) fail "refusal did not name the marker: '$wrong_message'" ;;
+esac
+rm -rf "$WRONG_ROOT"
 
 echo
 if [ "$failures" -eq 0 ]; then

@@ -27,6 +27,7 @@ import {
   requiredQaCoordinates,
 } from "./qa-client";
 import {
+import { qaRepoRoot } from "./repo-root";
   classifyViewerReadback,
   finalU5Result,
   reconcileSpawnRequests,
@@ -179,7 +180,7 @@ const home = realpathSync(coordinates.home);
 const project = realpathSync(coordinates.project);
 const artifacts = realpathSync(coordinates.artifacts);
 const sourceRoot = realpathSync(coordinates.sourceRoot);
-const scriptSourceRoot = realpathSync(join(import.meta.dir, ".."));
+const scriptSourceRoot = qaRepoRoot(import.meta.dir);
 
 if (!home.startsWith("/private/tmp/hvqa-") && !home.startsWith("/tmp/hvqa-")) {
   throw new Error(`QA home is not an isolated short rig: ${home}`);

@@ -16,8 +16,9 @@
 # shared rig; it publishes its own QA_HOME via qa/rig.sh.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-SRC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$SCRIPT_DIR/repo-root.sh"
+SRC_ROOT="$(qa_repo_root "$SCRIPT_DIR")" || exit 2
 PRIMARY_CHECKOUT="/Users/scottkellar/Projects/hive"
 # Known shared live-phase home (ownerless custodian rig). Suite must never use it.
 SHARED_QA_HOME_MARK="hvqa-0de8db4fd4"

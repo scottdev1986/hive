@@ -25,7 +25,12 @@
 set -uo pipefail
 
 PRIMARY_CHECKOUT="/Users/scottkellar/Projects/hive"
-SRC_DEFAULT="$(cd "$(dirname "$0")/.." && pwd -P)"
+QA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$QA_DIR/repo-root.sh"
+SRC_DEFAULT="$(qa_repo_root "$QA_DIR")" || exit 2
+# Where the QA tree sits inside a checkout, so the harness helpers below can
+# be found inside the source root UNDER TEST, which is not always this one.
+QA_TREE_SUBDIR="$(qa_tree_subdir "$QA_DIR")" || exit 2
 QA_SRC_ROOT="${QA_SRC_ROOT:-$SRC_DEFAULT}"
 QA_HOME_TAG="$(printf '%s' "$SRC_DEFAULT" | /usr/bin/shasum -a 256 | cut -c1-10)"
 QA_HOME_REQUESTED="${QA_HOME:-/tmp/hvqa-$QA_HOME_TAG}"
@@ -410,7 +415,7 @@ rig_up() {
   # (WORKSPACE_OWNER_REGISTRATION_TIMEOUT_MS); the holder also publishes the
   # empty visibility snapshot spawn admission requires.
   start_detached "$QA_HOME/owner.log" "$QA_PROJECT" \
-    bun run "$QA_SRC_ROOT/qa/hold-owner.ts" > "$QA_HOME/owner.pid"
+    bun run "$QA_SRC_ROOT/$QA_TREE_SUBDIR/hold-owner.ts" > "$QA_HOME/owner.pid"
   local owner_pid owner_start
   owner_pid="$(cat "$QA_HOME/owner.pid")"
   owner_start="$(process_start "$owner_pid")"
@@ -431,7 +436,7 @@ rig_up() {
 
   # The version-under-test gate: the daemon must announce the hash of the
   # sources this rig was pointed at, or nothing it serves can be trusted.
-  if ! bun run "$QA_SRC_ROOT/qa/verify-announcement.ts" \
+  if ! bun run "$QA_SRC_ROOT/$QA_TREE_SUBDIR/verify-announcement.ts" \
       "$QA_HOME/daemon.log" "$QA_SRC_ROOT" "$daemon_pid" \
       | tee "$QA_HOME/announcement.txt"; then
     echo "rig: source-hash assert failed" >&2
