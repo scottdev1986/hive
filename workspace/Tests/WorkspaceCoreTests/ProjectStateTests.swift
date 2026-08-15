@@ -557,11 +557,13 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testFeedLineKeepsAgentsWhenOptionalSiblingFieldsAreMalformed() throws {
-        let line = #"{"v":1,"agents":[{"name":"good","status":"working"}],"autonomy":17,"orchestrator":{"status":17}}"#
+        let line = #"{"v":1,"agents":[{"name":"good","status":"working"}],"autonomyState":17,"orchestrator":{"status":17}}"#
 
         let decoded = try XCTUnwrap(FeedLine.parse(line))
         XCTAssertEqual(decoded.agents, [AgentSnapshot(name: "good")])
-        XCTAssertNil(decoded.autonomy)
+        guard case .malformed = decoded.autonomy else {
+            return XCTFail("a malformed autonomy sibling must stay distinguishable")
+        }
         XCTAssertNil(decoded.orchestrator)
     }
 
@@ -576,11 +578,39 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testUnknownAutonomyDoesNotEnableKnownControls() throws {
-        let line = #"{"v":1,"agents":[],"autonomy":"future-mode"}"#
+        let line = #"{"v":1,"agents":[],"autonomyState":{"kind":"unsupported","value":"future-mode"}}"#
 
         let decoded = try XCTUnwrap(FeedLine.parse(line))
 
-        XCTAssertNil(decoded.autonomy)
+        XCTAssertEqual(decoded.autonomy, .unsupported(value: "future-mode"))
+        XCTAssertNil(decoded.autonomy.confirmedValue)
+    }
+
+    func testAutonomyFaultStatesRemainDistinct() throws {
+        let lines = [
+            (#"{"v":1,"agents":[],"autonomyState":{"kind":"absent"}}"#,
+             FeedAutonomyState.absent),
+            (#"{"v":1,"agents":[],"autonomyState":{"kind":"refused","statusCode":403,"reason":"forbidden"}}"#,
+             FeedAutonomyState.refused(statusCode: 403, reason: "forbidden")),
+            (#"{"v":1,"agents":[],"autonomyState":{"kind":"malformed","reason":"missing autonomy"}}"#,
+             FeedAutonomyState.malformed(reason: "missing autonomy")),
+            (#"{"v":1,"agents":[],"autonomyState":{"kind":"unreachable","reason":"connection refused"}}"#,
+             FeedAutonomyState.unreachable(reason: "connection refused")),
+        ]
+
+        for (line, expected) in lines {
+            let decoded = try XCTUnwrap(FeedLine.parse(line))
+            XCTAssertEqual(decoded.autonomy, expected)
+            XCTAssertNil(decoded.autonomy.confirmedValue)
+        }
+    }
+
+    func testConfirmedAutonomyIsTheOnlyStateWithAControlValue() throws {
+        let line = #"{"v":1,"agents":[],"autonomyState":{"kind":"current","value":"sandboxed"}}"#
+        let decoded = try XCTUnwrap(FeedLine.parse(line))
+
+        XCTAssertEqual(decoded.autonomy, .current(value: "sandboxed"))
+        XCTAssertEqual(decoded.autonomy.confirmedValue, "sandboxed")
     }
 
     func testFeedLineRejectsOnlyTheAgentFieldWhenAnyIdentityIsMalformed() throws {

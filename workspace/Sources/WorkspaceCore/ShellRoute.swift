@@ -1,4 +1,4 @@
-// ShellRoute.swift The ten screen destinations of the new Workspace shell. The sidebar and the menus both navigate through these identifiers, so a destination the shell does not have (Communications, Gates, Show Projects) cannot reappear as a side effect of adding a screen — it has to be added here, deliberately.
+// ShellRoute.swift The screen destinations of the new Workspace shell. The sidebar and the menus both navigate through these identifiers, so a destination the shell does not have (Communications, Gates, Show Projects) cannot reappear as a side effect of adding a screen — it has to be added here, deliberately.
 
 import Foundation
 
@@ -8,7 +8,6 @@ public enum ShellRoute: String, Codable, CaseIterable, Equatable, Hashable, Send
     case modelsQuota = "models"
     case tokens
     case queen
-    case autonomy
     case memoryOverview = "memory-overview"
     case memoryLibrary = "memory-library"
     case memoryRecallLab = "memory-recall"
@@ -21,7 +20,6 @@ public enum ShellRoute: String, Codable, CaseIterable, Equatable, Hashable, Send
         case .modelsQuota: return "Models & Quota"
         case .tokens: return "Tokens"
         case .queen: return "Queen Provider"
-        case .autonomy: return "Autonomy"
         case .memoryOverview: return "Memory Overview"
         case .memoryLibrary: return "Memory Library"
         case .memoryRecallLab: return "Recall Lab"
@@ -42,7 +40,7 @@ public enum ShellNavGroup: String, CaseIterable, Equatable, Sendable {
         switch self {
         case .workspace: return [.liveRun]
         case .modelControl: return [.taskRouter, .modelsQuota, .tokens]
-        case .runtime: return [.queen, .autonomy]
+        case .runtime: return [.queen]
         case .memory:
             return [.memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance]
         }
@@ -54,7 +52,7 @@ extension ShellRoute {
         switch self {
         case .liveRun: return .workspace
         case .taskRouter, .modelsQuota, .tokens: return .modelControl
-        case .queen, .autonomy: return .runtime
+        case .queen: return .runtime
         case .memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance:
             return .memory
         }

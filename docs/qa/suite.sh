@@ -131,7 +131,6 @@ UI-06|calibrated|T
 UI-07|calibrated|T
 UI-08|calibrated|T
 UI-09|calibrated|T
-UI-10|calibrated|T
 SYS-01|yes|S
 SYS-02|yes|D
 SYS-03|yes|D
@@ -530,7 +529,7 @@ publish_tour_rows() {
   local out="$legs/tour-rows.jsonl"
   : > "$out"
   local i=1 slug
-  local slugs=(run router models tokens queen autonomy memory-overview memory-library memory-recall memory-maintenance)
+  local slugs=(run router models tokens queen memory-overview memory-library memory-recall memory-maintenance)
   for slug in "${slugs[@]}"; do
     local id
     printf -v id 'UI-%02d' "$i"

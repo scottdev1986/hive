@@ -15,7 +15,6 @@ final class FeedClient {
     /// The strict shell adapter consumes the complete envelope so it can refuse an unsupported schema version before reading any agent fields. Legacy pane callers keep using `onSnapshot` below.
     var onLine: ((FeedLine) -> Void)?
     var onMalformedLine: ((String) -> Void)?
-    var onAutonomy: ((String) -> Void)?
     var onError: ((String) -> Void)?
     var onExit: (() -> Void)?
 
@@ -78,9 +77,6 @@ final class FeedClient {
             }
             onLine?(decoded)
             if let agents = decoded.agents {
-                if let autonomy = decoded.autonomy {
-                    onAutonomy?(autonomy)
-                }
                 onSnapshot?(agents, decoded.orchestrator)
             } else if let error = decoded.error {
                 onError?(error)

@@ -1,4 +1,4 @@
-/** `hive workspace-feed --port <n>` — the Workspace app's status wire. A long-lived child of the app that turns the daemon's `hive_status` into NDJSON on stdout, one JSON object per line and nothing else: {"v":1,"agents":[...],"autonomy":"sandboxed","orchestrator":{"status":"working"}} the full AgentRecord array, the daemon's live autonomy dial (omitted when unreadable), and what the root is doing (omitted when the daemon cannot honestly say — the root has no AgentRecord, so it travels beside the array, not inside it) — on the first snapshot, on any change, and at least every 5 s (heartbeat), so a silent wire is distinguishable from an unchanged one. {"v":1,"error":"..."} the daemon is unreachable — emitted once per distinct failure, not per retry, so a dead daemon does not scroll the app's log. {"v":1,"stale":true, the feed is giving up and exiting, so whatever the "reason":"..."} reader is still showing is now unproven. NO READER DECODES THIS YET: the app infers staleness from the stream ending, which cannot distinguish a feed that quit from one that never started. Emitting it regardless keeps the wire self-reporting and is what a reader needs in order to stop rendering a dead roster confidently. Polling lives here, not in Swift, because this process already holds the user credential (0600 file) and the MCP client; the app just decodes lines. The feed retries a dead daemon with backoff and exits non-zero only after 30 s of continuous refusal — a daemon restart mid-session must look like a hiccup, not a teardown. Only a refusal counts toward that deadline. A daemon that answers late is not a dead one: the status timeout climbs toward `FEED_STATUS_TIMEOUT_MAX_MS` while replies keep arriving too slowly, and those waits are charged to no deadline, because a feed that quits on a healthy-but-slow daemon leaves the app showing a roster that is wrong and looks right. */
+/** `hive workspace-feed --port <n>` — the Workspace app's status wire. A long-lived child of the app that turns the daemon's `hive_status` into NDJSON on stdout, one JSON object per line and nothing else: {"v":1,"agents":[...],"autonomyState":{"kind":"current","value":"sandboxed"},"orchestrator":{"status":"working"}} the full AgentRecord array, the daemon's typed autonomy observation, and what the root is doing (omitted when the daemon cannot honestly say — the root has no AgentRecord, so it travels beside the array, not inside it) — on the first snapshot, on any change, and at least every 5 s (heartbeat), so a silent wire is distinguishable from an unchanged one. {"v":1,"error":"..."} the daemon is unreachable — emitted once per distinct failure, not per retry, so a dead daemon does not scroll the app's log. {"v":1,"stale":true, the feed is giving up and exiting, so whatever the "reason":"..."} reader is still showing is now unproven. NO READER DECODES THIS YET: the app infers staleness from the stream ending, which cannot distinguish a feed that quit from one that never started. Emitting it regardless keeps the wire self-reporting and is what a reader needs in order to stop rendering a dead roster confidently. Polling lives here, not in Swift, because this process already holds the user credential (0600 file) and the MCP client; the app just decodes lines. The feed retries a dead daemon with backoff and exits non-zero only after 30 s of continuous refusal — a daemon restart mid-session must look like a hiccup, not a teardown. Only a refusal counts toward that deadline. A daemon that answers late is not a dead one: the status timeout climbs toward `FEED_STATUS_TIMEOUT_MAX_MS` while replies keep arriving too slowly, and those waits are charged to no deadline, because a feed that quits on a healthy-but-slow daemon leaves the app showing a roster that is wrong and looks right. */
 
 import type { Autonomy } from "../config/autonomy";
 import {
@@ -41,11 +41,23 @@ export const FEED_VISIBILITY_PUBLISH_SLOW_MS = 1_000;
 
 export type WorkspaceOrchestratorSnapshot = OrchestratorHostStatus;
 
+export type WorkspaceAutonomyState =
+  | { readonly kind: "current"; readonly value: Autonomy }
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "refused";
+      readonly statusCode: number;
+      readonly reason: string;
+    }
+  | { readonly kind: "malformed"; readonly reason: string }
+  | { readonly kind: "unsupported"; readonly value: string }
+  | { readonly kind: "unreachable"; readonly reason: string };
+
 export interface WorkspaceFeedDeps {
   readonly verifyInstance?: (port: number) => Promise<void>;
   readonly fetchStatus?: (port: number) => Promise<AgentRecord[]>;
-  /** Reads the daemon's live autonomy dial for the app's Agents menu. Errors degrade to null (field omitted) — the menu goes unknown, the agent list must not. */
-  readonly fetchAutonomy?: (port: number) => Promise<Autonomy | null>;
+  /** Reads the daemon's live autonomy dial without letting its faults take down the agent list. */
+  readonly fetchAutonomy?: (port: number) => Promise<WorkspaceAutonomyState>;
   /** Reads the root's independent turn status and terminal lifecycle. Errors degrade to null; an unknowable turn can still carry a sessiond locator. */
   readonly fetchOrchestrator?: (
     port: number,
@@ -277,15 +289,38 @@ export class WorkspaceVisibilityPublisher {
   }
 }
 
-/** `GET /autonomy` with the user credential: the live dial, or null when the daemon has no compatible control configured. */
-async function getAutonomy(daemon: UserDaemonClient): Promise<Autonomy | null> {
-  const body = (await daemon.json(
-    "/autonomy",
-    undefined,
-    "return-null",
-  )) as unknown;
+export function classifyWorkspaceAutonomyResponse(
+  statusCode: number,
+  body: unknown,
+): WorkspaceAutonomyState {
+  if (statusCode < 200 || statusCode >= 300) {
+    return {
+      kind: "refused",
+      statusCode,
+      reason: daemonErrorDetail(body, `HTTP ${statusCode}`).message,
+    };
+  }
   const parsed = AutonomyEnvelopeSchema.safeParse(body);
-  return parsed.success ? parsed.data.autonomy : null;
+  if (parsed.success) return { kind: "current", value: parsed.data.autonomy };
+  if (typeof body === "object" && body !== null && "autonomy" in body) {
+    const value = (body as { readonly autonomy?: unknown }).autonomy;
+    if (value === null) return { kind: "absent" };
+    if (typeof value === "string") {
+      return { kind: "unsupported", value };
+    }
+  }
+  return { kind: "malformed", reason: parsed.error.message };
+}
+
+/** Reads the autonomy dial without collapsing daemon absence, refusal, or protocol drift into one value. */
+async function getAutonomy(
+  daemon: UserDaemonClient,
+): Promise<WorkspaceAutonomyState> {
+  const response = await daemon.request("/autonomy");
+  return classifyWorkspaceAutonomyResponse(
+    response.status,
+    await decodeJson(response),
+  );
 }
 
 /** `GET /orchestrator-status` with the user credential: independently measured root turn state and terminal lifecycle. A null turn status stays null; a sessiond locator is present only after its host is ready. */
@@ -350,7 +385,7 @@ export async function runWorkspaceFeed(
   const daemon = new UserDaemonClient({ port });
   const fetchStatus: (port: number) => Promise<AgentRecord[]> =
     deps.fetchStatus ?? (() => readAgentStatus(session));
-  const fetchAutonomy: (port: number) => Promise<Autonomy | null> =
+  const fetchAutonomy: (port: number) => Promise<WorkspaceAutonomyState> =
     deps.fetchAutonomy ?? (() => getAutonomy(daemon));
   const fetchOrchestrator: (
     port: number,
@@ -376,8 +411,13 @@ export async function runWorkspaceFeed(
       try {
         await withTimeout(verifyInstance(port), statusTimeoutMs);
         const agents = await withTimeout(fetchStatus(port), statusTimeout);
-        // Autonomy rides the same snapshot line so the app's menu tracks the dial. Best-effort by design: its failure must never take the agent list down with it.
-        const autonomy = await fetchAutonomy(port).catch(() => null);
+        // Autonomy rides the same snapshot line as a typed observation. Its own failure is data, never a reason to drop the agent list.
+        const autonomyState = await fetchAutonomy(port).catch(
+          (error: unknown): WorkspaceAutonomyState => ({
+            kind: "unreachable",
+            reason: errorMessage(error),
+          }),
+        );
         // Root turn status and terminal lifecycle ride the same line. Best-effort like autonomy: no turn evidence stays null, while an independently measured ready locator still reaches Workspace before the first turn.
         const orchestrator = await fetchOrchestrator(port).catch(() => null);
         const presentedAgents = agents.map((agent) => ({
@@ -393,7 +433,7 @@ export async function runWorkspaceFeed(
               };
         const snapshot = JSON.stringify({
           agents: presentedAgents,
-          autonomy,
+          autonomyState,
           orchestrator: presentedOrchestrator,
         });
         const heartbeatDue =
@@ -404,7 +444,7 @@ export async function runWorkspaceFeed(
             JSON.stringify({
               v: FEED_VERSION,
               agents: presentedAgents,
-              ...(autonomy === null ? {} : { autonomy }),
+              autonomyState,
               ...(presentedOrchestrator === null
                 ? {}
                 : { orchestrator: presentedOrchestrator }),

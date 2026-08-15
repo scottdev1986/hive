@@ -293,15 +293,63 @@ public struct OrchestratorSnapshot: Equatable, Decodable {
     }
 }
 
+/// The feed's observation of the daemon autonomy dial. Only `current` can
+/// enable a control; every other case preserves why no confirmed value exists.
+public enum FeedAutonomyState: Equatable, Decodable {
+    case current(value: String)
+    case absent
+    case refused(statusCode: Int, reason: String)
+    case malformed(reason: String)
+    case unsupported(value: String)
+    case unreachable(reason: String)
+
+    public var confirmedValue: String? {
+        guard case .current(let value) = self else { return nil }
+        return value
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind, value, statusCode, reason
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(String.self, forKey: .kind) {
+        case "current":
+            let value = try container.decode(String.self, forKey: .value)
+            self = ["sandboxed", "dangerous"].contains(value)
+                ? .current(value: value)
+                : .unsupported(value: value)
+        case "absent":
+            self = .absent
+        case "refused":
+            self = .refused(
+                statusCode: try container.decode(Int.self, forKey: .statusCode),
+                reason: try container.decode(String.self, forKey: .reason))
+        case "malformed":
+            self = .malformed(
+                reason: try container.decode(String.self, forKey: .reason))
+        case "unsupported":
+            self = .unsupported(
+                value: try container.decode(String.self, forKey: .value))
+        case "unreachable":
+            self = .unreachable(
+                reason: try container.decode(String.self, forKey: .reason))
+        case let kind:
+            self = .malformed(reason: "unrecognized autonomy state \(kind)")
+        }
+    }
+}
+
 public struct FeedLine: Decodable {
     public let v: Int?
     public let agents: [AgentSnapshot]?
-    public let autonomy: String?
+    public let autonomy: FeedAutonomyState
     public let orchestrator: OrchestratorSnapshot?
     public let error: String?
 
     private enum CodingKeys: String, CodingKey {
-        case v, agents, autonomy, orchestrator, error
+        case v, agents, autonomyState, autonomy, orchestrator, error
     }
 
     public init(from decoder: Decoder) throws {
@@ -312,14 +360,30 @@ public struct FeedLine: Decodable {
         } catch {
             agents = nil
             self.error = "workspace-feed agent schema error: \(error)"
-            autonomy = nil
+            autonomy = .malformed(reason: "workspace-feed agent schema error")
             orchestrator = nil
             return
         }
-        let reportedAutonomy =
-            (try? container.decodeIfPresent(String.self, forKey: .autonomy)) ?? nil
-        autonomy = reportedAutonomy.flatMap {
-            ["sandboxed", "dangerous"].contains($0) ? $0 : nil
+        if container.contains(.autonomyState) {
+            do {
+                autonomy = try container.decode(
+                    FeedAutonomyState.self, forKey: .autonomyState)
+            } catch {
+                autonomy = .malformed(
+                    reason: "workspace-feed autonomy state schema error: \(error)")
+            }
+        } else if container.contains(.autonomy) {
+            do {
+                let value = try container.decode(String.self, forKey: .autonomy)
+                autonomy = ["sandboxed", "dangerous"].contains(value)
+                    ? .current(value: value)
+                    : .unsupported(value: value)
+            } catch {
+                autonomy = .malformed(
+                    reason: "workspace-feed legacy autonomy schema error: \(error)")
+            }
+        } else {
+            autonomy = .absent
         }
         orchestrator = (try? container.decodeIfPresent(
             OrchestratorSnapshot.self, forKey: .orchestrator)) ?? nil

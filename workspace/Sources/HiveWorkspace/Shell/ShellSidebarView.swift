@@ -152,7 +152,6 @@ final class ShellSidebarView: NSView {
         case .modelsQuota: return "gauge"
         case .tokens: return "number"
         case .queen: return "crown"
-        case .autonomy: return "lock.shield"
         case .memoryOverview: return "book"
         case .memoryLibrary: return "books.vertical"
         case .memoryRecallLab: return "magnifyingglass"

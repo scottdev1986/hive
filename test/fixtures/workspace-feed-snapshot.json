@@ -111,7 +111,10 @@
       }
     }
   ],
-  "autonomy": "dangerous",
+  "autonomyState": {
+    "kind": "current",
+    "value": "dangerous"
+  },
   "orchestrator": {
     "status": "working",
     "host": "sessiond",
