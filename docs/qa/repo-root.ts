@@ -21,7 +21,10 @@ import { dirname, join } from "node:path";
 export function qaRepoRoot(start: string): string {
   let probe = realpathSync(start);
   for (;;) {
-    if (existsSync(join(probe, "package.json")) && existsSync(join(probe, "src", "cli.ts"))) {
+    if (
+      existsSync(join(probe, "package.json")) &&
+      existsSync(join(probe, "src", "cli.ts"))
+    ) {
       return probe;
     }
     const parent = dirname(probe);

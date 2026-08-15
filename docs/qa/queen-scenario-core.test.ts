@@ -50,9 +50,7 @@ describe("queen scenario delivery and UserOrphaned evidence", () => {
   test("classifies recovered UserOrphaned from after-orphan-discard receipt id", () => {
     // Invariant: a written receipt whose transactionId carries the orphan-retry
     // suffix is recovered, even when the outcome enum alone looks clean.
-    expect(classifyUserOrphan([writtenAfterOrphan("uuid")])).toBe(
-      "recovered",
-    );
+    expect(classifyUserOrphan([writtenAfterOrphan("uuid")])).toBe("recovered");
     expect(classifyUserOrphan([writtenClean("uuid")])).toBe("absent");
   });
 

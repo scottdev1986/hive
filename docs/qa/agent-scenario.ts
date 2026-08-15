@@ -147,12 +147,7 @@ async function cwdIdentityForPid(pid: number): Promise<string | null> {
 async function mailboxStatus(
   recipient: string,
 ): Promise<z.infer<typeof MailStatusSchema>> {
-  return callTool(
-    "hive_mail_status",
-    { recipient },
-    "mail",
-    MailStatusSchema,
-  );
+  return callTool("hive_mail_status", { recipient }, "mail", MailStatusSchema);
 }
 
 function outstanding(status: z.infer<typeof MailStatusSchema>): number {

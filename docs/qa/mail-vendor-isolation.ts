@@ -1,4 +1,13 @@
-import { chmod, lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,7 +30,9 @@ const vendors = {
   },
   codex: {
     binary: ".local/bin/codex",
-    artifacts: [{ source: ".codex/auth.json", destination: ".codex/auth.json" }],
+    artifacts: [
+      { source: ".codex/auth.json", destination: ".codex/auth.json" },
+    ],
     baselines: [".codex"],
   },
   grok: {
@@ -103,7 +114,9 @@ function isWritableArtifact(artifact: unknown): boolean {
   );
 }
 
-async function baseline(paths: readonly string[]): Promise<Record<string, unknown>> {
+async function baseline(
+  paths: readonly string[],
+): Promise<Record<string, unknown>> {
   const result: Record<string, unknown> = {};
   for (const relativePath of paths) {
     const path = join(homedir(), relativePath);
@@ -119,7 +132,13 @@ async function baseline(paths: readonly string[]): Promise<Record<string, unknow
  * only the System keychain and the CLI reports "Not logged in". */
 async function keychainCredential(): Promise<string> {
   const child = Bun.spawn(
-    ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+    [
+      "security",
+      "find-generic-password",
+      "-s",
+      "Claude Code-credentials",
+      "-w",
+    ],
     { stdout: "pipe", stderr: "pipe" },
   );
   const [credential, error, code] = await Promise.all([
@@ -128,7 +147,9 @@ async function keychainCredential(): Promise<string> {
     child.exited,
   ]);
   if (code !== 0) {
-    throw new Error(`claude keychain credential is unreadable: ${error.trim()}`);
+    throw new Error(
+      `claude keychain credential is unreadable: ${error.trim()}`,
+    );
   }
   return credential;
 }
@@ -145,7 +166,10 @@ function baselineDigests(
   value: Record<string, { digest: string }>,
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(value).map(([path, measurement]) => [path, measurement.digest]),
+    Object.entries(value).map(([path, measurement]) => [
+      path,
+      measurement.digest,
+    ]),
   );
 }
 
@@ -166,7 +190,8 @@ if (mode === "prepare") {
   await mkdir(vendorHome, { recursive: true, mode: 0o700 });
   await chmod(vendorHome, 0o700);
   const parent = await lstat(vendorHome);
-  if ((parent.mode & 0o077) !== 0) throw new Error("vendor home is not private");
+  if ((parent.mode & 0o077) !== 0)
+    throw new Error("vendor home is not private");
 
   const binary = await realpath(join(originalHome, descriptor.binary));
   const artifacts = [];
@@ -176,7 +201,8 @@ if (mode === "prepare") {
     const source = join(originalHome, artifact.source);
     const destination = join(vendorHome, artifact.destination);
     await copyDetachedTree(source, destination);
-    if (isWritableArtifact(artifact)) await makePrivateTreeWritable(destination);
+    if (isWritableArtifact(artifact))
+      await makePrivateTreeWritable(destination);
     artifacts.push({
       label: artifactLabel(source),
       sourceMetadata: await metadataDigest(source),
@@ -206,10 +232,17 @@ if (mode === "prepare") {
     if (process.env.M3_SKIP_BORROW !== "1") {
       const credential = await keychainCredential();
       claudeCredentialDigest = digest(credential);
-      await mkdir(join(vendorHome, ".claude"), { recursive: true, mode: 0o700 });
-      await writeFile(join(vendorHome, ".claude", ".credentials.json"), credential, {
-        mode: 0o400,
+      await mkdir(join(vendorHome, ".claude"), {
+        recursive: true,
+        mode: 0o700,
       });
+      await writeFile(
+        join(vendorHome, ".claude", ".credentials.json"),
+        credential,
+        {
+          mode: 0o400,
+        },
+      );
     }
   }
   const userAdjustments: string[] = [];
@@ -266,9 +299,9 @@ if (mode === "prepare") {
         ]),
       );
       const after = new Map(
-        (userAfterNodes[path] as { nodes: Array<{ relativePath: string }> }).nodes.map(
-          (node) => [node.relativePath, node],
-        ),
+        (
+          userAfterNodes[path] as { nodes: Array<{ relativePath: string }> }
+        ).nodes.map((node) => [node.relativePath, node]),
       );
       const relativePaths = new Set([...before.keys(), ...after.keys()]);
       return [
@@ -342,5 +375,7 @@ if (mode === "prepare") {
     if (await exists(destination)) await makeDetachedTreeRemovable(destination);
   }
 } else {
-  throw new Error("usage: mail-vendor-isolation.ts prepare|verify|release <vendor>");
+  throw new Error(
+    "usage: mail-vendor-isolation.ts prepare|verify|release <vendor>",
+  );
 }

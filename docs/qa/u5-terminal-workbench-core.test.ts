@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { CAPABILITY_PROVIDERS, type CapabilityProvider } from "../../src/schemas/capability";
+import {
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+} from "../../src/schemas/capability";
 import {
   classifyViewerReadback,
   finalU5Result,
@@ -159,9 +162,10 @@ describe("U5 proof decisions", () => {
 });
 
 describe("U5 spawn cleanup reconciliation", () => {
-  const admittedRows = ["claude-id", "codex-id", "opencode-id"].map(
-    (id) => ({ id, taskDescription: `live ${id}` }),
-  );
+  const admittedRows = ["claude-id", "codex-id", "opencode-id"].map((id) => ({
+    id,
+    taskDescription: `live ${id}`,
+  }));
   const requests: U5SpawnRequest[] = [
     {
       provider: "claude",

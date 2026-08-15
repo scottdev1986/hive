@@ -1,4 +1,7 @@
-import { CAPABILITY_PROVIDERS, type CapabilityProvider } from "../../src/schemas/capability";
+import {
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+} from "../../src/schemas/capability";
 
 export const U5_FULL_SCOPE = "five-live-v1" as const;
 export const U5_PARTIAL_SCOPE = "three-live-two-measured-blocks-v1" as const;

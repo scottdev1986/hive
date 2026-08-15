@@ -29,7 +29,8 @@ async function readSoon(path: string, budgetMs: number): Promise<string> {
     } catch {
       // not there yet
     }
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${path}`);
+    if (Date.now() >= deadline)
+      throw new Error(`timed out waiting for ${path}`);
     await Bun.sleep(200);
   }
 }

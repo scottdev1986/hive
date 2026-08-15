@@ -27,6 +27,11 @@ const response = await fetch(`http://127.0.0.1:${port}/orchestrator-session`, {
 });
 const body = await response.json();
 if (!response.ok || body.state !== "running") {
-  throw new Error(`root binding failed (${response.status}): ${JSON.stringify(body)}`);
+  throw new Error(
+    `root binding failed (${response.status}): ${JSON.stringify(body)}`,
+  );
 }
-await Bun.write(`${qaHome}/artifacts/root-session.json`, `${JSON.stringify(body, null, 2)}\n`);
+await Bun.write(
+  `${qaHome}/artifacts/root-session.json`,
+  `${JSON.stringify(body, null, 2)}\n`,
+);
