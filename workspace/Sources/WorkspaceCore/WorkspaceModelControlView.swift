@@ -8,7 +8,7 @@ public struct WorkspaceModelControlView: Codable, Equatable, Sendable {
     public let snapshot: ModelControlSnapshot
     public let routing: WorkspaceRoutingPresentation
     public let providers: [String: WorkspaceProviderPresentation]
-    public let tokenSessions: [WorkspaceTokenSessionPresentation]
+    private let tokenSessions: [WorkspaceJSONValue]
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -25,8 +25,7 @@ public struct WorkspaceModelControlView: Codable, Equatable, Sendable {
             WorkspaceRoutingPresentation.self, forKey: .routing)
         providers = try container.decode(
             [String: WorkspaceProviderPresentation].self, forKey: .providers)
-        tokenSessions = try container.decode(
-            [WorkspaceTokenSessionPresentation].self, forKey: .tokenSessions)
+        tokenSessions = try container.decode([WorkspaceJSONValue].self, forKey: .tokenSessions)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -35,10 +34,6 @@ public struct WorkspaceModelControlView: Codable, Equatable, Sendable {
 
     public func provider(_ id: ProviderID) -> WorkspaceProviderPresentation? {
         providers[id.rawValue]
-    }
-
-    public func tokenSession(_ id: String) -> WorkspaceTokenSessionPresentation? {
-        tokenSessions.first { $0.sessionId == id }
     }
 
     public var providerIDs: [ProviderID] {
@@ -443,13 +438,4 @@ public enum WorkspaceEffortAxis: Codable, Equatable, Sendable {
         case .unknown(let reason): return .unknown(reason: reason)
         }
     }
-}
-
-public struct WorkspaceTokenSessionPresentation: Codable, Equatable, Sendable {
-    public let sessionId: String
-    public let fleet: TokenHeadline?
-    public let hiveControl: TokenHeadline?
-    public let workerSessions: TokenHeadline?
-    public let rows: [TokenUsageRow]
-    public let controlSharePercent: Double?
 }
