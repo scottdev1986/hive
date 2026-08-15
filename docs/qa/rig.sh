@@ -498,6 +498,13 @@ rig_up() {
   # a path whose file survived a previous run would make a dead run look alive.
   # The rig home is created fresh per bring-up and torn down after, so nothing
   # here can be inherited; the check below states that rather than assuming it.
+  # The instance identity the Workspace is launched with, derived ONCE from the
+  # resolved home and published so both sides read it instead of each computing
+  # it. QA_HOME_TAG above is a ten-character sha256 prefix too, but of the
+  # SOURCE ROOT — two identical-looking values meaning different things is how a
+  # wrong-instance bug survives review, so this one is named and shared.
+  local u5_instance_id
+  u5_instance_id="$(printf '%s' "$QA_HOME" | /usr/bin/shasum -a 256 | cut -c1-10)"
   local u5_ready="$ARTIFACTS/u5-app-ready.json"
   local u5_release="$ARTIFACTS/u5-app-release.json"
   local u5_receipt="$ARTIFACTS/u5-app-feed-receipt.json"
@@ -515,6 +522,7 @@ rig_up() {
     echo "project=$QA_PROJECT"
     echo "source=$QA_SRC_ROOT"
     echo "hive_bin=$hive_bin"
+    echo "u5_instance_id=$u5_instance_id"
     echo "u5_feed_bridge=$feed_bridge"
     echo "u5_ready_path=$u5_ready"
     echo "u5_release_path=$u5_release"
