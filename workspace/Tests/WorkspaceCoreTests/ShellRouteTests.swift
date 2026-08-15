@@ -1,8 +1,10 @@
 // ShellRouteTests.swift
 //
-// Pins the screen inventory: exactly the ten routes, each in exactly one nav
-// group, and none of the retired destinations. A retired destination that
-// compiles into the shell fails here before a menu can reach it.
+// Pins the screen inventory: exactly the screens ShellScreenRegistry declares,
+// each in exactly one nav group, and none of the retired destinations. A retired
+// destination that compiles into the shell fails here before a menu can reach
+// it. Tokens and Autonomy are retired rather than absent by accident: their
+// services cannot supply an honest contract, so the screens do not exist.
 
 import XCTest
 @testable import WorkspaceCore
@@ -18,24 +20,33 @@ final class ShellRouteTests: XCTestCase {
         "navigate",
         "review",
         "files",
+        // Settled omissions: the owning service cannot supply an honest
+        // contract, so the screen is absent from every surface by not being
+        // declared at all.
+        "tokens",
+        "autonomy",
     ]
 
-    func testExactlyTheTenContractRoutesExist() {
+    func testTheRoutesAreExactlyTheDeclaredScreens() {
         XCTAssertEqual(
             Set(ShellRoute.allCases),
             [
-                .liveRun, .taskRouter, .modelsQuota, .tokens, .queen,
-                .autonomy, .memoryOverview, .memoryLibrary, .memoryRecallLab,
+                .liveRun, .taskRouter, .modelsQuota, .queen,
+                .memoryOverview, .memoryLibrary, .memoryRecallLab,
                 .memoryMaintenance,
             ])
-        XCTAssertEqual(ShellRoute.allCases.count, 10)
+        // The route enum and the registry are the same inventory, not two lists
+        // that have to be kept in step.
+        XCTAssertEqual(
+            Set(ShellScreenRegistry.screens.map(\.route)), Set(ShellRoute.allCases))
+        XCTAssertEqual(ShellScreenRegistry.screens.count, ShellRoute.allCases.count)
     }
 
     func testRouteIdentifiersMatchTheContractSlugs() {
         XCTAssertEqual(
             Set(ShellRoute.allCases.map(\.rawValue)),
             [
-                "run", "router", "models", "tokens", "queen", "autonomy",
+                "run", "router", "models", "queen",
                 "memory-overview", "memory-library", "memory-recall",
                 "memory-maintenance",
             ])
@@ -64,12 +75,12 @@ final class ShellRouteTests: XCTestCase {
 
     func testNavGroupOrderMatchesTheShellStructure() {
         XCTAssertEqual(
-            ShellNavGroup.allCases,
+            ShellScreenRegistry.groups,
             [.workspace, .modelControl, .runtime, .memory])
         XCTAssertEqual(ShellNavGroup.workspace.routes, [.liveRun])
         XCTAssertEqual(
-            ShellNavGroup.modelControl.routes, [.taskRouter, .modelsQuota, .tokens])
-        XCTAssertEqual(ShellNavGroup.runtime.routes, [.queen, .autonomy])
+            ShellNavGroup.modelControl.routes, [.taskRouter, .modelsQuota])
+        XCTAssertEqual(ShellNavGroup.runtime.routes, [.queen])
         XCTAssertEqual(
             ShellNavGroup.memory.routes,
             [.memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance])

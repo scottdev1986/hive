@@ -67,7 +67,8 @@ final class ShellCommandRegistryTests: XCTestCase {
                     reason.isEmpty,
                     "\(command) must say why its surface is absent")
             case .local(.aboutPanel), .local(.detachWorkspace),
-                 .local(.toggleAttentionDrawer), .local(.toggleInspector):
+                 .local(.toggleAttentionDrawer), .local(.toggleInspector),
+                 .local(.enterFullTerminal):
                 break
             }
         }
@@ -102,7 +103,7 @@ final class ShellCommandRegistryTests: XCTestCase {
     func testMenuContentsMatchTheContract() {
         XCTAssertEqual(
             Set(ShellMenu.hive.commands), [
-                .aboutHive, .openSettings, .openMemoryManager,
+                .aboutHive, .openMemoryManager,
                 .detachWorkspace, .stopHive,
             ])
         XCTAssertEqual(
@@ -110,8 +111,8 @@ final class ShellCommandRegistryTests: XCTestCase {
             [.undo, .redo, .cut, .copy, .paste, .selectAll])
         XCTAssertEqual(
             Set(ShellMenu.view.commands), [
-                .showLiveRun, .toggleAttention, .toggleInspector,
-                .enterFullTerminal,
+                .showLiveRun, .showTaskRouter, .showModelsQuota,
+                .toggleAttention, .toggleInspector, .enterFullTerminal,
             ])
         XCTAssertEqual(
             Set(ShellMenu.agent.commands), [
@@ -197,7 +198,8 @@ final class ShellCommandRegistryTests: XCTestCase {
     /// route, so only this table pins each one to its destination.
     func testRouteCommandsPointAtTheirContractScreens() {
         let expected: [ShellCommand: ShellRoute] = [
-            .openSettings: .taskRouter,
+            .showTaskRouter: .taskRouter,
+            .showModelsQuota: .modelsQuota,
             .openMemoryManager: .memoryOverview,
             .showLiveRun: .liveRun,
             .memoryOverview: .memoryOverview,

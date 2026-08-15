@@ -252,8 +252,9 @@ final class ShellMenuEnumerationTests: XCTestCase {
                     continue
                 }
                 XCTAssertEqual(surfaced, command)
-            case .local(.aboutPanel), .local(.detachWorkspace):
-                continue // app-level effects, not state outcomes
+            case .local(.aboutPanel), .local(.detachWorkspace),
+                 .local(.enterFullTerminal):
+                continue // window- and app-level effects, not state outcomes
             }
         }
     }

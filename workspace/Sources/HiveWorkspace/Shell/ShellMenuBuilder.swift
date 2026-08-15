@@ -9,7 +9,6 @@ enum ShellMenuBuilder {
         (.hive, [
             .aboutHive,
             nil,
-            .openSettings,
             .openMemoryManager,
             nil,
             .detachWorkspace,
@@ -26,6 +25,8 @@ enum ShellMenuBuilder {
         ]),
         (.view, [
             .showLiveRun,
+            .showTaskRouter,
+            .showModelsQuota,
             .toggleAttention,
             .toggleInspector,
             .enterFullTerminal,

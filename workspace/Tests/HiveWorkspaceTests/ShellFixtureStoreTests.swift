@@ -60,86 +60,29 @@ final class ShellFixtureStoreTests: XCTestCase {
         try data.write(to: url)
     }
 
-    func testEveryUnwiredScreenRendersItsCorpusRowVerbatim() throws {
+    /// Every declared screen has a projection. This used to compare the unwired
+    /// routes against the absent-row corpus; with the registry there are no
+    /// unwired routes, which would make that comparison two empty sets agreeing
+    /// about nothing. So it asserts the guarantee instead: a declared screen is
+    /// always wired, and the absent-row corpus therefore has no subject left.
+    func testEveryDeclaredScreenIsWiredSoNoAbsentRowIsNeeded() throws {
         let state = try ShellFixtureStore(directory: fixtureDirectory)
             .loadState(scenario: .current)
-        let rows = try absentRows(from: fixtureDirectory)
         let unwired = ShellRoute.allCases.filter {
             ShellFixtureStore.wiredRoutes[$0] == nil
         }
+        XCTAssertEqual(unwired, [], "a declared screen must have a projection")
+        XCTAssertTrue(
+            try absentRows(from: fixtureDirectory).isEmpty,
+            "an absent row for a declared screen would contradict its projection")
+        // The positive control: the screens really are there to be found, so the
+        // emptiness above is a fact about absent rows, not about the reader.
         XCTAssertEqual(
-            Set(unwired), Set(rows.keys),
-            "every unwired route needs exactly one absent row")
-        for route in unwired {
-            let screen = try XCTUnwrap(state.screens[route])
-            let row = try XCTUnwrap(rows[route])
-            XCTAssertEqual(screen.availability, .unknown, "\(route)")
-            XCTAssertEqual(screen.observedAt, nil, "\(route)")
-            XCTAssertEqual(
-                screen.contract, .notFrozen(reason: row.reason),
-                "\(route)'s explanation must come from the fixture row")
-            XCTAssertEqual(
-                screen.facts,
-                [ShellScreenFact(label: "Contract", value: row.contractState)],
-                "\(route)'s contract state must come from the fixture row")
-        }
+            Set(state.screens.keys), Set(ShellRoute.allCases))
     }
 
-    func testEditingAFixtureRowChangesTheScreen() throws {
-        let temp = try makeTempCopy()
-        defer { try? FileManager.default.removeItem(atPath: temp) }
-        try mutateAbsentCorpus(in: temp) { rows in
-            for (index, row) in rows.enumerated()
-            where (row["value"] as? [String: Any])?["route"] as? String == "tokens" {
-                var value = row["value"] as! [String: Any]
-                value["reason"] = "MUTATED: the tokens screen must say exactly this"
-                rows[index]["value"] = value
-            }
-        }
-        let state = try ShellFixtureStore(directory: temp)
-            .loadState(scenario: .current)
-        XCTAssertEqual(
-            state.screens[.tokens]?.contract,
-            .notFrozen(reason: "MUTATED: the tokens screen must say exactly this"))
-    }
 
-    func testRemovingAFixtureRowFailsTheLoad() throws {
-        let temp = try makeTempCopy()
-        defer { try? FileManager.default.removeItem(atPath: temp) }
-        try mutateAbsentCorpus(in: temp) { rows in
-            rows.removeAll {
-                ($0["value"] as? [String: Any])?["route"] as? String
-                    == "tokens"
-            }
-        }
-        XCTAssertThrowsError(
-            try ShellFixtureStore(directory: temp).loadState(scenario: .current)
-        ) { error in
-            XCTAssertEqual(
-                error as? ShellFixtureStore.StoreError,
-                .missingAbsentScreen("tokens"),
-                "a missing row must fail loudly, never synthesize an absence")
-        }
-    }
 
-    func testARowClaimingAnObservationIsRejected() throws {
-        let temp = try makeTempCopy()
-        defer { try? FileManager.default.removeItem(atPath: temp) }
-        try mutateAbsentCorpus(in: temp) { rows in
-            for (index, row) in rows.enumerated()
-            where (row["value"] as? [String: Any])?["route"] as? String == "tokens" {
-                rows[index]["availability"] = "current"
-            }
-        }
-        XCTAssertThrowsError(
-            try ShellFixtureStore(directory: temp).loadState(scenario: .current)
-        ) { error in
-            XCTAssertEqual(
-                error as? ShellFixtureStore.StoreError,
-                .invalidAbsentRow("shell-absent-screens-corpus"),
-                "an absent row that claims to be observed is a lie the store rejects")
-        }
-    }
 
     func testInspectorCorporaProvidePositiveDenseControls() throws {
         let state = try ShellFixtureStore(directory: fixtureDirectory)
