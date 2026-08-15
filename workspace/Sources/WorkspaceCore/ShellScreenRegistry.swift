@@ -92,4 +92,30 @@ public enum ShellScreenRegistry {
         }
         return seen
     }
+
+    public static let proofPrefix = "SHELL-SCREEN "
+    public static let proofFieldSeparator = "|"
+
+    /// The declared screens, machine-readable, so a caller that needs the screen
+    /// list reads it from the declarations instead of keeping its own copy. The
+    /// QA tour kept two hand-written slug lists that had already drifted apart
+    /// from each other; this is what replaces them.
+    ///
+    /// Fields are `slug|command|group|title`, pipe-separated because two of them
+    /// contain spaces and a space-separated line could not be cut reliably.
+    public static var proofLines: [String] {
+        screens.map {
+            proofPrefix + [
+                $0.route.rawValue, $0.command.rawValue, $0.group.title, $0.title,
+            ].joined(separator: proofFieldSeparator)
+        }
+    }
+
+    /// The last line of a proof run. A consumer must require it and must check
+    /// the count against the screen lines it actually read: a run that died
+    /// half-way prints some screens and no terminator, which would otherwise be
+    /// indistinguishable from a short screen list.
+    public static var proofTerminator: String {
+        "SHELL-PROOF-END screens=\(screens.count)"
+    }
 }

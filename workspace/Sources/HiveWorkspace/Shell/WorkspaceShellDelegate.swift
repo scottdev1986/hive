@@ -538,7 +538,11 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             ? state.activeScreen?.availability.rawValue ?? "none"
             : "none"
         let drawer = state.attentionDrawerVisible ? "visible" : "hidden"
+        // The authoritative screen list, emitted before the summary so a QA leg
+        // consumes the registry rather than hardcoding slugs of its own.
+        for screen in ShellScreenRegistry.proofLines { print(screen) }
         var line = "SHELL-PROOF routes=\(ShellRoute.allCases.count)"
+            + " screens=\(ShellScreenRegistry.screens.count)"
             + " wired=\(wired)"
             + " scenario=\(launch.scenario.rawValue)"
             + " active=\(state.activeRoute.rawValue)"
@@ -566,6 +570,9 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             line += " \(await proveOneWrite(state: state, clearing: action == "clear"))"
         }
         print(line)
+        // Printed last, and only here: a consumer that requires this line cannot
+        // read success out of a run that died part-way through.
+        print(ShellScreenRegistry.proofTerminator)
         exit(0)
     }
 

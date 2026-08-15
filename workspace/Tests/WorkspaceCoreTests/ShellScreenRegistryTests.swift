@@ -117,6 +117,63 @@ final class ShellScreenRegistryTests: XCTestCase {
                 .contains { $0.rawValue == "memory-overview" })
     }
 
+    /// The emitted list IS the declarations. A QA leg that parses this must get
+    /// every declared screen and nothing else, or it has a copy of the slugs
+    /// again — which is the defect that let two QA lists drift apart.
+    func testTheEmittedScreenListIsExactlyTheDeclarations() throws {
+        let lines = ShellScreenRegistry.proofLines
+        XCTAssertEqual(lines.count, ShellScreenRegistry.screens.count)
+
+        var parsed: [(slug: String, command: String, group: String, title: String)] = []
+        for line in lines {
+            XCTAssertTrue(line.hasPrefix(ShellScreenRegistry.proofPrefix), line)
+            let fields = line
+                .dropFirst(ShellScreenRegistry.proofPrefix.count)
+                .components(separatedBy: ShellScreenRegistry.proofFieldSeparator)
+            XCTAssertEqual(fields.count, 4, "a consumer cuts exactly four fields: \(line)")
+            for field in fields {
+                XCTAssertFalse(field.isEmpty, "an empty field would parse as a screen")
+                XCTAssertFalse(
+                    field.contains(ShellScreenRegistry.proofFieldSeparator),
+                    "a field carrying the separator would split into a phantom screen")
+            }
+            parsed.append((fields[0], fields[1], fields[2], fields[3]))
+        }
+
+        XCTAssertEqual(
+            parsed.map(\.slug), ShellScreenRegistry.screens.map(\.route.rawValue))
+        XCTAssertEqual(
+            parsed.map(\.command), ShellScreenRegistry.screens.map(\.command.rawValue))
+        XCTAssertEqual(
+            parsed.map(\.title), ShellScreenRegistry.screens.map(\.title))
+        XCTAssertEqual(
+            Set(parsed.map(\.slug)), Set(ShellRoute.allCases.map(\.rawValue)),
+            "the emitted slugs are the routes, so an untourable screen cannot exist")
+        for omitted in Self.settledOmissions {
+            XCTAssertFalse(
+                parsed.contains { $0.slug == omitted },
+                "\(omitted) must not be emitted as a tourable screen")
+        }
+    }
+
+    /// The terminator is what makes a partial run detectable: a consumer that
+    /// requires it cannot read success out of a run that printed some screens
+    /// and then died.
+    func testTheProofTerminatorCarriesTheCountAConsumerMustCheck() {
+        let terminator = ShellScreenRegistry.proofTerminator
+        XCTAssertEqual(
+            terminator, "SHELL-PROOF-END screens=\(ShellScreenRegistry.screens.count)")
+        XCTAssertFalse(
+            terminator.hasPrefix(ShellScreenRegistry.proofPrefix),
+            "the terminator must not parse as one more screen")
+        // A truncated emission has fewer screen lines than the terminator claims,
+        // which is exactly the discrepancy a consumer is required to notice.
+        let truncated = ShellScreenRegistry.proofLines.dropLast()
+        XCTAssertNotEqual(
+            truncated.count, ShellScreenRegistry.screens.count,
+            "a short run must not agree with the terminator's count")
+    }
+
     /// No surface may carry a per-screen exception. The sidebar shows what is
     /// declared, so there is nothing to skip and nowhere to keep a skip list.
     func testNoNavGroupRendersWithoutAScreen() {
