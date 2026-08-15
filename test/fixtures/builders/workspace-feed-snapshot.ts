@@ -109,7 +109,7 @@ export async function buildWorkspaceFeedSnapshotFixture(): Promise<
       controller.abort();
       return [workspaceFeedAgentFixture];
     },
-    fetchAutonomy: async () => "dangerous",
+    fetchAutonomy: async () => ({ kind: "current", value: "dangerous" }),
     fetchOrchestrator: async (): Promise<WorkspaceOrchestratorSnapshot> => ({
       status: "working",
       host: "sessiond",

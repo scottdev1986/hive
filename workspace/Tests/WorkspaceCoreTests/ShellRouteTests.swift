@@ -1,6 +1,6 @@
 // ShellRouteTests.swift
 //
-// Pins the screen inventory: exactly the ten routes, each in exactly one nav
+// Pins the screen inventory: every routed screen appears in exactly one nav
 // group, and none of the retired destinations. A retired destination that
 // compiles into the shell fails here before a menu can reach it.
 
@@ -20,22 +20,22 @@ final class ShellRouteTests: XCTestCase {
         "files",
     ]
 
-    func testExactlyTheTenContractRoutesExist() {
+    func testExactlyTheRoutedContractScreensExist() {
         XCTAssertEqual(
             Set(ShellRoute.allCases),
             [
                 .liveRun, .taskRouter, .modelsQuota, .tokens, .queen,
-                .autonomy, .memoryOverview, .memoryLibrary, .memoryRecallLab,
+                .memoryOverview, .memoryLibrary, .memoryRecallLab,
                 .memoryMaintenance,
             ])
-        XCTAssertEqual(ShellRoute.allCases.count, 10)
+        XCTAssertEqual(ShellRoute.allCases.count, 9)
     }
 
     func testRouteIdentifiersMatchTheContractSlugs() {
         XCTAssertEqual(
             Set(ShellRoute.allCases.map(\.rawValue)),
             [
-                "run", "router", "models", "tokens", "queen", "autonomy",
+                "run", "router", "models", "tokens", "queen",
                 "memory-overview", "memory-library", "memory-recall",
                 "memory-maintenance",
             ])
@@ -47,6 +47,10 @@ final class ShellRouteTests: XCTestCase {
                 ShellRoute.allCases.contains { $0.rawValue == retired },
                 "retired destination \(retired) must never be a shell route")
         }
+    }
+
+    func testAutonomyIsNotARouteWithoutARevisionedDaemonProjection() {
+        XCTAssertNil(ShellRoute(rawValue: "autonomy"))
     }
 
     func testNavGroupsPartitionEveryRouteExactlyOnce() {
@@ -69,7 +73,7 @@ final class ShellRouteTests: XCTestCase {
         XCTAssertEqual(ShellNavGroup.workspace.routes, [.liveRun])
         XCTAssertEqual(
             ShellNavGroup.modelControl.routes, [.taskRouter, .modelsQuota, .tokens])
-        XCTAssertEqual(ShellNavGroup.runtime.routes, [.queen, .autonomy])
+        XCTAssertEqual(ShellNavGroup.runtime.routes, [.queen])
         XCTAssertEqual(
             ShellNavGroup.memory.routes,
             [.memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance])

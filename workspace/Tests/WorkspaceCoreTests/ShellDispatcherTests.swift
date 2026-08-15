@@ -61,10 +61,10 @@ final class ShellDispatcherTests: XCTestCase {
     func testSidebarNavigationUsesTheSameRoutePath() {
         let dispatcher = ShellDispatcher(transport: shellUnavailableTransport)
         var state = makeState()
-        let outcome = dispatcher.navigate(to: .autonomy, state: &state)
-        XCTAssertEqual(outcome, .routed(.autonomy))
-        XCTAssertEqual(state.activeRoute, .autonomy)
-        XCTAssertEqual(state.lastOutcome, .routed(.autonomy))
+        let outcome = dispatcher.navigate(to: .modelsQuota, state: &state)
+        XCTAssertEqual(outcome, .routed(.modelsQuota))
+        XCTAssertEqual(state.activeRoute, .modelsQuota)
+        XCTAssertEqual(state.lastOutcome, .routed(.modelsQuota))
     }
 
     // MARK: Intents

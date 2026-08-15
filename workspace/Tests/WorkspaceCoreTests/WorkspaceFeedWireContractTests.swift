@@ -33,7 +33,7 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
         XCTAssertNil(agent.closedAt)
         XCTAssertEqual(agent.presentation.paneStatus.paneStatus(), .running)
         XCTAssertEqual(agent.presentation.renderedActivity, .working)
-        XCTAssertEqual(decoded.autonomy, "dangerous")
+        XCTAssertEqual(decoded.autonomy, .current(value: "dangerous"))
         XCTAssertEqual(decoded.orchestrator?.status, "working")
         XCTAssertEqual(
             decoded.orchestrator?.presentation.renderedActivity, .working)

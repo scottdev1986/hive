@@ -5,12 +5,14 @@ import {
   FEED_RETRY_MAX_MS,
   FEED_STATUS_TIMEOUT_MAX_MS,
   FEED_STATUS_TIMEOUT_MS,
+  classifyWorkspaceAutonomyResponse,
   parseWorkspaceOrchestratorSnapshot,
   publishWorkspaceVisibility,
   registerWorkspaceOwner,
   runWorkspaceFeed,
   StatusPollTimeoutError,
   type WorkspaceOrchestratorSnapshot,
+  type WorkspaceAutonomyState,
   WorkspaceVisibilityPublisher,
   WorkspaceVisibilityPublishTimeoutError,
 } from "../../src/cli/workspace-feed";
@@ -66,12 +68,12 @@ interface FeedRun {
 
 /** Drives the real loop on a fake clock: sleeping advances time instantly, so
  * heartbeat and give-up behavior are exact, not wall-clock flaky. Autonomy and
- * the orchestrator's status are injected (default null) so no test ever touches
- * a real daemon. */
+ * the orchestrator's status are injected so no test ever touches a real daemon. */
 async function runScript(
   steps: Step[],
-  fetchAutonomy: () => Promise<"sandboxed" | "dangerous" | null> = async () =>
-    null,
+  fetchAutonomy: () => Promise<WorkspaceAutonomyState> = async () => ({
+    kind: "absent",
+  }),
   fetchOrchestrator: () => Promise<WorkspaceOrchestratorSnapshot | null> = async () =>
     null,
   verifyInstance: () => Promise<void> = async () => {},
@@ -139,6 +141,14 @@ const orchestrator = (
   hostDiagnostic: null,
   sessionLocator: null,
   ...overrides,
+});
+
+const currentAutonomy = (
+  value: "sandboxed" | "dangerous",
+): WorkspaceAutonomyState => ({ kind: "current", value });
+
+const absentAutonomy = async (): Promise<WorkspaceAutonomyState> => ({
+  kind: "absent",
 });
 
 const rootLocator = {
@@ -234,6 +244,26 @@ describe("workspace feed presentation", () => {
       paneStatus: { kind: "failed" },
       activity: "failed",
     });
+  });
+});
+
+describe("workspace autonomy response", () => {
+  test("keeps current, absent, refused, malformed, and future modes distinct", () => {
+    expect(
+      classifyWorkspaceAutonomyResponse(200, { autonomy: "sandboxed" }),
+    ).toEqual({ kind: "current", value: "sandboxed" });
+    expect(classifyWorkspaceAutonomyResponse(200, { autonomy: null })).toEqual({
+      kind: "absent",
+    });
+    expect(
+      classifyWorkspaceAutonomyResponse(403, { error: "forbidden" }),
+    ).toEqual({ kind: "refused", statusCode: 403, reason: "forbidden" });
+    expect(classifyWorkspaceAutonomyResponse(200, {})).toMatchObject({
+      kind: "malformed",
+    });
+    expect(
+      classifyWorkspaceAutonomyResponse(200, { autonomy: "future-mode" }),
+    ).toEqual({ kind: "unsupported", value: "future-mode" });
   });
 });
 
@@ -541,7 +571,7 @@ describe("runWorkspaceFeed", () => {
         snapshot(workspaceFeedAgentFixture),
         last(snapshot(workspaceFeedAgentFixture)), // t=5s: heartbeat
       ],
-      async () => "dangerous",
+      async () => currentAutonomy("dangerous"),
       async () => orchestrator("working"),
     );
     const fixture = await Bun.file(WORKSPACE_FEED_SNAPSHOT_FIXTURE).json();
@@ -578,7 +608,11 @@ describe("runWorkspaceFeed", () => {
     expect(run.lines).toEqual([
       { v: 1, error: "connect ECONNREFUSED" },
       { v: 1, error: "handshake mismatch" },
-      { v: 1, agents: [presentedAgent(maya)] },
+      {
+        v: 1,
+        agents: [presentedAgent(maya)],
+        autonomyState: { kind: "absent" },
+      },
     ]);
     expect(run.sleeps.slice(0, 3)).toEqual([
       Math.min(FEED_POLL_MS * 2, FEED_RETRY_MAX_MS),
@@ -618,7 +652,11 @@ describe("runWorkspaceFeed", () => {
     expect(attempts).toEqual(2);
     expect(run.lines).toEqual([
       { v: 1, error: "daemon still starting" },
-      { v: 1, agents: [presentedAgent(maya)] },
+      {
+        v: 1,
+        agents: [presentedAgent(maya)],
+        autonomyState: { kind: "absent" },
+      },
     ]);
   });
 
@@ -816,27 +854,30 @@ describe("runWorkspaceFeed", () => {
     let poll = 0;
     const run = await runScript(
       [snapshot(maya), snapshot(maya), last(snapshot(maya))],
-      async () => values[poll++] ?? "dangerous",
+      async () => currentAutonomy(values[poll++] ?? "dangerous"),
     );
     expect(run.lines).toHaveLength(2);
-    expect(run.lines[0]?.autonomy).toEqual("sandboxed");
-    expect(run.lines[1]?.autonomy).toEqual("dangerous");
+    expect(run.lines[0]?.autonomyState).toEqual(currentAutonomy("sandboxed"));
+    expect(run.lines[1]?.autonomyState).toEqual(currentAutonomy("dangerous"));
   });
 
-  test("an unreadable autonomy omits the field and never drops the agents", async () => {
+  test("an unreadable autonomy is typed and never drops the agents", async () => {
     const maya = agent("maya");
     const run = await runScript([last(snapshot(maya))], async () => {
       throw new Error("daemon predates /autonomy");
     });
     expect(run.lines).toHaveLength(1);
     expect(run.lines[0]?.agents).toBeDefined();
-    expect("autonomy" in (run.lines[0] ?? {})).toEqual(false);
+    expect(run.lines[0]?.autonomyState).toEqual({
+      kind: "unreachable",
+      reason: "daemon predates /autonomy",
+    });
   });
 
   test("carries the root's status beside the agents, not inside them", async () => {
     const run = await runScript(
       [last(snapshot(agent("maya")))],
-      async () => null,
+      absentAutonomy,
       async () => orchestrator("working"),
     );
     const root = orchestrator("working");
@@ -855,7 +896,7 @@ describe("runWorkspaceFeed", () => {
   test("omits the field entirely when the root's status is unknown", async () => {
     const run = await runScript(
       [last(snapshot(agent("maya")))],
-      async () => null,
+      absentAutonomy,
       async () => null,
     );
     expect(run.lines[0]).not.toHaveProperty("orchestrator");
@@ -871,7 +912,7 @@ describe("runWorkspaceFeed", () => {
     });
     const run = await runScript(
       [last(snapshot(agent("maya")))],
-      async () => null,
+      absentAutonomy,
       async () => pending,
     );
     expect(run.lines[0]?.orchestrator).toEqual(presentedOrchestrator(pending));
@@ -880,7 +921,7 @@ describe("runWorkspaceFeed", () => {
   test("a root-status read that throws degrades to omission, not to a guess", async () => {
     const run = await runScript(
       [last(snapshot(agent("maya")))],
-      async () => null,
+      absentAutonomy,
       async () => {
         throw new Error("daemon wedged");
       },

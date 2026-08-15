@@ -1,7 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     static let terminationStopArguments = ["stop", "--force"]
 
@@ -13,8 +13,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var placeholderWindow: NSWindow?
     /// Where a QA build attaches. Empty in the shipped app, whose binary holds no harness to attach.
     private let qa: WorkspaceQAHooks
-    /// The daemon's live agent-autonomy dial as last reported by the feed or confirmed by a `hive autonomy` set. nil means unknown (no feed yet, or the daemon does not expose the dial) — the menu items disable rather than guess.
-    private(set) var currentAutonomy: String?
     /// How long to wait before restarting a feed that exited. One second in the common case (a killed or crashed feed), doubling to a ceiling so a feed that cannot run at all — missing binary, dead daemon — is retried without a spawn storm. A snapshot resets it: that is the feed proving it works.
     private var feedRestartDelay: TimeInterval = 1
     private static let feedRestartCeiling: TimeInterval = 15
@@ -152,9 +150,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             self?.controller?.applyFeed(agents, orchestrator: orchestrator)
             self?.publishVisibility()
         }
-        feed.onAutonomy = { [weak self] autonomy in
-            self?.currentAutonomy = autonomy
-        }
         feed.onError = { [weak self] message in
             NSLog("workspace-feed error: %@", message)
             if message.hasPrefix("workspace-feed agent schema error:") {
@@ -202,60 +197,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func retireFeed() {
         feedRetired = true
         feedClient?.stop()
-    }
-
-    @objc func selectSandboxedAutonomy(_ sender: Any?) {
-        setAutonomy("sandboxed")
-    }
-
-    @objc func selectDangerousAutonomy(_ sender: Any?) {
-        setAutonomy("dangerous")
-    }
-
-    /// Sets the dial through `hive autonomy <mode>` — the same daemon endpoint the CLI uses, which persists to `~/.hive/config.toml` before applying. The checkmark updates only from the daemon's own answer (stdout names the confirmed mode); the feed reconciles it afterwards regardless, so the menu never claims a state the daemon doesn't hold.
-    private func setAutonomy(_ mode: String) {
-        guard let hivePath = config.hivePath, let port = config.port,
-              let instanceHome = config.instanceHome else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: hivePath)
-        process.arguments = ["autonomy", mode, "--port", String(port)]
-        var environment = ProcessInfo.processInfo.environment
-        environment["HIVE_HOME"] = instanceHome
-        process.environment = environment
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = FileHandle.standardError
-        process.terminationHandler = { finished in
-            let data = stdout.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            let confirmed = ["sandboxed", "dangerous"].first { output.contains("now \($0)") }
-            DispatchQueue.main.async { [weak self] in
-                if finished.terminationStatus == 0, let confirmed {
-                    self?.currentAutonomy = confirmed
-                } else {
-                    NSLog("hive autonomy %@ failed (exit %d): %@",
-                          mode, finished.terminationStatus, output)
-                }
-            }
-        }
-        do {
-            try process.run()
-        } catch {
-            NSLog("could not run hive autonomy: %@", error.localizedDescription)
-        }
-    }
-
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        switch menuItem.action {
-        case #selector(selectSandboxedAutonomy(_:)):
-            menuItem.state = currentAutonomy == "sandboxed" ? .on : .off
-            return currentAutonomy != nil
-        case #selector(selectDangerousAutonomy(_:)):
-            menuItem.state = currentAutonomy == "dangerous" ? .on : .off
-            return currentAutonomy != nil
-        default:
-            return true
-        }
     }
 
     private var settingsController: SettingsWindowController?

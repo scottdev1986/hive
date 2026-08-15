@@ -30,21 +30,5 @@
       "contractState": "new-control",
       "reason": "The live-Queen provider projection has no frozen client wire in this build, so the observed provider is unknown. The selection commands still dispatch and report honestly."
     }
-  },
-  {
-    "schemaVersion": 1,
-    "source": {
-      "revision": null,
-      "generation": null
-    },
-    "observedAt": null,
-    "freshness": "unknown",
-    "availability": "unknown",
-    "evidence": null,
-    "value": {
-      "route": "autonomy",
-      "contractState": "migrate",
-      "reason": "The daemon autonomy posture has no frozen client projection in this build; rendering one would be a guess."
-    }
   }
 ]

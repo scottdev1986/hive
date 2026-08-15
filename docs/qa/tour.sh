@@ -66,8 +66,8 @@ die() {
 # The sidebar renders one NSButton per route, titled with a two-space prefix.
 # Slugs are the ShellRoute raw values; they name the PNGs.
 TITLES=("Live Run" "Task Router" "Models & Quota" "Queen Provider" \
-  "Autonomy" "Memory Overview" "Memory Library" "Recall Lab" "Memory Maintenance")
-SLUGS=(run router models queen autonomy memory-overview memory-library \
+  "Memory Overview" "Memory Library" "Recall Lab" "Memory Maintenance")
+SLUGS=(run router models queen memory-overview memory-library \
   memory-recall memory-maintenance)
 
 # Product GET paths that feed live screens, paired with the proof field slug
@@ -527,14 +527,14 @@ run_self_check() {
   fake_token="Bearer self-check-user-token"
   fake_pid=$(start_standin_daemon "$port" "$fake_token" "")
 
-  proof_bad="SHELL-PROOF routes=10 wired=6 scenario=current active=run nav=9 drawer=hidden banner=none availability-run=unknown availability-router=disconnected availability-models=disconnected"
+  proof_bad="SHELL-PROOF routes=9 wired=6 scenario=current active=run nav=8 drawer=hidden banner=none availability-run=unknown availability-router=disconnected availability-models=disconnected"
   if ( assert_live_404_not_false_disconnect "$port" "$proof_bad" "$fake_token" ) >/dev/null 2>&1; then
     kill "$fake_pid" 2>/dev/null
     die "live 404 pin did not go red when availability-router=disconnected under /health 200 + endpoint 404"
   fi
   echo "self-check: live 404 pin goes red on false disconnect"
 
-  proof_ok="SHELL-PROOF routes=10 wired=6 scenario=current active=run nav=9 drawer=hidden banner=none availability-run=unknown availability-router=unauthorized availability-models=unknown"
+  proof_ok="SHELL-PROOF routes=9 wired=6 scenario=current active=run nav=8 drawer=hidden banner=none availability-run=unknown availability-router=unauthorized availability-models=unknown"
   if ! ( assert_live_404_not_false_disconnect "$port" "$proof_ok" "$fake_token" ) >/dev/null 2>&1; then
     kill "$fake_pid" 2>/dev/null
     die "live 404 pin went red on a proof that does not claim disconnection"
@@ -644,10 +644,10 @@ printf '%s\n' "$proof" | tr ' ' '\n' | grep '^availability-' \
   > "$ARTIFACTS/proof-availability.txt" || true
 [ $code -eq 0 ] || die "headless proof exited $code: $proof"
 # Anchored to the proof line and to the fields' trailing spaces, so stray
-# output cannot satisfy the check and routes=100 cannot pass as routes=10.
-printf '%s\n' "$proof" | grep -q '^SHELL-PROOF routes=10 ' \
+# output cannot satisfy the check and routes=90 cannot pass as routes=9.
+printf '%s\n' "$proof" | grep -q '^SHELL-PROOF routes=9 ' \
   || die "proof line drifted: $proof"
-printf '%s\n' "$proof" | grep -q '^SHELL-PROOF .* nav=9 ' \
+printf '%s\n' "$proof" | grep -q '^SHELL-PROOF .* nav=8 ' \
   || die "proof nav count drifted: $proof"
 # Per-route availability must be present so a stale binary without the fields
 # cannot leave the live pin vacuous.

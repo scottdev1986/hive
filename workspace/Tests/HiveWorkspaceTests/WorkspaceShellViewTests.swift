@@ -31,11 +31,13 @@ final class WorkspaceShellViewTests: XCTestCase {
     }
 
     private func makeController(
-        scenario: ProjectionAvailability = .current
+        scenario: ProjectionAvailability = .current,
+        route: ShellRoute? = nil
     ) throws -> WorkspaceShellWindowController {
         _ = NSApplication.shared
-        let state = try ShellFixtureStore(directory: fixtureDirectory)
+        var state = try ShellFixtureStore(directory: fixtureDirectory)
             .loadState(scenario: scenario)
+        if let route { state.navigate(to: route) }
         let controller = WorkspaceShellWindowController(
             context: ShellSidebarView.Context(
                 projectName: "hive",
@@ -210,17 +212,16 @@ final class WorkspaceShellViewTests: XCTestCase {
     }
 
     func testUnwiredScreensStateWhatIsAbsentAndWhy() throws {
-        let controller = try makeController()
+        let controller = try makeController(route: .tokens)
         XCTAssertNil(findView(
             in: controller.window!.contentView!, identifier: "shell-nav-tokens"))
-        let autonomy = try XCTUnwrap(findView(
-            in: controller.window!.contentView!, identifier: "shell-nav-autonomy") as? NSButton)
-        autonomy.performClick(nil)
+        XCTAssertNil(findView(
+            in: controller.window!.contentView!, identifier: "shell-nav-autonomy"))
         let text = allText(in: controller.window!.contentView!).joined(separator: "\n")
-        XCTAssertTrue(text.contains("no frozen client projection"))
+        XCTAssertTrue(text.contains("open contract gap"))
         XCTAssertEqual(
             controller.currentState.activeScreen?.facts,
-            [ShellScreenFact(label: "Contract", value: "migrate")])
+            [ShellScreenFact(label: "Contract", value: "contract-gap")])
         XCTAssertNil(controller.currentState.activeScreen?.banner)
         // Queen is a frozen wire. Navigating there must show the observed
         // projection, not an absent-row contract gap.
@@ -338,10 +339,9 @@ final class WorkspaceShellViewTests: XCTestCase {
                 accuracy: 1,
                 "the scrolled document must match its viewport at \(width)")
 
-            // A screen built from its own controls and one built from the
-            // shared availability panel are bounded by different constraints,
-            // so both have to be measured.
-            for route in ["router", "autonomy"] {
+            // Distinct screen implementations use different internal
+            // constraints, so both have to be measured.
+            for route in ["router", "queen"] {
                 let nav = try XCTUnwrap(findView(
                     in: content, identifier: "shell-nav-\(route)") as? NSButton)
                 nav.performClick(nil)
@@ -369,15 +369,11 @@ final class WorkspaceShellViewTests: XCTestCase {
     }
 
     func testSparseScreenFillsItsViewportWithoutManufacturingScroll() throws {
-        let controller = try makeController(scenario: .unknown)
+        let controller = try makeController(scenario: .unknown, route: .tokens)
         guard let window = controller.window, let content = window.contentView else {
             return XCTFail("no window")
         }
         window.setContentSize(NSSize(width: 1440, height: 900))
-        window.layoutIfNeeded()
-        let autonomy = try XCTUnwrap(findView(
-            in: content, identifier: "shell-nav-autonomy") as? NSButton)
-        autonomy.performClick(nil)
         window.layoutIfNeeded()
 
         let scrollView = try XCTUnwrap(findView(
