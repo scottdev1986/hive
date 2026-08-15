@@ -8,6 +8,7 @@
 #   make build       build + stage the standalone dev release under .dev/
 #   make run         run the staged dev build (defaults to this checkout)
 #   make test        lint + format + typecheck + bun suites + sessiond (Zig) + Workspace (Swift)
+#   make stage-ghosttykit  stage GhosttyKit and checkpoint fixtures for SwiftPM
 #
 # Everything else here is internal structure, never a command to run by hand:
 # heals and remediation run inside these five. build is complete every time;
@@ -228,15 +229,12 @@ $(GHOSTTY_ARTIFACT_STAMP): | toolchain
 # sessiond compiles the engine from vendor/ghostty; the app links this staged
 # archive. Nothing structural makes them equal — the lock check is what does, and
 # without it a stale artifact stages silently and every pane attach dies.
-$(GHOSTTYKIT_INFO): $(GHOSTTY_ARTIFACT_STAMP)
-	@"$(ROOT)/scripts/native/ghostty-artifact-lock-check.sh" "$(GHOSTTY_ARTIFACT)" "$(LOCK)" || { echo "make: cached GhosttyKit artifact does not record the toolchain lock's ghostty source identity; refusing to stage it (rerun 'make build')" >&2; exit 1; }
-	@echo "staging lock-pinned GhosttyKit for SwiftPM"
-	@/bin/rm -rf "$(GHOSTTYKIT)" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
-	@mkdir -p "$(ROOT)/workspace/Vendor"
-	@/usr/bin/ditto "$(GHOSTTY_ARTIFACT)/GhosttyKit.xcframework" "$(GHOSTTYKIT)"
-	@/usr/bin/ditto "$(GHOSTTY_ARTIFACT)/checkpoint-fixtures" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
-	@test -f "$@" || { echo "make: GhosttyKit staging failed; rerun 'make build'" >&2; exit 1; }
-	@touch "$@"
+.PHONY: stage-ghosttykit
+stage-ghosttykit:
+	@"$(ROOT)/scripts/native/stage-ghosttykit.sh"
+
+$(GHOSTTYKIT_INFO): stage-ghosttykit
+	@test -f "$@" || { echo "make: GhosttyKit staging failed; run 'make stage-ghosttykit'" >&2; exit 1; }
 
 # Not reached by the four: release builds its own. This is for the attach/smoke
 # harness (scripts/qa/b22-live-attach-proof.ts), which builds it by absolute path.

@@ -69,12 +69,23 @@ role.
 
 ## Run and verify
 
+`GhosttyKit.xcframework` and Gate 6's checkpoint fixtures are gitignored build
+output. Materialize both from the shared, lock-validated native cache before
+running SwiftPM; the command builds them with the existing native builder only
+when that cache is absent or invalid.
+
 ```sh
+scripts/native/stage-ghosttykit.sh
 cd workspace
 swift build
 swift test
 ../scripts/qa/b3-smoke.sh
 ```
+
+`make stage-ghosttykit`, `make build`, and `make test` run the same staging
+path. The staging command verifies a host-usable macOS archive plus the exact
+Gate 6 corpus inputs after copying; `--verify` checks an existing stage without
+changing it.
 
 The B3 smoke stands up the real `sessiond` substrate headlessly and verifies
 create, attach, input, resize readiness, detach-without-kill, and clean
