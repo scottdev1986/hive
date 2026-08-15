@@ -14,8 +14,9 @@ die() {
   exit 1
 }
 
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-REPO_ROOT=$(dirname "$SCRIPT_DIR")
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+. "$SCRIPT_DIR/repo-root.sh"
+REPO_ROOT="$(qa_repo_root "$SCRIPT_DIR")" || exit 2
 SHELL_DIR="workspace/Sources/HiveWorkspace/Shell"
 CONTROLLER="$SHELL_DIR/WorkspaceShellWindowController.swift"
 PANEL="$SHELL_DIR/ShellAvailabilityPanel.swift"

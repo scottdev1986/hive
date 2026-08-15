@@ -53,8 +53,9 @@ usage() {
   exit 2
 }
 
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(dirname "$SCRIPT_DIR")/workspace}"
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+. "$SCRIPT_DIR/repo-root.sh"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(qa_repo_root "$SCRIPT_DIR")/workspace}"
 BINARY="$WORKSPACE_ROOT/.build/debug/HiveWorkspace"
 ARTIFACTS="${ARTIFACTS:-$(mktemp -d -t workspace-tour)}"
 
