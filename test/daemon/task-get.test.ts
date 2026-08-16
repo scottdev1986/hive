@@ -267,7 +267,6 @@ function seedBoardTask(hierarchy: HierarchyStore): TaskDetail {
       currentPlan: { revision: "1", digest },
       topology: { revision: "1", digest },
       phase: "P1",
-      g2: { state: "pending" },
       baseSha,
       budget: { revision: "1", digest },
       runEpoch: 0,

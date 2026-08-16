@@ -44,9 +44,6 @@ enum ShellMenuBuilder {
             .closeAgent,
         ]),
         (.run, [
-            .reviewG2Candidate,
-            .approveG2Candidate,
-            nil,
             .pauseRun,
             .resumeRun,
             .redirectThroughQueen,

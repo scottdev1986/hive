@@ -11,7 +11,7 @@ import {
   TaskIdSchema,
 } from "./hierarchy-ids";
 
-// Shared by SpecRevision, PlanRevision, and TopologyDecision: each is an append-only proposal on a run, identified by (runId, revision) and bound to a digest so a gate can approve exact content rather than a floating draft.
+// Shared by SpecRevision, PlanRevision, and TopologyDecision: each is an append-only proposal on a run, identified by (runId, revision) and bound to a digest so later records can name exact content rather than a floating draft.
 export const REVISION_LIFECYCLE = [
   "proposed",
   "approved",
@@ -174,21 +174,6 @@ export const RUN_LIFECYCLE = [
 export const RunLifecycleSchema = z.enum(RUN_LIFECYCLE);
 export type RunLifecycle = z.infer<typeof RunLifecycleSchema>;
 
-// G2 approves the exact assembled run-stage SHA, its digest, evidence, and target-main base — never a floating branch.
-export const G2StateSchema = z.discriminatedUnion("state", [
-  z.strictObject({ state: z.literal("pending") }),
-  z.strictObject({
-    state: z.literal("approved"),
-    decider: z.string().min(1),
-    decidedAt: CreatedAtSchema,
-    runStageSha: GitShaSchema,
-    digest: DigestSchema,
-    evidenceArtifactRefs: z.array(ArtifactRefIdSchema),
-    targetMainBase: GitShaSchema,
-  }),
-]);
-export type G2State = z.infer<typeof G2StateSchema>;
-
 export const RunSchema = z.strictObject({
   runId: RunIdSchema,
   revision: RevisionSchema,
@@ -198,7 +183,6 @@ export const RunSchema = z.strictObject({
   currentPlan: RevisionRefSchema,
   topology: RevisionRefSchema,
   phase: RunPhaseSchema,
-  g2: G2StateSchema,
   baseSha: GitShaSchema,
   budget: RevisionRefSchema,
   runEpoch: SafeUintSchema,

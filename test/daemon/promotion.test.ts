@@ -121,7 +121,6 @@ function validRun(world: GitWorld): Run {
     currentPlan: { revision: "1", digest },
     topology: { revision: "1", digest },
     phase: "P1",
-    g2: { state: "pending" },
     baseSha: world.baseSha,
     budget: { revision: "1", digest },
     runEpoch: 0,

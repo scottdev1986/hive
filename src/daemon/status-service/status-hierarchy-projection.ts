@@ -102,7 +102,6 @@ function projectRun(
     phase: presentField(run.phase),
     lifecycle: presentField(run.lifecycle),
     topologyShape: shape,
-    g2: presentField(run.g2),
     topologySource: presentField("hierarchy"),
   });
 }
@@ -310,7 +309,6 @@ function projectAllAbsent(): HierarchySnapshotEntity[] {
     phase: absentField("unmeasured", "no Run record supplied"),
     lifecycle: absentField("unmeasured", "no Run record supplied"),
     topologyShape: absentField("unmeasured", "no TopologyDecision supplied"),
-    g2: absentField("unmeasured", "no Run record supplied"),
     topologySource: absentField(
       "unmeasured",
       "no hierarchy or legacy source supplied",

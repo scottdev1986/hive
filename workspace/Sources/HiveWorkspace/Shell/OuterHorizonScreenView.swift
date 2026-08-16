@@ -272,13 +272,13 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
     private func runCards() -> [CardView] {
         guard !horizon.snapshot.runs.isEmpty else {
             return [collectionCard(
-                title: "Run control & gates",
+                title: "Run control",
                 rows: [ShellScreenFact(
                     label: "Run entity",
                     value: "absent — no hierarchy-run entity was observed")])]
         }
         return horizon.snapshot.runs.map { run in
-            collectionCard(title: "Run control & gates", rows: [
+            collectionCard(title: "Run control", rows: [
                 ShellScreenFact(label: "Run", value: "\(run.runID) · revision \(run.entityRevision)"),
                 ShellScreenFact(label: "Root", value: Self.field(run.root) {
                     "queen root · \($0.instanceId) · \($0.repo)"
@@ -287,7 +287,6 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
                 ShellScreenFact(label: "Lifecycle", value: Self.field(run.lifecycle) { $0.rawValue }),
                 ShellScreenFact(label: "Topology", value: Self.field(run.topologyShape) { $0.rawValue }),
                 ShellScreenFact(label: "Topology source", value: Self.field(run.topologySource) { $0.rawValue }),
-                ShellScreenFact(label: "G2", value: Self.field(run.g2, render: Self.g2)),
             ])
         }
     }
@@ -496,14 +495,6 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
         case .present(let value): return render(value)
         case .absent(let reason, let detail):
             return "absent · \(reason.rawValue) — \(detail)"
-        }
-    }
-
-    private static func g2(_ state: HierarchyRun.G2State) -> String {
-        switch state {
-        case .pending: return "pending"
-        case .approved(let approval):
-            return "approved · \(approval.decider) · \(approval.runStageSha)"
         }
     }
 

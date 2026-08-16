@@ -6,7 +6,6 @@ import {
   MutationExpectationSchema,
   mutationIntentSchema,
   mutationResultSchema,
-  RunControlBodySchema,
   RunControlIntentSchema,
 } from "../../src/schemas/run-control";
 
@@ -93,7 +92,6 @@ describe("mutation envelope wire contract (shared with the Swift client)", () =>
 
 describe("run-control bodies name exact facts", () => {
   const runId = "run_018f4f5e-0000-7000-8000-000000000001";
-  const digest = `sha256:${"a".repeat(64)}`;
 
   test("a run-control intent must fence on revision AND epoch", () => {
     const intent = {
@@ -117,17 +115,5 @@ describe("run-control bodies name exact facts", () => {
         expected: { kind: "revision-and-epoch", revision: "1", epoch: "0" },
       }).success,
     ).toBe(true);
-  });
-
-  test("a G2 approval of a branch name rather than a SHA is rejected", () => {
-    const parsed = RunControlBodySchema.safeParse({
-      operation: "approve-g2",
-      runId,
-      runStageSha: "refs/hive/run-stage",
-      digest,
-      evidenceArtifactRefs: [],
-      targetMainBase: "f".repeat(40),
-    });
-    expect(parsed.success).toBe(false);
   });
 });

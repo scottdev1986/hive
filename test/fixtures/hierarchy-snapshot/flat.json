@@ -28,12 +28,6 @@
         "availability": "present",
         "value": "flat"
       },
-      "g2": {
-        "availability": "present",
-        "value": {
-          "state": "pending"
-        }
-      },
       "topologySource": {
         "availability": "present",
         "value": "hierarchy"

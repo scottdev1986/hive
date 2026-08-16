@@ -290,7 +290,6 @@ describe("hierarchy-snapshot-projection", () => {
     const run = parseRun(soleKind(present, HIERARCHY_ENTITY_KINDS.run));
     expect(run.phase.availability).toBe("present");
     expect(run.lifecycle.availability).toBe("present");
-    expect(run.g2.availability).toBe("present");
     expect(run.root.availability).toBe("present");
     expect(run.topologyShape.availability).toBe("present");
 
@@ -324,7 +323,6 @@ describe("hierarchy-snapshot-projection", () => {
       absentRun.phase,
       absentRun.lifecycle,
       absentRun.topologyShape,
-      absentRun.g2,
       absentRun.topologySource,
     ] as const) {
       expect(field.availability).toBe("absent");
@@ -404,15 +402,15 @@ describe("hierarchy-snapshot-projection", () => {
     }
     expect(populated.runDecision.value).toEqual([
       {
-        idempotencyKey: "approve-g2-once",
+        idempotencyKey: "run-pause-once",
         intentDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
         outcome: { status: "accepted" },
         observedRevision: "3",
       },
       {
-        idempotencyKey: "approve-g2-again",
+        idempotencyKey: "run-pause-again",
         intentDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
-        outcome: { status: "rejected", failureCode: "gate-already-decided" },
+        outcome: { status: "rejected", failureCode: "lifecycle-invalid" },
         observedRevision: "3",
       },
     ]);
@@ -474,19 +472,6 @@ describe("hierarchy-snapshot-projection", () => {
     expect(new Set(ABSENCE_REASONS)).toEqual(
       new Set(["unmeasured", "source-absent"]),
     );
-  });
-
-  test("the G2 present projection carries exact bound facts, not free-form prose", () => {
-    const run = parseRun(
-      soleKind(
-        projectHierarchyEntities(SCENARIO_BUILDERS.direct()),
-        HIERARCHY_ENTITY_KINDS.run,
-      ),
-    );
-    expect(run.g2.availability).toBe("present");
-    if (run.g2.availability === "present") {
-      expect(run.g2.value.state).toBe("pending");
-    }
   });
 
   test("lead-loss keeps terminated lead visible and crew parented under it", () => {

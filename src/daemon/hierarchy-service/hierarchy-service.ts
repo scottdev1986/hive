@@ -93,13 +93,8 @@ export class HierarchyService {
     this.machineMutations = options.machineMutations;
     this.onLanded = options.onLanded;
     this.boundaryWriter = options.writeBoundaryCheckpoint;
-    this.runControl = new RunControl(this.store, (accepted, after) => {
-      this.recordBoundary(
-        accepted.body.operation === "approve-g2"
-          ? "gate-transition"
-          : "run-control",
-        after,
-      );
+    this.runControl = new RunControl(this.store, (_accepted, after) => {
+      this.recordBoundary("run-control", after);
     });
   }
 

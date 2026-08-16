@@ -188,7 +188,6 @@ public struct HierarchyRunProjection: Codable, Equatable, Sendable {
     public let phase: HierarchyProjectionField<HierarchyRun.Phase>
     public let lifecycle: HierarchyProjectionField<HierarchyRun.Lifecycle>
     public let topologyShape: HierarchyProjectionField<HierarchyTopologyDecision.Shape>
-    public let g2: HierarchyProjectionField<HierarchyRun.G2State>
     public let topologySource: HierarchyProjectionField<HierarchyTopologySource>
 
     private enum CodingKeys: String, CodingKey {
@@ -199,7 +198,6 @@ public struct HierarchyRunProjection: Codable, Equatable, Sendable {
         case phase
         case lifecycle
         case topologyShape
-        case g2
         case topologySource
     }
 
@@ -217,8 +215,6 @@ public struct HierarchyRunProjection: Codable, Equatable, Sendable {
         topologyShape = try container.decode(
             HierarchyProjectionField<HierarchyTopologyDecision.Shape>.self,
             forKey: .topologyShape)
-        g2 = try container.decode(
-            HierarchyProjectionField<HierarchyRun.G2State>.self, forKey: .g2)
         topologySource = try container.decode(
             HierarchyProjectionField<HierarchyTopologySource>.self, forKey: .topologySource)
     }

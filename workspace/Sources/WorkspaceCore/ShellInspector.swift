@@ -340,7 +340,6 @@ public enum ShellInspectorPresenter {
             facts.append(InspectorFact(label: "Run revision", value: run.entityRevision))
             appendRawField(run.phase, label: "Phase", into: &facts)
             appendRawField(run.lifecycle, label: "Lifecycle", into: &facts)
-            appendG2Field(run.g2, into: &facts)
         }
 
         if let node = inputs.node {
@@ -896,22 +895,6 @@ public enum ShellInspectorPresenter {
             facts.append(InspectorFact(
                 label: label,
                 value: "\(reason.rawValue): \(detail)"))
-        }
-    }
-
-    private static func appendG2Field(
-        _ field: HierarchyProjectionField<HierarchyRun.G2State>,
-        into facts: inout [InspectorFact]
-    ) {
-        switch field {
-        case .present(.pending):
-            facts.append(InspectorFact(label: "G2", value: "pending"))
-        case .present(.approved(let approval)):
-            facts.append(InspectorFact(
-                label: "G2",
-                value: "approved · \(approval.decider) · \(shortDigest(approval.digest))"))
-        case .absent(let reason, let detail):
-            facts.append(InspectorFact(label: "G2", value: "\(reason.rawValue): \(detail)"))
         }
     }
 

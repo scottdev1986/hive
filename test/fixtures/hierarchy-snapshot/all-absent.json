@@ -27,11 +27,6 @@
         "reason": "unmeasured",
         "detail": "no TopologyDecision supplied"
       },
-      "g2": {
-        "availability": "absent",
-        "reason": "unmeasured",
-        "detail": "no Run record supplied"
-      },
       "topologySource": {
         "availability": "absent",
         "reason": "unmeasured",

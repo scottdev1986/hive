@@ -1,4 +1,4 @@
-// `/run-control`: the engineer's gates and run lifecycle over HTTP. The
+// `/run-control`: create, delegate, and run lifecycle over HTTP. The
 // adversarial case is the queen approving the package she proposed, so the
 // role checks matter as much as the happy path.
 import { describe, expect, test } from "bun:test";
@@ -36,7 +36,6 @@ function harness(): HiveDaemon {
     currentPlan: ref,
     topology: ref,
     phase: "P1",
-    g2: { state: "pending" },
     baseSha: "f".repeat(40),
     budget: ref,
     runEpoch: 0,
@@ -83,7 +82,7 @@ describe("POST /run-control", () => {
     await daemon.stop();
   });
 
-  test("no agent role may decide a gate or move the run", async () => {
+  test("no agent role may move the run", async () => {
     const daemon = harness();
     for (const [subject, role] of [
       ["maya", "writer"],

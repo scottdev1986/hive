@@ -1,4 +1,4 @@
-// Run control: the engineer's G2 gate decision and pause/resume/abort. Every write goes through HierarchyStore, so the store's compare-and-swap and its three authority fences stay the only concurrency control. This module adds one rule on top: an approval binds exact facts, and it is refused the moment any bound fact no longer matches stored state. A refusal is a normal result carrying the state that stayed in force, not an exception. Pause and abort advance runEpoch, which is what makes in-flight work holding the prior epoch fail its fence check on the next authority-bearing write. Resume advances it again so work reconciled during the pause cannot resume under the epoch it was suspended at.
+// Run control: create, delegate, pause, resume, and abort. Every write goes through HierarchyStore, so the store's compare-and-swap and its three authority fences stay the only concurrency control. A refusal is a normal result carrying the state that stayed in force, not an exception. Pause and abort advance runEpoch, which is what makes in-flight work holding the prior epoch fail its fence check on the next authority-bearing write. Resume advances it again so work reconciled during the pause cannot resume under the epoch it was suspended at.
 
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -6,9 +6,7 @@ import {
   type RunLifecycle,
   RunSchema,
 } from "../../schemas/hierarchy-run";
-import type { IntegrationStage } from "../../schemas/integration-stage";
 import {
-  type ApproveG2Body,
   type MutationFailure,
   RUN_CONTROL_FAILURE_CODES,
   type RunControlIntent,
@@ -18,9 +16,9 @@ import {
   type RunDelegateBody,
   runDelegateWireRefusal,
 } from "../../schemas/run-control";
-import { HierarchyConflictError, HierarchyFenceError } from "./records";
 import type { HierarchyStore } from "../hierarchy-store";
 import { canonicalJson } from "../status-service/status-service";
+import { HierarchyConflictError, HierarchyFenceError } from "./records";
 
 /** Named seam for the promotion engine: what abort leaves behind is a run whose lifecycle is "aborted" and whose runEpoch has moved past every grant issued before it. Admission refuses on both counts. Run control only leaves that state — it does not police promotion. */
 export const ABORTED_RUN_ADMISSION_SEAM =
@@ -33,11 +31,6 @@ export class RunNotFoundError extends Error {
     super(`no run ${runId}`);
     this.name = "RunNotFoundError";
   }
-}
-
-export function runStageDigest(stage: IntegrationStage): string {
-  const hash = createHash("sha256").update(canonicalJson(stage), "utf8");
-  return `sha256:${hash.digest("hex")}`;
 }
 
 const nextRevision = (current: string): string =>
@@ -85,8 +78,8 @@ export class RunControl {
     ) => void,
   ) {}
 
-  /** Decide one intent. `decider` is the authenticated caller, never a body field, so a gate cannot be recorded under someone else's name. Reading the facts and committing the decision happen inside one store transaction: a gate that read a stage, then wrote its approval outside that boundary, would be approving whatever the stage was, not what it is. Throws only when the run does not exist; every other refusal comes back as a rejected result with the observed post-state. */
-  apply(intent: RunControlIntent, decider: string): RunControlResult {
+  /** Decide one intent. Reading the facts and committing the decision happen inside one store transaction. Throws only when the run does not exist; every other refusal comes back as a rejected result with the observed post-state. */
+  apply(intent: RunControlIntent, _decider: string): RunControlResult {
     const runId = intent.body.runId;
     if (intent.body.operation === "run-create") {
       return this.createRun(intent, intent.body);
@@ -102,7 +95,7 @@ export class RunControl {
         const epoch = this.store.getFences(runId)?.runEpoch ?? before.runEpoch;
         const refused = this.check(intent, before, epoch);
         if (refused !== null) return refused;
-        return this.commit(intent, before, epoch, decider);
+        return this.commit(intent, before, epoch);
       });
     } catch (error) {
       // A write that lost a race is a refusal the caller can act on, not a server fault: it comes back as a rejection carrying live state.
@@ -170,7 +163,6 @@ export class RunControl {
           currentPlan: ref(body.plan),
           topology: ref(body.topology),
           phase: "P0",
-          g2: { state: "pending" },
           baseSha: body.baseSha,
           budget: ref(body.budget),
           runEpoch: 0,
@@ -278,8 +270,6 @@ export class RunControl {
     }
 
     switch (intent.body.operation) {
-      case "approve-g2":
-        return this.checkG2(intent.body, run);
       case "run-pause":
         return admits(run, ["active"], "pause");
       case "run-resume":
@@ -337,97 +327,14 @@ export class RunControl {
     return null;
   }
 
-  private checkG2(body: ApproveG2Body, run: Run): MutationFailure | null {
-    const gate = admits(run, ["active"], "approve G2");
-    if (gate !== null) return gate;
-    if (run.g2.state !== "pending") {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateAlreadyDecided,
-        "G2 is already approved",
-      );
-    }
-    const stage =
-      this.store
-        .listIntegrationStages(run.runId)
-        .find((candidate) => candidate.kind === "run") ?? null;
-    if (stage === null) {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-        "run has no run-kind integration stage",
-      );
-    }
-    if (body.runStageSha !== stage.headSha) {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-        `run-stage SHA is ${stage.headSha}, not ${body.runStageSha}`,
-      );
-    }
-    const digest = runStageDigest(stage);
-    if (body.digest !== digest) {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-        `run-stage digest is ${digest}, not ${body.digest}`,
-      );
-    }
-    const evidence = stage.validation.evidenceArtifactRefs;
-    const sameEvidence =
-      body.evidenceArtifactRefs.length === evidence.length &&
-      body.evidenceArtifactRefs.every((ref, index) => ref === evidence[index]);
-    if (!sameEvidence) {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-        `stage evidence is [${evidence.join(", ")}], not [${body.evidenceArtifactRefs.join(", ")}]`,
-      );
-    }
-    if (body.targetMainBase !== run.baseSha) {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-        `target-main base is ${run.baseSha}, not ${body.targetMainBase}`,
-      );
-    }
-    return null;
-  }
-
-  /** Write the decision, or refuse it on a fact that moved since the check. Callers run this inside the same transaction as the check, so the recheck here is the last read of the stage before the approval is durable. */
+  /** Write the decision, or refuse it on a fact that moved since the check. Callers run this inside the same transaction as the check, so the recheck here is the last read of the stage before the write is durable. */
   private commit(
     intent: RunControlIntent,
     run: Run,
     epoch: number,
-    decider: string,
   ): MutationFailure | null {
-    const decidedAt = new Date().toISOString();
     const body = intent.body;
     switch (body.operation) {
-      case "approve-g2": {
-        // The stage digest covers the whole stage record, its revision included, so re-deriving it here refuses any stage write that landed between the check and this line.
-        const stage =
-          this.store
-            .listIntegrationStages(run.runId)
-            .find((candidate) => candidate.kind === "run") ?? null;
-        if (stage === null || runStageDigest(stage) !== body.digest) {
-          return fail(
-            RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-            "run stage changed while the approval was being decided",
-          );
-        }
-        this.store.putRun(
-          {
-            ...run,
-            revision: nextRevision(run.revision),
-            g2: {
-              state: "approved",
-              decider,
-              decidedAt,
-              runStageSha: body.runStageSha,
-              digest: body.digest,
-              evidenceArtifactRefs: body.evidenceArtifactRefs,
-              targetMainBase: body.targetMainBase,
-            },
-          },
-          run.revision,
-        );
-        return null;
-      }
       case "run-pause":
         this.transition(run, epoch, "paused");
         return null;

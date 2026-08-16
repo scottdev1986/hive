@@ -20,7 +20,7 @@ export const ArtifactRefIdSchema = domainUuidV7Schema("art");
 export const RevisionSchema = DecimalUint64Schema;
 export type Revision = z.infer<typeof RevisionSchema>;
 
-// Every revisioned record binds a content digest so a G2 approval names exact bytes, never a floating "latest" pointer.
+// Every revisioned record binds a content digest so later records name exact bytes, never a floating "latest" pointer.
 export const DigestSchema = TaggedSha256Schema;
 export type Digest = z.infer<typeof DigestSchema>;
 
@@ -29,7 +29,7 @@ export const CreatedAtSchema = Rfc3339UtcMillisecondsSchema;
 export const GitShaSchema = z.string().regex(/^[0-9a-f]{40}$/);
 export type GitSha = z.infer<typeof GitShaSchema>;
 
-// The revision-binding primitive: names one exact revision by its digest so what a Run points at, and what the G2 gate approves, can never be re-described in free-form prose.
+// The revision-binding primitive: names one exact revision by its digest so what a Run points at can never be re-described in free-form prose.
 export const RevisionRefSchema = z.strictObject({
   revision: RevisionSchema,
   digest: DigestSchema,

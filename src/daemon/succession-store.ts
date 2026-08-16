@@ -1,13 +1,15 @@
-import type { DatabaseHost } from "../shared/database-host";
 import {
+  digestCheckpointContent,
   digestRunCheckpoint,
   type QueenSuccession,
   QueenSuccessionSchema,
   type RunCheckpoint,
-  RunCheckpointInputSchema,
   type RunCheckpointInput,
+  RunCheckpointInputSchema,
   RunCheckpointSchema,
 } from "../schemas/run-checkpoint";
+import type { DatabaseHost } from "../shared/database-host";
+import { liftStoredSpec } from "./hierarchy-store";
 
 /** What loading the latest checkpoint can find. A corrupt checkpoint is a first-class outcome — the successor converges without it and the contradiction stays on the record — so it is never thrown away here. */
 export type CheckpointLoad =
@@ -71,6 +73,126 @@ function migrateBootCapsuleDigest(db: DatabaseHost): void {
       .query("UPDATE queen_successions SET document = ? WHERE rowid = ?")
       .run(JSON.stringify(document), row.rowid);
   }
+}
+
+type StoredCheckpointRow = {
+  instanceId: string;
+  revision: string;
+  document: string;
+};
+
+/** Older checkpoints named the spec `approvedSpec` and stored a leftover `gates` object. The current schema rejects both, so a leftover row loads as corrupt. Rewrite the hierarchy onto `spec`, drop the leftover keys, and recompute the digest so the row verifies. Point any succession that named the old digest at the new one. */
+function migrateCheckpointSpec(db: DatabaseHost): void {
+  const rows = db.database
+    .query(
+      `SELECT instanceId, revision, document FROM run_checkpoints
+       WHERE document LIKE '%"approvedSpec"%'
+          OR document LIKE '%"g1"%'
+          OR document LIKE '%"g2"%'
+          OR document LIKE '%"gates"%'
+          OR document LIKE '%"gate-transition"%'`,
+    )
+    .all() as StoredCheckpointRow[];
+  for (const row of rows) {
+    const document = parseJsonObject(row.document);
+    if (document === null) continue;
+    let changed = false;
+    if (document.reason === "gate-transition") {
+      document.reason = "run-control";
+      changed = true;
+    }
+    const hierarchy = asRecord(document.hierarchy);
+    if (hierarchy !== null && typeof hierarchy.runId === "string") {
+      const lifted = liftStoredSpec(hierarchy, db, hierarchy.runId);
+      const hadGates = "gates" in hierarchy;
+      delete hierarchy.gates;
+      if (hierarchy.spec !== null && hierarchy.spec !== undefined) {
+        changed = changed || lifted || hadGates;
+      }
+    }
+    if (!changed) continue;
+    const previousDigest = document.digest;
+    const unsigned = { ...document };
+    delete unsigned.digest;
+    document.digest = digestCheckpointContent(unsigned);
+    db.database
+      .query(
+        `UPDATE run_checkpoints SET document = ?
+         WHERE instanceId = ? AND revision = ?`,
+      )
+      .run(JSON.stringify(document), row.instanceId, row.revision);
+    if (
+      typeof previousDigest === "string" &&
+      previousDigest !== document.digest
+    ) {
+      retargetSuccessionDigests(
+        db,
+        row.instanceId,
+        row.revision,
+        previousDigest,
+        document.digest,
+      );
+    }
+  }
+}
+
+function retargetSuccessionDigests(
+  db: DatabaseHost,
+  instanceId: string,
+  checkpointRevision: string,
+  from: string,
+  to: string,
+): void {
+  const rows = db.database
+    .query(
+      `SELECT revision, document FROM queen_successions WHERE instanceId = ?`,
+    )
+    .all(instanceId) as { revision: string; document: string }[];
+  for (const row of rows) {
+    const document = parseJsonObject(row.document);
+    if (document === null) continue;
+    let changed = false;
+    const proof = asRecord(document.proof);
+    const ref = proof === null ? null : asRecord(proof.ref);
+    if (
+      proof?.kind === "checkpoint" &&
+      ref !== null &&
+      ref.revision === checkpointRevision &&
+      ref.digest === from
+    ) {
+      ref.digest = to;
+      changed = true;
+    }
+    const attestation = asRecord(document.attestation);
+    if (attestation !== null && attestation.checkpointDigest === from) {
+      attestation.checkpointDigest = to;
+      changed = true;
+    }
+    if (!changed) continue;
+    db.database
+      .query(
+        `UPDATE queen_successions SET document = ?
+         WHERE instanceId = ? AND revision = ?`,
+      )
+      .run(JSON.stringify(document), instanceId, row.revision);
+  }
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  return asRecord(parsed);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
 }
 
 function latestRow(
@@ -170,6 +292,7 @@ export class SuccessionStore {
       )
     `);
     migrateBootCapsuleDigest(db);
+    migrateCheckpointSpec(db);
   }
 
   /** Run a load-and-decide and its record write as one atomic step. The proof a succession declares names the checkpoint the same transaction loaded — without the shared boundary a concurrent checkpoint write could supersede it in between. */

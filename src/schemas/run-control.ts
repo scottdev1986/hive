@@ -1,8 +1,7 @@
-// The typed run-control wire: the G2 gate decision and pause/resume/abort. The envelope half mirrors workspace/Sources/WorkspaceCore/MutationEnvelope.swift field for field, including its JSON key names, so one intent encoded by the Swift client decodes here and one result encoded here decodes there. Body and observed post-state are generic on both sides; run control binds them to the operations below and to the Run record. The gate body names exact facts — SHA, digest, evidence, target-main base — because an approval that named a floating "latest" pointer would authorize whatever landed after the engineer looked.
+// The typed run-control wire: create, delegate, pause, resume, and abort. The envelope half mirrors workspace/Sources/WorkspaceCore/MutationEnvelope.swift field for field, including its JSON key names, so one intent encoded by the Swift client decodes here and one result encoded here decodes there. Body and observed post-state are generic on both sides; run control binds them to the operations below and to the Run record.
 
 import { z } from "zod";
 import {
-  ArtifactRefIdSchema,
   DigestSchema,
   GitShaSchema,
   RevisionSchema,
@@ -86,16 +85,6 @@ export const mutationResultSchema = <
     observedPostState: postState,
   });
 
-export const ApproveG2BodySchema = z.strictObject({
-  operation: z.literal("approve-g2"),
-  runId: RunIdSchema,
-  runStageSha: GitShaSchema,
-  digest: DigestSchema,
-  evidenceArtifactRefs: z.array(ArtifactRefIdSchema),
-  targetMainBase: GitShaSchema,
-});
-export type ApproveG2Body = z.infer<typeof ApproveG2BodySchema>;
-
 /** The operation that starts a run, and the only one whose run does not exist yet. It carries the whole P0 package as records rather than references, because there is nothing stored to refer to: the daemon writes the SpecRevision, PlanRevision, TopologyDecision and RunBudget it is given, then the Run pointing at them, then the run's root node. Nothing here is defaulted. A run whose package the daemon invented would put every later fence — budget, scope, gate — on facts nobody chose. The Run points at every record in this package, spec included, so spawn admission fences on the exact revisions the caller named here and never on a floating "latest" pointer. */
 export const RunCreateBodySchema = z.strictObject({
   operation: z.literal("run-create"),
@@ -130,7 +119,6 @@ const RunLifecycleBodySchema = <Operation extends string>(
   });
 
 export const RunControlBodySchema = z.discriminatedUnion("operation", [
-  ApproveG2BodySchema,
   RunCreateBodySchema,
   RunDelegateBodySchema,
   RunLifecycleBodySchema("run-pause"),
@@ -226,8 +214,6 @@ export const RUN_CONTROL_FAILURE_CODES = {
   revisionConflict: "revision-conflict",
   /** The expected epoch is not the run's current epoch. */
   epochConflict: "epoch-conflict",
-  gateFactDrift: "gate-fact-drift",
-  gateAlreadyDecided: "gate-already-decided",
   lifecycleInvalid: "lifecycle-invalid",
   idempotencyKeyReused: "idempotency-key-reused",
   runAlreadyExists: "run-already-exists",

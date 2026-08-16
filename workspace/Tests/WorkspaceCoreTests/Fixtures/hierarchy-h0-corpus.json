@@ -234,9 +234,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g2": {
-          "state": "pending"
-        },
         "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "budget": {
           "revision": "1",
@@ -494,9 +491,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g2": {
-          "state": "pending"
-        },
         "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "budget": {
           "revision": "1",
@@ -745,9 +739,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g2": {
-          "state": "pending"
-        },
         "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "budget": {
           "revision": "1",
@@ -1011,9 +1002,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g2": {
-          "state": "pending"
-        },
         "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "budget": {
           "revision": "1",
@@ -1265,9 +1253,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g2": {
-          "state": "pending"
-        },
         "baseSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "budget": {
           "revision": "1",

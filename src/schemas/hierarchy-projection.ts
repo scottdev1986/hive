@@ -21,7 +21,6 @@ import {
 import {
   BudgetDimensionSchema,
   BudgetLimitSchema,
-  G2StateSchema,
   RunLifecycleSchema,
   RunPhaseSchema,
   TopologyShapeSchema,
@@ -100,7 +99,6 @@ export const HierarchyRunProjectionSchema = z.strictObject({
   phase: availableFieldSchema(RunPhaseSchema),
   lifecycle: availableFieldSchema(RunLifecycleSchema),
   topologyShape: availableFieldSchema(TopologyShapeSchema),
-  g2: availableFieldSchema(G2StateSchema),
   /** How this topology was produced: a TopologyDecision on a hierarchy Run is the only producer there is. The vocabulary lists exactly that one, because a value nothing emits is a claim the daemon cannot back — a second source arrives with a schemaVersion bump, not with a name reserved in advance. */
   topologySource: availableFieldSchema(z.enum(["hierarchy"])),
 });

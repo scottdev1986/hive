@@ -742,7 +742,6 @@ function hierarchyH0() {
     currentPlan: revisionRef,
     topology: revisionRef,
     phase: "P1",
-    g2: { state: "pending" },
     baseSha: gitSha,
     budget: revisionRef,
     runEpoch: 1,

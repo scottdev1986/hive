@@ -96,7 +96,6 @@ beforeEach(() => {
       currentPlan: { revision: "1", digest },
       topology: { revision: "1", digest },
       phase: "P2",
-      g2: { state: "pending" },
       baseSha: "c".repeat(40),
       budget: { revision: "1", digest },
       runEpoch: 0,

@@ -734,7 +734,6 @@ describe("recoverSubtreeManifests", () => {
         currentPlan: { revision: "1", digest: recDigest },
         topology: { revision: "1", digest: recDigest },
         phase: "P2",
-        g2: { state: "pending" },
         baseSha: recGitSha,
         budget: { revision: "1", digest: recDigest },
         runEpoch: 0,

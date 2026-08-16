@@ -424,7 +424,6 @@ describe("the snapshot carries the hierarchy the store holds", () => {
         currentPlan: ref,
         topology: ref,
         phase: "P1",
-        g2: { state: "pending" },
         baseSha: "f".repeat(40),
         budget: ref,
         runEpoch: 0,

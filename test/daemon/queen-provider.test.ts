@@ -366,7 +366,7 @@ describe("queen provider wire fixtures", () => {
 
     assertOpaque(); // idle, nothing in flight
     const checkpoint = succession.writeRootCheckpoint({
-      reason: "gate-transition",
+      reason: "run-control",
       contextUsage: {
         kind: "measured",
         residentTokens: 10_000,

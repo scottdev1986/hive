@@ -152,9 +152,9 @@ import {
   verificationCommandDeclared,
 } from "./landing/project-gate";
 import { repoMemoryCitesItem } from "./messaging/ruling-record";
-import { promoteVerificationToStandards } from "./spawn/agent-standards";
 import { registerAgentControlTools } from "./recovery/agent-control-tools";
 import type { ModelControlSnapshot } from "./routing-service/model-control-snapshot";
+import { promoteVerificationToStandards } from "./spawn/agent-standards";
 
 export type { Approval } from "./approval-service/approval-service";
 export {
@@ -207,6 +207,7 @@ import {
   DaemonMaintenance,
   type MaintenanceTask,
 } from "./lifecycle/maintenance";
+import { liveRunControlEndpoint } from "./live-run-control/live-run-control-endpoint";
 import { ManifestJournal } from "./manifest-journal";
 import { MemoryRetentionService } from "./memory-retention-service/memory-retention-service";
 import { registerMailTools, registerMessagingTools } from "./messaging/tools";
@@ -238,7 +239,6 @@ import {
   runVmStat,
 } from "./resource-management/resources";
 import { RoutingService } from "./routing-service/routing-service";
-import { liveRunControlEndpoint } from "./live-run-control/live-run-control-endpoint";
 import { attachGrantEndpoint as attachGrantRoute } from "./session-host/attach-grant-endpoint";
 import {
   HiveTerminalHostAdapter,
@@ -3498,7 +3498,7 @@ export class HiveDaemon {
       : json({ run: receipt });
   }
 
-  /** `POST /run-control` — the Run screen's G2 decision and pause, resume, and abort, as one typed intent in and one typed result out. User-only, like autonomy and routing policy: G2 is the engineer's gate on work the queen proposed, so an agent deciding it would be approving its own proposal. A refused intent is a 200 carrying a rejected outcome and the state that stayed in force — the caller needs that state either way, and a transport error would hide it. */
+  /** `POST /run-control` — create, delegate, pause, resume, and abort, as one typed intent in and one typed result out. User-only, like autonomy and routing policy. A refused intent is a 200 carrying a rejected outcome and the state that stayed in force — the caller needs that state either way, and a transport error would hide it. */
   private async runControlEndpoint(request: Request): Promise<Response> {
     const authorized = this.authorizeRoute(
       request,

@@ -136,7 +136,6 @@ function validRun(overrides: Partial<Run> = {}): Run {
     currentPlan: { revision: "1", digest: planDigest },
     topology: { revision: "1", digest: topologyDigest },
     phase: "P1",
-    g2: { state: "pending" },
     baseSha,
     budget: { revision: "1", digest: budgetDigest },
     runEpoch: 0,

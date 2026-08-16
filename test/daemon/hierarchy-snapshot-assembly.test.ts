@@ -8,10 +8,10 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
-import { UNSUPPLIED_SOURCE_DETAILS } from "../../src/daemon/status-service/status-hierarchy-projection";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import { ManifestJournal } from "../../src/daemon/manifest-journal";
 import { StatusStore } from "../../src/daemon/status/status-store";
+import { UNSUPPLIED_SOURCE_DETAILS } from "../../src/daemon/status-service/status-hierarchy-projection";
 import type {
   AgentBinding,
   AgentBindingRef,
@@ -77,7 +77,6 @@ function run(): Run {
     currentPlan: ref,
     topology: ref,
     phase: "P2",
-    g2: { state: "pending" },
     baseSha: gitSha,
     budget: ref,
     runEpoch: 0,
@@ -207,12 +206,12 @@ function review(): Review {
 
 function runControlDecision(): RunControlDecision {
   return {
-    idempotencyKey: "approve-g2-once",
+    idempotencyKey: "run-pause-once",
     intentDigest: digest,
     result: {
       schemaVersion: 1,
-      intentId: "intent-approve-g2",
-      operationId: "operation-approve-g2",
+      intentId: "intent-run-pause",
+      operationId: "operation-run-pause",
       postStateToken: { kind: "revision-and-epoch", revision: "1", epoch: "0" },
       outcome: { status: "accepted" },
       observedPostState: run(),
@@ -368,7 +367,7 @@ describe("the hierarchy snapshot assembler", () => {
       availability: "present",
       value: [
         {
-          idempotencyKey: "approve-g2-once",
+          idempotencyKey: "run-pause-once",
           intentDigest: digest,
           outcome: { status: "accepted" },
           observedRevision: "1",

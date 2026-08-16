@@ -1,16 +1,17 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
+  ABORTED_RUN_ADMISSION_SEAM,
+  RunControl,
+  RunNotFoundError,
+} from "../../src/daemon/hierarchy-service/hierarchy-run-control";
+import {
   HierarchyConflictError,
   HierarchyFenceError,
 } from "../../src/daemon/hierarchy-service/records";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
-import {
-  ABORTED_RUN_ADMISSION_SEAM,
-  RunControl,
-  RunNotFoundError,
-  runStageDigest,
-} from "../../src/daemon/hierarchy-service/hierarchy-run-control";
+import { SpawnAdmission } from "../../src/daemon/spawn/admission";
+import { ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import type { DelegationGrant } from "../../src/schemas/hierarchy-node";
 import type {
   PlanRevision,
@@ -28,8 +29,6 @@ import {
   RunControlIntentSchema,
 } from "../../src/schemas/run-control";
 import type { TaskDetail } from "../../src/schemas/task-detail";
-import { SpawnAdmission } from "../../src/daemon/spawn/admission";
-import { ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 
 const runId = "run_018f4f5e-0000-7000-8000-000000000001";
 const taskId = "task_018f4f5e-0000-7000-8000-000000000001";
@@ -37,7 +36,6 @@ const nodeId = "node_018f4f5e-0000-7000-8000-000000000001";
 const stageId = "stage_018f4f5e-0000-7000-8000-000000000001";
 const grantId = "grant_018f4f5e-0000-7000-8000-000000000001";
 const artId = "art_018f4f5e-0000-7000-8000-000000000003";
-const otherArtId = "art_018f4f5e-0000-7000-8000-000000000004";
 const createdAt = "2026-07-30T12:00:00.000Z";
 
 // Each bound record carries its OWN digest, so a drift test that moves one
@@ -47,10 +45,8 @@ const specDigest = digestOf("a");
 const planDigest = digestOf("b");
 const topologyDigest = digestOf("c");
 const budgetDigest = digestOf("d");
-const strangeDigest = digestOf("e");
 const baseSha = "f".repeat(40);
 const headSha = "1".repeat(40);
-const otherSha = "2".repeat(40);
 
 const binding = { nodeId, agentId: "worker", generation: 1 };
 
@@ -64,7 +60,6 @@ function validRun(overrides: Partial<Run> = {}): Run {
     currentPlan: { revision: "1", digest: planDigest },
     topology: { revision: "1", digest: topologyDigest },
     phase: "P0",
-    g2: { state: "pending" },
     baseSha,
     budget: { revision: "1", digest: budgetDigest },
     runEpoch: 0,
@@ -277,17 +272,6 @@ function seed(store: HierarchyStore, run: Run = validRun()): void {
   );
 }
 
-const g2Body = (overrides: Partial<RunControlBody> = {}): RunControlBody =>
-  ({
-    operation: "approve-g2",
-    runId,
-    runStageSha: headSha,
-    digest: runStageDigest(validStage()),
-    evidenceArtifactRefs: [artId],
-    targetMainBase: baseSha,
-    ...overrides,
-  }) as RunControlBody;
-
 // The key is derived from what the intent is fenced on, so two identical
 // intents replay under one key while a genuinely different attempt spends its
 // own — the same discipline a client is expected to keep.
@@ -316,101 +300,6 @@ beforeEach(() => {
 
 afterEach(() => {
   db.close();
-});
-
-describe("G2 binds the exact assembled candidate", () => {
-  test("the exact SHA, digest, evidence, and base are approved", () => {
-    seed(store);
-    const result = control.apply(intent(g2Body()), "engineer");
-
-    expect(result.outcome.status).toBe("accepted");
-    expect(store.getRun(runId)?.g2).toEqual({
-      state: "approved",
-      decider: "engineer",
-      decidedAt: expect.any(String),
-      runStageSha: headSha,
-      digest: runStageDigest(validStage()),
-      evidenceArtifactRefs: [artId],
-      targetMainBase: baseSha,
-    });
-  });
-
-  for (const drift of [
-    { fact: "run-stage SHA", body: { runStageSha: otherSha } },
-    { fact: "run-stage digest", body: { digest: strangeDigest } },
-    { fact: "stage evidence", body: { evidenceArtifactRefs: [otherArtId] } },
-    { fact: "target-main base", body: { targetMainBase: otherSha } },
-  ]) {
-    test(`a drifted ${drift.fact} is refused and nothing is approved`, () => {
-      seed(store);
-      const result = control.apply(intent(g2Body(drift.body)), "engineer");
-
-      expect(result.outcome).toEqual({
-        status: "rejected",
-        failure: {
-          code: RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-          message: expect.stringContaining(drift.fact),
-        },
-      });
-      expect(store.getRun(runId)?.g2.state).toBe("pending");
-    });
-  }
-
-  test("an approval of a stage that has since moved is refused", () => {
-    seed(store);
-    const approvalOfTheStageAsRead = g2Body();
-    store.putIntegrationStage(
-      validStage({ revision: "2", queueHighWater: 1 }),
-      "1",
-    );
-
-    const result = control.apply(intent(approvalOfTheStageAsRead), "engineer");
-
-    expect(result.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-        message: expect.stringContaining("run-stage digest"),
-      },
-    });
-  });
-
-  test("a stage that moves after the check is caught before the write", () => {
-    // The stage is CAS-moved on the second read — the one the commit makes —
-    // so the approval is decided on a stage that is already gone unless the
-    // check and the write share a boundary.
-    class StageMovesMidDecision extends HierarchyStore {
-      armed = false;
-      moved = false;
-      listIntegrationStages(id: string) {
-        const asRead = super.listIntegrationStages(id);
-        if (this.armed && !this.moved) {
-          this.moved = true;
-          super.putIntegrationStage(
-            validStage({ revision: "2", queueHighWater: 1 }),
-            "1",
-          );
-        }
-        return asRead;
-      }
-    }
-    const racing = new StageMovesMidDecision(db);
-    const racingControl = new RunControl(racing);
-    seed(racing);
-    racing.armed = true;
-
-    const result = racingControl.apply(intent(g2Body()), "engineer");
-
-    expect(racing.moved).toBe(true);
-    expect(result.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-        message: expect.stringContaining("changed while the approval"),
-      },
-    });
-    expect(racing.getRun(runId)?.g2.state).toBe("pending");
-  });
 });
 
 describe("pause, resume, and abort move the run epoch", () => {
@@ -506,22 +395,25 @@ describe("pause, resume, and abort move the run epoch", () => {
 describe("every result carries what the client needs to continue", () => {
   test("an accepted result carries operation id, post-state token, and state", () => {
     seed(store);
-    const result = control.apply(intent(g2Body()), "engineer");
+    const result = control.apply(
+      intent({ operation: "run-pause", runId }),
+      "engineer",
+    );
 
-    expect(result.intentId).toBe("intent-approve-g2");
+    expect(result.intentId).toBe("intent-run-pause");
     expect(result.operationId.length).toBeGreaterThan(0);
     expect(result.postStateToken).toEqual({
       kind: "revision-and-epoch",
       revision: "2",
-      epoch: "0",
+      epoch: "1",
     });
-    expect(result.observedPostState.g2.state).toBe("approved");
+    expect(result.observedPostState.lifecycle).toBe("paused");
   });
 
   test("a rejected result carries the state that stayed in force", () => {
     seed(store);
     const result = control.apply(
-      intent(g2Body({ digest: strangeDigest })),
+      intent({ operation: "run-resume", runId }),
       "engineer",
     );
 
@@ -531,14 +423,14 @@ describe("every result carries what the client needs to continue", () => {
       revision: "1",
       epoch: "0",
     });
-    expect(result.observedPostState.g2.state).toBe("pending");
+    expect(result.observedPostState.lifecycle).toBe("active");
     expect(result.observedPostState.revision).toBe("1");
   });
 
   test("an intent naming no stored run has no state to observe", () => {
-    expect(() => control.apply(intent(g2Body()), "engineer")).toThrow(
-      RunNotFoundError,
-    );
+    expect(() =>
+      control.apply(intent({ operation: "run-pause", runId }), "engineer"),
+    ).toThrow(RunNotFoundError);
   });
 });
 
@@ -586,15 +478,15 @@ describe("an idempotency key buys exactly one decision", () => {
   test("a refusal spends no key: it is decided again from live state", () => {
     seed(store);
     const refused = control.apply(
-      intent(g2Body({ digest: strangeDigest })),
+      intent({ operation: "run-resume", runId }),
       "engineer",
     );
 
     expect(refused.outcome.status).toBe("rejected");
-    expect(store.getRunControlDecision("key-approve-g2-1-0")).toBeNull();
+    expect(store.getRunControlDecision("key-run-resume-1-0")).toBeNull();
     // Positive control: an accepted decision under the same shape IS recorded.
-    control.apply(intent(g2Body()), "engineer");
-    expect(store.getRunControlDecision("key-approve-g2-1-0")).not.toBeNull();
+    control.apply(intent({ operation: "run-pause", runId }), "engineer");
+    expect(store.getRunControlDecision("key-run-pause-1-0")).not.toBeNull();
   });
 });
 
@@ -608,7 +500,10 @@ describe("a lost race is a refusal, never a server fault", () => {
     const racing = new LosesTheWrite(db);
     seed(store);
 
-    const result = new RunControl(racing).apply(intent(g2Body()), "engineer");
+    const result = new RunControl(racing).apply(
+      intent({ operation: "run-pause", runId }),
+      "engineer",
+    );
 
     expect(result.outcome).toEqual({
       status: "rejected",
@@ -618,7 +513,7 @@ describe("a lost race is a refusal, never a server fault", () => {
       },
     });
     expect(result.observedPostState.revision).toBe("1");
-    expect(store.getRun(runId)?.g2.state).toBe("pending");
+    expect(store.getRun(runId)?.lifecycle).toBe("active");
   });
 
   test("a failed transition leaves no half-applied epoch behind", () => {
@@ -739,7 +634,6 @@ describe("run-create", () => {
     control.apply(createIntent(), "engineer");
 
     const run = store.getRun(runId);
-    expect(run?.g2).toEqual({ state: "pending" });
     expect(run?.spec).toEqual({ revision: "1", digest: specDigest });
     // The root principal is not a spawned agent binding. Genesis records the
     // stable root seat without manufacturing an agents-table row.
@@ -1030,13 +924,9 @@ describe("run-delegate", () => {
   });
 });
 
-// THE POINT OF REMOVING G1. Before the removal every hierarchy spawn was
-// refused at admission — run.g1 was pending, nothing in the product could
-// approve it, and only a flat spawn without a runId worked. This walks the
-// whole path on real records: run-create writes the package, run-delegate
-// writes the node, task and grant, and a runId-carrying request is ADMITTED.
-// Nothing here is stubbed; the store is a real HierarchyStore over a real
-// database and preflight runs the real requireAuthority.
+// A runId-carrying spawn is admitted on real records: run-create writes the
+// package, run-delegate writes the node, task and grant, and preflight runs
+// the real requireAuthority. Nothing here is stubbed.
 describe("a runId-carrying spawn is admitted end to end", () => {
   const childNodeId = "node_018f4f5e-0000-7000-8000-0000000000c1";
   const childRef = {

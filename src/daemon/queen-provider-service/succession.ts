@@ -2,7 +2,6 @@
 
 import { createHash } from "node:crypto";
 import type { MailStore } from "../../mail-service/store";
-import type { DatabaseHost } from "../../shared/database-host";
 import { isLiveAgent, ORCHESTRATOR_NAME } from "../../schemas/agent";
 import { DigestSchema, type RevisionRef } from "../../schemas/hierarchy-ids";
 import type { Run } from "../../schemas/hierarchy-run";
@@ -29,12 +28,9 @@ import {
   type SuccessionProof,
   type SuccessionReason,
 } from "../../schemas/run-checkpoint";
-import {
-  type QueenBootCapsuleInput,
-  queenBootCapsules,
-} from "./queen-boot-capsule-service";
 import { workManifestRef } from "../../schemas/work-manifest";
 import { systemClock } from "../../shared/clock";
+import type { DatabaseHost } from "../../shared/database-host";
 import type { Capability } from "../authorization/authorization-service";
 import type { AgentStore } from "../database/agent-store";
 import type { RuntimeStore } from "../database/runtime-store";
@@ -45,6 +41,10 @@ import {
   SuccessionStateError,
   SuccessionStore,
 } from "../succession-store";
+import {
+  type QueenBootCapsuleInput,
+  queenBootCapsules,
+} from "./queen-boot-capsule-service";
 import {
   SUCCESSION_REQUIRED_READS,
   successionRequiredReadInstruction,
@@ -258,7 +258,6 @@ export class SuccessionService {
         plan: run.currentPlan,
         topology: run.topology,
         phase: run.phase,
-        gates: { g2: run.g2.state },
         budget: run.budget,
         tasks: tasks.map((task) => ({
           taskId: task.taskId,

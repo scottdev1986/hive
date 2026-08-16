@@ -336,7 +336,6 @@ describe("hive_run_bootstrap", () => {
 
     const store = new HierarchyStore(db);
     const run = required(store.getRun(bootstrap.runId), "run");
-    expect(run.g2).toEqual({ state: "pending" });
     const budget = required(
       store.getRunBudget(bootstrap.runId, run.budget.revision),
       "budget",

@@ -6,6 +6,7 @@ import {
   HierarchyValidationError,
 } from "../../src/daemon/hierarchy-service/records";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
+import { ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import type {
   DelegationGrant,
   GrantAction,
@@ -19,7 +20,6 @@ import type { IntegrationStage } from "../../src/schemas/integration-stage";
 import type { OwnershipTransferInput } from "../../src/schemas/ownership-transfer";
 import type { TaskDetail } from "../../src/schemas/task-detail";
 import { bumpCapabilityEpoch, bumpHierarchyRevision } from "./fence-state";
-import { ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 
 const runId = "run_018f4f5e-0000-7000-8000-000000000001";
 const taskId = "task_018f4f5e-0000-7000-8000-000000000001";
@@ -110,7 +110,6 @@ function validRun() {
     currentPlan: { revision: "1", digest },
     topology: { revision: "1", digest },
     phase: "P1" as const,
-    g2: { state: "pending" as const },
     baseSha: gitSha,
     budget: { revision: "1", digest },
     runEpoch: 0,
@@ -2840,13 +2839,13 @@ describe("run-root grant issuance", () => {
   });
 });
 
-describe("stored Runs from before the G1 removal", () => {
+describe("stored Runs that still name approvedSpec instead of spec", () => {
   let db: HiveDatabase;
 
-  // The pre-removal shape, written straight to the table so the row really
-  // carries what an existing instance holds. RunSchema is strict, so putRun
-  // could not produce this and a fixture in the current shape would prove
-  // nothing: "the migration ran" and "there was nothing to do" look identical.
+  // Written straight to the table so the row really carries what an existing
+  // instance holds. RunSchema is strict, so putRun could not produce this and
+  // a fixture in the current shape would prove nothing: "the rewrite ran" and
+  // "there was nothing to do" look identical.
   function insertLegacyRun(
     document: Record<string, unknown>,
     id = runId,
@@ -2857,6 +2856,31 @@ describe("stored Runs from before the G1 removal", () => {
          VALUES ('run', ?, ?, '1', ?)`,
       )
       .run(id, runId, JSON.stringify(document));
+  }
+
+  function insertLegacyDecision(observed: Record<string, unknown>): void {
+    const decision = {
+      idempotencyKey: `run-bootstrap:${runId}`,
+      intentDigest: digest,
+      result: {
+        schemaVersion: 1,
+        intentId: "intent-bootstrap",
+        operationId: "op-bootstrap",
+        postStateToken: {
+          kind: "revision-and-epoch",
+          revision: "1",
+          epoch: "0",
+        },
+        outcome: { status: "accepted" },
+        observedPostState: observed,
+      },
+    };
+    db.database
+      .query(
+        `INSERT INTO hierarchy_records (kind, id, runId, revision, document)
+         VALUES ('run-control-decision', ?, ?, '1', ?)`,
+      )
+      .run(decision.idempotencyKey, runId, JSON.stringify(decision));
   }
 
   function legacyRun(overrides: Record<string, unknown> = {}) {
@@ -2880,7 +2904,7 @@ describe("stored Runs from before the G1 removal", () => {
     db.close();
   });
 
-  test("a row the gate never approved is pointed at the spec the run states", () => {
+  test("a row with a null approvedSpec is pointed at the spec the run states", () => {
     insertLegacyRun(legacyRun());
     // Two revisions, so "the highest" is a choice the migration has to make
     // rather than the only row available.
@@ -2900,20 +2924,11 @@ describe("stored Runs from before the G1 removal", () => {
     expect(Object.keys(migrated ?? {})).not.toContain("approvedSpec");
   });
 
-  test("a row the gate did approve keeps the exact ref it approved", () => {
+  test("a row that already named a spec ref keeps that exact ref", () => {
     const approved = { revision: "1", digest };
     insertLegacyRun(
       legacyRun({
         approvedSpec: approved,
-        g1: {
-          state: "approved",
-          decider: "engineer",
-          decidedAt: createdAt,
-          spec: approved,
-          plan: { revision: "1", digest },
-          topology: { revision: "1", digest },
-          budget: { revision: "1", digest },
-        },
       }),
     );
     new HierarchyStore(db).putSpecRevision(
@@ -2949,5 +2964,30 @@ describe("stored Runs from before the G1 removal", () => {
     // Nothing to point the run at, so the row keeps its old shape and fails
     // its parse loudly instead of being rewritten onto an invented ref.
     expect(() => new HierarchyStore(db).getRun(runId)).toThrow();
+  });
+
+  test("a leftover decision snapshot is rewritten the same way", () => {
+    insertLegacyDecision(legacyRun());
+    new HierarchyStore(db).putSpecRevision(validSpec());
+
+    const [decision] = new HierarchyStore(db).listRunControlDecisions(runId);
+    expect(decision?.result.observedPostState.spec).toEqual({
+      revision: "1",
+      digest,
+    });
+    expect(Object.keys(decision?.result.observedPostState ?? {})).not.toContain(
+      "g1",
+    );
+    expect(Object.keys(decision?.result.observedPostState ?? {})).not.toContain(
+      "approvedSpec",
+    );
+  });
+
+  test("a leftover decision with no SpecRevision is left alone rather than guessed at", () => {
+    insertLegacyDecision(legacyRun());
+
+    expect(() =>
+      new HierarchyStore(db).listRunControlDecisions(runId),
+    ).toThrow();
   });
 });

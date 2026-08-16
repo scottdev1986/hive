@@ -122,8 +122,7 @@ final class ShellCommandRegistryTests: XCTestCase {
             ])
         XCTAssertEqual(
             Set(ShellMenu.run.commands), [
-                .reviewG2Candidate,
-                .approveG2Candidate, .pauseRun, .resumeRun,
+                .pauseRun, .resumeRun,
                 .redirectThroughQueen, .abortRun,
             ])
         XCTAssertEqual(
@@ -185,8 +184,7 @@ final class ShellCommandRegistryTests: XCTestCase {
                 .attachLiveTerminal, .detachTerminalView, .pauseProvider,
                 .resumeProvider, .stopProvider, .terminateTerminal,
                 .acknowledgeAttention, .closeAgent,
-                .reviewG2Candidate,
-                .approveG2Candidate, .pauseRun, .resumeRun,
+                .pauseRun, .resumeRun,
                 .redirectThroughQueen, .abortRun,
                 .newCuratedMemory, .reindexMemory,
                 .selectQueenClaude, .selectQueenCodex, .selectQueenGrok,

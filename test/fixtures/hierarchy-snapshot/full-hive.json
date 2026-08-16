@@ -28,12 +28,6 @@
         "availability": "present",
         "value": "full-hive"
       },
-      "g2": {
-        "availability": "present",
-        "value": {
-          "state": "pending"
-        }
-      },
       "topologySource": {
         "availability": "present",
         "value": "hierarchy"
@@ -394,7 +388,7 @@
         "availability": "present",
         "value": [
           {
-            "idempotencyKey": "approve-g2-once",
+            "idempotencyKey": "run-pause-once",
             "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "outcome": {
               "status": "accepted"
@@ -402,11 +396,11 @@
             "observedRevision": "3"
           },
           {
-            "idempotencyKey": "approve-g2-again",
+            "idempotencyKey": "run-pause-again",
             "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "outcome": {
               "status": "rejected",
-              "failureCode": "gate-already-decided"
+              "failureCode": "lifecycle-invalid"
             },
             "observedRevision": "3"
           }

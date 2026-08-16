@@ -29,12 +29,6 @@
         "reason": "unmeasured",
         "detail": "no TopologyDecision supplied for this run"
       },
-      "g2": {
-        "availability": "present",
-        "value": {
-          "state": "pending"
-        }
-      },
       "topologySource": {
         "availability": "present",
         "value": "hierarchy"

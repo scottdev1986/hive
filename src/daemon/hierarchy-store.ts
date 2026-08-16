@@ -64,41 +64,79 @@ interface HierarchyDatabase extends DatabaseHost {
   getAgentById(id: string): AgentRecord | null;
 }
 
-type StoredRunRow = { id: string; runId: string; document: string };
+type StoredHierarchyRow = {
+  id: string;
+  runId: string;
+  kind: string;
+  document: string;
+};
 
-/** Bring stored Runs onto the current RunSchema. Older Runs carried a `g1` gate object and an `approvedSpec` that only that gate could ever fill; RunSchema is strict and every read parses through it, so one leftover `g1` key makes getRun throw and a fresh daemon cannot open an existing instance at all. Each Run now names its SpecRevision directly as `spec`, so carry the approved ref over where the gate had run, and otherwise take the highest stored SpecRevision — the revision the run states, and the same one tasks created under it already cite. */
+/** Stored Runs, and the Run snapshot frozen on a run-control decision, must match RunSchema. Older rows named the spec `approvedSpec` and sometimes carried extra keys the current schema rejects. Point `spec` at that ref when present, otherwise the highest stored SpecRevision. Skip the write when there is no spec to point at rather than inventing one. */
 function migrateRunSpecRef(db: DatabaseHost): void {
   const rows = db.database
     .query(
-      `SELECT id, runId, document FROM hierarchy_records
-       WHERE kind = 'run' AND document LIKE '%"g1"%'`,
+      `SELECT id, runId, kind, document FROM hierarchy_records
+       WHERE kind IN ('run', 'run-control-decision')
+         AND (
+           document LIKE '%"approvedSpec"%'
+           OR document LIKE '%"g1"%'
+           OR document LIKE '%"g2"%'
+         )`,
     )
-    .all() as StoredRunRow[];
+    .all() as StoredHierarchyRow[];
   for (const row of rows) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.document);
-    } catch {
-      continue;
-    }
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      continue;
-    }
-    const document = parsed as Record<string, unknown>;
-    document.spec ??= document.approvedSpec ?? statedSpecRef(db, row.runId);
-    delete document.approvedSpec;
-    delete document.g1;
-    if (document.spec === null) continue;
+    const document = parseJsonObject(row.document);
+    if (document === null) continue;
+    const target =
+      row.kind === "run" ? document : observedPostStateRecord(document);
+    if (target === null) continue;
+    if (!liftStoredSpec(target, db, row.runId)) continue;
     db.database
       .query(
-        "UPDATE hierarchy_records SET document = ? WHERE kind = 'run' AND id = ?",
+        "UPDATE hierarchy_records SET document = ? WHERE kind = ? AND id = ?",
       )
-      .run(JSON.stringify(document), row.id);
+      .run(JSON.stringify(document), row.kind, row.id);
   }
+}
+
+/** True when leftover keys were stripped and `document` now has a spec. */
+export function liftStoredSpec(
+  document: Record<string, unknown>,
+  db: DatabaseHost,
+  runId: string,
+): boolean {
+  const hadLeftover =
+    "approvedSpec" in document || "g1" in document || "g2" in document;
+  if (!hadLeftover && document.spec != null) return false;
+  document.spec ??= document.approvedSpec ?? statedSpecRef(db, runId);
+  delete document.approvedSpec;
+  delete document.g1;
+  delete document.g2;
+  return document.spec !== null && document.spec !== undefined;
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  return asRecord(parsed);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function observedPostStateRecord(
+  decision: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const result = asRecord(decision.result);
+  return result === null ? null : asRecord(result.observedPostState);
 }
 
 /** The highest SpecRevision stored for a run, as a RevisionRef, or null when the run has none to point at. */

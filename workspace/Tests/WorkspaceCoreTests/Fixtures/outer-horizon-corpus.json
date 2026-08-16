@@ -37,12 +37,6 @@
                 "availability": "present",
                 "value": "full-hive"
               },
-              "g2": {
-                "availability": "present",
-                "value": {
-                  "state": "pending"
-                }
-              },
               "topologySource": {
                 "availability": "present",
                 "value": "hierarchy"
@@ -1103,7 +1097,7 @@
                 "availability": "present",
                 "value": [
                   {
-                    "idempotencyKey": "approve-g2-once",
+                    "idempotencyKey": "run-pause-once",
                     "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "outcome": {
                       "status": "accepted"
@@ -1111,11 +1105,11 @@
                     "observedRevision": "3"
                   },
                   {
-                    "idempotencyKey": "approve-g2-again",
+                    "idempotencyKey": "run-pause-again",
                     "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "outcome": {
                       "status": "rejected",
-                      "failureCode": "gate-already-decided"
+                      "failureCode": "lifecycle-invalid"
                     },
                     "observedRevision": "3"
                   }
@@ -1184,12 +1178,6 @@
               "topologyShape": {
                 "availability": "present",
                 "value": "direct"
-              },
-              "g2": {
-                "availability": "present",
-                "value": {
-                  "state": "pending"
-                }
               },
               "topologySource": {
                 "availability": "present",
@@ -1484,12 +1472,6 @@
               "topologyShape": {
                 "availability": "present",
                 "value": "flat"
-              },
-              "g2": {
-                "availability": "present",
-                "value": {
-                  "state": "pending"
-                }
               },
               "topologySource": {
                 "availability": "present",
@@ -1829,12 +1811,6 @@
                 "availability": "present",
                 "value": "full-hive"
               },
-              "g2": {
-                "availability": "present",
-                "value": {
-                  "state": "pending"
-                }
-              },
               "topologySource": {
                 "availability": "present",
                 "value": "hierarchy"
@@ -2171,12 +2147,6 @@
               "topologyShape": {
                 "availability": "present",
                 "value": "full-hive"
-              },
-              "g2": {
-                "availability": "present",
-                "value": {
-                  "state": "pending"
-                }
               },
               "topologySource": {
                 "availability": "present",
@@ -2567,11 +2537,6 @@
                 "reason": "unmeasured",
                 "detail": "no TopologyDecision supplied"
               },
-              "g2": {
-                "availability": "absent",
-                "reason": "unmeasured",
-                "detail": "no Run record supplied"
-              },
               "topologySource": {
                 "availability": "absent",
                 "reason": "unmeasured",
@@ -2689,12 +2654,6 @@
               "topologyShape": {
                 "availability": "present",
                 "value": "direct"
-              },
-              "g2": {
-                "availability": "present",
-                "value": {
-                  "state": "pending"
-                }
               },
               "topologySource": {
                 "availability": "present",

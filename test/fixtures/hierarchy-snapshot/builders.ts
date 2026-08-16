@@ -8,10 +8,10 @@ import type { HierarchyProjectionInput } from "../../../src/daemon/status-servic
 import type { HierarchyNode } from "../../../src/schemas/hierarchy-node";
 import type { StrandedManifestAttention } from "../../../src/schemas/hierarchy-projection";
 import {
+  BUDGET_DIMENSIONS,
   type Run,
   type RunBudget,
   type TopologyDecision,
-  BUDGET_DIMENSIONS,
 } from "../../../src/schemas/hierarchy-run";
 import type { Review } from "../../../src/schemas/integration-stage";
 import {
@@ -58,7 +58,6 @@ function baseRun(overrides: Partial<Run> = {}): Run {
     currentPlan: { revision: "1", digest: FIXTURE_DIGEST },
     topology: { revision: "1", digest: FIXTURE_DIGEST },
     phase: "P2",
-    g2: { state: "pending" },
     baseSha: FIXTURE_GIT_SHA,
     budget: { revision: "1", digest: FIXTURE_DIGEST },
     runEpoch: 0,
@@ -201,12 +200,12 @@ function runDecisions(): RunControlDecision[] {
     },
   });
   return [
-    decision("approve-g2-once", { status: "accepted" }),
-    decision("approve-g2-again", {
+    decision("run-pause-once", { status: "accepted" }),
+    decision("run-pause-again", {
       status: "rejected",
       failure: {
-        code: "gate-already-decided",
-        message: "G2 is already approved",
+        code: "lifecycle-invalid",
+        message: "run is already paused",
       },
     }),
   ];

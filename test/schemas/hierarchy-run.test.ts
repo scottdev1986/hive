@@ -139,7 +139,6 @@ const validRun = {
   currentPlan: { revision: "1", digest },
   topology: { revision: "1", digest },
   phase: "P1" as const,
-  g2: { state: "pending" as const },
   baseSha: gitSha,
   budget: { revision: "1", digest },
   runEpoch: 0,
@@ -309,37 +308,5 @@ describe("RunSchema", () => {
     expect(RunSchema.safeParse({ ...validRun, phase: "P7" }).success).toBe(
       false,
     );
-  });
-
-  test("G2 approval binds the exact run-stage SHA, digest, evidence, and target base", () => {
-    const approvedG2 = {
-      ...validRun,
-      g2: {
-        state: "approved" as const,
-        decider: "engineer",
-        decidedAt: createdAt,
-        runStageSha: gitSha,
-        digest,
-        evidenceArtifactRefs: [artId],
-        targetMainBase: gitSha,
-      },
-    };
-    expect(RunSchema.safeParse(approvedG2).success).toBe(true);
-  });
-
-  test("rejects a free-form, non-SHA targetMainBase on an approved G2", () => {
-    const broken = {
-      ...validRun,
-      g2: {
-        state: "approved" as const,
-        decider: "engineer",
-        decidedAt: createdAt,
-        runStageSha: gitSha,
-        digest,
-        evidenceArtifactRefs: [artId],
-        targetMainBase: "main",
-      },
-    };
-    expect(RunSchema.safeParse(broken).success).toBe(false);
   });
 });

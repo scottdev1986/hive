@@ -21,8 +21,6 @@ public enum ShellIntentBody: Codable, Equatable, Sendable {
     case terminateTerminal
     case acknowledgeAttention
     case closeAgentCascade
-    case reviewG2Candidate
-    case approveG2Candidate
     case pauseRun
     case resumeRun
     case redirectThroughQueen

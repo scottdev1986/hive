@@ -1,4 +1,4 @@
-// run-checkpoint.ts The RunCheckpoint and QueenSuccession records: how a replacement queen root learns what the prior root knew, and how the exchange is proven. A RunCheckpoint is written at semantic events (a task completes, a gate moves, run control acts, a promotion boundary passes), never on a timer or a percentage. It records state by revision and digest — exact pointers into the records the hierarchy already keeps — plus one short written layer. It never carries transcripts, raw tool output, message bodies, or file copies: a checkpoint that reproduced its sources would go stale the moment it was written, while a (revision, digest) ref can always be re-read and re-checked. A QueenSuccession records one root replacement: both generations, the checkpoint (or an explicit proof that none existed), the measured snapshot and replies the exchange was built from, every discrepancy found along the way, and the fresh root's attestation. Discrepancies are recorded, never resolved silently — a contradiction that disappears from the record is a contradiction nobody fixed. Both records are daemon-internal. Nothing here crosses the client control surface: the queen-provider projection speaks only idle|pending|failed, and these records never appear in it.
+// run-checkpoint.ts The RunCheckpoint and QueenSuccession records: how a replacement queen root learns what the prior root knew, and how the exchange is proven. A RunCheckpoint is written at semantic events (a task completes, run control acts, a promotion boundary passes), never on a timer or a percentage. It records state by revision and digest — exact pointers into the records the hierarchy already keeps — plus one short written layer. It never carries transcripts, raw tool output, message bodies, or file copies: a checkpoint that reproduced its sources would go stale the moment it was written, while a (revision, digest) ref can always be re-read and re-checked. A QueenSuccession records one root replacement: both generations, the checkpoint (or an explicit proof that none existed), the measured snapshot and replies the exchange was built from, every discrepancy found along the way, and the fresh root's attestation. Discrepancies are recorded, never resolved silently — a contradiction that disappears from the record is a contradiction nobody fixed. Both records are daemon-internal. Nothing here crosses the client control surface: the queen-provider projection speaks only idle|pending|failed, and these records never appear in it.
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -21,7 +21,6 @@ import { Rfc3339UtcMillisecondsSchema } from "./session-protocol";
 
 export const CHECKPOINT_EVENTS = [
   "task-completion",
-  "gate-transition",
   "run-control",
   "promotion-boundary",
   "graceful-shutdown",
@@ -98,8 +97,6 @@ export const WrittenLayerSchema = z.strictObject({
   nextAction: z.string().min(1),
   rollback: z.string().min(1),
 });
-export const GATE_STATES = ["pending", "approved"] as const;
-
 /** The kind-specific recovery refs: each names the exact record by identity, revision, and a digest over its whole stored content — never a bare revision a sibling record could share, so a drifted or missing record is identifiable, not just detectable. */
 export const CheckpointTaskRefSchema = z.strictObject({
   taskId: TaskIdSchema,
@@ -124,9 +121,6 @@ export const CheckpointHierarchySchema = z.strictObject({
   plan: RevisionRefSchema,
   topology: RevisionRefSchema,
   phase: RunPhaseSchema,
-  gates: z.strictObject({
-    g2: z.enum(GATE_STATES),
-  }),
   budget: RevisionRefSchema,
   tasks: z.array(CheckpointTaskRefSchema),
   decisions: z.array(CheckpointDecisionRefSchema),

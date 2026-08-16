@@ -171,7 +171,6 @@ function run(): Run {
     currentPlan: { revision: "1", digest },
     topology: { revision: "1", digest },
     phase: "P2",
-    g2: { state: "pending" },
     baseSha: gitSha,
     budget: { revision: "1", digest },
     runEpoch: 0,

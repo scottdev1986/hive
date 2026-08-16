@@ -8,8 +8,6 @@
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
-import { MailStore } from "../../src/mail-service/store";
 import { ManifestJournal } from "../../src/daemon/manifest-journal";
 import {
   admitWork,
@@ -24,12 +22,13 @@ import {
   SUCCESSION_REQUIRED_READS,
   successionRequiredReadInstruction,
 } from "../../src/daemon/queen-provider-service/succession-recovery";
+import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { MailStore } from "../../src/mail-service/store";
 import type { AgentRecord } from "../../src/schemas/agent";
 import type { GrantAction } from "../../src/schemas/hierarchy-node";
 import {
   type AgentSnapshotEntry,
   type BeginSuccessionRequest,
-  type RunCheckpointInput,
   BeginSuccessionResponseSchema,
   CheckpointDecisionRefSchema,
   CheckpointStageRefSchema,
@@ -39,6 +38,7 @@ import {
   digestRunCheckpoint,
   QueenSuccessionProjectionSchema,
   QueenSuccessionSchema,
+  type RunCheckpointInput,
   RunCheckpointSchema,
 } from "../../src/schemas/run-checkpoint";
 import { digestWorkManifest } from "../../src/schemas/work-manifest";
@@ -764,7 +764,6 @@ describe("checkpoint content", () => {
       currentPlan: ref,
       topology: ref,
       phase: "P1" as const,
-      g2: { state: "pending" as const },
       baseSha: "b".repeat(40),
       budget: ref,
       runEpoch: 0,
@@ -897,7 +896,7 @@ describe("checkpoint content", () => {
       },
     };
     store.putRunControlDecision(runId, decision);
-    const checkpoint = service.writeBoundaryCheckpoint("gate-transition", run);
+    const checkpoint = service.writeBoundaryCheckpoint("run-control", run);
     expect(checkpoint.hierarchy?.runId).toEqual(runId);
     expect(checkpoint.hierarchy?.tasks).toEqual([
       {
@@ -1074,7 +1073,6 @@ describe("semantic checkpoint requests", () => {
       [Parameters<typeof checkpointRequestKind>[0], "requested" | "required"]
     > = [
       ["task-completion", "requested"],
-      ["gate-transition", "requested"],
       ["run-control", "requested"],
       ["promotion-boundary", "requested"],
       ["repeated-failure", "required"],
@@ -1120,5 +1118,117 @@ describe("snapshot staleness comparison", () => {
     const checkpoint = service.writeCheckpoint(checkpointInput());
     expect(snapshotDiscrepancies(checkpoint, [snap("maya")])).toEqual([]);
     db.close();
+  });
+});
+
+describe("stored checkpoints that still name approvedSpec", () => {
+  const specDigest = `sha256:${"a".repeat(64)}`;
+  const specRef = { revision: "1", digest: specDigest };
+  const runId = "run_018f4f5e-0000-7000-8000-000000000001";
+
+  function currentHierarchy() {
+    return {
+      runId,
+      spec: specRef,
+      plan: specRef,
+      topology: specRef,
+      phase: "P0" as const,
+      budget: specRef,
+      tasks: [],
+      decisions: [],
+      promotionQueue: [],
+    };
+  }
+
+  function writeLegacyCheckpoint(db: HiveDatabase) {
+    const store = new SuccessionStore(db);
+    const written = store.writeCheckpoint(
+      checkpointInput({ hierarchy: currentHierarchy() }),
+      T0,
+    );
+    const row = db.database
+      .query(
+        "SELECT document FROM run_checkpoints WHERE instanceId = ? AND revision = ?",
+      )
+      .get(INSTANCE, written.revision) as { document: string };
+    const legacy = JSON.parse(row.document) as {
+      hierarchy: {
+        spec?: unknown;
+        approvedSpec?: unknown;
+        gates?: Record<string, unknown>;
+      };
+    };
+    legacy.hierarchy.approvedSpec = legacy.hierarchy.spec;
+    delete legacy.hierarchy.spec;
+    legacy.hierarchy.gates = { g2: "pending" };
+    db.database
+      .query(
+        "UPDATE run_checkpoints SET document = ? WHERE instanceId = ? AND revision = ?",
+      )
+      .run(JSON.stringify(legacy), INSTANCE, written.revision);
+    return { store, written };
+  }
+
+  test("rewrites the hierarchy onto spec and verifies the new digest", () => {
+    const db = new HiveDatabase(":memory:");
+    try {
+      const { written } = writeLegacyCheckpoint(db);
+      const read = new SuccessionStore(db).readCheckpoint(
+        INSTANCE,
+        written.revision,
+      );
+      expect(read.state).toBe("present");
+      if (read.state !== "present") return;
+      expect(read.checkpoint.hierarchy?.spec).toEqual(specRef);
+      expect(read.checkpoint.hierarchy).not.toHaveProperty("gates");
+      expect(JSON.stringify(read.checkpoint)).not.toContain('"approvedSpec"');
+      expect(JSON.stringify(read.checkpoint.hierarchy)).not.toContain('"g2"');
+    } finally {
+      db.close();
+    }
+  });
+
+  test("points a succession that named the old digest at the rewritten one", () => {
+    const db = new HiveDatabase(":memory:");
+    try {
+      const { store: writer, written } = writeLegacyCheckpoint(db);
+      writer.appendSuccession({
+        successionId: "qsc_00000000-0000-7000-8000-000000000002",
+        instanceId: INSTANCE,
+        createdAt: T0,
+        reason: "initial-boot",
+        reasonDetail: "test",
+        priorRootGeneration: 0,
+        newRootGeneration: 1,
+        proof: {
+          kind: "checkpoint",
+          ref: { revision: written.revision, digest: written.digest },
+        },
+        snapshot: [],
+        replies: [],
+        discrepancies: [],
+        launchRequestId: "req_00000000-0000-7000-8000-000000000001",
+        bootCapsuleDigest: `sha256:${"b".repeat(64)}`,
+        attestation: {
+          checkpointDigest: written.digest,
+          attestedAt: T0,
+        },
+      });
+
+      const store = new SuccessionStore(db);
+      const read = store.readCheckpoint(INSTANCE, written.revision);
+      const succession = store.latestSuccession(INSTANCE);
+      expect(read.state).toBe("present");
+      if (read.state !== "present") return;
+      expect(succession?.proof).toEqual({
+        kind: "checkpoint",
+        ref: { revision: written.revision, digest: read.checkpoint.digest },
+      });
+      expect(succession?.attestation?.checkpointDigest).toBe(
+        read.checkpoint.digest,
+      );
+    } finally {
+      db.close();
+    }
   });
 });
