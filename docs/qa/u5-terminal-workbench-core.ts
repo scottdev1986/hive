@@ -144,6 +144,37 @@ export function assertQaHomeOwner(
   }
 }
 
+/** The file Zig `@embedFile`s into hive-sessiond (native/sessiond/build.zig
+ * points generated.zig at this Tests/Fixtures path). */
+export const SESSION_PROTOCOL_SCHEMA_RELATIVE =
+  "workspace/Tests/WorkspaceCoreTests/Fixtures/session-protocol.schema.json";
+
+export function assertSessiondEmbedsTreeSchema(
+  binary: Uint8Array,
+  treeSchema: Uint8Array,
+): void {
+  if (treeSchema.byteLength === 0) {
+    throw new Error(
+      "U5 sessiond schema check refused: tree session-protocol.schema.json is empty",
+    );
+  }
+  const haystack = Buffer.from(
+    binary.buffer,
+    binary.byteOffset,
+    binary.byteLength,
+  );
+  const needle = Buffer.from(
+    treeSchema.buffer,
+    treeSchema.byteOffset,
+    treeSchema.byteLength,
+  );
+  if (haystack.indexOf(needle) < 0) {
+    throw new Error(
+      "U5 sessiond schema stale: staged hive-sessiond does not embed the tree's session-protocol.schema.json",
+    );
+  }
+}
+
 export function requireHeadlessRootRunning(state: string): void {
   if (state !== "running") {
     throw new Error(

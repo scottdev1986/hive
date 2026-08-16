@@ -63,8 +63,10 @@ import {
   reconcileSpawnRequests,
   assertIsolatedQaHiveHome,
   assertQaHomeFitsSocketPath,
+  assertSessiondEmbedsTreeSchema,
   isIsolatedQaHomePath,
   requireHeadlessRootRunning,
+  SESSION_PROTOCOL_SCHEMA_RELATIVE,
   requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
@@ -625,6 +627,32 @@ async function openIsolatedHeadlessRoot(): Promise<void> {
     process.env.HIVE_HOME ?? "",
     join(homedir(), ".hive"),
   );
+  const sessiondBin =
+    process.env.HIVE_SESSIOND_BIN ??
+    join(sourceRoot, "native/sessiond/zig-out/bin/hive-sessiond");
+  const treeSchemaPath = join(sourceRoot, SESSION_PROTOCOL_SCHEMA_RELATIVE);
+  if (!existsSync(sessiondBin)) {
+    throw new Error(
+      `U5 sessiond schema check refused: staged hive-sessiond is absent at ${sessiondBin}`,
+    );
+  }
+  if (!existsSync(treeSchemaPath)) {
+    throw new Error(
+      `U5 sessiond schema check refused: tree schema is absent at ${treeSchemaPath}`,
+    );
+  }
+  const sessiondBytes = readFileSync(sessiondBin);
+  const treeSchema = readFileSync(treeSchemaPath);
+  assertSessiondEmbedsTreeSchema(sessiondBytes, treeSchema);
+  writeEvidence("00-sessiond-schema.json", {
+    schemaVersion: 1,
+    sessiondBin,
+    treeSchemaPath,
+    sessiondBytes: sessiondBytes.byteLength,
+    treeSchemaBytes: treeSchema.byteLength,
+    treeSchemaSha256: createHash("sha256").update(treeSchema).digest("hex"),
+    state: "embedded",
+  });
   const requestId = mintSessionRequestId();
   const providerRunId = randomUUID();
   const response = await rootFetch(
