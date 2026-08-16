@@ -21,6 +21,7 @@ import {
   metadataDigest,
   verifyDetachedTree,
 } from "../../test/live/mail-vendor-rig";
+import { isRecord } from "./unknown-record";
 
 const vendors = {
   claude: {
@@ -158,6 +159,27 @@ function digest(value: string): string {
   return new Bun.CryptoHasher("sha256").update(value).digest("hex");
 }
 
+function nodesAt(tree: unknown, path: string): unknown {
+  if (!isRecord(tree)) throw new Error(`baseline tree is not an object`);
+  const entry = tree[path];
+  if (!isRecord(entry)) throw new Error(`missing baseline ${path}`);
+  return entry.nodes;
+}
+
+function nodeMap(nodes: unknown): Map<string, unknown> {
+  const map = new Map<string, unknown>();
+  if (!Array.isArray(nodes)) {
+    throw new Error("baseline nodes are not an array");
+  }
+  for (const node of nodes) {
+    if (!isRecord(node) || typeof node.relativePath !== "string") {
+      throw new Error("baseline node is missing relativePath");
+    }
+    map.set(node.relativePath, node);
+  }
+  return map;
+}
+
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
@@ -292,17 +314,8 @@ if (mode === "prepare") {
   );
   const changedOperatorNodes = Object.fromEntries(
     changedOperatorPaths.map((path) => {
-      const before = new Map(
-        userBeforeNodes[path].nodes.map((node: { relativePath: string }) => [
-          node.relativePath,
-          node,
-        ]),
-      );
-      const after = new Map(
-        (
-          userAfterNodes[path] as { nodes: Array<{ relativePath: string }> }
-        ).nodes.map((node) => [node.relativePath, node]),
-      );
+      const before = nodeMap(nodesAt(userBeforeNodes, path));
+      const after = nodeMap(nodesAt(userAfterNodes, path));
       const relativePaths = new Set([...before.keys(), ...after.keys()]);
       return [
         path,

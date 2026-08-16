@@ -21,11 +21,6 @@ import { SessiondViewerAttachClient } from "../../src/daemon/session-host/sessio
 import { WorkspaceVisibleTerminalSchema } from "../../src/daemon/session-host/workspace-visibility";
 import { type AgentRecord, AgentRecordSchema } from "../../src/schemas/agent";
 import {
-  AttachGrantSchema,
-  CaptureResultSchema,
-  type SessionLocator,
-} from "../../src/schemas/session-protocol";
-import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
   CapabilityProviderSchema,
@@ -44,6 +39,11 @@ import {
   RoutingPolicyMutationSchema,
   RoutingPolicySchema,
 } from "../../src/schemas/routing-policy";
+import {
+  AttachGrantSchema,
+  CaptureResultSchema,
+  type SessionLocator,
+} from "../../src/schemas/session-protocol";
 import {
   callMcpTool,
   McpToolRefusal,
@@ -393,9 +393,11 @@ function requireLaunchArgument(
   const positions = launchArguments.flatMap((argument, index) =>
     argument === flag ? [index] : [],
   );
+  const position = positions[0];
   if (
     positions.length !== 1 ||
-    launchArguments[positions[0] + 1] !== expectedValue
+    position === undefined ||
+    launchArguments[position + 1] !== expectedValue
   ) {
     throw new Error(
       `app proof launch identity did not bind ${flag} to ${expectedValue}`,
