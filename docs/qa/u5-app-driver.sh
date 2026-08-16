@@ -400,6 +400,12 @@ read_terminal_host_text() {
   [ -f "$dest" ]
 }
 
+on_screen_text_from_file() {
+  local dest="${1:-}"
+  [ -f "$dest" ] || return 1
+  tr '\n\r' '  ' < "$dest"
+}
+
 capture_timeout_on_screen() {
   local dest_txt dest_png shown="" win_id
   if [ -n "${DRIVER_EVIDENCE_ROOT:-}" ]; then
@@ -407,20 +413,22 @@ capture_timeout_on_screen() {
     dest_png="$DRIVER_EVIDENCE_ROOT/08-timeout-on-screen.png"
     if identity_matches "$LAUNCH_IDENTITY" 2>/dev/null; then
       read_terminal_host_text "$dest_txt" || true
-      [ -f "$dest_txt" ] && shown="$(tr '\n\r' '  ' < "$dest_txt")"
       win_id="$(workbench_window_number 2>/dev/null || true)"
       if [ -n "$win_id" ] && [ "$win_id" != "0" ]; then
         /usr/sbin/screencapture -x -o -l "$win_id" "$dest_png" 2>/dev/null || true
       fi
     fi
+    shown="$(on_screen_text_from_file "$dest_txt" || true)"
   fi
   printf '%s' "$shown"
 }
 
+emit_timeout_diagnosis() {
+  format_timeout_diagnosis "$1" "$(capture_timeout_on_screen)"
+}
+
 die_after_launch() {
-  local shown
-  shown="$(capture_timeout_on_screen)"
-  die "$(format_timeout_diagnosis "$1" "$shown")"
+  die "$(emit_timeout_diagnosis "$1")"
 }
 
 run_driver() {
@@ -867,6 +875,32 @@ PY
   else
     bad "timeout diagnosis does not surface on-screen text"
   fi
+
+  # Formatter-only is not the capture path. Induce a bounded wait
+  # failure and run the same emit die_after_launch uses.
+  local saved_evidence timeout_miss timeout_hit
+  saved_evidence="${DRIVER_EVIDENCE_ROOT:-}"
+  DRIVER_EVIDENCE_ROOT="$scratch/timeout-evidence"
+  mkdir -p "$DRIVER_EVIDENCE_ROOT"
+  if wait_until_ready 1 never_ready >/dev/null 2>&1; then
+    bad "induced timeout did not fail"
+  else
+    timeout_miss="$(emit_timeout_diagnosis "feed receipt never selected claude/x")"
+    if [ "$timeout_miss" = "feed receipt never selected claude/x (on-screen: unreadable)" ]; then
+      ok "induced timeout with no capture file reports unreadable"
+    else
+      bad "empty capture was not unreadable: $timeout_miss"
+    fi
+    printf '%s\n' "Terminal transport is absent in this launch." \
+      > "$DRIVER_EVIDENCE_ROOT/08-timeout-on-screen.txt"
+    timeout_hit="$(emit_timeout_diagnosis "feed receipt never selected claude/x")"
+    if [ "$timeout_hit" = "feed receipt never selected claude/x (on-screen: Terminal transport is absent in this launch.)" ]; then
+      ok "induced timeout reports the on-screen placeholder the capture wrote"
+    else
+      bad "capture did not report the induced on-screen text: $timeout_hit"
+    fi
+  fi
+  DRIVER_EVIDENCE_ROOT="$saved_evidence"
 
   if [ "$(published_instance_id "$coordinates_file")" = "abcdef0123" ]; then
     ok "the published instance id is read, not computed"
