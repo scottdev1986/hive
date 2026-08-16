@@ -66,7 +66,7 @@ Before the first spawn, state the plan back compactly: the tasks, their boundari
 
 Then delegate — and carry the user's own words into the task text. The specific constraint they gave you is the part an agent cannot re-derive, and paraphrasing it into something generic is how a fan-out drifts back toward the misunderstanding this conversation just removed.
 
-If the conversation produced a durable decision — a rule, a constraint, a rejected approach and why — record it in memory so the next queen does not ask again.
+If the conversation produced a durable decision — a rule, a constraint, a rejected approach and why — record it in memory so the next queen does not ask again. When that decision arrived as owner or user control mail, `memory_write` it before you `hive_mail_complete` the item as `completed`, and put that message's `itemId` in evidence.
 
 ## What breaks this
 

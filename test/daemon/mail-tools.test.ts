@@ -5,6 +5,7 @@ import type {
 } from "../../src/daemon/authorization/authorization-service";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
+  MailRulingRequiredError,
   MailSubjectUnboundError,
   type MailToolDeps,
   MailTools,
@@ -49,14 +50,21 @@ const rig = (
   options: {
     generations?: Record<string, number>;
     denyOn?: (call: AuthorizeCall) => boolean;
+    requireRulingRecord?: (itemId: string) => Promise<boolean>;
   } = {},
 ) => {
   const calls: AuthorizeCall[] = [];
-  const generations = options.generations ?? { queen: 1, ada: 4, worker: 1 };
+  const generations = options.generations ?? {
+    queen: 1,
+    ada: 4,
+    worker: 1,
+    user: 1,
+    owner: 1,
+  };
   const db = new HiveDatabase(":memory:");
   const store = new MailStore(db);
   const wake = new MailWakeLedger(new MailWakeStore(db));
-  const live = new Set(["ada", "bo", "queen", "worker"]);
+  const live = new Set(["ada", "bo", "queen", "worker", "user", "owner"]);
   const recipients = (named: string): MailRecipientState => {
     const canonical = named === "orchestrator" ? "queen" : named;
     return live.has(canonical)
@@ -89,6 +97,7 @@ const rig = (
     liveGeneration: (subject) =>
       generations[subject === "orchestrator" ? "queen" : subject] ?? null,
     now: () => T0,
+    requireRulingRecord: options.requireRulingRecord,
   };
   return { store, wake, calls, tools: new MailTools(deps) };
 };
@@ -111,7 +120,7 @@ const itemIdOf = (result: ReturnType<MailTools["publish"]>): string =>
   (result.structuredContent.mail as { itemId: string }).itemId;
 
 describe("capability checks at the boundary", () => {
-  test("every tool authorises before it touches the store", () => {
+  test("every tool authorises before it touches the store", async () => {
     const { tools, calls } = rig();
     const itemId = itemIdOf(publishControl(tools));
     tools.poll(capability("ada"), { recipient: "ada" });
@@ -120,7 +129,7 @@ describe("capability checks at the boundary", () => {
       itemId,
       handlerId: "h1",
     });
-    tools.complete(capability("ada"), {
+    await tools.complete(capability("ada"), {
       recipient: "ada",
       itemId,
       handlerId: "h1",
@@ -296,7 +305,7 @@ describe("tool results", () => {
     expect(polled.backlog.controlAvailable).toBe(1);
   });
 
-  test("the five tools carry a publish through to a settlement", () => {
+  test("the five tools carry a publish through to a settlement", async () => {
     const { tools, store, wake } = rig();
     const itemId = itemIdOf(publishControl(tools));
     const offered = tools.poll(capability("ada"), { recipient: "ada" })
@@ -307,12 +316,14 @@ describe("tool results", () => {
       itemId,
       handlerId: "h1",
     });
-    const settled = tools.complete(capability("ada"), {
-      recipient: "ada",
-      itemId,
-      handlerId: "h1",
-      disposition: "completed",
-    }).structuredContent.mail as { replayed: boolean };
+    const settled = (
+      await tools.complete(capability("ada"), {
+        recipient: "ada",
+        itemId,
+        handlerId: "h1",
+        disposition: "completed",
+      })
+    ).structuredContent.mail as { replayed: boolean };
     expect(settled.replayed).toBe(false);
     expect(store.getItem(itemId)).toBeNull();
     expect(wake.deliveryChain(itemId).map((row) => row.state)).toEqual([
@@ -326,7 +337,7 @@ describe("tool results", () => {
     expect(status.lanes.control.available).toBe(0);
   });
 
-  test("the root alias writes every evidence row under the canonical mailbox", () => {
+  test("the root alias writes every evidence row under the canonical mailbox", async () => {
     const { tools, wake } = rig();
     const itemId = itemIdOf(
       tools.publish(capability("ada"), {
@@ -344,7 +355,7 @@ describe("tool results", () => {
       itemId,
       handlerId: "root-handler",
     });
-    tools.complete(capability("orchestrator"), {
+    await tools.complete(capability("orchestrator"), {
       recipient: "orchestrator",
       itemId,
       handlerId: "root-handler",
@@ -439,7 +450,7 @@ describe("the work lane", () => {
       ...overrides,
     });
 
-  test("a digest entry can be claimed and read by the recipient it was shown to", () => {
+  test("a digest entry can be claimed and read by the recipient it was shown to", async () => {
     const { tools, wake } = rig();
     const itemId = itemIdOf(publishWork(tools));
     const polled = tools.poll(capability("ada"), { recipient: "ada" })
@@ -452,7 +463,7 @@ describe("the work lane", () => {
       handlerId: "h1",
     }).structuredContent.mail as { body: string };
     expect(claimed.body).toBe("the digest never carries this");
-    tools.complete(capability("ada"), {
+    await tools.complete(capability("ada"), {
       recipient: "ada",
       itemId,
       handlerId: "h1",
@@ -495,7 +506,7 @@ describe("the work lane", () => {
 });
 
 describe("honest refusals", () => {
-  test("an over-long completion reason is truncated, not refused", () => {
+  test("an over-long completion reason is truncated, not refused", async () => {
     const { tools } = rig();
     const itemId = itemIdOf(publishControl(tools));
     tools.poll(capability("ada"), { recipient: "ada" });
@@ -504,13 +515,15 @@ describe("honest refusals", () => {
       itemId,
       handlerId: "h1",
     });
-    const settled = tools.complete(capability("ada"), {
-      recipient: "ada",
-      itemId,
-      handlerId: "h1",
-      disposition: "rejected",
-      reason: "x".repeat(400),
-    }).structuredContent.mail as { reason: string | null };
+    const settled = (
+      await tools.complete(capability("ada"), {
+        recipient: "ada",
+        itemId,
+        handlerId: "h1",
+        disposition: "rejected",
+        reason: "x".repeat(400),
+      })
+    ).structuredContent.mail as { reason: string | null };
     expect(settled.reason).toBe("x".repeat(280));
   });
 
@@ -575,7 +588,7 @@ describe("an item whose published row never landed", () => {
     tools.poll(capability("ada"), { recipient: "ada" }).structuredContent
       .mail as { control: { itemId: string } | null };
 
-  test("a mailbox holding one unpresentable item still polls, and the item claims", () => {
+  test("a mailbox holding one unpresentable item still polls, and the item claims", async () => {
     const { store, wake, tools } = rig();
     const wedged = publishChainless(store);
     expect(wake.deliveryChain(wedged.itemId)).toEqual([]);
@@ -603,7 +616,7 @@ describe("an item whose published row never landed", () => {
       itemId: wedged.itemId,
       handlerId: "h1",
     });
-    tools.complete(capability("ada"), {
+    await tools.complete(capability("ada"), {
       recipient: "ada",
       itemId: wedged.itemId,
       handlerId: "h1",
@@ -771,5 +784,101 @@ describe("registration", () => {
     ).text();
     expect(source).not.toContain("registerTool");
     expect(source).not.toContain("McpServer");
+  });
+});
+
+describe("owner control complete requires a memory citation", () => {
+  const publishOwnerControl = (
+    tools: MailTools,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    tools.publish(capability("user"), {
+      from: "user",
+      to: "queen",
+      lane: "control",
+      topic: "ruling",
+      body: "wait on first boot",
+      idempotencyKey: "user-ruling-1",
+      ...overrides,
+    });
+
+  const claimQueen = (tools: MailTools, itemId: string) => {
+    tools.poll(capability("queen"), { recipient: "queen" });
+    tools.claim(capability("queen"), {
+      recipient: "queen",
+      itemId,
+      handlerId: "queen-h1",
+    });
+  };
+
+  test("completed is refused until repo memory cites the itemId", async () => {
+    const cited = new Set<string>();
+    const { tools, store } = rig({
+      requireRulingRecord: async (itemId) => cited.has(itemId),
+    });
+    const itemId = itemIdOf(publishOwnerControl(tools));
+    claimQueen(tools, itemId);
+
+    await expect(
+      tools.complete(capability("queen"), {
+        recipient: "queen",
+        itemId,
+        handlerId: "queen-h1",
+        disposition: "completed",
+      }),
+    ).rejects.toThrow(MailRulingRequiredError);
+    expect(store.getItem(itemId)?.state).toBe("leased");
+
+    cited.add(itemId);
+    const settled = await tools.complete(capability("queen"), {
+      recipient: "queen",
+      itemId,
+      handlerId: "queen-h1",
+      disposition: "completed",
+    });
+    expect(
+      (settled.structuredContent.mail as { disposition: string }).disposition,
+    ).toBe("completed");
+    expect(store.getItem(itemId)).toBeNull();
+  });
+
+  test("deferred does not need a citation", async () => {
+    const { tools } = rig({
+      requireRulingRecord: async () => false,
+    });
+    const itemId = itemIdOf(publishOwnerControl(tools));
+    claimQueen(tools, itemId);
+    const settled = await tools.complete(capability("queen"), {
+      recipient: "queen",
+      itemId,
+      handlerId: "queen-h1",
+      disposition: "deferred",
+    });
+    expect(
+      (settled.structuredContent.mail as { disposition: string }).disposition,
+    ).toBe("deferred");
+  });
+
+  test("agent-to-queen control does not need a citation", async () => {
+    const { tools } = rig({
+      requireRulingRecord: async () => false,
+    });
+    const itemId = itemIdOf(
+      tools.publish(capability("ada"), {
+        from: "ada",
+        to: "queen",
+        lane: "control",
+        topic: "reply",
+        body: "finished",
+        idempotencyKey: "ada-reply-ruling",
+      }),
+    );
+    claimQueen(tools, itemId);
+    await tools.complete(capability("queen"), {
+      recipient: "queen",
+      itemId,
+      handlerId: "queen-h1",
+      disposition: "completed",
+    });
   });
 });

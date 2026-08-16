@@ -133,8 +133,8 @@ export function learnedVerificationInstruction(learned: {
     "## Learned verification",
     "",
     `This repository has a measured verification command (${learned.status}): \`${learned.command}\`.`,
-    "Re-check that command still exists in the tree before treating it as the land gate.",
-    "If it does not, discover the current one from the repo and record it with memory_write (topic verification).",
+    "hive_land reruns this command when it is still declared in the tree.",
+    "If it is gone, discover the current one from the repo and record it with memory_write (topic verification).",
   ].join("\n");
 }
 

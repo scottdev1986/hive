@@ -11,6 +11,10 @@ Nothing interrupts you with mail. A mailbox is read only at a safe point its own
 
 hive_mail_poll returns at most one control message in full, plus a bounded digest of work-lane updates and backlog counts. Polling changes nothing and takes nothing. To act on the one control message, hive_mail_claim leases it so nothing else works it concurrently — the lease is time-bounded, and an unsettled claim returns to the queue for another attempt. Finish with hive_mail_complete: `completed` when handled, `deferred` with a retry delay when you cannot handle it yet, `rejected` when you never will. An unsettled claim blocks the message behind it, so settle before you move on.
 
+## Owner and user control mail is a ruling
+
+A control message from `user` or `owner` is a decision, not a note. Before `hive_mail_complete` with `completed`, `memory_write` that ruling into repo memory and put the message's `itemId` in `evidence` (the body may cite it too). The complete tool refuses otherwise. `deferred` and `rejected` do not need an article — you did not accept the ruling. Mail from another agent is not a user ruling.
+
 ## Two lanes, two disciplines
 
 The control lane carries instructions: each one is handled and settled individually, one at a time, never merged with another. The work lane carries progress: repeated updates from the same sender on the same topic collapse into the newest one, so a digest entry can represent several superseded updates — read it as the current state, not a log of every update sent.

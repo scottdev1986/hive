@@ -44,6 +44,8 @@ import {
   harvestPitfalls,
   harvestVerification,
   isHarvestBoundaryEvent,
+  VERIFICATION_ARTICLE_ID,
+  verificationCommandFromTitle,
 } from "../memory-service/harvest";
 import {
   type MemoryJobDeps,
@@ -144,7 +146,13 @@ import {
 } from "./artifact-store/artifact-store";
 import { registerArtifactTools } from "./artifact-store/artifact-store-tool";
 import type { MainHealthMonitorHandle } from "./landing/main-health-monitor";
-import { type ProjectGate, runProjectGate } from "./landing/project-gate";
+import {
+  type ProjectGate,
+  runLearnedProjectGate,
+  verificationCommandDeclared,
+} from "./landing/project-gate";
+import { repoMemoryCitesItem } from "./messaging/ruling-record";
+import { promoteVerificationToStandards } from "./spawn/agent-standards";
 import { registerAgentControlTools } from "./recovery/agent-control-tools";
 import type { ModelControlSnapshot } from "./routing-service/model-control-snapshot";
 
@@ -747,7 +755,6 @@ export class HiveDaemon {
       );
     });
     this.land = options.landBranch ?? landBranch;
-    this.projectGate = options.projectGate ?? runProjectGate;
     this.resources = options.resources ?? null;
     this.wakeBudgetTokens = options.wakeBudgetTokens ?? null;
     this.psSample = options.resourceRunners?.ps ?? runPs;
@@ -774,6 +781,9 @@ export class HiveDaemon {
         beforeKill,
       );
     this.repoRoot = options.repoRoot ?? projectRootOrCwd();
+    this.projectGate =
+      options.projectGate ??
+      ((worktree) => runLearnedProjectGate(this.repoRoot, worktree));
     // Verification is learned from the repo, never compiled in. A stranger's
     // checkout is not this source tree; even this source tree is learned the
     // same way. Tests may inject a monitor.
@@ -4108,6 +4118,8 @@ export class HiveDaemon {
       authorizeTool: (cap, tool, action, subject, auditAllow) =>
         this.authorizeTool(cap, tool, action, subject, auditAllow),
       liveGeneration: (subject) => this.liveMailGeneration(subject),
+      requireRulingRecord: (itemId) =>
+        repoMemoryCitesItem(this.repoRoot, itemId),
     });
 
     registerHierarchyNodeTools(server, capability, this.hierarchy);
@@ -4175,8 +4187,21 @@ export class HiveDaemon {
       authorizeTool: (cap, tool, action, subject, auditAllow) =>
         this.authorizeTool(cap, tool, action, subject, auditAllow),
       writeMemoryFact: (input) => this.writeMemoryFact(input),
-      verifyMemoryFact: (scope, id, verifier) =>
-        this.memoryWrites.verify(scope, id, { verifier }),
+      verifyMemoryFact: async (scope, id, verifier) => {
+        const verified = await this.memoryWrites.verify(scope, id, {
+          verifier,
+        });
+        if (scope === "repo" && id === VERIFICATION_ARTICLE_ID) {
+          const command = verificationCommandFromTitle(verified.title);
+          if (
+            command !== null &&
+            verificationCommandDeclared(this.repoRoot, command)
+          ) {
+            await promoteVerificationToStandards(this.repoRoot, command);
+          }
+        }
+        return verified;
+      },
       deleteMemoryFact: (scope, id) => this.deleteMemoryFact(scope, id),
       rebuildMemoryIndex: (signal) => this.rebuildMemoryIndex(signal),
       semanticRecall: () => this.semanticRecall(),

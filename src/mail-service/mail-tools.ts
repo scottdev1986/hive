@@ -1,3 +1,4 @@
+import { isOrchestratorName } from "../schemas/agent";
 import type { Action, Capability } from "../schemas/authority";
 import type { MailLane } from "../schemas/mail";
 import { systemClock } from "../shared/clock";
@@ -30,6 +31,8 @@ export interface MailToolDeps {
   ) => void;
   liveGeneration: MailLiveGenerationLookup;
   now?: () => Date;
+  /** True when repo memory already cites this itemId. Absent, the complete path does not look at memory. */
+  requireRulingRecord?: (itemId: string) => Promise<boolean>;
 }
 
 export class MailSubjectUnboundError extends Error {
@@ -41,6 +44,17 @@ export class MailSubjectUnboundError extends Error {
         "generation can be authenticated for its mailbox",
     );
     this.name = "MailSubjectUnboundError";
+  }
+}
+
+export class MailRulingRequiredError extends Error {
+  readonly code = "MAIL_RULING_REQUIRED";
+
+  constructor(itemId: string) {
+    super(
+      `MAIL_RULING_REQUIRED: owner control item ${itemId} cannot be completed until a repo memory article cites that itemId in evidence or body. memory_write the ruling first.`,
+    );
+    this.name = "MailRulingRequiredError";
   }
 }
 
@@ -135,13 +149,14 @@ export class MailTools {
     return toolResult(mail, "mail");
   }
 
-  complete(capability: Capability, request: unknown) {
+  async complete(capability: Capability, request: unknown) {
     this.deps.authorizeTool(
       capability,
       "hive_mail_complete",
       "message:ack",
       namedField(request, "recipient"),
     );
+    await this.requireOwnerRuling(capability, request);
     const at = this.now();
     const mail = this.deps.service.complete(
       this.actor(capability),
@@ -168,6 +183,25 @@ export class MailTools {
       this.deps.service.status(this.actor(capability), request, this.now()),
       "mail",
     );
+  }
+
+  /** Completing an owner or user control message to queen is accepting a ruling. Deferred and rejected skip this: they did not accept it. Agent-to-queen mail is not a user ruling. */
+  private async requireOwnerRuling(
+    capability: Capability,
+    request: unknown,
+  ): Promise<void> {
+    if (this.deps.requireRulingRecord === undefined) return;
+    if (namedField(request, "disposition") !== "completed") return;
+    const itemId = namedField(request, "itemId");
+    if (itemId === undefined) return;
+    const item = this.deps.service.store.getItem(itemId);
+    if (item === null) return;
+    if (item.lane !== "control") return;
+    if (item.sender !== "user" && item.sender !== "owner") return;
+    if (!isOrchestratorName(this.canonicalRecipient(capability))) return;
+    if (!isOrchestratorName(item.recipient)) return;
+    const cited = await this.deps.requireRulingRecord(itemId);
+    if (!cited) throw new MailRulingRequiredError(itemId);
   }
 
   /** The subject and generation this call runs as. A capability that names an agent with no live binding gets no generation rather than a default one: zero is a real generation, and handing it out as "we could not tell" would let an unbound caller claim mail addressed to the first incarnation. */

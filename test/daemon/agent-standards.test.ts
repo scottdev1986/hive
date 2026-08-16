@@ -7,6 +7,9 @@ import { learnedVerificationInstruction } from "../../src/daemon/spawn/agent-pro
 import {
   type AgentStandards,
   loadAgentStandards,
+  promoteVerificationToStandards,
+  scaffoldAgentStandardsMd,
+  withPromotedVerification,
 } from "../../src/daemon/spawn/agent-standards";
 import {
   buildAgentPrompt,
@@ -118,6 +121,60 @@ const assertHeadingLinesMatchDelivery = (
     }
   }
 };
+
+describe("promoting a measured verification command", () => {
+  test("a generic scaffold gains a Verification section for writers", () => {
+    const next = withPromotedVerification(
+      scaffoldAgentStandardsMd(),
+      "npm test",
+    );
+    expect(next).not.toBeNull();
+    expect(next).toContain("Verification: writers");
+    expect(next).toContain("## Verification");
+    expect(next).toContain("`npm test`");
+  });
+
+  test("this repo's custom file is left alone", () => {
+    expect(withPromotedVerification(live, "bun test")).toBeNull();
+  });
+
+  test("a custom file that already declares Verification is updated", () => {
+    const custom = [
+      "# Custom",
+      "",
+      "```standards",
+      "Hive protocol: everyone",
+      "Verification: writers",
+      "```",
+      "",
+      "## Hive protocol",
+      "",
+      "Do the work.",
+      "",
+      "## Verification",
+      "",
+      "Old command.",
+      "",
+    ].join("\n");
+    const next = withPromotedVerification(custom, "make test");
+    expect(next).toContain("`make test`");
+    expect(next).not.toContain("Old command.");
+  });
+
+  test("promoteVerificationToStandards writes the generic file when absent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-promote-standards-"));
+    temporaryRoots.push(root);
+    expect(await promoteVerificationToStandards(root, "npm test")).toBe(
+      "promoted",
+    );
+    const written = await readFile(join(root, "AGENT_STANDARDS.md"), "utf8");
+    expect(written).toContain("Generic Hive product standards");
+    expect(written).toContain("`npm test`");
+    expect(await promoteVerificationToStandards(root, "npm test")).toBe(
+      "unchanged",
+    );
+  });
+});
 
 describe("agent standards come from the repo, not the binary", () => {
   // Positive control. Every refusal test below is worthless until this proves

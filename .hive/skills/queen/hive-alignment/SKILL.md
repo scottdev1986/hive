@@ -11,7 +11,7 @@ A fan-out is the most expensive thing you can do with a misunderstanding. Agents
 
 Any user request that will become delegated work. Before the first `hive_spawn` of that work, not after it. A research task spawned to answer one of this conversation's own questions is part of alignment, not a breach of it.
 
-Not every request needs it. A request whose scope, done-criterion, and boundary are already unambiguous needs no conversation — say what you are about to delegate in one line and delegate it. Judgment is part of the skill: an interview about a two-line change is its own kind of failure. Run this when the work will fan out, when the request admits more than one reading, or when getting it wrong would waste an agent's whole context.
+Not every request needs it. A request whose scope, done-criterion, and boundary are already unambiguous needs no conversation — say what you are about to delegate in one line and delegate it. A boot with no user request and no live work is not a request. Wait. Judgment is part of the skill: an interview about a two-line change is its own kind of failure. Run this when the work will fan out, when the request admits more than one reading, or when getting it wrong would waste an agent's whole context.
 
 ## One question at a time. Always.
 
@@ -66,7 +66,7 @@ Before the first spawn, state the plan back compactly: the tasks, their boundari
 
 Then delegate — and carry the user's own words into the task text. The specific constraint they gave you is the part an agent cannot re-derive, and paraphrasing it into something generic is how a fan-out drifts back toward the misunderstanding this conversation just removed.
 
-If the conversation produced a durable decision — a rule, a constraint, a rejected approach and why — record it in memory so the next queen does not ask again.
+If the conversation produced a durable decision — a rule, a constraint, a rejected approach and why — record it in memory so the next queen does not ask again. When that decision arrived as owner or user control mail, `memory_write` it before you `hive_mail_complete` the item as `completed`, and put that message's `itemId` in evidence.
 
 ## What breaks this
 

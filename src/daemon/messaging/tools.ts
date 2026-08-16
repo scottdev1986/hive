@@ -127,9 +127,11 @@ export function registerMailTools(
       description:
         "Finish with a claimed message: completed when it is handled, deferred " +
         "with a retryAfterSeconds when you cannot handle it yet, rejected when " +
-        "you never will. Settling is what releases the lane for the next " +
-        "instruction, so a claimed message that is never settled blocks the " +
-        "ones behind it.",
+        "you never will. Completing an owner or user control message to queen " +
+        "is refused until a repo memory article cites that itemId in evidence " +
+        "or body — memory_write the ruling first. Settling is what releases " +
+        "the lane for the next instruction, so a claimed message that is never " +
+        "settled blocks the ones behind it.",
       inputSchema: MailCompleteRequestSchema,
     },
     async (request) => mail.complete(capability, request),

@@ -1,6 +1,6 @@
 // agent-standards.ts Reads the standing engineering and protocol rules that every spawn prompt carries, from AGENT_STANDARDS.md in the primary checkout. The rules used to be string constants in the spawner. That made a wording change a code change: commit, review, land, promote, restart — and a promote kills every working agent. Standards belong to the project, so they live in a committed file the user edits directly and a spawn reads. The file declares its own sections, and each declaration names the audience that section is for. Nothing here knows which categories a project has: this module knows only HOW to route — to everyone, to writers, to read-only agents, or to one routing category — and the project says WHICH of those each of its sections wants. Adding a category is an edit to the file; adding a way to route is a change here, and those are different kinds of decision on purpose. Every failure to produce complete standards throws. There is no fallback text: an agent that spawned without its standards would behave subtly wrong for a whole session with nothing in the logs to say why, and a refused spawn is the cheaper failure by a wide margin. That is why the declaration exists at all rather than the file simply being a bag of sections — a section that disappears from a file nobody declared anything about disappears silently, and silence is the failure this module was written to prevent.
 
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   ROUTING_CATEGORIES,
@@ -68,6 +68,83 @@ export function scaffoldAgentStandardsMd(): string {
     "This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_mail_publish. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.",
     "",
   ].join("\n");
+}
+
+export const VERIFICATION_SECTION = "Verification";
+const GENERIC_STANDARDS_MARKER =
+  "Generic Hive product standards, scaffolded by `hive init`.";
+
+export function verificationSectionText(command: string): string {
+  return [
+    `This repository's measured verification command is \`${command}\`.`,
+    "",
+    "Run it on the rebased branch before hive_land. Re-check the command still exists in the tree; if it does not, discover the current one and record it with memory_write (topic verification).",
+  ].join("\n");
+}
+
+/** Insert or replace the Verification section. Generic scaffolds may gain the section; a custom file is updated only when it already declares one. Returns null when the file should not be touched. */
+export function withPromotedVerification(
+  source: string,
+  command: string,
+): string | null {
+  const generic = source.includes(GENERIC_STANDARDS_MARKER);
+  const declared = source.includes(`${VERIFICATION_SECTION}:`);
+  if (!generic && !declared) return null;
+  const body = verificationSectionText(command);
+  if (source.includes(`## ${VERIFICATION_SECTION}`)) {
+    return replaceSection(source, VERIFICATION_SECTION, body);
+  }
+  return appendVerificationSection(source, body);
+}
+
+export async function promoteVerificationToStandards(
+  repoRoot: string,
+  command: string,
+): Promise<"promoted" | "unchanged" | "skipped"> {
+  const path = join(repoRoot, AGENT_STANDARDS_FILE);
+  let source: string;
+  try {
+    source = await readFile(path, "utf8");
+  } catch (error) {
+    const code =
+      error instanceof Error && "code" in error
+        ? (error as NodeJS.ErrnoException).code
+        : undefined;
+    if (code !== "ENOENT") throw error;
+    source = scaffoldAgentStandardsMd();
+  }
+  const next = withPromotedVerification(source, command);
+  if (next === null) return "skipped";
+  if (next === source) return "unchanged";
+  parseAgentStandards(next, path);
+  await writeFile(path, next);
+  return "promoted";
+}
+
+function replaceSection(
+  source: string,
+  heading: string,
+  body: string,
+): string {
+  const marker = `## ${heading}\n`;
+  const start = source.indexOf(marker);
+  if (start === -1) return source;
+  const after = start + marker.length;
+  const next = source.indexOf("\n## ", after);
+  const end = next === -1 ? source.length : next;
+  const prefix = source.slice(0, after);
+  const suffix =
+    next === -1 ? "" : source.slice(end).replace(/^\n*/, "\n\n");
+  return `${prefix}\n${body}\n${suffix}`;
+}
+
+function appendVerificationSection(source: string, body: string): string {
+  const fence = source.indexOf(DECLARATION_FENCE);
+  const close = source.indexOf("\n```", fence);
+  if (fence === -1 || close === -1) return source;
+  const withDecl = `${source.slice(0, close)}\n${VERIFICATION_SECTION}: writers${source.slice(close)}`;
+  const trimmed = withDecl.endsWith("\n") ? withDecl : `${withDecl}\n`;
+  return `${trimmed}\n## ${VERIFICATION_SECTION}\n\n${body}\n`;
 }
 
 const DECLARATION_FENCE = "```standards";
