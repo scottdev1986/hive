@@ -6,38 +6,27 @@
 // honestly (B6 terrain).
 
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import { agentFetch, userFetch } from "../../src/cli/credential";
 import { buildHookEvent, postHookEvent } from "../../src/cli/event-command";
 import { OrchestratorSessiondSnapshotSchema } from "../../src/daemon/orchestrator-host/sessiond-controller";
-import { CaptureResultSchema } from "../../src/schemas/session-protocol";
-import { RunCheckpointSchema } from "../../src/schemas/run-checkpoint";
 import {
-  RoutingPolicySchema,
   type RoutingPolicy,
+  RoutingPolicySchema,
 } from "../../src/schemas/routing-policy";
+import { RunCheckpointSchema } from "../../src/schemas/run-checkpoint";
+import { CaptureResultSchema } from "../../src/schemas/session-protocol";
 import { isProductFailure } from "./agent-scenario-core";
 import {
-  applyOrphanRefuseTransition,
-  bindRetryMessageId,
-  catalogDeterminism,
-  classifyUserOrphan,
-  deliveryEvidenceLabel,
-  hasTerminalWriteReceipt,
-  planOrphanRefuseTransition,
-  type AttemptEvidence,
-  type BlockedDelivery,
-  type QCatalogRowId,
-} from "./queen-scenario-core";
-import {
   callMcpTool,
+  type QaRowRecord,
   requiredQaCoordinates,
   writeRowRecord,
-  type QaRowRecord,
 } from "./qa-client";
+import { catalogDeterminism, type QCatalogRowId } from "./queen-scenario-core";
 
 const coordinates = requiredQaCoordinates();
 const home = realpathSync(coordinates.home);
@@ -75,36 +64,6 @@ const SendSummarySchema = z.object({ itemId: z.string() });
 const TerminalObservationSchema = z.object({
   capture: CaptureResultSchema,
 });
-const MessageRowSchema = z.object({
-  id: z.string(),
-  state: z.enum(["queued", "notified", "acknowledged"]),
-  createdAt: z.string(),
-  notifiedAt: z.string().nullable(),
-  acknowledgedAt: z.string().nullable(),
-});
-const TerminalReceiptSchema = z
-  .object({
-    transactionId: z.string(),
-    stage: z.string().optional(),
-    diagnostic: z.string().nullable().optional(),
-  })
-  .loose();
-const MessageAttemptSchema = z.object({
-  attemptId: z.string(),
-  messageId: z.string(),
-  outcome: z.enum([
-    "pending",
-    "written",
-    "foreground-changed",
-    "input-busy",
-    "timeout",
-    "unknown",
-  ]),
-  terminalReceipt: TerminalReceiptSchema.nullable(),
-});
-
-type MessageRow = z.infer<typeof MessageRowSchema>;
-type MessageAttempt = z.infer<typeof MessageAttemptSchema>;
 type Snapshot = z.infer<typeof OrchestratorSessiondSnapshotSchema>;
 
 let supervisor: Bun.Subprocess | null = null;
@@ -113,7 +72,7 @@ let rootLocator: Snapshot["locator"] | null = null;
 // provider). Never lsof +D the shared project path — every rig shares
 // QA_PROJECT by design, and a path-primary kill is fratricide (T6 review:
 // "the path gate never becomes primary").
-let ownedIdentities = new Set<string>();
+const ownedIdentities = new Set<string>();
 const rows: QaRowRecord[] = [];
 
 function git(...args: string[]): string {
@@ -301,7 +260,12 @@ async function preflightAdmissionLadder(): Promise<{
       `PRODUCT_RED hive_models inventory has no models for provider ${tool} (discoveredCount=${inventory.discoveredCount})`,
     );
   }
-  const selected = forTool[0]!;
+  const selected = forTool[0];
+  if (selected === undefined) {
+    throw new Error(
+      `PRODUCT_RED hive_models inventory has no models for provider ${tool} (discoveredCount=${inventory.discoveredCount})`,
+    );
+  }
   const modelId = selected.canonicalId;
   // Prove the selected id is still present when re-read (not a one-shot parse).
   const inventoryAgain = await callMcpTool(
