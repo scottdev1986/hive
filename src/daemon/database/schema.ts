@@ -225,6 +225,7 @@ class HiveSchemaMigrator {
     this.migrateEvents();
     this.migrateApprovals();
     this.retireTaskFailureFields();
+    this.closeSupersededProviderRuns();
 
     const recoveredAt = new Date().toISOString();
     this.recoverLegacyNotificationApprovals(recoveredAt);
@@ -415,6 +416,85 @@ class HiveSchemaMigrator {
       )
       WHERE kind = 'task'
     `);
+  }
+
+  /**
+   * One-time repair of rows left at 'running' by a teardown that could never
+   * close them. Until 3e82b7568 the gate that ended a provider run demanded a
+   * termination state of exactly "terminated", which a process-tree target
+   * cannot produce, so a run whose process was gone kept its row. For the root
+   * that is a false accept rather than untidy data: getActiveRootProviderRun
+   * reads state alone, so a dead run reads as the ACTIVE root and a bootstrap
+   * binds to it.
+   *
+   * The predicate is SUPERSESSION, and it is a proof rather than an estimate.
+   * The system runs one root per instance and one live run per agent, so a
+   * strictly newer run for the same subject does not suggest the older one
+   * probably ended — it contradicts the older one still being live. It is
+   * derivable from rows already in the table, needs nothing outside the
+   * database, and gives the identical answer on every replay. Liveness of the
+   * NEWEST run for a subject is not decidable here and is not guessed at: those
+   * rows are left open.
+   *
+   * endedAt is the superseding run's startedAt, which is the honest bound —
+   * the older run cannot have outlived the start of the run that replaced it.
+   */
+  private closeSupersededProviderRuns(): void {
+    const exists = this.database
+      .query(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'provider_runs'",
+      )
+      .get();
+    if (exists === null) return;
+    // Root supersession is per instance and ordered by generation; agent
+    // supersession is per agentId and ordered by rowid, which is the same
+    // recency signal getActiveProviderRunForAgent already reads.
+    const superseded = this.database
+      .query(`
+      SELECT p.runId AS runId, p.recordJson AS recordJson,
+             (SELECT json_extract(q.recordJson, '$.startedAt')
+                FROM provider_runs q
+               WHERE (p.agentId IS NULL
+                        AND q.agentId IS NULL
+                        AND q.terminalInstanceId = p.terminalInstanceId
+                        AND q.terminalGeneration > p.terminalGeneration)
+                  OR (p.agentId IS NOT NULL
+                        AND q.agentId = p.agentId
+                        AND q.rowid > p.rowid)
+               ORDER BY json_extract(q.recordJson, '$.startedAt')
+               LIMIT 1) AS supersededAt
+        FROM provider_runs p
+       WHERE p.state = 'running'
+         AND EXISTS (
+               SELECT 1 FROM provider_runs q
+                WHERE (p.agentId IS NULL
+                         AND q.agentId IS NULL
+                         AND q.terminalInstanceId = p.terminalInstanceId
+                         AND q.terminalGeneration > p.terminalGeneration)
+                   OR (p.agentId IS NOT NULL
+                         AND q.agentId = p.agentId
+                         AND q.rowid > p.rowid))
+    `)
+      .all() as { runId: string; recordJson: string; supersededAt: string }[];
+    if (superseded.length === 0) return;
+    this.database.transaction(() => {
+      for (const row of superseded) {
+        let record: Record<string, unknown>;
+        try {
+          record = JSON.parse(row.recordJson) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        record.state = "exited";
+        record.endedAt = row.supersededAt;
+        record.exitReason = "superseded-by-newer-run";
+        this.database
+          .query(
+            "UPDATE provider_runs SET state = 'exited', recordJson = ? WHERE runId = ? AND state = 'running'",
+          )
+          .run(JSON.stringify(record), row.runId);
+      }
+    })();
   }
 
   private recoverLegacyNotificationApprovals(recoveredAt: string): void {
