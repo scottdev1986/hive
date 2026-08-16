@@ -9,6 +9,7 @@ import {
   finalU5Result,
   reconcileSpawnRequests,
   assertIsolatedQaHiveHome,
+  requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
   summarizeProviderOutcomes,
@@ -51,6 +52,23 @@ describe("U5 proof decisions", () => {
       releasePath: "/tmp/release",
       feedReceiptPath: "/tmp/feed-receipt",
     });
+  });
+
+  test("live accountability task id is required and never defaulted", () => {
+    expect(() => requireU5AccountabilityTaskId({})).toThrow(
+      "U5 live evidence requires HIVE_QA_U5_ACCOUNTABILITY_TASK_ID; the harness does not default a live-board id",
+    );
+    expect(() =>
+      requireU5AccountabilityTaskId({ HIVE_QA_U5_ACCOUNTABILITY_TASK_ID: "" }),
+    ).toThrow(
+      "U5 live evidence requires HIVE_QA_U5_ACCOUNTABILITY_TASK_ID; the harness does not default a live-board id",
+    );
+    expect(
+      requireU5AccountabilityTaskId({
+        HIVE_QA_U5_ACCOUNTABILITY_TASK_ID:
+          "task_01a00790-000b-7000-8000-00000000010b",
+      }),
+    ).toBe("task_01a00790-000b-7000-8000-00000000010b");
   });
 
   test("fixture-task seeding refuses a machine hive home by name", () => {

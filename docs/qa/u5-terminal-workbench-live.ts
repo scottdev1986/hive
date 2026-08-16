@@ -57,6 +57,7 @@ import {
   finalU5Result,
   reconcileSpawnRequests,
   assertIsolatedQaHiveHome,
+  requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
   summarizeProviderOutcomes,
@@ -279,7 +280,7 @@ if (isolatedHiveHome !== home) {
     `HIVE_HOME ${isolatedHiveHome} is not the isolated QA home ${home}`,
   );
 }
-const liveAccountabilityTaskId = "task_01a00790-0301-7000-8000-000000000301";
+const liveAccountabilityTaskId = requireU5AccountabilityTaskId(process.env);
 const appExecutablePath = realpathSync(workspaceApp.executablePath);
 if (
   !appExecutablePath.endsWith("/HiveWorkspace.app/Contents/MacOS/HiveWorkspace")

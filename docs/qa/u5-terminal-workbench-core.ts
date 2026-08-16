@@ -4,6 +4,7 @@ import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
 } from "../../src/schemas/capability";
+import { TaskIdSchema } from "../../src/schemas/hierarchy-ids";
 
 export const U5_FULL_SCOPE = "five-live-v1" as const;
 export const U5_PARTIAL_SCOPE = "three-live-two-measured-blocks-v1" as const;
@@ -65,6 +66,18 @@ export function requireU5WorkspaceApp(
     );
   }
   return { executablePath, readyPath, releasePath, feedReceiptPath };
+}
+
+export function requireU5AccountabilityTaskId(
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  const taskId = env.HIVE_QA_U5_ACCOUNTABILITY_TASK_ID;
+  if (taskId === undefined || taskId.length === 0) {
+    throw new Error(
+      "U5 live evidence requires HIVE_QA_U5_ACCOUNTABILITY_TASK_ID; the harness does not default a live-board id",
+    );
+  }
+  return TaskIdSchema.parse(taskId);
 }
 
 function resolvedPath(path: string): string {
