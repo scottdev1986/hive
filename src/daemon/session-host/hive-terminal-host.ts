@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
+import type { AgentRecord } from "../../schemas/agent";
 import type {
   AdapterChildIdentity,
   ProviderRun,
 } from "../../schemas/provider-run";
-import type { AgentRecord } from "../../schemas/agent";
 import { systemClock } from "../../shared/clock";
 import { macProcessIdentity } from "../lifecycle/daemon-lifecycle";
+import { sameSessionLocator } from "./locators";
 import type {
   AttachGrant,
   AttachRequest,
@@ -17,7 +18,7 @@ import type {
   TerminationRequest,
   TerminationResult,
 } from "./session-host-contract";
-import { sameSessionLocator } from "./locators";
+import type { HostExitWaiter, HostExitWaitResult } from "./sessiond-host";
 import { TERMINAL_SHELL } from "./shell-session";
 import {
   type HiveTerminalBinding,
@@ -33,7 +34,6 @@ import type {
   SessionRef,
   TerminalHost,
 } from "./terminal-host-contract";
-import type { HostExitWaiter, HostExitWaitResult } from "./sessiond-host";
 
 /** Death of the verified zsh root is terminal death. Foreground provider lifecycle is separate and must never strengthen this evidence. */
 export function sessiondTerminalIsDead(
@@ -289,6 +289,11 @@ export class HiveTerminalHostAdapter {
   >;
   private readonly sleep: NonNullable<HiveTerminalHostAdapterOptions["sleep"]>;
   private readonly providerRuns: ProviderRunStore;
+  /** Session ids whose host reported `managed-exit` through waitForExit.
+   * Root runs insert with adapterChild null, so the process-group arm of
+   * reconcileProviderRun cannot see them. This is that same close, keyed
+   * on the observation root already has. */
+  private readonly observedHostExits = new Set<string>();
 
   async pauseProvider(
     locator: SessionLocator,
@@ -412,15 +417,20 @@ export class HiveTerminalHostAdapter {
   reconcileProviderRun(locator: SessionLocator): ProviderRun | null {
     const active = this.providerRuns.getActiveProviderRunByTerminal(locator);
     if (active === null) return null;
-    if (active.adapterChild === null) return active;
-    try {
-      if (this.verifyAdapterChildIdentity(active.adapterChild)) {
+    if (active.adapterChild !== null) {
+      try {
+        if (this.verifyAdapterChildIdentity(active.adapterChild)) {
+          return active;
+        }
+      } catch {
         return active;
       }
-    } catch {
-      return active;
-    }
-    if (this.processGroupState(active.adapterChild.processGroupId) !== "gone") {
+      if (
+        this.processGroupState(active.adapterChild.processGroupId) !== "gone"
+      ) {
+        return active;
+      }
+    } else if (!this.observedHostExits.has(locator.sessionId)) {
       return active;
     }
     this.providerRuns.endProviderRun(
@@ -436,7 +446,11 @@ export class HiveTerminalHostAdapter {
     signal: AbortSignal,
   ): Promise<HostExitWaitResult> {
     this.requireBinding(locator);
-    return await this.host.waitForHostExit(locator.sessionId, signal);
+    const result = await this.host.waitForHostExit(locator.sessionId, signal);
+    if (result.kind === "managed-exit") {
+      this.observedHostExits.add(locator.sessionId);
+    }
+    return result;
   }
 
   async create(

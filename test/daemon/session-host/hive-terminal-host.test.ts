@@ -1648,4 +1648,126 @@ describe("a teardown the platform cannot positively prove still ends the run", (
     expect(projected.state).toBe("survivors");
     expect(endedRuns).toEqual([]);
   });
+
+  test("a live root run with no adapterChild survives reconcile", () => {
+    const { adapter, active } = rootRunHarness();
+    expect(adapter.reconcileProviderRun(rootLocator)).toEqual(active);
+    expect(active.state).toBe("running");
+    expect(active.endedAt).toBeNull();
+  });
+
+  test("a root run closes when waitForExit reports managed-exit", async () => {
+    const { adapter, active, ended } = rootRunHarness({
+      waitForHostExit: async () => ({ kind: "managed-exit", exitCode: 0 }),
+    });
+    await adapter.waitForExit(rootLocator, new AbortController().signal);
+    expect(adapter.reconcileProviderRun(rootLocator)).toBeNull();
+    expect(ended).toEqual([
+      {
+        runId: active.runId,
+        exitReason: "provider-process-exited",
+      },
+    ]);
+  });
 });
+
+const rootLocator: HiveTerminalBinding["locator"] = {
+  ...locator,
+  subject: { kind: "root" },
+};
+
+function rootRunHarness(
+  hostOverrides: {
+    waitForHostExit?: () => Promise<{
+      kind: "managed-exit";
+      exitCode: number | null;
+    }>;
+  } = {},
+): {
+  adapter: HiveTerminalHostAdapter;
+  active: ProviderRun;
+  ended: Array<{ runId: string; exitReason: string }>;
+} {
+  const bindings = new MemoryBindings();
+  bindings.bindTerminalHostSession({ locator: rootLocator, visibility });
+  bindings.completeTerminalHostSession(rootLocator, {
+    expectedExecutable: sessionSpec.expectedExecutable,
+    executableVerified: true,
+    verifiedShellRoot: createResult.inspection.shellRoot,
+    geometry,
+    visibility: {
+      state: "visible",
+      workspaceSessionId: visibility.workspaceSessionId,
+      openTerminalRevision: "1",
+      expiresAt: "2026-07-18T01:00:15.000Z",
+    },
+  });
+  const active: ProviderRun = {
+    runId: "018f1e90-7b5a-7cc0-8000-00000000root",
+    agentId: null,
+    terminal: rootLocator,
+    provider: null,
+    model: null,
+    effort: null,
+    conversationId: null,
+    adapterChild: null,
+    protocolReceipt: null,
+    capabilityEpoch: 0,
+    launchGrantId: "root-launch",
+    startedAt: "2026-07-18T01:00:00.000Z",
+    endedAt: null,
+    state: "running",
+    exitReason: null,
+  };
+  const ended: Array<{ runId: string; exitReason: string }> = [];
+  let current: ProviderRun = active;
+  const host = {
+    waitForHostExit:
+      hostOverrides.waitForHostExit ??
+      (async () => ({ kind: "inherited" as const })),
+    issueAttach: async () => {
+      throw new Error("issueAttach not under test");
+    },
+    create: async () => createResult,
+    claimInput: async () => {
+      throw new Error("claimInput not under test");
+    },
+    submitInput: async () => {
+      throw new Error("submitInput not under test");
+    },
+    resize: async () => {
+      throw new Error("resize not under test");
+    },
+    list: async () => [inspection],
+    inspect: async () => inspection,
+    terminate: async () => {
+      throw new Error("terminate not under test");
+    },
+  };
+  const adapter = new HiveTerminalHostAdapter(
+    host,
+    bindings,
+    rootLocator.instanceId,
+    {
+      now: () => new Date("2026-07-18T01:00:02.000Z"),
+      providerRuns: {
+        getActiveProviderRunByTerminal: () =>
+          current.state === "running" ? current : null,
+        endProviderRun: (runId, endedAt, exitReason) => {
+          if (current.runId !== runId || current.state !== "running") {
+            return current;
+          }
+          current = {
+            ...current,
+            state: "exited",
+            endedAt,
+            exitReason,
+          };
+          ended.push({ runId, exitReason });
+          return current;
+        },
+      },
+    },
+  );
+  return { adapter, active, ended };
+}
