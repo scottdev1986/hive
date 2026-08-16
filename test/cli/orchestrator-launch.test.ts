@@ -24,6 +24,7 @@ import {
   prepareOrchestratorConfig,
   provisionCodexRootToken,
   provisionQueenRootToken,
+  QUEEN_KICKOFF,
 } from "../../src/cli/orchestrator";
 import { QUEEN_POLICY } from "../../src/cli/queen-policy";
 import {
@@ -54,6 +55,12 @@ afterEach(async () => {
 });
 
 describe("orchestrator launch", () => {
+  test("queen kickoff does not invent an assigned task", () => {
+    expect(QUEEN_KICKOFF).not.toContain("Begin the assigned task.");
+    expect(QUEEN_KICKOFF).toContain("wait for the user");
+    expect(QUEEN_KICKOFF).toContain("Do not invent work");
+  });
+
   test("the pinned policy names the orchestration surface and operating rules", () => {
     for (const tool of [
       "hive_spawn",

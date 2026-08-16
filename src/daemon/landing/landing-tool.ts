@@ -145,7 +145,7 @@ export function registerLandTool(
     {
       title: "Land an agent branch",
       description:
-        "Land completed writer work through Hive's capability-gated fast-forward. Read the agent's current capabilityEpoch from hive_status, commit first, rebase the primary checkout's current branch, then rerun the relevant tests and typecheck. Abort and report any rebase conflict; never merge into the primary checkout directly. If the target moved, rebase and retry.",
+        "Land completed writer work through Hive's capability-gated fast-forward. Read the agent's current capabilityEpoch from hive_status, commit first, rebase the primary checkout's current branch, then rerun this repository's verification. Abort and report any rebase conflict; never merge into the primary checkout directly. If the target moved, rebase and retry.",
       inputSchema: LandRequestSchema,
     },
     async (rawInput) => {

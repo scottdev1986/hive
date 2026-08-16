@@ -205,6 +205,9 @@ export interface OrchestratorCommandOptions {
 export const CLAUDE_QUEEN_MODEL = "claude-opus-5";
 export const CLAUDE_QUEEN_EFFORT = "high";
 export const CLAUDE_QUEEN_AUTOCOMPACT = "250k";
+/** First user turn on every queen launch, including a first boot. There is no assigned task until the user gives one. */
+export const QUEEN_KICKOFF =
+  "Follow your boot capsule. If there is no user request and no live work to continue, wait for the user. Do not invent work, do not spawn, and do not create a board unless the user asks.";
 
 export function buildOrchestratorCommand(
   options: OrchestratorCommandOptions,
@@ -536,7 +539,7 @@ export async function launchOrchestrator(
     ...(effectiveEffort === undefined ? {} : { effort: effectiveEffort }),
     readOnly: true,
     instructionPath: launchPromptPath(orchestratorSessionKey()),
-    kickoff: "Begin the assigned task.",
+    kickoff: QUEEN_KICKOFF,
     providerArgv: protocolProviderArgv(tool, providerArgv),
   });
   const launch = OrchestratorSessiondLaunchSchema.parse({

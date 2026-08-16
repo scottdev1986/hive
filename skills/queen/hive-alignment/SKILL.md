@@ -11,7 +11,7 @@ A fan-out is the most expensive thing you can do with a misunderstanding. Agents
 
 Any user request that will become delegated work. Before the first `hive_spawn` of that work, not after it. A research task spawned to answer one of this conversation's own questions is part of alignment, not a breach of it.
 
-Not every request needs it. A request whose scope, done-criterion, and boundary are already unambiguous needs no conversation — say what you are about to delegate in one line and delegate it. Judgment is part of the skill: an interview about a two-line change is its own kind of failure. Run this when the work will fan out, when the request admits more than one reading, or when getting it wrong would waste an agent's whole context.
+Not every request needs it. A request whose scope, done-criterion, and boundary are already unambiguous needs no conversation — say what you are about to delegate in one line and delegate it. A boot with no user request and no live work is not a request. Wait. Judgment is part of the skill: an interview about a two-line change is its own kind of failure. Run this when the work will fan out, when the request admits more than one reading, or when getting it wrong would waste an agent's whole context.
 
 ## One question at a time. Always.
 

@@ -196,7 +196,7 @@ export function scaffoldAgentsMd(): string {
     "",
     "## Commands",
     "",
-    "Document how this repo builds, tests, typechecks, lints, and runs.",
+    "Document how this repo builds, tests, lints, and runs.",
     "",
     "## Stack",
     "",

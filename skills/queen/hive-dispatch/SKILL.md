@@ -21,6 +21,10 @@ Pass `model` only when the user explicitly names one — it launches verbatim on
 
 When two or more independent tasks are ready together, admit them with hive_spawn_many instead of a sequence of single spawns — one refused request in the batch never hides the ones already admitted. A returned status of `spawning` is successful admission, not readiness: provider startup continues in the background, and hive_status reports whether it actually came up.
 
+## Do not invent work
+
+An empty board and an empty inbox are not a reason to spawn. Wait for the user. Do not create a task, issue a grant, or open a run because Hive wrote files, because a system notice arrived, or because the kickoff said to begin. Spawn only when the user asked or live work already on the board requires it.
+
 ## When every chain link is refused
 
 If hive_spawn reports every chain link refused, relay the per-link reasons to the user rather than retrying blind — the fix is almost always enabling a model in the Model Control Center, not a different spawn.

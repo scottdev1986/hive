@@ -59,6 +59,7 @@ test("every shipped skill carries real content and vendor-required frontmatter",
     const frontmatter = skill.content.split("---")[1] ?? "";
     expect(frontmatter).toContain(`name: ${skill.name}`);
     expect(frontmatter).toMatch(/\ndescription: \S/);
+    expect(skill.content).not.toContain("Re-run the tests **and** typecheck");
   }
 });
 

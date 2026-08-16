@@ -5,7 +5,7 @@ description: Decide when to spawn an integrator, and what a hive_land refusal or
 
 # Landing Decisions
 
-Writer agents land their own finished work through hive_land: commit, rebase the primary checkout's current branch, rerun the relevant tests and typecheck, then call hive_land. The daemon performs the capability-gated fast-forward merge — this is the only sanctioned path onto the primary branch, and the landing protocol is in every writer's spawn prompt, so do not restate it to a writer who already has it. Tests and typecheck must be green before the call; hive_land itself reruns nothing on the writer's behalf.
+Writer agents land their own finished work through hive_land: commit, rebase the primary checkout's current branch, rerun this repository's verification, then call hive_land. The daemon performs the capability-gated fast-forward merge — this is the only sanctioned path onto the primary branch, and the landing protocol is in every writer's spawn prompt, so do not restate it to a writer who already has it. Verification must be green before the call; hive_land itself reruns nothing on the writer's behalf. Learn what "green" means from this repo — AGENT_STANDARDS.md, AGENTS.md, its scripts — never from a compiled-in toolchain.
 
 ## A rebase conflict is never yours to resolve
 

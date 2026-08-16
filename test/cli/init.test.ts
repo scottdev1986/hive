@@ -149,6 +149,7 @@ describe("scaffoldAgentsMd", () => {
     // Hive does not detect commands, stack, or design docs, so those sections
     // are prompts to fill in — never a concrete command guessed from a manifest.
     expect(md).not.toContain("`bun test`");
+    expect(md).not.toContain("typecheck");
     expect(md).toContain("## Commands");
     expect(md).toContain("## Stack");
     expect(md).not.toContain("## Design");

@@ -9,7 +9,7 @@
 // Nothing in this file touches live work: an in-memory database, a stub
 // spawner that launches nothing, and a stub landBranch that runs no git.
 import { describe, expect, test } from "bun:test";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -24,10 +24,7 @@ import { credentialPath } from "../../src/hive-home/home";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import type { LandReadiness } from "../../src/daemon/landing/landing-service";
 import type { MainHealthMonitorHandle } from "../../src/daemon/landing/main-health-monitor";
-import {
-  runProjectGate,
-  type ProjectGate,
-} from "../../src/daemon/landing/project-gate";
+import type { ProjectGate } from "../../src/daemon/landing/project-gate";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "../../src/daemon/server";
 import type {
   Spawner,
@@ -675,56 +672,6 @@ describe("the codex root token endpoint", () => {
 });
 
 describe("a one-shot landing grant cannot be replayed", () => {
-  test("the project gate catches a type error in the candidate worktree", async () => {
-    const primaryRoot = tempRoot("hive-primary-green-");
-    const candidateRoot = tempRoot("hive-candidate-red-");
-    const tscExecutable = Bun.which("tsc");
-    if (tscExecutable === null) throw new Error("test requires tsc on PATH");
-    writeFileSync(
-      join(primaryRoot, "package.json"),
-      JSON.stringify({
-        scripts: { "format:check": "exit 0", typecheck: "exit 0" },
-      }),
-    );
-    writeFileSync(
-      join(candidateRoot, "package.json"),
-      JSON.stringify({
-        scripts: {
-          "format:check": "exit 0",
-          typecheck: `${JSON.stringify(tscExecutable)} --noEmit --pretty false`,
-        },
-      }),
-    );
-    writeFileSync(
-      join(candidateRoot, "tsconfig.json"),
-      JSON.stringify({ include: ["broken.ts"] }),
-    );
-    writeFileSync(
-      join(candidateRoot, "broken.ts"),
-      'const value: number = "not a number";\n',
-    );
-    const { daemon, db, landed } = harness({
-      repoRoot: primaryRoot,
-      projectGate: runProjectGate,
-    });
-    db.upsertAgent(agentRecord({ worktreePath: candidateRoot }));
-    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
-
-    try {
-      const result = await callTool(daemon, token, "hive_land", {
-        agent: "maya",
-        capabilityEpoch: 0,
-      });
-
-      expect(result.ok).toBe(false);
-      expect(result.error).toContain("Project typecheck blocked landing");
-      expect(result.error).toContain("Type 'string' is not assignable");
-      expect(landed).toEqual([]);
-    } finally {
-      await daemon.stop();
-    }
-  });
-
   test("a project gate refusal blocks the merge", async () => {
     let calls = 0;
     const { daemon, db, landed } = harness({

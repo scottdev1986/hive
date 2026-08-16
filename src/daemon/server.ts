@@ -142,15 +142,7 @@ import {
   sweepArtifacts,
 } from "./artifact-store/artifact-store";
 import { registerArtifactTools } from "./artifact-store/artifact-store-tool";
-import {
-  DECLINE_IS_FINAL,
-  describeDirtyCheckout,
-  MainHealthMonitor,
-  type MainHealthMonitorHandle,
-  readPrimaryRevision,
-  runMainBunTests,
-  watchPrimaryRefMove,
-} from "./landing/main-health-monitor";
+import type { MainHealthMonitorHandle } from "./landing/main-health-monitor";
 import { type ProjectGate, runProjectGate } from "./landing/project-gate";
 import { registerAgentControlTools } from "./recovery/agent-control-tools";
 import type { ModelControlSnapshot } from "./routing-service/model-control-snapshot";
@@ -781,39 +773,10 @@ export class HiveDaemon {
         beforeKill,
       );
     this.repoRoot = options.repoRoot ?? projectRootOrCwd();
-    this.mainHealthMonitor =
-      options.mainHealthMonitor === null
-        ? null
-        : (options.mainHealthMonitor ??
-          (this.manageLifecycle
-            ? new MainHealthMonitor({
-                readRevision: () => readPrimaryRevision(this.repoRoot),
-                runTests: (signal) => runMainBunTests(this.repoRoot, signal),
-                notifyRed: (revision, detail) =>
-                  this.mailService.publishSystem(
-                    "hive-main-health",
-                    ORCHESTRATOR_NAME,
-                    `RED MAIN: bun test failed at ${revision}.\n` +
-                      "This asynchronous warning does not block landing. It covers the Bun test suite only; format and typecheck are separate landing gates.\n\n" +
-                      detail,
-                    { idempotencyKey: `hive-main-health:red:${revision}` },
-                  ),
-                notifyDeclined: (revision, dirty) =>
-                  this.mailService.publishSystem(
-                    "hive-main-health",
-                    ORCHESTRATOR_NAME,
-                    `MAIN HEALTH DECLINED: did not measure ${revision}; an exact revision check needs a clean checkout and this one had ${describeDirtyCheckout(dirty)}\n${DECLINE_IS_FINAL}`,
-                    {
-                      idempotencyKey: `hive-main-health:declined:${revision}`,
-                    },
-                  ),
-                log: (message) => this.writeDaemonLog(message),
-                watchExternalMove: (onChange) =>
-                  watchPrimaryRefMove(this.repoRoot, onChange, (message) =>
-                    this.writeDaemonLog(message),
-                  ),
-              })
-            : null));
+    // Verification is learned from the repo, never compiled in. A stranger's
+    // checkout is not this source tree; even this source tree is learned the
+    // same way. Tests may inject a monitor.
+    this.mainHealthMonitor = options.mainHealthMonitor ?? null;
     this.approvalService = new ApprovalService({
       db: this.db,
       capabilities: this.capabilities,
