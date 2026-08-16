@@ -1,5 +1,5 @@
 #!/bin/sh
-# Inventory the user hive home for QA isolation proofs.
+# Inventory the user Hive home for QA isolation checks.
 #
 # A live fleet writes hive.db-wal, logs, and mail while this runs. Hashing
 # those bytes would make every compare red and hide a real leak. This

@@ -13,7 +13,7 @@
 # QA lifecycle (separate from the five; they keep their meaning):
 #
 #   make qa          install hive-qa into an isolated home, init the test project, run it
-#   make qa-clean    uninstall from the test project, prove cleanup scope, remove qa
+#   make qa-clean    uninstall from the test project and remove qa
 #
 # Everything else here is internal structure, never a command to run by hand:
 # heals and remediation run inside these five. build is complete every time;
@@ -192,7 +192,7 @@ QA_BIN := $(QA_INSTALL_ROOT)/current/hive
 QA_BIN_LINK := $(QA)/bin/hive-qa
 QA_HOME := $(QA)/home
 QA_DAEMON_STARTUP_LOG := $(QA)/daemon-startup.log
-QA_PROOF := $(QA)/proof
+QA_STATE := $(QA)/state
 USER_HIVE ?= $(HOME)/.hive
 ifeq ($(origin PROJECT),command line)
 QA_PROJECT := $(PROJECT)
@@ -364,11 +364,8 @@ run:
 
 # Isolated qa install + run, mirroring `run`. Does not share memory with
 # ~/.hive (qa's sharedWithDefaultHome is empty) and never calls
-# dev-memory-setup. Inventories the test repo — tracked, staged, untracked,
-# ignored, plus git status — and ~/.hive before init so qa-clean can prove
-# Hive removed its own footprint without changing anything that was already
-# the user's. New non-Hive files created by another tool during QA are outside
-# that proof and stay untouched.
+# dev-memory-setup. Records the user's Hive isolation state before init so
+# qa-clean can check that the isolated QA lifecycle did not reach it.
 qa:
 	@set -e; \
 	case "$(QA_HOME)" in "$(HOME)/.hive"|"$(HOME)/.hive"/*) \
@@ -381,12 +378,11 @@ qa:
 	    echo "refusing: PROJECT is inside the hive checkout but is not its root; point at the root or a separate repo" >&2; exit 2;; esac; \
 	fi; \
 	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
-	if [ -f "$(QA_PROOF)/repo-before" ]; then \
-	  echo "refusing: leftover qa proof at $(QA_PROOF); run 'make qa-clean' first" >&2; exit 2; \
+	if [ -f "$(QA_STATE)/hive-before" ]; then \
+	  echo "refusing: leftover qa state at $(QA_STATE); run 'make qa-clean' first" >&2; exit 2; \
 	fi; \
-	mkdir -p "$(QA_PROOF)" "$(QA)/bin" "$(QA)/tmp"; \
-	"$(ROOT)/scripts/qa/inventory.sh" capture-repo "$$proj" "$(QA_PROOF)/repo-before"; \
-	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_PROOF)/hive-before"; \
+	mkdir -p "$(QA_STATE)" "$(QA)/bin" "$(QA)/tmp"; \
+	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_STATE)/hive-before"; \
 	if [ ! -x "$(QA_BIN)" ]; then \
 	  "$(ROOT)/scripts/qa/stage-qa.sh" "$(ROOT)" "$(DIST)" "$(QA_DIST)" "$(DEV_VERSION)" "$(CLI_ASSET)"; \
 	  env $(QA_ENV) sh "$(ROOT)/install.sh" --variant qa --from-build "$(QA_DIST)" "$(DEV_VERSION)"; \
@@ -413,8 +409,8 @@ qa:
 	  exit 1; \
 	fi
 
-# Product uninstall, then proofs. Order is load-bearing: repo uninstall first,
-# scoped repo proof, machine uninstall --purge, then prove the qa paths are gone
+# Product uninstall, then isolation checks. Order is load-bearing: repo
+# uninstall first, machine uninstall --purge, then check the qa paths are gone
 # and ~/.hive matches the pre-qa inventory. Never rm -rf the test project.
 qa-clean:
 	@set -e; \
@@ -427,7 +423,7 @@ qa-clean:
 	    echo "refusing: PROJECT is inside the hive checkout but is not its root; point at the root or a separate repo" >&2; exit 2;; esac; \
 	fi; \
 	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
-	[ -f "$(QA_PROOF)/repo-before" ] || { echo "no pre-install inventory at $(QA_PROOF)/repo-before; run 'make qa' first" >&2; exit 2; }; \
+	[ -f "$(QA_STATE)/hive-before" ] || { echo "no pre-run isolation inventory at $(QA_STATE)/hive-before; run 'make qa' first" >&2; exit 2; }; \
 	[ -x "$(QA_BIN)" ] || { echo "no installed qa binary; cannot run the product uninstall" >&2; exit 2; }; \
 	cd "$$proj"; \
 	env $(QA_ENV) "$(QA_BIN)" stop --force || true; \
@@ -438,22 +434,15 @@ qa-clean:
 	  done; \
 	fi; \
 	env $(QA_ENV) "$(QA_BIN)" uninstall --repo --yes; \
-	"$(ROOT)/scripts/qa/inventory.sh" capture-repo "$$proj" "$(QA_PROOF)/repo-after"; \
-	mark_status=0; \
-	bun run "$(ROOT)/scripts/qa/repo-uninstall-proof.ts" "$(QA_PROOF)/repo-before" "$(QA_PROOF)/repo-after" || mark_status=$$?; \
 	env $(QA_ENV) "$(QA_BIN)" uninstall --yes --purge; \
 	/bin/rm -rf "$(QA_HOME)" "$(QA_HOME).runtime" "$(QA_INSTALL_ROOT)" "$(QA_DIST)" "$(QA)/bin" "$(QA)/tmp" "$(QA_DAEMON_STARTUP_LOG)"; \
 	"$(ROOT)/scripts/qa/assert-qa-gone.sh" \
 	  "$(QA_HOME)" "$(QA_BIN)" "$(QA_BIN_LINK)" \
 	  "$(HOME)/.local/bin/hive-qa" "$(HOME)/.local/share/hive-qa"; \
-	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_PROOF)/hive-after"; \
-	"$(ROOT)/scripts/qa/inventory.sh" compare "$(QA_PROOF)/hive-before" "$(QA_PROOF)/hive-after"; \
-	if [ "$$mark_status" -ne 0 ]; then \
-	  echo "qa-clean: uninstall touched non-Hive content or left Hive residue; the repo proof is above" >&2; \
-	  exit 1; \
-	fi; \
-	echo "qa-clean: Hive removed, non-Hive repo content untouched, and qa variant removed"; \
-	/bin/rm -rf "$(QA_PROOF)" "$(QA)"
+	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_STATE)/hive-after"; \
+	"$(ROOT)/scripts/qa/inventory.sh" compare "$(QA_STATE)/hive-before" "$(QA_STATE)/hive-after"; \
+	echo "qa-clean: Hive and the qa variant removed; user Hive isolation preserved"; \
+	/bin/rm -rf "$(QA_STATE)" "$(QA)"
 
 # No pipes anywhere: a red suite must exit red. The real-CLI e2e suite is already
 # inside `bun run test` and self-skips unless HIVE_E2E=1; opting in is

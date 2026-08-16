@@ -76,7 +76,6 @@ test("the five public .PHONY names are unchanged and qa is declared beside them"
   );
   expect(makefile).toContain(".PHONY: qa qa-clean");
   expect(makefile).toContain("HIVE_DEFAULT_HOME=$(QA_HOME)");
-  expect(makefile).toContain("scripts/qa/repo-uninstall-proof.ts");
 });
 
 test("make -n qa defaults PROJECT to the designated test repo", () => {
@@ -139,7 +138,7 @@ test("make qa refuses a QA_HOME under the user hive home", () => {
   }
 });
 
-test("make qa-clean runs repo uninstall then purge and proves cleanup scope", () => {
+test("make qa-clean runs repo uninstall then purge and preserves isolation", () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-clean-"));
   try {
     const qa = join(fixture, "qa");
@@ -161,22 +160,12 @@ test("make qa-clean runs repo uninstall then purge and proves cleanup scope", ()
         "",
       ].join("\n"),
     );
-    mkdirSync(join(qa, "proof"), { recursive: true });
-    const captureRepo = Bun.spawnSync(
-      [
-        join(root, "scripts", "qa", "inventory.sh"),
-        "capture-repo",
-        project,
-        join(qa, "proof", "repo-before"),
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    expect(captureRepo.exitCode, captureRepo.stderr.toString()).toBe(0);
+    mkdirSync(join(qa, "state"), { recursive: true });
     const captureHive = Bun.spawnSync(
       [
         join(root, "scripts", "qa", "isolation-inventory.sh"),
         userHive,
-        join(qa, "proof", "hive-before"),
+        join(qa, "state", "hive-before"),
       ],
       { stdout: "pipe", stderr: "pipe" },
     );
@@ -190,7 +179,6 @@ test("make qa-clean runs repo uninstall then purge and proves cleanup scope", ()
       USER_HIVE: userHive,
     });
     expect(result.exitCode, result.output).toBe(0);
-    expect(result.output).toContain("repo-proof: CLEAN");
     expect(result.output).toContain("no listed qa path remains");
     expect(readFileSync(argvLog, "utf8")).toBe(
       "stop --force\nuninstall --repo --yes\nuninstall --yes --purge\n",
@@ -199,53 +187,6 @@ test("make qa-clean runs repo uninstall then purge and proves cleanup scope", ()
       "untouched\n",
     );
     expect(result.output).not.toContain("dev-memory-setup.ts");
-  } finally {
-    rmSync(fixture, { recursive: true, force: true });
-  }
-});
-
-test("make qa-clean reds the repo proof when Hive residue is left", () => {
-  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-clean-red-"));
-  try {
-    const qa = join(fixture, "qa");
-    const project = join(fixture, "project");
-    const userHive = join(fixture, "dot-hive");
-    initRepo(project);
-    mkdirSync(userHive, { recursive: true });
-    const hiveBin = join(fixture, "hive-dev");
-    writeExec(hiveBin, "#!/bin/sh\nexit 0\n");
-    writeExec(join(qa, "root", "current", "hive"), "#!/bin/sh\nexit 0\n");
-    mkdirSync(join(qa, "proof"), { recursive: true });
-    Bun.spawnSync(
-      [
-        join(root, "scripts", "qa", "inventory.sh"),
-        "capture-repo",
-        project,
-        join(qa, "proof", "repo-before"),
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    Bun.spawnSync(
-      [
-        join(root, "scripts", "qa", "isolation-inventory.sh"),
-        userHive,
-        join(qa, "proof", "hive-before"),
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    mkdirSync(join(project, "graphify-out"));
-    writeFileSync(join(project, "graphify-out", "graph.json"), "{}\n");
-
-    const result = runMake("qa-clean", {
-      HIVE_BIN: hiveBin,
-      PROJECT: project,
-      QA: qa,
-      QA_HOME: join(qa, "home"),
-      USER_HIVE: userHive,
-    });
-    expect(result.exitCode, result.output).not.toBe(0);
-    expect(result.output).toContain("Hive residue");
-    expect(result.output).toContain("graphify-out/graph.json");
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

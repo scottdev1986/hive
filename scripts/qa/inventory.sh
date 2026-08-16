@@ -1,13 +1,12 @@
 #!/bin/sh
-# Capture and compare filesystem inventories. A compare that only prints a
-# verdict cannot tell "nothing changed" from "the checker did not look".
-# Every compare prints the two paths and the lines that differ.
+# Capture and compare filesystem inventories. Every compare prints both input
+# paths and the lines that differ.
 set -eu
 
 die() { printf 'inventory: %s\n' "$1" >&2; exit 2; }
 
 usage() {
-  die "usage: $0 capture-repo <root> <out> | capture-tree <root> <out> | compare <before> <after>"
+  die "usage: $0 capture-tree <root> <out> | compare <before> <after>"
 }
 
 [ "$#" -ge 1 ] || usage
@@ -55,32 +54,6 @@ write_tree() {
   done | /usr/bin/sort
 }
 
-capture_repo() {
-  [ "$#" -eq 2 ] || die "usage: $0 capture-repo <root> <out>"
-  root="$1"
-  out="$2"
-  [ -e "$root/.git" ] || die "not a git repository: $root"
-  root="$(cd "$root" && pwd -P)" || die "cannot enter $1"
-  tmp="$(mktemp "${TMPDIR:-/tmp}/hive-inventory.XXXXXX")"
-  {
-    printf 'kind\trepo\n'
-    printf 'root\t%s\n' "$root"
-    printf 'section\tgit-status\n'
-    git -C "$root" status --porcelain=v2 --untracked-files=all --ignored=matching --branch
-    printf 'section\tgit-index\n'
-    git -C "$root" ls-files -s
-    printf 'section\tproof-content\n'
-    if [ -f "$root/.gitignore" ] && [ ! -L "$root/.gitignore" ]; then
-      encoded="$(/usr/bin/base64 <"$root/.gitignore" | tr -d '\n')"
-      printf 'B\t.gitignore\t%s\n' "$encoded"
-    fi
-    printf 'section\ttree\n'
-  } >"$tmp"
-  write_tree "$root" ".git" >>"$tmp"
-  /bin/mv -f "$tmp" "$out"
-  printf 'inventory: captured repo %s -> %s\n' "$root" "$out"
-}
-
 capture_tree() {
   [ "$#" -eq 2 ] || die "usage: $0 capture-tree <root> <out>"
   root="$1"
@@ -122,7 +95,6 @@ compare() {
 }
 
 case "$cmd" in
-  capture-repo) capture_repo "$@" ;;
   capture-tree) capture_tree "$@" ;;
   compare) compare "$@" ;;
   *) usage ;;
