@@ -26,6 +26,14 @@
 # work. mtime's known weakness -- a checkout that moves a timestamp without
 # changing bytes -- costs one cache-warm rebuild and never a false pass, and a
 # false pass is precisely the failure this gate exists to delete.
+#
+# WHAT THIS CANNOT SEE. Two things write that binary: the Makefile installs the
+# ReleaseFast proof build (3,337,600 bytes) and native/sessiond/test.sh writes a
+# Debug one (10,726,192 bytes) over the same path. "Newer than its sources" is
+# true of both, so this reports either as current; only `make sessiond`'s own
+# cmp against the proof build tells them apart. That is a defect in having two
+# builders rather than in this check, and it does not reach what this gate is
+# for: both binaries are current with respect to the sources, and both run.
 set -u
 
 CHECK=0
