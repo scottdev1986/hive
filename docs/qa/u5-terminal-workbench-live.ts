@@ -63,6 +63,7 @@ import {
   reconcileSpawnRequests,
   assertIsolatedQaHiveHome,
   assertQaHomeFitsSocketPath,
+  isIsolatedQaHomePath,
   requireHeadlessRootRunning,
   requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
@@ -252,7 +253,7 @@ const artifacts = realpathSync(coordinates.artifacts);
 const sourceRoot = realpathSync(coordinates.sourceRoot);
 const scriptSourceRoot = qaRepoRoot(import.meta.dir);
 
-if (!home.startsWith("/private/tmp/hvqa-") && !home.startsWith("/tmp/hvqa-")) {
+if (!isIsolatedQaHomePath(home)) {
   throw new Error(`QA home is not an isolated short rig: ${home}`);
 }
 assertQaHomeFitsSocketPath(home);

@@ -82,12 +82,14 @@ export function requireU5AccountabilityTaskId(
 }
 
 /** Sessiond's AF_UNIX path is built under the resolved QA home. On macOS
- * `/tmp/hvqa-*` realpaths to `/private/tmp/hvqa-*` (18-char prefix including
- * the hyphen), so the suffix has two characters left. This bound is a
- * socket-path fact, not a style preference — do not raise it to fit a
- * longer default. */
+ * `/tmp` is `/private/tmp` (13 characters including the trailing slash).
+ * This bound is a socket-path fact — do not raise it to fit a longer default.
+ * Keep the label short so the per-checkout tag can stay long enough that
+ * two worktrees do not silently share a home. */
 export const U5_QA_HOME_SOCKET_MAX_LENGTH = 20;
-export const U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH = 2;
+export const QA_HOME_DEFAULT_LABEL = "hq";
+export const U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH = 5;
+export const QA_HOME_OWNER_STAMP_NAME = "qa-owner";
 
 export function assertQaHomeFitsSocketPath(home: string): string {
   if (home.length > U5_QA_HOME_SOCKET_MAX_LENGTH) {
@@ -98,14 +100,23 @@ export function assertQaHomeFitsSocketPath(home: string): string {
   return home;
 }
 
-/** The path `rig.sh` uses when QA_HOME is unset: `/tmp/hvqa-` plus the first
- * two hex digits of sha256(sourceRoot). Matches `printf '%s' | shasum -a 256`. */
+export function isIsolatedQaHomePath(home: string): boolean {
+  return (
+    home.startsWith("/tmp/hq") ||
+    home.startsWith("/private/tmp/hq") ||
+    home.startsWith("/tmp/hvqa-") ||
+    home.startsWith("/private/tmp/hvqa-")
+  );
+}
+
+/** The path `rig.sh` uses when QA_HOME is unset. Must stay in lockstep with
+ * `qa_default_home_requested` in qa-home.sh. */
 export function defaultQaHomeRequested(sourceRoot: string): string {
   const tag = createHash("sha256")
     .update(sourceRoot)
     .digest("hex")
     .slice(0, U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH);
-  return `/tmp/hvqa-${tag}`;
+  return `/tmp/${QA_HOME_DEFAULT_LABEL}${tag}`;
 }
 
 export function defaultQaHomeResolved(sourceRoot: string): string {
@@ -113,11 +124,23 @@ export function defaultQaHomeResolved(sourceRoot: string): string {
   try {
     return realpathSync(requested);
   } catch {
-    // The directory may not exist yet. On macOS `/tmp` is `/private/tmp`, and
-    // that is the spelling the harness measures after rig.sh up.
     return requested.startsWith("/tmp/")
       ? `/private${requested}`
       : resolve(requested);
+  }
+}
+
+/** Same-checkout reuse is allowed. A stamp naming a different checkout is a
+ * collision and must refuse by name, not silently share the home. */
+export function assertQaHomeOwner(
+  existingOwner: string | undefined,
+  checkoutPath: string,
+): void {
+  if (existingOwner === undefined || existingOwner.length === 0) return;
+  const existing = resolvedPath(existingOwner);
+  const checkout = resolvedPath(checkoutPath);
+  if (existing !== checkout) {
+    throw new Error(`QA_HOME is owned by ${existing}, not ${checkout}`);
   }
 }
 
@@ -160,10 +183,7 @@ export function assertIsolatedQaHiveHome(
       `U5 fixture-task seeding refuses HIVE_HOME that resolves to the machine hive: ${resolvedHome}`,
     );
   }
-  if (
-    !resolvedHome.startsWith("/tmp/hvqa-") &&
-    !resolvedHome.startsWith("/private/tmp/hvqa-")
-  ) {
+  if (!isIsolatedQaHomePath(resolvedHome)) {
     throw new Error(
       `U5 fixture-task seeding refuses a HIVE_HOME that is not an isolated QA root: ${resolvedHome}`,
     );

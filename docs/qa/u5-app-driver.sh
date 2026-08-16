@@ -22,8 +22,8 @@
 # Do not set HIVE_SHELL_PROOF=1 for the live launch: it makes the app
 # background-only.
 set -uo pipefail
-
 QA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$QA_DIR/qa-home.sh"
 . "$QA_DIR/repo-root.sh"
 
 die() { echo "u5-driver: $*" >&2; exit 1; }
@@ -355,10 +355,8 @@ run_driver() {
   artifacts="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$artifacts")"
   source_root="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$source_root")"
 
-  case "$home" in
-    /tmp/hvqa-*|/private/tmp/hvqa-*) ;;
-    *) die "QA home is not an isolated short rig: $home" ;;
-  esac
+  qa_home_is_isolated "$home" \
+    || die "QA home is not an isolated short rig: $home"
   case "$project" in
     /tmp/*|/private/tmp/*) ;;
     *) die "QA project is outside the temporary root: $project" ;;

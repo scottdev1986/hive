@@ -6,8 +6,9 @@
 #   qa/rig.sh down           stop QA processes; exit 1 if any survive
 #
 # Parameters (environment):
-#   QA_HOME          /tmp/hvqa-<2 hex> — must resolve under hvqa-* and, after
-#                    macOS realpath, stay within the U5 socket-path bound (20)
+#   QA_HOME          default /tmp/hq<5 hex of checkout> — must resolve under
+#                    hq* or hvqa-* and, after macOS realpath, stay within the
+#                    U5 socket-path bound (20)
 #   QA_PROJECT       /Users/scottkellar/Projects/hive-test-project
 #   QA_SRC_ROOT      the checkout containing this script (the code under test)
 #   QA_HIVE_BIN      optional compiled Hive binary; source execution is the default
@@ -28,15 +29,13 @@ set -uo pipefail
 PRIMARY_CHECKOUT="/Users/scottkellar/Projects/hive"
 QA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$QA_DIR/repo-root.sh"
+. "$QA_DIR/qa-home.sh"
 SRC_DEFAULT="$(qa_repo_root "$QA_DIR")" || exit 2
 # Where the QA tree sits inside a checkout, so the harness helpers below can
 # be found inside the source root UNDER TEST, which is not always this one.
 QA_TREE_SUBDIR="$(qa_tree_subdir "$QA_DIR")" || exit 2
 QA_SRC_ROOT="${QA_SRC_ROOT:-$SRC_DEFAULT}"
-# Two hex digits: /private/tmp/hvqa-XX is 20 characters, the sessiond
-# socket-path bound. A ten-digit tag realpaths to 28 and the U5 harness refuses it.
-QA_HOME_TAG="$(printf '%s' "$SRC_DEFAULT" | /usr/bin/shasum -a 256 | cut -c1-2)"
-QA_HOME_REQUESTED="${QA_HOME:-/tmp/hvqa-$QA_HOME_TAG}"
+QA_HOME_REQUESTED="${QA_HOME:-$(qa_default_home_requested "$SRC_DEFAULT")}"
 QA_HOME="$QA_HOME_REQUESTED"
 QA_PROJECT="${QA_PROJECT:-/Users/scottkellar/Projects/hive-test-project}"
 QA_HIVE_BIN="${QA_HIVE_BIN:-}"
@@ -71,16 +70,34 @@ case "$QA_HOME_RESOLVED" in
   "$DEV_HOME_RESOLVED"|"$DEV_HOME_RESOLVED"/*)
     refuse "QA_HOME resolves to the protected primary dev home: '$QA_HOME_RESOLVED'" ;;
 esac
-case "$QA_HOME_RESOLVED" in
-  /tmp/hvqa-?*|/private/tmp/hvqa-?*) ;;
-  *) refuse "QA_HOME must resolve under /tmp/hvqa-* (got '$QA_HOME' -> '$QA_HOME_RESOLVED')" ;;
-esac
+qa_home_is_isolated "$QA_HOME_RESOLVED" \
+  || refuse "QA_HOME must resolve under /tmp/hq* or /tmp/hvqa-* (got '$QA_HOME' -> '$QA_HOME_RESOLVED')"
 
 # Bind the checked path into every later use. Keeping the caller's symlink here
 # would reopen the gate if that link were swapped after validation.
 QA_HOME="$QA_HOME_RESOLVED"
 ARTIFACTS="$QA_HOME/artifacts"
 QA_DEFAULT_HOME="$QA_HOME/default"
+QA_HOME_OWNER="$(cd "$SRC_DEFAULT" && pwd -P)" \
+  || refuse "could not resolve owning checkout: $SRC_DEFAULT"
+QA_HOME_OWNER_STAMP="$QA_HOME/$QA_HOME_OWNER_STAMP_NAME"
+if [ -f "$QA_HOME_OWNER_STAMP" ]; then
+  QA_HOME_EXISTING_OWNER="$(python3 -c 'import os,sys
+line = open(sys.argv[1]).read().strip()
+print(os.path.realpath(line) if line else "")' "$QA_HOME_OWNER_STAMP")" \
+    || refuse "could not read QA_HOME owner stamp at $QA_HOME_OWNER_STAMP"
+  owner_reason="$(qa_home_owner_refuse "$QA_HOME_EXISTING_OWNER" "$QA_HOME_OWNER")" \
+    || refuse "$owner_reason"
+  if [ -z "$QA_HOME_EXISTING_OWNER" ]; then
+    printf '%s\n' "$QA_HOME_OWNER" > "$QA_HOME_OWNER_STAMP" \
+      || refuse "could not stamp QA_HOME owner at $QA_HOME_OWNER_STAMP"
+  fi
+else
+  mkdir -p "$QA_HOME" \
+    || refuse "could not create QA_HOME $QA_HOME"
+  printf '%s\n' "$QA_HOME_OWNER" > "$QA_HOME_OWNER_STAMP" \
+    || refuse "could not stamp QA_HOME owner at $QA_HOME_OWNER_STAMP"
+fi
 
 mode="${1:-}"
 [ -n "$mode" ] || { echo "usage: qa/rig.sh up|run <cmd...>|down" >&2; exit 2; }
@@ -532,10 +549,10 @@ rig_up() {
 
   # The instance identity the Workspace is launched with, derived ONCE from the
   # resolved home and published so both sides read it instead of each computing
-  # it. QA_HOME_TAG above is a two-character sha256 prefix of the SOURCE ROOT;
-  # this one is a ten-character prefix of the resolved home. Two similar-looking
-  # hashes meaning different things is how a wrong-instance bug survives review,
-  # so this one is named and shared.
+  # it. The default home tag is a five-character sha256 prefix of the SOURCE
+  # ROOT; this one is a ten-character prefix of the resolved home. Two
+  # similar-looking hashes meaning different things is how a wrong-instance
+  # bug survives review, so this one is named and shared.
   local u5_instance_id
   u5_instance_id="$(printf '%s' "$QA_HOME" | /usr/bin/shasum -a 256 | cut -c1-10)"
   local u5_ready="$ARTIFACTS/u5-app-ready.json"

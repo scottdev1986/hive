@@ -10,6 +10,10 @@ import { SessionLocatorSchema } from "../../src/schemas/session-protocol";
 import { WorkspaceVisibilityInventoryInputSchema } from "../../src/daemon/session-host/workspace-visibility";
 import { requiredQaCoordinates } from "./qa-client";
 import { qaRepoRoot } from "./repo-root";
+import {
+  assertQaHomeFitsSocketPath,
+  isIsolatedQaHomePath,
+} from "./u5-terminal-workbench-core";
 
 const ReadySchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -66,14 +70,10 @@ if (home !== qaHome) {
     `HIVE_HOME does not match HIVE_QA_HOME: ${home} != ${qaHome}`,
   );
 }
-if (!home.startsWith("/private/tmp/hvqa-") && !home.startsWith("/tmp/hvqa-")) {
+if (!isIsolatedQaHomePath(home)) {
   throw new Error(`QA home is not an isolated short rig: ${home}`);
 }
-if (home.length > 20) {
-  throw new Error(
-    `QA home is too long for the session host socket path: ${home}`,
-  );
-}
+assertQaHomeFitsSocketPath(home);
 if (project === "/Users/scottkellar/Projects/hive-test-project") {
   throw new Error("refusing the shared hive-test-project");
 }

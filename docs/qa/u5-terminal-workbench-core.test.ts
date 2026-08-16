@@ -10,9 +10,12 @@ import {
   reconcileSpawnRequests,
   assertIsolatedQaHiveHome,
   assertQaHomeFitsSocketPath,
+  assertQaHomeOwner,
   defaultQaHomeRequested,
   defaultQaHomeResolved,
   headlessRootReapVerdict,
+  isIsolatedQaHomePath,
+  QA_HOME_DEFAULT_LABEL,
   requireHeadlessRootRunning,
   requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
@@ -63,22 +66,65 @@ describe("U5 proof decisions", () => {
 
   test("default QA home fits the socket-path limit and an over-long home is refused", () => {
     expect(U5_QA_HOME_SOCKET_MAX_LENGTH).toBe(20);
-    expect(U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH).toBe(2);
+    expect(QA_HOME_DEFAULT_LABEL).toBe("hq");
+    expect(U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH).toBe(5);
     const requested = defaultQaHomeRequested(
       "/Users/x/Projects/hive/.hive/worktrees/helen",
     );
-    expect(requested).toMatch(/^\/tmp\/hvqa-[0-9a-f]{2}$/);
+    expect(requested).toMatch(/^\/tmp\/hq[0-9a-f]{5}$/);
     const resolved = defaultQaHomeResolved(
       "/Users/x/Projects/hive/.hive/worktrees/helen",
     );
-    expect(resolved.length).toBeLessThanOrEqual(U5_QA_HOME_SOCKET_MAX_LENGTH);
+    expect(resolved.length).toBe(U5_QA_HOME_SOCKET_MAX_LENGTH);
     expect(assertQaHomeFitsSocketPath(resolved)).toBe(resolved);
+    expect(isIsolatedQaHomePath(resolved)).toBe(true);
     expect(() =>
       assertQaHomeFitsSocketPath("/private/tmp/hvqa-a50f523119"),
     ).toThrow("QA home is too long for the session host socket path");
     expect(() =>
       assertQaHomeFitsSocketPath("/private/tmp/hvqa-f35"),
     ).toThrow("QA home is too long for the session host socket path");
+  });
+
+  test("shell and TypeScript share one QA home definition", () => {
+    const sourceRoot = "/Users/x/Projects/hive/.hive/worktrees/helen";
+    const shell = Bun.spawnSync(
+      [
+        "bash",
+        "-c",
+        'source "$1" && qa_default_home_requested "$2" && qa_home_is_isolated "$3"; echo isolated:$?',
+        "qa-home",
+        resolve(import.meta.dir, "qa-home.sh"),
+        sourceRoot,
+        defaultQaHomeResolved(sourceRoot),
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    expect(shell.exitCode).toBe(0);
+    const lines = new TextDecoder()
+      .decode(shell.stdout)
+      .trim()
+      .split("\n");
+    expect(lines[0]).toBe(defaultQaHomeRequested(sourceRoot));
+    expect(lines[1]).toBe("isolated:0");
+  });
+
+  test("a QA home owned by a different checkout is refused by name, same-checkout reuse is not", () => {
+    expect(() =>
+      assertQaHomeOwner(
+        "/Users/x/Projects/hive/.hive/worktrees/carmen",
+        "/Users/x/Projects/hive/.hive/worktrees/helen",
+      ),
+    ).toThrow("QA_HOME is owned by");
+    expect(() =>
+      assertQaHomeOwner(
+        "/Users/x/Projects/hive/.hive/worktrees/helen",
+        "/Users/x/Projects/hive/.hive/worktrees/helen",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertQaHomeOwner(undefined, "/Users/x/Projects/hive/.hive/worktrees/helen"),
+    ).not.toThrow();
   });
 
   test("headless root open refuses any state that is not running", () => {
@@ -141,6 +187,8 @@ describe("U5 proof decisions", () => {
     expect(
       assertIsolatedQaHiveHome("/tmp/hvqa-fixture-control", "/Users/x/.hive"),
     ).toBe(resolve("/tmp/hvqa-fixture-control"));
+    expect(isIsolatedQaHomePath("/private/tmp/hqabcde")).toBe(true);
+    expect(isIsolatedQaHomePath("/tmp/not-qa")).toBe(false);
   });
 
   test("keeps incomplete auxiliary viewer readback unclaimed", () => {
