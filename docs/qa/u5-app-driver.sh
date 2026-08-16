@@ -308,28 +308,127 @@ print("\n".join(out))
 ' "$@"
 }
 
+# Every process whose argv carries THIS launch's published --instance-id, one
+# per line as "pid<TAB>ppid<TAB>command".
+#
+# The needle travels in the environment rather than in awk's argv. Written as
+# `awk -v needle="--instance-id $id"`, the needle is part of awk's OWN command
+# line, so `ps` reports the searcher as a candidate and the search matches
+# itself.
+instance_candidates() {
+  local instance_id="$1"
+  ps -axww -o pid=,ppid=,command= \
+    | u5_bind_needle="--instance-id ${instance_id}" awk '
+        index($0, ENVIRON["u5_bind_needle"]) {
+          pid = $1
+          ppid = $2
+          $1 = ""
+          $2 = ""
+          sub(/^[[:space:]]+/, "")
+          print pid "\t" ppid "\t" $0
+        }
+      '
+}
+
 # `open` returns without a pid. Bind the process that carries THIS
 # launch's published --instance-id, then confirm it is the executable
 # we launched. Not a name match. A second HiveWorkspace on the host
 # (production) is ignored unless it has this instance id.
+#
+# EVERY candidate is examined on every poll. More than one process carries this
+# id by construction — the app spawns a feed bridge that repeats --instance-id
+# in its own argv — and `ps` output is not ordered by pid, so the first matching
+# line is not reliably the app. Reading only the first line and treating a
+# mismatch as failure ends the search on the first poll, roughly a tenth of a
+# second in, rather than waiting for the app to appear.
+#
+# A deadline of 0 means one census and no waiting, which is what the pre-launch
+# "nothing already holds this id" assertion needs: a process that does not exist
+# yet cannot be a process that already exists.
 bind_open_app_pid() {
-  local instance_id="$1" executable="$2"
-  local waited=0 pid command
-  while [ "$waited" -lt 20 ]; do
-    pid="$(ps -axww -o pid=,command= | awk -v needle="--instance-id ${instance_id}" '
-      index($0, needle) { print $1; exit }
-    ')"
-    if [ -n "$pid" ] && process_alive "$pid"; then
-      command="$(ps -ww -p "$pid" -o command=)" || return 1
-      printf '%s\n' "$command" | grep -qF "$executable" \
-        || return 1
+  local instance_id="$1" executable="$2" deadline_seconds="$3"
+  local polls=$((deadline_seconds * 2)) waited=0
+  local pid ppid command seen="" started ended
+  started="$(date +%s)"
+  while :; do
+    while IFS="$(printf '\t')" read -r pid ppid command; do
+      [ -n "$pid" ] || continue
+      case "$seen" in
+        *" $pid="*) ;;
+        *) seen="$seen $pid=$command;" ;;
+      esac
+      process_alive "$pid" || continue
+      printf '%s\n' "$command" | grep -qF "$executable" || continue
       printf '%s\n' "$pid"
       return 0
-    fi
+    done <<EOF
+$(instance_candidates "$instance_id")
+EOF
+    [ "$waited" -lt "$polls" ] || break
     sleep 0.5
     waited=$((waited + 1))
   done
+  ended="$(date +%s)"
+  if [ "$polls" -gt 0 ]; then
+    echo "u5-driver: nothing carrying --instance-id $instance_id ran $executable;" \
+      "waited $((ended - started))s; candidates seen:${seen:- none}" >&2
+  fi
   return 1
+}
+
+# A failed bind still launched an app. The EXIT trap can only reap a captured
+# identity, and a failed bind never produces one, so the app and the feed bridge
+# it spawned both survive the driver — and `rig.sh down` then fails on those
+# live identities.
+#
+# The reap is keyed on the published instance id, which belongs to this rig
+# alone, and every kill is an exact pid whose argv is re-read immediately before
+# the signal. Nothing is matched by name, so a production Workspace on a
+# different instance id is never a candidate.
+reap_launched_instance() {
+  local instance_id="$1" executable="$2"
+  local pid ppid command app_pids="" doomed="" identity survivors=""
+
+  while IFS="$(printf '\t')" read -r pid ppid command; do
+    [ -n "$pid" ] || continue
+    printf '%s\n' "$command" | grep -qF "$executable" || continue
+    app_pids="$app_pids $pid"
+  done <<EOF
+$(instance_candidates "$instance_id")
+EOF
+  [ -n "$app_pids" ] || return 0
+
+  # Children are collected before anything is killed: once the app dies its
+  # children are reparented to launchd and their descent from this launch can no
+  # longer be established.
+  while IFS="$(printf '\t')" read -r pid ppid command; do
+    [ -n "$pid" ] || continue
+    case " $app_pids " in
+      *" $ppid "*) doomed="$doomed $pid" ;;
+    esac
+  done <<EOF
+$(instance_candidates "$instance_id")
+EOF
+  doomed="$doomed$app_pids"
+
+  for pid in $doomed; do
+    identity="$(capture_identity "$pid")" || continue
+    /bin/ps -ww -p "$pid" -o command= | grep -qF -- "--instance-id $instance_id" \
+      || continue
+    kill_scoped "$identity" >/dev/null 2>&1 || true
+  done
+
+  sleep 1
+  for pid in $doomed; do
+    if process_alive "$pid"; then
+      survivors="$survivors $pid"
+    fi
+  done
+  if [ -n "$survivors" ]; then
+    log "reap left processes alive:$survivors"
+    return 1
+  fi
+  log "reaped the launched instance:$doomed"
 }
 
 format_timeout_diagnosis() {
@@ -671,7 +770,7 @@ EOF
 $open_args
 EOF
 
-  if bind_open_app_pid "$instance_id" "$executable" >/dev/null; then
+  if bind_open_app_pid "$instance_id" "$executable" 0 >/dev/null; then
     die "a process already carries --instance-id $instance_id"
   fi
 
@@ -680,8 +779,10 @@ EOF
   local launched_at
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   /usr/bin/open "${open_tokens[@]}" || die "open refused to launch the Workspace"
-  APP_PID="$(bind_open_app_pid "$instance_id" "$executable")" \
-    || die "could not bind the launched Workspace pid for --instance-id $instance_id"
+  if ! APP_PID="$(bind_open_app_pid "$instance_id" "$executable" 60)"; then
+    reap_launched_instance "$instance_id" "$executable" || true
+    die "could not bind the launched Workspace pid for --instance-id $instance_id"
+  fi
   LAUNCH_IDENTITY="$(capture_identity "$APP_PID")" \
     || die "could not capture the launched Workspace identity"
 
@@ -891,6 +992,113 @@ self_check() {
   else
     ok "an exit with code 9 was refused rather than read as a SIGKILL"
   fi
+
+  # Binding the launched app. These fixtures forge argv with `exec -a`, so they
+  # carry an instance id and an executable path without an app or a GUI.
+  local bind_exe="/tmp/hvqa-u5-bind/HiveWorkspace.app/Contents/MacOS/HiveWorkspace"
+  local bind_id="hvqabind$$" other_id="hvqaother$$"
+  local bind_started bind_ended bind_elapsed bound bind_err
+
+  # The searcher must not be a candidate. `awk -v needle=...` puts the instance
+  # id into awk's own argv, so `ps` reports it and the search finds itself.
+  if [ -z "$(instance_candidates "$bind_id")" ]; then
+    ok "the candidate census does not match its own search process"
+  else
+    bad "the census matched itself: $(instance_candidates "$bind_id")"
+  fi
+
+  # THE DEFECT THIS FILE WAS OPENED FOR. A process carrying the instance id with
+  # a DIFFERENT executable exists by construction — the app spawns a feed bridge
+  # that repeats --instance-id in its argv. Reading only the first ps line and
+  # failing on a mismatch abandons the whole wait, so the app that arrives a
+  # moment later is never bound.
+  /bin/sh -c "exec -a 'bun run u5-workspace-feed-bridge.ts --port 1 --instance-id $bind_id' /bin/sleep 60" &
+  local decoy_pid=$!
+  # A production Workspace: same executable, its own instance id, not this rig's.
+  /bin/sh -c "exec -a '$bind_exe --workspace-shell-live --instance-id $other_id' /bin/sleep 60" &
+  local production_pid=$!
+  # The app itself appears only after the first polls have already run.
+  ( sleep 2; exec -a "$bind_exe --workspace-shell-live --instance-id $bind_id --feed /tmp/f" /bin/sleep 60 ) &
+  local late_app_shell=$!
+  sleep 0.3
+
+  bind_started="$(date +%s)"
+  bound="$(bind_open_app_pid "$bind_id" "$bind_exe" 20 2>/dev/null)"
+  bind_ended="$(date +%s)"
+  bind_elapsed=$((bind_ended - bind_started))
+  if [ -n "$bound" ] && [ "$bound" != "$decoy_pid" ] && [ "$bound" != "$production_pid" ]; then
+    ok "a decoy carrying the instance id was skipped and the real app was bound ($bind_elapsed s)"
+  else
+    bad "bind returned '${bound:-nothing}' after ${bind_elapsed}s: the decoy collapsed the wait"
+  fi
+  if [ "$bind_elapsed" -ge 1 ]; then
+    ok "the wait outlived the decoy rather than being abandoned on the first poll"
+  else
+    bad "bind returned in ${bind_elapsed}s: it cannot have waited for the late app"
+  fi
+  if [ -n "$bound" ] && process_alive "$production_pid" \
+    && [ "$(/bin/ps -ww -p "$bound" -o command= | grep -c -- "--instance-id $bind_id")" -eq 1 ]; then
+    ok "the production Workspace on another instance id was never bound"
+  else
+    bad "a Workspace on instance id $other_id was bound or the bound pid is not this rig's"
+  fi
+
+  # The pre-launch assertion is one census. Waiting for a process that is
+  # supposed to be absent to appear is ten seconds of nothing on every run.
+  bind_started="$(date +%s)"
+  bind_open_app_pid "absent$$" "$bind_exe" 0 >/dev/null 2>&1
+  bind_ended="$(date +%s)"
+  if [ "$((bind_ended - bind_started))" -le 1 ]; then
+    ok "the pre-launch census refuses immediately instead of waiting out a window"
+  else
+    bad "the zero-deadline census waited $((bind_ended - bind_started))s"
+  fi
+
+  # A genuinely absent app must still fail, and say what it waited for.
+  bind_started="$(date +%s)"
+  bind_err="$(bind_open_app_pid "absent$$" "$bind_exe" 2 2>&1 >/dev/null)"
+  bind_ended="$(date +%s)"
+  bind_elapsed=$((bind_ended - bind_started))
+  if [ "$bind_elapsed" -ge 2 ] \
+    && printf '%s\n' "$bind_err" | grep -q "waited ${bind_elapsed}s" \
+    && printf '%s\n' "$bind_err" | grep -q "candidates seen: none"; then
+    ok "an absent app fails after its full window and names the wait and the candidates"
+  else
+    bad "absent-app failure did not name a measured wait and its candidates: $bind_err"
+  fi
+
+  # A failed bind must not orphan what it launched. The app and the bridge it
+  # spawned are reaped by exact pid; the production Workspace is not.
+  kill -KILL "$decoy_pid" "$late_app_shell" 2>/dev/null || true
+  wait "$decoy_pid" "$late_app_shell" 2>/dev/null
+  local reap_id="hvqareap$$"
+  /bin/sh -c "
+    /bin/sh -c \"exec -a 'bun run u5-workspace-feed-bridge.ts --instance-id $reap_id' /bin/sleep 60\" &
+    exec -a '$bind_exe --workspace-shell-live --instance-id $reap_id' /bin/sleep 60
+  " &
+  local reap_app=$!
+  sleep 0.5
+  local reap_bridge
+  reap_bridge="$(instance_candidates "$reap_id" | awk -F'\t' -v p="$reap_app" '$2 == p { print $1 }')"
+  if [ -n "$reap_bridge" ]; then
+    ok "the fixture reproduces the leak: app $reap_app with child $reap_bridge"
+  else
+    bad "the reap fixture has no child process, so it cannot prove the two-process leak"
+  fi
+  reap_launched_instance "$reap_id" "$bind_exe" >/dev/null 2>&1
+  if ! process_alive "$reap_app" && [ -n "$reap_bridge" ] && ! process_alive "$reap_bridge"; then
+    ok "a failed bind reaps both the app and the child it spawned"
+  else
+    bad "the reap left the app or its child alive: app=$reap_app bridge=$reap_bridge"
+  fi
+  if process_alive "$production_pid"; then
+    ok "the reap left the production Workspace on another instance id alive"
+  else
+    bad "the reap killed a Workspace it did not launch"
+  fi
+  wait "$reap_app" 2>/dev/null
+  kill -KILL "$production_pid" 2>/dev/null || true
+  wait "$production_pid" 2>/dev/null
 
   # Readiness fails as not-ready, in bounded time, rather than hanging.
   never_ready() { return 1; }
