@@ -59,6 +59,7 @@ import { qaRepoRoot } from "./repo-root";
 import {
   agentStandardsRefusalMessage,
   classifyViewerReadback,
+  buildProviderMatrix,
   disclosedMatrixRow,
   explicitRefusalReadbackState,
   finalU5Result,
@@ -2765,19 +2766,16 @@ const finalDecision = finalU5Result(
       : "unknown",
   routingRestore.state === "restored" ? "restored" : "failed",
 );
-const providerMatrix = attemptProviders.map((provider) => {
-  const record = providerOutcomes.get(provider);
-  return {
-    ...disclosedMatrixRow({
-      provider,
-      outcome: record?.outcome,
-      cause: record?.cause ?? record?.reason,
-    }),
-    attemptOrdinal: record?.attemptOrdinal ?? null,
-    artifact:
-      record === undefined ? null : `providers/${provider}.json`,
-  };
-});
+const providerMatrix = buildProviderMatrix(
+  attemptProviders,
+  providerOutcomes,
+).map((row) => ({
+  ...row,
+  artifact:
+    providerOutcomes.get(row.provider as CapabilityProvider) === undefined
+      ? null
+      : `providers/${row.provider}.json`,
+}));
 const result = {
   schemaVersion: 1,
   runId,

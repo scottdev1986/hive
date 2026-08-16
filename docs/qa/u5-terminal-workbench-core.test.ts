@@ -11,6 +11,7 @@ import {
   classifyViewerReadback,
   explicitRefusalReadbackState,
   finalU5Result,
+  buildProviderMatrix,
   disclosedMatrixRow,
   liveRunControlSubjectReady,
   nameSpawnRefusalCause,
@@ -617,6 +618,46 @@ describe("U5 live-proof subject liveness", () => {
     expect(
       disclosedMatrixRow({ provider: "claude", outcome: "attested" }),
     ).toMatchObject({ disposition: "proven", proven: true });
+  });
+
+  test("a thrown proof still emits a matrix for every attempted vendor", () => {
+    const afterThrow = new Map<
+      CapabilityProvider,
+      {
+        outcome: U5ProviderOutcome;
+        cause?: unknown;
+        attemptOrdinal?: number;
+      }
+    >([
+      [
+        "kimi",
+        {
+          outcome: "launch-refused",
+          cause: "pool-exclusion: quota pool subscription is drained",
+          attemptOrdinal: 1,
+        },
+      ],
+      ["claude", { outcome: "pending-attestation", attemptOrdinal: 1 }],
+    ]);
+    const matrix = buildProviderMatrix(
+      ["claude", "codex", "opencode", "grok", "kimi"],
+      afterThrow,
+    );
+    expect(matrix.map((row) => row.provider)).toEqual([
+      "claude",
+      "codex",
+      "opencode",
+      "grok",
+      "kimi",
+    ]);
+    expect(matrix.every((row) => row.disposition === "not-proven")).toBe(true);
+    expect(matrix.find((row) => row.provider === "kimi")?.cause).toContain(
+      "quota pool",
+    );
+    expect(matrix.find((row) => row.provider === "codex")).toMatchObject({
+      outcome: "unknown",
+      cause: "no provider outcome was written",
+    });
   });
 
   test("Stop/Terminate entry keys on the tree, not provider-run busy-ness", () => {

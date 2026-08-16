@@ -369,6 +369,38 @@ export function disclosedMatrixRow(input: {
   };
 }
 
+export function buildProviderMatrix(
+  attemptProviders: readonly CapabilityProvider[],
+  records: ReadonlyMap<
+    CapabilityProvider,
+    {
+      outcome: U5ProviderOutcome;
+      cause?: unknown;
+      reason?: unknown;
+      attemptOrdinal?: number;
+    }
+  >,
+): Array<{
+  provider: string;
+  proven: boolean;
+  disposition: "proven" | "not-proven";
+  outcome: string;
+  cause: string;
+  attemptOrdinal: number | null;
+}> {
+  return attemptProviders.map((provider) => {
+    const record = records.get(provider);
+    return {
+      ...disclosedMatrixRow({
+        provider,
+        outcome: record?.outcome,
+        cause: record?.cause ?? record?.reason,
+      }),
+      attemptOrdinal: record?.attemptOrdinal ?? null,
+    };
+  });
+}
+
 export function finalU5Result(
   proof: "passed" | "partial" | "failed",
   cleanup: "clean" | "failed" | "unknown",
