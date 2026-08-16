@@ -5,7 +5,6 @@ import {
   ArtifactRefIdSchema,
   DigestSchema,
   GitShaSchema,
-  RevisionRefSchema,
   RevisionSchema,
   RunIdSchema,
 } from "./hierarchy-ids";

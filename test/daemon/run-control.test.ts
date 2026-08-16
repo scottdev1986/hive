@@ -364,10 +364,7 @@ describe("G2 binds the exact assembled candidate", () => {
       "1",
     );
 
-    const result = control.apply(
-      intent(approvalOfTheStageAsRead),
-      "engineer",
-    );
+    const result = control.apply(intent(approvalOfTheStageAsRead), "engineer");
 
     expect(result.outcome).toEqual({
       status: "rejected",
@@ -1172,18 +1169,20 @@ describe("a runId-carrying spawn is admitted end to end", () => {
       digest: specDigest,
     });
 
-    const admitted = new SpawnAdmission(store, () => new Date(createdAt))
-      .preflight(
-        {
-          runId,
-          runEpoch: 0,
-          nodeId: childNodeId,
-          taskId,
-          delegationSpec: delegatedTask().delegationSpec,
-          grantId,
-        },
-        "author",
-      );
+    const admitted = new SpawnAdmission(
+      store,
+      () => new Date(createdAt),
+    ).preflight(
+      {
+        runId,
+        runEpoch: 0,
+        nodeId: childNodeId,
+        taskId,
+        delegationSpec: delegatedTask().delegationSpec,
+        grantId,
+      },
+      "author",
+    );
 
     expect(admitted).toMatchObject(childRef);
   });

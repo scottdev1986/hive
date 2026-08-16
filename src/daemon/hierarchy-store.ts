@@ -81,7 +81,11 @@ function migrateRunSpecRef(db: DatabaseHost): void {
     } catch {
       continue;
     }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
       continue;
     }
     const document = parsed as Record<string, unknown>;
@@ -90,7 +94,9 @@ function migrateRunSpecRef(db: DatabaseHost): void {
     delete document.g1;
     if (document.spec === null) continue;
     db.database
-      .query("UPDATE hierarchy_records SET document = ? WHERE kind = 'run' AND id = ?")
+      .query(
+        "UPDATE hierarchy_records SET document = ? WHERE kind = 'run' AND id = ?",
+      )
       .run(JSON.stringify(document), row.id);
   }
 }

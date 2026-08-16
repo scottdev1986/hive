@@ -14,10 +14,7 @@ import {
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import { HiveDaemon } from "../../src/daemon/server";
-import {
-  SpawnAdmission,
-  SpawnAdmissionError,
-} from "../../src/daemon/spawn/admission";
+import { SpawnAdmission } from "../../src/daemon/spawn/admission";
 import type {
   Spawner,
   SpawnRequest,

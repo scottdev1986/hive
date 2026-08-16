@@ -94,7 +94,6 @@ describe("mutation envelope wire contract (shared with the Swift client)", () =>
 describe("run-control bodies name exact facts", () => {
   const runId = "run_018f4f5e-0000-7000-8000-000000000001";
   const digest = `sha256:${"a".repeat(64)}`;
-  const ref = { revision: "1", digest };
 
   test("a run-control intent must fence on revision AND epoch", () => {
     const intent = {
