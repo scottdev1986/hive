@@ -2,10 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { macProcessIdentity } from "../../../src/daemon/lifecycle/daemon-lifecycle";
-import type {
-  CreateResult,
-  SessionSpec,
-} from "../../../src/daemon/session-host/session-host-contract";
 import {
   HiveTerminalHostAdapter,
   requireSessiondRootLocator,
@@ -13,6 +9,10 @@ import {
   TerminalHostBindingMismatchError,
   TerminalHostBindingNotFoundError,
 } from "../../../src/daemon/session-host/hive-terminal-host";
+import type {
+  CreateResult,
+  SessionSpec,
+} from "../../../src/daemon/session-host/session-host-contract";
 import type {
   HiveTerminalBinding,
   TerminalHostBindingStore,
@@ -24,6 +24,7 @@ import type {
 } from "../../../src/daemon/session-host/terminal-host-contract";
 import type { ProviderRun } from "../../../src/schemas/provider-run";
 import { required } from "../../required";
+import { PROCESS_TABLE_VISIBLE_MS, waitUntil } from "../../support/wait-until";
 
 async function processGroupStates(
   processGroupId: number,
@@ -1254,17 +1255,14 @@ describe("HiveTerminalHostAdapter", () => {
         },
       );
 
-      for (
-        let attempt = 0;
-        attempt < 20 &&
-        (await processGroupStates(pid)).every((member) => member.pid === pid);
-        attempt += 1
-      ) {
-        await Bun.sleep(10);
-      }
-      expect(
-        (await processGroupStates(pid)).some((member) => member.pid !== pid),
-      ).toBe(true);
+      await waitUntil(
+        async () =>
+          (await processGroupStates(pid)).some((member) => member.pid !== pid),
+        {
+          deadlineMs: PROCESS_TABLE_VISIBLE_MS,
+          label: `process group ${pid} to contain a forked child`,
+        },
+      );
       expect(await adapter.pauseProvider(locator, run)).toBe(true);
       expect(macProcessIdentity(pid)).toEqual(identity);
       expect(

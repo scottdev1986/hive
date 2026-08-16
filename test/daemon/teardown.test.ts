@@ -4,19 +4,20 @@ import {
   parseProcessTable,
   runPs,
 } from "../../src/daemon/resource-management/resources";
-import { HostOperationError } from "../../src/daemon/session-host/host-operations";
-import { SessiondWireError } from "../../src/daemon/session-host/sessiond-host";
 import {
   captureProcessTree,
   type ReapDependencies,
   reapCapturedTree,
   stopSessiondAgentSession,
 } from "../../src/daemon/resource-management/teardown";
+import { HostOperationError } from "../../src/daemon/session-host/host-operations";
+import { SessiondWireError } from "../../src/daemon/session-host/sessiond-host";
 import type { AgentRecord } from "../../src/schemas/agent";
 import type { ProviderRun } from "../../src/schemas/provider-run";
 import { TerminationRequestSchema } from "../../src/schemas/session-protocol";
 import { required } from "../required";
 import { spawnTestChild } from "../support/spawn-test-child";
+import { PROCESS_TABLE_VISIBLE_MS, waitUntil } from "../support/wait-until";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -68,13 +69,12 @@ async function realProcesses() {
 
 async function waitForProcess(
   predicate: (processes: Awaited<ReturnType<typeof realProcesses>>) => boolean,
-): Promise<boolean> {
-  const deadline = Date.now() + 2_000;
-  do {
-    if (predicate(await realProcesses())) return true;
-    await Bun.sleep(20);
-  } while (Date.now() < deadline);
-  return false;
+  label: string,
+): Promise<void> {
+  await waitUntil(async () => predicate(await realProcesses()), {
+    deadlineMs: PROCESS_TABLE_VISIBLE_MS,
+    label,
+  });
 }
 
 function processGroupAlive(processGroupId: number): boolean {
@@ -180,18 +180,15 @@ describe("reapProcessTree", () => {
     });
     let childPid: number | undefined;
     try {
-      expect(
-        await waitForProcess((processes) => {
-          childPid = processes.find((entry) => entry.ppid === shell.pid)?.pid;
-          return childPid !== undefined;
-        }),
-      ).toBe(true);
+      await waitForProcess((processes) => {
+        childPid = processes.find((entry) => entry.ppid === shell.pid)?.pid;
+        return childPid !== undefined;
+      }, `process ${shell.pid} to start its child`);
       expect(childPid).toBeDefined();
-      expect(
-        await waitForProcess((processes) =>
-          processes.some((entry) => entry.pid === unrelated.pid),
-        ),
-      ).toBe(true);
+      await waitForProcess(
+        (processes) => processes.some((entry) => entry.pid === unrelated.pid),
+        `unrelated process ${unrelated.pid} to appear in the process table`,
+      );
 
       const captured = await captureProcessTree([shell.pid]);
       expect(captured.map((entry) => entry.pid)).toContain(shell.pid);
@@ -199,13 +196,13 @@ describe("reapProcessTree", () => {
 
       shell.kill("SIGKILL");
       await shell.exited;
-      expect(
-        await waitForProcess((processes) =>
+      await waitForProcess(
+        (processes) =>
           processes.some(
             (entry) => entry.pid === childPid && entry.ppid !== shell.pid,
           ),
-        ),
-      ).toBe(true);
+        `process ${required(childPid)} to reparent away from ${shell.pid}`,
+      );
 
       const outcome = await reapCapturedTree(captured);
 
@@ -213,11 +210,10 @@ describe("reapProcessTree", () => {
       expect(outcome.killed.map((entry) => entry.pid)).toContain(
         required(childPid),
       );
-      expect(
-        await waitForProcess(
-          (processes) => !processes.some((entry) => entry.pid === childPid),
-        ),
-      ).toBe(true);
+      await waitForProcess(
+        (processes) => !processes.some((entry) => entry.pid === childPid),
+        `process ${required(childPid)} to leave the process table after reap`,
+      );
       expect(
         (await realProcesses()).some((entry) => entry.pid === unrelated.pid),
       ).toBe(true);

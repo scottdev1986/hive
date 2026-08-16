@@ -7,18 +7,20 @@ import { join } from "node:path";
 import { processGroupAlive } from "../../src/adapters/providers/protocol/process-group";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { macProcessIdentity } from "../../src/daemon/lifecycle/daemon-lifecycle";
+import { SuccessionStore } from "../../src/daemon/queen-provider-service/succession";
 import {
   parseProcessTable,
   runPs,
 } from "../../src/daemon/resource-management/resources";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawn/spawn-service";
-import { SuccessionStore } from "../../src/daemon/queen-provider-service/succession";
 import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { RunCheckpointSchema } from "../../src/schemas/run-checkpoint";
 import type { SessionLocator } from "../../src/schemas/session-protocol";
+import { required } from "../required";
 import { spawnTestChild } from "../support/spawn-test-child";
+import { PROCESS_TABLE_VISIBLE_MS, waitUntil } from "../support/wait-until";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const at = "2026-08-10T12:00:00.000Z";
@@ -124,15 +126,20 @@ function completeHost(db: HiveDatabase, sessionLocator: SessionLocator): void {
 }
 
 async function waitForChildProcess(parentPid: number): Promise<number> {
-  const deadline = Date.now() + 2_000;
-  do {
-    const child = parseProcessTable(await runPs()).find(
-      (process) => process.ppid === parentPid,
-    );
-    if (child !== undefined) return child.pid;
-    await Bun.sleep(20);
-  } while (Date.now() < deadline);
-  throw new Error(`process ${parentPid} never started its child`);
+  let childPid: number | undefined;
+  await waitUntil(
+    async () => {
+      childPid = parseProcessTable(await runPs()).find(
+        (process) => process.ppid === parentPid,
+      )?.pid;
+      return childPid !== undefined;
+    },
+    {
+      deadlineMs: PROCESS_TABLE_VISIBLE_MS,
+      label: `process ${parentPid} to start its child`,
+    },
+  );
+  return required(childPid);
 }
 
 function stopRequest(daemon: HiveDaemon, token: string): Promise<Response> {
