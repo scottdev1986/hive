@@ -4,7 +4,6 @@
 // exact-locator viewer attempt, and cleanup obligation before returning.
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import {
   existsSync,
   mkdirSync,
@@ -13,6 +12,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { agentFetch, userFetch } from "../../src/cli/credential";
@@ -31,11 +31,11 @@ import {
   CapabilityProviderSchema,
 } from "../../src/schemas/capability";
 import {
+  type LiveRunControlIntent,
   LiveRunControlIntentSchema,
+  type LiveRunControlProjection,
   LiveRunControlProjectionSchema,
   LiveRunControlResultSchema,
-  type LiveRunControlIntent,
-  type LiveRunControlProjection,
 } from "../../src/schemas/live-run-control";
 import {
   CandidateEffortSchema,
@@ -51,6 +51,10 @@ import {
   type SessionLocator,
 } from "../../src/schemas/session-protocol";
 import {
+  assertStagedSessiondSchemaDigest,
+  SESSION_PROTOCOL_SCHEMA_RELATIVE,
+} from "../../src/sessiond-schema-digest";
+import {
   callMcpTool,
   McpToolRefusal,
   requiredQaCoordinates,
@@ -58,22 +62,20 @@ import {
 import { qaRepoRoot } from "./repo-root";
 import {
   agentStandardsRefusalMessage,
-  classifyViewerReadback,
+  assertIsolatedQaHiveHome,
+  assertQaHomeFitsSocketPath,
   buildProviderMatrix,
+  classifyViewerReadback,
   disclosedMatrixRow,
   explicitRefusalReadbackState,
   finalU5Result,
   headlessRootReapVerdict,
+  isIsolatedQaHomePath,
   liveRunControlSubjectReady,
   proofSubjectLiveness,
   reconcileSpawnRequests,
-  assertIsolatedQaHiveHome,
-  assertQaHomeFitsSocketPath,
-  assertSessiondEmbedsTreeSchema,
-  isIsolatedQaHomePath,
   requireHeadlessRootRunning,
   requireParsedAgentStandards,
-  SESSION_PROTOCOL_SCHEMA_RELATIVE,
   requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
@@ -671,27 +673,14 @@ async function openIsolatedHeadlessRoot(): Promise<void> {
     process.env.HIVE_SESSIOND_BIN ??
     join(sourceRoot, "native/sessiond/zig-out/bin/hive-sessiond");
   const treeSchemaPath = join(sourceRoot, SESSION_PROTOCOL_SCHEMA_RELATIVE);
-  if (!existsSync(sessiondBin)) {
-    throw new Error(
-      `U5 sessiond schema check refused: staged hive-sessiond is absent at ${sessiondBin}`,
-    );
-  }
-  if (!existsSync(treeSchemaPath)) {
-    throw new Error(
-      `U5 sessiond schema check refused: tree schema is absent at ${treeSchemaPath}`,
-    );
-  }
-  const sessiondBytes = readFileSync(sessiondBin);
-  const treeSchema = readFileSync(treeSchemaPath);
-  assertSessiondEmbedsTreeSchema(sessiondBytes, treeSchema);
+  const digest = assertStagedSessiondSchemaDigest(sessiondBin, treeSchemaPath);
   writeEvidence("00-sessiond-schema.json", {
     schemaVersion: 1,
     sessiondBin,
     treeSchemaPath,
-    sessiondBytes: sessiondBytes.byteLength,
-    treeSchemaBytes: treeSchema.byteLength,
-    treeSchemaSha256: createHash("sha256").update(treeSchema).digest("hex"),
-    state: "embedded",
+    treeSchemaSha256: digest.treeDigest,
+    stagedSchemaSha256: digest.stagedDigest,
+    state: "digest-matched",
   });
   const requestId = mintSessionRequestId();
   const providerRunId = randomUUID();

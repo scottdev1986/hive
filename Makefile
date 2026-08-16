@@ -290,6 +290,7 @@ sessiond: $(SESSIOND_BIN)
 		/bin/chmod 755 "$(SESSIOND_BIN)"; \
 	fi
 	@/usr/bin/cmp -s "$(SESSIOND_RELEASE_BIN)" "$(SESSIOND_BIN)" || { echo "make: sessiond is not the ReleaseFast proof build; rerun 'make build'" >&2; exit 1; }
+	@bun run "$(ROOT)/src/sessiond-schema-digest.ts" "$(SESSIOND_BIN)" "$(ROOT)/workspace/Tests/WorkspaceCoreTests/Fixtures/session-protocol.schema.json"
 
 $(SESSIOND_BIN): $(SESSIOND_RELEASE_BIN)
 	@mkdir -p "$(@D)"

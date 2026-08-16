@@ -1,39 +1,38 @@
+import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, test } from "bun:test";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
 } from "../../src/schemas/capability";
 import {
   agentStandardsRefusalMessage,
+  assertIsolatedQaHiveHome,
+  assertQaHomeFitsSocketPath,
+  assertQaHomeOwner,
+  buildProviderMatrix,
   classifyViewerReadback,
+  defaultQaHomeRequested,
+  defaultQaHomeResolved,
+  disclosedMatrixRow,
   explicitRefusalReadbackState,
   finalU5Result,
-  buildProviderMatrix,
-  disclosedMatrixRow,
+  headlessRootReapVerdict,
+  isIsolatedQaHomePath,
   liveRunControlSubjectReady,
   nameSpawnRefusalCause,
   partitionLiveProofSubjects,
   proofSubjectLiveness,
-  reconcileSpawnRequests,
-  requireParsedAgentStandards,
-  spawnRefusalProofError,
-  stageIsolatedProjectAgentStandards,
-  assertIsolatedQaHiveHome,
-  assertQaHomeFitsSocketPath,
-  assertQaHomeOwner,
-  assertSessiondEmbedsTreeSchema,
-  defaultQaHomeRequested,
-  defaultQaHomeResolved,
-  headlessRootReapVerdict,
-  isIsolatedQaHomePath,
   QA_HOME_DEFAULT_LABEL,
+  reconcileSpawnRequests,
   requireHeadlessRootRunning,
+  requireParsedAgentStandards,
   requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
+  spawnRefusalProofError,
+  stageIsolatedProjectAgentStandards,
   summarizeProviderOutcomes,
   U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH,
   U5_FULL_SCOPE,
@@ -137,29 +136,6 @@ describe("U5 proof decisions", () => {
       assertQaHomeOwner(
         undefined,
         "/Users/x/Projects/hive/.hive/worktrees/helen",
-      ),
-    ).not.toThrow();
-  });
-
-  test("sessiond must embed the tree schema; a stale binary is refused by name", () => {
-    const tree = Buffer.from('{"schemaVersion":1,"title":"session-protocol"}');
-    expect(() => assertSessiondEmbedsTreeSchema(Buffer.from(""), tree)).toThrow(
-      "U5 sessiond schema stale: staged hive-sessiond does not embed the tree's session-protocol.schema.json",
-    );
-    expect(() =>
-      assertSessiondEmbedsTreeSchema(Buffer.from("unrelated binary"), tree),
-    ).toThrow(
-      "U5 sessiond schema stale: staged hive-sessiond does not embed the tree's session-protocol.schema.json",
-    );
-    expect(() =>
-      assertSessiondEmbedsTreeSchema(Buffer.from(""), Buffer.from("")),
-    ).toThrow(
-      "U5 sessiond schema check refused: tree session-protocol.schema.json is empty",
-    );
-    expect(() =>
-      assertSessiondEmbedsTreeSchema(
-        Buffer.concat([Buffer.from("hdr"), tree, Buffer.from("tlr")]),
-        tree,
       ),
     ).not.toThrow();
   });
