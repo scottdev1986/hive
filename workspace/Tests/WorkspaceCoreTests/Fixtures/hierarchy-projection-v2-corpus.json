@@ -201,7 +201,7 @@
           "availability": "present",
           "value": [
             {
-              "idempotencyKey": "approve-g1-once",
+              "idempotencyKey": "approve-g2-once",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "accepted"
@@ -209,7 +209,7 @@
               "observedRevision": "3"
             },
             {
-              "idempotencyKey": "approve-g1-again",
+              "idempotencyKey": "approve-g2-again",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "rejected",
@@ -530,7 +530,7 @@
           "availability": "present",
           "value": [
             {
-              "idempotencyKey": "approve-g1-once",
+              "idempotencyKey": "approve-g2-once",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "accepted"
@@ -538,7 +538,7 @@
               "observedRevision": "3"
             },
             {
-              "idempotencyKey": "approve-g1-again",
+              "idempotencyKey": "approve-g2-again",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "rejected",
@@ -850,7 +850,7 @@
           "availability": "present",
           "value": [
             {
-              "idempotencyKey": "approve-g1-once",
+              "idempotencyKey": "approve-g2-once",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "accepted"
@@ -858,7 +858,7 @@
               "observedRevision": "3"
             },
             {
-              "idempotencyKey": "approve-g1-again",
+              "idempotencyKey": "approve-g2-again",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "rejected",
@@ -1185,7 +1185,7 @@
           "availability": "present",
           "value": [
             {
-              "idempotencyKey": "approve-g1-once",
+              "idempotencyKey": "approve-g2-once",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "accepted"
@@ -1193,7 +1193,7 @@
               "observedRevision": "3"
             },
             {
-              "idempotencyKey": "approve-g1-again",
+              "idempotencyKey": "approve-g2-again",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "rejected",
@@ -1508,7 +1508,7 @@
           "availability": "present",
           "value": [
             {
-              "idempotencyKey": "approve-g1-once",
+              "idempotencyKey": "approve-g2-once",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "accepted"
@@ -1516,7 +1516,7 @@
               "observedRevision": "3"
             },
             {
-              "idempotencyKey": "approve-g1-again",
+              "idempotencyKey": "approve-g2-again",
               "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "outcome": {
                 "status": "rejected",

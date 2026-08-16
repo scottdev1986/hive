@@ -1103,7 +1103,7 @@
                 "availability": "present",
                 "value": [
                   {
-                    "idempotencyKey": "approve-g1-once",
+                    "idempotencyKey": "approve-g2-once",
                     "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "outcome": {
                       "status": "accepted"
@@ -1111,7 +1111,7 @@
                     "observedRevision": "3"
                   },
                   {
-                    "idempotencyKey": "approve-g1-again",
+                    "idempotencyKey": "approve-g2-again",
                     "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "outcome": {
                       "status": "rejected",
@@ -1135,7 +1135,7 @@
           }
         ],
         "createdAt": "2026-07-30T20:00:00.000Z",
-        "contentSha256": "bbb339903609a9aee322722b1f7443a39004c6721f23387ffd75567b7d2c00db"
+        "contentSha256": "8a6d63bdd111dfe93f2a1d744bccfff87395f147192285c8f050df4bea19efcc"
       }
     },
     {
