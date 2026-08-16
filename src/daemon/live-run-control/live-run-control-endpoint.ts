@@ -5,7 +5,10 @@ import type {
   Decision,
 } from "../authorization/authorization-service";
 import type { HiveDatabase } from "../database/hive-database";
-import type { HiveTerminalHostAdapter } from "../session-host/hive-terminal-host";
+import {
+  type HiveTerminalHostAdapter,
+  sessiondTeardownSucceeded,
+} from "../session-host/hive-terminal-host";
 import type { HiveTerminalBinding } from "../session-host/terminal-host-binding";
 import { sameSessionLocator } from "../session-host/locators";
 import type { AgentRecord } from "../../schemas/agent";
@@ -134,9 +137,13 @@ async function project(
   const inspected = await deps.terminalHost.inspectControl(locator);
   const binding = terminalBinding(deps, locator);
   const terminalResult = binding?.terminationEvidence ?? null;
+  // A process-tree target never reports "terminated" — the inspector says
+  // `unknown` unconditionally there because macOS cannot prove containment
+  // (terminal-host-v1.md row J) — so demanding that exact state reported every
+  // clean kill as unknown. The shared predicate reads the documented floor.
   const terminated =
-    terminalResult?.result.state === "terminated" &&
-    terminalResult.result.survivors.length === 0 &&
+    terminalResult !== null &&
+    sessiondTeardownSucceeded(terminalResult.result) &&
     inspected.terminal.presence !== "present";
 
   const active = deps.terminalHost.reconcileProviderRun(locator);

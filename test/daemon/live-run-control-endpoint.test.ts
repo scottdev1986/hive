@@ -463,3 +463,94 @@ describe("Live Run process controls", () => {
     expect(terminateCalls).toEqual([]);
   });
 });
+
+// THE OUTCOME THE PLATFORM ACTUALLY PRODUCES. A process-tree target never
+// reports "terminated": the inspector answers `unknown` unconditionally because
+// macOS cannot prove containment (terminal-host-v1.md row J). A clean kill
+// therefore arrives as unknown-with-no-survivors and the escapee gap stated
+// outright, and this endpoint used to demand the exact "terminated" the
+// platform cannot yield — so it reported every clean kill as unknown.
+describe("a clean kill the platform cannot positively prove", () => {
+  const rowJEvidence = {
+    completedAt: AT,
+    result: {
+      locator,
+      state: "unknown" as const,
+      exit: null,
+      survivors: [],
+      errors: [
+        {
+          phase: "neutral-control",
+          code: "UNKNOWN",
+          diagnosticId: "process-tree-escapees-unaccounted",
+        },
+      ],
+    },
+  };
+
+  function terminatedHarness(evidence: typeof rowJEvidence) {
+    const { deps } = harness();
+    return {
+      ...deps,
+      terminalHost: {
+        ...deps.terminalHost,
+        inspectControl: async () => terminatedInspection(),
+        reconcileProviderRun: () => null,
+      },
+      db: {
+        ...deps.db,
+        getTerminalHostBindingByLocator: () => ({
+          locator,
+          visibility: {
+            workspaceSessionId: "workspace-fixture",
+            workspacePid: 3_800,
+            workspaceStartToken: "3800:123400",
+            openTerminalRevision: "1",
+          },
+          createEvidence: {
+            expectedExecutable: "/bin/zsh",
+            executableVerified: true,
+            verifiedShellRoot: shellRoot,
+            geometry: liveInspection().terminal.geometry,
+            visibility: liveInspection().terminal.visibility,
+          },
+          terminationEvidence: evidence,
+        }),
+      },
+    };
+  }
+
+  test("projects as terminated on the wire, not unknown", async () => {
+    const response = await liveRunControlEndpoint(
+      terminatedHarness(rowJEvidence),
+      request(),
+    );
+
+    expect(response.status).toBe(200);
+    const projection = LiveRunControlProjectionSchema.parse(
+      await response.json(),
+    );
+    expect(projection.termination).toEqual({
+      state: "terminated",
+      completedAt: AT,
+      survivors: [],
+    });
+  });
+
+  // The loud fixture: the same shape WITHOUT the documented escapee diagnostic
+  // is an unexplained absence of evidence, not the floor, and must stay unknown.
+  test("a bare unknown, with no escapee diagnostic, still projects unknown", async () => {
+    const response = await liveRunControlEndpoint(
+      terminatedHarness({
+        ...rowJEvidence,
+        result: { ...rowJEvidence.result, errors: [] },
+      }),
+      request(),
+    );
+
+    const projection = LiveRunControlProjectionSchema.parse(
+      await response.json(),
+    );
+    expect(projection.termination.state).toBe("unknown");
+  });
+});
