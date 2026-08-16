@@ -1,10 +1,26 @@
 // swift-tools-version:5.10
+import Foundation
 import PackageDescription
 
 /// GhosttyKit.xcframework is a **build output**, not checked in.
 /// Materialize it and Gate 6's checkpoint fixtures with
 /// `scripts/native/stage-ghosttykit.sh` from the repo root before running SwiftPM.
 let ghosttyKitPath = "Vendor/GhosttyKit.xcframework"
+let packageRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let requiredStagedInputs = [
+    "\(ghosttyKitPath)/Info.plist",
+    "Vendor/checkpoint-fixtures",
+]
+let missingStagedInputs = requiredStagedInputs.filter {
+    !FileManager.default.fileExists(atPath: packageRoot.appendingPathComponent($0).path)
+}
+
+if !missingStagedInputs.isEmpty {
+    fatalError("""
+    Hive Workspace native inputs are not staged: \(missingStagedInputs.joined(separator: ", ")).
+    From the repository root, run scripts/native/stage-ghosttykit.sh before SwiftPM.
+    """)
+}
 
 let package = Package(
     name: "HiveWorkspace",
