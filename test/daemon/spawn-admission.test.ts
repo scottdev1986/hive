@@ -11,11 +11,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { RunControl } from "../../src/daemon/hierarchy-service/hierarchy-run-control";
 import { HierarchyValidationError } from "../../src/daemon/hierarchy-service/records";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
-import { hiveMailPublish } from "../../src/mail-service/service";
-import { MailStore } from "../../src/mail-service/store";
-import { RunControl } from "../../src/daemon/hierarchy-service/hierarchy-run-control";
 import type {
   SessionInspection,
   SessionLocator,
@@ -30,8 +28,9 @@ import {
   StatusAssignmentMismatchError,
   StatusStore,
 } from "../../src/daemon/status/status-store";
+import { hiveMailPublish } from "../../src/mail-service/service";
+import { MailStore } from "../../src/mail-service/store";
 import type { AgentRecord } from "../../src/schemas/agent";
-import type { RoutingPolicy } from "../../src/schemas/routing-policy";
 import type {
   AgentBindingRef,
   DelegationGrant,
@@ -43,6 +42,7 @@ import type {
   Run,
   SpecRevision,
 } from "../../src/schemas/hierarchy-run";
+import type { RoutingPolicy } from "../../src/schemas/routing-policy";
 import type { RunControlIntent } from "../../src/schemas/run-control";
 import type { TaskDetail } from "../../src/schemas/task-detail";
 import { bumpCapabilityEpoch } from "./fence-state";
@@ -1955,6 +1955,20 @@ test("a hierarchy-spawned agent's launch prompt carries its open assignment pair
   const previousHome = process.env.HIVE_HOME;
   process.env.HIVE_HOME = home;
   const launchedDb = new HiveDatabase(":memory:");
+  const reservedNames: string[] = [];
+  const releasedNames: string[] = [];
+  const reserveAgentName = launchedDb.reserveAgentName.bind(launchedDb);
+  const releaseAgentName = launchedDb.releaseAgentName.bind(launchedDb);
+  launchedDb.reserveAgentName = (name, createdAt) => {
+    const held = reserveAgentName(name, createdAt);
+    if (held) reservedNames.push(name);
+    return held;
+  };
+  launchedDb.releaseAgentName = (name) => {
+    const freed = releaseAgentName(name);
+    if (freed) releasedNames.push(name);
+    return freed;
+  };
   const launchedStore = new HierarchyStore(launchedDb);
   const statusStore = new StatusStore(launchedDb, "instance-1");
   const spec: DelegationSpec = {
@@ -2057,6 +2071,15 @@ test("a hierarchy-spawned agent's launch prompt carries its open assignment pair
       ...hierarchyFields({}, spec),
     });
     expect(record.id).toBe(workerAgentId);
+    expect(reservedNames).toContain(record.name);
+    expect(launchedDb.isAgentNameReserved(record.name)).toBe(true);
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (!launchedDb.isAgentNameReserved(record.name)) break;
+      await Bun.sleep(5);
+    }
+    expect(releasedNames).toContain(record.name);
+    expect(launchedDb.isAgentNameReserved(record.name)).toBe(false);
+    expect(launchedDb.getLiveAgentByName(record.name)?.id).toBe(record.id);
     // server.ts's spawnAgent wrapper opens an assignment row after every
     // spawn, hierarchy spawns included — reproduce that call here.
     statusStore.openAssignment(record.id, record.createdAt);
@@ -2107,6 +2130,9 @@ test("a hierarchy-spawned agent's launch prompt carries its open assignment pair
       now,
     );
     expect(report.eventId).toStartWith("evt_");
+    // The test is who closes launchedDb. releaseAgentName runs in
+    // launch().finally after spawn() returns. Closing before that
+    // reservation is FREE is the RangeError at agent-store.ts:294.
 
     // A report naming any other assignment is still rejected: the validation
     // is the defence, not the defect.
