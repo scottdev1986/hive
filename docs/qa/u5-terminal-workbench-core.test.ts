@@ -9,12 +9,19 @@ import {
   finalU5Result,
   reconcileSpawnRequests,
   assertIsolatedQaHiveHome,
+  assertQaHomeFitsSocketPath,
+  defaultQaHomeRequested,
+  defaultQaHomeResolved,
+  headlessRootReapVerdict,
+  requireHeadlessRootRunning,
   requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
   summarizeProviderOutcomes,
+  U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH,
   U5_FULL_SCOPE,
   U5_PARTIAL_SCOPE,
+  U5_QA_HOME_SOCKET_MAX_LENGTH,
   type U5ProviderOutcome,
   type U5SpawnRequest,
 } from "./u5-terminal-workbench-core";
@@ -52,6 +59,47 @@ describe("U5 proof decisions", () => {
       releasePath: "/tmp/release",
       feedReceiptPath: "/tmp/feed-receipt",
     });
+  });
+
+  test("default QA home fits the socket-path limit and an over-long home is refused", () => {
+    expect(U5_QA_HOME_SOCKET_MAX_LENGTH).toBe(20);
+    expect(U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH).toBe(2);
+    const requested = defaultQaHomeRequested(
+      "/Users/x/Projects/hive/.hive/worktrees/helen",
+    );
+    expect(requested).toMatch(/^\/tmp\/hvqa-[0-9a-f]{2}$/);
+    const resolved = defaultQaHomeResolved(
+      "/Users/x/Projects/hive/.hive/worktrees/helen",
+    );
+    expect(resolved.length).toBeLessThanOrEqual(U5_QA_HOME_SOCKET_MAX_LENGTH);
+    expect(assertQaHomeFitsSocketPath(resolved)).toBe(resolved);
+    expect(() =>
+      assertQaHomeFitsSocketPath("/private/tmp/hvqa-a50f523119"),
+    ).toThrow("QA home is too long for the session host socket path");
+    expect(() =>
+      assertQaHomeFitsSocketPath("/private/tmp/hvqa-f35"),
+    ).toThrow("QA home is too long for the session host socket path");
+  });
+
+  test("headless root open refuses any state that is not running", () => {
+    expect(() => requireHeadlessRootRunning("exited")).toThrow(
+      "U5 headless root open refused: state is exited, not running",
+    );
+    expect(() => requireHeadlessRootRunning("failed")).toThrow(
+      "U5 headless root open refused: state is failed, not running",
+    );
+    expect(() => requireHeadlessRootRunning("")).toThrow(
+      "U5 headless root open refused: state is , not running",
+    );
+    expect(() => requireHeadlessRootRunning("running")).not.toThrow();
+  });
+
+  test("headless root reap is clean only when the host is live before and absent after", () => {
+    expect(headlessRootReapVerdict(false, null, null)).toBe("not-opened");
+    expect(headlessRootReapVerdict(true, "live", "absent")).toBe("clean");
+    expect(headlessRootReapVerdict(true, "live", "live")).toBe("failed");
+    expect(headlessRootReapVerdict(true, "absent", "absent")).toBe("failed");
+    expect(headlessRootReapVerdict(true, "unknown", "absent")).toBe("failed");
   });
 
   test("live accountability task id is required and never defaulted", () => {

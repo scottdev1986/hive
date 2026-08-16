@@ -6,7 +6,8 @@
 #   qa/rig.sh down           stop QA processes; exit 1 if any survive
 #
 # Parameters (environment):
-#   QA_HOME          /tmp/hvqa-<checkout hash> — must resolve under hvqa-*
+#   QA_HOME          /tmp/hvqa-<2 hex> — must resolve under hvqa-* and, after
+#                    macOS realpath, stay within the U5 socket-path bound (20)
 #   QA_PROJECT       /Users/scottkellar/Projects/hive-test-project
 #   QA_SRC_ROOT      the checkout containing this script (the code under test)
 #   QA_HIVE_BIN      optional compiled Hive binary; source execution is the default
@@ -32,7 +33,9 @@ SRC_DEFAULT="$(qa_repo_root "$QA_DIR")" || exit 2
 # be found inside the source root UNDER TEST, which is not always this one.
 QA_TREE_SUBDIR="$(qa_tree_subdir "$QA_DIR")" || exit 2
 QA_SRC_ROOT="${QA_SRC_ROOT:-$SRC_DEFAULT}"
-QA_HOME_TAG="$(printf '%s' "$SRC_DEFAULT" | /usr/bin/shasum -a 256 | cut -c1-10)"
+# Two hex digits: /private/tmp/hvqa-XX is 20 characters, the sessiond
+# socket-path bound. A ten-digit tag realpaths to 28 and the U5 harness refuses it.
+QA_HOME_TAG="$(printf '%s' "$SRC_DEFAULT" | /usr/bin/shasum -a 256 | cut -c1-2)"
 QA_HOME_REQUESTED="${QA_HOME:-/tmp/hvqa-$QA_HOME_TAG}"
 QA_HOME="$QA_HOME_REQUESTED"
 QA_PROJECT="${QA_PROJECT:-/Users/scottkellar/Projects/hive-test-project}"
@@ -529,9 +532,10 @@ rig_up() {
 
   # The instance identity the Workspace is launched with, derived ONCE from the
   # resolved home and published so both sides read it instead of each computing
-  # it. QA_HOME_TAG above is a ten-character sha256 prefix too, but of the
-  # SOURCE ROOT — two identical-looking values meaning different things is how a
-  # wrong-instance bug survives review, so this one is named and shared.
+  # it. QA_HOME_TAG above is a two-character sha256 prefix of the SOURCE ROOT;
+  # this one is a ten-character prefix of the resolved home. Two similar-looking
+  # hashes meaning different things is how a wrong-instance bug survives review,
+  # so this one is named and shared.
   local u5_instance_id
   u5_instance_id="$(printf '%s' "$QA_HOME" | /usr/bin/shasum -a 256 | cut -c1-10)"
   local u5_ready="$ARTIFACTS/u5-app-ready.json"

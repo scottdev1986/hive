@@ -17,7 +17,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { agentFetch, userFetch } from "../../src/cli/credential";
 import { macProcessIdentity } from "../../src/daemon/lifecycle/daemon-lifecycle";
-import { sameSessionLocator } from "../../src/daemon/session-host/locators";
+import { hostDirectory } from "../../src/daemon/session-host/host-operations";
+import {
+  mintSessionRequestId,
+  sameSessionLocator,
+} from "../../src/daemon/session-host/locators";
 import { SessiondViewerAttachClient } from "../../src/daemon/session-host/sessiond-viewer-attach";
 import { WorkspaceVisibleTerminalSchema } from "../../src/daemon/session-host/workspace-visibility";
 import { type AgentRecord, AgentRecordSchema } from "../../src/schemas/agent";
@@ -55,8 +59,11 @@ import { qaRepoRoot } from "./repo-root";
 import {
   classifyViewerReadback,
   finalU5Result,
+  headlessRootReapVerdict,
   reconcileSpawnRequests,
   assertIsolatedQaHiveHome,
+  assertQaHomeFitsSocketPath,
+  requireHeadlessRootRunning,
   requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
@@ -248,11 +255,7 @@ const scriptSourceRoot = qaRepoRoot(import.meta.dir);
 if (!home.startsWith("/private/tmp/hvqa-") && !home.startsWith("/tmp/hvqa-")) {
   throw new Error(`QA home is not an isolated short rig: ${home}`);
 }
-if (home.length > 20) {
-  throw new Error(
-    `QA home is too long for the session host socket path: ${home}`,
-  );
-}
+assertQaHomeFitsSocketPath(home);
 if (!project.startsWith("/private/tmp/") && !project.startsWith("/tmp/")) {
   throw new Error(
     `QA project is not isolated under the temporary root: ${project}`,
@@ -557,6 +560,178 @@ const FixtureTaskReceiptSchema = z
     taskId: z.string().min(1),
   })
   .loose();
+const HeadlessRootSnapshotSchema = z
+  .object({
+    requestId: z.string().min(1),
+    locator: z.object({ sessionId: z.string().min(1) }).passthrough(),
+    state: z.enum(["running", "exited", "failed"]),
+    exitCode: z.number().int().nullable(),
+    diagnostic: z.string().nullable(),
+  })
+  .loose();
+const HeadlessHostRecordSchema = z
+  .object({
+    hostPid: z.number().int().positive(),
+    hostStartToken: z.string().min(1),
+  })
+  .passthrough();
+
+let openedHeadlessRoot: {
+  requestId: string;
+  providerRunId: string;
+  locatorSessionId: string;
+  hostPid: number;
+  hostStartToken: string;
+} | null = null;
+
+async function readJsonResponse(
+  response: Response,
+): Promise<{ status: number; body: unknown; raw: string }> {
+  const raw = await response.text();
+  let body: unknown = raw;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    body = raw;
+  }
+  return { status: response.status, body, raw };
+}
+
+async function observeHeadlessRootHost(
+  sessionId: string,
+): Promise<{ hostPid: number; hostStartToken: string }> {
+  const recordPath = join(hostDirectory(home, sessionId), "record.json");
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (existsSync(recordPath)) {
+      const record = HeadlessHostRecordSchema.parse(
+        JSON.parse(readFileSync(recordPath, "utf8")),
+      );
+      return {
+        hostPid: record.hostPid,
+        hostStartToken: record.hostStartToken,
+      };
+    }
+    await Bun.sleep(50);
+  }
+  throw new Error(
+    `U5 headless root open refused: host record never appeared at ${recordPath}`,
+  );
+}
+
+async function openIsolatedHeadlessRoot(): Promise<void> {
+  assertIsolatedQaHiveHome(
+    process.env.HIVE_HOME ?? "",
+    join(homedir(), ".hive"),
+  );
+  const requestId = mintSessionRequestId();
+  const providerRunId = randomUUID();
+  const response = await rootFetch(
+    `http://127.0.0.1:${port}/orchestrator-session/headless`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requestId,
+        providerRunId,
+        cwd: project,
+        environment: { HIVE_HOME: home },
+      }),
+    },
+  );
+  const payload = await readJsonResponse(response);
+  if (!response.ok) {
+    throw new Error(
+      `U5 headless root open refused: HTTP ${payload.status}: ${payload.raw}`,
+    );
+  }
+  const snapshot = HeadlessRootSnapshotSchema.parse(payload.body);
+  requireHeadlessRootRunning(snapshot.state);
+  const host = await observeHeadlessRootHost(snapshot.locator.sessionId);
+  const identity = macProcessIdentity(host.hostPid);
+  if (identity.startToken !== host.hostStartToken) {
+    throw new Error(
+      `U5 headless root open refused: host pid ${host.hostPid} start token drifted`,
+    );
+  }
+  openedHeadlessRoot = {
+    requestId: snapshot.requestId,
+    providerRunId,
+    locatorSessionId: snapshot.locator.sessionId,
+    hostPid: host.hostPid,
+    hostStartToken: host.hostStartToken,
+  };
+  writeEvidence("00-headless-root.json", {
+    schemaVersion: 1,
+    requestId: snapshot.requestId,
+    providerRunId,
+    state: snapshot.state,
+    locator: snapshot.locator,
+    hostPid: host.hostPid,
+    hostStartToken: host.hostStartToken,
+    before: processReadback(host.hostPid),
+  });
+}
+
+function signalRecordedIdentity(
+  pid: number,
+  startToken: string,
+  signal: NodeJS.Signals,
+): boolean {
+  const live = processReadback(pid);
+  if (live.state !== "live" || live.startToken !== startToken) return false;
+  try {
+    process.kill(pid, signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function reapIsolatedHeadlessRoot(): Promise<Record<string, unknown>> {
+  if (openedHeadlessRoot === null) {
+    return { state: "not-opened" };
+  }
+  const { hostPid, hostStartToken, requestId } = openedHeadlessRoot;
+  const before = processReadback(hostPid);
+  signalRecordedIdentity(hostPid, hostStartToken, "SIGTERM");
+  const termDeadline = Date.now() + 2_000;
+  while (Date.now() < termDeadline) {
+    const current = processReadback(hostPid);
+    if (current.state === "absent") break;
+    if (current.state === "live" && current.startToken !== hostStartToken) break;
+    await Bun.sleep(50);
+  }
+  const afterTerm = processReadback(hostPid);
+  if (afterTerm.state === "live" && afterTerm.startToken === hostStartToken) {
+    signalRecordedIdentity(hostPid, hostStartToken, "SIGKILL");
+    const killDeadline = Date.now() + 2_000;
+    while (Date.now() < killDeadline) {
+      const current = processReadback(hostPid);
+      if (current.state === "absent") break;
+      if (current.state === "live" && current.startToken !== hostStartToken)
+        break;
+      await Bun.sleep(50);
+    }
+  }
+  const after = processReadback(hostPid);
+  let snapshot: unknown = null;
+  try {
+    const response = await rootFetch(
+      `http://127.0.0.1:${port}/orchestrator-session?requestId=${encodeURIComponent(requestId)}`,
+    );
+    const payload = await readJsonResponse(response);
+    snapshot = payload.body;
+  } catch (error) {
+    snapshot = {
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  const state = headlessRootReapVerdict(true, before.state, after.state);
+  const evidence = { state, requestId, hostPid, before, after, snapshot };
+  writeEvidence("10-headless-root-reap.json", evidence);
+  return evidence;
+}
 
 async function seedIsolatedFixtureTask(
   provider: CapabilityProvider,
@@ -1582,6 +1757,8 @@ async function runProof(): Promise<Record<string, unknown>> {
       })),
     });
 
+  await openIsolatedHeadlessRoot();
+
   for (const provider of attemptProviders) {
     if (scopedPartial && provider === "grok") {
       try {
@@ -2445,13 +2622,22 @@ const sentinelCleanup = {
   exitCode: sentinelExitCode,
   after: sentinelAfterCleanup,
 };
+const headlessRootCleanup = await reapIsolatedHeadlessRoot().catch((error) => ({
+  state: "failed" as const,
+  error: error instanceof Error ? error.message : String(error),
+}));
+const rootReaped =
+  headlessRootCleanup.state === "clean" ||
+  headlessRootCleanup.state === "not-opened";
 const finalDecision = finalU5Result(
   proof.result === "passed" || proof.result === "partial"
     ? proof.result
     : "failed",
-  cleanup.state === "clean" && sentinelCleanup.state === "clean"
+  cleanup.state === "clean" && sentinelCleanup.state === "clean" && rootReaped
     ? "clean"
-    : cleanup.state === "failed" || sentinelCleanup.state === "failed"
+    : cleanup.state === "failed" ||
+        sentinelCleanup.state === "failed" ||
+        !rootReaped
       ? "failed"
       : "unknown",
   routingRestore.state === "restored" ? "restored" : "failed",
@@ -2470,6 +2656,7 @@ const result = {
   cleanup,
   routingRestore,
   sentinelCleanup,
+  headlessRootCleanup,
   limitations: [
     ...(proof.result === "partial"
       ? [

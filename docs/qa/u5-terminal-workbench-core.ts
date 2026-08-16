@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -78,6 +79,63 @@ export function requireU5AccountabilityTaskId(
     );
   }
   return TaskIdSchema.parse(taskId);
+}
+
+/** Sessiond's AF_UNIX path is built under the resolved QA home. On macOS
+ * `/tmp/hvqa-*` realpaths to `/private/tmp/hvqa-*` (18-char prefix including
+ * the hyphen), so the suffix has two characters left. This bound is a
+ * socket-path fact, not a style preference — do not raise it to fit a
+ * longer default. */
+export const U5_QA_HOME_SOCKET_MAX_LENGTH = 20;
+export const U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH = 2;
+
+export function assertQaHomeFitsSocketPath(home: string): string {
+  if (home.length > U5_QA_HOME_SOCKET_MAX_LENGTH) {
+    throw new Error(
+      `QA home is too long for the session host socket path: ${home}`,
+    );
+  }
+  return home;
+}
+
+/** The path `rig.sh` uses when QA_HOME is unset: `/tmp/hvqa-` plus the first
+ * two hex digits of sha256(sourceRoot). Matches `printf '%s' | shasum -a 256`. */
+export function defaultQaHomeRequested(sourceRoot: string): string {
+  const tag = createHash("sha256")
+    .update(sourceRoot)
+    .digest("hex")
+    .slice(0, U5_DEFAULT_QA_HOME_TAG_HEX_LENGTH);
+  return `/tmp/hvqa-${tag}`;
+}
+
+export function defaultQaHomeResolved(sourceRoot: string): string {
+  const requested = defaultQaHomeRequested(sourceRoot);
+  try {
+    return realpathSync(requested);
+  } catch {
+    // The directory may not exist yet. On macOS `/tmp` is `/private/tmp`, and
+    // that is the spelling the harness measures after rig.sh up.
+    return requested.startsWith("/tmp/")
+      ? `/private${requested}`
+      : resolve(requested);
+  }
+}
+
+export function requireHeadlessRootRunning(state: string): void {
+  if (state !== "running") {
+    throw new Error(
+      `U5 headless root open refused: state is ${state}, not running`,
+    );
+  }
+}
+
+export function headlessRootReapVerdict(
+  opened: boolean,
+  beforeState: "live" | "absent" | "unknown" | null,
+  afterState: "live" | "absent" | "unknown" | null,
+): "clean" | "failed" | "not-opened" {
+  if (!opened) return "not-opened";
+  return beforeState === "live" && afterState === "absent" ? "clean" : "failed";
 }
 
 function resolvedPath(path: string): string {
