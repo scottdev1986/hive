@@ -8,6 +8,7 @@
 
 import {
   existsSync,
+  readFileSync,
   realpathSync,
   statfsSync,
   statSync,
@@ -22,6 +23,18 @@ const DEFAULT_MAX_BYTES = 1024 * 1024 * 1024;
 const DEFAULT_IMAGE_SIZE = "1g";
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const DETACH_DEADLINE_MS = 2_000;
+
+function sandboxScratchRoot(): string {
+  return process.env.HIVE_TEST_ROOT ?? "/tmp";
+}
+
+// One preserved timeout sandbox per invocation key. A new timeout evicts the
+// previous image for that key so 1 GB residues cannot accumulate. Nested
+// callers (bun test inside this runner) must scratch on HIVE_TEST_ROOT
+// because the outer profile denies writes to /tmp.
+export function preservedSandboxRoot(): string {
+  return join(sandboxScratchRoot(), "hv-timeout");
+}
 
 // The suite starts from a closed environment. These are either ordinary
 // process facts needed by macOS tools or explicit opt-in test modes. Product
@@ -69,10 +82,47 @@ interface RunOptions {
   readonly maxBytes: number;
   readonly cwd?: string;
   readonly beforeRun?: (root: string) => void | Promise<void>;
+  readonly deadlineMs?: number;
+  readonly waitingFor?: string;
+  readonly cleanup?: (base: string) => Promise<void>;
+}
+
+export class SandboxTimeoutError extends Error {
+  readonly deadlineMs: number;
+  readonly waitingFor: string;
+  readonly preservedPath: string;
+
+  constructor(deadlineMs: number, waitingFor: string, preservedPath: string) {
+    super(
+      `timed out after ${deadlineMs}ms waiting for ${waitingFor}\npreserved sandbox: ${preservedPath}`,
+    );
+    this.name = "SandboxTimeoutError";
+    this.deadlineMs = deadlineMs;
+    this.waitingFor = waitingFor;
+    this.preservedPath = preservedPath;
+  }
+}
+
+export function preservedSandboxPointer(key: string): string {
+  return join(preservedSandboxRoot(), key);
+}
+
+export function readPreservedSandboxBase(key: string): string | null {
+  const pointer = preservedSandboxPointer(key);
+  if (!existsSync(pointer)) return null;
+  const base = readFileSync(pointer, "utf8").trim();
+  return base.length > 0 ? base : null;
+}
+
+export async function releasePreservedSandbox(key: string): Promise<void> {
+  const base = readPreservedSandboxBase(key);
+  if (base !== null) await cleanupSandboxBase(base);
+  const pointer = preservedSandboxPointer(key);
+  if (existsSync(pointer)) await rm(pointer, { force: true });
 }
 
 async function createTestSandboxPaths(): Promise<RootPaths> {
-  const base = await mkdtemp(join("/tmp", "hv-"));
+  const base = await mkdtemp(join(sandboxScratchRoot(), "hv-"));
   return {
     base,
     imageBase: join(base, "v"),
@@ -119,6 +169,16 @@ async function detach(paths: RootPaths): Promise<boolean> {
   return result.exitCode === 0;
 }
 
+function pathsFromBase(base: string): RootPaths {
+  return {
+    base,
+    imageBase: join(base, "v"),
+    image: join(base, "v.sparseimage"),
+    mount: join(base, "m"),
+    outside: join(base, "outside"),
+  };
+}
+
 async function cleanupTestSandbox(paths: RootPaths): Promise<void> {
   try {
     if (!(await detach(paths))) return;
@@ -127,6 +187,25 @@ async function cleanupTestSandbox(paths: RootPaths): Promise<void> {
     // Cleanup is best effort. A unique orphan costs bounded disk space but
     // cannot block another invocation, and cleanup must not change test truth.
   }
+}
+
+async function cleanupSandboxBase(base: string): Promise<void> {
+  await cleanupTestSandbox(pathsFromBase(base));
+}
+
+async function preserveTimedOutSandbox(
+  paths: RootPaths,
+  key: string,
+  cleanup: (base: string) => Promise<void>,
+): Promise<string> {
+  await mkdir(preservedSandboxRoot(), { recursive: true });
+  const pointer = preservedSandboxPointer(key);
+  const previous = readPreservedSandboxBase(key);
+  await writeFile(pointer, `${paths.base}\n`);
+  if (previous !== null && previous !== paths.base) {
+    await cleanup(previous);
+  }
+  return realpathSync(paths.mount);
 }
 
 function assertBoundedVolume(root: string, maxBytes: number): void {
@@ -317,10 +396,19 @@ export async function runInBoundedTestRoot(
   if (!/^[a-z0-9-]+$/.test(options.key)) {
     throw new Error(`invalid test-root key: ${options.key}`);
   }
+  if (options.deadlineMs !== undefined && options.deadlineMs <= 0) {
+    throw new Error("deadlineMs must be a positive number of milliseconds");
+  }
+  if (options.deadlineMs !== undefined && options.waitingFor === undefined) {
+    throw new Error("a named deadline requires waitingFor");
+  }
 
   const paths = await createTestSandboxPaths();
+  const cleanup = options.cleanup ?? cleanupSandboxBase;
   let child: ReturnType<typeof Bun.spawn> | undefined;
   let processListServer: ReturnType<typeof Bun.listen> | undefined;
+  let timedOut = false;
+  let timeoutError: SandboxTimeoutError | undefined;
   const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
   const forward = (signal: NodeJS.Signals): void => {
     if (child !== undefined) void stopProcessGroup(child.pid, signal);
@@ -338,17 +426,55 @@ export async function runInBoundedTestRoot(
       detached: true,
     });
     for (const signal of signals) process.on(signal, forward);
-    const exitCode = await child.exited;
-    await stopProcessGroup(child.pid, "SIGTERM");
-    await Bun.sleep(100);
-    await stopProcessGroup(child.pid, "SIGKILL");
-    return exitCode;
+    const finished =
+      options.deadlineMs === undefined
+        ? { kind: "exited" as const, exitCode: await child.exited }
+        : await Promise.race([
+            child.exited.then((exitCode) => ({
+              kind: "exited" as const,
+              exitCode,
+            })),
+            Bun.sleep(options.deadlineMs).then(() => ({
+              kind: "timeout" as const,
+            })),
+          ]);
+    if (finished.kind === "timeout") {
+      timedOut = true;
+    } else {
+      await stopProcessGroup(child.pid, "SIGTERM");
+      await Bun.sleep(100);
+      await stopProcessGroup(child.pid, "SIGKILL");
+      return finished.exitCode;
+    }
   } finally {
     for (const signal of signals) process.off(signal, forward);
     if (child !== undefined) await stopProcessGroup(child.pid, "SIGKILL");
     processListServer?.stop(true);
-    await cleanupTestSandbox(paths);
+    // A timeout is when the working directory is most valuable. Cleanup on
+    // that path would delete the evidence and can emit a secondary fatal
+    // about a missing directory that readers then mistake for the failure.
+    if (timedOut) {
+      let preservedPath = paths.mount;
+      try {
+        preservedPath = await preserveTimedOutSandbox(
+          paths,
+          options.key,
+          cleanup,
+        );
+      } catch {
+        // Eviction of a previous image must not replace the timeout.
+      }
+      timeoutError = new SandboxTimeoutError(
+        options.deadlineMs ?? 0,
+        options.waitingFor ?? "the sandboxed command",
+        preservedPath,
+      );
+    } else {
+      await cleanup(paths.base);
+    }
   }
+  if (timeoutError !== undefined) throw timeoutError;
+  throw new Error("sandbox run ended without an exit or a named timeout");
 }
 
 async function selfTest(): Promise<void> {
@@ -444,8 +570,160 @@ async function selfTest(): Promise<void> {
   if (roots.length !== 2 || roots[0] === roots[1]) {
     throw new Error("concurrent invocations did not receive unique roots");
   }
+
+  const timeoutKeys = [
+    "self-to-preserve",
+    "self-green-clean",
+    "self-fail-clean",
+    "self-evict-cap",
+    "self-cleanup-fail",
+  ] as const;
+  try {
+    let preservedRoot = "";
+    try {
+      await runInBoundedTestRoot(["bun", "-e", "await Bun.sleep(10_000)"], {
+        ...options,
+        key: "self-to-preserve",
+        deadlineMs: 80,
+        waitingFor: "a command that never finished",
+        beforeRun(root) {
+          writeFileSync(join(root, "existed"), "yes");
+          preservedRoot = root;
+        },
+      });
+      throw new Error("timeout path returned instead of throwing");
+    } catch (error) {
+      if (!(error instanceof SandboxTimeoutError)) throw error;
+      if (
+        error.message.split("\n")[0] !==
+        "timed out after 80ms waiting for a command that never finished"
+      ) {
+        throw new Error(
+          `timeout first line was ${error.message.split("\n")[0]}`,
+        );
+      }
+      if (!error.message.includes(`preserved sandbox: ${preservedRoot}`)) {
+        throw new Error("timeout did not cite the preserved sandbox path");
+      }
+      if (!existsSync(join(preservedRoot, "existed"))) {
+        throw new Error(
+          "timeout cleaned up the image it should have preserved",
+        );
+      }
+    }
+
+    let greenRoot = "";
+    const green = await runInBoundedTestRoot(["bun", "-e", "process.exit(0)"], {
+      ...options,
+      key: "self-green-clean",
+      beforeRun(root) {
+        writeFileSync(join(root, "existed"), "yes");
+        if (!existsSync(join(root, "existed"))) {
+          throw new Error("green fixture never created the image");
+        }
+        greenRoot = root;
+      },
+    });
+    if (green !== 0) throw new Error(`green run exited ${green}`);
+    if (greenRoot.length === 0) throw new Error("green fixture did not run");
+    if (existsSync(greenRoot)) {
+      throw new Error("green run left the image on disk");
+    }
+
+    let failedRoot = "";
+    const failed = await runInBoundedTestRoot(
+      ["bun", "-e", "process.exit(7)"],
+      {
+        ...options,
+        key: "self-fail-clean",
+        beforeRun(root) {
+          writeFileSync(join(root, "existed"), "yes");
+          if (!existsSync(join(root, "existed"))) {
+            throw new Error("failure fixture never created the image");
+          }
+          failedRoot = root;
+        },
+      },
+    );
+    if (failed !== 7) throw new Error(`named failure exited ${failed}`);
+    if (failedRoot.length === 0) throw new Error("failure fixture did not run");
+    if (existsSync(failedRoot)) {
+      throw new Error("named failure left the image on disk");
+    }
+
+    let first = "";
+    let second = "";
+    try {
+      await runInBoundedTestRoot(["bun", "-e", "await Bun.sleep(10_000)"], {
+        ...options,
+        key: "self-evict-cap",
+        deadlineMs: 80,
+        waitingFor: "the first hung command",
+        beforeRun(root) {
+          first = root;
+        },
+      });
+      throw new Error("first eviction timeout returned");
+    } catch (error) {
+      if (!(error instanceof SandboxTimeoutError)) throw error;
+    }
+    if (!existsSync(first)) throw new Error("first timeout did not preserve");
+    try {
+      await runInBoundedTestRoot(["bun", "-e", "await Bun.sleep(10_000)"], {
+        ...options,
+        key: "self-evict-cap",
+        deadlineMs: 80,
+        waitingFor: "the second hung command",
+        beforeRun(root) {
+          second = root;
+        },
+      });
+      throw new Error("second eviction timeout returned");
+    } catch (error) {
+      if (!(error instanceof SandboxTimeoutError)) throw error;
+    }
+    if (!existsSync(second)) throw new Error("second timeout did not preserve");
+    if (first === second) throw new Error("eviction reused the same image");
+    if (existsSync(first)) throw new Error("cap did not evict the first image");
+
+    try {
+      await runInBoundedTestRoot(["bun", "-e", "await Bun.sleep(10_000)"], {
+        ...options,
+        key: "self-cleanup-fail",
+        deadlineMs: 80,
+        waitingFor: "a command that never finished",
+      });
+      throw new Error("cleanup-fail seed timeout returned");
+    } catch (error) {
+      if (!(error instanceof SandboxTimeoutError)) throw error;
+    }
+    try {
+      await runInBoundedTestRoot(["bun", "-e", "await Bun.sleep(10_000)"], {
+        ...options,
+        key: "self-cleanup-fail",
+        deadlineMs: 80,
+        waitingFor: "a command that never finished",
+        cleanup: async () => {
+          throw new Error("cleanup exploded");
+        },
+      });
+      throw new Error("cleanup-fail timeout returned");
+    } catch (error) {
+      if (!(error instanceof SandboxTimeoutError)) {
+        throw new Error(
+          `cleanup error replaced the timeout: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (error.message.includes("cleanup exploded")) {
+        throw new Error("cleanup error leaked into the timeout message");
+      }
+    }
+  } finally {
+    await Promise.all(timeoutKeys.map((key) => releasePreservedSandbox(key)));
+  }
+
   console.log(
-    `bounded test root: write guard, cap, unique concurrent roots across ${Math.min(worktrees.length, 2)} worktrees, failure cleanup, and kill cleanup verified`,
+    `bounded test root: write guard, cap, unique concurrent roots across ${Math.min(worktrees.length, 2)} worktrees, failure cleanup, and kill cleanup verified; timeout preserve/name 1, green cleanup 1, named-failure cleanup 1, cap eviction 1, cleanup-error-does-not-replace 1`,
   );
 }
 
@@ -475,12 +753,20 @@ if (import.meta.main) {
   const args = process.argv.slice(2);
   const selfTestOnly = args.length === 1 && args[0] === "--self-test";
   if (!selfTestOnly) ensureSessiond();
-  const exitCode = selfTestOnly
-    ? await selfTest().then(() => 0)
-    : await runInBoundedTestRoot(args[0] === "--" ? args.slice(1) : args, {
-        key: "suite",
-        imageSize: DEFAULT_IMAGE_SIZE,
-        maxBytes: DEFAULT_MAX_BYTES,
-      });
-  process.exit(exitCode);
+  try {
+    const exitCode = selfTestOnly
+      ? await selfTest().then(() => 0)
+      : await runInBoundedTestRoot(args[0] === "--" ? args.slice(1) : args, {
+          key: "suite",
+          imageSize: DEFAULT_IMAGE_SIZE,
+          maxBytes: DEFAULT_MAX_BYTES,
+        });
+    process.exit(exitCode);
+  } catch (error) {
+    if (error instanceof SandboxTimeoutError) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    throw error;
+  }
 }
