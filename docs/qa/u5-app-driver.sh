@@ -246,6 +246,31 @@ raise SystemExit("no registry identity for this project")
 PY
 }
 
+# One token list is both the recorded argv and the exec argv. 851cce8b
+# wrote --project-id/--project-name into the release record only; the
+# process never received them. A valued flag is two lines so a missing
+# identity flag is a missing line.
+workspace_launch_tokens() {
+  printf '%s\n' \
+    --workspace-shell-live \
+    --port "$1" \
+    --instance-home "$2" \
+    --hive "$3" \
+    --project "$4" \
+    --project-id "$5" \
+    --project-name "$6" \
+    --instance-id "$7" \
+    --feed "$8"
+}
+
+format_timeout_diagnosis() {
+  local reason="$1"
+  local shown="$2"
+  shown="$(printf '%s' "$shown" | tr '\n\r' '  ' | sed 's/  */ /g;s/^ //;s/ $//')"
+  [ -n "$shown" ] || shown="unreadable"
+  printf '%s (on-screen: %s)\n' "$reason" "$shown"
+}
+
 ready_agent_rows() {
   python3 - "$1" <<'PY'
 import json, sys
@@ -323,6 +348,7 @@ PY
 LAUNCH_IDENTITY=""
 APP_PID=""
 APP_LLDB_LOG=""
+DRIVER_EVIDENCE_ROOT=""
 
 cleanup_launch() {
   local status=$?
@@ -361,6 +387,40 @@ session_button_present() {
 click_session() {
   local target_id="$1"
   lldb_value "NSArray *wins=[$NSAPP windows]; NSButton *hit=(NSButton*)0; for (NSWindow *candidate in wins) { NSMutableArray *q=[NSMutableArray arrayWithObject:[candidate contentView]]; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSButton class]] && [(NSString*)[v accessibilityIdentifier] isEqualToString:@\"live-run-session-$target_id\"]) { hit=(NSButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } if (hit) break; } [hit performSelector:@selector(performClick:) withObject:(id)0 afterDelay:0.2]; (long)hit"
+}
+
+# Visible NSTextField text inside live-run-terminal-host. Written to a
+# file because lldb_value only keeps the last awk field of `$0 =`.
+read_terminal_host_text() {
+  local dest="${1:-}"
+  [ -n "$APP_PID" ] || return 1
+  [ -n "$dest" ] || return 1
+  rm -f "$dest"
+  lldb_value "NSArray *wins=[$NSAPP windows]; NSMutableArray *parts=[NSMutableArray array]; for (NSWindow *candidate in wins) { NSMutableArray *q=[NSMutableArray arrayWithObject:[candidate contentView]]; NSView *host=(NSView*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([(NSString*)[v accessibilityIdentifier] isEqualToString:@\"live-run-terminal-host\"]) { host=v; break; } [q addObjectsFromArray:[v subviews]]; } if (!host) continue; NSMutableArray *q2=[NSMutableArray arrayWithObject:host]; while ([q2 count] > 0) { NSView *v=(NSView*)[q2 objectAtIndex:0]; [q2 removeObjectAtIndex:0]; if ([v isKindOfClass:[NSTextField class]] && ![(NSView*)v isHidden] && [[(NSTextField*)v stringValue] length] > 0) { [parts addObject:[(NSTextField*)v stringValue]]; } [q2 addObjectsFromArray:[v subviews]]; } } NSString *text=[parts componentsJoinedByString:@\" | \"]; [text writeToFile:@\"$dest\" atomically:YES encoding:4 error:(NSError**)0]; (long)[text length]" >/dev/null || true
+  [ -f "$dest" ]
+}
+
+capture_timeout_on_screen() {
+  local dest_txt dest_png shown="" win_id
+  if [ -n "${DRIVER_EVIDENCE_ROOT:-}" ]; then
+    dest_txt="$DRIVER_EVIDENCE_ROOT/08-timeout-on-screen.txt"
+    dest_png="$DRIVER_EVIDENCE_ROOT/08-timeout-on-screen.png"
+    if identity_matches "$LAUNCH_IDENTITY" 2>/dev/null; then
+      read_terminal_host_text "$dest_txt" || true
+      [ -f "$dest_txt" ] && shown="$(tr '\n\r' '  ' < "$dest_txt")"
+      win_id="$(workbench_window_number 2>/dev/null || true)"
+      if [ -n "$win_id" ] && [ "$win_id" != "0" ]; then
+        /usr/sbin/screencapture -x -o -l "$win_id" "$dest_png" 2>/dev/null || true
+      fi
+    fi
+  fi
+  printf '%s' "$shown"
+}
+
+die_after_launch() {
+  local shown
+  shown="$(capture_timeout_on_screen)"
+  die "$(format_timeout_diagnosis "$1" "$shown")"
 }
 
 run_driver() {
@@ -448,6 +508,7 @@ run_driver() {
     *) die "ready marker points outside the artifact root: $evidence_root" ;;
   esac
   mkdir -p "$evidence_root"
+  DRIVER_EVIDENCE_ROOT="$evidence_root"
 
   local screenshot_paths
   screenshot_paths="$(derive_screenshot_paths "$ready_path" "$evidence_root")" \
@@ -459,15 +520,24 @@ run_driver() {
   [ ! -e "$app_log" ] || die "app log already exists: $app_log"
 
   local launch_args
-  launch_args="--workspace-shell-live
---port $port
---instance-home $home
---hive $hive_bin
---project $project
---project-id $project_id
---project-name $project_name
---instance-id $instance_id
---feed $feed_bin"
+  launch_args="$(workspace_launch_tokens \
+    "$port" "$home" "$hive_bin" "$project" \
+    "$project_id" "$project_name" "$instance_id" "$feed_bin")"
+  printf '%s\n' "$launch_args" | grep -qx -- '--project-id' \
+    || die "launch argv dropped --project-id"
+  printf '%s\n' "$launch_args" | grep -qx -- '--project-name' \
+    || die "launch argv dropped --project-name"
+
+  local -a launch_tokens
+  launch_tokens=()
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    launch_tokens+=("$tok")
+  done <<EOF
+$launch_args
+EOF
+  [ "${#launch_tokens[@]}" -eq 17 ] \
+    || die "launch argv is incomplete: ${#launch_tokens[@]} tokens"
 
   trap cleanup_launch EXIT HUP INT TERM
 
@@ -483,13 +553,7 @@ run_driver() {
     HIVE_QA_U5_APP_READY_PATH="$ready_path" \
     HIVE_QA_U5_APP_FEED_RECEIPT="$receipt_path" \
     "$executable" \
-    --workspace-shell-live \
-    --port "$port" \
-    --instance-home "$home" \
-    --hive "$hive_bin" \
-    --project "$project" \
-    --instance-id "$instance_id" \
-    --feed "$feed_bin" \
+    "${launch_tokens[@]}" \
     >"$app_log" 2>&1 &
   APP_PID=$!
   LAUNCH_IDENTITY="$(capture_identity "$APP_PID")" \
@@ -502,7 +566,7 @@ run_driver() {
     [ -n "$number" ] && [ "$number" != "0" ]
   }
   wait_until_ready 90 workbench_ready >/dev/null \
-    || die "not ready after 90s: live-run-workbench window never appeared"
+    || die_after_launch "not ready after 90s: live-run-workbench window never appeared"
 
   host_ready() {
     local hosts
@@ -511,7 +575,7 @@ run_driver() {
     [ -n "$hosts" ] && [ "$hosts" != "0" ]
   }
   wait_until_ready 90 host_ready >/dev/null \
-    || die "not ready after 90s: live-run-terminal-host never appeared"
+    || die_after_launch "not ready after 90s: live-run-terminal-host never appeared"
 
   local provider agent_id
   while IFS="$(printf '\t')" read -r provider agent_id; do
@@ -522,7 +586,7 @@ run_driver() {
       [ -n "$hit" ] && [ "$hit" != "0" ]
     }
     wait_until_ready 90 session_ready >/dev/null \
-      || die "not ready after 90s: live-run-session-$agent_id never appeared"
+      || die_after_launch "not ready after 90s: live-run-session-$agent_id never appeared"
   done <<EOF
 $rows
 EOF
@@ -536,7 +600,7 @@ raise SystemExit(0 if receipt.get("schemaVersion") == 1 else 1)
 PY
   }
   wait_until_ready 90 receipt_ready >/dev/null \
-    || die "not ready after 90s: feed receipt never arrived"
+    || die_after_launch "not ready after 90s: feed receipt never arrived"
 
   local win_id captured=""
   win_id="$(workbench_window_number)" \
@@ -553,7 +617,7 @@ PY
       receipt_has_agent "$receipt_path" "$agent_id"
     }
     wait_until_ready 90 agent_receipt_ready >/dev/null \
-      || die "feed receipt never selected $provider/$agent_id"
+      || die_after_launch "feed receipt never selected $provider/$agent_id"
     local shot
     shot="$evidence_root/workspace-final-$provider.png"
     [ ! -e "$shot" ] || die "screenshot already exists: $shot"
@@ -780,6 +844,28 @@ PY
     ok "project identity is read from the registry and refused when absent"
   else
     bad "project identity helper did not read or refuse correctly"
+  fi
+
+  local tokens
+  tokens="$(workspace_launch_tokens 9 /tmp/h /tmp/hive /tmp/p \
+    48558525-a01d-4037-875e-8b72203eef0a u5p-h abcdef /tmp/feed)"
+  if printf '%s\n' "$tokens" | grep -qx -- '--project-id' \
+    && printf '%s\n' "$tokens" | grep -qx -- '48558525-a01d-4037-875e-8b72203eef0a' \
+    && printf '%s\n' "$tokens" | grep -qx -- '--project-name' \
+    && printf '%s\n' "$tokens" | grep -qx -- 'u5p-h' \
+    && [ "$(printf '%s\n' "$tokens" | grep -c .)" -eq 17 ]; then
+    ok "launch argv is one list and includes project identity flags"
+  else
+    bad "launch argv helper dropped project identity flags: $tokens"
+  fi
+
+  if [ "$(format_timeout_diagnosis "feed receipt never selected claude/x" "Terminal transport is absent in this launch.")" \
+      = "feed receipt never selected claude/x (on-screen: Terminal transport is absent in this launch.)" ] \
+    && [ "$(format_timeout_diagnosis "feed receipt never arrived" "")" \
+      = "feed receipt never arrived (on-screen: unreadable)" ]; then
+    ok "timeout names the on-screen placeholder rather than only the missing receipt"
+  else
+    bad "timeout diagnosis does not surface on-screen text"
   fi
 
   if [ "$(published_instance_id "$coordinates_file")" = "abcdef0123" ]; then
