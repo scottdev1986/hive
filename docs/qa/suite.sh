@@ -1662,7 +1662,7 @@ probe_workspace_ui() {
   # no rig; sandbox-blind does, so it is run through workspace-ui.sh with the
   # coordinates of a live one.
   local control
-  for control in forged-healthy forged-counters end-state-reachable corpus-gap; do
+  for control in forged-healthy forged-counters end-state-reachable corpus-retired-row; do
     log "probe workspace-ui: $control"
     "$WORKSPACE_UI" probe "$control" \
       || die "probe workspace-ui: $control did not bite"

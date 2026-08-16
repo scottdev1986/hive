@@ -2,7 +2,7 @@
 # qa/workspace-ui.sh — headless proof legs for the new Workspace shell.
 #
 #   qa/workspace-ui.sh run <artifacts> <home> <port> <hive-bin>
-#   qa/workspace-ui.sh probe forged-proof|corpus-gap|sandbox-blind
+#   qa/workspace-ui.sh probe forged-proof|corpus-retired-row|sandbox-blind
 #
 # `run` drives the QA-only executable HiveWorkspaceQA under HIVE_SHELL_PROOF=1,
 # which builds the shell, prints one measured SHELL-PROOF line and exits without
@@ -48,7 +48,7 @@ log() { echo "workspace-ui: $*" >&2; }
 usage() {
   echo "usage: qa/workspace-ui.sh run <artifacts> <home> <port> <hive-bin>" >&2
   echo "       qa/workspace-ui.sh probe forged-healthy|forged-counters" >&2
-  echo "       qa/workspace-ui.sh probe end-state-reachable|corpus-gap" >&2
+  echo "       qa/workspace-ui.sh probe end-state-reachable|corpus-retired-row" >&2
   echo "       qa/workspace-ui.sh probe screen-registry" >&2
   echo "       qa/workspace-ui.sh probe sandbox-blind <artifacts> <home> <port> <hive-bin>" >&2
   exit 2
@@ -689,21 +689,46 @@ probe_screen_registry() {
   rm -rf "$work"
 }
 
-probe_corpus_gap() {
+probe_corpus_retired_row() {
   local work
   work="$(mktemp -d -t wsui-corpus)"
   local corpus="$work/corpus"
   cp -R "$FIXTURE_CORPUS" "$corpus"
-  # Drop the absent-screen row for one unwired screen. The store must refuse
-  # the whole corpus rather than serve nine routes and let a screen vanish.
+  # Put a RETIRED screen back into the absent-screens corpus. ShellRoute has a
+  # case only for a screen the registry declares, so an autonomy row cannot
+  # decode into a route, and the store must refuse the whole corpus rather than
+  # serve a shell with a resurrected destination.
+  #
+  # This probe used to REMOVE the autonomy row instead, and that expectation
+  # went stale: making absence structural deleted the retired rows from the
+  # corpus, so there was nothing left to remove and the probe could no longer
+  # bite. Removal is also no longer constructible for any screen — every
+  # ShellRoute case is wired, so no route needs an absent row at all. Adding an
+  # undeclared one is the direction that still has a subject, and it guards the
+  # property that actually matters: a retired screen must not be reinstatable
+  # through fixture data.
   python3 - "$corpus/shell-absent-screens-corpus.json" <<'PY'
 import json, sys
 path = sys.argv[1]
 rows = json.loads(open(path, encoding="utf-8").read())
-kept = [r for r in rows if r["value"]["route"] != "autonomy"]
-if len(kept) == len(rows):
-    raise SystemExit("corpus has no autonomy absent row to remove")
-open(path, "w", encoding="utf-8").write(json.dumps(kept, indent=2))
+if any(row["value"]["route"] == "autonomy" for row in rows):
+    raise SystemExit("corpus already declares autonomy; the probe must add it")
+rows.append(
+    {
+        "schemaVersion": 1,
+        "source": {"revision": None, "generation": None},
+        "observedAt": None,
+        "freshness": "unknown",
+        "availability": "unknown",
+        "evidence": None,
+        "value": {
+            "route": "autonomy",
+            "contractState": "retired",
+            "reason": "Probe row: a retired screen must not be reinstatable.",
+        },
+    }
+)
+open(path, "w", encoding="utf-8").write(json.dumps(rows, indent=2))
 PY
   build_qa_binary "$work" || die "$BUILD_REFUSAL"
   local proofs="$work/proofs"
@@ -713,16 +738,20 @@ PY
     proof_run "$proofs" "fixture-$scenario" "$scenario" "" --workspace-shell "$corpus"
   done
   grep -q '^SHELL-PROOF FAIL' "$proofs/fixture-current.line" \
-    || die "corpus-gap: the shell accepted a corpus missing an absent-screen row"
+    || die "corpus-retired-row: the shell accepted a corpus reinstating a retired screen"
+  # Named, not merely failed: a corpus that died for an unrelated reason would
+  # otherwise satisfy the check above and prove nothing about the retired row.
+  grep -q 'invalidAbsentRow' "$proofs/fixture-current.line" \
+    || die "corpus-retired-row: the shell refused for the wrong reason: $(cat "$proofs/fixture-current.line")"
   [ "$(cat "$proofs/fixture-current.exit")" != 0 ] \
-    || die "corpus-gap: the shell exited 0 on a corpus it should refuse"
+    || die "corpus-retired-row: the shell exited 0 on a corpus it should refuse"
   printf 'CONNECTED\n' >"$proofs/control-net-open.txt"
   printf 'DENIED\n' >"$proofs/control-net-denied.txt"
   printf 'READ\n' >"$proofs/control-home-open.txt"
   printf 'DENIED\n' >"$proofs/control-home-denied.txt"
   local rows="$work/rows.txt"
   assert_rows "$proofs" >"$rows" 2>&1 || true
-  require_broken "$rows" WSUI-01 "corpus-gap"
+  require_broken "$rows" WSUI-01 "corpus-retired-row"
   rm -rf "$work"
 }
 
@@ -754,7 +783,7 @@ case "$mode" in
       forged-counters) probe_forged_counters ;;
       end-state-reachable) probe_end_state_reachable ;;
       screen-registry) probe_screen_registry ;;
-      corpus-gap) probe_corpus_gap ;;
+      corpus-retired-row) probe_corpus_retired_row ;;
       sandbox-blind) shift; probe_sandbox_blind "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
       *) usage ;;
     esac
