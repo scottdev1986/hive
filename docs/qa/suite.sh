@@ -63,7 +63,7 @@ log() { echo "suite: $*" >&2; }
 
 usage() {
   echo "usage: qa/suite.sh fixture" >&2
-  echo "       qa/suite.sh probe missing-row|forged-tier|teardown-leak|schema|broken-exit|shared-home|cleanup-trap|raw-d|green-needs|tour-calibration|tour-interaction-row|declared-screens|declared-catalog|queen-leg|workspace-ui" >&2
+  echo "       qa/suite.sh probe missing-row|forged-tier|teardown-leak|schema|broken-exit|shared-home|cleanup-trap|raw-d|green-needs|tour-calibration|tour-interaction-row|declared-screens|declared-catalog|screen-id-binding|queen-leg|workspace-ui" >&2
   exit 2
 }
 
@@ -210,11 +210,62 @@ qa_declared_vs_catalog() {
   return 0
 }
 
+# The settled id-to-slug pairing, written out a second time on purpose.
+#
+# This is the expectation, so it must not be read from TOUR_SCREEN_MAP: a
+# control that derives its expected value from the thing under test agrees with
+# every edit, including the wrong ones. Same reason FROZEN_DECLARED_SCREENS is
+# a literal. Changing a pairing here is a deliberate act with a reviewer
+# attached, which is exactly what a silent re-point never had.
+#
+# UI-04 (tokens) and UI-06 (autonomy) are retired. A retired id is a tombstone,
+# never a free slot to hand to the next screen.
+FROZEN_SCREEN_ID_BINDING="$(cat <<'EOF'
+UI-01|run
+UI-02|router
+UI-03|models
+UI-05|queen
+UI-07|memory-overview
+UI-08|memory-library
+UI-09|memory-recall
+UI-10|memory-maintenance
+EOF
+)"
+RETIRED_SCREEN_IDS="UI-04 UI-06"
+
+# Fails naming the screen whose id moved. The set comparisons next door cannot
+# see this: swap two slugs' ids and both the id set and the slug set are
+# unchanged, so the mismatch they look for never appears.
+qa_assert_screen_id_binding() {
+  local id slug actual_id actual_slug drift=0
+  while IFS='|' read -r id slug; do
+    [ -n "$id" ] || continue
+    actual_id="$(printf '%s\n' "$TOUR_SCREEN_MAP" | awk -F'|' -v s="$slug" '$2 == s { print $1 }')"
+    if [ "$actual_id" != "$id" ]; then
+      echo "screen $slug is bound to ${actual_id:-<absent>}, settled id is $id" >&2
+      drift=1
+    fi
+  done <<EOF
+$FROZEN_SCREEN_ID_BINDING
+EOF
+  for id in $RETIRED_SCREEN_IDS; do
+    actual_slug="$(printf '%s\n' "$TOUR_SCREEN_MAP" | awk -F'|' -v i="$id" '$1 == i { print $2 }')"
+    if [ -n "$actual_slug" ]; then
+      echo "retired id $id was reissued to $actual_slug" >&2
+      drift=1
+    fi
+  done
+  [ "$drift" -eq 0 ]
+}
+
 catalog_ui_ids="$(qa_catalog_ui_ids)"
 map_ui_ids="$(qa_map_ui_ids)"
 if [ "$catalog_ui_ids" != "$map_ui_ids" ]; then
   die "screen catalog ids disagree with the declared-screen map catalog=[${catalog_ui_ids//$'\n'/,}] map=[${map_ui_ids//$'\n'/,}]"
 fi
+# Every run, not just `probe screen-id-binding`. The check above compares sets
+# and so cannot see a screen handed another screen's id; this one names it.
+qa_assert_screen_id_binding || die "the settled screen id binding drifted"
 
 resolve_real() {
   python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
@@ -1517,6 +1568,46 @@ probe_declared_catalog() {
   log "probe declared-catalog: match/extra/missing/omission/aggregator controls pinned"
 }
 
+probe_screen_id_binding() {
+  log "probe screen-id-binding: settled pairing, re-point, swap, tombstone reuse"
+  qa_assert_screen_id_binding \
+    || die "probe screen-id-binding: the shipped binding already drifted"
+
+  local saved="$TOUR_SCREEN_MAP" err
+
+  # A re-point of one screen, the 85afb4cc5 defect in miniature.
+  TOUR_SCREEN_MAP="${saved//UI-07|memory-overview/UI-06|memory-overview}"
+  err="$(qa_assert_screen_id_binding 2>&1)" \
+    && { TOUR_SCREEN_MAP="$saved"; die "probe screen-id-binding: a re-pointed id passed"; }
+  printf '%s' "$err" | grep -q 'screen memory-overview is bound to UI-06, settled id is UI-07' \
+    || { TOUR_SCREEN_MAP="$saved"; die "probe screen-id-binding: re-point not named: $err"; }
+  printf '%s' "$err" | grep -q 'retired id UI-06 was reissued to memory-overview' \
+    || { TOUR_SCREEN_MAP="$saved"; die "probe screen-id-binding: tombstone reuse not named: $err"; }
+
+  # A swap, which leaves both the id set and the slug set identical.
+  TOUR_SCREEN_MAP="$(printf '%s\n' "$saved" \
+    | sed -e 's/^UI-08|memory-library$/UI-08|memory-recall/' \
+          -e 's/^UI-09|memory-recall$/UI-09|memory-library/')"
+  err="$(qa_assert_screen_id_binding 2>&1)" \
+    && { TOUR_SCREEN_MAP="$saved"; die "probe screen-id-binding: a swapped pair passed"; }
+  printf '%s' "$err" | grep -q 'screen memory-library is bound to UI-09, settled id is UI-08' \
+    || { TOUR_SCREEN_MAP="$saved"; die "probe screen-id-binding: swap not named: $err"; }
+
+  # The set checks must be shown BLIND to that swap, or this probe is redundant.
+  local swapped_ids swapped_slugs
+  swapped_ids="$(printf '%s\n' "$TOUR_SCREEN_MAP" | awk -F'|' '{ print $1 }' | sort | tr '\n' ',')"
+  swapped_slugs="$(printf '%s\n' "$TOUR_SCREEN_MAP" | awk -F'|' '{ print $2 }' | sort | tr '\n' ',')"
+  TOUR_SCREEN_MAP="$saved"
+  [ "$swapped_ids" = "$(qa_map_ui_ids | tr '\n' ',')" ] \
+    || die "probe screen-id-binding: the swap changed the id set, so it was not a silent re-point"
+  [ "$swapped_slugs" = "$(qa_map_slugs | tr '\n' ',')" ] \
+    || die "probe screen-id-binding: the swap changed the slug set, so it was not a silent re-point"
+
+  qa_assert_screen_id_binding \
+    || die "probe screen-id-binding: binding not restored after the controls"
+  log "probe screen-id-binding: re-point, swap and tombstone reuse all fail by name"
+}
+
 probe_shared_home() {
   log "probe shared-home: preflight must refuse before reset/up"
   local saved="$QA_HOME" code
@@ -1599,6 +1690,7 @@ case "$mode" in
       tour-interaction-row) probe_tour_interaction_row ;;
       declared-screens) probe_declared_screens ;;
       declared-catalog) probe_declared_catalog ;;
+      screen-id-binding) probe_screen_id_binding ;;
       queen-leg) probe_queen_leg ;;
       workspace-ui) probe_workspace_ui ;;
       *) usage ;;
