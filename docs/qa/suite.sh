@@ -18,6 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$SCRIPT_DIR/repo-root.sh"
+. "$SCRIPT_DIR/tour-interaction-slugs.sh"
 SRC_ROOT="$(qa_repo_root "$SCRIPT_DIR")" || exit 2
 PRIMARY_CHECKOUT="/Users/scottkellar/Projects/hive"
 # Known shared live-phase home (ownerless custodian rig). Suite must never use it.
@@ -62,7 +63,7 @@ log() { echo "suite: $*" >&2; }
 
 usage() {
   echo "usage: qa/suite.sh fixture" >&2
-  echo "       qa/suite.sh probe missing-row|forged-tier|teardown-leak|schema|broken-exit|shared-home|cleanup-trap|raw-d|green-needs|tour-calibration|tour-interaction-row|queen-leg|workspace-ui" >&2
+  echo "       qa/suite.sh probe missing-row|forged-tier|teardown-leak|schema|broken-exit|shared-home|cleanup-trap|raw-d|green-needs|tour-calibration|tour-interaction-row|declared-screens|declared-catalog|queen-leg|workspace-ui" >&2
   exit 2
 }
 
@@ -129,12 +130,11 @@ CLI-17|bounded|A
 UI-01|calibrated|T
 UI-02|calibrated|T
 UI-03|calibrated|T
-UI-04|calibrated|T
 UI-05|calibrated|T
-UI-06|calibrated|T
 UI-07|calibrated|T
 UI-08|calibrated|T
 UI-09|calibrated|T
+UI-10|calibrated|T
 SYS-01|yes|S
 SYS-02|yes|D
 SYS-03|yes|D
@@ -158,6 +158,63 @@ EOF
 # Derived from the catalog above and never restated. A second copy of this
 # number is exactly how a row gets added while the totals check keeps passing.
 MATRIX_ROW_COUNT="$(printf '%s\n' "$MATRIX_ROWS" | grep -c '|')"
+
+# Stable UI id → declared slug, and the only place the pairing is stated.
+# UI-04 (tokens) and UI-06 (autonomy) are absent because they name no screen;
+# every surviving screen keeps the number it has always had. Renumbering is
+# what this table exists to prevent: an id is a stable name, so shifting one
+# silently re-points every stored capture and report at a different screen.
+#
+# The ids are deliberately not contiguous, and closing the gaps would be the
+# bug. Rows once derived their id from a slug's POSITION in a hand-kept list,
+# so removing a screen from the middle renumbered every screen after it while
+# the suite stayed green — that is how memory-overview through
+# memory-maintenance each came to answer to the id of their predecessor.
+TOUR_SCREEN_MAP="$(cat <<'EOF'
+UI-01|run
+UI-02|router
+UI-03|models
+UI-05|queen
+UI-07|memory-overview
+UI-08|memory-library
+UI-09|memory-recall
+UI-10|memory-maintenance
+EOF
+)"
+
+# Catalog T rows must be exactly these ids. A reintroduced UI-04/UI-06 or a
+# renamed survivor is a failed catalog, not a row to mark broken.
+qa_catalog_ui_ids() {
+  printf '%s\n' "$MATRIX_ROWS" | awk -F'|' '$1 ~ /^UI-/ && $3 == "T" { print $1 }' | sort
+}
+
+qa_map_ui_ids() {
+  printf '%s\n' "$TOUR_SCREEN_MAP" | awk -F'|' '{ print $1 }' | sort
+}
+
+qa_map_slugs() {
+  printf '%s\n' "$TOUR_SCREEN_MAP" | awk -F'|' '{ print $2 }' | sort
+}
+
+qa_declared_vs_catalog() {
+  local declared_file="$1"
+  local extra missing
+  extra="$(comm -13 <(qa_map_slugs) <(sort "$declared_file"))"
+  missing="$(comm -23 <(qa_map_slugs) <(sort "$declared_file"))"
+  if [ -n "$extra" ] || [ -n "$missing" ]; then
+    extra="${extra//$'\n'/,}"
+    missing="${missing//$'\n'/,}"
+    echo "declared list disagrees with the screen catalog extra=[${extra}] missing=[${missing}]"
+    return 1
+  fi
+  return 0
+}
+
+catalog_ui_ids="$(qa_catalog_ui_ids)"
+map_ui_ids="$(qa_map_ui_ids)"
+if [ "$catalog_ui_ids" != "$map_ui_ids" ]; then
+  die "screen catalog ids disagree with the declared-screen map catalog=[${catalog_ui_ids//$'\n'/,}] map=[${map_ui_ids//$'\n'/,}]"
+fi
 
 resolve_real() {
   python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
@@ -273,11 +330,12 @@ aggregate_report() {
   leg_list="$(printf '%s\n' "${LEG_FILES[@]}")"
   expect_list="${QA_SUITE_EXPECT_LEGS:-}"
 
-  python3 - "$MATRIX_ROWS" "$legs_dir" "$report" "$source_sha" "$drop" "$run_dir" "$leg_list" "$expect_list" <<'PY'
+  local declared_file="${QA_SUITE_DECLARED_SCREENS:-}"
+  python3 - "$MATRIX_ROWS" "$legs_dir" "$report" "$source_sha" "$drop" "$run_dir" "$leg_list" "$expect_list" "$TOUR_SCREEN_MAP" "$declared_file" <<'PY'
 import json, sys
 from pathlib import Path
 
-matrix_text, legs_dir, report_path, source_sha, drop, run_dir, leg_list, expect_list = sys.argv[1:9]
+matrix_text, legs_dir, report_path, source_sha, drop, run_dir, leg_list, expect_list, tour_map, declared_file = sys.argv[1:11]
 ALLOWED_VERDICTS = {"working", "broken", "NEEDS-FIXTURE", "NOT-RUN-BY-S"}
 ALLOWED_MODES = {"fixture", "live"}
 ALLOWED_DET = {"yes", "bounded", "calibrated"}
@@ -308,6 +366,31 @@ leg_presence = {}
 
 def reject(msg: str) -> None:
     schema_errors.append(msg)
+
+map_ids = {line.split("|", 1)[0] for line in tour_map.splitlines() if line.strip()}
+catalog_ui = {rid for rid, meta in matrix.items() if rid.startswith("UI-") and meta["owner"] == "T"}
+if catalog_ui != map_ids:
+    reject(
+        "catalog T ids "
+        + ",".join(sorted(catalog_ui))
+        + " != declared-screen map "
+        + ",".join(sorted(map_ids))
+    )
+if declared_file:
+    declared_path = Path(declared_file)
+    if not declared_path.is_file():
+        reject(f"declared list missing: {declared_file}")
+    else:
+        declared = {line.strip() for line in declared_path.read_text().splitlines() if line.strip()}
+        map_slugs = {line.split("|", 1)[1] for line in tour_map.splitlines() if line.strip()}
+        extra = sorted(declared - map_slugs)
+        missing = sorted(map_slugs - declared)
+        if extra or missing:
+            reject(
+                "declared list disagrees with the screen catalog"
+                + (f" extra={','.join(extra)}" if extra else "")
+                + (f" missing={','.join(missing)}" if missing else "")
+            )
 
 leg_names = [n for n in leg_list.splitlines() if n.strip()]
 expected = {n.strip() for n in expect_list.replace(",", " ").split() if n.strip()}
@@ -547,12 +630,21 @@ publish_tour_rows() {
   local legs="$1" source_sha="$2" tour_artifacts="$3" tour_ok="$4" tour_log="${5:-}"
   local out="$legs/tour-rows.jsonl"
   : > "$out"
-  local i=1 slug
-  local slugs=(run router models tokens queen memory-overview memory-library memory-recall memory-maintenance)
-  for slug in "${slugs[@]}"; do
-    local id
-    printf -v id 'UI-%02d' "$i"
-    local png="$tour_artifacts/fixture-$slug.png"
+  local declared="$tour_artifacts/declared-screens.txt"
+  if [ ! -f "$declared" ]; then
+    log "tour-rows: no declared-screens.txt — cannot derive UI rows from the declared list"
+    return 0
+  fi
+  local disagree
+  if ! disagree="$(qa_declared_vs_catalog "$declared")"; then
+    die "tour-rows: $disagree"
+  fi
+  local slug id png
+  while IFS= read -r slug; do
+    [ -n "$slug" ] || continue
+    id="$(printf '%s\n' "$TOUR_SCREEN_MAP" | awk -F'|' -v s="$slug" '$2 == s { print $1 }')"
+    [ -n "$id" ] || die "tour-rows: declared slug $slug has no stable UI id"
+    png="$tour_artifacts/fixture-$slug.png"
     if [ -n "$tour_log" ] && grep -q "^ok ${slug} -> " "$tour_log" 2>/dev/null \
       && [ -f "$png" ] && [ -s "$png" ]; then
       write_row "$out" "$id" "fixture" "working" "calibrated" "$source_sha" \
@@ -561,32 +653,24 @@ publish_tour_rows() {
       write_row "$out" "$id" "fixture" "broken" "calibrated" "$source_sha" \
         "tour-failed-or-missing-capture:$slug" "tour_ok=$tour_ok"
     fi
-    i=$((i + 1))
-  done
+  done < "$declared"
 }
 
 publish_tour_interaction_row() {
   local legs="$1" source_sha="$2" tour_artifacts="$3"
   local out="$legs/tour-interaction-rows.jsonl" slug verdict=working
-  local slugs=(
-    run-menu-hive run-menu-edit run-menu-view run-menu-agent
-    run-menu-run run-menu-memory run-menu-queen run-menu-window
-    run-unavailable-inspector run-attention run-modal
-    router-category-popup router-category-selected
-    router-effort-popup router-effort-selected memory-recall-text
-  )
   local ledger="$tour_artifacts/interactions.tsv"
-  if [ ! -f "$ledger" ] || [ "$(wc -l < "$ledger")" -ne "${#slugs[@]}" ]; then
+  if [ ! -f "$ledger" ] || [ "$(wc -l < "$ledger")" -ne "${#TOUR_INTERACTION_SLUGS[@]}" ]; then
     verdict=broken
   fi
-  for slug in "${slugs[@]}"; do
+  for slug in "${TOUR_INTERACTION_SLUGS[@]}"; do
     [ "$(awk -F '\t' -v slug="$slug" '$1 == slug && $2 == "ok" { found++ } END { print found+0 }' "$ledger" 2>/dev/null)" = 1 ] \
       || verdict=broken
     [ -s "$tour_artifacts/fixture-$slug.png" ] || verdict=broken
   done
   : > "$out"
   write_row "$out" "SYS-10" "fixture" "$verdict" "calibrated" "$source_sha" \
-    "interactions.tsv" "16 interaction captures" "post-state and settledness guards"
+    "interactions.tsv" "${#TOUR_INTERACTION_SLUGS[@]} interaction captures" "post-state and settledness guards"
 }
 
 publish_workspace_ui_rows() {
@@ -789,6 +873,11 @@ PY
   publish_workspace_ui_rows "$run_dir/legs" "$source_sha" \
     "$run_dir/artifacts/workspace-ui" "$home" "$port" "$hive_bin"
 
+  if [ -f "$tour_artifacts/declared-screens.txt" ]; then
+    QA_SUITE_DECLARED_SCREENS="$tour_artifacts/declared-screens.txt"
+  else
+    unset QA_SUITE_DECLARED_SCREENS
+  fi
   if ! aggregate_report "$run_dir" "$source_sha" "$run_dir/suite-report.jsonl"; then
     status=1
   fi
@@ -1278,18 +1367,11 @@ probe_tour_calibration() {
 
 probe_tour_interaction_row() {
   local root artifacts legs slug
-  local slugs=(
-    run-menu-hive run-menu-edit run-menu-view run-menu-agent
-    run-menu-run run-menu-memory run-menu-queen run-menu-window
-    run-unavailable-inspector run-attention run-modal
-    router-category-popup router-category-selected
-    router-effort-popup router-effort-selected memory-recall-text
-  )
   root="$(mktemp -d -t hive-suite-tour-interaction-XXXXXX)"
   artifacts="$root/artifacts"
   legs="$root/legs"
   mkdir -p "$artifacts" "$legs"
-  for slug in "${slugs[@]}"; do
+  for slug in "${TOUR_INTERACTION_SLUGS[@]}"; do
     printf '%s\tok\tprobe\n' "$slug" >> "$artifacts/interactions.tsv"
     printf 'capture\n' > "$artifacts/fixture-$slug.png"
   done
@@ -1315,6 +1397,124 @@ probe_tour_interaction_row() {
   grep -q '"verdict":"broken"' "$legs/tour-interaction-rows.jsonl" \
     || die "probe tour-interaction-row: extra ledger row published working"
   log "probe tour-interaction-row: complete/red/missing/extra controls pinned"
+}
+
+# Frozen eight-screen emission matching the settled declared list. Tokens and
+# Autonomy are omitted on purpose — a control that puts either back must go red.
+FROZEN_DECLARED_SCREENS="$(cat <<'EOF'
+SHELL-SCREEN run|show-live-run|Workspace|Live Run
+SHELL-SCREEN router|show-task-router|Workspace|Task Router
+SHELL-SCREEN models|show-models|Workspace|Models & Quota
+SHELL-SCREEN queen|show-queen|Workspace|Queen Provider
+SHELL-SCREEN memory-overview|show-memory-overview|Memory|Memory Overview
+SHELL-SCREEN memory-library|show-memory-library|Memory|Memory Library
+SHELL-SCREEN memory-recall|show-memory-recall|Memory|Recall Lab
+SHELL-SCREEN memory-maintenance|show-memory-maintenance|Memory|Memory Maintenance
+SHELL-PROOF routes=8 wired=8 scenario=current active=run nav=8
+SHELL-PROOF-END screens=8
+EOF
+)"
+
+probe_declared_screens() {
+  . "$SCRIPT_DIR/declared-screens.sh"
+  local records slugs titles err
+  log "probe declared-screens: frozen emission, missing terminator, count mismatch, empty title"
+  records="$(qa_parse_declared_screens "$FROZEN_DECLARED_SCREENS")" \
+    || die "probe declared-screens: frozen emission did not parse"
+  slugs="$(printf '%s\n' "$records" | cut -d'|' -f1 | tr '\n' ' ')"
+  titles="$(printf '%s\n' "$records" | cut -d'|' -f2- | tr '\n' '|')"
+  [ "$slugs" = "run router models queen memory-overview memory-library memory-recall memory-maintenance " ] \
+    || die "probe declared-screens: unexpected slugs [$slugs]"
+  printf '%s\n' "$titles" | grep -q 'Live Run|' \
+    || die "probe declared-screens: titles were not parsed [$titles]"
+  printf '%s\n' "$titles" | grep -q 'Recall Lab|' \
+    || die "probe declared-screens: Recall Lab title missing [$titles]"
+  ! printf '%s\n' "$records" | grep -q 'tokens\|autonomy' \
+    || die "probe declared-screens: frozen emission smuggled tokens or autonomy"
+
+  err="$(qa_parse_declared_screens "$(printf '%s\n' "$FROZEN_DECLARED_SCREENS" | grep -v SHELL-PROOF-END)" 2>&1)" \
+    && die "probe declared-screens: missing terminator parsed as a list"
+  printf '%s' "$err" | grep -q 'no SHELL-PROOF-END terminator' \
+    || die "probe declared-screens: missing terminator failed for the wrong reason: $err"
+
+  err="$(qa_parse_declared_screens "$(printf '%s\n' "$FROZEN_DECLARED_SCREENS" | sed 's/screens=8/screens=7/')" 2>&1)" \
+    && die "probe declared-screens: count mismatch parsed as a list"
+  printf '%s' "$err" | grep -q 'claimed 7 screens and printed 8' \
+    || die "probe declared-screens: count mismatch failed for the wrong reason: $err"
+
+  err="$(qa_parse_declared_screens "$(printf '%s\n' "$FROZEN_DECLARED_SCREENS" | sed 's/|Live Run$/|/' )" 2>&1)" \
+    && die "probe declared-screens: empty title parsed as a list"
+  printf '%s' "$err" | grep -q 'has no title' \
+    || die "probe declared-screens: empty title failed for the wrong reason: $err"
+  log "probe declared-screens: frozen/terminator/count/title controls pinned"
+}
+
+probe_declared_catalog() {
+  local root declared legs err
+  root="$(mktemp -d -t hive-suite-declared-catalog-XXXXXX)"
+  declared="$root/declared-screens.txt"
+  legs="$root/legs"
+  mkdir -p "$legs"
+  log "probe declared-catalog: matching list, extra slug, missing slug, tokens reinstated"
+
+  qa_map_slugs > "$declared"
+  qa_declared_vs_catalog "$declared" >/dev/null \
+    || die "probe declared-catalog: matching declared list disagreed with the catalog"
+
+  printf '%s\n' tokens >> "$declared"
+  err="$(qa_declared_vs_catalog "$declared" 2>&1)" \
+    && die "probe declared-catalog: extra slug tokens did not fail"
+  printf '%s' "$err" | grep -q 'extra=\[tokens\]' \
+    || die "probe declared-catalog: extra slug failed without naming tokens: $err"
+
+  qa_map_slugs | grep -v '^run$' > "$declared"
+  err="$(qa_declared_vs_catalog "$declared" 2>&1)" \
+    && die "probe declared-catalog: missing slug run did not fail"
+  printf '%s' "$err" | grep -q 'missing=\[run\]' \
+    || die "probe declared-catalog: missing slug failed without naming run: $err"
+
+  {
+    qa_map_slugs
+    printf '%s\n' tokens autonomy
+  } > "$declared"
+  err="$(qa_declared_vs_catalog "$declared" 2>&1)" \
+    && die "probe declared-catalog: reinstated tokens/autonomy did not fail"
+  printf '%s' "$err" | grep -q 'tokens' \
+    || die "probe declared-catalog: reinstated tokens not named: $err"
+  printf '%s' "$err" | grep -q 'autonomy' \
+    || die "probe declared-catalog: reinstated autonomy not named: $err"
+
+  qa_map_slugs > "$declared"
+  : > "$root/tour.out"
+  mkdir -p "$root/artifacts"
+  cp "$declared" "$root/artifacts/declared-screens.txt"
+  publish_tour_rows "$legs" probe-sha "$root/artifacts" 0 "$root/tour.out"
+  grep -q '"id":"UI-01"' "$legs/tour-rows.jsonl" \
+    || die "probe declared-catalog: derived rows omitted UI-01"
+  grep -q '"id":"UI-05"' "$legs/tour-rows.jsonl" \
+    || die "probe declared-catalog: derived rows omitted UI-05 (would mean queen was renumbered)"
+  grep -q '"id":"UI-10"' "$legs/tour-rows.jsonl" \
+    || die "probe declared-catalog: derived rows omitted UI-10"
+  ! grep -q '"id":"UI-04"' "$legs/tour-rows.jsonl" \
+    || die "probe declared-catalog: derived rows reinstated UI-04"
+  ! grep -q '"id":"UI-06"' "$legs/tour-rows.jsonl" \
+    || die "probe declared-catalog: derived rows reinstated UI-06"
+  [ "$(grep -c '"id":"UI-' "$legs/tour-rows.jsonl")" -eq 8 ] \
+    || die "probe declared-catalog: expected 8 derived UI rows"
+
+  write_complete_stub_legs "$legs" probe-sha
+  QA_SUITE_DECLARED_SCREENS="$declared"
+  printf '%s\n' tokens >> "$declared"
+  set +e
+  aggregate_report "$root" probe-sha "$root/suite-report.jsonl" 2>"$root/agg.err"
+  local code=$?
+  set -e
+  unset QA_SUITE_DECLARED_SCREENS
+  [ "$code" -ne 0 ] || die "probe declared-catalog: aggregator accepted a catalog/declared mismatch"
+  grep -q 'declared list disagrees with the screen catalog' "$root/agg.err" \
+    || grep -q 'declared list disagrees with the screen catalog' "$root/aggregate-schema-errors.txt" \
+    || die "probe declared-catalog: aggregator mismatch not named: $(cat "$root/agg.err") $(cat "$root/aggregate-schema-errors.txt" 2>/dev/null)"
+  log "probe declared-catalog: match/extra/missing/omission/aggregator controls pinned"
 }
 
 probe_shared_home() {
@@ -1397,6 +1597,8 @@ case "$mode" in
       green-needs) probe_green_needs ;;
       tour-calibration) probe_tour_calibration ;;
       tour-interaction-row) probe_tour_interaction_row ;;
+      declared-screens) probe_declared_screens ;;
+      declared-catalog) probe_declared_catalog ;;
       queen-leg) probe_queen_leg ;;
       workspace-ui) probe_workspace_ui ;;
       *) usage ;;

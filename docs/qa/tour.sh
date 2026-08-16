@@ -55,6 +55,7 @@ usage() {
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 . "$SCRIPT_DIR/repo-root.sh"
+. "$SCRIPT_DIR/declared-screens.sh"
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(qa_repo_root "$SCRIPT_DIR")/workspace}"
 BINARY="$WORKSPACE_ROOT/.build/debug/HiveWorkspace"
 ARTIFACTS="${ARTIFACTS:-$(mktemp -d -t workspace-tour)}"
@@ -64,12 +65,11 @@ die() {
   exit 1
 }
 
-# The sidebar renders one NSButton per route, titled with a two-space prefix.
-# Slugs are the ShellRoute raw values; they name the PNGs.
-TITLES=("Live Run" "Task Router" "Models & Quota" "Queen Provider" \
-  "Memory Overview" "Memory Library" "Recall Lab" "Memory Maintenance")
-SLUGS=(run router models queen memory-overview memory-library \
-  memory-recall memory-maintenance)
+# SLUGS and TITLES are not initialised here. The corpus (or live launch
+# arguments) arrive from argv later, and the declared list is read from the
+# proof that launch prints. Filling the arrays before that point is what
+# forced a hand-maintained copy. Nothing between here and load_declared_routes
+# may mention either name.
 
 # Product GET paths that feed live screens, paired with the proof field slug
 # each path populates (availability-<slug>=…). Probed in live mode so a 404 is
@@ -617,6 +617,29 @@ self-check)
   ;;
 esac
 
+# The declared list can be read only after argv has named the launch. Live
+# mode has no corpus of its own; the proof of that launch still prints the
+# same SHELL-SCREEN lines, so one reader covers both modes.
+SLUGS=()
+TITLES=()
+load_declared_routes() {
+  local records slug title
+  records="$(qa_parse_declared_screens "$1")" \
+    || die "could not read declared screens from the proof"
+  SLUGS=()
+  TITLES=()
+  while IFS='|' read -r slug title; do
+    [ -n "$slug" ] || continue
+    SLUGS+=("$slug")
+    TITLES+=("$title")
+  done <<EOF
+$records
+EOF
+  [ "${#SLUGS[@]}" -gt 0 ] && [ "${#SLUGS[@]}" -eq "${#TITLES[@]}" ] \
+    || die "declared screen slugs and titles disagree"
+  printf '%s\n' "${SLUGS[@]}" > "$ARTIFACTS/declared-screens.txt"
+}
+
 APP_PID=""
 cleanup() {
   if [ -n "$APP_PID" ]; then
@@ -644,11 +667,15 @@ printf '%s\n' "$proof" > "$ARTIFACTS/proof.txt"
 printf '%s\n' "$proof" | tr ' ' '\n' | grep '^availability-' \
   > "$ARTIFACTS/proof-availability.txt" || true
 [ $code -eq 0 ] || die "headless proof exited $code: $proof"
+load_declared_routes "$proof"
 # Anchored to the proof line and to the fields' trailing spaces, so stray
-# output cannot satisfy the check and routes=90 cannot pass as routes=9.
-printf '%s\n' "$proof" | grep -q '^SHELL-PROOF routes=9 ' \
+# output cannot satisfy the check, and the trailing space keeps a longer number
+# from passing as a shorter one (routes=80 cannot satisfy routes=8).
+# The expected counts are the declared list, not a frozen pair: a reappearing
+# or vanished screen must fail here the same way WSUI-06 fails.
+printf '%s\n' "$proof" | grep -q "^SHELL-PROOF routes=${#SLUGS[@]} " \
   || die "proof line drifted: $proof"
-printf '%s\n' "$proof" | grep -q '^SHELL-PROOF .* nav=8 ' \
+printf '%s\n' "$proof" | grep -q "^SHELL-PROOF .* nav=${#TITLES[@]} " \
   || die "proof nav count drifted: $proof"
 # Per-route availability must be present so a stale binary without the fields
 # cannot leave the live pin vacuous.
