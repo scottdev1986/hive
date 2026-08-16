@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import {
   parseProcessTable,
   runPs,
 } from "../../src/daemon/resource-management/resources";
 import { PROCESS_TABLE_VISIBLE_MS, waitUntil } from "./wait-until";
+
+const timeoutFixture = join(import.meta.dir, "wait-until-timeout.fixture.ts");
 
 describe("waitUntil", () => {
   test("a timeout names the deadline and what it was waiting for", async () => {
@@ -32,6 +35,25 @@ describe("waitUntil", () => {
     } finally {
       clearTimeout(flip);
     }
+  });
+
+  test("the named timeout reaches bun's reporter instead of collapsing to a boolean", async () => {
+    const child = Bun.spawn([process.execPath, "test", timeoutFixture], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: process.env,
+    });
+    const [stdout, stderr] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    await child.exited;
+    const reporter = `${stdout}\n${stderr}`;
+    expect(reporter).toContain(
+      "timed out after 50ms waiting for a child that was never forked",
+    );
+    expect(reporter).not.toContain("Expected true");
+    expect(reporter).not.toContain("Received false");
   });
 
   test("a process that never forks a child times out with the named reason", async () => {
