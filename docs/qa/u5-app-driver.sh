@@ -15,7 +15,12 @@
 # Settled rulings, superseding earlier mail:
 #   - A refusal leaves the release marker ABSENT, fails the outer leg, and
 #     names the reason on stderr. There is no refusal file.
-#   - waitStatus is the reaped value, verbatim. It is never computed as 128+9.
+#   - Termination is one of two NAMED outcomes, each carrying its own proof of
+#     death. reaped-as-child carries the reaped value verbatim, never computed
+#     as 128+9, plus the post-kill readback. confirmed-dead-by-observation
+#     carries the identity probe and no wait status at all, because launchd owns
+#     the app and this shell has no status to collect for it. Neither is ever
+#     synthesised to stand in for the other.
 #   - --instance-id is the published u5_instance_id, never a recomputed prefix.
 #   - The screenshot set is derived from the ready marker's agents, never a
 #     hardcoded five.
@@ -97,6 +102,17 @@ identity_matches() {
 # of printed into a command substitution.
 KILL_WAIT_STATUS=""
 
+# How the process ended, as one of two NAMED outcomes, never collapsed into one
+# field. A reader tells them apart by the name, not by inspecting prose:
+#   reaped-as-child               we waited for our own child; KILL_WAIT_STATUS
+#                                 holds the real status, verbatim
+#   confirmed-dead-by-observation the process belonged to launchd, so this shell
+#                                 could not wait for it; KILL_OBSERVATION holds
+#                                 the probe that proved it gone and there is no
+#                                 wait status to report
+KILL_OUTCOME=""
+KILL_OBSERVATION=""
+
 reap_sigkill() {
   local pid="$1" status
   wait "$pid" 2>/dev/null
@@ -108,23 +124,71 @@ reap_sigkill() {
   KILL_WAIT_STATUS="$status"
 }
 
+# Whether this shell is able to reap the process itself.
+#
+# `wait` answers 127 for a process that is not a child of this shell — but a
+# child that genuinely exits 127 answers 127 as well, so the NUMBER cannot tell
+# "there was no status to collect" from "the status was 127". That is the
+# did-not-run versus ran-and-failed confusion, and reading it off the return
+# value would bake it in. Parentage is therefore read from the process itself,
+# before the kill, while there is still a process to read.
+process_is_own_child() {
+  local parent
+  parent="$(ps -p "$1" -o ppid= 2>/dev/null | tr -d ' ')"
+  [ -n "$parent" ] && [ "$parent" = "$$" ]
+}
+
+# The captured process is gone when its IDENTITY no longer resolves, which is
+# strictly stronger than the pid being absent: a recycled pid fails the start
+# token, so the original is still correctly reported as gone rather than a
+# stranger being reported as the survivor. The probe that establishes it is
+# recorded, because "confirmed dead" with nothing behind it is an assumption.
+confirm_identity_gone() {
+  local identity="$1"
+  local pid="${identity%%:*}"
+  local waited=0 probe rc
+  while [ "$waited" -lt 50 ]; do
+    if ! identity_matches "$identity"; then
+      probe="$(/bin/ps -ww -p "$pid" -o pid=,command= 2>&1)" && rc=0 || rc=$?
+      KILL_OBSERVATION="identity $identity no longer resolves; ps -p $pid -o pid=,command=: exit=$rc output=${probe:-empty}"
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  echo "u5-driver: $pid still carries the captured identity after SIGKILL" >&2
+  return 1
+}
+
 kill_scoped() {
   local identity="${1:-}"
   # Declared on its own line: bash 3.2, which is the bash on this rig, does not
   # expand a variable declared earlier on the SAME `local` line, so folding
   # these two together leaves pid empty and the kill silently signals nothing.
   local pid="${identity%%:*}"
+  local own_child=""
   KILL_WAIT_STATUS=""
+  KILL_OUTCOME=""
+  KILL_OBSERVATION=""
   if ! identity_matches "$identity"; then
     echo "u5-driver: refusing to signal '${pid:-none}': not the captured process" >&2
     return 1
   fi
+  process_is_own_child "$pid" && own_child="yes"
   kill -KILL "$pid" 2>/dev/null || true
-  reap_sigkill "$pid" || return 1
-  if process_alive "$pid"; then
-    echo "u5-driver: $pid survived SIGKILL" >&2
-    return 1
+  if [ -n "$own_child" ]; then
+    reap_sigkill "$pid" || return 1
+    KILL_OUTCOME="reaped-as-child"
+    if process_alive "$pid"; then
+      echo "u5-driver: $pid survived SIGKILL" >&2
+      return 1
+    fi
+    return 0
   fi
+  # /usr/bin/open hands the Workspace to launchd, so the app this driver kills
+  # is nobody's child here and there is no status to collect for it.
+  confirm_identity_gone "$identity" || return 1
+  KILL_OUTCOME="confirmed-dead-by-observation"
 }
 
 # --- readiness --------------------------------------------------------------
@@ -505,6 +569,33 @@ write_release() {
   python3 - <<'PY'
 import json, os, sys
 
+
+# One of two named outcomes, discriminated by "outcome" so a reader never has to
+# parse prose to learn which happened. Each outcome carries its OWN proof of
+# death, rather than leaving that to a field sitting beside them where a reader
+# would have to work out which proof belongs to which case.
+#
+# The child case proves it with the reaped status and the post-kill readback.
+# The orphan case proves it with the identity probe, which is the stronger
+# evidence there and the reason the readback is not repeated alongside it: the
+# readback says the pid is absent, while the identity probe says THIS process is
+# gone, and only the latter still holds if the pid has been recycled.
+#
+# waitStatus appears only when there was a real status to collect. Neither field
+# is ever synthesised to fill the other's place.
+def termination():
+    outcome = os.environ["U5_KILL_OUTCOME"]
+    if outcome == "reaped-as-child":
+        return {
+            "outcome": outcome,
+            "waitStatus": os.environ["U5_WAIT_STATUS"],
+            "postKillReadback": os.environ["U5_POSTKILL"],
+        }
+    if outcome == "confirmed-dead-by-observation":
+        return {"outcome": outcome, "identityProbe": os.environ["U5_KILL_OBSERVATION"]}
+    raise SystemExit(f"unnamed termination outcome: {outcome!r}")
+
+
 payload = {
     "schemaVersion": 1,
     "viewerPid": int(os.environ["U5_VIEWER_PID"]),
@@ -513,9 +604,7 @@ payload = {
     "launchedAt": os.environ["U5_LAUNCHED_AT"],
     "preKillProcessReadback": os.environ["U5_PREKILL"],
     "sigkillIssuedAt": os.environ["U5_SIGKILL_AT"],
-    "waitStatus": os.environ["U5_WAIT_STATUS"],
-    "postKillState": "absent",
-    "postKillProbe": os.environ["U5_POSTKILL"],
+    "termination": termination(),
     "screenshots": [line for line in os.environ["U5_SCREENSHOTS"].split("\n") if line],
 }
 path = os.environ["U5_RELEASE_PATH"]
@@ -891,9 +980,16 @@ executableSha256=$exe_sha"
   postkill="ps -p $viewer_pid -o pid=: exit=$post_rc stdout= stderr="
   rm -f "$post_out" "$post_err"
 
-  if [ "$KILL_WAIT_STATUS" != "137" ]; then
-    log "reaped waitStatus $KILL_WAIT_STATUS, not 137; recording the observed value"
-  fi
+  case "$KILL_OUTCOME" in
+    reaped-as-child)
+      [ "$KILL_WAIT_STATUS" = "137" ] \
+        || log "reaped waitStatus $KILL_WAIT_STATUS, not 137; recording the observed value"
+      ;;
+    confirmed-dead-by-observation)
+      log "the app belonged to launchd, so no wait status exists; recording the observation instead"
+      ;;
+    *) die "termination outcome was never named: '${KILL_OUTCOME:-none}'" ;;
+  esac
 
   U5_VIEWER_PID="$viewer_pid" \
   U5_EXECUTABLE="$executable" \
@@ -901,6 +997,8 @@ executableSha256=$exe_sha"
   U5_LAUNCHED_AT="$launched_at" \
   U5_PREKILL="$prekill" \
   U5_SIGKILL_AT="$sigkill_at" \
+  U5_KILL_OUTCOME="$KILL_OUTCOME" \
+  U5_KILL_OBSERVATION="$KILL_OBSERVATION" \
   U5_WAIT_STATUS="$KILL_WAIT_STATUS" \
   U5_POSTKILL="$postkill" \
   U5_SCREENSHOTS="$captured" \
@@ -992,6 +1090,140 @@ self_check() {
   else
     ok "an exit with code 9 was refused rather than read as a SIGKILL"
   fi
+
+  # Termination outcomes. The app this driver kills is reparented to launchd by
+  # /usr/bin/open, so the orphan path is the REAL path and it gets a real
+  # ppid-1 orphan here, not a stand-in.
+  local orphan_pid_file orphan_pid orphan_ppid orphan_identity
+  orphan_pid_file="$(mktemp /tmp/hvqa-u5-orphan.XXXXXX)"
+  ( /bin/sleep 60 & echo $! > "$orphan_pid_file" )
+  sleep 0.6
+  orphan_pid="$(cat "$orphan_pid_file")"
+  rm -f "$orphan_pid_file"
+  orphan_ppid="$(ps -p "$orphan_pid" -o ppid= 2>/dev/null | tr -d ' ')"
+  if [ "$orphan_ppid" = "1" ]; then
+    ok "the fixture is a genuine launchd orphan (pid $orphan_pid, ppid 1)"
+  else
+    bad "the orphan fixture has ppid '${orphan_ppid:-none}', so it proves nothing about the real path"
+  fi
+  if process_is_own_child "$orphan_pid"; then
+    bad "an orphan was read as this shell's child"
+  else
+    ok "parentage is read from the process: the orphan is not this shell's child"
+  fi
+
+  orphan_identity="$(capture_identity "$orphan_pid")" || bad "could not capture the orphan identity"
+  if kill_scoped "$orphan_identity"; then
+    ok "kill_scoped SUCCEEDS against a launchd-reparented process (it used to fail here)"
+  else
+    bad "kill_scoped still fails against a ppid-1 orphan: line 774 will still die"
+  fi
+  if [ "$KILL_OUTCOME" = "confirmed-dead-by-observation" ]; then
+    ok "the orphan outcome is NAMED confirmed-dead-by-observation"
+  else
+    bad "orphan outcome was '${KILL_OUTCOME:-none}'"
+  fi
+  # The whole point: 127 means "not a child", so it must never be recorded as
+  # if it were a status. A child that genuinely exits 127 returns 127 too, and
+  # the two are indistinguishable by number.
+  if [ -z "$KILL_WAIT_STATUS" ]; then
+    ok "no wait status was recorded for the orphan: 127 was never mistaken for one"
+  else
+    bad "a wait status '$KILL_WAIT_STATUS' was recorded for a process we cannot wait for"
+  fi
+  if printf '%s' "$KILL_OBSERVATION" | grep -q "$orphan_pid"; then
+    ok "the orphan death is backed by a recorded exact-pid observation"
+  else
+    bad "confirmed-dead carried no observation: that is an assumption, not a measurement"
+  fi
+
+  # The child path is unchanged and must stay that way.
+  /bin/sh -c 'sleep 60' &
+  local child_pid=$!
+  sleep 0.3
+  local child_identity
+  child_identity="$(capture_identity "$child_pid")" || bad "could not capture the child identity"
+  if kill_scoped "$child_identity" \
+    && [ "$KILL_OUTCOME" = "reaped-as-child" ] && [ "$KILL_WAIT_STATUS" = "137" ]; then
+    ok "a real child is still reaped as a child with its verbatim status 137"
+  else
+    bad "child path changed: outcome='${KILL_OUTCOME:-none}' status='${KILL_WAIT_STATUS:-none}'"
+  fi
+
+  # Teeth. A confirmation that cannot fail is indistinguishable from no check.
+  # A process that survives SIGKILL cannot be built safely on this host, so the
+  # refusal is proven on the function that renders the verdict.
+  /bin/sh -c 'sleep 60' &
+  local survivor_pid=$!
+  sleep 0.3
+  local survivor_identity
+  survivor_identity="$(capture_identity "$survivor_pid")" || bad "could not capture the survivor identity"
+  if confirm_identity_gone "$survivor_identity" 2>/dev/null; then
+    bad "a live process was confirmed dead: the check has no teeth"
+  else
+    ok "a live process is REFUSED confirmation rather than reported dead"
+  fi
+  if process_alive "$survivor_pid"; then
+    ok "the refused survivor is still alive and was not signalled by the check"
+  else
+    bad "the confirmation killed the process it was asked to observe"
+  fi
+  kill -KILL "$survivor_pid" 2>/dev/null || true
+  wait "$survivor_pid" 2>/dev/null
+
+  # The marker must never carry a fabricated status, and never both shapes.
+  local rel_scratch rel_child rel_orphan
+  rel_scratch="$(mktemp -d /tmp/hvqa-u5-rel.XXXXXX)"
+  rel_child="$rel_scratch/child.json"
+  rel_orphan="$rel_scratch/orphan.json"
+  U5_VIEWER_PID=1234 U5_EXECUTABLE=/tmp/x U5_LAUNCH_ARGS="--a" \
+  U5_LAUNCHED_AT="2026-01-01T00:00:00Z" U5_PREKILL="p" \
+  U5_SIGKILL_AT="2026-01-01T00:00:01Z" U5_KILL_OUTCOME="reaped-as-child" \
+  U5_KILL_OBSERVATION="" U5_WAIT_STATUS="137" U5_POSTKILL="q" \
+  U5_SCREENSHOTS="/tmp/s.png" U5_RELEASE_PATH="$rel_child" write_release
+  U5_VIEWER_PID=1234 U5_EXECUTABLE=/tmp/x U5_LAUNCH_ARGS="--a" \
+  U5_LAUNCHED_AT="2026-01-01T00:00:00Z" U5_PREKILL="p" \
+  U5_SIGKILL_AT="2026-01-01T00:00:01Z" U5_KILL_OUTCOME="confirmed-dead-by-observation" \
+  U5_KILL_OBSERVATION="identity 7:1:1 no longer resolves" U5_WAIT_STATUS="" U5_POSTKILL="q" \
+  U5_SCREENSHOTS="/tmp/s.png" U5_RELEASE_PATH="$rel_orphan" write_release
+  if python3 - "$rel_child" "$rel_orphan" <<'PY'
+import json, sys
+child_doc = json.load(open(sys.argv[1]))
+orphan_doc = json.load(open(sys.argv[2]))
+child = child_doc["termination"]
+orphan = orphan_doc["termination"]
+assert child == {
+    "outcome": "reaped-as-child",
+    "waitStatus": "137",
+    "postKillReadback": "q",
+}, child
+assert orphan["outcome"] == "confirmed-dead-by-observation", orphan
+assert "waitStatus" not in orphan, orphan
+assert orphan["identityProbe"], orphan
+assert "identityProbe" not in child, child
+# Each outcome proves death inside its own member: nothing is left beside them
+# for a reader to guess at.
+for doc in (child_doc, orphan_doc):
+    assert "postKillState" not in doc, doc
+    assert "postKillProbe" not in doc, doc
+    assert "waitStatus" not in doc, doc
+PY
+  then
+    ok "each outcome carries its own proof of death and nothing is left beside them"
+  else
+    bad "the release marker did not distinguish the two termination outcomes"
+  fi
+  if U5_VIEWER_PID=1234 U5_EXECUTABLE=/tmp/x U5_LAUNCH_ARGS="--a" \
+    U5_LAUNCHED_AT="2026-01-01T00:00:00Z" U5_PREKILL="p" \
+    U5_SIGKILL_AT="2026-01-01T00:00:01Z" U5_KILL_OUTCOME="" \
+    U5_KILL_OBSERVATION="" U5_WAIT_STATUS="" U5_POSTKILL="q" \
+    U5_SCREENSHOTS="/tmp/s.png" U5_RELEASE_PATH="$rel_scratch/bad.json" \
+    write_release >/dev/null 2>&1; then
+    bad "an unnamed termination outcome was written to the marker"
+  else
+    ok "an unnamed termination outcome is refused rather than written"
+  fi
+  rm -rf "$rel_scratch"
 
   # Binding the launched app. These fixtures forge argv with `exec -a`, so they
   # carry an instance id and an executable path without an app or a GUI.

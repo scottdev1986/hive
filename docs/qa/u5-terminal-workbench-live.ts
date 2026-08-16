@@ -171,6 +171,30 @@ const HiveKillResultSchema = z
     }),
   })
   .loose();
+// How the app died, and the proof of it, as one of two named outcomes.
+//
+// The driver kills a Workspace that /usr/bin/open handed to launchd, so the
+// shell that killed it is not its parent and has no wait status to collect for
+// it. `wait` answers 127 there, but a child that genuinely exits 127 answers
+// 127 too, so a single field cannot carry both meanings honestly.
+//
+// Each member carries its own proof of death rather than leaving that to a
+// field beside them: reaped-as-child proves it with the reaped status plus the
+// post-kill readback, confirmed-dead-by-observation proves it with the identity
+// probe. waitStatus is a MEASURED value, so it is matched as a number and never
+// as an expected constant — pinning it to "137" would throw away the very
+// observation the driver takes care to record.
+const AppLifecycleTerminationSchema = z.discriminatedUnion("outcome", [
+  z.strictObject({
+    outcome: z.literal("reaped-as-child"),
+    waitStatus: z.string().regex(/^[0-9]+$/),
+    postKillReadback: z.string().min(1),
+  }),
+  z.strictObject({
+    outcome: z.literal("confirmed-dead-by-observation"),
+    identityProbe: z.string().min(1),
+  }),
+]);
 const AppLifecycleReleaseSchema = z.strictObject({
   schemaVersion: z.literal(1),
   viewerPid: z.number().int().positive(),
@@ -179,9 +203,7 @@ const AppLifecycleReleaseSchema = z.strictObject({
   launchedAt: z.iso.datetime({ offset: true }),
   preKillProcessReadback: z.string().min(1),
   sigkillIssuedAt: z.iso.datetime({ offset: true }),
-  waitStatus: z.literal("137"),
-  postKillState: z.literal("absent"),
-  postKillProbe: z.string().min(1),
+  termination: AppLifecycleTerminationSchema,
   screenshots: z.array(z.string().min(1)).min(1),
 });
 const WorkspaceFeedReceiptSchema = z.strictObject({
@@ -438,6 +460,10 @@ function requireLaunchArgument(
 function verifyAppLifecycleRelease(release: AppLifecycleRelease): {
   executableSha256: string;
   expectedInstanceId: string;
+  // 137 is still the expected child status; the schema no longer rejects
+  // anything else, so an unexpected one is NAMED here rather than normalised
+  // away by being accepted silently.
+  unexpectedChildWaitStatus: string | null;
   postKillProcessReadback: {
     pid: number;
     state: "absent";
@@ -530,6 +556,11 @@ function verifyAppLifecycleRelease(release: AppLifecycleRelease): {
   return {
     executableSha256,
     expectedInstanceId,
+    unexpectedChildWaitStatus:
+      release.termination.outcome === "reaped-as-child" &&
+      release.termination.waitStatus !== "137"
+        ? release.termination.waitStatus
+        : null,
     postKillProcessReadback: {
       pid: release.viewerPid,
       state: "absent",
