@@ -244,6 +244,24 @@ for agent in agents:
 PY
 }
 
+# The first other row, if any. Used to force a visibility edge: the app
+# publishes locator changes, not the current selection. Clicking the
+# already-visible row is a no-op and writes nothing.
+other_session_row() {
+  python3 -c '
+import sys
+target = sys.argv[1]
+for line in sys.argv[2].splitlines():
+    if line == "":
+        continue
+    provider, sep, agent_id = line.partition("\t")
+    if sep and agent_id and agent_id != target:
+        print(line)
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$2" "$1"
+}
+
 receipt_has_agent() {
   python3 - "$1" "$2" <<'PY'
 import json, sys
@@ -510,7 +528,22 @@ PY
   [ "$win_id" != "0" ] || die "live-run-workbench window number is zero"
 
   while IFS="$(printf '\t')" read -r provider agent_id; do
-    local hit
+    local hit other other_provider other_id
+    other="$(other_session_row "$rows" "$agent_id" || true)"
+    if [ -z "$other" ]; then
+      die "cannot force a visibility edge: only one session row ($provider/$agent_id)"
+    fi
+    other_provider="${other%%	*}"
+    other_id="${other#*	}"
+    hit="$(click_session "$other_id" 2>/dev/null || true)"
+    [ -n "$hit" ] && [ "$hit" != "0" ] \
+      || die "row control is absent for $other_provider/$other_id"
+    other_receipt_ready() {
+      [ -f "$receipt_path" ] || return 1
+      receipt_has_agent "$receipt_path" "$other_id"
+    }
+    wait_until_ready 90 other_receipt_ready >/dev/null \
+      || die "feed receipt never selected $other_provider/$other_id after force-change"
     hit="$(click_session "$agent_id" 2>/dev/null || true)"
     [ -n "$hit" ] && [ "$hit" != "0" ] \
       || die "row control is absent for $provider/$agent_id"
@@ -719,6 +752,13 @@ json.dump({
 }, open(sys.argv[1], "w"))
 PY
   local shots
+  if [ "$(other_session_row "$(printf 'claude\ta1\ncodex\ta2\n')" a1)" = "$(printf 'codex\ta2')" ] \
+    && ! other_session_row "$(printf 'claude\ta1\n')" a1 >/dev/null 2>&1; then
+    ok "force-change picks another session row and refuses a singleton"
+  else
+    bad "force-change other-row helper is wrong"
+  fi
+
   shots="$(derive_screenshot_paths "$ready_json" "$scratch" || true)"
   if printf '%s\n' "$shots" | grep -Fq "workspace-final-kimi.png"; then
     bad "a four-agent ready marker produced a kimi screenshot"
