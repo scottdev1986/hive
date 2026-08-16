@@ -17,7 +17,6 @@ import {
   type LiveRunControlProjection,
   type LiveRunControlResult,
 } from "../../schemas/live-run-control";
-import type { ProviderRun } from "../../schemas/provider-run";
 import type { SessionLocator } from "../../schemas/session-protocol";
 import { errorMessage } from "../../shared/error-message";
 
