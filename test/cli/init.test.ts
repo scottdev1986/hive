@@ -179,7 +179,10 @@ describe("runInit", () => {
       expect(result.agentsScaffolded).toBe(true);
       expect(result.standardsScaffolded).toBe(true);
       expect(result.factsSeeded).toEqual(["flaky-login-test"]);
-      const standards = await readFile(join(root, "AGENT_STANDARDS.md"), "utf8");
+      const standards = await readFile(
+        join(root, "AGENT_STANDARDS.md"),
+        "utf8",
+      );
       expect(standards).toBe(scaffoldAgentStandardsMd());
       expect(standards).not.toContain("bun run");
       expect(standards).not.toContain("tsc --noEmit");

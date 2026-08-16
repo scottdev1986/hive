@@ -67,7 +67,8 @@ export function verificationCommandDeclared(
   const tool = parts[0];
   const script = parts.at(-1);
   if (tool === undefined || script === undefined) return false;
-  if ((tool === "npm" || tool === "bun" || tool === "pnpm" || tool === "yarn") &&
+  if (
+    (tool === "npm" || tool === "bun" || tool === "pnpm" || tool === "yarn") &&
     script !== tool
   ) {
     const pkgPath = join(repoRoot, "package.json");

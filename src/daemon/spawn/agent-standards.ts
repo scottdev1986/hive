@@ -121,11 +121,7 @@ export async function promoteVerificationToStandards(
   return "promoted";
 }
 
-function replaceSection(
-  source: string,
-  heading: string,
-  body: string,
-): string {
+function replaceSection(source: string, heading: string, body: string): string {
   const marker = `## ${heading}\n`;
   const start = source.indexOf(marker);
   if (start === -1) return source;
@@ -133,8 +129,7 @@ function replaceSection(
   const next = source.indexOf("\n## ", after);
   const end = next === -1 ? source.length : next;
   const prefix = source.slice(0, after);
-  const suffix =
-    next === -1 ? "" : source.slice(end).replace(/^\n*/, "\n\n");
+  const suffix = next === -1 ? "" : source.slice(end).replace(/^\n*/, "\n\n");
   return `${prefix}\n${body}\n${suffix}`;
 }
 

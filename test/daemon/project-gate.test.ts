@@ -84,9 +84,9 @@ describe("project landing gate", () => {
 
     expect(await Bun.file(join(worktree, "calls")).text()).toBe("ran");
     expect(await Bun.file(join(primary, "calls")).exists()).toBe(false);
-    expect(await Bun.file(join(primary, AGENT_STANDARDS_FILE)).text()).toContain(
-      `\`${command}\``,
-    );
+    expect(
+      await Bun.file(join(primary, AGENT_STANDARDS_FILE)).text(),
+    ).toContain(`\`${command}\``);
   });
 
   test("a red harvested command blocks landing and does not promote", async () => {
