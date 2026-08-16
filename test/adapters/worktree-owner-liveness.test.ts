@@ -12,7 +12,6 @@ import {
   listProcessesWithCwd,
   probeWorktreeOwnerProcessLiveness,
 } from "../../src/adapters/worktree-owner-liveness";
-import { required } from "../required";
 import { PROCESS_TABLE_VISIBLE_MS, waitUntil } from "../support/wait-until";
 
 describe("asOwnershipLiveness", () => {
@@ -143,7 +142,7 @@ describe("listProcessesWithCwd", () => {
       stderr: "ignore",
     });
     try {
-      let listed: number[] | null = null;
+      let listed: number[] = [];
       await waitUntil(
         async () => {
           const result = await listProcessesWithCwd(tempDir);
@@ -158,7 +157,7 @@ describe("listProcessesWithCwd", () => {
           label: `process ${sleeper.pid} to appear as a cwd holder of ${tempDir}`,
         },
       );
-      expect(required(listed)).toContain(sleeper.pid);
+      expect(listed).toContain(sleeper.pid);
     } finally {
       sleeper.kill();
       await sleeper.exited.catch(() => undefined);
