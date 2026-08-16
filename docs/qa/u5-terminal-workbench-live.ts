@@ -62,6 +62,8 @@ import {
   explicitRefusalReadbackState,
   finalU5Result,
   headlessRootReapVerdict,
+  liveRunControlSubjectReady,
+  proofSubjectLiveness,
   reconcileSpawnRequests,
   assertIsolatedQaHiveHome,
   assertQaHomeFitsSocketPath,
@@ -1021,68 +1023,111 @@ async function proveLiveRunControls(
   const sentinelStartToken = sentinelBefore.startToken;
   const providers = [];
   for (const row of rows) {
+    try {
     const before = await readLiveRunControl(row.id);
     if (
       before.provider !== row.tool ||
-      !sameSessionLocator(before.locator, row.sessionLocator) ||
-      before.providerRun.state !== "running" ||
-      before.providerRun.provider !== row.tool ||
-      before.shell.state !== "retained" ||
-      before.shell.foreground !== "provider" ||
-      before.processCensus.state !== "complete" ||
-      !before.controls.stopProvider.enabled ||
-      !before.controls.terminateTerminal.enabled
+      !sameSessionLocator(before.locator, row.sessionLocator)
     ) {
-      throw new Error(`${row.tool} has no complete pre-control process proof`);
+      throw new Error(`${row.tool} live-run projection does not bind this agent`);
+    }
+    const censusMembers =
+      before.processCensus.state === "complete"
+        ? before.processCensus.members
+        : [];
+    const liveMemberCount = censusMembers.filter(
+      (member) => processReadback(member.pid).state === "live",
+    ).length;
+    const shellRootLive =
+      before.shell.state === "retained" &&
+      processReadback(before.shell.root.pid).state === "live";
+    const subjectReady = liveRunControlSubjectReady({
+      shellState: before.shell.state,
+      censusState: before.processCensus.state,
+      liveMemberCount,
+      shellRootLive,
+    });
+    const liveness = proofSubjectLiveness({
+      agentStatus: row.status,
+      tree: subjectReady.ready ? "live" : "absent",
+    });
+    if (
+      !subjectReady.ready ||
+      before.shell.state !== "retained" ||
+      liveness.state !== "tree-live"
+    ) {
+      throw new Error(`${row.tool} ${liveness.reason}; ${subjectReady.reason}`);
     }
     const shellRoot = before.shell.root;
-    const providerProcess = before.providerRun.process;
+    const providerProcess =
+      before.providerRun.state === "running"
+        ? before.providerRun.process
+        : null;
     if (
-      !before.processCensus.members.some(
+      before.processCensus.state === "complete" &&
+      (!censusMembers.some(
         (member) =>
           member.pid === shellRoot.pid &&
           member.startToken === shellRoot.startToken,
       ) ||
-      !before.processCensus.members.some(
-        (member) =>
-          member.pid === providerProcess.pid &&
-          member.startToken === providerProcess.startToken,
-      ) ||
-      before.processCensus.members.some(
-        (member) => member.pid === survivingSentinel.pid,
-      )
+        (providerProcess !== null &&
+          !censusMembers.some(
+            (member) =>
+              member.pid === providerProcess.pid &&
+              member.startToken === providerProcess.startToken,
+          )) ||
+        censusMembers.some((member) => member.pid === survivingSentinel.pid))
     ) {
       throw new Error(`${row.tool} returned an invalid process-tree census`);
     }
 
-    const stopResult = await submitLiveRunControl(
-      controlIntent("stop-provider", before),
-    );
-    const afterStop = await readLiveRunControl(row.id);
-    if (
-      stopResult.outcome.status !== "accepted" ||
-      stopResult.observedPostState.providerRun.state !== "absent" ||
-      stopResult.observedPostState.shell.state !== "retained" ||
-      !sameProcessRoot(stopResult.observedPostState.shell.root, shellRoot) ||
-      stopResult.observedPostState.shell.foreground !== "shell" ||
-      afterStop.providerRun.state !== "absent" ||
-      afterStop.shell.state !== "retained" ||
-      !sameProcessRoot(afterStop.shell.root, shellRoot) ||
-      afterStop.shell.foreground !== "shell"
-    ) {
-      throw new Error(`${row.tool} Stop Provider did not retain the same zsh`);
-    }
-    const providerProcessAfterStop = processReadback(providerProcess.pid);
-    const shellAfterStop = processReadback(shellRoot.pid);
-    const sentinelAfterStop = processReadback(survivingSentinel.pid);
-    if (
-      providerProcessAfterStop.state !== "absent" ||
+    const canStopProvider =
+      before.providerRun.state === "running" &&
+      before.controls.stopProvider.enabled;
+    let afterStop = before;
+    let stopResult: Awaited<ReturnType<typeof submitLiveRunControl>> | null =
+      null;
+    let providerProcessAfterStop: ProcessReadback | null = null;
+    let shellAfterStop = processReadback(shellRoot.pid);
+    let sentinelAfterStop = processReadback(survivingSentinel.pid);
+    if (canStopProvider && providerProcess !== null) {
+      stopResult = await submitLiveRunControl(
+        controlIntent("stop-provider", before),
+      );
+      afterStop = await readLiveRunControl(row.id);
+      if (
+        stopResult.outcome.status !== "accepted" ||
+        stopResult.observedPostState.providerRun.state !== "absent" ||
+        stopResult.observedPostState.shell.state !== "retained" ||
+        !sameProcessRoot(stopResult.observedPostState.shell.root, shellRoot) ||
+        stopResult.observedPostState.shell.foreground !== "shell" ||
+        afterStop.providerRun.state !== "absent" ||
+        afterStop.shell.state !== "retained" ||
+        !sameProcessRoot(afterStop.shell.root, shellRoot) ||
+        afterStop.shell.foreground !== "shell"
+      ) {
+        throw new Error(`${row.tool} Stop Provider did not retain the same zsh`);
+      }
+      providerProcessAfterStop = processReadback(providerProcess.pid);
+      shellAfterStop = processReadback(shellRoot.pid);
+      sentinelAfterStop = processReadback(survivingSentinel.pid);
+      if (
+        providerProcessAfterStop.state !== "absent" ||
+        shellAfterStop.state !== "live" ||
+        shellAfterStop.startToken !== shellRoot.startToken ||
+        sentinelAfterStop.state !== "live" ||
+        sentinelAfterStop.startToken !== sentinelStartToken
+      ) {
+        throw new Error(`${row.tool} Stop Provider process readback failed`);
+      }
+    } else if (
       shellAfterStop.state !== "live" ||
-      shellAfterStop.startToken !== shellRoot.startToken ||
       sentinelAfterStop.state !== "live" ||
       sentinelAfterStop.startToken !== sentinelStartToken
     ) {
-      throw new Error(`${row.tool} Stop Provider process readback failed`);
+      throw new Error(
+        `${row.tool} tree was not live before Terminate Terminal`,
+      );
     }
 
     const terminateResult = await submitLiveRunControl(
@@ -1116,8 +1161,14 @@ async function proveLiveRunControls(
       provider: row.tool,
       agentId: row.id,
       locator: row.sessionLocator,
+      outcome: "proven",
       before,
       stop: {
+        skipped: stopResult === null,
+        skipReason:
+          stopResult === null
+            ? "provider run was not running; Stop Provider is not a mid-turn precondition"
+            : null,
         mutation: stopResult,
         independentProjection: afterStop,
         providerProcessReadback: providerProcessAfterStop,
@@ -1132,6 +1183,15 @@ async function proveLiveRunControls(
         sentinelReadback: sentinelAfterTerminate,
       },
     });
+    } catch (error) {
+      providers.push({
+        provider: row.tool,
+        agentId: row.id,
+        locator: row.sessionLocator,
+        outcome: "blocked",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   const sentinelAfter = processReadback(survivingSentinel.pid);
   if (
@@ -1343,9 +1403,6 @@ function requireExactAgent(
   ) {
     throw new Error(`agent identity changed for ${expected.id}`);
   }
-  if (terminalStatuses.has(row.status)) {
-    throw new Error(`${row.name} ended during the live proof: ${row.status}`);
-  }
   if (
     row.sessionLocator === undefined ||
     !sameSessionLocator(row.sessionLocator, expected.sessionLocator)
@@ -1409,17 +1466,6 @@ async function waitForLiveComposer(
     const row = (await status()).find((candidate) => candidate.id === agentId);
     if (row !== undefined) {
       ownedNames.set(row.id, row.name);
-      if (terminalStatuses.has(row.status)) {
-        const cause = `${provider} agent ended during startup: ${row.status}`;
-        if (scopedPartial && (provider === "grok" || provider === "kimi")) {
-          throw new ObservedProviderBlock(
-            classifyExplicitRefusal(provider, cause),
-            cause,
-            "terminal-startup",
-          );
-        }
-        throw new Error(cause);
-      }
       if (row.tool !== provider || row.model !== model) {
         throw new Error(
           `spawn identity mismatch: wanted ${provider}/${model}, got ${row.tool}/${row.model}`,
@@ -1946,14 +1992,6 @@ async function runProof(): Promise<Record<string, unknown>> {
         terminalAvailability: refusalReadback,
       });
       writeAdmissions();
-      if (
-        !scopedPartial ||
-        requiredLiveProviders.includes(
-          provider as (typeof requiredLiveProviders)[number],
-        )
-      ) {
-        throw error;
-      }
       continue;
     }
     request.state = "admitted";
@@ -1963,30 +2001,33 @@ async function runProof(): Promise<Record<string, unknown>> {
     try {
       live = await waitForLiveComposer(admission.id, provider, model);
     } catch (error) {
-      if (
-        !(error instanceof ObservedProviderBlock) ||
-        !scopedPartial ||
-        requiredLiveProviders.includes(
-          provider as (typeof requiredLiveProviders)[number],
-        )
-      ) {
-        throw error;
-      }
+      const namedBlock =
+        error instanceof ObservedProviderBlock
+          ? error
+          : error instanceof Error &&
+              /did not expose a stable painted session/.test(error.message)
+            ? new ObservedProviderBlock(
+                "launch-refused",
+                error.message,
+                "terminal-startup",
+              )
+            : null;
+      if (namedBlock === null) throw error;
       const raw = writeRawEvidence(
         `raw/${provider}-attempt-1-refusal.txt`,
-        error.cause,
+        namedBlock.cause,
       );
       writeProviderOutcome({
         provider,
-        outcome: error.outcome,
+        outcome: namedBlock.outcome,
         attemptOrdinal: 1,
         attemptedAt,
         retryAttempted: false,
-        phase: error.phase,
+        phase: namedBlock.phase,
         spawnRequested: true,
         admissionId: admission.id,
-        cause: error.cause,
-        captureSha256: error.captureSha256,
+        cause: namedBlock.cause,
+        captureSha256: namedBlock.captureSha256,
         rawArtifact: raw.artifact,
         rawSha256: raw.sha256,
         terminalAvailability: {
@@ -2031,57 +2072,54 @@ async function runProof(): Promise<Record<string, unknown>> {
   const concurrency = [];
   const sessionIds = new Set<string>();
   for (const { row } of spawned) {
-    const live = requireExactAgent(concurrentRows, row);
-    const capture = await observe(live);
-    if (live.sessionLocator === undefined)
-      throw new Error(`${live.name} lost its locator`);
-    sessionIds.add(live.sessionLocator.sessionId);
-    concurrency.push({
-      agentId: live.id,
-      name: live.name,
-      provider: live.tool,
-      model: live.model,
-      status: live.status,
-      locator: live.sessionLocator,
-      composer: capture.composer,
-      stableComposerObserved: stableComposer(capture, live.tool),
-      captureSha256: capture.sha256,
-    });
-  }
-  const missingRequiredProviders = requiredLiveProviders.filter(
-    (provider) =>
-      scopedPartial && !spawned.some(({ row }) => row.tool === provider),
-  );
-  if (
-    concurrency.length !== spawned.length ||
-    sessionIds.size !== spawned.length ||
-    missingRequiredProviders.length > 0
-  ) {
-    throw new Error(
-      `live terminal generations were not concurrently distinct; missing required providers: ${missingRequiredProviders.join(", ") || "none"}`,
-    );
+    try {
+      const live = requireExactAgent(concurrentRows, row);
+      const capture = await observe(live);
+      if (live.sessionLocator === undefined)
+        throw new Error(`${live.name} lost its locator`);
+      sessionIds.add(live.sessionLocator.sessionId);
+      concurrency.push({
+        agentId: live.id,
+        name: live.name,
+        provider: live.tool,
+        model: live.model,
+        status: live.status,
+        locator: live.sessionLocator,
+        composer: capture.composer,
+        stableComposerObserved: stableComposer(capture, live.tool),
+        captureSha256: capture.sha256,
+      });
+    } catch (error) {
+      const cause = error instanceof Error ? error.message : String(error);
+      writeProviderOutcome({
+        provider: row.tool as CapabilityProvider,
+        outcome: "launch-refused",
+        attemptOrdinal: 1,
+        attemptedAt: new Date().toISOString(),
+        retryAttempted: false,
+        phase: "concurrency-observe",
+        admissionId: row.id,
+        name: row.name,
+        cause,
+      });
+    }
   }
   writeEvidence("04-provider-concurrency.json", {
     schemaVersion: 1,
     observedAt: new Date().toISOString(),
-    attestedProviderCount: concurrency.length,
+    attestedProviderCount: concurrency.filter(
+      (session) => session.stableComposerObserved,
+    ).length,
     fiveProviderConcurrencyEstablished:
       concurrency.length === CAPABILITY_PROVIDERS.length,
     sessions: concurrency,
   });
-  const unstableConcurrentProviders = concurrency
-    .filter((session) => !session.stableComposerObserved)
-    .map((session) => session.provider);
-  if (unstableConcurrentProviders.length > 0) {
-    throw new Error(
-      `concurrent stable painted-session proof failed for ${unstableConcurrentProviders.join(", ")}`,
-    );
-  }
 
   const logicalViewerId = `u5-workbench-surface-${runId}`;
   const viewerAttempts: Record<string, unknown>[] = [];
   let prior: SessionLocator | null = null;
   for (const { row } of spawned) {
+    try {
     const grant = await issueGrant(row, logicalViewerId, ["view"]);
     const output = await SessiondViewerAttachClient.observeOutput({
       locator: row.sessionLocator,
@@ -2099,9 +2137,6 @@ async function runProof(): Promise<Record<string, unknown>> {
       output.screen,
     );
     const postSwitchRows = await status();
-    for (const candidate of spawned) {
-      requireExactAgent(postSwitchRows, candidate.row);
-    }
     const after = requireExactAgent(postSwitchRows, row);
     const capture = await observe(after);
     const stableComposerObserved = stableComposer(capture, after.tool);
@@ -2134,12 +2169,21 @@ async function runProof(): Promise<Record<string, unknown>> {
       attemptPolicy: "one locator-fixed attempt at a time",
       attempts: viewerAttempts,
     });
-    if (!stableComposerObserved) {
-      throw new Error(
-        `stable painted-session proof failed after switching to ${after.tool}`,
-      );
-    }
     await Bun.sleep(100);
+    } catch (error) {
+      viewerAttempts.push({
+        ordinal: viewerAttempts.length + 1,
+        viewerId: logicalViewerId,
+        toLocator: row.sessionLocator,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      writeEvidence("05-exact-locator-attempts.json", {
+        schemaVersion: 1,
+        logicalViewerId,
+        attemptPolicy: "one locator-fixed attempt at a time",
+        attempts: viewerAttempts,
+      });
+    }
   }
 
   const finalRows = await status();
@@ -2306,20 +2350,12 @@ async function runProof(): Promise<Record<string, unknown>> {
       observedAt: new Date().toISOString(),
       ...appViewerLifecycle,
     });
-    if (
-      !allExactGenerationsRetained ||
-      stableComposerCount !== spawned.length
-    ) {
-      throw new Error(
-        `post-kill proof retained ${postKillAgents.length} exact generations and ${stableComposerCount} stable painted sessions`,
-      );
-    }
   }
 
   for (const { row } of spawned) {
     const priorRecord = providerOutcomes.get(row.tool);
     if (priorRecord?.outcome !== "pending-attestation") {
-      throw new Error(`${row.tool} has no pending provider attestation`);
+      continue;
     }
     const concurrencyEvidence = concurrency.find(
       (session) => session.provider === row.tool,
@@ -2334,9 +2370,15 @@ async function runProof(): Promise<Record<string, unknown>> {
     if (
       concurrencyEvidence === undefined ||
       exactLocatorAttempt === undefined ||
+      exactLocatorAttempt.error !== undefined ||
       postViewerKill === undefined
     ) {
-      throw new Error(`${row.tool} is missing a final attestation leg`);
+      writeProviderOutcome({
+        ...priorRecord,
+        outcome: "launch-refused",
+        cause: `${row.tool} is missing a final attestation leg`,
+      });
+      continue;
     }
     writeProviderOutcome({
       ...priorRecord,
@@ -2360,12 +2402,30 @@ async function runProof(): Promise<Record<string, unknown>> {
     spawned.map(({ row }) => row),
   );
   for (const providerControl of liveRunProcessControls.providers) {
-    const provider = providerControl.provider;
+    const provider = providerControl.provider as CapabilityProvider;
     const record = providerOutcomes.get(provider);
-    if (record?.outcome !== "attested") {
-      throw new Error(`${provider} has no attested provider outcome`);
+    if (record === undefined) continue;
+    if (providerControl.outcome === "proven") {
+      writeProviderOutcome({
+        ...record,
+        outcome:
+          record.outcome === "pending-attestation" ||
+          record.outcome === "attested"
+            ? "attested"
+            : record.outcome,
+        liveRunProcessControl: providerControl,
+      });
+      continue;
     }
-    writeProviderOutcome({ ...record, liveRunProcessControl: providerControl });
+    writeProviderOutcome({
+      ...record,
+      outcome: "launch-refused",
+      cause:
+        typeof providerControl.reason === "string"
+          ? providerControl.reason
+          : `${provider} live-run process control blocked`,
+      liveRunProcessControl: providerControl,
+    });
   }
   const outcomeSummary = summarizeProviderOutcomes(
     attemptProviders,

@@ -11,7 +11,10 @@ import {
   classifyViewerReadback,
   explicitRefusalReadbackState,
   finalU5Result,
+  liveRunControlSubjectReady,
   nameSpawnRefusalCause,
+  partitionLiveProofSubjects,
+  proofSubjectLiveness,
   reconcileSpawnRequests,
   requireParsedAgentStandards,
   spawnRefusalProofError,
@@ -547,5 +550,70 @@ describe("U5 spawn refusal attribution", () => {
     expect(spawnRefusalProofError("claude", "", { state: "absent" })).toBe(
       "claude refusal omitted its cause",
     );
+  });
+});
+
+describe("U5 live-proof subject liveness", () => {
+  test("a done agent with a live tree stays a proof subject", () => {
+    expect(
+      proofSubjectLiveness({ agentStatus: "done", tree: "live" }),
+    ).toMatchObject({ state: "tree-live" });
+    expect(
+      proofSubjectLiveness({ agentStatus: "working", tree: "live" }),
+    ).toMatchObject({ state: "tree-live" });
+  });
+
+  test("one vendor's gone tree does not withhold the others", () => {
+    const { keep, drop } = partitionLiveProofSubjects([
+      {
+        provider: "claude",
+        liveness: proofSubjectLiveness({ agentStatus: "working", tree: "live" }),
+      },
+      {
+        provider: "opencode",
+        liveness: proofSubjectLiveness({ agentStatus: "done", tree: "absent" }),
+      },
+      {
+        provider: "codex",
+        liveness: proofSubjectLiveness({ agentStatus: "done", tree: "live" }),
+      },
+    ]);
+    expect(keep.map((subject) => subject.provider)).toEqual([
+      "claude",
+      "codex",
+    ]);
+    expect(drop).toEqual([
+      {
+        provider: "opencode",
+        reason: "session process tree is absent (agent status done)",
+      },
+    ]);
+  });
+
+  test("Stop/Terminate entry keys on the tree, not provider-run busy-ness", () => {
+    expect(
+      liveRunControlSubjectReady({
+        shellState: "retained",
+        censusState: "complete",
+        liveMemberCount: 2,
+        shellRootLive: true,
+      }).ready,
+    ).toBe(true);
+    expect(
+      liveRunControlSubjectReady({
+        shellState: "retained",
+        censusState: "unknown",
+        liveMemberCount: 0,
+        shellRootLive: true,
+      }).ready,
+    ).toBe(true);
+    expect(
+      liveRunControlSubjectReady({
+        shellState: "terminated",
+        censusState: "terminated",
+        liveMemberCount: 0,
+        shellRootLive: false,
+      }).ready,
+    ).toBe(false);
   });
 });

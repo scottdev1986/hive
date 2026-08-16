@@ -515,3 +515,71 @@ export function spawnRefusalProofError(
   }
   return `${provider} refusal is ${kind}: ${cause}; ${reason}`;
 }
+
+/** Agent-record status is not proof liveness. Stop Provider and Terminate
+ * Terminal need the session process tree, not a mid-turn agent. */
+export function proofSubjectLiveness(input: {
+  agentStatus: string;
+  tree: "live" | "absent" | "unknown";
+}): { state: "tree-live" | "tree-gone" | "unmeasured"; reason: string } {
+  if (input.tree === "live") {
+    return {
+      state: "tree-live",
+      reason:
+        input.agentStatus === "done" || input.agentStatus === "dead"
+          ? `agent status is ${input.agentStatus} but the session process tree is live`
+          : `session process tree is live (agent status ${input.agentStatus})`,
+    };
+  }
+  if (input.tree === "absent") {
+    return {
+      state: "tree-gone",
+      reason: `session process tree is absent (agent status ${input.agentStatus})`,
+    };
+  }
+  return {
+    state: "unmeasured",
+    reason: `session process tree is unmeasured (agent status ${input.agentStatus})`,
+  };
+}
+
+export function partitionLiveProofSubjects<T extends { provider: string }>(
+  subjects: readonly (T & {
+    liveness: { state: "tree-live" | "tree-gone" | "unmeasured"; reason: string };
+  })[],
+): { keep: T[]; drop: { provider: string; reason: string }[] } {
+  const keep: T[] = [];
+  const drop: { provider: string; reason: string }[] = [];
+  for (const subject of subjects) {
+    if (subject.liveness.state === "tree-live") {
+      keep.push(subject);
+    } else {
+      drop.push({ provider: subject.provider, reason: subject.liveness.reason });
+    }
+  }
+  return { keep, drop };
+}
+
+/** Entry to Stop/Terminate: a retained shell and a live tree. Provider-run
+ * busy-ness and agent-record status are not preconditions. */
+export function liveRunControlSubjectReady(input: {
+  shellState: string;
+  censusState: string;
+  liveMemberCount: number;
+  shellRootLive: boolean;
+}): { ready: boolean; reason: string } {
+  const treeLive = input.liveMemberCount > 0 || input.shellRootLive;
+  if (input.shellState === "retained" && treeLive) {
+    return {
+      ready: true,
+      reason: "retained shell and live session process tree",
+    };
+  }
+  return {
+    ready: false,
+    reason:
+      `no live session tree for Stop/Terminate (shell=${input.shellState}, ` +
+      `census=${input.censusState}, liveMembers=${input.liveMemberCount}, ` +
+      `shellRootLive=${input.shellRootLive})`,
+  };
+}
