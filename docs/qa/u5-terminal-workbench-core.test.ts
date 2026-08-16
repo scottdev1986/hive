@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   CAPABILITY_PROVIDERS,
@@ -7,6 +8,7 @@ import {
   classifyViewerReadback,
   finalU5Result,
   reconcileSpawnRequests,
+  assertIsolatedQaHiveHome,
   requireU5SpawnTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
@@ -67,6 +69,30 @@ describe("U5 proof decisions", () => {
         HIVE_QA_U5_TASK_ID: "task_01a00790-0301-7000-8000-000000000301",
       }),
     ).toBe("task_01a00790-0301-7000-8000-000000000301");
+  });
+
+  test("fixture-task seeding refuses a machine hive home by name", () => {
+    expect(() =>
+      assertIsolatedQaHiveHome("/Users/x/.hive", "/Users/x/.hive"),
+    ).toThrow(
+      "U5 fixture-task seeding refuses HIVE_HOME that resolves to the machine hive",
+    );
+    expect(() =>
+      assertIsolatedQaHiveHome(
+        "/Users/x/.hive/instances/dev-abc",
+        "/Users/x/.hive",
+      ),
+    ).toThrow(
+      "U5 fixture-task seeding refuses HIVE_HOME that resolves to the machine hive",
+    );
+    expect(() =>
+      assertIsolatedQaHiveHome("/tmp/not-qa", "/Users/x/.hive"),
+    ).toThrow(
+      "U5 fixture-task seeding refuses a HIVE_HOME that is not an isolated QA root",
+    );
+    expect(
+      assertIsolatedQaHiveHome("/tmp/hvqa-fixture-control", "/Users/x/.hive"),
+    ).toBe(resolve("/tmp/hvqa-fixture-control"));
   });
 
   test("keeps incomplete auxiliary viewer readback unclaimed", () => {

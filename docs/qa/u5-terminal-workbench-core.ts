@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
@@ -76,6 +78,39 @@ export function requireU5SpawnTaskId(
     );
   }
   return TaskIdSchema.parse(taskId);
+}
+
+function resolvedPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+export function assertIsolatedQaHiveHome(
+  hiveHome: string,
+  userHiveHome: string,
+): string {
+  const resolvedHome = resolvedPath(hiveHome);
+  const resolvedUserHive = resolvedPath(userHiveHome);
+  if (
+    resolvedHome === resolvedUserHive ||
+    resolvedHome.startsWith(`${resolvedUserHive}/`)
+  ) {
+    throw new Error(
+      `U5 fixture-task seeding refuses HIVE_HOME that resolves to the machine hive: ${resolvedHome}`,
+    );
+  }
+  if (
+    !resolvedHome.startsWith("/tmp/hvqa-") &&
+    !resolvedHome.startsWith("/private/tmp/hvqa-")
+  ) {
+    throw new Error(
+      `U5 fixture-task seeding refuses a HIVE_HOME that is not an isolated QA root: ${resolvedHome}`,
+    );
+  }
+  return resolvedHome;
 }
 
 export function classifyViewerReadback(

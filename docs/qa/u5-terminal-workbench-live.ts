@@ -3,7 +3,8 @@
 // blocked providers typed and non-passing while it measures every live route,
 // exact-locator viewer attempt, and cleanup obligation before returning.
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import {
   existsSync,
   mkdirSync,
@@ -55,7 +56,7 @@ import {
   classifyViewerReadback,
   finalU5Result,
   reconcileSpawnRequests,
-  requireU5SpawnTaskId,
+  assertIsolatedQaHiveHome,
   requireU5WorkspaceApp,
   resolveU5Scope,
   summarizeProviderOutcomes,
@@ -269,7 +270,16 @@ if (sourceRoot !== scriptSourceRoot) {
 }
 
 const workspaceApp = requireU5WorkspaceApp(process.env);
-const spawnTaskId = requireU5SpawnTaskId(process.env);
+const isolatedHiveHome = assertIsolatedQaHiveHome(
+  process.env.HIVE_HOME ?? "",
+  join(homedir(), ".hive"),
+);
+if (isolatedHiveHome !== home) {
+  throw new Error(
+    `HIVE_HOME ${isolatedHiveHome} is not the isolated QA home ${home}`,
+  );
+}
+const liveAccountabilityTaskId = "task_01a00790-0301-7000-8000-000000000301";
 const appExecutablePath = realpathSync(workspaceApp.executablePath);
 if (
   !appExecutablePath.endsWith("/HiveWorkspace.app/Contents/MacOS/HiveWorkspace")
@@ -512,6 +522,114 @@ function verifyAppLifecycleRelease(release: AppLifecycleRelease): {
       stderr,
     },
   };
+}
+
+function uuidV7(now: number): string {
+  const timestamp = now.toString(16).padStart(12, "0");
+  const random = randomBytes(10).toString("hex");
+  const variant = (
+    (Number.parseInt(random.charAt(3), 16) & 0x3) |
+    0x8
+  ).toString(16);
+  const body = `${timestamp}7${random.slice(0, 3)}${variant}${random.slice(4, 19)}`;
+  return `${body.slice(0, 8)}-${body.slice(8, 12)}-${body.slice(12, 16)}-${body.slice(16, 20)}-${body.slice(20, 32)}`;
+}
+
+const RunBootstrapSchema = z
+  .object({
+    runId: z.string().min(1),
+    taskInputs: z.object({
+      specRevision: z.object({
+        revision: z.string().min(1),
+        digest: z.string().min(1),
+      }),
+      planRevision: z.object({
+        revision: z.string().min(1),
+        digest: z.string().min(1),
+      }),
+      baseSha: z.string().min(1),
+    }),
+  })
+  .loose();
+const FixtureTaskReceiptSchema = z
+  .object({
+    taskId: z.string().min(1),
+  })
+  .loose();
+
+async function seedIsolatedFixtureTask(): Promise<string> {
+  assertIsolatedQaHiveHome(
+    process.env.HIVE_HOME ?? "",
+    join(homedir(), ".hive"),
+  );
+  const bootstrap = await callTool(
+    "hive_run_bootstrap",
+    {},
+    "bootstrap",
+    RunBootstrapSchema,
+  );
+  const fixtureTaskId = `task_${uuidV7(Date.now())}`;
+  const receipt = await callTool(
+    "hive_task_create",
+    {
+      taskId: fixtureTaskId,
+      revision: "1",
+      parentTaskId: null,
+      dependsOn: [],
+      acceptanceIds: ["u5-isolated-fixture"],
+      assigneeNodeId: null,
+      pathLeases: [{ path: "docs/qa/", mode: "read" }],
+      branch: "dev",
+      baseSha: bootstrap.taskInputs.baseSha,
+      state: "assigned",
+      blockers: [],
+      evidence: [],
+      artifactRefs: [],
+      runId: bootstrap.runId,
+      delegationSpec: {
+        objective: "Isolated U5 fixture task so hive_spawn has a board story",
+        parentAcceptanceIds: ["u5-isolated-fixture"],
+        childOutcome:
+          "The isolated spawn is accountable on this ephemeral board",
+        terminationCondition: "The U5 live harness finishes or refuses by name",
+        inputs: {
+          specRevision: bootstrap.taskInputs.specRevision,
+          planRevision: bootstrap.taskInputs.planRevision,
+          taskRevisions: [],
+          interfaceRevisions: [],
+          baseSha: bootstrap.taskInputs.baseSha,
+          prerequisites: [],
+          sourceArtifactRefs: [],
+        },
+        boundaries: { allowedPaths: ["docs/qa/"] },
+        authority: {
+          grantId: `grant_${uuidV7(Date.now() + 1)}`,
+          permittedOperations: ["read", "test", "message"],
+          environment: "local",
+          worktree: "per-agent",
+          branch: "dev",
+          explicitNonAuthority: [
+            "never land on main",
+            "never write the live board",
+          ],
+        },
+        allowance: {
+          sessions: 2,
+          tokens: 1_500_000,
+          costCents: 8000,
+          wallTimeMs: 3_600_000,
+          retries: 1,
+          blockers: [],
+        },
+      },
+    },
+    "task",
+    FixtureTaskReceiptSchema,
+  );
+  if (receipt.taskId.length === 0) {
+    throw new Error("isolated fixture task create returned no taskId");
+  }
+  return receipt.taskId;
 }
 
 function throwIfInterrupted(): void {
@@ -1249,6 +1367,13 @@ function safeGrant(
 }
 
 async function runProof(): Promise<Record<string, unknown>> {
+  const fixtureSpawnTaskId = await seedIsolatedFixtureTask();
+  writeEvidence("00-isolated-fixture-task.json", {
+    schemaVersion: 1,
+    liveAccountabilityTaskId,
+    isolatedHiveHome,
+    fixtureTaskId: fixtureSpawnTaskId,
+  });
   initialProjectHead = git(project, "rev-parse", "HEAD");
   initialProjectStatus = git(project, "status", "--porcelain");
   initialProjectWorktrees = git(project, "worktree", "list", "--porcelain");
@@ -1493,7 +1618,7 @@ async function runProof(): Promise<Record<string, unknown>> {
           task,
           category: "simple_coding",
           readOnly: true,
-          taskId: spawnTaskId,
+          taskId: fixtureSpawnTaskId,
         },
         "agent",
         SpawnSummarySchema,
