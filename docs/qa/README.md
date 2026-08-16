@@ -6,11 +6,13 @@ without touching the user's Hive or the shared development instance.
 
 ## Use
 
-    qa/rig.sh up                       # bring up the QA daemon, leave it running
-    qa/rig.sh run <cmd...>             # up, run cmd in the QA environment, down
-    qa/rig.sh down                     # stop; exit 1 if anything survives
-    qa/suite.sh fixture                # private rig + landed legs → suite-report.jsonl
-    qa/suite.sh probe missing-row|forged-tier|teardown-leak
+    docs/qa/rig.sh up                  # bring up the QA daemon, leave it running
+    docs/qa/rig.sh run <cmd...>        # up, run cmd in the QA environment, down
+    docs/qa/rig.sh down                # stop; exit 1 if anything survives
+    docs/qa/suite.sh fixture           # private rig + landed legs → suite-report.jsonl
+    docs/qa/suite.sh probe missing-row|forged-tier|teardown-leak
+    docs/qa/suite.sh probe workspace-ui   # workspace shell legs must be able to fail
+    docs/qa/workspace-ui.sh run <artifacts> <home> <port> <hive-bin>
 
 Parameters (env): `QA_HOME` (default: a short checkout-specific `/tmp/hvqa-*`
 path), `QA_PROJECT` (default `/Users/scottkellar/Projects/hive-test-project`),
@@ -57,11 +59,22 @@ rigs may coexist, and a name alone does not prove where a path resolves.
   descendants. Its final `lsof` readback proves its own reader worked before an
   empty result can pass.
 
+- The checkout root is never assumed. Every script here resolves its own
+  directory from its own location and asks `repo-root.sh` (`repo-root.ts` for
+  the two TypeScript entry points) to search upward for a directory holding
+  both `package.json` and `src/cli.ts`. Nothing records how deep this tree
+  sits, and sibling scripts are referenced through the caller's own directory,
+  so moving the tree cannot silently redirect a run. A root that cannot be
+  validated is refused, quoting the path — it is never passed to the daemon,
+  the CLI, or the u5 isolation gate.
+
 Reviewer controls:
 
-    QA_HOME=$HOME/.hive qa/rig.sh up        # refused
-    qa/rig-checks.sh                        # every claim above, exercised
+    QA_HOME=$HOME/.hive docs/qa/rig.sh up   # refused
+    docs/qa/rig-checks.sh                   # every claim above, exercised
 
-`g-checks.sh` proves the refusals in both directions with a passing
-positive control, and proves `down` really fails on a survivor by leaking a
-TERM-ignoring process bound to the QA home.
+`docs/qa/rig-checks.sh` proves the refusals in both directions with a passing
+positive control, proves `down` really fails on a survivor by leaking a
+TERM-ignoring process bound to the QA home, proves `up` with no `QA_SRC_ROOT`
+resolves this checkout, and proves the root resolver refuses a directory that
+sits under no checkout.

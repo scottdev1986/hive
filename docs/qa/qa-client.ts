@@ -1,5 +1,8 @@
 import { appendFileSync } from "node:fs";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { agentFetch, userFetch } from "../../src/cli/credential";
 import { HIVE_MCP_VERSION_NEGOTIATION } from "../../src/shared/mcp-protocol";
 import { z } from "zod";
@@ -36,7 +39,11 @@ export function requiredQaCoordinates(): QaCoordinates {
   const project = requiredEnv("HIVE_QA_PROJECT");
   const artifacts = process.env.HIVE_QA_ARTIFACTS || `${home}/artifacts`;
   const sourceRoot = requiredEnv("HIVE_QA_SRC_ROOT");
-  const port = z.coerce.number().int().positive().parse(requiredEnv("HIVE_QA_PORT"));
+  const port = z.coerce
+    .number()
+    .int()
+    .positive()
+    .parse(requiredEnv("HIVE_QA_PORT"));
   return { home, project, port, artifacts, sourceRoot };
 }
 

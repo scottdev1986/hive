@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# qa/suite.sh — composition runner for the 79-row deterministic matrix.
+# qa/suite.sh — composition runner for the deterministic matrix in MATRIX_ROWS.
 #
 #   qa/suite.sh fixture              private rig + landed legs + suite-report.jsonl
 #   qa/suite.sh probe missing-row    aggregator must red on incomplete coverage
@@ -9,20 +9,23 @@
 #   qa/suite.sh probe broken-exit    a broken verdict forbids green / exit 0
 #   qa/suite.sh probe shared-home    preflight refuses the known shared home
 #   qa/suite.sh probe cleanup-trap   mid-run die still tears down the private rig
+#   qa/suite.sh probe workspace-ui   every workspace-ui row must be able to fail
 #
 # Dev is the sole driver: preflight records sourceTier=dev and refuses a
 # production origin. The suite never globs /tmp/hvqa-* and never reuses a
 # shared rig; it publishes its own QA_HOME via qa/rig.sh.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
-SRC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$SCRIPT_DIR/repo-root.sh"
+SRC_ROOT="$(qa_repo_root "$SCRIPT_DIR")" || exit 2
 PRIMARY_CHECKOUT="/Users/scottkellar/Projects/hive"
 # Known shared live-phase home (ownerless custodian rig). Suite must never use it.
 SHARED_QA_HOME_MARK="hvqa-0de8db4fd4"
 RIG="$SCRIPT_DIR/rig.sh"
 RESET="$SCRIPT_DIR/reset-test-project.sh"
 TOUR="$SCRIPT_DIR/tour.sh"
+WORKSPACE_UI="$SCRIPT_DIR/workspace-ui.sh"
 DAEMON_SCENARIO="$SCRIPT_DIR/daemon-scenario.ts"
 FIXTURE_CORPUS="${FIXTURE_CORPUS:-$SRC_ROOT/workspace/Tests/WorkspaceCoreTests/Fixtures}"
 # Tour uses [ -z "${TOUR_CALIBRATION:-}" ] to mean off (tour.sh route_red).
@@ -45,6 +48,7 @@ LEG_FILES=(
   daemon-scenario.jsonl
   tour-rows.jsonl
   tour-interaction-rows.jsonl
+  workspace-ui-rows.jsonl
   queen-scenario.jsonl
   agent-scenario.jsonl
 )
@@ -58,7 +62,7 @@ log() { echo "suite: $*" >&2; }
 
 usage() {
   echo "usage: qa/suite.sh fixture" >&2
-  echo "       qa/suite.sh probe missing-row|forged-tier|teardown-leak|schema|broken-exit|shared-home|cleanup-trap|raw-d|green-needs|tour-calibration|tour-interaction-row|queen-leg" >&2
+  echo "       qa/suite.sh probe missing-row|forged-tier|teardown-leak|schema|broken-exit|shared-home|cleanup-trap|raw-d|green-needs|tour-calibration|tour-interaction-row|queen-leg|workspace-ui" >&2
   exit 2
 }
 
@@ -143,8 +147,17 @@ SYS-09|yes|D
 SYS-10|calibrated|T-interact
 SYS-11|yes|F
 SYS-12|yes|S
+WSUI-01|yes|W
+WSUI-02|yes|W
+WSUI-03|yes|W
+WSUI-04|yes|W
+WSUI-05|yes|W
+WSUI-06|yes|W
 EOF
 )"
+# Derived from the catalog above and never restated. A second copy of this
+# number is exactly how a row gets added while the totals check keeps passing.
+MATRIX_ROW_COUNT="$(printf '%s\n' "$MATRIX_ROWS" | grep -c '|')"
 
 resolve_real() {
   python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"
@@ -248,7 +261,7 @@ PY
 }
 
 # Returns 0 when report is schema-valid and complete; 1 when incomplete/invalid schema;
-# always writes the report when the 79 set is present after fills. Exit 2 reserved.
+# always writes the report when the whole catalog is present after fills. Exit 2 reserved.
 # Suite exit nonzero when any broken verdict exists is signaled via manifest.green=false
 # and aggregate exit code 1 when broken>0 OR schema invalid.
 aggregate_report() {
@@ -285,6 +298,7 @@ LEG_OWNER = {
     "daemon-scenario.jsonl": "D",
     "tour-rows.jsonl": "T",
     "tour-interaction-rows.jsonl": "T-interact",
+    "workspace-ui-rows.jsonl": "W",
     "queen-scenario.jsonl": "Q",
     "agent-scenario.jsonl": "A",
 }
@@ -448,9 +462,11 @@ if schema_errors:
 if missing or schema_errors:
     sys.exit(1)
 
-if len(collected) != 79 or set(collected) != set(matrix):
+expected_rows = len(matrix)
+if len(collected) != expected_rows or set(collected) != set(matrix):
     print(
-        f"suite: expected exactly the 79 matrix ids, got {len(collected)}",
+        f"suite: expected exactly the {expected_rows} matrix ids, "
+        f"got {len(collected)}",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -465,16 +481,19 @@ broken = sum(1 for r in collected.values() if r["verdict"] == "broken")
 needs = sum(1 for r in collected.values() if r["verdict"] == "NEEDS-FIXTURE")
 notrun = sum(1 for r in collected.values() if r["verdict"] == "NOT-RUN-BY-S")
 total = working + broken + needs + notrun
-if total != 79:
-    print(f"suite: verdict totals sum to {total}, expected 79", file=sys.stderr)
+if total != expected_rows:
+    print(
+        f"suite: verdict totals sum to {total}, expected {expected_rows}",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
-# Green only when every one of the 79 rows is working.
+# Green only when every row in the catalog is working.
 # NEEDS-FIXTURE, NOT-RUN-BY-S, and broken are all non-green: the matrix is
 # complete (valid) but the suite is not a green product summary.
-green = working == 79 and broken == 0 and needs == 0 and notrun == 0
+green = working == expected_rows and broken == 0 and needs == 0 and notrun == 0
 manifest = {
-    "rows": 79,
+    "rows": expected_rows,
     "working": working,
     "broken": broken,
     "needsFixture": needs,
@@ -502,7 +521,7 @@ if not green:
         reasons.append(f"not-run-by-s={notrun}")
     print(
         "suite: green summary forbidden — "
-        + (", ".join(reasons) if reasons else "not all 79 working"),
+        + (", ".join(reasons) if reasons else f"not all {expected_rows} working"),
         file=sys.stderr,
     )
     sys.exit(1)
@@ -568,6 +587,36 @@ publish_tour_interaction_row() {
   : > "$out"
   write_row "$out" "SYS-10" "fixture" "$verdict" "calibrated" "$source_sha" \
     "interactions.tsv" "16 interaction captures" "post-state and settledness guards"
+}
+
+publish_workspace_ui_rows() {
+  local legs="$1" source_sha="$2" artifacts="$3" home="$4" port="$5" hive_bin="$6"
+  local out="$legs/workspace-ui-rows.jsonl"
+  : > "$out"
+  mkdir -p "$artifacts"
+  local rows="$artifacts/rows.txt"
+  # The leg exits nonzero when a row is broken, which is a verdict, not a suite
+  # failure — the aggregator decides that. Only an empty row set is fatal here.
+  "$WORKSPACE_UI" run "$artifacts" "$home" "$port" "$hive_bin" \
+    >"$rows" 2>"$artifacts/leg.log" || true
+  local -a parts=()
+  local seen=0
+  while IFS='|' read -r -a parts; do
+    [ "${parts[0]:-}" = ROW ] || continue
+    write_row "$out" "${parts[1]}" "fixture" "${parts[2]}" "yes" "$source_sha" \
+      "${parts[@]:3}"
+    seen=$((seen + 1))
+  done < "$rows"
+  if [ "$seen" -eq 0 ]; then
+    # A leg that produced no rows must say so in the report rather than leave
+    # its ids missing, where an incomplete-matrix error would hide the cause.
+    log "workspace-ui leg emitted no rows (see $artifacts/leg.log)"
+    local rid
+    for rid in WSUI-01 WSUI-02 WSUI-03 WSUI-04 WSUI-05 WSUI-06; do
+      write_row "$out" "$rid" "fixture" "broken" "yes" "$source_sha" \
+        "workspace-ui leg emitted no rows" "leg.log"
+    done
+  fi
 }
 
 # Teardown installed immediately after successful rig up.
@@ -736,6 +785,10 @@ PY
   publish_tour_rows "$run_dir/legs" "$source_sha" "$tour_artifacts" "$tour_ok" "$run_dir/tour.out"
   publish_tour_interaction_row "$run_dir/legs" "$source_sha" "$tour_artifacts"
 
+  log "running workspace-ui shell proofs"
+  publish_workspace_ui_rows "$run_dir/legs" "$source_sha" \
+    "$run_dir/artifacts/workspace-ui" "$home" "$port" "$hive_bin"
+
   if ! aggregate_report "$run_dir" "$source_sha" "$run_dir/suite-report.jsonl"; then
     status=1
   fi
@@ -787,7 +840,16 @@ write_complete_stub_legs() {
 import json, sys
 from pathlib import Path
 legs, matrix_text, sha, broken_id = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
-produce = {"S": [], "D": [], "T": [], "T-interact": []}
+# Owners this stub writes a file for. Owners absent here are the ones the S
+# wave does not execute; the aggregator fills those as NOT-RUN-BY-S.
+mapping = {
+    "S": "s-rows.jsonl",
+    "D": "daemon-scenario.jsonl",
+    "T": "tour-rows.jsonl",
+    "T-interact": "tour-interaction-rows.jsonl",
+    "W": "workspace-ui-rows.jsonl",
+}
+produce = {owner: [] for owner in mapping}
 for line in matrix_text.strip().splitlines():
     rid, det, owner = line.split("|", 2)
     if owner not in produce:
@@ -798,12 +860,6 @@ for line in matrix_text.strip().splitlines():
         "determinism": det, "bugs": {"present": [], "absent": []},
         "evidence": ["probe-stub"], "sourceSha": sha,
     })
-mapping = {
-    "S": "s-rows.jsonl",
-    "D": "daemon-scenario.jsonl",
-    "T": "tour-rows.jsonl",
-    "T-interact": "tour-interaction-rows.jsonl",
-}
 for owner, name in mapping.items():
     rows = produce[owner]
     (legs / name).write_text(
@@ -941,13 +997,13 @@ probe_broken_exit() {
   set -e
   [ "$code" -ne 0 ] || die "probe broken-exit: aggregator exited 0 with a broken row"
   [ -f "$run_dir/suite-report.jsonl" ] || die "probe broken-exit: report was not written"
-  python3 - "$run_dir/suite-manifest.json" <<'PY'
+  python3 - "$run_dir/suite-manifest.json" "$MATRIX_ROW_COUNT" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
 assert m.get("valid") is True, m
 assert m.get("green") is False, m
 assert m.get("broken", 0) >= 1, m
-assert m.get("totalsSum") == 79, m
+assert m.get("totalsSum") == int(sys.argv[2]), m
 PY
   grep -q 'green summary forbidden' "$run_dir/agg.err" \
     || die "probe broken-exit: missing green-forbidden message"
@@ -977,7 +1033,7 @@ PY
   code=$?
   set -e
   [ "$code" -ne 0 ] || die "probe green-needs: aggregator exited 0 with NEEDS-FIXTURE/NOT-RUN"
-  python3 - "$run_dir/suite-manifest.json" <<'PY'
+  python3 - "$run_dir/suite-manifest.json" "$MATRIX_ROW_COUNT" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
 assert m.get("valid") is True, m
@@ -985,7 +1041,7 @@ assert m.get("green") is False, m
 assert m.get("needsFixture", 0) >= 1, m
 assert m.get("notRunByS", 0) >= 1, m
 assert m.get("broken", 0) == 0, m
-assert m.get("totalsSum") == 79, m
+assert m.get("totalsSum") == int(sys.argv[2]), m
 PY
   grep -q 'needs-fixture=' "$run_dir/agg.err" \
     || die "probe green-needs: missing needs-fixture reason"
@@ -1308,6 +1364,21 @@ probe_cleanup_trap() {
   log "probe cleanup-trap: RED die path cleaned as required"
 }
 
+probe_workspace_ui() {
+  # The workspace-ui rows must each be able to fail, and the two that assert the
+  # shell's end state must also be able to pass — a row that is red today cannot
+  # show by redness alone that it is not simply broken. These four controls need
+  # no rig; sandbox-blind does, so it is run through workspace-ui.sh with the
+  # coordinates of a live one.
+  local control
+  for control in forged-healthy forged-counters end-state-reachable corpus-gap; do
+    log "probe workspace-ui: $control"
+    "$WORKSPACE_UI" probe "$control" \
+      || die "probe workspace-ui: $control did not bite"
+  done
+  log "probe workspace-ui: every control bit as required"
+}
+
 case "$mode" in
   fixture|all)
     run_fixture
@@ -1327,6 +1398,7 @@ case "$mode" in
       tour-calibration) probe_tour_calibration ;;
       tour-interaction-row) probe_tour_interaction_row ;;
       queen-leg) probe_queen_leg ;;
+      workspace-ui) probe_workspace_ui ;;
       *) usage ;;
     esac
     ;;

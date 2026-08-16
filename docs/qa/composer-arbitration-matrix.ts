@@ -1,6 +1,9 @@
 import { mkdir } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -25,9 +28,7 @@ const mcpProtocolModule = await import(
   pathToFileURL(`${src}/src/shared/mcp-protocol.ts`).href
 );
 const attachModule = await import(
-  pathToFileURL(
-    `${src}/src/daemon/session-host/sessiond-viewer-attach.ts`,
-  ).href
+  pathToFileURL(`${src}/src/daemon/session-host/sessiond-viewer-attach.ts`).href
 );
 const schemaModule = await import(
   pathToFileURL(`${src}/src/schemas/session-protocol.ts`).href
@@ -395,7 +396,9 @@ try {
     "user-edit",
   );
   if (editReceipt.stage !== "written-to-terminal") {
-    throw new Error(`user edit was not written: ${JSON.stringify(editReceipt)}`);
+    throw new Error(
+      `user edit was not written: ${JSON.stringify(editReceipt)}`,
+    );
   }
   const draft = await waitForCapture(
     agent,
@@ -457,7 +460,9 @@ try {
     "user-clear",
   );
   if (clearReceipt.stage !== "written-to-terminal") {
-    throw new Error(`user clear was not written: ${JSON.stringify(clearReceipt)}`);
+    throw new Error(
+      `user clear was not written: ${JSON.stringify(clearReceipt)}`,
+    );
   }
   const cleared = await waitForCapture(
     agent,
@@ -535,7 +540,11 @@ try {
     vendor,
     model: agent.model,
     completedAt: new Date().toISOString(),
-    agent: { id: agent.id, name: agent.name, sessionLocator: agent.sessionLocator },
+    agent: {
+      id: agent.id,
+      name: agent.name,
+      sessionLocator: agent.sessionLocator,
+    },
     busyMessage,
     deliveredMessage,
     backlog: backlog.structuredContent?.mail,
@@ -572,12 +581,9 @@ try {
       "simple_coding",
       "user-weighted",
     ]).catch(() => undefined);
-    await routingMutation([
-      "routing",
-      "set-provider",
-      vendor,
-      "unset",
-    ]).catch(() => undefined);
+    await routingMutation(["routing", "set-provider", vendor, "unset"]).catch(
+      () => undefined,
+    );
   }
   await writeJson(`${root}/result.json`, outcome);
   console.log(stringify(outcome));

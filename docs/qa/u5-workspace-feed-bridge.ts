@@ -3,12 +3,13 @@
 // this process only avoids competing with the rig's daemon-lifetime owner.
 
 import { readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { z } from "zod";
 import { publishWorkspaceVisibility } from "../../src/cli/workspace-feed";
 import { SessionLocatorSchema } from "../../src/schemas/session-protocol";
 import { WorkspaceVisibilityInventoryInputSchema } from "../../src/daemon/session-host/workspace-visibility";
 import { requiredQaCoordinates } from "./qa-client";
+import { qaRepoRoot } from "./repo-root";
 
 const ReadySchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -58,22 +59,28 @@ const qaHome = realpathSync(coordinates.home);
 const project = realpathSync(coordinates.project);
 const artifacts = realpathSync(coordinates.artifacts);
 const sourceRoot = realpathSync(coordinates.sourceRoot);
-const scriptSourceRoot = realpathSync(join(import.meta.dir, ".."));
+const scriptSourceRoot = qaRepoRoot(import.meta.dir);
 
 if (home !== qaHome) {
-  throw new Error(`HIVE_HOME does not match HIVE_QA_HOME: ${home} != ${qaHome}`);
+  throw new Error(
+    `HIVE_HOME does not match HIVE_QA_HOME: ${home} != ${qaHome}`,
+  );
 }
 if (!home.startsWith("/private/tmp/hvqa-") && !home.startsWith("/tmp/hvqa-")) {
   throw new Error(`QA home is not an isolated short rig: ${home}`);
 }
 if (home.length > 20) {
-  throw new Error(`QA home is too long for the session host socket path: ${home}`);
+  throw new Error(
+    `QA home is too long for the session host socket path: ${home}`,
+  );
 }
 if (project === "/Users/scottkellar/Projects/hive-test-project") {
   throw new Error("refusing the shared hive-test-project");
 }
 if (!project.startsWith("/private/tmp/") && !project.startsWith("/tmp/")) {
-  throw new Error(`QA project is not isolated under the temporary root: ${project}`);
+  throw new Error(
+    `QA project is not isolated under the temporary root: ${project}`,
+  );
 }
 if (!artifacts.startsWith(`${home}/`)) {
   throw new Error(`artifact directory is outside the QA home: ${artifacts}`);
@@ -137,7 +144,9 @@ for await (const chunk of Bun.stdin.stream()) {
     const line = pending.slice(0, newline);
     pending = pending.slice(newline + 1);
     if (line.trim().length === 0) continue;
-    const input = WorkspaceVisibilityInventoryInputSchema.parse(JSON.parse(line));
+    const input = WorkspaceVisibilityInventoryInputSchema.parse(
+      JSON.parse(line),
+    );
     revision += 1n;
     const projected = {
       ...input,

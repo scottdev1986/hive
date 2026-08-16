@@ -242,9 +242,7 @@ async function getOrchestratorSession(): Promise<Snapshot | null> {
 }
 
 async function readRoutingPolicy(): Promise<RoutingPolicy> {
-  const response = await userFetch(
-    `http://127.0.0.1:${port}/routing/policy`,
-  );
+  const response = await userFetch(`http://127.0.0.1:${port}/routing/policy`);
   if (!response.ok) {
     throw new Error(
       `GET /routing/policy failed (${response.status}): ${await response.text().catch(() => "")}`,
@@ -256,14 +254,11 @@ async function readRoutingPolicy(): Promise<RoutingPolicy> {
 async function mutateRoutingPolicy(
   mutation: Record<string, unknown>,
 ): Promise<RoutingPolicy> {
-  const response = await userFetch(
-    `http://127.0.0.1:${port}/routing/policy`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(mutation),
-    },
-  );
+  const response = await userFetch(`http://127.0.0.1:${port}/routing/policy`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(mutation),
+  });
   if (!response.ok) {
     throw new Error(
       `POST /routing/policy failed (${response.status}): ${await response.text().catch(() => "")}`,
@@ -349,8 +344,7 @@ async function preflightAdmissionLadder(): Promise<{
     null;
   const hasExactCandidate =
     route?.candidates.some(
-      (candidate) =>
-        candidate.provider === tool && candidate.model === modelId,
+      (candidate) => candidate.provider === tool && candidate.model === modelId,
     ) === true;
   if (!hasExactCandidate) {
     policy = await readRoutingPolicy();
@@ -382,8 +376,7 @@ async function preflightAdmissionLadder(): Promise<{
     finalPolicy.global ?? finalPolicy.categories.standard_coding ?? null;
   if (
     finalRoute?.candidates.some(
-      (candidate) =>
-        candidate.provider === tool && candidate.model === modelId,
+      (candidate) => candidate.provider === tool && candidate.model === modelId,
     ) !== true
   ) {
     throw new Error(
@@ -428,12 +421,6 @@ async function preflightAdmissionLadder(): Promise<{
   );
   return { model: modelId, provider: tool };
 }
-
-
-
-
-
-
 
 async function observeRoot(
   locator: Snapshot["locator"],
@@ -789,20 +776,20 @@ try {
   // sendOnce is block-scoped to the single initial send. The orphan-refuse
   // retry site below cannot name it — a mutation that calls sendOnce() there
   // fails direct tsc (cheapest possible red for a second message).
-async function queenMailboxStatus(): Promise<{
-  lanes: { control: { available: number; leased: number } };
-}> {
-  return callQueenTool(
-    "hive_mail_status",
-    { recipient: "queen" },
-    "mail",
-    z.object({
-      lanes: z.object({
-        control: z.object({ available: z.number(), leased: z.number() }),
+  async function queenMailboxStatus(): Promise<{
+    lanes: { control: { available: number; leased: number } };
+  }> {
+    return callQueenTool(
+      "hive_mail_status",
+      { recipient: "queen" },
+      "mail",
+      z.object({
+        lanes: z.object({
+          control: z.object({ available: z.number(), leased: z.number() }),
+        }),
       }),
-    }),
-  );
-}
+    );
+  }
 
   let messageId: string;
   {

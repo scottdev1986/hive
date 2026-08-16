@@ -20,8 +20,16 @@ import { sameSessionLocator } from "../../src/daemon/session-host/locators";
 import { SessiondViewerAttachClient } from "../../src/daemon/session-host/sessiond-viewer-attach";
 import { WorkspaceVisibleTerminalSchema } from "../../src/daemon/session-host/workspace-visibility";
 import { type AgentRecord, AgentRecordSchema } from "../../src/schemas/agent";
-import { AttachGrantSchema, CaptureResultSchema, type SessionLocator } from "../../src/schemas/session-protocol";
-import { CAPABILITY_PROVIDERS, type CapabilityProvider, CapabilityProviderSchema } from "../../src/schemas/capability";
+import {
+  AttachGrantSchema,
+  CaptureResultSchema,
+  type SessionLocator,
+} from "../../src/schemas/session-protocol";
+import {
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "../../src/schemas/capability";
 import {
   LiveRunControlIntentSchema,
   LiveRunControlProjectionSchema,
@@ -29,12 +37,19 @@ import {
   type LiveRunControlIntent,
   type LiveRunControlProjection,
 } from "../../src/schemas/live-run-control";
-import { CandidateEffortSchema, RoutingCategorySchema, type RoutingPolicy, RoutingPolicyMutationSchema, RoutingPolicySchema } from "../../src/schemas/routing-policy";
+import {
+  CandidateEffortSchema,
+  RoutingCategorySchema,
+  type RoutingPolicy,
+  RoutingPolicyMutationSchema,
+  RoutingPolicySchema,
+} from "../../src/schemas/routing-policy";
 import {
   callMcpTool,
   McpToolRefusal,
   requiredQaCoordinates,
 } from "./qa-client";
+import { qaRepoRoot } from "./repo-root";
 import {
   classifyViewerReadback,
   finalU5Result,
@@ -223,7 +238,7 @@ const home = realpathSync(coordinates.home);
 const project = realpathSync(coordinates.project);
 const artifacts = realpathSync(coordinates.artifacts);
 const sourceRoot = realpathSync(coordinates.sourceRoot);
-const scriptSourceRoot = realpathSync(join(import.meta.dir, ".."));
+const scriptSourceRoot = qaRepoRoot(import.meta.dir);
 
 if (!home.startsWith("/private/tmp/hvqa-") && !home.startsWith("/tmp/hvqa-")) {
   throw new Error(`QA home is not an isolated short rig: ${home}`);
@@ -253,9 +268,7 @@ if (sourceRoot !== scriptSourceRoot) {
 const workspaceApp = requireU5WorkspaceApp(process.env);
 const appExecutablePath = realpathSync(workspaceApp.executablePath);
 if (
-  !appExecutablePath.endsWith(
-    "/HiveWorkspace.app/Contents/MacOS/HiveWorkspace",
-  )
+  !appExecutablePath.endsWith("/HiveWorkspace.app/Contents/MacOS/HiveWorkspace")
 ) {
   throw new Error(
     `HIVE_QA_U5_APP_EXECUTABLE is not an exact Workspace binary: ${appExecutablePath}`,
@@ -266,7 +279,9 @@ const appReleasePath = resolve(workspaceApp.releasePath);
 const appFeedReceiptPath = resolve(workspaceApp.feedReceiptPath);
 for (const path of [appReadyPath, appReleasePath, appFeedReceiptPath]) {
   if (!path.startsWith(`${artifacts}/`)) {
-    throw new Error(`app proof rendezvous is outside the artifact root: ${path}`);
+    throw new Error(
+      `app proof rendezvous is outside the artifact root: ${path}`,
+    );
   }
   if (existsSync(path)) {
     throw new Error(`app proof rendezvous already exists: ${path}`);
@@ -330,7 +345,10 @@ function writeEvidence(name: string, value: unknown): void {
   renameSync(temporary, path);
 }
 
-function writeRawEvidence(name: string, value: string): {
+function writeRawEvidence(
+  name: string,
+  value: string,
+): {
   artifact: string;
   sha256: string;
 } {
@@ -410,9 +428,7 @@ function verifyAppLifecycleRelease(release: AppLifecycleRelease): {
   if (
     executablePath !== release.executablePath ||
     executablePath !== appExecutablePath ||
-    !executablePath.endsWith(
-      "/HiveWorkspace.app/Contents/MacOS/HiveWorkspace",
-    )
+    !executablePath.endsWith("/HiveWorkspace.app/Contents/MacOS/HiveWorkspace")
   ) {
     throw new Error(
       `app proof executable is not the exact Workspace binary: ${release.executablePath}`,
@@ -429,7 +445,9 @@ function verifyAppLifecycleRelease(release: AppLifecycleRelease): {
     (argument) => argument === "--workspace-shell-live",
   ).length;
   if (liveFlagCount !== 1) {
-    throw new Error("app proof launch identity omitted the live Workspace flag");
+    throw new Error(
+      "app proof launch identity omitted the live Workspace flag",
+    );
   }
   for (const [flag, value] of [
     ["--port", String(port)],
@@ -1249,7 +1267,8 @@ async function runProof(): Promise<Record<string, unknown>> {
     initialAgentCount: initialAgents.length,
     pendingAssertions: {
       stopProvider: "production endpoint absent in this production proof leg",
-      terminateTerminal: "production endpoint absent in this production proof leg",
+      terminateTerminal:
+        "production endpoint absent in this production proof leg",
       viewerProcessSigkill: "awaiting the production Workspace rendezvous",
     },
   });
@@ -1264,10 +1283,7 @@ async function runProof(): Promise<Record<string, unknown>> {
     if (scopedPartial && (provider === "grok" || provider === "kimi")) {
       continue;
     }
-    selectedModels.set(
-      provider,
-      selectModel(firstInventory, provider),
-    );
+    selectedModels.set(provider, selectModel(firstInventory, provider));
   }
   const secondInventory = await inventory();
   if (!inventoryReadyForScope(secondInventory)) {
@@ -1282,7 +1298,8 @@ async function runProof(): Promise<Record<string, unknown>> {
         selection: {
           state: "hard-route-probe",
           canonicalId: kimiHardRoute,
-          reason: "measure the current daemon response to the resolved Kimi route",
+          reason:
+            "measure the current daemon response to the resolved Kimi route",
         },
         firstProviderRead: firstInventory.providers.kimi,
         secondProviderRead: secondInventory.providers.kimi,
@@ -1296,8 +1313,7 @@ async function runProof(): Promise<Record<string, unknown>> {
           safeCandidates: secondInventory.models
             .filter(
               (model) =>
-                model.vendor === "grok" &&
-                model.plan.status !== "would-spend",
+                model.vendor === "grok" && model.plan.status !== "would-spend",
             )
             .map((model) => ({
               canonicalId: model.canonicalId,
@@ -1362,16 +1378,14 @@ async function runProof(): Promise<Record<string, unknown>> {
       },
       decision: {
         decision: "replace",
-        reason:
-          scopedPartial
-            ? "fresh isolated provider proof with bounded blocked outcomes"
-            : "fresh isolated five-provider proof",
+        reason: scopedPartial
+          ? "fresh isolated provider proof with bounded blocked outcomes"
+          : "fresh isolated five-provider proof",
       },
       written: {
-        goal:
-          scopedPartial
-            ? "Measure live provider terminals, exact-locator viewer attempts, and two bounded launch outcomes"
-            : "Measure five concurrent provider terminals and exact-locator viewer attempts",
+        goal: scopedPartial
+          ? "Measure live provider terminals, exact-locator viewer attempts, and two bounded launch outcomes"
+          : "Measure five concurrent provider terminals and exact-locator viewer attempts",
         done: ["The private rig and two live catalog reads were verified"],
         failures: [],
         uncertainty: ["Stop and terminate controls are not present yet"],
@@ -1436,9 +1450,7 @@ async function runProof(): Promise<Record<string, unknown>> {
       }
     }
     const model = selectedModelId(provider);
-    routeEvidence.push(
-      await configureSingletonRoute(provider, model),
-    );
+    routeEvidence.push(await configureSingletonRoute(provider, model));
     writeEvidence("02-route-readbacks.json", routeEvidence);
 
     const attemptedAt = new Date().toISOString();
@@ -1470,8 +1482,7 @@ async function runProof(): Promise<Record<string, unknown>> {
           attemptedAt,
           retryAttempted: false,
           phase: "hive_spawn",
-          reason:
-            error instanceof Error ? error.message : String(error),
+          reason: error instanceof Error ? error.message : String(error),
         });
         writeAdmissions();
         throw error;
@@ -1488,7 +1499,8 @@ async function runProof(): Promise<Record<string, unknown>> {
         positiveControlIds,
       );
       request.refusalReadback = refusalReadback;
-      request.state = refusalReadback.state === "absent" ? "refused" : "unknown";
+      request.state =
+        refusalReadback.state === "absent" ? "refused" : "unknown";
       const exactRefusal = error.detail;
       const raw = writeRawEvidence(
         `raw/${provider}-attempt-1-refusal.txt`,
@@ -1580,7 +1592,8 @@ async function runProof(): Promise<Record<string, unknown>> {
         terminalAvailability: {
           state: "unknown",
           observedAt: new Date().toISOString(),
-          reason: "an admission exists but did not reach a stable painted session",
+          reason:
+            "an admission exists but did not reach a stable painted session",
           diagnosticIds: [admission.id],
         },
       });
@@ -2098,9 +2111,7 @@ async function cleanupOwnedAgents(): Promise<Record<string, unknown>> {
     if (projectRestored || Date.now() >= restorationDeadline) break;
     await Bun.sleep(250);
   }
-  let terminalReadback:
-    | boolean
-    | { state: "unknown"; error: string } = false;
+  let terminalReadback: boolean | { state: "unknown"; error: string } = false;
   try {
     const finalRows = await status();
     terminalReadback = targets.every((target) => {
@@ -2118,12 +2129,11 @@ async function cleanupOwnedAgents(): Promise<Record<string, unknown>> {
     unknown.length > 0 ||
     typeof terminalReadback !== "boolean";
   return {
-    state:
-      cleanupUnknown
-        ? "unknown"
-        : failed.length === 0 && projectRestored && terminalReadback
-          ? "clean"
-          : "failed",
+    state: cleanupUnknown
+      ? "unknown"
+      : failed.length === 0 && projectRestored && terminalReadback
+        ? "clean"
+        : "failed",
     exactOwnedNames: Object.fromEntries(ownedNames),
     results,
     reconciliationComplete: reconciliation.complete,

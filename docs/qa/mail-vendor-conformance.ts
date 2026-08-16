@@ -1,7 +1,10 @@
 import { Database } from "bun:sqlite";
 import { mkdir } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -154,7 +157,9 @@ async function waitForIdle(name: string): Promise<Record<string, any>> {
   throw new Error("agent did not reach an idle session after mail settlement");
 }
 
-async function waitForAuthenticated(name: string): Promise<Record<string, any>> {
+async function waitForAuthenticated(
+  name: string,
+): Promise<Record<string, any>> {
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     const result = await status();
@@ -162,7 +167,9 @@ async function waitForAuthenticated(name: string): Promise<Record<string, any>> 
       (candidate_: Record<string, any>) => candidate_.name === name,
     );
     if (row && ["dead", "done", "failed"].includes(row.status)) {
-      throw new Error(`agent ended during authentication with status ${row.status}`);
+      throw new Error(
+        `agent ended during authentication with status ${row.status}`,
+      );
     }
     if (row?.sessionLocator) {
       const capture = await observe(row).catch(() => null);
@@ -197,7 +204,9 @@ function journal(itemIds: string[]): Record<string, any>[] {
   }
 }
 
-async function waitForSettled(itemIds: string[]): Promise<Record<string, any>[]> {
+async function waitForSettled(
+  itemIds: string[],
+): Promise<Record<string, any>[]> {
   const timeout = Number(process.env.M3_SETTLE_TIMEOUT_MS ?? "360000");
   if (!Number.isFinite(timeout) || timeout <= 0) {
     throw new Error("M3_SETTLE_TIMEOUT_MS must be a positive number");
@@ -292,7 +301,10 @@ try {
     agent = await waitForAuthenticated(agent.name);
     const afterSpawn = await status();
     const authenticatedCapture = await observe(agent);
-    await writeJson(`${root}/auth-probe-status.json`, afterSpawn.structuredContent);
+    await writeJson(
+      `${root}/auth-probe-status.json`,
+      afterSpawn.structuredContent,
+    );
     await writeJson(`${root}/auth-probe-terminal.json`, authenticatedCapture);
     outcome = {
       result: "auth-worked",
@@ -307,138 +319,163 @@ try {
     };
     await writeJson(`${root}/result.json`, outcome);
   } else {
-  const afterSpawn = await status();
-  const spawnWrites = afterSpawn.structuredContent?.terminalWrites?.total;
-  if (typeof spawnWrites !== "number") {
-    throw new Error("terminal-write counter is absent");
-  }
+    const afterSpawn = await status();
+    const spawnWrites = afterSpawn.structuredContent?.terminalWrites?.total;
+    if (typeof spawnWrites !== "number") {
+      throw new Error("terminal-write counter is absent");
+    }
 
-  // The post-restart counter tallies the kickoff delivery too, and for a
-  // vendor whose TUI boots slowly those writes land after the afterSpawn
-  // snapshot. The zero-write invariant covers mail handling, not kickoff, so
-  // the baseline waits for the turn to start: the task bytes are delivered
-  // by then, and anything afterwards belongs to the measured window.
-  const workingDeadline = Date.now() + 180_000;
-  let baselineStatus: any = null;
-  for (;;) {
-    const current = await status();
-    const row = current.structuredContent?.agents?.find(
+    // The post-restart counter tallies the kickoff delivery too, and for a
+    // vendor whose TUI boots slowly those writes land after the afterSpawn
+    // snapshot. The zero-write invariant covers mail handling, not kickoff, so
+    // the baseline waits for the turn to start: the task bytes are delivered
+    // by then, and anything afterwards belongs to the measured window.
+    const workingDeadline = Date.now() + 180_000;
+    let baselineStatus: any = null;
+    for (;;) {
+      const current = await status();
+      const row = current.structuredContent?.agents?.find(
+        (candidate_: Record<string, any>) => candidate_.name === agent?.name,
+      );
+      if (row && ["dead", "done", "failed"].includes(row.status)) {
+        throw new Error(
+          `agent ended before its first turn with status ${row.status}`,
+        );
+      }
+      if (row && (row.status === "working" || row.status === "idle")) {
+        baselineStatus = current;
+        break;
+      }
+      if (Date.now() >= workingDeadline) {
+        throw new Error("agent never began its kickoff turn");
+      }
+      await sleep(1_000);
+    }
+    const baselineWrites =
+      baselineStatus.structuredContent?.terminalWrites?.total;
+    if (typeof baselineWrites !== "number") {
+      throw new Error(
+        "terminal-write counter is absent at the working baseline",
+      );
+    }
+    await writeJson(
+      `${root}/status-working.json`,
+      baselineStatus.structuredContent,
+    );
+
+    const controlKey = `m3-${vendor}-control-${stamp}`;
+    const workKey = `m3-${vendor}-work-${stamp}`;
+    const controlRequest = {
+      from: "queen",
+      to: agent.name,
+      lane: "control",
+      topic: "m3-control",
+      body: `control conformance ${stamp}`,
+      idempotencyKey: controlKey,
+    };
+    const controlFirst = mail(
+      await callTool("hive_mail_publish", controlRequest),
+    );
+    const controlReplay = mail(
+      await callTool("hive_mail_publish", controlRequest),
+    );
+    if (controlReplay.itemId !== controlFirst.itemId) {
+      throw new Error("idempotent publish returned a different control item");
+    }
+    const workFirst = mail(
+      await callTool("hive_mail_publish", {
+        from: "queen",
+        to: agent.name,
+        lane: "work",
+        topic: "m3-work",
+        body: `work conformance ${stamp}`,
+        idempotencyKey: workKey,
+      }),
+    );
+    const workMerged = mail(
+      await callTool("hive_mail_publish", {
+        from: "queen",
+        to: agent.name,
+        lane: "work",
+        topic: "m3-work",
+        body: `work conformance merged ${stamp}`,
+        idempotencyKey: `${workKey}-merged`,
+      }),
+    );
+    if (
+      workMerged.itemId !== workFirst.itemId ||
+      workMerged.mergedCount !== 1
+    ) {
+      throw new Error("work lane did not coalesce by sender and topic");
+    }
+    publishedItemIds.push(controlFirst.itemId, workFirst.itemId);
+
+    const writesBeforeMail = baselineWrites;
+    const events = await waitForSettled([
+      controlFirst.itemId,
+      workFirst.itemId,
+    ]);
+    agent = await waitForIdle(agent.name);
+    const finalStatus = await status();
+    const writesAfterMail =
+      finalStatus.structuredContent?.terminalWrites?.total;
+    if (writesAfterMail !== writesBeforeMail) {
+      throw new Error("mail handling caused an automated terminal write");
+    }
+    const finalCapture = await observe(agent).catch(() => null);
+    // Positive control: arbiter reduction left the key on the wire as null.
+    // A non-null composer means we are reading an old daemon or a fabricated fact.
+    if (finalCapture != null && finalCapture.composer != null) {
+      throw new Error(
+        `capture.composer must be null after arbiter reduction; got ${JSON.stringify(finalCapture.composer)}`,
+      );
+    }
+    const finalAgent = finalStatus.structuredContent?.agents?.find(
       (candidate_: Record<string, any>) => candidate_.name === agent?.name,
     );
-    if (row && ["dead", "done", "failed"].includes(row.status)) {
-      throw new Error(`agent ended before its first turn with status ${row.status}`);
-    }
-    if (row && (row.status === "working" || row.status === "idle")) {
-      baselineStatus = current;
-      break;
-    }
-    if (Date.now() >= workingDeadline) {
-      throw new Error("agent never began its kickoff turn");
-    }
-    await sleep(1_000);
-  }
-  const baselineWrites = baselineStatus.structuredContent?.terminalWrites?.total;
-  if (typeof baselineWrites !== "number") {
-    throw new Error("terminal-write counter is absent at the working baseline");
-  }
-  await writeJson(`${root}/status-working.json`, baselineStatus.structuredContent);
-
-  const controlKey = `m3-${vendor}-control-${stamp}`;
-  const workKey = `m3-${vendor}-work-${stamp}`;
-  const controlRequest = {
-    from: "queen",
-    to: agent.name,
-    lane: "control",
-    topic: "m3-control",
-    body: `control conformance ${stamp}`,
-    idempotencyKey: controlKey,
-  };
-  const controlFirst = mail(await callTool("hive_mail_publish", controlRequest));
-  const controlReplay = mail(await callTool("hive_mail_publish", controlRequest));
-  if (controlReplay.itemId !== controlFirst.itemId) {
-    throw new Error("idempotent publish returned a different control item");
-  }
-  const workFirst = mail(
-    await callTool("hive_mail_publish", {
-      from: "queen",
-      to: agent.name,
-      lane: "work",
-      topic: "m3-work",
-      body: `work conformance ${stamp}`,
-      idempotencyKey: workKey,
-    }),
-  );
-  const workMerged = mail(
-    await callTool("hive_mail_publish", {
-      from: "queen",
-      to: agent.name,
-      lane: "work",
-      topic: "m3-work",
-      body: `work conformance merged ${stamp}`,
-      idempotencyKey: `${workKey}-merged`,
-    }),
-  );
-  if (workMerged.itemId !== workFirst.itemId || workMerged.mergedCount !== 1) {
-    throw new Error("work lane did not coalesce by sender and topic");
-  }
-  publishedItemIds.push(controlFirst.itemId, workFirst.itemId);
-
-  const writesBeforeMail = baselineWrites;
-  const events = await waitForSettled([controlFirst.itemId, workFirst.itemId]);
-  agent = await waitForIdle(agent.name);
-  const finalStatus = await status();
-  const writesAfterMail = finalStatus.structuredContent?.terminalWrites?.total;
-  if (writesAfterMail !== writesBeforeMail) {
-    throw new Error("mail handling caused an automated terminal write");
-  }
-  const finalCapture = await observe(agent).catch(() => null);
-  // Positive control: arbiter reduction left the key on the wire as null.
-  // A non-null composer means we are reading an old daemon or a fabricated fact.
-  if (finalCapture != null && finalCapture.composer != null) {
-    throw new Error(
-      `capture.composer must be null after arbiter reduction; got ${JSON.stringify(finalCapture.composer)}`,
+    await writeJson(`${root}/journal.json`, events);
+    await writeJson(
+      `${root}/status-before-spawn.json`,
+      beforeSpawn.structuredContent,
     );
-  }
-  const finalAgent = finalStatus.structuredContent?.agents?.find(
-    (candidate_: Record<string, any>) => candidate_.name === agent?.name,
-  );
-  await writeJson(`${root}/journal.json`, events);
-  await writeJson(`${root}/status-before-spawn.json`, beforeSpawn.structuredContent);
-  await writeJson(`${root}/status-after-spawn.json`, afterSpawn.structuredContent);
-  await writeJson(`${root}/status-final.json`, finalStatus.structuredContent);
-  if (finalCapture != null) {
-    await writeJson(`${root}/terminal-final.json`, finalCapture);
-  }
-  outcome = {
-    result: "passed",
-    vendor,
-    model: agent.model,
-    completedAt: new Date().toISOString(),
-    agent: {
-      id: agent.id,
-      name: agent.name,
-      sessionLocator: agent.sessionLocator,
-      status: agent.status,
-      statusDimensions: finalAgent?.statusDimensions ?? null,
-    },
-    publish: { controlFirst, controlReplay, workFirst, workMerged },
-    // Protocol receipts: durable mail journal settlement, not terminal delivery.
-    settlement: {
-      itemIds: [controlFirst.itemId, workFirst.itemId],
-      completedKinds: events
-        .filter((event) => event.kind === "completed")
-        .map((event) => event.itemId),
+    await writeJson(
+      `${root}/status-after-spawn.json`,
+      afterSpawn.structuredContent,
+    );
+    await writeJson(`${root}/status-final.json`, finalStatus.structuredContent);
+    if (finalCapture != null) {
+      await writeJson(`${root}/terminal-final.json`, finalCapture);
+    }
+    outcome = {
+      result: "passed",
+      vendor,
+      model: agent.model,
+      completedAt: new Date().toISOString(),
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        sessionLocator: agent.sessionLocator,
+        status: agent.status,
+        statusDimensions: finalAgent?.statusDimensions ?? null,
+      },
+      publish: { controlFirst, controlReplay, workFirst, workMerged },
+      // Protocol receipts: durable mail journal settlement, not terminal delivery.
+      settlement: {
+        itemIds: [controlFirst.itemId, workFirst.itemId],
+        completedKinds: events
+          .filter((event) => event.kind === "completed")
+          .map((event) => event.itemId),
+        eventCount: events.length,
+      },
+      terminalWrites: {
+        beforeSpawn: beforeSpawn.structuredContent?.terminalWrites,
+        afterSpawn: afterSpawn.structuredContent?.terminalWrites,
+        workingBaseline: baselineStatus.structuredContent?.terminalWrites,
+        final: finalStatus.structuredContent?.terminalWrites,
+      },
+      captureComposerNull: finalCapture == null ? "unobserved" : true,
       eventCount: events.length,
-    },
-    terminalWrites: {
-      beforeSpawn: beforeSpawn.structuredContent?.terminalWrites,
-      afterSpawn: afterSpawn.structuredContent?.terminalWrites,
-      workingBaseline: baselineStatus.structuredContent?.terminalWrites,
-      final: finalStatus.structuredContent?.terminalWrites,
-    },
-    captureComposerNull: finalCapture == null ? "unobserved" : true,
-    eventCount: events.length,
-  };
+    };
   }
 } catch (error) {
   if (agent?.name) {
@@ -447,21 +484,24 @@ try {
       (candidate_: Record<string, any>) => candidate_.name === agent?.name,
     );
     if (failureStatus) {
-      await writeJson(`${root}/failure-status.json`, failureStatus.structuredContent).catch(
-        () => undefined,
-      );
+      await writeJson(
+        `${root}/failure-status.json`,
+        failureStatus.structuredContent,
+      ).catch(() => undefined);
     }
     if (currentAgent?.sessionLocator) {
       agent = currentAgent;
-      await writeJson(`${root}/failure-terminal.json`, await observe(currentAgent)).catch(
-        () => undefined,
-      );
+      await writeJson(
+        `${root}/failure-terminal.json`,
+        await observe(currentAgent),
+      ).catch(() => undefined);
     }
   }
   if (publishedItemIds.length > 0) {
-    await writeJson(`${root}/failure-journal.json`, journal(publishedItemIds)).catch(
-      () => undefined,
-    );
+    await writeJson(
+      `${root}/failure-journal.json`,
+      journal(publishedItemIds),
+    ).catch(() => undefined);
   }
   outcome = {
     ...outcome,
@@ -479,12 +519,9 @@ try {
       "simple_coding",
       "user-weighted",
     ]).catch(() => undefined);
-    await routingMutation([
-      "routing",
-      "set-provider",
-      vendor,
-      "unset",
-    ]).catch(() => undefined);
+    await routingMutation(["routing", "set-provider", vendor, "unset"]).catch(
+      () => undefined,
+    );
   }
   await writeJson(`${root}/result.json`, outcome);
   console.log(stringify(outcome));

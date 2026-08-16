@@ -22,7 +22,9 @@ if (
   !Number.isSafeInteger(daemonPid) ||
   daemonPid <= 0
 ) {
-  console.error("usage: verify-announcement <daemon-log> <src-root> <daemon-pid>");
+  console.error(
+    "usage: verify-announcement <daemon-log> <src-root> <daemon-pid>",
+  );
   process.exit(2);
 }
 

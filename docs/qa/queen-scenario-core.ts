@@ -138,6 +138,8 @@ export const Q_CATALOG_ROWS = {
 
 export type QCatalogRowId = keyof typeof Q_CATALOG_ROWS;
 
-export function catalogDeterminism(id: QCatalogRowId): "yes" | "bounded" | "calibrated" {
+export function catalogDeterminism(
+  id: QCatalogRowId,
+): "yes" | "bounded" | "calibrated" {
   return Q_CATALOG_ROWS[id];
 }
