@@ -1,7 +1,7 @@
 import { required } from "../required";
 // The mistake-harvest pipeline. Unit-level coverage of harvestPitfalls
 // (clustering, dedup contract, advisory links,
-// clean sessions) plus MCP-level coverage of the memory_pitfall tool and the
+// clean sessions) plus MCP-level coverage of memory_search kind=pitfall and the
 // cross-agent shared-knowledge loop: agent A's harvested pitfall, once
 // verified, surfaces for agent B via pitfall-check and ranks first in the
 // spawn-injected memory index.
@@ -971,20 +971,7 @@ describe("harvestPitfalls", () => {
   });
 });
 
-// --- MCP level: memory_pitfall + the cross-agent shared-knowledge loop ------
-
-interface PitfallSearchEnvelope {
-  state: "ok" | "empty";
-  pitfalls: Array<{
-    scope: string;
-    id: string;
-    topic: string;
-    title: string;
-    status: string;
-    date: string;
-    snippet?: string;
-  }>;
-}
+// --- MCP level: memory_search kind=pitfall + the cross-agent shared-knowledge loop ------
 
 function parseToolJson<T>(result: Awaited<ReturnType<Client["callTool"]>>): T {
   const content = (
@@ -1029,8 +1016,8 @@ function daemonFixture(options: {
   return { daemon, db };
 }
 
-describe("memory_pitfall MCP tool", () => {
-  test("search and list return only pitfall-kind articles", async () => {
+describe("memory_search kind=pitfall", () => {
+  test("kind=pitfall returns only pitfall-kind articles", async () => {
     await makeHome();
     const repoRoot = await makeRepo();
     const episodic = new EpisodicStore(":memory:");
@@ -1050,7 +1037,7 @@ describe("memory_pitfall MCP tool", () => {
           title: "Pitfall: rebase retries drop commits",
           body: "Retrying a rebase mid-conflict drops commits.",
           source: "agent",
-          evidence: "memory_pitfall fixture",
+          evidence: "memory_search pitfall fixture",
           status: "unverified",
           date: TODAY,
           supersedes: [],
@@ -1064,35 +1051,24 @@ describe("memory_pitfall MCP tool", () => {
           title: "Rebase test coverage lives in scripts/",
           body: "The rebase retry path is covered by b23-acceptance-matrix.",
           source: "agent",
-          evidence: "memory_pitfall fixture",
+          evidence: "memory_search pitfall fixture",
           status: "unverified",
           date: TODAY,
           supersedes: [],
         },
       });
 
-      // Query search: both articles match "rebase", only the pitfall returns.
-      const searched = parseToolJson<PitfallSearchEnvelope>(
+      const searched = parseToolJson<Array<{ title: string; status: string }>>(
         await client.callTool({
-          name: "memory_pitfall",
-          arguments: { query: "rebase" },
+          name: "memory_search",
+          arguments: { query: "rebase", kind: "pitfall" },
         }),
       );
-      expect(searched.state).toBe("ok");
-      expect(searched.pitfalls).toHaveLength(1);
-      expect(searched.pitfalls[0]).toMatchObject({
+      expect(searched).toHaveLength(1);
+      expect(searched[0]).toMatchObject({
         title: "Pitfall: rebase retries drop commits",
         status: "unverified",
       });
-
-      // List mode (no query): the article-kind write stays invisible too.
-      const listed = parseToolJson<PitfallSearchEnvelope>(
-        await client.callTool({
-          name: "memory_pitfall",
-          arguments: {},
-        }),
-      );
-      expect(listed.pitfalls).toHaveLength(1);
     } finally {
       await client.close().catch(() => undefined);
     }
@@ -1141,15 +1117,14 @@ describe("memory_pitfall MCP tool", () => {
     try {
       // Agent B can already see A's candidate — labeled unverified everywhere
       // it appears (hint-not-authority).
-      const unverified = parseToolJson<PitfallSearchEnvelope>(
+      const unverified = parseToolJson<Array<{ status: string }>>(
         await beth.callTool({
-          name: "memory_pitfall",
-          arguments: { query: "protolog" },
+          name: "memory_search",
+          arguments: { query: "protolog", kind: "pitfall" },
         }),
       );
-      expect(unverified.state).toBe("ok");
-      expect(unverified.pitfalls).toHaveLength(1);
-      expect(unverified.pitfalls[0]?.status).toBe("unverified");
+      expect(unverified).toHaveLength(1);
+      expect(unverified[0]?.status).toBe("unverified");
 
       // A write can no longer promote anything, however it is dressed up: the
       // author is ada, and beth restating the body is still a write.
@@ -1194,19 +1169,14 @@ describe("memory_pitfall MCP tool", () => {
       expect(promoted.author).toBe("agent-ada");
       await daemon.rebuildMemoryIndex();
 
-      // Agent B's pitfall-check now returns A's verified lesson.
-      const check = parseToolJson<{
-        state: string;
-        results: Array<{ id: string; status: string; title: string }>;
-      }>(
+      const check = parseToolJson<Array<{ id: string; status: string }>>(
         await beth.callTool({
-          name: "memory_query",
-          arguments: { class: "pitfall-check", query: "protolog" },
+          name: "memory_search",
+          arguments: { query: "protolog", kind: "pitfall" },
         }),
       );
-      expect(check.state).toBe("ok");
-      expect(check.results).toHaveLength(1);
-      expect(check.results[0]).toMatchObject({
+      expect(check).toHaveLength(1);
+      expect(check[0]).toMatchObject({
         id: candidateId,
         status: "verified",
       });

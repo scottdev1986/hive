@@ -325,7 +325,7 @@ function candidateBody(input: {
     "## Provenance",
     "",
     `- Events: ${eventIds.map((id) => `e${id}`).join(", ")} ` +
-      "(drill down with memory_query { class: point-search })",
+      "(drill down with hive_status or the episodic store)",
     `- Session: ${sessionId ?? "unknown"}`,
     "",
     "UNVERIFIED repeated harvest candidate — a hint, not authority. Check " +

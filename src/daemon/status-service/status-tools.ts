@@ -352,7 +352,7 @@ const COMPACT_FIELDS: Record<keyof ActiveAgentSummary, true> = {
   model: true,
   contextPct: true,
   status: true,
-  task: true,
+  brief: true,
   waitingInstructionCount: true,
   latestWaitingInstruction: true,
   observedFiles: true,
@@ -373,7 +373,7 @@ const COMPACT_FIELDS: Record<keyof ActiveAgentSummary, true> = {
 ///
 /// NEITHER detail level's keys contain the other's: the full record carries
 /// `branch` and `worktreePath`, while the compact projection computes `runId` and
-/// `task` that no full record has. So a name can be real and still absent here, in
+/// `brief` that no full record has. So a name can be real and still absent here, in
 /// both directions, and that case gets its own message naming the detail that does
 /// return it. Telling a caller their field does not exist, when it does and they
 /// merely asked at the wrong level, would trade a silent drop for a misleading
@@ -417,7 +417,7 @@ export function registerStatusTools(
     {
       title: "Hive agent status",
       description:
-        'Fetch bounded live-agent status on demand. The compact default reports capability and hierarchy write fences, spawn-task provenance, later orchestrator instructions, observed Git paths, overlaps, and any live-agent/task-state contradictions. Use detail "full" for full live records and history:true only when terminal history is explicitly needed. fields projects the AGENT RECORDS only: each name is a top-level key of an agent record, never a path into this response and never a sibling section, so "capabilityEpoch" is legal and "agents.capabilityEpoch" and "settlementDebt" are not. A name that is not a legal field is refused with the legal set named rather than dropped, and because the compact record carries fewer keys than the full one, a field that exists only at detail "full" is refused with that hint instead. structuredContent.recentRunOutcomes carries the newest 20 typed provider-run outcomes for retry and redispatch decisions. structuredContent.memoryIncidentMetric scores the incident-exposure ledger: repeatIncidentRate and avoidedRepeatCost are co-primary, novelIncidents counts first-of-kind failures memory could not have covered, and articleReward splits the avoided cost between the articles that were cited. The article corpus is not an input, so writing articles cannot move any of it. structuredContent.credentialReporting says, per agent, whether the credential issued to that agent has authenticated against this MCP surface since the agent launched (authenticated / never-authenticated / unobserved, with the window it covers and when it was checked). A never-authenticated agent is alive but permanently mute: it can never publish mail, claim, or land. It is an observation to act on, not a verdict — it closes no provider run and is never fused into stuck. The memory.embeddings section reports the semantic recall leg — provider, model, state (ready / pending / disabled / embedding-runtime-missing / embedding-runtime-broken / embedding-native-unloadable / embedding-runtime-unverified / unavailable), vector-row counts, and the runtime dir in use — so embedding degradation is visible here without reading logs. structuredContent.openAssignments carries, per agent, the identifiers of the daemon-held open session Assignment (assignmentId and assignmentGeneration), or null when the store holds no open row for it — the pair an agent reports status against, projected so a spawn that never delivered it is visible from outside.',
+        "Live agents and this instance's current run. Default detail is active: identity, capability fences, truncated spawn brief (`brief` — not a board task id), status, overlaps, and observed files. Use detail=full for complete records; history=true to include dead and done. Board tasks are hive_task_list / hive_task_get. `fields` names top-level keys of an agent record only. Extra sections: credentialReporting, openAssignments, memory.embeddings, recentRunOutcomes, settlementDebt.",
       inputSchema: StatusRequestSchema,
     },
     async ({ detail, history, fields }, context) => {
@@ -647,7 +647,7 @@ export function registerStatusTools(
     {
       title: "List hierarchy tasks",
       description:
-        "List the compact task projections already carried by the workspace status snapshot.",
+        "List compact board-task projections (id, state, blockers, evidence). Not part of hive_status. Use hive_task_get for the full story.",
       inputSchema: TaskListRequestSchema,
     },
     async () => {
@@ -700,7 +700,7 @@ export function registerStatusTools(
     {
       title: "Report descriptive agent status",
       description:
-        "Append an authenticated, Assignment-bound descriptive status report. Complete is descriptive and never approves work or changes task, gate, review, or landing authority. Report with the assignmentId and assignmentGeneration your prompt gave you — they name this agent's open session Assignment, not a board task, and stay valid until the agent is killed. Omit requestId on the first call; for a retry, reuse only the exact req_ UUIDv7 the daemon returned. Supply a non-empty blocker only with phase=blocked; for every other phase omit blocker or pass null. The result carries mailBacklog: how many messages are waiting in your mailbox right now. It is a count, not a delivery — read them with hive_mail_poll at your next safe point.",
+        "Append a descriptive status report for your open session Assignment (assignmentId + assignmentGeneration from your prompt — not a board task). Does not approve work or change task, review, or landing authority. Returns mailBacklog as a count; read mail with hive_mail_poll.",
       inputSchema: HiveUpdateStatusAdvertisedSchema,
     },
     async (input) => {

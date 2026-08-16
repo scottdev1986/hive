@@ -98,13 +98,14 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `POST /stop` | `agent:kill` | fleet, then per-agent | yes (one allow per killed agent, carrying the invoker origin) | `src/daemon/server.ts` (`stopEndpoint`) |
 | `POST /codex-root-token` | `root-token:mint` | — | yes | `src/daemon/server.ts:2401-2403`, `:2416-2441` |
 | `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `src/daemon/server.ts:3427-3433`, `:3533-3539`, `:4044-4054` |
-| `hive_quota_status` | `quota:read` | — | no | `src/daemon/server.ts:3505-3512` |
-| `hive_quota_reconcile` | `quota:write` | — | yes | `src/daemon/server.ts:3546-3553` |
-| `hive_token_usage` | `token-usage:read` | — | no | `src/daemon/server.ts:3515-3525` |
+| `hive_quota_status` | `quota:read` | — | no | `src/usage-service/quota-tools.ts` |
+| `POST /quota/observe` | `quota:write` | — | yes | `src/daemon/server.ts` (`quotaObserveEndpoint`) |
+| `hive_token_usage` | `token-usage:read` | — | no | `src/usage-service/quota-tools.ts` |
 | `hive_spawn` | `agent:spawn` | — | yes | `src/daemon/server.ts:3764-3785` |
 | `hive_kill`, `hive_preserve_branch` | `agent:kill` | any | kill yes, preserve no | `src/daemon/server.ts:3592-3599`, `:3488-3494` |
-| `hive_mark_dead` | `agent:mark-dead` | any | yes | `src/daemon/server.ts:3573-3579` |
-| `hive_recover` | `agent:recover` | any | yes | `src/daemon/server.ts:3563-3569` |
+| `hive_mark_dead` | `agent:mark-dead` | any | yes | `src/daemon/recovery/agent-control-tools.ts` |
+| `POST /recover` | `agent:recover` | any | yes | `src/daemon/server.ts` (`recoverEndpoint`) |
+| `POST /settlement/sweep` | `settlement:execute` | — | yes | `src/daemon/server.ts` (`settlementSweepEndpoint`) |
 | `hive_approvals` | `approval:read` | — | no | `src/daemon/server.ts:3822-3833` |
 | `hive_approve` | `approval:decide` | any | yes | `src/daemon/server.ts:3840-3850` |
 | `hive_send`, `hive_escalate` | `message:send` | self (`from` / `agent`) | no | `src/daemon/server.ts:3612-3620`, `:3645-3659` |
@@ -112,7 +113,7 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `hive_ack_message` | `message:ack` | self | yes, **epoch** | `src/daemon/server.ts:3717-3724` |
 | `hive_read_message` | `message:read` | — | no | `src/daemon/server.ts:3750-3757` |
 | `hive_land` | `branch:land` | self | yes, **epoch + once** | `src/daemon/server.ts:3918-3927` |
-| `memory_search`, `memory_read` | `memory:read` | — | no | `src/daemon/server.ts:3981-3988`, `:4005-4012` |
+| `memory_search`, `memory_read` | `memory:read` | — | no | `src/memory-service/memory-tools.ts` |
 | `memory_write`, `memory_reindex` | `memory:write` | — | yes | `src/daemon/server.ts:3991-3998`, `:4029-4036` |
 | `memory_delete` | `memory:delete` | — | yes | `src/daemon/server.ts:4019-4026` |
 

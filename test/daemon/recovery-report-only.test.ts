@@ -174,8 +174,8 @@ describe("the crash-recovery sweep", () => {
     );
     expect(report.body).toContain("2 unsettled message(s)");
     expect(report.body).toContain("hive_mark_dead agent=kimi-victim");
-    // The report must not tell the owner that hive_recover itself revives the
-    // agent: recovery only ever reports evidence, so a re-run of hive_recover
+    // The report must not tell the owner that /recover itself revives the
+    // agent: recovery only ever reports evidence, so a re-run of /recover
     // on this same agent would just re-report the identical death.
     expect(report.body).not.toContain("hive_recover");
   });
@@ -198,11 +198,11 @@ describe("the crash-recovery sweep", () => {
   });
 });
 
-// hive_recover's named-agent form ("manual retry" in its tool description)
+// /recover's named-agent form ("manual retry")
 // calls recoverAgent, not sweep. It has to hold the same report-only contract:
 // this is the path an operator reaches for expecting a "recovery", so it is
 // the one most likely to be mistaken for a relaunch if the two ever drift.
-describe("recoverAgent (hive_recover's manual, named-agent form)", () => {
+describe("recoverAgent (/recover's manual, named-agent form)", () => {
   test("reports the same evidence as the sweep and never touches the row or the terminal", async () => {
     const db = new HiveDatabase(":memory:");
     const before = db.upsertAgent(agent());

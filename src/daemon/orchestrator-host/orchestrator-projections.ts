@@ -24,7 +24,8 @@ export interface ActiveAgentSummary {
   /** Null when Hive has not observed this agent's context. The orchestrator's reuse rule must read null as "not eligible", never as "plenty of room". */
   contextPct: number | null;
   status: AgentRecord["status"];
-  task: string;
+  /** Truncated spawn brief. Not a board task id — those live on hive_task_list. */
+  brief: string;
   waitingInstructionCount: number;
   latestWaitingInstruction?: string;
   observedFiles: string[];
@@ -85,7 +86,7 @@ export function compactActiveTeam(
         status: agent.status,
         contextPct:
           agent.contextPct === null ? null : Math.round(agent.contextPct),
-        task: truncateCodePoints(
+        brief: truncateCodePoints(
           agent.taskDescription.replaceAll(/\s+/g, " ").trim(),
           MAX_TASK_CODE_POINTS,
         ),

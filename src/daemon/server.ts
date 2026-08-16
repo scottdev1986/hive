@@ -132,7 +132,10 @@ import { errorMessage } from "../shared/error-message";
 import { HIVE_MCP_CATALOG_CACHE_TTL_MS } from "../shared/mcp-protocol";
 import { HIVE_VERSION } from "../shared/version";
 import { registerKnowledgeTool } from "../skills/knowledge-tool";
-import { registerQuotaTools } from "../usage-service/quota-tools";
+import {
+  QuotaObservationRequestSchema,
+  registerQuotaTools,
+} from "../usage-service/quota-tools";
 import { TokenUsageStore } from "../usage-service/token-usage";
 import type {
   QuotaRefreshReport,
@@ -2388,6 +2391,12 @@ export class HiveDaemon {
     if (url.pathname === "/recover" && request.method === "POST") {
       return this.recoverEndpoint(request);
     }
+    if (url.pathname === "/quota/observe" && request.method === "POST") {
+      return this.quotaObserveEndpoint(request);
+    }
+    if (url.pathname === "/settlement/sweep" && request.method === "POST") {
+      return this.settlementSweepEndpoint(request);
+    }
     if (url.pathname === "/stop" && request.method === "POST") {
       return this.stopEndpoint(request);
     }
@@ -3881,6 +3890,74 @@ export class HiveDaemon {
     }
   }
 
+  private async quotaObserveEndpoint(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/quota/observe");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      "/quota/observe",
+      "quota:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    if (this.quota === undefined) {
+      return json({ error: "Quota tracking is unavailable" }, { status: 503 });
+    }
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: "Invalid quota observation" }, { status: 400 });
+    }
+    const parsed = QuotaObservationRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return json(
+        { error: "Invalid quota observation", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    try {
+      const observation = await this.quota.observe({
+        ...parsed.data,
+        observedAt: parsed.data.observedAt ?? new Date().toISOString(),
+      });
+      return json({ observation });
+    } catch (error) {
+      return json(
+        {
+          error:
+            error instanceof Error ? error.message : "Quota observation failed",
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  private async settlementSweepEndpoint(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/settlement/sweep");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      "/settlement/sweep",
+      "settlement:execute",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    try {
+      return json({
+        settlement: await this.worktrees.reconcileOrphanedWorktrees(),
+      });
+    } catch (error) {
+      return json(
+        {
+          error:
+            error instanceof Error ? error.message : "Settlement sweep failed",
+        },
+        { status: 500 },
+      );
+    }
+  }
+
   async processEvent(event: HookEvent): Promise<void> {
     return processHookEvent(
       {
@@ -4084,7 +4161,6 @@ export class HiveDaemon {
       terminalHost: this.terminalHost,
       authorizeTool: (cap, tool, action, subject, auditAllow) =>
         this.authorizeTool(cap, tool, action, subject, auditAllow),
-      recoverCrashedAgents: (name) => this.recoverCrashedAgents(name),
       hasNeverBoundSessiondGeneration: (agent) =>
         this.hasNeverBoundSessiondGeneration(agent),
       killAgentTeardown: (agent, options) =>
@@ -4096,7 +4172,6 @@ export class HiveDaemon {
         this.worktrees.mintDestructiveDecision(input),
       executeDestructiveDecision: (decisionId, executedBy) =>
         this.worktrees.executeDestructiveDecision(decisionId, executedBy),
-      sweepSettlement: () => this.worktrees.reconcileOrphanedWorktrees(),
       listSettlementCases: () => this.worktrees.listSettlementCases(),
     });
 
@@ -4177,13 +4252,8 @@ export class HiveDaemon {
     });
 
     registerMemoryTools(server, capability, {
-      db: this.db,
       repoRoot: this.repoRoot,
       memory: this.memory,
-      embeddingIndex: this.embeddingIndex,
-      episodic: this.episodic,
-      status: this.status,
-      tokenUsage: this.tokenUsage,
       authorizeTool: (cap, tool, action, subject, auditAllow) =>
         this.authorizeTool(cap, tool, action, subject, auditAllow),
       writeMemoryFact: (input) => this.writeMemoryFact(input),
@@ -4204,8 +4274,6 @@ export class HiveDaemon {
       },
       deleteMemoryFact: (scope, id) => this.deleteMemoryFact(scope, id),
       rebuildMemoryIndex: (signal) => this.rebuildMemoryIndex(signal),
-      semanticRecall: () => this.semanticRecall(),
-      semanticRecallState: () => this.semanticRecallState(),
     });
 
     registerGraphTool(server, capability, {

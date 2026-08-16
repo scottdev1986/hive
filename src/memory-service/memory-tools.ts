@@ -2,32 +2,19 @@ import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import type { Action, Capability } from "../schemas/authority";
 import type { HiveToolRegistrar } from "../daemon/authorization/mcp-tool-policy";
-import type { StatusService } from "../daemon/status-service/status-service";
-import type { MemoryRecallEnvelope } from "../schemas/memory-projections";
 import { toolResult } from "../shared/mcp-tool-result";
 import {
   compactMemoryWriteResult,
   type MemoryFact,
   type MemoryScope,
+  MemoryKindSchema,
   MemoryScopeSchema,
   type MemoryWriteInput,
   MemoryWriteRequestFieldsSchema,
 } from "../schemas/memory";
-import type { TokenUsageStore } from "../usage-service/token-usage";
-import type {
-  MemoryEmbeddingIndex,
-  MemoryEmbeddingWriteOutcome,
-} from "./embeddings";
-import type { EpisodicStore } from "./episodic";
+import type { MemoryEmbeddingWriteOutcome } from "./embeddings";
 import { findSimilarMemoryCandidates, type MemoryIndex } from "./fts-index";
-import { MemoryQueryInputSchema, runMemoryQuery } from "./query";
-import {
-  buildMemoryRecallBundle,
-  MEMORY_RECALL_HINT_NOTE,
-  memoryRecallDegradedWarning,
-  partitionMemoryRecall,
-} from "./recall";
-import { listMemoryFacts, readMemoryFact } from "./memory-store";
+import { readMemoryFact } from "./memory-store";
 import type { MemoryWriteFileResult } from "./store-records";
 
 export const MemoryIdSchema = z
@@ -42,6 +29,7 @@ export const MemoryIdSchema = z
 export const MemorySearchRequestSchema = z.object({
   query: z.string().min(1),
   scope: MemoryScopeSchema.optional(),
+  kind: MemoryKindSchema.optional(),
   limit: z
     .number()
     .int()
@@ -60,40 +48,11 @@ export const MemoryWriteRequestSchema =
     id: MemoryIdSchema.optional(),
   });
 
-export const MemoryPitfallRequestSchema = z.object({
-  query: z.string().min(1).optional(),
-  scope: MemoryScopeSchema.optional(),
-  limit: z
-    .number()
-    .int()
-    .max(50)
-    .refine((value) => value > 0, "must be positive")
-    .optional(),
-});
-
-export const MemoryRecallRequestSchema = z.object({
-  query: z.string().min(1),
-  budget: z
-    .number()
-    .int()
-    .refine((value) => value > 0, "must be positive")
-    .optional(),
-});
-
 export const MEMORY_RECALL_DEFAULT_BUDGET = 800;
 
-interface AgentIdentityReader {
-  getAgentByName(name: string): { id: string } | null;
-}
-
 export interface MemoryToolDeps {
-  db: AgentIdentityReader;
   repoRoot: string;
   memory: MemoryIndex;
-  embeddingIndex: MemoryEmbeddingIndex | null;
-  episodic: EpisodicStore | null;
-  status: StatusService;
-  tokenUsage: TokenUsageStore;
   authorizeTool: (
     capability: Capability,
     tool: string,
@@ -113,17 +72,6 @@ export interface MemoryToolDeps {
   ) => Promise<MemoryFact>;
   deleteMemoryFact: (scope: MemoryScope, id: string) => Promise<boolean>;
   rebuildMemoryIndex: (signal?: AbortSignal) => Promise<unknown>;
-  semanticRecall: () =>
-    | ((
-        query: string,
-        limit: number,
-      ) => Promise<Array<{
-        scope: string;
-        id: string;
-        score: number;
-      }> | null>)
-    | undefined;
-  semanticRecallState: () => (() => string) | undefined;
 }
 
 export function registerMemoryTools(
@@ -136,10 +84,10 @@ export function registerMemoryTools(
     {
       title: "Search Hive memory",
       description:
-        'Full-text search compiled memory articles across repo (".hive/memory/wiki/") and global ("~/.hive/memory/wiki/") scope. Raw observations are immutable evidence and are not search results. Returns short snippets only; pull a full article with memory_read before relying on it.',
+        'Full-text search compiled memory articles across repo (".hive/memory/wiki/") and global ("~/.hive/memory/wiki/") scope. Optional kind=pitfall limits results to pitfall articles, including unverified harvest candidates. Raw observations are not search results. Returns snippets; pull a full article with memory_read before relying on it.',
       inputSchema: MemorySearchRequestSchema,
     },
-    async ({ query, scope, limit }) => {
+    async ({ query, scope, kind, limit }) => {
       deps.authorizeTool(
         capability,
         "memory_search",
@@ -147,7 +95,10 @@ export function registerMemoryTools(
         undefined,
         false,
       );
-      return toolResult(deps.memory.search(query, { scope, limit }), "results");
+      return toolResult(
+        deps.memory.search(query, { scope, kind, limit }),
+        "results",
+      );
     },
   );
 
@@ -261,154 +212,6 @@ export function registerMemoryTools(
         await deps.rebuildMemoryIndex(context.mcpReq.signal),
         "result",
       );
-    },
-  );
-
-  server.registerTool(
-    "memory_query",
-    {
-      title: "Query Hive episodic memory",
-      description:
-        "Answer bounded questions against this project's episodic memory: agent-now / agent-history (agent name), fleet-summary, what-landed (optional since), who-blocked, token-spend (optional agent/since), point-search (query: FTS over episodic events and facts, bounded snippets), my-history (your own event history — scoped to your identity, any agent field is ignored), pitfall-check (query: search pitfall-class wiki articles relevant to your current task). Every class has a server-enforced token ceiling; budget may only lower it. Over-budget results come back truncated with truncated:true and an omitted count. The envelope state distinguishes ok, empty (surface built, no matches), and absent (surface not built). Rows carry their own source and asOf freshness labels — treat them as leads to verify, not authority.",
-      inputSchema: MemoryQueryInputSchema,
-    },
-    async (input) => {
-      deps.authorizeTool(
-        capability,
-        "memory_query",
-        "memory:read",
-        undefined,
-        false,
-      );
-      const result = await runMemoryQuery(
-        {
-          episodic: deps.episodic,
-          status: deps.status,
-          tokenUsage: deps.tokenUsage,
-          memory: deps.memory,
-          repoRoot: deps.repoRoot,
-          resolveAgentId: (name) => deps.db.getAgentByName(name)?.id ?? null,
-        },
-        { subject: capability.subject },
-        input,
-      );
-      return toolResult(result, "result");
-    },
-  );
-
-  // The focused pitfall surface reads pitfall-kind articles only. An agent checking "has anyone burned themselves here before" never wades through the whole wiki. search with no query lists every pitfall (optionally scope-filtered); search with a query runs the same FTS memory_search uses, filtered to pitfalls; get reads one article and refuses a non-pitfall id. Every row carries its verification status — unverified is a hint, not authority, everywhere it appears.
-  server.registerTool(
-    "memory_pitfall",
-    {
-      title: "List and search Hive pitfall memory",
-      description:
-        "List or search pitfall-kind memory articles — the 'we burned ourselves before' class, including the unverified harvest candidates that ordinary ranking quarantines. With a query, runs full-text search filtered to pitfalls; with no query, lists every pitfall article (optionally scope-filtered). This is the review surface for harvest candidates, so it is the one retrieval path that shows them. Read a full article with memory_read(scope, id). Every result carries its verification status: unverified is a harvested claim to reconcile before acting, never authority.",
-      inputSchema: MemoryPitfallRequestSchema,
-    },
-    async ({ query, scope, limit }) => {
-      deps.authorizeTool(
-        capability,
-        "memory_pitfall",
-        "memory:read",
-        undefined,
-        false,
-      );
-      const facts = await listMemoryFacts(deps.repoRoot);
-      const pitfalls = facts.filter(
-        (fact) =>
-          fact.kind === "pitfall" &&
-          (scope === undefined || fact.scope === scope),
-      );
-      if (query === undefined) {
-        return toolResult(
-          {
-            state: pitfalls.length === 0 ? "empty" : "ok",
-            pitfalls: pitfalls.map((fact) => ({
-              scope: fact.scope,
-              id: fact.id,
-              topic: fact.topic,
-              title: fact.title,
-              status: fact.status,
-              date: fact.date,
-            })),
-          },
-          "results",
-        );
-      }
-      const hits = deps.memory.search(query, {
-        ...(scope === undefined ? {} : { scope }),
-        limit: limit ?? 10,
-        kind: "pitfall",
-      });
-      return toolResult(
-        {
-          state: hits.length === 0 ? "empty" : "ok",
-          pitfalls: hits.map((hit) => ({
-            scope: hit.scope,
-            id: hit.id,
-            topic: hit.topic,
-            title: hit.title,
-            status: hit.status,
-            date: hit.date,
-            snippet: hit.snippet,
-          })),
-        },
-        "results",
-      );
-    },
-  );
-
-  server.registerTool(
-    "memory_recall",
-    {
-      title: "Recall ranked Hive memory for a query",
-      description:
-        "The ranked recall bundle the trigger protocol produces, as a tool: wiki search partitioned into pitfalls (the highest-priority class) and articles, every row carrying its verification label. Retrieval is hybrid: full-text search blended (reciprocal-rank) with local embedding similarity when the daemon's semantic leg is available, FTS-only otherwise. The envelope state distinguishes ok, empty (searched, no matches), and absent (no wiki search index wired). Server-enforced token ceiling: budget may only lower it. The ceiling is partitioned so neither class can starve the other — each is bounded to a reserved share and unused capacity is reallocated to the other side. Over-budget bundles come back with truncated:true, an omitted count, and omittedPitfalls/omittedArticles naming which side was cut. Rows are leads to reconcile, not authority — pull the full article with memory_read(scope, id) before relying on one.",
-      inputSchema: MemoryRecallRequestSchema,
-    },
-    async ({ query, budget }) => {
-      deps.authorizeTool(
-        capability,
-        "memory_recall",
-        "memory:read",
-        undefined,
-        false,
-      );
-      const bundle = await buildMemoryRecallBundle(query, {
-        memory: deps.memory,
-        repoRoot: () => deps.repoRoot,
-        semantic: deps.semanticRecall(),
-        semanticStatus: deps.semanticRecallState(),
-      });
-      const ceiling = MEMORY_RECALL_DEFAULT_BUDGET;
-      const effective = Math.min(budget ?? ceiling, ceiling);
-      const fitted = partitionMemoryRecall(bundle, effective);
-      // The envelope discriminates hybrid / degraded:<state> / disabled so FTS-only-because-embeddings-are-down is never indistinguishable from a genuine keyword-only result. The warning is envelope-level (field + note block), never a row — budget clamping cannot cut it.
-      const degraded = bundle.semantic.startsWith("degraded:");
-      const warning = degraded
-        ? memoryRecallDegradedWarning(bundle.semantic.slice("degraded:".length))
-        : null;
-      const envelope: MemoryRecallEnvelope = {
-        state: bundle.state,
-        semantic: bundle.semantic,
-        ...(warning === null ? {} : { warning }),
-        detail:
-          bundle.state === "absent"
-            ? "this daemon has no wiki search index wired"
-            : bundle.state === "empty"
-              ? `the wiki was searched and nothing matched "${query}"`
-              : null,
-        note: MEMORY_RECALL_HINT_NOTE,
-        budget: effective,
-        tokens: fitted.tokens,
-        truncated: fitted.truncated,
-        omitted: fitted.omitted,
-        omittedPitfalls: fitted.omittedPitfalls,
-        omittedArticles: fitted.omittedArticles,
-        pitfalls: fitted.pitfalls,
-        articles: fitted.articles,
-      };
-      return toolResult(envelope, "results", warning);
     },
   );
 }

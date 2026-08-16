@@ -74,7 +74,6 @@ async function mintAs(capability: Capability): Promise<{
         });
         if (!authorization.ok) throw new Error(authorization.message);
       },
-      recoverCrashedAgents: async () => [],
       hasNeverBoundSessiondGeneration: () => true,
       killAgentTeardown: async () => Promise.reject(new Error("unused")),
       listSalvageableRefs: async () => [],
@@ -89,7 +88,6 @@ async function mintAs(capability: Capability): Promise<{
         return { ...decision, executedBy };
       },
       listSettlementCases: async () => [],
-      sweepSettlement: async () => ({}),
     },
   );
   return {

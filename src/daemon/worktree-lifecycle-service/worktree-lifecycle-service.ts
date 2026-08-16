@@ -245,7 +245,7 @@ export function describeWorktreeKill(
     unmergedCommits: 0,
     dirtyFiles: [],
     resolve:
-      "hive_settlement_sweep to retry the exact proof after its watched condition changes",
+      "the daemon settlement pass retries the exact proof after its watched condition changes",
   };
 }
 

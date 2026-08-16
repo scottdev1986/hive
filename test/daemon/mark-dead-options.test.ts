@@ -82,7 +82,6 @@ describe("hive_mark_dead options", () => {
         db,
         terminalHost: {} as never,
         authorizeTool: () => {},
-        recoverCrashedAgents: async () => [],
         hasNeverBoundSessiondGeneration: () => true,
         killAgentTeardown: async (_agent, options) => {
           calls.push(options);
@@ -96,7 +95,6 @@ describe("hive_mark_dead options", () => {
         executeDestructiveDecision: async () =>
           Promise.reject(new Error("unused")),
         listSettlementCases: async () => [],
-        sweepSettlement: async () => ({}),
       },
     );
     const markDead = required(tools.get("hive_mark_dead"));
@@ -127,7 +125,6 @@ describe("hive_mark_dead options", () => {
         db,
         terminalHost: {} as never,
         authorizeTool: () => {},
-        recoverCrashedAgents: async () => [],
         hasNeverBoundSessiondGeneration: () => true,
         killAgentTeardown: async (_agent, options) => {
           calls.push(options);
@@ -141,7 +138,6 @@ describe("hive_mark_dead options", () => {
         executeDestructiveDecision: async () =>
           Promise.reject(new Error("unused")),
         listSettlementCases: async () => [],
-        sweepSettlement: async () => ({}),
       },
     );
     const markDead = required(tools.get("hive_mark_dead"));

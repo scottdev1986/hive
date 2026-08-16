@@ -29,7 +29,7 @@ Hive treats unfinished work as evidence to preserve, not clutter to remove. Use 
 
 Use `hive_settlement_list` for the pull-based, actionable case inventory. The workspace and collapsing mail topic carry one aggregate debt line; unchanged sweeps send nothing. A `needs-integration` case needs an integrator. A `blocked` case names its dependency and watcher. An `owner-decision` case is the only place to ask for product judgment.
 
-Use `hive_salvage` to list, park, or proof-release preserved and salvage refs when no agent row remains. `keep` parks the bundle with a review time. `release` succeeds only when the service reproduces exact accounting; an ambiguous salvage ref remains `needs-integration`.
+Use `hive_salvage` to list, park, or proof-release preserved and salvage refs when no agent row remains. `keep` parks the bundle with a review time. `release` succeeds only when the service reproduces exact accounting; an ambiguous salvage ref remains `needs-integration`. The daemon retries exact-safe release on its own settlement pass; do not look for a sweep tool.
 
 When destruction is intentionally chosen, the user or the queen mints `hive_settlement_decide` with the current case ID, revision, evidence digest, reason, and expiry — minting refuses a case whose evidence digest is null, so an unmeasured case stays undecidable until it is remeasured. The user or the queen then calls `hive_settlement_execute` with that decision ID, in a separate call: minting a decision never executes it. Any intervening case, content, path, branch, ref, or OID change invalidates the decision before execution, and an expired decision cannot be executed at all.
 

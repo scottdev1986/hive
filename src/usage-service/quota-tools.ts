@@ -96,25 +96,4 @@ export function registerQuotaTools(
       return toolResult(await deps.modelInventory(), "inventory");
     },
   );
-
-  server.registerTool(
-    "hive_quota_reconcile",
-    {
-      title: "Reconcile Hive quota",
-      description:
-        "Record a provider, gateway, or manual usage observation for one configured quota pool.",
-      inputSchema: QuotaObservationRequestSchema,
-    },
-    async (observation) => {
-      deps.authorizeTool(capability, "hive_quota_reconcile", "quota:write");
-      if (deps.quota === undefined) {
-        throw new Error("Quota tracking is unavailable");
-      }
-      const value = await deps.quota.observe({
-        ...observation,
-        observedAt: observation.observedAt ?? new Date().toISOString(),
-      });
-      return toolResult(value, "observation");
-    },
-  );
 }

@@ -128,9 +128,7 @@ export const HIVE_TOOL_POLICIES = {
   hive_preserve_branch: additive("agent:kill", "result", {
     idempotent: true,
   }),
-  hive_quota_reconcile: additive("quota:write", "observation"),
   hive_quota_status: readOnly("quota:read", "quotas"),
-  hive_recover: additive("agent:recover", "outcomes", { openWorld: true }),
   // Stewardship over preserved/salvage refs: list is idempotent read-ish but
   // release/keep mutate; keep is additive (meta only), release is destructive
   // at the tool layer when action=release. Catalog risk is the mutation surface.
@@ -138,7 +136,6 @@ export const HIVE_TOOL_POLICIES = {
   hive_settlement_decide: destructive("settlement:decide", "decision"),
   hive_settlement_execute: destructive("settlement:execute", "decision"),
   hive_settlement_list: readOnly("status:read", "cases"),
-  hive_settlement_sweep: additive("settlement:execute", "settlement"),
   hive_review_put: additive("review:write", "review"),
   // Idempotent by identity: an instance that already has a live root gets it back rather than a second one.
   hive_run_bootstrap: additive("run:bootstrap", "bootstrap", {
@@ -160,10 +157,7 @@ export const HIVE_TOOL_POLICIES = {
   hive_token_usage: readOnly("token-usage:read", "tokenUsage", true),
   hive_update_status: additive("status:write", "statusReport"),
   memory_delete: destructive("memory:delete", "result"),
-  memory_pitfall: readOnly("memory:read", "results"),
-  memory_query: readOnly("memory:read", "result"),
   memory_read: readOnly("memory:read", "fact"),
-  memory_recall: readOnly("memory:read", "results"),
   memory_reindex: additive("memory:write", "result", { idempotent: true }),
   memory_search: readOnly("memory:read", "results"),
   // Additive rather than destructive: it adds a check to an article and rewrites no claim. Idempotent because a second verification on the same day by the same non-author reaches the same state.

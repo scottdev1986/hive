@@ -8,7 +8,6 @@ import type {
   Capability,
 } from "../authorization/authorization-service";
 import type { HiveDatabase } from "../database/hive-database";
-import type { RecoveryOutcome } from "./recovery-service";
 import {
   type HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
@@ -58,7 +57,6 @@ export interface AgentControlToolDeps {
     subject?: string,
     auditAllow?: boolean,
   ) => void;
-  recoverCrashedAgents: (name?: string) => Promise<RecoveryOutcome[]>;
   hasNeverBoundSessiondGeneration: (agent: AgentRecord) => boolean;
   killAgentTeardown: (
     agent: AgentRecord,
@@ -83,7 +81,6 @@ export interface AgentControlToolDeps {
     decisionId: string,
     executedBy: string,
   ) => Promise<SettlementDecision>;
-  sweepSettlement: () => Promise<unknown>;
   listSettlementCases: () => Promise<unknown[]>;
 }
 
@@ -92,20 +89,6 @@ export function registerAgentControlTools(
   capability: Capability,
   deps: AgentControlToolDeps,
 ): void {
-  server.registerTool(
-    "hive_recover",
-    {
-      title: "Recover crashed Hive agents",
-      description:
-        "Report which crashed agents' terminal sessions are confirmed dead, with evidence — report-only, it never relaunches the conversation, resumes a provider session, or changes the agent's row. Omit agent to sweep all recoverable agents; name one — including an agent already marked dead — for a manual retry.",
-      inputSchema: z.object({ agent: z.string().min(1).optional() }),
-    },
-    async ({ agent }) => {
-      deps.authorizeTool(capability, "hive_recover", "agent:recover", agent);
-      return toolResult(await deps.recoverCrashedAgents(agent), "outcomes");
-    },
-  );
-
   server.registerTool(
     "hive_mark_dead",
     {
@@ -279,24 +262,6 @@ export function registerAgentControlTools(
         await deps.executeDestructiveDecision(decisionId, capability.subject),
         "decision",
       );
-    },
-  );
-
-  server.registerTool(
-    "hive_settlement_sweep",
-    {
-      title: "Settle repository work bundles",
-      description:
-        "Run the deterministic settlement pass. Exact-safe cases release; every unprovable case remains protected with an owner and due trigger.",
-      inputSchema: z.strictObject({}),
-    },
-    async () => {
-      deps.authorizeTool(
-        capability,
-        "hive_settlement_sweep",
-        "settlement:execute",
-      );
-      return toolResult(await deps.sweepSettlement(), "settlement");
     },
   );
 }

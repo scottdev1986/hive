@@ -18,11 +18,7 @@ const expectedTools = [
   "graph_locate",
   "hive_approvals",
   "hive_approve",
-  "hive_channel_create",
-  "hive_channel_send",
-  "hive_contract_create",
   "hive_escalate",
-  "hive_grant_issue",
   "hive_kill",
   "hive_land",
   "hive_mail_claim",
@@ -32,30 +28,22 @@ const expectedTools = [
   "hive_mail_status",
   "hive_mark_dead",
   "hive_models",
-  "hive_node_create",
-  "hive_ownership_transfer",
   "hive_pickup_handoff",
   "hive_preserve_branch",
-  "hive_quota_reconcile",
   "hive_quota_status",
-  "hive_recover",
-  "hive_review_put",
-  "hive_run_checkpoint",
+  "hive_run_checkpoint_get",
+  "hive_salvage",
+  "hive_settlement_decide",
+  "hive_settlement_execute",
+  "hive_settlement_list",
   "hive_spawn",
   "hive_spawn_many",
   "hive_status",
-  "hive_succession_attest",
-  "hive_task_create",
-  "hive_task_update",
+  "hive_task_list",
   "hive_terminal_observe",
   "hive_token_usage",
-  "hive_update_status",
-  "hive_validation_train_put",
   "memory_delete",
-  "memory_pitfall",
-  "memory_query",
   "memory_read",
-  "memory_recall",
   "memory_reindex",
   "memory_search",
   "memory_verify",
@@ -187,8 +175,8 @@ async function mcpProbe(id: string): Promise<void> {
     "MCP-01": "hive_status",
     "MCP-02": "hive_update_status",
     "MCP-04": "hive_preserve_branch",
-    "MCP-08": "hive_quota_reconcile",
-    "MCP-09": "hive_recover",
+    "MCP-08": "hive_quota_status",
+    "MCP-09": "hive_models",
     "MCP-10": "hive_mark_dead",
     "MCP-13": "hive_escalate",
     "MCP-16": "hive_pickup_handoff",
@@ -199,7 +187,7 @@ async function mcpProbe(id: string): Promise<void> {
     "MCP-23": "hive_spawn_many",
     "MCP-25": "hive_approve",
     "MCP-26": "hive_land",
-    "MCP-32": "memory_query",
+    "MCP-32": "memory_search",
     "MCP-40": "hive_succession_attest",
   }[id];
   if (tool === undefined) throw new Error(`no product probe for ${id}`);
@@ -213,17 +201,25 @@ async function mcpProbe(id: string): Promise<void> {
     );
     return;
   }
+  if (id === "MCP-08") {
+    await userMcpCall(coordinates.port, tool, {}, "quotas", z.unknown());
+    return;
+  }
+  if (id === "MCP-09") {
+    await userMcpCall(coordinates.port, tool, {}, "inventory", z.unknown());
+    return;
+  }
   if (id === "MCP-32") {
     await userMcpCall(
       coordinates.port,
       tool,
-      { class: "fleet-summary" },
-      "result",
-      z.object({ state: z.string() }),
+      { query: "fleet" },
+      "results",
+      z.array(z.unknown()),
     );
     return;
   }
-  const args = id === "MCP-09" ? {} : id === "MCP-23" ? { requests: [] } : {};
+  const args = id === "MCP-23" ? { requests: [] } : {};
   await userMcpCall(coordinates.port, tool, args, "result", z.unknown());
 }
 
@@ -535,12 +531,12 @@ await productRow("MCP-34", async () => {
   await write(pitfallId, "pitfall");
   const pitfalls = await userMcpCall(
     coordinates.port,
-    "memory_pitfall",
-    { query: marker, scope: "repo" },
+    "memory_search",
+    { query: marker, scope: "repo", kind: "pitfall" },
     "results",
-    z.object({ pitfalls: z.array(z.unknown()) }),
+    z.array(z.unknown()),
   );
-  if (pitfalls.pitfalls.length === 0)
+  if (pitfalls.length === 0)
     throw new Error("pitfall search did not read back the seeded pitfall");
   await userMcpCall(
     coordinates.port,
@@ -553,17 +549,13 @@ await productRow("MCP-34", async () => {
 await productRow("MCP-36", async () => {
   const recall = await userMcpCall(
     coordinates.port,
-    "memory_recall",
+    "memory_search",
     { query: marker },
     "results",
-    z.object({
-      semantic: z.string(),
-      pitfalls: z.array(z.unknown()),
-      articles: z.array(z.unknown()),
-    }),
+    z.array(z.object({ kind: z.string().optional() })),
   );
-  if (recall.pitfalls.length === 0 || recall.articles.length === 0)
-    throw new Error("recall did not partition the seeded pitfall and article");
+  if (recall.length === 0)
+    throw new Error("memory search did not read back the seeded articles");
 });
 await productRow("MCP-38", async () => {
   const result = await userMcpCall(

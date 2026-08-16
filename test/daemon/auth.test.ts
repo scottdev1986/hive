@@ -201,6 +201,8 @@ describe("an unauthenticated process cannot mutate anything", () => {
         { kind: "notification", agentName: "maya", timestamp },
       ],
       ["/recover", "POST", { agent: "maya" }],
+      ["/quota/observe", "POST", {}],
+      ["/settlement/sweep", "POST", {}],
       ["/token-usage/protocol-session-facts", "POST", { agent: "maya" }],
       [
         "/provider-permission/settled",
@@ -357,8 +359,7 @@ describe("a foreign agent cannot act on another tenant", () => {
       ],
       ["hive_approve", { id: "any", decision: "approve" }],
       ["hive_approvals", {}],
-      ["hive_recover", {}],
-      ["hive_quota_reconcile", {}],
+      ["hive_settlement_decide", {}],
     ] as const) {
       expect([tool, (await callTool(daemon, token, tool, args)).ok]).toEqual([
         tool,

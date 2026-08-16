@@ -22,8 +22,8 @@ import {
   MemoryWriteResultSchema,
 } from "../schemas/memory";
 import {
-  type MemoryRecallEnvelope,
-  MemoryRecallEnvelopeSchema,
+  type MemoryRecallPreview,
+  MemoryRecallPreviewSchema,
 } from "../schemas/memory-projections";
 import {
   type QuotaObservation,
@@ -178,11 +178,38 @@ export async function fetchAgentStatus(
   }
 }
 
+async function postDaemonJson(
+  port: number,
+  path: string,
+  body: unknown,
+  fetcher?: McpFetcher,
+): Promise<unknown> {
+  const fetchFn = fetcher ?? userFetch;
+  const response = await fetchFn(`http://127.0.0.1:${port}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const reason = z.object({ error: z.string() }).safeParse(payload);
+    throw new Error(
+      reason.success
+        ? reason.data.error
+        : `${path} failed (HTTP ${response.status})`,
+    );
+  }
+  return payload;
+}
+
 export async function requestSettlementSweep(
   port: number,
   fetcher?: McpFetcher,
 ): Promise<unknown> {
-  return callHiveTool(port, "hive_settlement_sweep", {}, "settlement", fetcher);
+  const payload = z
+    .object({ settlement: z.unknown() })
+    .parse(await postDaemonJson(port, "/settlement/sweep", {}, fetcher));
+  return payload.settlement;
 }
 
 export async function sendOrchestratorMessage(
@@ -242,15 +269,10 @@ export async function reconcileQuota(
   observation: QuotaObservationInput,
   fetcher?: McpFetcher,
 ): Promise<QuotaObservation> {
-  return QuotaObservationSchema.parse(
-    await callHiveTool(
-      port,
-      "hive_quota_reconcile",
-      observation,
-      "observation",
-      fetcher,
-    ),
-  );
+  const payload = z
+    .object({ observation: QuotaObservationSchema })
+    .parse(await postDaemonJson(port, "/quota/observe", observation, fetcher));
+  return payload.observation;
 }
 
 export async function searchMemory(
@@ -344,13 +366,12 @@ export async function recallMemory(
   query: string,
   options?: { budget?: number },
   fetcher?: McpFetcher,
-): Promise<MemoryRecallEnvelope> {
-  return MemoryRecallEnvelopeSchema.parse(
-    await callHiveTool(
+): Promise<MemoryRecallPreview> {
+  return MemoryRecallPreviewSchema.parse(
+    await postDaemonJson(
       port,
-      "memory_recall",
-      { query, ...options },
-      "results",
+      "/memory/recall-preview",
+      { query, purpose: "explicit-recall", ...options },
       fetcher,
     ),
   );

@@ -21,6 +21,7 @@ import type {
   Spawner,
   SpawnRequest,
 } from "../../src/daemon/spawn/spawn-service";
+import { recallMemory } from "../../src/cli/mcp";
 import { actingAs } from "../support/daemon-test-support";
 import type { MemoryEmbedder } from "../../src/memory-service/embeddings";
 import { EpisodicStore } from "../../src/memory-service/episodic";
@@ -342,22 +343,21 @@ describe("write responses (defect D2)", () => {
   });
 });
 
-describe("memory_recall envelope (defect D2)", () => {
+describe("memory recall-preview envelope (defect D2)", () => {
   test("hybrid when the leg answers; no warning block", async () => {
     const episodic = new EpisodicStore(":memory:");
     const { daemon } = await makeDaemon({ episodic });
     const client = await connectedClient(daemon);
     await seedArticle(client, "Database fixtures layout");
     await required(daemon.embeddingIndex).settle();
-    const result = await client.callTool({
-      name: "memory_recall",
-      arguments: { query: "database" },
-    });
-    const value = textValue(result);
+    const value = await recallMemory(
+      0,
+      "database",
+      undefined,
+      actingAs(daemon, "user", "user"),
+    );
     expect(value.semantic).toBe("hybrid");
-    expect(value.warning).toBeUndefined();
-    const blocks = (result as { content: Array<{ type: string }> }).content;
-    expect(blocks).toHaveLength(1);
+    expect(value.warning).toBeNull();
     episodic.close();
   });
 
@@ -367,25 +367,17 @@ describe("memory_recall envelope (defect D2)", () => {
     const client = await connectedClient(daemon);
     await seedArticle(client, "Database fixtures layout");
     await required(daemon.embeddingIndex).settle();
-    const result = await client.callTool({
-      name: "memory_recall",
-      arguments: { query: "database", budget: 1 },
-    });
-    const value = textValue(result);
+    const value = await recallMemory(
+      0,
+      "database",
+      { budget: 1 },
+      actingAs(daemon, "user", "user"),
+    );
     expect(value.semantic).toBe("degraded:embedding-runtime-missing");
     expect(value.warning).toBe(
       "⚠ semantic search unavailable (embedding-runtime-missing) — results are keyword-only",
     );
-    // Clamping cut the rows but not the warning: the discriminator and the
-    // note block are envelope-level.
     expect(value.truncated).toBe(true);
-    const blocks = (
-      result as {
-        content: Array<{ type: string; text?: string }>;
-      }
-    ).content;
-    expect(blocks).toHaveLength(2);
-    expect(blocks[1]?.text).toBe(value.warning);
     episodic.close();
   });
 
@@ -393,14 +385,14 @@ describe("memory_recall envelope (defect D2)", () => {
     const { daemon } = await makeDaemon();
     const client = await connectedClient(daemon);
     await seedArticle(client, "Database fixtures layout");
-    const value = textValue(
-      await client.callTool({
-        name: "memory_recall",
-        arguments: { query: "database" },
-      }),
+    const value = await recallMemory(
+      0,
+      "database",
+      undefined,
+      actingAs(daemon, "user", "user"),
     );
     expect(value.semantic).toBe("disabled");
-    expect(value.warning).toBeUndefined();
+    expect(value.warning).toBeNull();
   });
 });
 

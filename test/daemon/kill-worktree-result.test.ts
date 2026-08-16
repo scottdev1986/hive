@@ -199,7 +199,7 @@ describe("describeWorktreeKill outcome strings", () => {
     const result = describeWorktreeKill(agent(), settlement());
     expect(result.outcome).toBe("kept-clean");
     expect(result.resolve).toBe(
-      "hive_settlement_sweep to retry the exact proof after its watched condition changes",
+      "the daemon settlement pass retries the exact proof after its watched condition changes",
     );
   });
 
