@@ -54,19 +54,10 @@ function baseRun(overrides: Partial<Run> = {}): Run {
     revision: "3",
     repo: "hive",
     instanceId: "instance-fixture",
-    approvedSpec: { revision: "1", digest: FIXTURE_DIGEST },
+    spec: { revision: "1", digest: FIXTURE_DIGEST },
     currentPlan: { revision: "1", digest: FIXTURE_DIGEST },
     topology: { revision: "1", digest: FIXTURE_DIGEST },
     phase: "P2",
-    g1: {
-      state: "approved",
-      decider: "engineer",
-      decidedAt: FIXTURE_CREATED_AT,
-      spec: { revision: "1", digest: FIXTURE_DIGEST },
-      plan: { revision: "1", digest: FIXTURE_DIGEST },
-      topology: { revision: "1", digest: FIXTURE_DIGEST },
-      budget: { revision: "1", digest: FIXTURE_DIGEST },
-    },
     g2: { state: "pending" },
     baseSha: FIXTURE_GIT_SHA,
     budget: { revision: "1", digest: FIXTURE_DIGEST },
@@ -210,12 +201,12 @@ function runDecisions(): RunControlDecision[] {
     },
   });
   return [
-    decision("approve-g1-once", { status: "accepted" }),
-    decision("approve-g1-again", {
+    decision("approve-g2-once", { status: "accepted" }),
+    decision("approve-g2-again", {
       status: "rejected",
       failure: {
         code: "gate-already-decided",
-        message: "G1 is already approved",
+        message: "G2 is already approved",
       },
     }),
   ];

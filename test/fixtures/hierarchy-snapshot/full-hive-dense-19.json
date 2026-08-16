@@ -4,7 +4,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001",
     "entityRevision": "3",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "3",
       "root": {
@@ -28,30 +28,6 @@
         "availability": "present",
         "value": "full-hive"
       },
-      "g1": {
-        "availability": "present",
-        "value": {
-          "state": "approved",
-          "decider": "engineer",
-          "decidedAt": "2026-07-30T12:00:00.000Z",
-          "spec": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "plan": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "topology": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "budget": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          }
-        }
-      },
       "g2": {
         "availability": "present",
         "value": {
@@ -69,7 +45,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000104",
     "entityRevision": "2",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "2",
@@ -117,7 +93,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000105",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000105",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -163,7 +139,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000106",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000106",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -209,7 +185,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000103",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000103",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -255,7 +231,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000110",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000110",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -303,7 +279,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000111",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000111",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -349,7 +325,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000112",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000112",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -395,7 +371,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000113",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000113",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -443,7 +419,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000114",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000114",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -489,7 +465,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000115",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000115",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -535,7 +511,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000116",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000116",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -583,7 +559,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000117",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000117",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -629,7 +605,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000118",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000118",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -675,7 +651,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000119",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000119",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -723,7 +699,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000120",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000120",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -769,7 +745,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000121",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000121",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -815,7 +791,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000122",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000122",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -863,7 +839,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000123",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000123",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -909,7 +885,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000124",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000124",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -955,7 +931,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
     "entityRevision": "2",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "2",
       "tasks": {
@@ -996,7 +972,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
       "limits": {
@@ -1077,7 +1053,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
       "reviews": {
@@ -1111,14 +1087,14 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
     "entityRevision": "3",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "3",
       "runDecision": {
         "availability": "present",
         "value": [
           {
-            "idempotencyKey": "approve-g1-once",
+            "idempotencyKey": "approve-g2-once",
             "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "outcome": {
               "status": "accepted"
@@ -1126,7 +1102,7 @@
             "observedRevision": "3"
           },
           {
-            "idempotencyKey": "approve-g1-again",
+            "idempotencyKey": "approve-g2-again",
             "intentDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "outcome": {
               "status": "rejected",

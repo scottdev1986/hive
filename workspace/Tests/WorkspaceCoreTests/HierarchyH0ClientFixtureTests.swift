@@ -39,10 +39,6 @@ final class HierarchyH0ClientFixtureTests: XCTestCase {
     func testPendingGatesRejectApprovalFields() {
         XCTAssertThrowsError(
             try JSONDecoder().decode(
-                HierarchyRun.G1State.self,
-                from: Data(#"{"state":"pending","decider":"engineer"}"#.utf8)))
-        XCTAssertThrowsError(
-            try JSONDecoder().decode(
                 HierarchyRun.G2State.self,
                 from: Data(#"{"state":"pending","runStageSha":"abc"}"#.utf8)))
     }

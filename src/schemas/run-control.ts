@@ -1,4 +1,4 @@
-// The typed run-control wire: G1/G2 gate decisions and pause/resume/abort. The envelope half mirrors workspace/Sources/WorkspaceCore/MutationEnvelope.swift field for field, including its JSON key names, so one intent encoded by the Swift client decodes here and one result encoded here decodes there. Body and observed post-state are generic on both sides; run control binds them to the operations below and to the Run record. Gate bodies name exact facts — RevisionRef pairs for G1, SHA/digest/evidence/ base for G2 — because an approval that named a floating "latest" pointer would authorize whatever landed after the engineer looked.
+// The typed run-control wire: the G2 gate decision and pause/resume/abort. The envelope half mirrors workspace/Sources/WorkspaceCore/MutationEnvelope.swift field for field, including its JSON key names, so one intent encoded by the Swift client decodes here and one result encoded here decodes there. Body and observed post-state are generic on both sides; run control binds them to the operations below and to the Run record. The gate body names exact facts — SHA, digest, evidence, target-main base — because an approval that named a floating "latest" pointer would authorize whatever landed after the engineer looked.
 
 import { z } from "zod";
 import {
@@ -87,16 +87,6 @@ export const mutationResultSchema = <
     observedPostState: postState,
   });
 
-export const ApproveG1BodySchema = z.strictObject({
-  operation: z.literal("approve-g1"),
-  runId: RunIdSchema,
-  spec: RevisionRefSchema,
-  plan: RevisionRefSchema,
-  topology: RevisionRefSchema,
-  budget: RevisionRefSchema,
-});
-export type ApproveG1Body = z.infer<typeof ApproveG1BodySchema>;
-
 export const ApproveG2BodySchema = z.strictObject({
   operation: z.literal("approve-g2"),
   runId: RunIdSchema,
@@ -107,7 +97,7 @@ export const ApproveG2BodySchema = z.strictObject({
 });
 export type ApproveG2Body = z.infer<typeof ApproveG2BodySchema>;
 
-/** The operation that starts a run, and the only one whose run does not exist yet. It carries the whole P0 package as records rather than references, because there is nothing stored to refer to: the daemon writes the SpecRevision, PlanRevision, TopologyDecision and RunBudget it is given, then the Run pointing at them, then the run's root node. Nothing here is defaulted. A run whose package the daemon invented would put every later fence — budget, scope, gate — on facts nobody chose. It approves nothing. The run is written with G1 pending, so it grants no authority and admits no spawn until an engineer approves the package through the existing approve-g1 operation. */
+/** The operation that starts a run, and the only one whose run does not exist yet. It carries the whole P0 package as records rather than references, because there is nothing stored to refer to: the daemon writes the SpecRevision, PlanRevision, TopologyDecision and RunBudget it is given, then the Run pointing at them, then the run's root node. Nothing here is defaulted. A run whose package the daemon invented would put every later fence — budget, scope, gate — on facts nobody chose. The Run points at every record in this package, spec included, so spawn admission fences on the exact revisions the caller named here and never on a floating "latest" pointer. */
 export const RunCreateBodySchema = z.strictObject({
   operation: z.literal("run-create"),
   runId: RunIdSchema,
@@ -141,7 +131,6 @@ const RunLifecycleBodySchema = <Operation extends string>(
   });
 
 export const RunControlBodySchema = z.discriminatedUnion("operation", [
-  ApproveG1BodySchema,
   ApproveG2BodySchema,
   RunCreateBodySchema,
   RunDelegateBodySchema,
@@ -240,11 +229,9 @@ export const RUN_CONTROL_FAILURE_CODES = {
   epochConflict: "epoch-conflict",
   gateFactDrift: "gate-fact-drift",
   gateAlreadyDecided: "gate-already-decided",
-  gateOutOfOrder: "gate-out-of-order",
   lifecycleInvalid: "lifecycle-invalid",
   idempotencyKeyReused: "idempotency-key-reused",
   runAlreadyExists: "run-already-exists",
-  gateNotApproved: "gate-not-approved",
   /** A delegation named records that do not agree with each other or the run. */
   delegationInvalid: "delegation-invalid",
 } as const;

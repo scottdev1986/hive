@@ -174,21 +174,6 @@ export const RUN_LIFECYCLE = [
 export const RunLifecycleSchema = z.enum(RUN_LIFECYCLE);
 export type RunLifecycle = z.infer<typeof RunLifecycleSchema>;
 
-// G1 binds the exact SpecRevision with its preliminary PlanRevision, TopologyDecision, and RunBudget as one package — four RevisionRefs, never a free-form description of what was approved.
-export const G1StateSchema = z.discriminatedUnion("state", [
-  z.strictObject({ state: z.literal("pending") }),
-  z.strictObject({
-    state: z.literal("approved"),
-    decider: z.string().min(1),
-    decidedAt: CreatedAtSchema,
-    spec: RevisionRefSchema,
-    plan: RevisionRefSchema,
-    topology: RevisionRefSchema,
-    budget: RevisionRefSchema,
-  }),
-]);
-export type G1State = z.infer<typeof G1StateSchema>;
-
 // G2 approves the exact assembled run-stage SHA, its digest, evidence, and target-main base — never a floating branch.
 export const G2StateSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("pending") }),
@@ -209,11 +194,10 @@ export const RunSchema = z.strictObject({
   revision: RevisionSchema,
   repo: z.string().min(1),
   instanceId: z.string().min(1),
-  approvedSpec: RevisionRefSchema.nullable(),
+  spec: RevisionRefSchema,
   currentPlan: RevisionRefSchema,
   topology: RevisionRefSchema,
   phase: RunPhaseSchema,
-  g1: G1StateSchema,
   g2: G2StateSchema,
   baseSha: GitShaSchema,
   budget: RevisionRefSchema,

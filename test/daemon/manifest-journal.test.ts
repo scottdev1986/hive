@@ -350,7 +350,7 @@ describe("projectStrandedManifestAttention", () => {
     const entity = projectStrandedManifestEntity([attention]);
     expect(entity.kind).toBe("hierarchy-stranded-manifest");
     expect(entity.projection).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       // The journal is keyed by agent, so the row belongs to no single run.
       runId: null,
       items: { availability: "present", value: [attention] },
@@ -730,19 +730,10 @@ describe("recoverSubtreeManifests", () => {
         revision: "1",
         repo: "hive",
         instanceId: "instance-1",
-        approvedSpec: { revision: "1", digest: recDigest },
+        spec: { revision: "1", digest: recDigest },
         currentPlan: { revision: "1", digest: recDigest },
         topology: { revision: "1", digest: recDigest },
         phase: "P2",
-        g1: {
-          state: "approved",
-          decider: "engineer",
-          decidedAt: timestamp,
-          spec: { revision: "1", digest: recDigest },
-          plan: { revision: "1", digest: recDigest },
-          topology: { revision: "1", digest: recDigest },
-          budget: { revision: "1", digest: recDigest },
-        },
         g2: { state: "pending" },
         baseSha: recGitSha,
         budget: { revision: "1", digest: recDigest },

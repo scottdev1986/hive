@@ -64,6 +64,66 @@ interface HierarchyDatabase extends DatabaseHost {
   getAgentById(id: string): AgentRecord | null;
 }
 
+type StoredRunRow = { id: string; runId: string; document: string };
+
+/** Bring stored Runs onto the current RunSchema. Older Runs carried a `g1` gate object and an `approvedSpec` that only that gate could ever fill; RunSchema is strict and every read parses through it, so one leftover `g1` key makes getRun throw and a fresh daemon cannot open an existing instance at all. Each Run now names its SpecRevision directly as `spec`, so carry the approved ref over where the gate had run, and otherwise take the highest stored SpecRevision — the revision the run states, and the same one tasks created under it already cite. */
+function migrateRunSpecRef(db: DatabaseHost): void {
+  const rows = db.database
+    .query(
+      `SELECT id, runId, document FROM hierarchy_records
+       WHERE kind = 'run' AND document LIKE '%"g1"%'`,
+    )
+    .all() as StoredRunRow[];
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.document);
+    } catch {
+      continue;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      continue;
+    }
+    const document = parsed as Record<string, unknown>;
+    document.spec ??= document.approvedSpec ?? statedSpecRef(db, row.runId);
+    delete document.approvedSpec;
+    delete document.g1;
+    if (document.spec === null) continue;
+    db.database
+      .query("UPDATE hierarchy_records SET document = ? WHERE kind = 'run' AND id = ?")
+      .run(JSON.stringify(document), row.id);
+  }
+}
+
+/** The highest SpecRevision stored for a run, as a RevisionRef, or null when the run has none to point at. */
+function statedSpecRef(
+  db: DatabaseHost,
+  runId: string,
+): { revision: string; digest: string } | null {
+  const rows = db.database
+    .query(
+      `SELECT document FROM hierarchy_records
+       WHERE kind = 'spec-revision' AND runId = ?`,
+    )
+    .all(runId) as { document: string }[];
+  let best: { revision: string; digest: string } | null = null;
+  for (const row of rows) {
+    let spec: { revision?: unknown; digest?: unknown };
+    try {
+      spec = JSON.parse(row.document) as typeof spec;
+    } catch {
+      continue;
+    }
+    if (typeof spec.revision !== "string" || typeof spec.digest !== "string") {
+      continue;
+    }
+    if (best === null || BigInt(spec.revision) > BigInt(best.revision)) {
+      best = { revision: spec.revision, digest: spec.digest };
+    }
+  }
+  return best;
+}
+
 export class HierarchyStore {
   constructor(private readonly db: HierarchyDatabase) {
     db.database.exec(`
@@ -84,6 +144,7 @@ export class HierarchyStore {
       CREATE INDEX IF NOT EXISTS hierarchy_records_run_kind
         ON hierarchy_records(runId, kind)
     `);
+    migrateRunSpecRef(db);
   }
 
   /** Credential rotation uses AgentRecord's one capability epoch. */
@@ -211,7 +272,7 @@ export class HierarchyStore {
     );
   }
 
-  /** Every SpecRevision proposed on a run. Spec revisions are append-only and a Run only points at the one G1 approved, so a caller asking which spec a run currently states has no other way to find it before that approval. */
+  /** Every SpecRevision proposed on a run. Spec revisions are append-only and a Run points at only one of them, so a caller asking what else has been proposed has no other way to find it. */
   listSpecRevisions(runId: string): SpecRevision[] {
     return this.listDocuments("spec-revision", runId).map((document) =>
       SpecRevisionSchema.parse(document),

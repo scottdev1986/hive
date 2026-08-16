@@ -290,7 +290,6 @@ describe("hierarchy-snapshot-projection", () => {
     const run = parseRun(soleKind(present, HIERARCHY_ENTITY_KINDS.run));
     expect(run.phase.availability).toBe("present");
     expect(run.lifecycle.availability).toBe("present");
-    expect(run.g1.availability).toBe("present");
     expect(run.g2.availability).toBe("present");
     expect(run.root.availability).toBe("present");
     expect(run.topologyShape.availability).toBe("present");
@@ -325,7 +324,6 @@ describe("hierarchy-snapshot-projection", () => {
       absentRun.phase,
       absentRun.lifecycle,
       absentRun.topologyShape,
-      absentRun.g1,
       absentRun.g2,
       absentRun.topologySource,
     ] as const) {
@@ -351,7 +349,7 @@ describe("hierarchy-snapshot-projection", () => {
 
   test("the board renders the stored tasks in store order", () => {
     const board = parseTask(SCENARIO_BUILDERS["full-hive"]());
-    expect(board.schemaVersion).toBe(2);
+    expect(board.schemaVersion).toBe(3);
     // entityRevision tracks the newest stored task, so an update moves the row.
     expect(board.entityRevision).toBe("2");
     // Store order is id order, which on UUIDv7 task ids is creation order:
@@ -406,13 +404,13 @@ describe("hierarchy-snapshot-projection", () => {
     }
     expect(populated.runDecision.value).toEqual([
       {
-        idempotencyKey: "approve-g1-once",
+        idempotencyKey: "approve-g2-once",
         intentDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
         outcome: { status: "accepted" },
         observedRevision: "3",
       },
       {
-        idempotencyKey: "approve-g1-again",
+        idempotencyKey: "approve-g2-again",
         intentDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
         outcome: { status: "rejected", failureCode: "gate-already-decided" },
         observedRevision: "3",
@@ -478,26 +476,13 @@ describe("hierarchy-snapshot-projection", () => {
     );
   });
 
-  test("G1/G2 present projections carry exact bound facts, not free-form prose", () => {
+  test("the G2 present projection carries exact bound facts, not free-form prose", () => {
     const run = parseRun(
       soleKind(
         projectHierarchyEntities(SCENARIO_BUILDERS.direct()),
         HIERARCHY_ENTITY_KINDS.run,
       ),
     );
-    expect(run.g1.availability).toBe("present");
-    if (run.g1.availability === "present") {
-      expect(run.g1.value.state).toBe("approved");
-      if (run.g1.value.state === "approved") {
-        expect(run.g1.value.spec).toEqual({
-          revision: "1",
-          digest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
-        });
-        expect(run.g1.value.plan.revision).toBe("1");
-        expect(run.g1.value.topology.revision).toBe("1");
-        expect(run.g1.value.budget.revision).toBe("1");
-      }
-    }
     expect(run.g2.availability).toBe("present");
     if (run.g2.availability === "present") {
       expect(run.g2.value.state).toBe("pending");

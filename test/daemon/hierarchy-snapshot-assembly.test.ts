@@ -73,19 +73,10 @@ function run(): Run {
     revision: "1",
     repo: "hive",
     instanceId,
-    approvedSpec: ref,
+    spec: ref,
     currentPlan: ref,
     topology: ref,
     phase: "P2",
-    g1: {
-      state: "approved",
-      decider: "engineer",
-      decidedAt: now,
-      spec: ref,
-      plan: ref,
-      topology: ref,
-      budget: ref,
-    },
     g2: { state: "pending" },
     baseSha: gitSha,
     budget: ref,
@@ -216,12 +207,12 @@ function review(): Review {
 
 function runControlDecision(): RunControlDecision {
   return {
-    idempotencyKey: "approve-g1-once",
+    idempotencyKey: "approve-g2-once",
     intentDigest: digest,
     result: {
       schemaVersion: 1,
-      intentId: "intent-approve-g1",
-      operationId: "operation-approve-g1",
+      intentId: "intent-approve-g2",
+      operationId: "operation-approve-g2",
       postStateToken: { kind: "revision-and-epoch", revision: "1", epoch: "0" },
       outcome: { status: "accepted" },
       observedPostState: run(),
@@ -377,7 +368,7 @@ describe("the hierarchy snapshot assembler", () => {
       availability: "present",
       value: [
         {
-          idempotencyKey: "approve-g1-once",
+          idempotencyKey: "approve-g2-once",
           intentDigest: digest,
           outcome: { status: "accepted" },
           observedRevision: "1",

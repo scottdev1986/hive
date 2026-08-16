@@ -107,7 +107,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "inbox:read",
       // The queen's pull path to her shipped skills. Agents get no share of it: their skills reach their worktrees by provisioning, so the pull path would be a second door to what they already hold.
       "knowledge:read",
-      // Opening the run root the board hangs from. Orchestrator-only and distinct from run-control:write, which stays the user's: this opens a run that grants nothing and approves nothing, while the G1/G2 gates it leaves pending remain the engineer's to decide.
+      // Opening the run root the board hangs from. Orchestrator-only and distinct from run-control:write, which stays the user's: this opens a run that grants nothing, while the G2 gate it leaves pending remains the engineer's to decide.
       "run:bootstrap",
       "node:create",
       "grant:issue",

@@ -3518,7 +3518,7 @@ export class HiveDaemon {
       : json({ run: receipt });
   }
 
-  /** `POST /run-control` — the Run screen's G1/G2 decisions and pause, resume, and abort, as one typed intent in and one typed result out. User-only, like autonomy and routing policy: G1/G2 are the engineer's gates on work the queen proposed, so an agent deciding one would be approving its own proposal. A refused intent is a 200 carrying a rejected outcome and the state that stayed in force — the caller needs that state either way, and a transport error would hide it. */
+  /** `POST /run-control` — the Run screen's G2 decision and pause, resume, and abort, as one typed intent in and one typed result out. User-only, like autonomy and routing policy: G2 is the engineer's gate on work the queen proposed, so an agent deciding it would be approving its own proposal. A refused intent is a 200 carrying a rejected outcome and the state that stayed in force — the caller needs that state either way, and a transport error would hide it. */
   private async runControlEndpoint(request: Request): Promise<Response> {
     const authorized = this.authorizeRoute(
       request,

@@ -21,7 +21,6 @@ import {
 import {
   BudgetDimensionSchema,
   BudgetLimitSchema,
-  G1StateSchema,
   G2StateSchema,
   RunLifecycleSchema,
   RunPhaseSchema,
@@ -39,7 +38,7 @@ import {
 } from "./session-protocol";
 import { TaskStateSchema } from "./task-detail";
 
-export const HIERARCHY_PROJECTION_SCHEMA_VERSION = 2;
+export const HIERARCHY_PROJECTION_SCHEMA_VERSION = 3;
 
 export const HIERARCHY_ENTITY_KINDS = {
   run: "hierarchy-run",
@@ -101,8 +100,6 @@ export const HierarchyRunProjectionSchema = z.strictObject({
   phase: availableFieldSchema(RunPhaseSchema),
   lifecycle: availableFieldSchema(RunLifecycleSchema),
   topologyShape: availableFieldSchema(TopologyShapeSchema),
-  /** G1 state with exact RevisionRefs when approved — never free-form prose. */
-  g1: availableFieldSchema(G1StateSchema),
   g2: availableFieldSchema(G2StateSchema),
   /** How this topology was produced: a TopologyDecision on a hierarchy Run is the only producer there is. The vocabulary lists exactly that one, because a value nothing emits is a claim the daemon cannot back — a second source arrives with a schemaVersion bump, not with a name reserved in advance. */
   topologySource: availableFieldSchema(z.enum(["hierarchy"])),

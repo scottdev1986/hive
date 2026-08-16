@@ -132,19 +132,10 @@ function validRun(overrides: Partial<Run> = {}): Run {
     revision: "1",
     repo: "hive",
     instanceId: "instance-1",
-    approvedSpec: { revision: "1", digest: specDigest },
+    spec: { revision: "1", digest: specDigest },
     currentPlan: { revision: "1", digest: planDigest },
     topology: { revision: "1", digest: topologyDigest },
     phase: "P1",
-    g1: {
-      state: "approved",
-      decider: "engineer",
-      decidedAt: createdAt,
-      spec: { revision: "1", digest: specDigest },
-      plan: { revision: "1", digest: planDigest },
-      topology: { revision: "1", digest: topologyDigest },
-      budget: { revision: "1", digest: budgetDigest },
-    },
     g2: { state: "pending" },
     baseSha,
     budget: { revision: "1", digest: budgetDigest },
@@ -594,28 +585,6 @@ describe("hierarchy spawn admission guards", () => {
     expect(() =>
       admission.preflight(hierarchyFields({ grantId: undefined }), "author"),
     ).toThrow("requires a grant");
-  });
-
-  test("spawn without approved G1 is rejected independently", () => {
-    const pendingDb = new HiveDatabase(":memory:");
-    const pendingStore = new HierarchyStore(pendingDb);
-    try {
-      seed(
-        pendingDb,
-        pendingStore,
-        validRun({ approvedSpec: null, g1: { state: "pending" } }),
-      );
-      const pending = new SpawnAdmission(
-        pendingStore,
-        () => now,
-        () => briefId,
-      );
-      expect(() => pending.preflight(hierarchyFields(), "author")).toThrow(
-        "has no approved G1",
-      );
-    } finally {
-      pendingDb.close();
-    }
   });
 
   test.each([

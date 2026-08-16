@@ -287,7 +287,6 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
                 ShellScreenFact(label: "Lifecycle", value: Self.field(run.lifecycle) { $0.rawValue }),
                 ShellScreenFact(label: "Topology", value: Self.field(run.topologyShape) { $0.rawValue }),
                 ShellScreenFact(label: "Topology source", value: Self.field(run.topologySource) { $0.rawValue }),
-                ShellScreenFact(label: "G1", value: Self.field(run.g1, render: Self.g1)),
                 ShellScreenFact(label: "G2", value: Self.field(run.g2, render: Self.g2)),
             ])
         }
@@ -497,14 +496,6 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
         case .present(let value): return render(value)
         case .absent(let reason, let detail):
             return "absent · \(reason.rawValue) — \(detail)"
-        }
-    }
-
-    private static func g1(_ state: HierarchyRun.G1State) -> String {
-        switch state {
-        case .pending: return "pending"
-        case .approved(let approval):
-            return "approved · \(approval.decider) · \(approval.decidedAt)"
         }
     }
 

@@ -4,7 +4,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001",
     "entityRevision": "3",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "3",
       "root": {
@@ -29,30 +29,6 @@
         "reason": "unmeasured",
         "detail": "no TopologyDecision supplied for this run"
       },
-      "g1": {
-        "availability": "present",
-        "value": {
-          "state": "approved",
-          "decider": "engineer",
-          "decidedAt": "2026-07-30T12:00:00.000Z",
-          "spec": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "plan": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "topology": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "budget": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          }
-        }
-      },
       "g2": {
         "availability": "present",
         "value": {
@@ -70,7 +46,7 @@
     "id": "node_018f4f5e-0000-7000-8000-000000000101",
     "entityRevision": "1",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "nodeId": "node_018f4f5e-0000-7000-8000-000000000101",
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "1",
@@ -116,7 +92,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001:tasks",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "0",
       "tasks": {
@@ -131,7 +107,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001:budget",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "0",
       "limits": {
@@ -146,7 +122,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001:reviews",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "0",
       "reviews": {
@@ -161,7 +137,7 @@
     "id": "run_018f4f5e-0000-7000-8000-000000000001:incident",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_018f4f5e-0000-7000-8000-000000000001",
       "entityRevision": "0",
       "runDecision": {

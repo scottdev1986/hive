@@ -1,6 +1,6 @@
 // Opens the queen's coordination run so the hierarchy board has a root to hang work on. A run root is deliberately unreachable through hive_node_create, which refuses parentNodeId null: roots exist only as the genesis half of run-create. That left the queen with no supported way to open a run at all, and a board that reads hierarchy records renders empty until one exists. This tool closes that gap without adding a second genesis path — it assembles a run-create package and hands it to the SAME RunControl operation the /run-control endpoint uses.
 //
-// The package is assembled here rather than asked of the caller because the queen has no honest source for a repo sha, an instance id, or a revision digest; the daemon does. What the daemon must not do is invent a package that then FENCES real work, so this one states that it authorizes none: G1 is left pending by run-create, every budget dimension is zero, and the plan carries no tasks. A run in that state is refused by spawn admission on its first check, so the bootstrap run is inert to delegation by construction rather than by convention.
+// The package is assembled here rather than asked of the caller because the queen has no honest source for a repo sha, an instance id, or a revision digest; the daemon does. What the daemon must not do is invent a package that then FENCES real work, so this one claims as little as it can: every budget dimension is zero and the plan carries no tasks. Neither is a fence — spawn admission reads neither the RunBudget nor the plan's taskDag — so they bound what this run SAYS it will spend, not what it can be made to do. What actually bounds delegation under this run is the DelegationGrant an engineer issues into it.
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -72,7 +72,7 @@ const ref = (record: { revision: string; digest: string }) => ({
   digest: record.digest,
 });
 
-/** Every budget dimension at zero. This run spends nothing: it opens no sessions, spawns nobody, and lands no code. Zero is the honest ceiling for that, and it is also the safe one — a generous default on a package no engineer chose would be capacity waiting for the first caller who approved its G1 by mistake. */
+/** Every budget dimension at zero. This run is opened to hold the board root, not to spend: it declares no sessions, no spawns, and no landings. Zero is the honest declaration for a package no engineer sized, and it stays zero rather than carrying a generous default nobody chose. */
 const NO_SPEND = { hard: 0, soft: 0, reserved: 0, used: 0 } as const;
 
 /** The whole P0 package for a coordination run, assembled in dependency order because each record binds the digest of the one before it. `proposer` is the authenticated caller: the daemon wrote these bytes, but it wrote them because that subject asked. */
@@ -214,23 +214,6 @@ function liveRoot(
   return null;
 }
 
-/** The spec a run currently states, for a run whose G1 has approved none. Spec revisions are append-only, so the highest revision is the standing proposal. */
-function latestSpecRef(store: HierarchyStore, runId: string): RevisionRef {
-  const latest = store
-    .listSpecRevisions(runId)
-    .reduce<SpecRevision | null>(
-      (best, spec) =>
-        best === null || BigInt(spec.revision) > BigInt(best.revision)
-          ? spec
-          : best,
-      null,
-    );
-  if (latest === null) {
-    throw new Error(`run ${runId} has no stored SpecRevision`);
-  }
-  return ref(latest);
-}
-
 /** The task inputs for whichever run this call settled on, read back from the store. The created branch goes through here too rather than reusing the package it just assembled: reading it back is what makes the returned refs a statement about stored state instead of about a local variable. */
 function taskInputsOf(
   store: HierarchyStore,
@@ -239,8 +222,7 @@ function taskInputsOf(
   const run = store.getRun(runId);
   if (run === null) throw new Error(`run ${runId} is not stored`);
   return {
-    // A run past G1 must be cited by the spec that gate approved; before it, by the one the run states.
-    specRevision: run.approvedSpec ?? latestSpecRef(store, runId),
+    specRevision: run.spec,
     planRevision: run.currentPlan,
     baseSha: run.baseSha,
   };
@@ -350,7 +332,7 @@ export function registerRunBootstrapTool(
     {
       title: "Open the coordination run that holds the board root",
       description:
-        "Open this instance's coordination run and its root hierarchy node, so tasks have an owner to hang from. Takes no input: the daemon reads the repo, instance, and root identity from its own state. Returns the run, root node, root binding, and the taskInputs (specRevision, planRevision, baseSha) a task under this root must cite — everything hive_task_create needs, so no store read is required to follow up. kind=created when this call opened it, kind=existing when one was already open, and the same ids either way, so calling twice never makes a second root. The run grants nothing: its G1 stays pending and its budget is zero, so no spawn is admissible under it. Orchestrator role only; every other role is refused.",
+        "Open this instance's coordination run and its root hierarchy node, so tasks have an owner to hang from. Takes no input: the daemon reads the repo, instance, and root identity from its own state. Returns the run, root node, root binding, and the taskInputs (specRevision, planRevision, baseSha) a task under this root must cite — everything hive_task_create needs, so no store read is required to follow up. kind=created when this call opened it, kind=existing when one was already open, and the same ids either way, so calling twice never makes a second root. The run itself grants nothing: delegating under it still needs an engineer-issued DelegationGrant. Orchestrator role only; every other role is refused.",
       inputSchema: z.object({}),
     },
     async () => {

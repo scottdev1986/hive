@@ -120,30 +120,6 @@ describe("run-control bodies name exact facts", () => {
     ).toBe(true);
   });
 
-  test("a G1 package binding a revision without its digest is rejected", () => {
-    const parsed = RunControlBodySchema.safeParse({
-      operation: "approve-g1",
-      runId,
-      spec: { revision: "1" },
-      plan: ref,
-      topology: ref,
-      budget: ref,
-    });
-    expect(parsed.success).toBe(false);
-  });
-
-  test("a G1 package cannot be described in free-form prose", () => {
-    const parsed = RunControlBodySchema.safeParse({
-      operation: "approve-g1",
-      runId,
-      spec: "the latest spec",
-      plan: ref,
-      topology: ref,
-      budget: ref,
-    });
-    expect(parsed.success).toBe(false);
-  });
-
   test("a G2 approval of a branch name rather than a SHA is rejected", () => {
     const parsed = RunControlBodySchema.safeParse({
       operation: "approve-g2",

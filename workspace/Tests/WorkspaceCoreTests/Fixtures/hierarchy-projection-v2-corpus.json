@@ -11,7 +11,7 @@
     "evidence": null,
     "value": {
       "run": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "root": {
@@ -35,30 +35,6 @@
           "availability": "present",
           "value": "full-hive"
         },
-        "g1": {
-          "availability": "present",
-          "value": {
-            "state": "approved",
-            "decider": "engineer",
-            "decidedAt": "2026-07-30T12:00:00.000Z",
-            "spec": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "plan": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "topology": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "budget": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            }
-          }
-        },
         "g2": {
           "availability": "present",
           "value": {
@@ -71,7 +47,7 @@
         }
       },
       "node": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "2",
@@ -113,7 +89,7 @@
         }
       },
       "budget": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "limits": {
@@ -189,7 +165,7 @@
         }
       },
       "review": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "reviews": {
@@ -218,7 +194,7 @@
         }
       },
       "incident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "runDecision": {
@@ -255,7 +231,7 @@
         }
       },
       "recoveryIncident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "5",
         "runDecision": {
@@ -282,7 +258,7 @@
         }
       },
       "unmeasuredRun": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_00000000-0000-7000-8000-0000000000a0",
         "entityRevision": "0",
         "root": {
@@ -305,11 +281,6 @@
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
         },
-        "g1": {
-          "availability": "absent",
-          "reason": "unmeasured",
-          "detail": "no Run record supplied"
-        },
         "g2": {
           "availability": "absent",
           "reason": "unmeasured",
@@ -322,7 +293,7 @@
         }
       },
       "stranded": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": null,
         "entityRevision": "0",
         "items": {
@@ -369,7 +340,7 @@
     "evidence": null,
     "value": {
       "run": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "root": {
@@ -393,30 +364,6 @@
           "availability": "present",
           "value": "full-hive"
         },
-        "g1": {
-          "availability": "present",
-          "value": {
-            "state": "approved",
-            "decider": "engineer",
-            "decidedAt": "2026-07-30T12:00:00.000Z",
-            "spec": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "plan": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "topology": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "budget": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            }
-          }
-        },
         "g2": {
           "availability": "present",
           "value": {
@@ -429,7 +376,7 @@
         }
       },
       "node": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "2",
@@ -471,7 +418,7 @@
         }
       },
       "budget": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "limits": {
@@ -547,7 +494,7 @@
         }
       },
       "review": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "reviews": {
@@ -576,7 +523,7 @@
         }
       },
       "incident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "runDecision": {
@@ -613,7 +560,7 @@
         }
       },
       "recoveryIncident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "5",
         "runDecision": {
@@ -640,7 +587,7 @@
         }
       },
       "unmeasuredRun": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_00000000-0000-7000-8000-0000000000a0",
         "entityRevision": "0",
         "root": {
@@ -663,11 +610,6 @@
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
         },
-        "g1": {
-          "availability": "absent",
-          "reason": "unmeasured",
-          "detail": "no Run record supplied"
-        },
         "g2": {
           "availability": "absent",
           "reason": "unmeasured",
@@ -680,7 +622,7 @@
         }
       },
       "stranded": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": null,
         "entityRevision": "0",
         "items": {
@@ -718,7 +660,7 @@
     },
     "value": {
       "run": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "root": {
@@ -742,30 +684,6 @@
           "availability": "present",
           "value": "full-hive"
         },
-        "g1": {
-          "availability": "present",
-          "value": {
-            "state": "approved",
-            "decider": "engineer",
-            "decidedAt": "2026-07-30T12:00:00.000Z",
-            "spec": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "plan": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "topology": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "budget": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            }
-          }
-        },
         "g2": {
           "availability": "present",
           "value": {
@@ -778,7 +696,7 @@
         }
       },
       "node": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "2",
@@ -820,7 +738,7 @@
         }
       },
       "budget": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "limits": {
@@ -896,7 +814,7 @@
         }
       },
       "review": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "reviews": {
@@ -925,7 +843,7 @@
         }
       },
       "incident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "runDecision": {
@@ -962,7 +880,7 @@
         }
       },
       "recoveryIncident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "5",
         "runDecision": {
@@ -989,7 +907,7 @@
         }
       },
       "unmeasuredRun": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_00000000-0000-7000-8000-0000000000a0",
         "entityRevision": "0",
         "root": {
@@ -1012,11 +930,6 @@
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
         },
-        "g1": {
-          "availability": "absent",
-          "reason": "unmeasured",
-          "detail": "no Run record supplied"
-        },
         "g2": {
           "availability": "absent",
           "reason": "unmeasured",
@@ -1029,7 +942,7 @@
         }
       },
       "stranded": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": null,
         "entityRevision": "0",
         "items": {
@@ -1082,7 +995,7 @@
     },
     "value": {
       "run": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "root": {
@@ -1106,30 +1019,6 @@
           "availability": "present",
           "value": "full-hive"
         },
-        "g1": {
-          "availability": "present",
-          "value": {
-            "state": "approved",
-            "decider": "engineer",
-            "decidedAt": "2026-07-30T12:00:00.000Z",
-            "spec": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "plan": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "topology": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "budget": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            }
-          }
-        },
         "g2": {
           "availability": "present",
           "value": {
@@ -1142,7 +1031,7 @@
         }
       },
       "node": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "2",
@@ -1184,7 +1073,7 @@
         }
       },
       "budget": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "limits": {
@@ -1260,7 +1149,7 @@
         }
       },
       "review": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "reviews": {
@@ -1289,7 +1178,7 @@
         }
       },
       "incident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "runDecision": {
@@ -1326,7 +1215,7 @@
         }
       },
       "recoveryIncident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "5",
         "runDecision": {
@@ -1353,7 +1242,7 @@
         }
       },
       "unmeasuredRun": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_00000000-0000-7000-8000-0000000000a0",
         "entityRevision": "0",
         "root": {
@@ -1376,11 +1265,6 @@
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
         },
-        "g1": {
-          "availability": "absent",
-          "reason": "unmeasured",
-          "detail": "no Run record supplied"
-        },
         "g2": {
           "availability": "absent",
           "reason": "unmeasured",
@@ -1393,7 +1277,7 @@
         }
       },
       "stranded": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": null,
         "entityRevision": "0",
         "items": {
@@ -1434,7 +1318,7 @@
     },
     "value": {
       "run": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "root": {
@@ -1458,30 +1342,6 @@
           "availability": "present",
           "value": "full-hive"
         },
-        "g1": {
-          "availability": "present",
-          "value": {
-            "state": "approved",
-            "decider": "engineer",
-            "decidedAt": "2026-07-30T12:00:00.000Z",
-            "spec": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "plan": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "topology": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
-            "budget": {
-              "revision": "1",
-              "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            }
-          }
-        },
         "g2": {
           "availability": "present",
           "value": {
@@ -1494,7 +1354,7 @@
         }
       },
       "node": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "2",
@@ -1536,7 +1396,7 @@
         }
       },
       "budget": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "limits": {
@@ -1612,7 +1472,7 @@
         }
       },
       "review": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "1",
         "reviews": {
@@ -1641,7 +1501,7 @@
         }
       },
       "incident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "3",
         "runDecision": {
@@ -1678,7 +1538,7 @@
         }
       },
       "recoveryIncident": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_018f4f5e-0000-7000-8000-000000000001",
         "entityRevision": "5",
         "runDecision": {
@@ -1705,7 +1565,7 @@
         }
       },
       "unmeasuredRun": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": "run_00000000-0000-7000-8000-0000000000a0",
         "entityRevision": "0",
         "root": {
@@ -1728,11 +1588,6 @@
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
         },
-        "g1": {
-          "availability": "absent",
-          "reason": "unmeasured",
-          "detail": "no Run record supplied"
-        },
         "g2": {
           "availability": "absent",
           "reason": "unmeasured",
@@ -1745,7 +1600,7 @@
         }
       },
       "stranded": {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "runId": null,
         "entityRevision": "0",
         "items": {

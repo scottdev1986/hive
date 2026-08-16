@@ -44,8 +44,6 @@ enum ShellMenuBuilder {
             .closeAgent,
         ]),
         (.run, [
-            .reviewG1Proposal,
-            .approveG1Package,
             .reviewG2Candidate,
             .approveG2Candidate,
             nil,

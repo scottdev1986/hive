@@ -4,7 +4,7 @@
     "id": "run_00000000-0000-7000-8000-0000000000a0",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_00000000-0000-7000-8000-0000000000a0",
       "entityRevision": "0",
       "root": {
@@ -27,11 +27,6 @@
         "reason": "unmeasured",
         "detail": "no TopologyDecision supplied"
       },
-      "g1": {
-        "availability": "absent",
-        "reason": "unmeasured",
-        "detail": "no Run record supplied"
-      },
       "g2": {
         "availability": "absent",
         "reason": "unmeasured",
@@ -49,7 +44,7 @@
     "id": "run_00000000-0000-7000-8000-0000000000a0:tasks",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_00000000-0000-7000-8000-0000000000a0",
       "entityRevision": "0",
       "tasks": {
@@ -64,7 +59,7 @@
     "id": "run_00000000-0000-7000-8000-0000000000a0:budget",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_00000000-0000-7000-8000-0000000000a0",
       "entityRevision": "0",
       "limits": {
@@ -79,7 +74,7 @@
     "id": "run_00000000-0000-7000-8000-0000000000a0:reviews",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_00000000-0000-7000-8000-0000000000a0",
       "entityRevision": "0",
       "reviews": {
@@ -94,7 +89,7 @@
     "id": "run_00000000-0000-7000-8000-0000000000a0:incident",
     "entityRevision": "0",
     "projection": {
-      "schemaVersion": 2,
+      "schemaVersion": 3,
       "runId": "run_00000000-0000-7000-8000-0000000000a0",
       "entityRevision": "0",
       "runDecision": {

@@ -302,9 +302,9 @@ describe("hive_run_bootstrap", () => {
     expect(baseSha).toBe(
       required(store.getRun(bootstrap.runId), "run").baseSha,
     );
-    // The run states this spec but has not approved it, which is why the ref
-    // cannot simply be read off Run.approvedSpec.
-    expect(store.getRun(bootstrap.runId)?.approvedSpec).toBeNull();
+    // The returned ref is the one the Run itself points at, so a task created
+    // from these inputs cites exactly what admission will fence on.
+    expect(store.getRun(bootstrap.runId)?.spec).toEqual(specRevision);
   });
 
   test("a second call returns the same root instead of opening another", async () => {
@@ -330,7 +330,7 @@ describe("hive_run_bootstrap", () => {
     expect(new HierarchyStore(db).listRuns()).toHaveLength(1);
   });
 
-  test("the run it opens grants nothing: G1 pending and a zero budget", async () => {
+  test("the run it opens declares no spend: a zero budget in every dimension", async () => {
     const { daemon, db } = harness();
 
     const bootstrap = bootstrapOf(
@@ -339,9 +339,7 @@ describe("hive_run_bootstrap", () => {
 
     const store = new HierarchyStore(db);
     const run = required(store.getRun(bootstrap.runId), "run");
-    expect(run.g1).toEqual({ state: "pending" });
     expect(run.g2).toEqual({ state: "pending" });
-    expect(run.approvedSpec).toBeNull();
     const budget = required(
       store.getRunBudget(bootstrap.runId, run.budget.revision),
       "budget",
@@ -422,10 +420,11 @@ describe("hive_run_bootstrap", () => {
     expect(JSON.stringify(afterTasks?.projection)).toContain("completed");
   });
 
-  test("a tracking task admits no spawn, because its run has no approved G1", async () => {
+  test("a tracking task admits no spawn: the root node holds no task in scope", async () => {
     // The poison risk: a task on the board is a task admission can read. This
-    // asserts the refusal rather than assuming it — with the tracking task
-    // stored and named, preflight still refuses, and it refuses on the gate.
+    // asserts the refusal rather than assuming it, and names which fence does
+    // the work — run-create opens the root node with an empty taskScope, so a
+    // task nobody put in a node's scope is not spawnable under it.
     const { daemon, db } = harness();
     const token = queenToken(daemon);
     const store = new HierarchyStore(db);
@@ -452,13 +451,9 @@ describe("hive_run_bootstrap", () => {
         },
         "lead-coordination",
       ),
-    ).toThrow(SpawnAdmissionError);
-    expect(() =>
-      new SpawnAdmission(store).preflight(
-        { runId: bootstrap.runId, taskId: task.taskId },
-        "lead-coordination",
-      ),
-    ).toThrow(`hierarchy Run ${bootstrap.runId} has no approved G1`);
+    ).toThrow(
+      `Task ${task.taskId} is not in an active lead-coordination node for Run ${bootstrap.runId}`,
+    );
   });
 
   test("a writer and a reader are refused; only the orchestrator may open a run", async () => {

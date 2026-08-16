@@ -95,8 +95,7 @@ export class HierarchyService {
     this.boundaryWriter = options.writeBoundaryCheckpoint;
     this.runControl = new RunControl(this.store, (accepted, after) => {
       this.recordBoundary(
-        accepted.body.operation === "approve-g1" ||
-          accepted.body.operation === "approve-g2"
+        accepted.body.operation === "approve-g2"
           ? "gate-transition"
           : "run-control",
         after,

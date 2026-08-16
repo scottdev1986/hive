@@ -78,8 +78,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
     case terminateTerminal = "terminate-terminal"
     case acknowledgeAttention = "acknowledge-attention"
     case closeAgent = "close-agent"
-    case reviewG1Proposal = "review-g1-proposal"
-    case approveG1Package = "approve-g1-package"
     case reviewG2Candidate = "review-g2-candidate"
     case approveG2Candidate = "approve-g2-candidate"
     case pauseRun = "pause-run"
@@ -114,7 +112,7 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .attachLiveTerminal, .detachTerminalView, .pauseProvider, .resumeProvider,
              .stopProvider, .terminateTerminal, .acknowledgeAttention, .closeAgent:
             return .agent
-        case .reviewG1Proposal, .approveG1Package, .reviewG2Candidate, .approveG2Candidate,
+        case .reviewG2Candidate, .approveG2Candidate,
              .pauseRun, .resumeRun, .redirectThroughQueen, .abortRun:
             return .run
         case .memoryOverview, .memoryLibrary, .memoryRecallLab, .newCuratedMemory,
@@ -154,8 +152,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .terminateTerminal: return "Terminate Terminal…"
         case .acknowledgeAttention: return "Acknowledge Attention"
         case .closeAgent: return "Close Agent…"
-        case .reviewG1Proposal: return "Review G1 Proposal…"
-        case .approveG1Package: return "Approve G1 Package…"
         case .reviewG2Candidate: return "Review G2 Candidate…"
         case .approveG2Candidate: return "Approve G2 SHA…"
         case .pauseRun: return "Pause Run…"
@@ -231,8 +227,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .terminateTerminal: return .intent(.terminateTerminal)
         case .acknowledgeAttention: return .intent(.acknowledgeAttention)
         case .closeAgent: return .intent(.closeAgentCascade)
-        case .reviewG1Proposal: return .intent(.reviewG1Proposal)
-        case .approveG1Package: return .intent(.approveG1Package)
         case .reviewG2Candidate: return .intent(.reviewG2Candidate)
         case .approveG2Candidate: return .intent(.approveG2Candidate)
         case .pauseRun: return .intent(.pauseRun)

@@ -78,7 +78,7 @@ type CheckedAuthority = {
   fields: HierarchySpawnFields;
   grant: DelegationGrant;
   planRevision: PlanRevision;
-  run: Run & { g1: Extract<Run["g1"], { state: "approved" }> };
+  run: Run;
   specRevision: SpecRevision;
   task: TaskDetail;
 };
@@ -205,7 +205,7 @@ export class SpawnAdmission {
       const content: SpawnBriefContent = {
         briefId: BriefIdSchema.parse(this.makeBriefId()),
         engineerConstraints: {
-          specRevision: checked.run.g1.spec,
+          specRevision: checked.run.spec,
           excerpts: briefInput.engineerConstraints.excerpts,
         },
         computedPointers: {
@@ -384,20 +384,13 @@ export class SpawnAdmission {
         `hierarchy Run ${fields.runId} does not exist`,
       );
     }
-    const g1 = run.g1;
-    if (g1.state !== "approved" || run.approvedSpec === null) {
-      throw new SpawnAdmissionError(
-        `hierarchy Run ${fields.runId} has no approved G1`,
-      );
-    }
-    const approvedRun = { ...run, g1 };
     const specRevision = this.store.getSpecRevision(
       fields.runId,
-      g1.spec.revision,
+      run.spec.revision,
     );
-    if (specRevision === null || specRevision.digest !== g1.spec.digest) {
+    if (specRevision === null || specRevision.digest !== run.spec.digest) {
       throw new SpawnAdmissionError(
-        `hierarchy Run ${fields.runId} has no stored approved SpecRevision`,
+        `hierarchy Run ${fields.runId} has no stored SpecRevision`,
       );
     }
     const planRevision = this.store.getPlanRevision(
@@ -412,9 +405,9 @@ export class SpawnAdmission {
         `hierarchy Run ${fields.runId} has no stored current PlanRevision`,
       );
     }
-    if (!sameJson(run.approvedSpec, g1.spec) || run.lifecycle !== "active") {
+    if (run.lifecycle !== "active") {
       throw new SpawnAdmissionError(
-        `hierarchy Run ${fields.runId} is not active under its approved G1 (${ABORTED_RUN_ADMISSION_SEAM})`,
+        `hierarchy Run ${fields.runId} is not active (${ABORTED_RUN_ADMISSION_SEAM})`,
       );
     }
     if (fields.runEpoch === undefined) {
@@ -473,7 +466,7 @@ export class SpawnAdmission {
     }
     const spec = fields.delegationSpec;
     if (
-      !sameJson(spec.inputs.specRevision, g1.spec) ||
+      !sameJson(spec.inputs.specRevision, run.spec) ||
       !sameJson(spec.inputs.planRevision, run.currentPlan) ||
       !spec.inputs.taskRevisions.some(
         (ref) => ref.taskId === task.taskId && ref.revision === task.revision,
@@ -532,7 +525,7 @@ export class SpawnAdmission {
       fields,
       grant,
       planRevision,
-      run: approvedRun,
+      run,
       specRevision,
       task,
     };
@@ -660,7 +653,7 @@ export class SpawnAdmission {
       !brief.engineerConstraints.excerpts.every((excerpt) =>
         permittedExcerpts.has(excerpt),
       ) ||
-      !sameJson(brief.engineerConstraints.specRevision, checked.run.g1.spec) ||
+      !sameJson(brief.engineerConstraints.specRevision, checked.run.spec) ||
       !sameJson(brief.computedPointers.planRevision, {
         revision: checked.planRevision.revision,
         digest: checked.planRevision.digest,

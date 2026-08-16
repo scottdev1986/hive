@@ -345,81 +345,6 @@ public struct HierarchyRun: Codable, Equatable, Sendable {
         case aborted
     }
 
-    public enum G1State: Codable, Equatable, Sendable {
-        public struct Approval: Codable, Equatable, Sendable {
-            public let decider: String
-            public let decidedAt: String
-            public let spec: HierarchyRevisionRef
-            public let plan: HierarchyRevisionRef
-            public let topology: HierarchyRevisionRef
-            public let budget: HierarchyRevisionRef
-        }
-
-        case pending
-        case approved(Approval)
-
-        private enum State: String, Codable {
-            case pending
-            case approved
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case state
-            case decider
-            case decidedAt
-            case spec
-            case plan
-            case topology
-            case budget
-        }
-
-        public init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            switch try container.decode(State.self, forKey: .state) {
-            case .pending:
-                if let key = [
-                    CodingKeys.decider,
-                    .decidedAt,
-                    .spec,
-                    .plan,
-                    .topology,
-                    .budget,
-                ].first(where: container.contains) {
-                    throw DecodingError.dataCorruptedError(
-                        forKey: key,
-                        in: container,
-                        debugDescription: "pending G1 state cannot carry approval fields")
-                }
-                self = .pending
-            case .approved:
-                self = .approved(Approval(
-                    decider: try container.decode(String.self, forKey: .decider),
-                    decidedAt: try container.decode(String.self, forKey: .decidedAt),
-                    spec: try container.decode(HierarchyRevisionRef.self, forKey: .spec),
-                    plan: try container.decode(HierarchyRevisionRef.self, forKey: .plan),
-                    topology: try container.decode(
-                        HierarchyRevisionRef.self, forKey: .topology),
-                    budget: try container.decode(HierarchyRevisionRef.self, forKey: .budget)))
-            }
-        }
-
-        public func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            switch self {
-            case .pending:
-                try container.encode(State.pending, forKey: .state)
-            case .approved(let approval):
-                try container.encode(State.approved, forKey: .state)
-                try container.encode(approval.decider, forKey: .decider)
-                try container.encode(approval.decidedAt, forKey: .decidedAt)
-                try container.encode(approval.spec, forKey: .spec)
-                try container.encode(approval.plan, forKey: .plan)
-                try container.encode(approval.topology, forKey: .topology)
-                try container.encode(approval.budget, forKey: .budget)
-            }
-        }
-    }
-
     public enum G2State: Codable, Equatable, Sendable {
         public struct Approval: Codable, Equatable, Sendable {
             public let decider: String
@@ -501,11 +426,10 @@ public struct HierarchyRun: Codable, Equatable, Sendable {
     public let revision: String
     public let repo: String
     public let instanceId: String
-    public let approvedSpec: HierarchyRevisionRef?
+    public let spec: HierarchyRevisionRef
     public let currentPlan: HierarchyRevisionRef
     public let topology: HierarchyRevisionRef
     public let phase: Phase
-    public let g1: G1State
     public let g2: G2State
     public let baseSha: String
     public let budget: HierarchyRevisionRef
@@ -517,11 +441,10 @@ public struct HierarchyRun: Codable, Equatable, Sendable {
         case revision
         case repo
         case instanceId
-        case approvedSpec
+        case spec
         case currentPlan
         case topology
         case phase
-        case g1
         case g2
         case baseSha
         case budget
@@ -535,9 +458,9 @@ public struct HierarchyRun: Codable, Equatable, Sendable {
         revision = try container.decode(String.self, forKey: .revision)
         repo = try container.decode(String.self, forKey: .repo)
         instanceId = try container.decode(String.self, forKey: .instanceId)
-        approvedSpec = try container.decodeRequiredNullable(
+        spec = try container.decode(
             HierarchyRevisionRef.self,
-            forKey: .approvedSpec)
+            forKey: .spec)
         currentPlan = try container.decode(
             HierarchyRevisionRef.self,
             forKey: .currentPlan)
@@ -545,7 +468,6 @@ public struct HierarchyRun: Codable, Equatable, Sendable {
             HierarchyRevisionRef.self,
             forKey: .topology)
         phase = try container.decode(Phase.self, forKey: .phase)
-        g1 = try container.decode(G1State.self, forKey: .g1)
         g2 = try container.decode(G2State.self, forKey: .g2)
         baseSha = try container.decode(String.self, forKey: .baseSha)
         budget = try container.decode(
@@ -561,11 +483,10 @@ public struct HierarchyRun: Codable, Equatable, Sendable {
         try container.encode(revision, forKey: .revision)
         try container.encode(repo, forKey: .repo)
         try container.encode(instanceId, forKey: .instanceId)
-        try container.encode(approvedSpec, forKey: .approvedSpec)
+        try container.encode(spec, forKey: .spec)
         try container.encode(currentPlan, forKey: .currentPlan)
         try container.encode(topology, forKey: .topology)
         try container.encode(phase, forKey: .phase)
-        try container.encode(g1, forKey: .g1)
         try container.encode(g2, forKey: .g2)
         try container.encode(baseSha, forKey: .baseSha)
         try container.encode(budget, forKey: .budget)

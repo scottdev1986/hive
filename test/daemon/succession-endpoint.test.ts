@@ -689,11 +689,10 @@ describe("a succession through the production paths", () => {
       revision: "1",
       repo: "hive",
       instanceId: "instance-fixture",
-      approvedSpec: null,
+      spec: ref,
       currentPlan: ref,
       topology: ref,
       phase: "P1",
-      g1: { state: "pending" },
       g2: { state: "pending" },
       baseSha: "f".repeat(40),
       budget: ref,
@@ -828,7 +827,7 @@ describe("a succession through the production paths", () => {
       hierarchy: {
         runId: string;
         phase: string;
-        gates: { g1: string; g2: string };
+        gates: { g2: string };
         tasks: Array<{ taskId: string; revision: string; digest: string }>;
         decisions: Array<{
           idempotencyKey: string;
@@ -847,10 +846,7 @@ describe("a succession through the production paths", () => {
     expect(checkpoint.reason).toEqual("run-control");
     expect(checkpoint.hierarchy?.runId).toEqual(runId);
     expect(checkpoint.hierarchy?.phase).toEqual("P1");
-    expect(checkpoint.hierarchy?.gates).toEqual({
-      g1: "pending",
-      g2: "pending",
-    });
+    expect(checkpoint.hierarchy?.gates).toEqual({ g2: "pending" });
     // The refs the schema promises are really bound from the live records,
     // by identity and whole-record digest: the task, the stage, the artifact
     // ids — and the pause decision itself, by idempotency key and the run

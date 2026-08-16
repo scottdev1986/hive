@@ -254,11 +254,11 @@ export class SuccessionService {
     return {
       hierarchy: {
         runId: run.runId,
-        approvedSpec: run.approvedSpec,
+        spec: run.spec,
         plan: run.currentPlan,
         topology: run.topology,
         phase: run.phase,
-        gates: { g1: run.g1.state, g2: run.g2.state },
+        gates: { g2: run.g2.state },
         budget: run.budget,
         tasks: tasks.map((task) => ({
           taskId: task.taskId,

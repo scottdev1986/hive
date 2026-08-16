@@ -59,11 +59,10 @@ function validRun(overrides: Partial<Run> = {}): Run {
     revision: "1",
     repo: "hive",
     instanceId: "instance-1",
-    approvedSpec: null,
+    spec: { revision: "1", digest: specDigest },
     currentPlan: { revision: "1", digest: planDigest },
     topology: { revision: "1", digest: topologyDigest },
     phase: "P0",
-    g1: { state: "pending" },
     g2: { state: "pending" },
     baseSha,
     budget: { revision: "1", digest: budgetDigest },
@@ -277,17 +276,6 @@ function seed(store: HierarchyStore, run: Run = validRun()): void {
   );
 }
 
-const g1Body = (overrides: Partial<RunControlBody> = {}): RunControlBody =>
-  ({
-    operation: "approve-g1",
-    runId,
-    spec: { revision: "1", digest: specDigest },
-    plan: { revision: "1", digest: planDigest },
-    topology: { revision: "1", digest: topologyDigest },
-    budget: { revision: "1", digest: budgetDigest },
-    ...overrides,
-  }) as RunControlBody;
-
 const g2Body = (overrides: Partial<RunControlBody> = {}): RunControlBody =>
   ({
     operation: "approve-g2",
@@ -315,15 +303,6 @@ const intent = (
   body,
 });
 
-/** G2 is only reachable after G1, so its fixtures start from an approved G1. */
-function seedThroughG1(): void {
-  seed(store);
-  const approved = control.apply(intent(g1Body()), "engineer");
-  if (approved.outcome.status !== "accepted") {
-    throw new Error("G1 fixture did not approve");
-  }
-}
-
 let db: HiveDatabase;
 let store: HierarchyStore;
 let control: RunControl;
@@ -338,185 +317,10 @@ afterEach(() => {
   db.close();
 });
 
-describe("G1 binds the exact proposal package", () => {
-  test("the exact package is approved and recorded fact by fact", () => {
-    seed(store);
-    const result = control.apply(intent(g1Body()), "engineer");
-
-    expect(result.outcome.status).toBe("accepted");
-    const run = store.getRun(runId);
-    expect(run?.g1).toEqual({
-      state: "approved",
-      decider: "engineer",
-      decidedAt: expect.any(String),
-      spec: { revision: "1", digest: specDigest },
-      plan: { revision: "1", digest: planDigest },
-      topology: { revision: "1", digest: topologyDigest },
-      budget: { revision: "1", digest: budgetDigest },
-    });
-    expect(run?.approvedSpec).toEqual({ revision: "1", digest: specDigest });
-    expect(run?.revision).toBe("2");
-  });
-
-  // One test per bound fact: each moves exactly one digest and must be the
-  // reason the approval is refused.
-  for (const drift of [
-    { fact: "spec", body: { spec: { revision: "1", digest: strangeDigest } } },
-    { fact: "plan", body: { plan: { revision: "1", digest: strangeDigest } } },
-    {
-      fact: "topology",
-      body: { topology: { revision: "1", digest: strangeDigest } },
-    },
-    {
-      fact: "budget",
-      body: { budget: { revision: "1", digest: strangeDigest } },
-    },
-  ]) {
-    test(`a drifted ${drift.fact} digest is refused and nothing is approved`, () => {
-      seed(store);
-      const result = control.apply(intent(g1Body(drift.body)), "engineer");
-
-      expect(result.outcome).toEqual({
-        status: "rejected",
-        failure: {
-          code: RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-          message: expect.stringContaining(drift.fact),
-        },
-      });
-      expect(store.getRun(runId)?.g1.state).toBe("pending");
-      expect(store.getRun(runId)?.revision).toBe("1");
-    });
-  }
-
-  test("a bound revision that was never written is refused", () => {
-    seed(store);
-    const result = control.apply(
-      intent(g1Body({ plan: { revision: "9", digest: planDigest } })),
-      "engineer",
-    );
-
-    expect(result.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-        message: expect.stringContaining("plan revision 9 does not exist"),
-      },
-    });
-  });
-
-  test("an approval built before the run moved is refused on revision", () => {
-    seed(store);
-    store.putRun({ ...validRun(), revision: "2", phase: "P1" }, "1");
-
-    const result = control.apply(intent(g1Body()), "engineer");
-
-    expect(result.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.revisionConflict,
-        message: expect.stringContaining("run is at 2"),
-      },
-    });
-  });
-
-  test("an approval built before the epoch moved is refused on epoch", () => {
-    seed(store);
-    store.advanceRunEpoch(runId, 0);
-
-    const result = control.apply(intent(g1Body()), "engineer");
-
-    expect(result.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.epochConflict,
-        message: expect.stringContaining("run is at 1"),
-      },
-    });
-  });
-
-  test("a gate is decided once", () => {
-    seed(store);
-    control.apply(intent(g1Body()), "engineer");
-
-    const again = control.apply(intent(g1Body(), "2"), "engineer");
-
-    expect(again.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.gateAlreadyDecided,
-        message: expect.stringContaining("G1"),
-      },
-    });
-  });
-
-  // A superseded revision is still a stored record with a valid digest, so the
-  // stored-digest checks above cannot see this: only the run's own pointers can.
-  for (const fact of ["plan", "topology", "budget"] as const) {
-    test(`approving a superseded ${fact} while the run points elsewhere is refused`, () => {
-      seed(store);
-      const supersededDigest = digestOf("9");
-      if (fact === "plan") {
-        store.putPlanRevision(
-          { ...validPlan(), revision: "2", digest: supersededDigest },
-          0,
-        );
-      } else if (fact === "topology") {
-        store.putTopologyDecision({
-          ...validTopology(),
-          revision: "2",
-          digest: supersededDigest,
-        });
-      } else {
-        store.putRunBudget(
-          { ...validBudget(), revision: "2", digest: supersededDigest },
-          0,
-        );
-      }
-      const moved = {
-        ...validRun(),
-        revision: "2",
-        [fact === "plan" ? "currentPlan" : fact]: {
-          revision: "2",
-          digest: supersededDigest,
-        },
-      };
-      store.putRun(moved, "1");
-
-      // The intent still names revision 1: a real record, correct digest, and
-      // no longer the revision execution follows.
-      const result = control.apply(intent(g1Body(), "2"), "engineer");
-
-      expect(result.outcome).toEqual({
-        status: "rejected",
-        failure: {
-          code: RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-          message: expect.stringContaining("not the run's active revision"),
-        },
-      });
-      expect(store.getRun(runId)?.g1.state).toBe("pending");
-    });
-  }
-
-  test("a paused run cannot have its gate approved", () => {
-    seed(store);
-    control.apply(intent({ operation: "run-pause", runId }), "engineer");
-
-    const result = control.apply(intent(g1Body(), "2", "1"), "engineer");
-
-    expect(result.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.lifecycleInvalid,
-        message: expect.stringContaining("paused"),
-      },
-    });
-  });
-});
-
 describe("G2 binds the exact assembled candidate", () => {
   test("the exact SHA, digest, evidence, and base are approved", () => {
-    seedThroughG1();
-    const result = control.apply(intent(g2Body(), "2"), "engineer");
+    seed(store);
+    const result = control.apply(intent(g2Body()), "engineer");
 
     expect(result.outcome.status).toBe("accepted");
     expect(store.getRun(runId)?.g2).toEqual({
@@ -537,8 +341,8 @@ describe("G2 binds the exact assembled candidate", () => {
     { fact: "target-main base", body: { targetMainBase: otherSha } },
   ]) {
     test(`a drifted ${drift.fact} is refused and nothing is approved`, () => {
-      seedThroughG1();
-      const result = control.apply(intent(g2Body(drift.body), "2"), "engineer");
+      seed(store);
+      const result = control.apply(intent(g2Body(drift.body)), "engineer");
 
       expect(result.outcome).toEqual({
         status: "rejected",
@@ -552,7 +356,7 @@ describe("G2 binds the exact assembled candidate", () => {
   }
 
   test("an approval of a stage that has since moved is refused", () => {
-    seedThroughG1();
+    seed(store);
     const approvalOfTheStageAsRead = g2Body();
     store.putIntegrationStage(
       validStage({ revision: "2", queueHighWater: 1 }),
@@ -560,7 +364,7 @@ describe("G2 binds the exact assembled candidate", () => {
     );
 
     const result = control.apply(
-      intent(approvalOfTheStageAsRead, "2"),
+      intent(approvalOfTheStageAsRead),
       "engineer",
     );
 
@@ -571,20 +375,6 @@ describe("G2 binds the exact assembled candidate", () => {
         message: expect.stringContaining("run-stage digest"),
       },
     });
-  });
-
-  test("G2 cannot be approved while G1 is still pending", () => {
-    seed(store);
-    const result = control.apply(intent(g2Body()), "engineer");
-
-    expect(result.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.gateOutOfOrder,
-        message: expect.stringContaining("before G1"),
-      },
-    });
-    expect(store.getRun(runId)?.g2.state).toBe("pending");
   });
 
   test("a stage that moves after the check is caught before the write", () => {
@@ -609,10 +399,9 @@ describe("G2 binds the exact assembled candidate", () => {
     const racing = new StageMovesMidDecision(db);
     const racingControl = new RunControl(racing);
     seed(racing);
-    racingControl.apply(intent(g1Body()), "engineer");
     racing.armed = true;
 
-    const result = racingControl.apply(intent(g2Body(), "2"), "engineer");
+    const result = racingControl.apply(intent(g2Body()), "engineer");
 
     expect(racing.moved).toBe(true);
     expect(result.outcome).toEqual({
@@ -719,22 +508,22 @@ describe("pause, resume, and abort move the run epoch", () => {
 describe("every result carries what the client needs to continue", () => {
   test("an accepted result carries operation id, post-state token, and state", () => {
     seed(store);
-    const result = control.apply(intent(g1Body()), "engineer");
+    const result = control.apply(intent(g2Body()), "engineer");
 
-    expect(result.intentId).toBe("intent-approve-g1");
+    expect(result.intentId).toBe("intent-approve-g2");
     expect(result.operationId.length).toBeGreaterThan(0);
     expect(result.postStateToken).toEqual({
       kind: "revision-and-epoch",
       revision: "2",
       epoch: "0",
     });
-    expect(result.observedPostState.g1.state).toBe("approved");
+    expect(result.observedPostState.g2.state).toBe("approved");
   });
 
   test("a rejected result carries the state that stayed in force", () => {
     seed(store);
     const result = control.apply(
-      intent(g1Body({ spec: { revision: "1", digest: strangeDigest } })),
+      intent(g2Body({ digest: strangeDigest })),
       "engineer",
     );
 
@@ -744,12 +533,12 @@ describe("every result carries what the client needs to continue", () => {
       revision: "1",
       epoch: "0",
     });
-    expect(result.observedPostState.g1.state).toBe("pending");
+    expect(result.observedPostState.g2.state).toBe("pending");
     expect(result.observedPostState.revision).toBe("1");
   });
 
   test("an intent naming no stored run has no state to observe", () => {
-    expect(() => control.apply(intent(g1Body()), "engineer")).toThrow(
+    expect(() => control.apply(intent(g2Body()), "engineer")).toThrow(
       RunNotFoundError,
     );
   });
@@ -799,15 +588,15 @@ describe("an idempotency key buys exactly one decision", () => {
   test("a refusal spends no key: it is decided again from live state", () => {
     seed(store);
     const refused = control.apply(
-      intent(g1Body({ spec: { revision: "1", digest: strangeDigest } })),
+      intent(g2Body({ digest: strangeDigest })),
       "engineer",
     );
 
     expect(refused.outcome.status).toBe("rejected");
-    expect(store.getRunControlDecision("key-approve-g1-1-0")).toBeNull();
+    expect(store.getRunControlDecision("key-approve-g2-1-0")).toBeNull();
     // Positive control: an accepted decision under the same shape IS recorded.
-    control.apply(intent(g1Body()), "engineer");
-    expect(store.getRunControlDecision("key-approve-g1-1-0")).not.toBeNull();
+    control.apply(intent(g2Body()), "engineer");
+    expect(store.getRunControlDecision("key-approve-g2-1-0")).not.toBeNull();
   });
 });
 
@@ -821,7 +610,7 @@ describe("a lost race is a refusal, never a server fault", () => {
     const racing = new LosesTheWrite(db);
     seed(store);
 
-    const result = new RunControl(racing).apply(intent(g1Body()), "engineer");
+    const result = new RunControl(racing).apply(intent(g2Body()), "engineer");
 
     expect(result.outcome).toEqual({
       status: "rejected",
@@ -831,7 +620,7 @@ describe("a lost race is a refusal, never a server fault", () => {
       },
     });
     expect(result.observedPostState.revision).toBe("1");
-    expect(store.getRun(runId)?.g1.state).toBe("pending");
+    expect(store.getRun(runId)?.g2.state).toBe("pending");
   });
 
   test("a failed transition leaves no half-applied epoch behind", () => {
@@ -925,8 +714,9 @@ describe("run-create", () => {
     expect(result.outcome).toEqual({ status: "accepted" });
     const run = store.getRun(runId);
     expect(run).not.toBeNull();
-    // The package the user supplied is stored and the run points at it, so
-    // approve-g1 has real records to bind rather than dangling references.
+    // The package the user supplied is stored and the run points at every
+    // record in it, so admission fences on real revisions rather than on
+    // dangling references.
     expect(store.getSpecRevision(runId, "1")).not.toBeNull();
     expect(store.getPlanRevision(runId, "1")).not.toBeNull();
     expect(store.getTopologyDecision(runId, "1")).not.toBeNull();
@@ -947,26 +737,16 @@ describe("run-create", () => {
     });
   });
 
-  test("grants nothing: G1 stays pending while the root principal exists", () => {
+  test("points the run at its own spec while the root principal exists", () => {
     control.apply(createIntent(), "engineer");
 
     const run = store.getRun(runId);
-    expect(run?.g1).toEqual({ state: "pending" });
     expect(run?.g2).toEqual({ state: "pending" });
-    expect(run?.approvedSpec).toBeNull();
+    expect(run?.spec).toEqual({ revision: "1", digest: specDigest });
     // The root principal is not a spawned agent binding. Genesis records the
     // stable root seat without manufacturing an agents-table row.
     expect(store.findBindingsByNode(rootNodeId)).toEqual([]);
     expect(store.getRootBinding(runId)?.nodeId).toBe(rootNodeId);
-  });
-
-  test("the created run is the one approve-g1 can then approve", () => {
-    control.apply(createIntent(), "engineer");
-
-    const approved = control.apply(intent(g1Body()), "engineer");
-
-    expect(approved.outcome).toEqual({ status: "accepted" });
-    expect(store.getRun(runId)?.g1.state).toBe("approved");
   });
 
   test("a second create of the same run is refused, not applied twice", () => {
@@ -1136,7 +916,7 @@ describe("run-delegate", () => {
     RunControlIntentSchema.parse({
       schemaVersion: 1,
       intentId: "intent-run-delegate",
-      expected: { kind: "revision-and-epoch", revision: "2", epoch: "0" },
+      expected: { kind: "revision-and-epoch", revision: "1", epoch: "0" },
       idempotencyKey: "key-run-delegate",
       body,
     });
@@ -1145,7 +925,7 @@ describe("run-delegate", () => {
   // grant bounds every grant that attenuates below it, so a scope nobody chose
   // would make the whole chain vacuous while still looking enforced.
   test("refuses a root grant with no path scope", () => {
-    seedThroughG1();
+    seed(store);
     const body = delegateBody();
     const stripped = {
       ...body,
@@ -1167,7 +947,7 @@ describe("run-delegate", () => {
 
   // DIRECTION TWO: supplied, it is stored and the chain attenuates from it.
   test("writes node, task and grant, and the chain attenuates from the scope", () => {
-    seedThroughG1();
+    seed(store);
 
     const result = control.apply(delegateIntent(), "engineer");
 
@@ -1200,34 +980,8 @@ describe("run-delegate", () => {
     ).toThrow();
   });
 
-  // run-create grants nothing, and this is where that is felt: a run whose
-  // package no engineer has approved cannot be delegated into.
-  test("refuses to delegate into a run whose G1 is not approved", () => {
-    seed(store);
-
-    const result = control.apply(
-      RunControlIntentSchema.parse({
-        schemaVersion: 1,
-        intentId: "intent-run-delegate",
-        expected: { kind: "revision-and-epoch", revision: "1", epoch: "0" },
-        idempotencyKey: "key-ungated",
-        body: delegateBody(),
-      }),
-      "engineer",
-    );
-
-    expect(result.outcome).toEqual({
-      status: "rejected",
-      failure: {
-        code: RUN_CONTROL_FAILURE_CODES.gateNotApproved,
-        message: expect.stringContaining("no approved G1"),
-      },
-    });
-    expect(store.getGrant(grantId)).toBeNull();
-  });
-
   test("a genesis root grant carries its worker identity into spawn admission", () => {
-    seedThroughG1();
+    seed(store);
     const delegated = control.apply(delegateIntent(), "engineer");
     expect(delegated.outcome).toEqual({ status: "accepted" });
 
@@ -1255,7 +1009,7 @@ describe("run-delegate", () => {
   });
 
   test("refuses a delegation issued from any node but the run root", () => {
-    seedThroughG1();
+    seed(store);
     const body = delegateBody();
     const forged = {
       ...body,

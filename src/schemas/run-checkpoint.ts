@@ -120,12 +120,11 @@ export const CheckpointStageRefSchema = z.strictObject({
 /** The hierarchy state a checkpoint names, entirely by identity, revision, and digest refs. Null for a flat instance with no hierarchy run: a checkpoint there still binds the agent snapshot and pending messages. The dependent-record arrays bind exactly the records the store holds for the run: tasks, accepted run-control decisions, and the promotion queue. Tree-mutation records — ownership transfers — are deliberately NOT checkpoint content: they are their own record family with their own recovery flow, and the tree's current shape is re-read from the store, so a checkpoint never carries them. */
 export const CheckpointHierarchySchema = z.strictObject({
   runId: RunIdSchema,
-  approvedSpec: RevisionRefSchema.nullable(),
+  spec: RevisionRefSchema,
   plan: RevisionRefSchema,
   topology: RevisionRefSchema,
   phase: RunPhaseSchema,
   gates: z.strictObject({
-    g1: z.enum(GATE_STATES),
     g2: z.enum(GATE_STATES),
   }),
   budget: RevisionRefSchema,

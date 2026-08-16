@@ -135,19 +135,10 @@ const validRun = {
   revision: "1",
   repo: "hive",
   instanceId: "instance-1",
-  approvedSpec: { revision: "1", digest },
+  spec: { revision: "1", digest },
   currentPlan: { revision: "1", digest },
   topology: { revision: "1", digest },
   phase: "P1" as const,
-  g1: {
-    state: "approved" as const,
-    decider: "engineer",
-    decidedAt: createdAt,
-    spec: { revision: "1", digest },
-    plan: { revision: "1", digest },
-    topology: { revision: "1", digest },
-    budget: { revision: "1", digest },
-  },
   g2: { state: "pending" as const },
   baseSha: gitSha,
   budget: { revision: "1", digest },
@@ -318,44 +309,6 @@ describe("RunSchema", () => {
     expect(RunSchema.safeParse({ ...validRun, phase: "P7" }).success).toBe(
       false,
     );
-  });
-
-  test("an approved G1 binds spec/plan/topology/budget as exact revision+digest pairs", () => {
-    const parsed = RunSchema.parse(validRun);
-    if (parsed.g1.state !== "approved")
-      throw new Error("fixture must be approved");
-    expect(parsed.g1.spec).toEqual({ revision: "1", digest });
-    expect(parsed.g1.plan).toEqual({ revision: "1", digest });
-    expect(parsed.g1.topology).toEqual({ revision: "1", digest });
-    expect(parsed.g1.budget).toEqual({ revision: "1", digest });
-  });
-
-  test("rejects a free-form G1 package instead of exact revision+digest refs", () => {
-    const broken = {
-      ...validRun,
-      g1: {
-        state: "approved" as const,
-        decider: "engineer",
-        decidedAt: createdAt,
-        spec: "the spec I approved verbally",
-        plan: { revision: "1", digest },
-        topology: { revision: "1", digest },
-        budget: { revision: "1", digest },
-      },
-    };
-    expect(RunSchema.safeParse(broken).success).toBe(false);
-  });
-
-  test("a pending G1 carries no decider or package", () => {
-    expect(
-      RunSchema.safeParse({ ...validRun, g1: { state: "pending" } }).success,
-    ).toBe(true);
-    expect(
-      RunSchema.safeParse({
-        ...validRun,
-        g1: { state: "pending", decider: "engineer" },
-      }).success,
-    ).toBe(false);
   });
 
   test("G2 approval binds the exact run-stage SHA, digest, evidence, and target base", () => {

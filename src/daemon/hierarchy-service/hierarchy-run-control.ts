@@ -1,4 +1,4 @@
-// Run control: the engineer's G1/G2 gate decisions and pause/resume/abort. Every write goes through HierarchyStore, so the store's compare-and-swap and its three authority fences stay the only concurrency control. This module adds one rule on top: an approval binds exact facts, and it is refused the moment any bound fact no longer matches stored state. A refusal is a normal result carrying the state that stayed in force, not an exception. Pause and abort advance runEpoch, which is what makes in-flight work holding the prior epoch fail its fence check on the next authority-bearing write. Resume advances it again so work reconciled during the pause cannot resume under the epoch it was suspended at.
+// Run control: the engineer's G2 gate decision and pause/resume/abort. Every write goes through HierarchyStore, so the store's compare-and-swap and its three authority fences stay the only concurrency control. This module adds one rule on top: an approval binds exact facts, and it is refused the moment any bound fact no longer matches stored state. A refusal is a normal result carrying the state that stayed in force, not an exception. Pause and abort advance runEpoch, which is what makes in-flight work holding the prior epoch fail its fence check on the next authority-bearing write. Resume advances it again so work reconciled during the pause cannot resume under the epoch it was suspended at.
 
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -8,7 +8,6 @@ import {
 } from "../../schemas/hierarchy-run";
 import type { IntegrationStage } from "../../schemas/integration-stage";
 import {
-  type ApproveG1Body,
   type ApproveG2Body,
   type MutationFailure,
   RUN_CONTROL_FAILURE_CODES,
@@ -141,7 +140,7 @@ export class RunControl {
     return result;
   }
 
-  /** Genesis: the one intent whose run does not exist yet. Everything the run needs is written in ONE transaction, in the order the store's own fences require: the spec and topology first because they are append-only and fence on nothing, then the Run — which is what seeds hierarchy_fences — then the plan and budget, which assert the run epoch the Run just established, then the root node and its stable principal. It approves nothing. G1 is written pending, so no spawn is admissible until an engineer approves the package. The root principal is not an AgentBinding and creates no agents-table row; it only makes the queen's pre-existing root capability resolvable to this run's root node. */
+  /** Genesis: the one intent whose run does not exist yet. Everything the run needs is written in ONE transaction, in the order the store's own fences require: the spec and topology first because they are append-only and fence on nothing, then the Run — which is what seeds hierarchy_fences — then the plan and budget, which assert the run epoch the Run just established, then the root node and its stable principal. The Run points at every record in the caller's package, spec included, so spawn admission fences on exactly the revisions named here. The root principal is not an AgentBinding and creates no agents-table row; it only makes the queen's pre-existing root capability resolvable to this run's root node. */
   private createRun(
     intent: RunControlIntent,
     body: RunCreateBody,
@@ -167,11 +166,10 @@ export class RunControl {
           revision: "1",
           repo: body.repo,
           instanceId: body.instanceId,
-          approvedSpec: null,
+          spec: ref(body.spec),
           currentPlan: ref(body.plan),
           topology: ref(body.topology),
           phase: "P0",
-          g1: { state: "pending" },
           g2: { state: "pending" },
           baseSha: body.baseSha,
           budget: ref(body.budget),
@@ -280,8 +278,6 @@ export class RunControl {
     }
 
     switch (intent.body.operation) {
-      case "approve-g1":
-        return this.checkG1(intent.body, run);
       case "approve-g2":
         return this.checkG2(intent.body, run);
       case "run-pause":
@@ -307,12 +303,6 @@ export class RunControl {
   ): MutationFailure | null {
     const gate = admits(run, ["active"], "delegate");
     if (gate !== null) return gate;
-    if (run.g1.state !== "approved") {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateNotApproved,
-        `run ${run.runId} has no approved G1, so it cannot be delegated into`,
-      );
-    }
     const wire = runDelegateWireRefusal(body);
     if (wire !== null) {
       return fail(RUN_CONTROL_FAILURE_CODES.delegationInvalid, wire);
@@ -347,68 +337,6 @@ export class RunControl {
     return null;
   }
 
-  private checkG1(body: ApproveG1Body, run: Run): MutationFailure | null {
-    const gate = admits(run, ["active"], "approve G1");
-    if (gate !== null) return gate;
-    if (run.g1.state !== "pending") {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateAlreadyDecided,
-        "G1 is already approved",
-      );
-    }
-    const bound = [
-      [
-        "spec",
-        body.spec,
-        this.store.getSpecRevision(run.runId, body.spec.revision),
-      ],
-      [
-        "plan",
-        body.plan,
-        this.store.getPlanRevision(run.runId, body.plan.revision),
-      ],
-      [
-        "topology",
-        body.topology,
-        this.store.getTopologyDecision(run.runId, body.topology.revision),
-      ],
-      [
-        "budget",
-        body.budget,
-        this.store.getRunBudget(run.runId, body.budget.revision),
-      ],
-    ] as const;
-    for (const [fact, ref, stored] of bound) {
-      if (stored === null) {
-        return fail(
-          RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-          `${fact} revision ${ref.revision} does not exist`,
-        );
-      }
-      if (stored.digest !== ref.digest) {
-        return fail(
-          RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-          `${fact} revision ${ref.revision} is ${stored.digest}, not ${ref.digest}`,
-        );
-      }
-    }
-    // The package must also be the one the run is actually pointing at. Approving an older revision while execution follows a newer one is the exact drift a gate exists to stop, and the stored digests above cannot see it: an old revision is still a valid record.
-    const active = [
-      ["plan", body.plan, run.currentPlan],
-      ["topology", body.topology, run.topology],
-      ["budget", body.budget, run.budget],
-    ] as const;
-    for (const [fact, ref, pointer] of active) {
-      if (ref.revision !== pointer.revision || ref.digest !== pointer.digest) {
-        return fail(
-          RUN_CONTROL_FAILURE_CODES.gateFactDrift,
-          `${fact} is not the run's active revision ${pointer.revision}`,
-        );
-      }
-    }
-    return null;
-  }
-
   private checkG2(body: ApproveG2Body, run: Run): MutationFailure | null {
     const gate = admits(run, ["active"], "approve G2");
     if (gate !== null) return gate;
@@ -416,13 +344,6 @@ export class RunControl {
       return fail(
         RUN_CONTROL_FAILURE_CODES.gateAlreadyDecided,
         "G2 is already approved",
-      );
-    }
-    // G2 approves the assembly of work G1 authorized. Without G1 there is no approved package for the candidate to be an assembly of, and a run could reach main having never passed the first gate.
-    if (run.g1.state !== "approved") {
-      return fail(
-        RUN_CONTROL_FAILURE_CODES.gateOutOfOrder,
-        "G2 cannot be approved before G1",
       );
     }
     const stage =
@@ -477,25 +398,6 @@ export class RunControl {
     const decidedAt = new Date().toISOString();
     const body = intent.body;
     switch (body.operation) {
-      case "approve-g1":
-        this.store.putRun(
-          {
-            ...run,
-            revision: nextRevision(run.revision),
-            approvedSpec: body.spec,
-            g1: {
-              state: "approved",
-              decider,
-              decidedAt,
-              spec: body.spec,
-              plan: body.plan,
-              topology: body.topology,
-              budget: body.budget,
-            },
-          },
-          run.revision,
-        );
-        return null;
       case "approve-g2": {
         // The stage digest covers the whole stage record, its revision included, so re-deriving it here refuses any stage write that landed between the check and this line.
         const stage =

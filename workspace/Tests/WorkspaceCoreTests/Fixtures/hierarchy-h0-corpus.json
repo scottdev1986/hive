@@ -221,7 +221,7 @@
         "revision": "1",
         "repo": "hive",
         "instanceId": "instance-fixture",
-        "approvedSpec": {
+        "spec": {
           "revision": "1",
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
@@ -234,27 +234,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g1": {
-          "state": "approved",
-          "decider": "engineer",
-          "decidedAt": "2026-07-30T20:00:00.000Z",
-          "spec": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "plan": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "topology": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "budget": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          }
-        },
         "g2": {
           "state": "pending"
         },
@@ -502,7 +481,7 @@
         "revision": "1",
         "repo": "hive",
         "instanceId": "instance-fixture",
-        "approvedSpec": {
+        "spec": {
           "revision": "1",
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
@@ -515,27 +494,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g1": {
-          "state": "approved",
-          "decider": "engineer",
-          "decidedAt": "2026-07-30T20:00:00.000Z",
-          "spec": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "plan": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "topology": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "budget": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          }
-        },
         "g2": {
           "state": "pending"
         },
@@ -774,7 +732,7 @@
         "revision": "1",
         "repo": "hive",
         "instanceId": "instance-fixture",
-        "approvedSpec": {
+        "spec": {
           "revision": "1",
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
@@ -787,27 +745,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g1": {
-          "state": "approved",
-          "decider": "engineer",
-          "decidedAt": "2026-07-30T20:00:00.000Z",
-          "spec": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "plan": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "topology": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "budget": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          }
-        },
         "g2": {
           "state": "pending"
         },
@@ -1061,7 +998,7 @@
         "revision": "1",
         "repo": "hive",
         "instanceId": "instance-fixture",
-        "approvedSpec": {
+        "spec": {
           "revision": "1",
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
@@ -1074,27 +1011,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g1": {
-          "state": "approved",
-          "decider": "engineer",
-          "decidedAt": "2026-07-30T20:00:00.000Z",
-          "spec": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "plan": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "topology": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "budget": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          }
-        },
         "g2": {
           "state": "pending"
         },
@@ -1336,7 +1252,7 @@
         "revision": "1",
         "repo": "hive",
         "instanceId": "instance-fixture",
-        "approvedSpec": {
+        "spec": {
           "revision": "1",
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
@@ -1349,27 +1265,6 @@
           "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         "phase": "P1",
-        "g1": {
-          "state": "approved",
-          "decider": "engineer",
-          "decidedAt": "2026-07-30T20:00:00.000Z",
-          "spec": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "plan": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "topology": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          },
-          "budget": {
-            "revision": "1",
-            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-          }
-        },
         "g2": {
           "state": "pending"
         },
