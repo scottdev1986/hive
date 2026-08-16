@@ -156,6 +156,7 @@ async function removeOwnedSkillCopy(
   directory: string,
   displayPath: string,
   shippedContent: string,
+  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
@@ -168,9 +169,9 @@ async function removeOwnedSkillCopy(
     );
     return;
   }
-  const tracking = Bun.spawnSync(
+  const tracking = await run(
     ["git", "-C", root, "ls-files", "--error-unmatch", "--", displayPath],
-    { stdout: "ignore", stderr: "ignore" },
+    { cwd: root, timeoutMs: 5_000 },
   );
   if (tracking.exitCode === 0) {
     log(`Left ${displayPath}: it is tracked by Git, so it is yours.`);
@@ -187,6 +188,7 @@ async function removeOwnedSkillCopy(
 /** Remove the base skills Hive installed into `.hive/skills`, where they sit beside the user's own. Only byte-identical, untracked copies are Hive's to remove; an edited or tracked one is the user's and is reported instead, and their own skills are never candidates at all — a name Hive does not ship is not looked at. */
 async function removeBaseSkills(
   root: string,
+  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const skillsRoot = join(root, ".hive", "skills");
@@ -200,6 +202,7 @@ async function removeBaseSkills(
         directory,
         relativePath,
         skill.content,
+        run,
         log,
       );
     }
@@ -218,6 +221,7 @@ async function removeBaseSkills(
 async function removeShippedSkills(
   root: string,
   tool: SkillTool,
+  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const nativeDirectory = nativeSkillDirectory(tool);
@@ -232,6 +236,7 @@ async function removeShippedSkills(
       directory,
       join(nativeDirectory, skill.name),
       skill.content,
+      run,
       log,
     );
   }
@@ -315,10 +320,10 @@ export async function runUninstallRepo(
     );
     return 1;
   }
-  await removeBaseSkills(root, deps.log);
+  await removeBaseSkills(root, deps.run, deps.log);
   // Remove byte-identical Hive skills from vendor directories too.
   for (const tool of CAPABILITY_PROVIDERS) {
-    await removeShippedSkills(root, tool, deps.log);
+    await removeShippedSkills(root, tool, deps.run, deps.log);
   }
   const repaired = await repairLeakedProjectConfig(root);
   for (const path of repaired) deps.log(`Removed Hive's entries from ${path}.`);
