@@ -45,8 +45,9 @@ mac_archive() {
 }
 
 validate_manifest_files() {
-  local expected relative actual
+  local expected relative actual found=0
   while IFS=$'\t' read -r expected relative; do
+    found=1
     [[ -n "$relative" && -f "$artifact/$relative" ]] || return 1
     actual=$(/usr/bin/shasum -a 256 "$artifact/$relative" | /usr/bin/awk '{ print $1 }')
     [[ "$actual" == "$expected" ]] || return 1
@@ -54,6 +55,7 @@ validate_manifest_files() {
     /usr/bin/plutil -convert json -o - "$artifact/artifact-manifest.json" \
       | /usr/bin/jq -r '.files[] | select(.path | startswith("GhosttyKit.xcframework/") or startswith("checkpoint-fixtures/")) | "\(.sha256)\t\(.path)"'
   )
+  [[ $found -eq 1 ]]
 }
 
 validate_artifact() {
