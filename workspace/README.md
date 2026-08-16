@@ -44,15 +44,21 @@ The shipped executable does not link those hooks.
 
 ## Run and verify
 
-`GhosttyKit.xcframework` is gitignored build output. Materialize it at
-`workspace/Vendor/GhosttyKit.xcframework` before running SwiftPM. The repository
-build tooling owns that staging step; do not commit the framework.
+`GhosttyKit.xcframework` and Gate 6's checkpoint fixtures are gitignored build
+output. Materialize both from the shared, lock-validated native cache before
+running SwiftPM; the command builds them with the existing native builder only
+when that cache is absent or invalid. Do not commit either artifact.
 
 ```sh
+scripts/native/stage-ghosttykit.sh
 cd workspace
 swift build
 swift test
 ```
+
+`make stage-ghosttykit` runs the same staging path. The staging command verifies
+a host-usable macOS archive plus the exact Gate 6 corpus inputs after copying;
+`--verify` checks an existing stage without changing it.
 
 To exercise the frozen Shell proof through the built QA binary:
 
