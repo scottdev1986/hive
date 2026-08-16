@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { DatabaseHost } from "../../shared/database-host";
+import type { CapabilityProvider } from "../../schemas/capability";
 import {
   type HandoffBundle,
   HandoffBundleSchema,
@@ -726,7 +727,8 @@ export class RuntimeStore {
           this.recordRunOutcome({
             decisionId: exited.launchGrantId,
             providerRunId: exited.runId,
-            provider: exited.provider,
+            // A worker run (agentId !== null, checked above) always carries a provider — enforced by ProviderRunSchema's refinement, not just this call site.
+            provider: exited.provider as CapabilityProvider,
             model: exited.model,
             taskCategory: agent.category,
             outcome:

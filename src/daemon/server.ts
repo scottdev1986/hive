@@ -214,6 +214,7 @@ import { DaemonLog, logAlertDeliveryFailure } from "./observability/daemon-log";
 import { ObservabilityService } from "./observability/observability-service";
 import type { OrchestratorHostStatus } from "./orchestrator-host/orchestrator-host-contract";
 import {
+  HeadlessOrchestratorSessiondLaunchSchema,
   OrchestratorSessiondController,
   OrchestratorSessiondLaunchSchema,
 } from "./orchestrator-host/sessiond-controller";
@@ -2298,6 +2299,12 @@ export class HiveDaemon {
       return this.orchestratorSessionEndpoint(url, request);
     }
     if (
+      url.pathname === "/orchestrator-session/headless" &&
+      request.method === "POST"
+    ) {
+      return this.orchestratorSessionHeadlessEndpoint(request);
+    }
+    if (
       url.pathname === "/queen-provider" &&
       (request.method === "GET" || request.method === "POST")
     ) {
@@ -2734,6 +2741,45 @@ export class HiveDaemon {
       return json(
         {
           error: error instanceof Error ? error.message : "queen launch failed",
+        },
+        { status: 409 },
+      );
+    }
+  }
+
+  /** `POST /orchestrator-session/headless` — opens a root with no vendor process attached: a real sessiond-backed shell, verified live and idle, with an agentId=null provider run bound to it. Same authority gate as a vendor launch (`agent:spawn`) and the same one-generation discipline (orchestratorSessiond enforces both) — this only changes what runs inside the terminal, never who may open one or how many may be open. */
+  private async orchestratorSessionHeadlessEndpoint(
+    request: Request,
+  ): Promise<Response> {
+    const route = "/orchestrator-session/headless";
+    const authorized = this.authorizeRoute(request, route, "agent:spawn", {
+      auditAllow: true,
+    });
+    if (!authorized.ok) return authorized.response;
+    if (this.orchestratorSessiond === null) {
+      return json(
+        { error: "the sessiond queen host is unavailable" },
+        { status: 503 },
+      );
+    }
+    const parsed = await this.parseJsonBody(
+      request,
+      HeadlessOrchestratorSessiondLaunchSchema,
+    );
+    if (!parsed.ok) return parsed.response;
+    try {
+      // Deliberately no pending-provider-change reconciliation here, unlike the sibling vendor POST: a headless root satisfies no vendor desire, so a pending change must survive to be honoured when a vendor root next opens, and with no provider on this launch to compare, the vendor path's condition would fire unconditionally and tear down the root just opened.
+      const snapshot = await this.orchestratorSessiond.startHeadless(
+        parsed.data,
+      );
+      return json(snapshot);
+    } catch (error) {
+      return json(
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "headless queen launch failed",
         },
         { status: 409 },
       );

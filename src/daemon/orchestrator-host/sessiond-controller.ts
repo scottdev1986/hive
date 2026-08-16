@@ -1,6 +1,9 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { CapabilityProviderSchema } from "../../schemas/capability";
+import {
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "../../schemas/capability";
 import type { ProviderRun } from "../../schemas/provider-run";
 import { domainUuidV7Schema } from "../../schemas/session-protocol";
 import {
@@ -39,6 +42,21 @@ export const OrchestratorSessiondLaunchSchema = z
 
 export type OrchestratorSessiondLaunch = z.infer<
   typeof OrchestratorSessiondLaunchSchema
+>;
+
+/** A headless root: a real sessiond-backed shell with no vendor CLI launched inside it — the same session model every provider is stopped down to (shell-session.ts's "leave an ordinary login zsh behind"), just started there directly rather than reached by stopping a provider. No provider/argv/expectedExecutable: there is no vendor to name. */
+export const HeadlessOrchestratorSessiondLaunchSchema = z
+  .strictObject({
+    requestId: domainUuidV7Schema("req"),
+    providerRunId: z.string().uuid(),
+    cwd: z.string().min(1).refine(isAbsolute, "cwd must be absolute"),
+    environment: z.record(z.string(), z.string()).readonly(),
+    targetGeneration: z.number().int().nonnegative().optional(),
+  })
+  .readonly();
+
+export type HeadlessOrchestratorSessiondLaunch = z.infer<
+  typeof HeadlessOrchestratorSessiondLaunchSchema
 >;
 
 export const OrchestratorSessiondSnapshotSchema = z
@@ -81,6 +99,19 @@ const INHERITED_OBSERVATION_FAILURE_TIMEOUT_MS = 95_000;
 
 type HostOrigin = "managed" | "inherited";
 
+/** The one shape createSession() needs, whether the caller is a vendor-backed start() or a headless startHeadless(): a headless launch simply supplies provider/model/effort as null and a shell built from an empty command. */
+interface SessionCreateParams {
+  requestId: string;
+  providerRunId: string;
+  cwd: string;
+  environment: Readonly<Record<string, string>>;
+  targetGeneration?: number;
+  provider: CapabilityProvider | null;
+  shell: ShellSessionLaunch;
+  model: string | null;
+  effort: string | null;
+}
+
 /** Owns the one root provider generation. Creation is private: no locator is published until the host and its durable binding both exist. */
 export class OrchestratorSessiondController {
   private current: OrchestratorSessiondSnapshot | null = null;
@@ -110,16 +141,63 @@ export class OrchestratorSessiondController {
   async start(
     input: OrchestratorSessiondLaunch,
   ): Promise<OrchestratorSessiondSnapshot> {
-    if (this.current?.requestId === input.requestId) return this.current;
-    if (this.starting?.requestId === input.requestId)
+    return await this.startGeneration(input.requestId, (signal) =>
+      this.createSession(
+        {
+          requestId: input.requestId,
+          providerRunId: input.providerRunId,
+          cwd: input.cwd,
+          environment: input.environment,
+          targetGeneration: input.targetGeneration,
+          provider: input.provider,
+          shell: shellSessionLaunch(shellJoin(input.argv)),
+          model: input.model ?? null,
+          effort: input.effort ?? null,
+        },
+        "unmanaged",
+        signal,
+      ),
+    );
+  }
+
+  /** Opens a headless root: same one-generation discipline, locator, binding, session creation, and exit-monitor machinery as a vendor start() — createSession() is the one path both go through. The only thing that differs is what "ready" means: a vendor launch waits for a foreign process to take the foreground ("unmanaged"); a headless root has none to wait for, so it waits for the foreground to settle on the shell itself ("shell-idle") — the same state a stopped provider already leaves behind. */
+  async startHeadless(
+    input: HeadlessOrchestratorSessiondLaunch,
+  ): Promise<OrchestratorSessiondSnapshot> {
+    return await this.startGeneration(input.requestId, (signal) =>
+      this.createSession(
+        {
+          requestId: input.requestId,
+          providerRunId: input.providerRunId,
+          cwd: input.cwd,
+          environment: input.environment,
+          targetGeneration: input.targetGeneration,
+          provider: null,
+          shell: shellSessionLaunch(""),
+          model: null,
+          effort: null,
+        },
+        "shell-idle",
+        signal,
+      ),
+    );
+  }
+
+  /** The one-root-generation guard, shared verbatim by every way a root can be opened: at most one launch in flight, at most one running root, regardless of what is behind it. */
+  private async startGeneration(
+    requestId: string,
+    creator: (signal: AbortSignal) => Promise<OrchestratorSessiondSnapshot>,
+  ): Promise<OrchestratorSessiondSnapshot> {
+    if (this.current?.requestId === requestId) return this.current;
+    if (this.starting?.requestId === requestId)
       return await this.starting.promise;
     if (this.starting !== null || this.current?.state === "running") {
       throw new Error("a queen sessiond generation is already active");
     }
     this.inputReady = false;
     const abort = new AbortController();
-    const promise = this.create(input, abort.signal);
-    this.starting = { requestId: input.requestId, promise, abort };
+    const promise = creator(abort.signal);
+    this.starting = { requestId, promise, abort };
     return await promise.finally(() => {
       if (this.starting?.promise === promise) this.starting = null;
     });
@@ -183,8 +261,10 @@ export class OrchestratorSessiondController {
     });
   }
 
-  private async create(
-    input: OrchestratorSessiondLaunch,
+  /** The one path every root's session comes up through, vendor-backed or headless. readiness is parameterised rather than hardcoded: "the root is ready" no longer means "a vendor process arrived" (create()'s old, transport-coupled definition), it means "the session reached the caller-named foreground state" — unmanaged for a vendor launch, shell-idle for a headless one. Bind, wait loop, ProviderRun insert, error handling, and the exit-monitor reap are the same code for both; only that one predicate and the params it reads (provider/model/effort, which stay null for a headless root) differ. */
+  private async createSession(
+    params: SessionCreateParams,
+    expectedForeground: "unmanaged" | "shell-idle",
     signal: AbortSignal,
   ): Promise<OrchestratorSessiondSnapshot> {
     let locator: OrchestratorSessiondSnapshot["locator"] | null = null;
@@ -199,7 +279,7 @@ export class OrchestratorSessiondController {
         throw new Error("queen sessiond creation canceled");
       }
       locator = mintRootSessiondLocator({
-        requestId: input.requestId,
+        requestId: params.requestId,
         instanceId: this.dependencies.instanceId,
         engineBuildId: policy.engineBuildId,
         bindings: this.dependencies.bindings.listTerminalHostBindings(
@@ -207,20 +287,19 @@ export class OrchestratorSessiondController {
         ),
       });
       if (
-        input.targetGeneration !== undefined &&
-        locator.generation !== input.targetGeneration
+        params.targetGeneration !== undefined &&
+        locator.generation !== params.targetGeneration
       ) {
         throw new Error(
-          `queen launch names generation ${input.targetGeneration}; durable bindings require ${locator.generation}`,
+          `queen launch names generation ${params.targetGeneration}; durable bindings require ${locator.generation}`,
         );
       }
       const existing =
         this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
       let hostOrigin: HostOrigin = "inherited";
       if (existing?.createEvidence === undefined) {
-        const shell = shellSessionLaunch(shellJoin(input.argv));
         const created = await this.dependencies.terminalHost.create(
-          this.sessionSpec(input, locator, policy.geometry, shell),
+          this.sessionSpec(params, locator, policy.geometry),
           { locator, visibility: policy.visibility },
         );
         createdInspection = created.inspection;
@@ -233,14 +312,14 @@ export class OrchestratorSessiondController {
         ) === null
       ) {
         let inspection: SessionInspection | null =
-          createdInspection?.foreground.state === "unmanaged"
+          createdInspection?.foreground.state === expectedForeground
             ? createdInspection
             : null;
         for (let attempt = 0; attempt < 40; attempt += 1) {
           if (inspection !== null) break;
           const candidate =
             await this.dependencies.terminalHost.inspect(locator);
-          if (candidate.foreground.state === "unmanaged") {
+          if (candidate.foreground.state === expectedForeground) {
             inspection = candidate;
             break;
           }
@@ -249,22 +328,22 @@ export class OrchestratorSessiondController {
         }
         if (
           inspection === null ||
-          inspection.foreground.state !== "unmanaged"
+          inspection.foreground.state !== expectedForeground
         ) {
           throw new Error(
-            "queen provider launch has no new foreground process identity",
+            `queen sessiond launch never reached its expected foreground (${expectedForeground})`,
           );
         }
         this.dependencies.providerRuns.insertProviderRun({
-          runId: input.providerRunId,
+          runId: params.providerRunId,
           agentId: null,
           terminal: locator,
-          provider: input.provider,
-          model: input.model ?? null,
-          effort: input.effort ?? null,
+          provider: params.provider,
+          model: params.model,
+          effort: params.effort,
           conversationId: null,
           capabilityEpoch: 0,
-          launchGrantId: input.requestId,
+          launchGrantId: params.requestId,
           startedAt: inspection.evidenceAt,
           endedAt: null,
           adapterChild: null,
@@ -275,7 +354,7 @@ export class OrchestratorSessiondController {
       }
       if (signal.aborted) throw new Error("queen sessiond creation canceled");
       const ready: OrchestratorSessiondSnapshot = {
-        requestId: input.requestId,
+        requestId: params.requestId,
         locator,
         state: "running",
         exitCode: null,
@@ -285,7 +364,7 @@ export class OrchestratorSessiondController {
       const monitorAbort = new AbortController();
       this.abort = monitorAbort;
       void this.monitor(
-        input.requestId,
+        params.requestId,
         locator,
         hostOrigin,
         monitorAbort.signal,
@@ -471,27 +550,26 @@ export class OrchestratorSessiondController {
   }
 
   private sessionSpec(
-    input: OrchestratorSessiondLaunch,
+    params: SessionCreateParams,
     locator: OrchestratorSessiondSnapshot["locator"],
     geometry: SessionSpec["geometry"],
-    shell: ShellSessionLaunch,
   ): SessionSpec {
     return {
       schemaVersion: 1,
       locator,
-      provider: input.provider,
+      provider: params.provider,
       toolSessionId: null,
-      cwd: input.cwd,
-      argv: shell.argv,
+      cwd: params.cwd,
+      argv: params.shell.argv,
       environment: providerTerminalEnvironment({
         ...(this.dependencies.environment ?? process.env),
-        ...input.environment,
+        ...params.environment,
       }),
-      expectedExecutable: shell.expectedExecutable,
+      expectedExecutable: params.shell.expectedExecutable,
       readOnly: false,
       capabilityEpoch: 0,
       geometry,
-      launchGrantId: input.requestId,
+      launchGrantId: params.requestId,
       launchGrantRevision: 1,
     };
   }

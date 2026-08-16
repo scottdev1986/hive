@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { getAgentAdapter } from "../../adapters/providers/provider-registry";
 import type { AgentRecord } from "../../schemas/agent";
+import type { CapabilityProvider } from "../../schemas/capability";
 import type { HookEvent } from "../../schemas/event";
 import type { ProviderEvent } from "../../schemas/provider-communication";
 import type { HiveDatabase } from "../database/hive-database";
@@ -90,7 +91,8 @@ export function recordProviderHookEvent(
       )
       .digest("hex"),
     providerRunId: run.runId,
-    provider: run.provider,
+    // getActiveProviderRunForAgent is agent-scoped, so this is always a worker run and ProviderRunSchema's refinement guarantees a non-null provider for it.
+    provider: run.provider as CapabilityProvider,
     capabilityEpoch: run.capabilityEpoch,
     conversationId,
     kind: normalized.kind,

@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import type { CapabilityProvider } from "../../src/schemas/capability";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -304,7 +305,8 @@ describe("production liveness evidence", () => {
       expect(outcomes).toHaveLength(1);
       expect(outcomes[0]?.providerRunId).toBe(run.runId);
       expect(outcomes[0]?.decisionId).toBe(run.launchGrantId);
-      expect(outcomes[0]?.provider).toBe(run.provider);
+      // insertProviderRun always writes a worker row (agentId set), so provider is never null here.
+      expect(outcomes[0]?.provider).toBe(run.provider as CapabilityProvider);
       expect(outcomes[0]?.model).toBe("gpt-5.6-sol");
       expect(outcomes[0]?.taskCategory).toBe("complex_coding");
       expect(outcomes[0]?.outcome).toBe("crashed");

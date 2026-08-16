@@ -69,7 +69,8 @@ export const ProviderRunBindingSchema = z
     runId: z.string().uuid(),
     agentId: z.string().min(1).nullable(),
     terminal: SessionLocatorSchema,
-    provider: CapabilityProviderSchema,
+    /** Null only for a headless orchestrator root: no vendor process is attached. A worker run (agentId non-null) always has one — enforced below, not just by convention. */
+    provider: CapabilityProviderSchema.nullable(),
     model: z.string().min(1).nullable(),
     effort: z.string().min(1).nullable(),
     conversationId: z.string().min(1).nullable(),
@@ -102,6 +103,15 @@ export const ProviderRunSchema = z
         code: "custom",
         message: "an exited provider run requires endedAt",
         path: ["endedAt"],
+      });
+    }
+    // One-directional: a worker run always has a vendor. Only a root run (agentId null) may be headless (provider null) — this is what stops a worker from masquerading as a headless root at the type level, not just inside getActiveRootProviderRun.
+    if (run.agentId !== null && run.provider === null) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "a worker provider run must carry a provider; only a root run may be headless",
+        path: ["provider"],
       });
     }
   });

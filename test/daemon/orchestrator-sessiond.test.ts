@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
+  type HeadlessOrchestratorSessiondLaunch,
   OrchestratorSessiondController,
   type OrchestratorSessiondDependencies,
   type OrchestratorSessiondLaunch,
@@ -11,7 +13,10 @@ import type {
   HiveTerminalBinding,
   TerminalHostBindingStore,
 } from "../../src/daemon/session-host/terminal-host-binding";
-import type { ProviderRun } from "../../src/schemas/provider-run";
+import {
+  type ProviderRun,
+  ProviderRunSchema,
+} from "../../src/schemas/provider-run";
 import { required } from "../required";
 
 class MemoryBindings implements TerminalHostBindingStore {
@@ -193,7 +198,7 @@ function inspection(
 }
 
 function completeBinding(
-  bindings: MemoryBindings,
+  bindings: TerminalHostBindingStore,
   locator: HiveTerminalBinding["locator"],
 ): void {
   const value = inspection(locator, "present");
@@ -784,5 +789,215 @@ describe("OrchestratorSessiondController", () => {
     expect(resumed.locator).toEqual(firstLocator);
     expect(creates).toBe(1);
     expect(restarted.snapshot()?.state).toBe("exited");
+  });
+});
+
+// Headless root: task_01a00790-0305. Every control here reads
+// getActiveRootProviderRun off a REAL HiveDatabase, not a fake — the claim
+// under test is that the daemon's own dispatch gate accepts and later refuses
+// this row, not that a mock was configured to say so.
+const headlessLaunch: HeadlessOrchestratorSessiondLaunch = {
+  requestId: mintSessionRequestId(1_750_000_200_000),
+  providerRunId: "018f1e90-7b5a-7cc0-8000-0000000007b1",
+  cwd: "/repo",
+  environment: { HIVE_ROOT_FIXTURE: "1" },
+};
+
+/** A plain shell with nothing launched inside it never reaches "unmanaged" — that state means a foreign process took the foreground, which only a vendor launch produces. It settles at "shell-idle": the terminal's own foreground process group, matching exactly what shell-session.ts's SHELL_BOOTSTRAP leaves behind once eval runs nothing. */
+function shellIdleInspection(
+  locator: HiveTerminalBinding["locator"],
+  presence: SessionInspection["presence"],
+): SessionInspection {
+  return {
+    ...inspection(locator, presence),
+    foreground:
+      presence === "present"
+        ? { state: "shell-idle", runId: null }
+        : { state: "unknown", runId: null },
+  };
+}
+
+/** Wires OrchestratorSessiondController.startHeadless against a real, in-memory HiveDatabase so getActiveRootProviderRun is the genuine daemon query, not a fake. The fake terminalHost's reconcileProviderRun ends the run in that same real database exactly as HiveTerminalHostAdapter's does on a detected exit — simulating that reconciliation already ran, not re-testing it; HiveTerminalHostAdapter's own exit detection is pre-existing and out of this task's scope. */
+function headlessHarness(): Readonly<{
+  db: HiveDatabase;
+  controller: OrchestratorSessiondController;
+  finishExit: () => void;
+}> {
+  const db = new HiveDatabase(":memory:");
+  let exit:
+    | ((value: { kind: "managed-exit"; exitCode: number }) => void)
+    | null = null;
+  const controller = new OrchestratorSessiondController({
+    bindings: db,
+    instanceId: "instance-a",
+    providerRuns: db,
+    visibility: {
+      prepareAgentCreation: async () => ({
+        engineBuildId: "engine-a",
+        visibility,
+        geometry,
+      }),
+    },
+    terminalHost: {
+      create: async (spec, policy) => {
+        db.bindTerminalHostSession(policy);
+        completeBinding(db, policy.locator);
+        return {
+          locator: spec.locator,
+          inspection: shellIdleInspection(policy.locator, "present"),
+          created: true,
+        };
+      },
+      inspect: async (value) => shellIdleInspection(value, "present"),
+      reconcileProviderRun: (locator) => {
+        const run = db.getActiveProviderRunByTerminal(locator);
+        if (run === null) return null;
+        return db.endProviderRun(
+          run.runId,
+          "2026-08-16T02:00:00.000Z",
+          "provider-process-exited",
+        );
+      },
+      terminate: terminalTermination.terminate,
+      waitForExit: async () =>
+        await new Promise<{ kind: "managed-exit"; exitCode: number }>(
+          (resolve) => {
+            exit = resolve;
+          },
+        ),
+    },
+  });
+  return {
+    db,
+    controller,
+    finishExit: () => {
+      if (exit === null) throw new Error("monitor is not waiting");
+      exit({ kind: "managed-exit", exitCode: 0 });
+    },
+  };
+}
+
+describe("OrchestratorSessiondController headless root", () => {
+  test("POSITIVE: a headless root opens and is accepted by getActiveRootProviderRun", async () => {
+    const { db, controller } = headlessHarness();
+
+    const snapshot = await controller.startHeadless(headlessLaunch);
+    await settle();
+
+    expect(snapshot.state).toBe("running");
+    const accepted = db.getActiveRootProviderRun("instance-a");
+    expect(accepted).not.toBeNull();
+    expect(accepted?.agentId).toBeNull();
+    expect(accepted?.provider).toBeNull();
+    expect(accepted?.runId).toBe(headlessLaunch.providerRunId);
+  });
+
+  test("NEGATIVE (runtime): a worker run on the root's own terminal still cannot masquerade as the root", async () => {
+    const { db, controller } = headlessHarness();
+    const snapshot = await controller.startHeadless(headlessLaunch);
+    await settle();
+    const rootLocator = snapshot.locator;
+
+    // End the headless root's own run first: getActiveProviderRunByTerminal only
+    // ever returns one running row per terminal, so a worker impostor has to
+    // replace it, not sit beside it — the realistic shape of an attempted
+    // masquerade, not a contrived double-booking.
+    db.endProviderRun(
+      headlessLaunch.providerRunId,
+      "2026-08-16T02:00:00.000Z",
+      "provider-process-exited",
+    );
+    db.insertProviderRun({
+      runId: "018f1e90-7b5a-7cc0-8000-0000000007b2",
+      agentId: "worker-imposter",
+      terminal: rootLocator,
+      provider: "claude",
+      model: "claude-haiku-4-5-20251001",
+      effort: null,
+      conversationId: null,
+      adapterChild: null,
+      protocolReceipt: null,
+      capabilityEpoch: 0,
+      launchGrantId: "grant-imposter",
+      startedAt: "2026-08-16T02:00:01.000Z",
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    });
+
+    expect(db.getActiveRootProviderRun("instance-a")).toBeNull();
+  });
+
+  test("REAP: the headless root is refused by getActiveRootProviderRun once its shell process exits", async () => {
+    const { db, controller, finishExit } = headlessHarness();
+    await controller.startHeadless(headlessLaunch);
+    await settle();
+    expect(db.getActiveRootProviderRun("instance-a")).not.toBeNull();
+
+    finishExit();
+    await settle();
+
+    expect(controller.snapshot()?.state).toBe("exited");
+    expect(db.getActiveRootProviderRun("instance-a")).toBeNull();
+  });
+
+  test("NEGATIVE (schema, positive control included): ProviderRunSchema accepts a headless root and a normal worker row, and refuses a worker row with a null provider", async () => {
+    const rootLocator: HiveTerminalBinding["locator"] = {
+      schemaVersion: 1,
+      instanceId: "instance-a",
+      subject: { kind: "root" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-0000000007c1",
+      hostKind: "sessiond",
+      engineBuildId: "engine-a",
+    };
+    const workerLocator: HiveTerminalBinding["locator"] = {
+      ...rootLocator,
+      subject: { kind: "agent", agentId: "worker-schema-fixture" },
+    };
+    const base = {
+      runId: "018f1e90-7b5a-7cc0-8000-0000000007c2",
+      capabilityEpoch: 0,
+      model: null,
+      effort: null,
+      conversationId: null,
+      adapterChild: null,
+      protocolReceipt: null,
+      launchGrantId: "grant-schema-fixture",
+      startedAt: "2026-08-16T02:00:00.000Z",
+      endedAt: null,
+      state: "running" as const,
+      exitReason: null,
+    };
+
+    // Positive control: a loud fixture proving the parser can accept a headless
+    // root at all, so the refusal below is a real refusal and not a parser that
+    // never built anything.
+    expect(() =>
+      ProviderRunSchema.parse({
+        ...base,
+        agentId: null,
+        terminal: rootLocator,
+        provider: null,
+      }),
+    ).not.toThrow();
+    // Regression control: an ordinary worker row, provider set, is unaffected.
+    expect(() =>
+      ProviderRunSchema.parse({
+        ...base,
+        agentId: "worker-schema-fixture",
+        terminal: workerLocator,
+        provider: "claude",
+      }),
+    ).not.toThrow();
+    // The actual negative control: a worker row can never carry a null provider.
+    expect(() =>
+      ProviderRunSchema.parse({
+        ...base,
+        agentId: "worker-schema-fixture",
+        terminal: workerLocator,
+        provider: null,
+      }),
+    ).toThrow(/only a root run may be headless/);
   });
 });

@@ -1632,13 +1632,20 @@
           "additionalProperties": false
         },
         "provider": {
-          "type": "string",
-          "enum": [
-            "claude",
-            "codex",
-            "grok",
-            "kimi",
-            "opencode"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "claude",
+                "codex",
+                "grok",
+                "kimi",
+                "opencode"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "toolSessionId": {
@@ -8957,13 +8964,20 @@
           "additionalProperties": false
         },
         "provider": {
-          "type": "string",
-          "enum": [
-            "claude",
-            "codex",
-            "grok",
-            "kimi",
-            "opencode"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "claude",
+                "codex",
+                "grok",
+                "kimi",
+                "opencode"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "toolSessionId": {

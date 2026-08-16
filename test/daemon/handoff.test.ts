@@ -53,7 +53,7 @@ const agent: AgentRecord = {
   writeRevoked: true,
 };
 
-const run: ProviderRun = {
+const run = {
   runId: "018f1e90-7b5a-7cc0-8000-000000000211",
   agentId: agent.id,
   terminal,
@@ -74,7 +74,7 @@ const run: ProviderRun = {
   endedAt: "2026-07-25T01:10:00.000Z",
   state: "exited",
   exitReason: "provider-process-exited",
-};
+} satisfies ProviderRun;
 
 const memory: MemoryFact = {
   id: "handoff-fact",

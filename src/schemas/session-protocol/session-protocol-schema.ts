@@ -68,7 +68,8 @@ export const SessionSpecSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     locator: SessionLocatorSchema,
-    provider: SessionProtocolProviderSchema,
+    /** Null only for a headless orchestrator root's session: a plain shell with no vendor CLI launched inside it. Every vendor launch supplies one — enforced by its own input schema requiring a non-null provider, not by a refinement here. */
+    provider: SessionProtocolProviderSchema.nullable(),
     toolSessionId: z.string().min(1).nullable(),
     cwd: z.string().startsWith("/"),
     argv: z.tuple([z.string().min(1)], z.string()).readonly(),
