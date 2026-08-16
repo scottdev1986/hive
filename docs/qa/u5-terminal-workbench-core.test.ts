@@ -7,6 +7,7 @@ import {
   classifyViewerReadback,
   finalU5Result,
   reconcileSpawnRequests,
+  requireU5SpawnTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
   summarizeProviderOutcomes,
@@ -49,6 +50,23 @@ describe("U5 proof decisions", () => {
       releasePath: "/tmp/release",
       feedReceiptPath: "/tmp/feed-receipt",
     });
+  });
+
+  test("requires an externally supplied board task and never mints one", () => {
+    expect(() => requireU5SpawnTaskId({})).toThrow(
+      "U5 live spawn requires HIVE_QA_U5_TASK_ID; the harness does not mint a board task",
+    );
+    expect(() => requireU5SpawnTaskId({ HIVE_QA_U5_TASK_ID: "" })).toThrow(
+      "U5 live spawn requires HIVE_QA_U5_TASK_ID; the harness does not mint a board task",
+    );
+    expect(() =>
+      requireU5SpawnTaskId({ HIVE_QA_U5_TASK_ID: "not-a-task" }),
+    ).toThrow();
+    expect(
+      requireU5SpawnTaskId({
+        HIVE_QA_U5_TASK_ID: "task_01a00790-0301-7000-8000-000000000301",
+      }),
+    ).toBe("task_01a00790-0301-7000-8000-000000000301");
   });
 
   test("keeps incomplete auxiliary viewer readback unclaimed", () => {

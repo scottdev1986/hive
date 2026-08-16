@@ -55,6 +55,7 @@ import {
   classifyViewerReadback,
   finalU5Result,
   reconcileSpawnRequests,
+  requireU5SpawnTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
   summarizeProviderOutcomes,
@@ -268,6 +269,7 @@ if (sourceRoot !== scriptSourceRoot) {
 }
 
 const workspaceApp = requireU5WorkspaceApp(process.env);
+const spawnTaskId = requireU5SpawnTaskId(process.env);
 const appExecutablePath = realpathSync(workspaceApp.executablePath);
 if (
   !appExecutablePath.endsWith("/HiveWorkspace.app/Contents/MacOS/HiveWorkspace")
@@ -1487,7 +1489,12 @@ async function runProof(): Promise<Record<string, unknown>> {
     try {
       admission = await callTool(
         "hive_spawn",
-        { task, category: "simple_coding", readOnly: true },
+        {
+          task,
+          category: "simple_coding",
+          readOnly: true,
+          taskId: spawnTaskId,
+        },
         "agent",
         SpawnSummarySchema,
       );
