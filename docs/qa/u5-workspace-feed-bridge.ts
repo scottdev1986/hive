@@ -2,6 +2,7 @@
 // override. Terminal grants and rendering still use their production paths;
 // this process only avoids competing with the rig's daemon-lifetime owner.
 
+import { randomBytes } from "node:crypto";
 import { readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
@@ -10,6 +11,13 @@ import { SessionLocatorSchema } from "../../src/schemas/session-protocol";
 import { WorkspaceVisibilityInventoryInputSchema } from "../../src/daemon/session-host/workspace-visibility";
 import { requiredQaCoordinates } from "./qa-client";
 import { qaRepoRoot } from "./repo-root";
+import {
+  appendFeedStdinJournalEntry,
+  feedStdinJournalEntry,
+  openFeedStdinJournal,
+  requireFeedStdinRecorderAlive,
+  type FeedStdinJournal,
+} from "./u5-feed-stdin-journal";
 import {
   assertQaHomeFitsSocketPath,
   isIsolatedQaHomePath,
@@ -99,7 +107,8 @@ if (port !== coordinates.port) {
 }
 const readyPath = resolve(required("HIVE_QA_U5_APP_READY_PATH"));
 const receiptPath = resolve(required("HIVE_QA_U5_APP_FEED_RECEIPT"));
-for (const path of [readyPath, receiptPath]) {
+const journalPath = resolve(`${artifacts}/u5-feed-stdin-journal.json`);
+for (const path of [readyPath, receiptPath, journalPath]) {
   if (!path.startsWith(`${artifacts}/`)) {
     throw new Error(`feed bridge path is outside the rig artifacts: ${path}`);
   }
@@ -123,6 +132,14 @@ const agents = ready.agents.map((agent) => ({
 
 process.stdout.write(`${JSON.stringify({ v: 1, agents })}\n`);
 const accepted: Array<Record<string, unknown>> = [];
+let journal: FeedStdinJournal = openFeedStdinJournal(
+  randomBytes(8).toString("hex"),
+  new Date().toISOString(),
+);
+journal = appendFeedStdinJournalEntry(journal, journal.probe);
+writeReceipt(journalPath, journal);
+journal = JSON.parse(readFileSync(journalPath, "utf8")) as FeedStdinJournal;
+requireFeedStdinRecorderAlive(journal);
 writeReceipt(receiptPath, {
   schemaVersion: 1,
   state: "snapshot-emitted",
@@ -144,6 +161,11 @@ for await (const chunk of Bun.stdin.stream()) {
     const line = pending.slice(0, newline);
     pending = pending.slice(newline + 1);
     if (line.trim().length === 0) continue;
+    journal = appendFeedStdinJournalEntry(
+      journal,
+      feedStdinJournalEntry("stdin", line, new Date().toISOString()),
+    );
+    writeReceipt(journalPath, journal);
     const input = WorkspaceVisibilityInventoryInputSchema.parse(
       JSON.parse(line),
     );
