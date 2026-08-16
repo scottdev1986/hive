@@ -495,12 +495,9 @@ test("a spawn over a repo with no standards file uses the generic scaffold", asy
   }
 });
 
-// The regression guard for the move itself. The three golden files were written
-// by the spawner as it stood before the standards left it, and the baseline
-// standards file holds that spawner's constants verbatim. Feeding the old text
-// through the new assembly must reproduce the old prompt byte for byte:
-// anything else means the refactor changed the prompt, not just where its words
-// come from.
+// Assembly pin: baseline standards plus the current preamble must match the
+// captured prompts. The preamble changed with the team-role split; recapture
+// the goldens when that contract changes, not when live AGENT_STANDARDS.md does.
 describe("the move changed the source of the text and nothing else", () => {
   const golden = async (file: string): Promise<string> =>
     readFile(join(BASELINE, file), "utf8");
@@ -551,6 +548,13 @@ describe("artifact delivery convention", () => {
     "artifactId",
     "Full deliverables go into the artifact store",
   ] as const;
+  // The preamble now names artifactId too (work-lane status). The mutation
+  // must prove the *standards* sentences dropped, not that the word vanished.
+  const STANDARDS_ONLY_MARKERS = [
+    "hive_artifact_put",
+    "Full deliverables go into the artifact store",
+    "never the full findings prose in mail",
+  ] as const;
 
   test("Hive protocol names the store-vs-mail split", async () => {
     const protocol = textOf(
@@ -585,6 +589,9 @@ describe("artifact delivery convention", () => {
     for (const marker of CONVENTION_MARKERS) {
       expect(prompt).toContain(marker);
     }
+    for (const marker of STANDARDS_ONLY_MARKERS) {
+      expect(prompt).toContain(marker);
+    }
 
     // Mutation control: excise only the convention sentences (not whole
     // sections — Writer agents packs the landing gates on the same line) and
@@ -594,11 +601,11 @@ describe("artifact delivery convention", () => {
       .replace(/\n5\. Full deliverables go into the artifact store[^\n]*/, "")
       .replace(/ When you report completion or findings by mail[^.]*\./, "")
       .replace(
-        /5\. Store the full review body with `hive_artifact_put` first, then report with one durable hive_mail_publish message to queen \(lane "control"\): verdict \(APPROVE \/ REQUEST_CHANGES \/ NEEDS_DISCUSSION\), reviewed SHA, test evidence, the `artifactId`, and a short summary of blocking and non-blocking findings as path:line — never the full findings prose in mail\./,
-        '5. Report with one durable hive_mail_publish message to queen (lane "control"): verdict (APPROVE / REQUEST_CHANGES / NEEDS_DISCUSSION), reviewed SHA, test evidence, then blocking and non-blocking findings as path:line, each naming a concrete failure.',
+        /5\. Store the full review body with `hive_artifact_put` first, then report with one durable hive_mail_publish message to queen: verdict \(APPROVE \/ REQUEST_CHANGES \/ NEEDS_DISCUSSION\), reviewed SHA, test evidence, the `artifactId`, and a short summary of blocking and non-blocking findings as path:line — never the full findings prose in mail\./,
+        "5. Report with one durable hive_mail_publish message to queen: verdict (APPROVE / REQUEST_CHANGES / NEEDS_DISCUSSION), reviewed SHA, test evidence, then blocking and non-blocking findings as path:line, each naming a concrete failure.",
       );
     expect(stripped).not.toBe(live);
-    for (const marker of CONVENTION_MARKERS) {
+    for (const marker of STANDARDS_ONLY_MARKERS) {
       expect(stripped).not.toContain(marker);
     }
     // Positive control: the rest of each section still loads so a loader
@@ -615,9 +622,31 @@ describe("artifact delivery convention", () => {
       await loadAgentStandards(await rootHolding(stripped)),
       { tool: "claude", category: "code_review" },
     );
-    for (const marker of CONVENTION_MARKERS) {
+    for (const marker of STANDARDS_ONLY_MARKERS) {
       expect(mutated).not.toContain(marker);
     }
+  });
+});
+
+describe("team role split reaches the spawn prompt", () => {
+  test("status is work-lane; control is escalations; landing does not wait for GO", async () => {
+    const prompt = buildAgentPrompt(
+      "nina",
+      "Fix the parser.",
+      worktree,
+      "",
+      await loadAgentStandards(REPO_ROOT),
+      { tool: "claude", category: "simple_coding" },
+    );
+    expect(prompt).toContain("not a ticket desk");
+    expect(prompt).toContain("Do not wait for GO or a verify window");
+    expect(prompt).toContain("on the work lane");
+    expect(prompt).toContain(
+      "Use the control lane to queen only for a design fork",
+    );
+    expect(prompt).not.toContain(
+      'important findings to queen with hive_mail_publish on the "control" lane',
+    );
   });
 });
 

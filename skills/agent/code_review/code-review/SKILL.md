@@ -109,7 +109,7 @@ exactly what is unverified.
 
 ## Reporting findings
 
-Publish one durable control-lane message to the orchestrator with `hive_mail_publish`. Reference files
+Publish one durable message to queen with `hive_mail_publish`. APPROVE, and findings that do not ask for a hold, go on the `work` lane. A REQUEST_CHANGES or NEEDS_DISCUSSION that needs landing held goes on the `control` lane. Reference files
 as `path:line`; do not paste large diffs. If a finding is uncertain, say so —
 a wrong confident claim costs more than an honest maybe.
 

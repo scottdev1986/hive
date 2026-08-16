@@ -47,6 +47,7 @@ When editing existing code:
 Both stop at the same line:
 - The code must already be in front of you because of the task.
 - The fix must fit the diff a reviewer is reading and must not change behavior the task never asked about.
+- A format or lint refusal this repo's verification names is the tool's own edit — fix it as its own commit even if the file was not in the story; that is not hunting and not a scope expansion.
 - If it is larger than the task, reaches another agent's files, or changes behavior outside your task, report it to queen and do not start the refactor.
 - Unrelated dead code you never had to open is still mentioned, not deleted.
 

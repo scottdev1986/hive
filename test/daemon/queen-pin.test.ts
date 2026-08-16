@@ -49,6 +49,7 @@ describe("queen pin", () => {
     expect(QUEEN_PIN).toContain("tech lead");
     expect(QUEEN_PIN).toContain("architect");
     expect(QUEEN_PIN).toContain("do not implement");
+    expect(QUEEN_PIN).toContain("do not issue GO");
     expect(QUEEN_PIN).toContain("hierarchy board");
     expect(QUEEN_PIN).toContain("hive_task_list");
     expect(QUEEN_PIN).toContain("No spawn without a current taskId");

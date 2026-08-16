@@ -20,6 +20,8 @@ const WORKER_SKILLS = [
 /** Operational address patterns that must prefer queen (the systematic sweep). */
 const OPERATIONAL_QUEEN_MARKERS = [
   "to queen with `hive_mail_publish`",
+  "on the `work` lane",
+  "Do not wait for GO",
   "report to queen rather than grinding",
   "message queen naming the conflicting files",
   "message queen instead of retrying",
@@ -37,6 +39,7 @@ const FORBIDDEN_OPERATIONAL_ORCHESTRATOR = [
   "hold from the orchestrator",
   "wait for the orchestrator",
   "report it to the orchestrator",
+  "important findings to queen with `hive_mail_publish` on the `control` lane",
 ] as const;
 
 const repoRoot = join(import.meta.dir, "../..");

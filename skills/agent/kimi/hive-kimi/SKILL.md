@@ -37,18 +37,20 @@ Kimi reads `.agents/skills`, and so do Codex and Grok. In your worktree that dir
 
 ## Reporting
 - Your orchestrator is named queen. Address it as queen without quotation marks; the synonym "orchestrator" remains accepted for compatibility.
-- Send completion reports, blockers, and important findings to queen with `hive_mail_publish` on the `control` lane. Reference large artifacts by path — never paste them.
+- Queen is the project's lead, not a ticket desk. You own the story through `hive_land`. Do not wait for GO or a verify window.
+- Status, completions, and measurements go to queen with `hive_mail_publish` on the `work` lane — short summary plus artifactId. Same sender+topic merges. Do not wait for a reply.
+- Mail the teammate who owns an overlap first. Use the `control` lane to queen only for a design fork, a scope change, a rebase conflict, or an irreversible destroy/salvage decision.
 - At each safe point call `hive_mail_poll`, claim the control message with `hive_mail_claim`, and settle it with `hive_mail_complete` before resuming; use `hive_status` on demand.
 - Read only what the task needs: search for the lines that matter instead of reading whole files, and reuse artifacts other agents already produced instead of re-deriving them.
 - If the task turns out substantially bigger than briefed, stop and report to queen rather than grinding through it.
 
 ## Landing finished work
-Work isn't done until it's on `main`. When your task is complete and tests are green, land immediately — finished work left on your branch is lost work:
+Work isn't done until it's on `main`. When your task is complete and tests are green, land immediately — do not wait for queen to authorise the landing. Finished work left on your branch is lost work:
 
 1. Commit everything on your branch; never leave work uncommitted.
 2. `git rebase main` in your worktree.
    - Conflict: `git rebase --abort`, message queen naming the conflicting files, and stop. Never force the rebase and never resolve another agent's conflicting code yourself — that is an integrator's job, not yours.
-3. Re-run this repository's verification on the rebased branch — whatever this repo actually uses to prove a change is good. Learn that from AGENT_STANDARDS.md, AGENTS.md, or the repo's own scripts; do not assume bun, typecheck, or any other toolchain. Skip verification only if the rebase pulled in nothing but `.md` files and your pre-rebase green run still holds. Red verification never merges: fix it on your branch, or commit what you have and report the failure instead.
+3. Re-run this repository's verification on the rebased branch — whatever this repo actually uses to prove a change is good. Learn that from AGENT_STANDARDS.md, AGENTS.md, or the repo's own scripts; do not assume bun, typecheck, or any other toolchain. Skip verification only if the rebase pulled in nothing but `.md` files and your pre-rebase green run still holds. Red verification never merges: fix it on your branch, or commit what you have and report the failure instead. A format or lint refusal the gate names is yours to fix (the tool's own edit, its own commit) even in files the story did not name — that is not a scope expansion.
 4. Call `hive_land` with your agent name and the capability epoch you were issued at spawn. This is the only sanctioned path onto `main` — the daemon performs a fast-forward-only merge. Never merge into the primary checkout yourself, no matter how small the change.
 5. Rejected because `main` moved? Return to step 2. After 3 failed attempts, stop and message queen instead of retrying further.
 6. Include the merge commit hash in your report. Leave your branch and worktree in place — Hive cleans up landed branches.
@@ -58,7 +60,7 @@ Hive shrinks authority by restarting you. A fresh ACP session requests Kimi's ma
 
 ## Escalate, don't guess
 - A rebase conflict means two agents genuinely touched the same code. Abort and hand it to queen; do not resolve it solo, even if the fix looks obvious.
-- Never merge to `main` outside `hive_land`, and never widen your file scope on your own judgment — ask if the task needs files outside it.
+- Never merge to `main` outside `hive_land`, and never widen your file scope on your own judgment — ask if the task needs a behavior change outside it. Mechanical format/lint the gate named is not a widening.
 - After reporting a landing or milestone, continue immediately with the next authorized piece of your assignment in the same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.
 
 ## Same protocol as any other Hive agent

@@ -78,12 +78,14 @@ export function registerMailTools(
       title: "Publish a message to a mailbox",
       description:
         "Durably accept one message for a recipient. The control lane carries " +
-        "instructions that must each be handled and settled; the work lane " +
-        "carries progress that may safely merge, so repeated updates from the " +
-        "same sender on the same topic collapse into the newest one. Returns " +
-        "once the message is committed, not once it is read. Reusing an " +
-        "idempotencyKey returns the original receipt; reusing one for different " +
-        "content is refused rather than silently dropped.",
+        "instructions and escalations that must each be handled and settled. " +
+        "The work lane carries status and progress that may safely merge, so " +
+        "repeated updates from the same sender on the same topic collapse into " +
+        "the newest one — completions, measurements, and 'ready' reports to " +
+        "the orchestrator belong here, not on control. Returns once the " +
+        "message is committed, not once it is read. Reusing an idempotencyKey " +
+        "returns the original receipt; reusing one for different content is " +
+        "refused rather than silently dropped.",
       inputSchema: publishInputSchema,
     },
     async (request) => mail.publish(capability, request),

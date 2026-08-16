@@ -96,6 +96,18 @@ const CONCISE_CATEGORIES: readonly RoutingCategory[] = [
   "light_research",
 ];
 
+/** Queen leads; the agent is a developer on the team. Status is not an instruction — putting it on control made one lead into a ticket desk. */
+function teamRoleContract(): string {
+  return (
+    `You are a developer on the team; ${ORCHESTRATOR_NAME} is the project's lead — briefs, design rulings, and work that cannot run in parallel — not a ticket desk. ` +
+    `Own your story through hive_land. Do not wait for GO or a verify window. ` +
+    `Status, completions, and measurements go to ${ORCHESTRATOR_NAME} on the work lane (short summary plus artifactId; same sender+topic merges). Do not wait for a reply. ` +
+    `Mail the teammate who owns an overlap first. Use the control lane to ${ORCHESTRATOR_NAME} only for a design fork, a scope change, a rebase conflict, or an irreversible destroy/salvage decision. ` +
+    `A format or lint refusal from this repo's verification is yours to fix (the tool's own edit, its own commit) even in files the story did not name. ` +
+    `Users and agents may address ${ORCHESTRATOR_NAME} without quotation marks; the synonym "orchestrator" remains accepted.`
+  );
+}
+
 /** Reporting a landing is not finishing. Continue while authorized work remains — the mirror image of the escalate-don't-grind tripwire (grind → escalate; idle-with-work → continue). A live session is also the cheapest place to do the next piece: a respawn re-reads everything from zero. */
 const CONTINUOUS_EXECUTION = `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from ${ORCHESTRATOR_NAME}.`;
 
@@ -236,7 +248,7 @@ export function buildAgentPrompt(
         `You are ${name}, a Hive ${readOnly ? "read-only" : "writer"} agent.`,
         `Your task: ${task}`,
         `Work only inside your worktree at ${worktree.path}.`,
-        `Your orchestrator is named ${ORCHESTRATOR_NAME}. Report completion, blockers, and findings to ${ORCHESTRATOR_NAME} with hive_mail_publish on the "control" lane (hive_mail_poll and hive_status are also available; the synonym "orchestrator" is still accepted). Reference artifacts by path; never paste them.`,
+        `Your orchestrator is named ${ORCHESTRATOR_NAME}. ${teamRoleContract()} hive_mail_poll and hive_status are available. Reference artifacts by path; never paste them.`,
         `Read only what the task names. Search for the lines that matter rather than reading files whole. If the task is substantially bigger than assigned, stop and report rather than grinding.`,
         `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise — commit your WIP, then call hive_escalate once with the evidence and a handoff. Keep working until ${ORCHESTRATOR_NAME} answers. Never grind on under-powered, and never quietly lower the quality bar instead.`,
         CONTINUOUS_EXECUTION,
@@ -246,7 +258,7 @@ export function buildAgentPrompt(
         `Your task: ${task}`,
         `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
         "Use the Hive MCP tools hive_mail_publish, hive_mail_poll, hive_mail_claim, hive_mail_complete, and hive_mail_status to message and coordinate with other named agents. Mail never interrupts you: at each safe point — after finishing a unit of work, before reporting, on resume — call hive_mail_poll, claim at most the one control message, settle it with hive_mail_complete before resuming, and never poll in a tight loop. A failed mailbox call is retryable at your next safe point.",
-        `Your orchestrator is named ${ORCHESTRATOR_NAME}. Users and agents may address it as ${ORCHESTRATOR_NAME} without quotation marks; the synonym "orchestrator" remains accepted. Send concise completion reports, blockers, and important findings to ${ORCHESTRATOR_NAME} with hive_mail_publish on the "control" lane; reference large artifacts instead of pasting them.`,
+        `Your orchestrator is named ${ORCHESTRATOR_NAME}. ${teamRoleContract()} Reference large artifacts instead of pasting them.`,
         `Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than assigned, stop and report to ${ORCHESTRATOR_NAME} rather than grinding.`,
         `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until ${ORCHESTRATOR_NAME} answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.`,
         CONTINUOUS_EXECUTION,

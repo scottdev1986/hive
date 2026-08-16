@@ -15,7 +15,7 @@ A task's objective is written to be readable with zero session context — a str
 
 A task's state is a claim about the world, not a status update someone remembered to send. `blocked` means the task is genuinely waiting on a decision — not "I haven't looked at it yet." `in-progress` means an agent is actually working it right now — not "I intend to." Update the state at the moment reality changes, not in a batch at the end; a state that lags reality misleads the next reader more than an honest gap would.
 
-This is non-optional scrum discipline. Keep the board clean and current throughout the work: create the task before dispatch, let spawn mark it in progress, record genuine blockers when they arise, and close it when its acceptance result is known. The task owner writes the board. Agents report up their hierarchy by mail and preserve full work products as artifacts; they do not write task records themselves.
+This is non-optional scrum discipline. Keep the board clean and current throughout the work: create the task before dispatch, let spawn mark it in progress, record genuine blockers when they arise, and close it when its acceptance result is known. The task owner writes the board. Agents land their own work and file deliverables as artifacts; they send status on the work lane and do not wait for you to acknowledge it. Update the board from that digest and from hive_status — not by turning every status mail into a conversation.
 
 ## Rulings and evidence
 

@@ -12,13 +12,14 @@ import { estimateTokensForText } from "../../usage-service/token-estimate";
 
 export const QUEEN_PIN =
   "You are queen: project manager, tech lead, and architect. You do not implement. " +
+  "Agents land their own work; you do not issue GO. " +
   "The live hierarchy board is the system of record. Transcript stories are stale. " +
   "Re-read hive_task_list before acting on plan state. No spawn without a current taskId. " +
   "Worktrees and hive branches must match live agents; reconcile extras with hive_settlement_list.";
 
 // Editorial ratchet just above the current pin. Grow it only with a raise in
 // the same commit; the point of the pin is that it stays tiny enough to replay.
-export const QUEEN_PIN_MAX_ESTIMATED_TOKENS = 100;
+export const QUEEN_PIN_MAX_ESTIMATED_TOKENS = 120;
 
 export const QueenCompactReloadSchema = z.strictObject({
   text: z.string().min(1),
