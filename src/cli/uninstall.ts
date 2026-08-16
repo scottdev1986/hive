@@ -157,9 +157,11 @@ async function confirmed(
 }
 
 async function removeOwnedSkillCopy(
+  root: string,
   directory: string,
   displayPath: string,
   shippedContent: string,
+  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
@@ -170,6 +172,18 @@ async function removeOwnedSkillCopy(
     log(
       `Left ${displayPath}: it differs from what Hive ships, so it is yours.`,
     );
+    return;
+  }
+  const tracking = await run(
+    ["git", "-C", root, "ls-files", "--error-unmatch", "--", displayPath],
+    { cwd: root, timeoutMs: 5_000 },
+  );
+  if (tracking.exitCode === 0) {
+    log(`Left ${displayPath}: it is tracked by Git, so it is yours.`);
+    return;
+  }
+  if (tracking.exitCode !== 1 && tracking.exitCode !== 128) {
+    log(`Left ${displayPath}: Git could not determine whether it is tracked.`);
     return;
   }
   await rm(directory, { recursive: true, force: true });
@@ -215,9 +229,10 @@ async function removeHiveGitignoreEntries(
   log("Removed Hive's local-state entries from .gitignore.");
 }
 
-/** Remove the base skills Hive installed into `.hive/skills`, where they sit beside the user's own. Only byte-identical copies are Hive's to remove; an edited one is the user's and is reported instead, and their own skills are never candidates at all — a name Hive does not ship is not looked at. */
+/** Remove the base skills Hive installed into `.hive/skills`, where they sit beside the user's own. Only byte-identical, untracked copies are Hive's to remove; an edited or tracked one is the user's and is reported instead, and their own skills are never candidates at all — a name Hive does not ship is not looked at. */
 async function removeBaseSkills(
   root: string,
+  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const skillsRoot = join(root, ".hive", "skills");
@@ -226,7 +241,14 @@ async function removeBaseSkills(
     for (const address of shippedSkillAddresses(skill)) {
       const directory = join(skillsRoot, address, skill.name);
       const relativePath = join(".hive", "skills", address, skill.name);
-      await removeOwnedSkillCopy(directory, relativePath, skill.content, log);
+      await removeOwnedSkillCopy(
+        root,
+        directory,
+        relativePath,
+        skill.content,
+        run,
+        log,
+      );
     }
   }
   for (const address of new Set(
@@ -239,10 +261,11 @@ async function removeBaseSkills(
   }
 }
 
-/** Remove shipped skills from one vendor directory of the primary checkout. Only byte-identical copies are Hive's to remove; an edited skill is the user's and is reported instead. */
+/** Remove shipped skills from one vendor directory of the primary checkout. Only byte-identical, untracked copies are Hive's to remove; an edited or tracked skill is the user's and is reported instead. */
 async function removeShippedSkills(
   root: string,
   tool: SkillTool,
+  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const nativeDirectory = nativeSkillDirectory(tool);
@@ -253,9 +276,11 @@ async function removeShippedSkills(
   )) {
     const directory = join(nativeRoot, skill.name);
     await removeOwnedSkillCopy(
+      root,
       directory,
       join(nativeDirectory, skill.name),
       skill.content,
+      run,
       log,
     );
   }
@@ -341,12 +366,12 @@ export async function runUninstallRepo(
     );
     return 1;
   }
-  await removeBaseSkills(root, deps.log);
+  await removeBaseSkills(root, deps.run, deps.log);
   await removeScaffoldedAgentStandards(root, deps.log);
   await removeHiveGitignoreEntries(root, deps.log);
   // Remove byte-identical Hive skills from vendor directories too.
   for (const tool of CAPABILITY_PROVIDERS) {
-    await removeShippedSkills(root, tool, deps.log);
+    await removeShippedSkills(root, tool, deps.run, deps.log);
   }
   const repaired = await repairLeakedProjectConfig(root);
   for (const path of repaired) deps.log(`Removed Hive's entries from ${path}.`);
@@ -424,6 +449,12 @@ export async function runUninstallMachine(
 ): Promise<number> {
   const method = detectInstallMethod(process.execPath);
   const resolved = resolveVariant();
+  if (resolved.variant !== "prod" && resolved.home === resolved.defaultHome) {
+    deps.log(
+      `Refusing ${resolved.binName} uninstall: its home ${resolved.home} is the production home. Set HIVE_HOME to this variant's isolated home.`,
+    );
+    return 1;
+  }
   // Purge is this same uninstall with the variant's retention overridden to nothing — dev's
   // destroy-everything command (`make clean-all`), not a second deletion path. On prod it is
   // idempotent rather than dead, because prod's configured retention is already empty.

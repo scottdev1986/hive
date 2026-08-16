@@ -348,6 +348,73 @@ describe("hive uninstall --repo", () => {
     }
   });
 
+  test("keeps tracked byte-identical skills and removes untracked byte-identical skills", async () => {
+    const root = await gitRepo();
+    try {
+      const shipped = shippedSkillsFor({ role: "agent", tool: "claude" });
+      const [tracked, untracked] = [required(shipped[0]), required(shipped[1])];
+      for (const skill of [tracked, untracked]) {
+        await mkdir(join(root, ".claude", "skills", skill.name), {
+          recursive: true,
+        });
+        await writeFile(
+          join(root, ".claude", "skills", skill.name, "SKILL.md"),
+          skill.content,
+        );
+      }
+      git(root, ["add", join(".claude", "skills", tracked.name, "SKILL.md")]);
+      git(root, ["commit", "-m", "track skill", "--no-gpg-sign"]);
+
+      const { deps, lines } = probe(true, {
+        currentInstanceOwnsProject: async () => false,
+      });
+      expect(await runUninstallRepo(root, {}, deps)).toBe(0);
+
+      expect(
+        await readFile(
+          join(root, ".claude", "skills", tracked.name, "SKILL.md"),
+          "utf8",
+        ),
+      ).toBe(tracked.content);
+      expect(existsSync(join(root, ".claude", "skills", untracked.name))).toBe(
+        false,
+      );
+      expect(lines.join("\n")).toContain("is tracked by Git");
+      expect(lines.join("\n")).toContain(
+        `Removed ${join(".claude", "skills", untracked.name)}.`,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses to remove a byte-identical skill when Git tracking cannot be determined", async () => {
+    const root = await gitRepo();
+    try {
+      const skill = required(shippedSkillsFor({ role: "agent", tool: "claude" })[0]);
+      const path = join(root, ".claude", "skills", skill.name, "SKILL.md");
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, skill.content);
+      const { deps, lines } = probe(true, {
+        currentInstanceOwnsProject: async () => false,
+        run: async (argv, options) =>
+          argv[0] === "git" && argv[1] === "-C" && argv[3] === "ls-files"
+            ? {
+                exitCode: 2,
+                stdout: "",
+                stderr: "git failed",
+                timedOut: false,
+              }
+            : runCommand(argv, options),
+      });
+      expect(await runUninstallRepo(root, {}, deps)).toBe(0);
+      expect(existsSync(path)).toBe(true);
+      expect(lines.join("\n")).toContain("could not determine whether it is tracked");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("leaves every unproved worktree and branch protected", async () => {
     const root = await gitRepo();
     try {
@@ -437,6 +504,29 @@ describe("hive uninstall --repo", () => {
 });
 
 describe("hive uninstall", () => {
+  test("a non-prod variant refuses to uninstall the production home", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const previousDefaultHome = process.env.HIVE_DEFAULT_HOME;
+    const previousVariant = process.env.HIVE_BUILD_VARIANT;
+    delete process.env.HIVE_HOME;
+    delete process.env.HIVE_DEFAULT_HOME;
+    process.env.HIVE_BUILD_VARIANT = "qa";
+    try {
+      const { deps, lines, stops } = probe(true);
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(lines.join("\n")).toContain("Refusing hive-qa uninstall");
+      expect(lines.join("\n")).toContain("production home");
+    } finally {
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+      if (previousDefaultHome === undefined) delete process.env.HIVE_DEFAULT_HOME;
+      else process.env.HIVE_DEFAULT_HOME = previousDefaultHome;
+      if (previousVariant === undefined) delete process.env.HIVE_BUILD_VARIANT;
+      else process.env.HIVE_BUILD_VARIANT = previousVariant;
+    }
+  });
+
   test("holds the machine mutation lease from the final team check through removal", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-home-machine-lease-"));
     const previous = process.env.HIVE_HOME;
