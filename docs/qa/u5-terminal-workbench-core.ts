@@ -621,7 +621,10 @@ export function proofSubjectLiveness(input: {
 
 export function partitionLiveProofSubjects<T extends { provider: string }>(
   subjects: readonly (T & {
-    liveness: { state: "tree-live" | "tree-gone" | "unmeasured"; reason: string };
+    liveness: {
+      state: "tree-live" | "tree-gone" | "unmeasured";
+      reason: string;
+    };
   })[],
 ): { keep: T[]; drop: { provider: string; reason: string }[] } {
   const keep: T[] = [];
@@ -630,7 +633,10 @@ export function partitionLiveProofSubjects<T extends { provider: string }>(
     if (subject.liveness.state === "tree-live") {
       keep.push(subject);
     } else {
-      drop.push({ provider: subject.provider, reason: subject.liveness.reason });
+      drop.push({
+        provider: subject.provider,
+        reason: subject.liveness.reason,
+      });
     }
   }
   return { keep, drop };

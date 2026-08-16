@@ -95,9 +95,9 @@ describe("U5 proof decisions", () => {
     expect(() =>
       assertQaHomeFitsSocketPath("/private/tmp/hvqa-a50f523119"),
     ).toThrow("QA home is too long for the session host socket path");
-    expect(() =>
-      assertQaHomeFitsSocketPath("/private/tmp/hvqa-f35"),
-    ).toThrow("QA home is too long for the session host socket path");
+    expect(() => assertQaHomeFitsSocketPath("/private/tmp/hvqa-f35")).toThrow(
+      "QA home is too long for the session host socket path",
+    );
   });
 
   test("shell and TypeScript share one QA home definition", () => {
@@ -115,10 +115,7 @@ describe("U5 proof decisions", () => {
       { stdout: "pipe", stderr: "pipe" },
     );
     expect(shell.exitCode).toBe(0);
-    const lines = new TextDecoder()
-      .decode(shell.stdout)
-      .trim()
-      .split("\n");
+    const lines = new TextDecoder().decode(shell.stdout).trim().split("\n");
     expect(lines[0]).toBe(defaultQaHomeRequested(sourceRoot));
     expect(lines[1]).toBe("isolated:0");
   });
@@ -137,7 +134,10 @@ describe("U5 proof decisions", () => {
       ),
     ).not.toThrow();
     expect(() =>
-      assertQaHomeOwner(undefined, "/Users/x/Projects/hive/.hive/worktrees/helen"),
+      assertQaHomeOwner(
+        undefined,
+        "/Users/x/Projects/hive/.hive/worktrees/helen",
+      ),
     ).not.toThrow();
   });
 
@@ -464,7 +464,10 @@ describe("U5 isolated project agent standards", () => {
   test("the staged checkout file parses against the declaration check", async () => {
     const root = await mkdtemp(join(tmpdir(), "u5-std-real-"));
     try {
-      const source = await readFile(join(repoRoot, "AGENT_STANDARDS.md"), "utf8");
+      const source = await readFile(
+        join(repoRoot, "AGENT_STANDARDS.md"),
+        "utf8",
+      );
       const staged = stageIsolatedProjectAgentStandards(root, source);
       expect(staged.path).toBe(join(root, "AGENT_STANDARDS.md"));
       expect(staged.bytes).toBeGreaterThan(0);
@@ -569,7 +572,10 @@ describe("U5 live-proof subject liveness", () => {
     const { keep, drop } = partitionLiveProofSubjects([
       {
         provider: "claude",
-        liveness: proofSubjectLiveness({ agentStatus: "working", tree: "live" }),
+        liveness: proofSubjectLiveness({
+          agentStatus: "working",
+          tree: "live",
+        }),
       },
       {
         provider: "opencode",

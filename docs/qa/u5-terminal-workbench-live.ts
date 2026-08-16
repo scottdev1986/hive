@@ -737,7 +737,8 @@ async function reapIsolatedHeadlessRoot(): Promise<Record<string, unknown>> {
   while (Date.now() < termDeadline) {
     const current = processReadback(hostPid);
     if (current.state === "absent") break;
-    if (current.state === "live" && current.startToken !== hostStartToken) break;
+    if (current.state === "live" && current.startToken !== hostStartToken)
+      break;
     await Bun.sleep(50);
   }
   const afterTerm = processReadback(hostPid);
@@ -1026,165 +1027,175 @@ async function proveLiveRunControls(
   const providers = [];
   for (const row of rows) {
     try {
-    const before = await readLiveRunControl(row.id);
-    if (
-      before.provider !== row.tool ||
-      !sameSessionLocator(before.locator, row.sessionLocator)
-    ) {
-      throw new Error(`${row.tool} live-run projection does not bind this agent`);
-    }
-    const censusMembers =
-      before.processCensus.state === "complete"
-        ? before.processCensus.members
-        : [];
-    const liveMemberCount = censusMembers.filter(
-      (member) => processReadback(member.pid).state === "live",
-    ).length;
-    const shellRootLive =
-      before.shell.state === "retained" &&
-      processReadback(before.shell.root.pid).state === "live";
-    const subjectReady = liveRunControlSubjectReady({
-      shellState: before.shell.state,
-      censusState: before.processCensus.state,
-      liveMemberCount,
-      shellRootLive,
-    });
-    const liveness = proofSubjectLiveness({
-      agentStatus: row.status,
-      tree: subjectReady.ready ? "live" : "absent",
-    });
-    if (
-      !subjectReady.ready ||
-      before.shell.state !== "retained" ||
-      liveness.state !== "tree-live"
-    ) {
-      throw new Error(`${row.tool} ${liveness.reason}; ${subjectReady.reason}`);
-    }
-    const shellRoot = before.shell.root;
-    const providerProcess =
-      before.providerRun.state === "running"
-        ? before.providerRun.process
-        : null;
-    if (
-      before.processCensus.state === "complete" &&
-      (!censusMembers.some(
-        (member) =>
-          member.pid === shellRoot.pid &&
-          member.startToken === shellRoot.startToken,
-      ) ||
-        (providerProcess !== null &&
-          !censusMembers.some(
-            (member) =>
-              member.pid === providerProcess.pid &&
-              member.startToken === providerProcess.startToken,
-          )) ||
-        censusMembers.some((member) => member.pid === survivingSentinel.pid))
-    ) {
-      throw new Error(`${row.tool} returned an invalid process-tree census`);
-    }
-
-    const canStopProvider =
-      before.providerRun.state === "running" &&
-      before.controls.stopProvider.enabled;
-    let afterStop = before;
-    let stopResult: Awaited<ReturnType<typeof submitLiveRunControl>> | null =
-      null;
-    let providerProcessAfterStop: ProcessReadback | null = null;
-    let shellAfterStop = processReadback(shellRoot.pid);
-    let sentinelAfterStop = processReadback(survivingSentinel.pid);
-    if (canStopProvider && providerProcess !== null) {
-      stopResult = await submitLiveRunControl(
-        controlIntent("stop-provider", before),
-      );
-      afterStop = await readLiveRunControl(row.id);
+      const before = await readLiveRunControl(row.id);
       if (
-        stopResult.outcome.status !== "accepted" ||
-        stopResult.observedPostState.providerRun.state !== "absent" ||
-        stopResult.observedPostState.shell.state !== "retained" ||
-        !sameProcessRoot(stopResult.observedPostState.shell.root, shellRoot) ||
-        stopResult.observedPostState.shell.foreground !== "shell" ||
-        afterStop.providerRun.state !== "absent" ||
-        afterStop.shell.state !== "retained" ||
-        !sameProcessRoot(afterStop.shell.root, shellRoot) ||
-        afterStop.shell.foreground !== "shell"
+        before.provider !== row.tool ||
+        !sameSessionLocator(before.locator, row.sessionLocator)
       ) {
-        throw new Error(`${row.tool} Stop Provider did not retain the same zsh`);
+        throw new Error(
+          `${row.tool} live-run projection does not bind this agent`,
+        );
       }
-      providerProcessAfterStop = processReadback(providerProcess.pid);
-      shellAfterStop = processReadback(shellRoot.pid);
-      sentinelAfterStop = processReadback(survivingSentinel.pid);
+      const censusMembers =
+        before.processCensus.state === "complete"
+          ? before.processCensus.members
+          : [];
+      const liveMemberCount = censusMembers.filter(
+        (member) => processReadback(member.pid).state === "live",
+      ).length;
+      const shellRootLive =
+        before.shell.state === "retained" &&
+        processReadback(before.shell.root.pid).state === "live";
+      const subjectReady = liveRunControlSubjectReady({
+        shellState: before.shell.state,
+        censusState: before.processCensus.state,
+        liveMemberCount,
+        shellRootLive,
+      });
+      const liveness = proofSubjectLiveness({
+        agentStatus: row.status,
+        tree: subjectReady.ready ? "live" : "absent",
+      });
       if (
-        providerProcessAfterStop.state !== "absent" ||
+        !subjectReady.ready ||
+        before.shell.state !== "retained" ||
+        liveness.state !== "tree-live"
+      ) {
+        throw new Error(
+          `${row.tool} ${liveness.reason}; ${subjectReady.reason}`,
+        );
+      }
+      const shellRoot = before.shell.root;
+      const providerProcess =
+        before.providerRun.state === "running"
+          ? before.providerRun.process
+          : null;
+      if (
+        before.processCensus.state === "complete" &&
+        (!censusMembers.some(
+          (member) =>
+            member.pid === shellRoot.pid &&
+            member.startToken === shellRoot.startToken,
+        ) ||
+          (providerProcess !== null &&
+            !censusMembers.some(
+              (member) =>
+                member.pid === providerProcess.pid &&
+                member.startToken === providerProcess.startToken,
+            )) ||
+          censusMembers.some((member) => member.pid === survivingSentinel.pid))
+      ) {
+        throw new Error(`${row.tool} returned an invalid process-tree census`);
+      }
+
+      const canStopProvider =
+        before.providerRun.state === "running" &&
+        before.controls.stopProvider.enabled;
+      let afterStop = before;
+      let stopResult: Awaited<ReturnType<typeof submitLiveRunControl>> | null =
+        null;
+      let providerProcessAfterStop: ProcessReadback | null = null;
+      let shellAfterStop = processReadback(shellRoot.pid);
+      let sentinelAfterStop = processReadback(survivingSentinel.pid);
+      if (canStopProvider && providerProcess !== null) {
+        stopResult = await submitLiveRunControl(
+          controlIntent("stop-provider", before),
+        );
+        afterStop = await readLiveRunControl(row.id);
+        if (
+          stopResult.outcome.status !== "accepted" ||
+          stopResult.observedPostState.providerRun.state !== "absent" ||
+          stopResult.observedPostState.shell.state !== "retained" ||
+          !sameProcessRoot(
+            stopResult.observedPostState.shell.root,
+            shellRoot,
+          ) ||
+          stopResult.observedPostState.shell.foreground !== "shell" ||
+          afterStop.providerRun.state !== "absent" ||
+          afterStop.shell.state !== "retained" ||
+          !sameProcessRoot(afterStop.shell.root, shellRoot) ||
+          afterStop.shell.foreground !== "shell"
+        ) {
+          throw new Error(
+            `${row.tool} Stop Provider did not retain the same zsh`,
+          );
+        }
+        providerProcessAfterStop = processReadback(providerProcess.pid);
+        shellAfterStop = processReadback(shellRoot.pid);
+        sentinelAfterStop = processReadback(survivingSentinel.pid);
+        if (
+          providerProcessAfterStop.state !== "absent" ||
+          shellAfterStop.state !== "live" ||
+          shellAfterStop.startToken !== shellRoot.startToken ||
+          sentinelAfterStop.state !== "live" ||
+          sentinelAfterStop.startToken !== sentinelStartToken
+        ) {
+          throw new Error(`${row.tool} Stop Provider process readback failed`);
+        }
+      } else if (
         shellAfterStop.state !== "live" ||
-        shellAfterStop.startToken !== shellRoot.startToken ||
         sentinelAfterStop.state !== "live" ||
         sentinelAfterStop.startToken !== sentinelStartToken
       ) {
-        throw new Error(`${row.tool} Stop Provider process readback failed`);
+        throw new Error(
+          `${row.tool} tree was not live before Terminate Terminal`,
+        );
       }
-    } else if (
-      shellAfterStop.state !== "live" ||
-      sentinelAfterStop.state !== "live" ||
-      sentinelAfterStop.startToken !== sentinelStartToken
-    ) {
-      throw new Error(
-        `${row.tool} tree was not live before Terminate Terminal`,
-      );
-    }
 
-    const terminateResult = await submitLiveRunControl(
-      controlIntent("terminate-terminal", afterStop),
-    );
-    const afterTerminate = await readLiveRunControl(row.id);
-    const terminalStatus = (await status()).find(
-      (candidate) => candidate.id === row.id,
-    );
-    const shellAfterTerminate = processReadback(shellRoot.pid);
-    const sentinelAfterTerminate = processReadback(survivingSentinel.pid);
-    if (
-      terminateResult.outcome.status !== "accepted" ||
-      terminateResult.observedPostState.termination.state !== "terminated" ||
-      terminateResult.observedPostState.termination.survivors.length !== 0 ||
-      terminateResult.observedPostState.shell.state !== "terminated" ||
-      terminateResult.observedPostState.processCensus.state !== "terminated" ||
-      afterTerminate.termination.state !== "terminated" ||
-      afterTerminate.termination.survivors.length !== 0 ||
-      afterTerminate.shell.state !== "terminated" ||
-      afterTerminate.processCensus.state !== "terminated" ||
-      shellAfterTerminate.state !== "absent" ||
-      (terminalStatus !== undefined &&
-        !terminalStatuses.has(terminalStatus.status)) ||
-      sentinelAfterTerminate.state !== "live" ||
-      sentinelAfterTerminate.startToken !== sentinelStartToken
-    ) {
-      throw new Error(`${row.tool} Terminate Terminal final readback failed`);
-    }
-    providers.push({
-      provider: row.tool,
-      agentId: row.id,
-      locator: row.sessionLocator,
-      outcome: "proven",
-      before,
-      stop: {
-        skipped: stopResult === null,
-        skipReason:
-          stopResult === null
-            ? "provider run was not running; Stop Provider is not a mid-turn precondition"
-            : null,
-        mutation: stopResult,
-        independentProjection: afterStop,
-        providerProcessReadback: providerProcessAfterStop,
-        retainedShellReadback: shellAfterStop,
-        sentinelReadback: sentinelAfterStop,
-      },
-      terminate: {
-        mutation: terminateResult,
-        independentProjection: afterTerminate,
-        shellProcessReadback: shellAfterTerminate,
-        agentStatus: terminalStatus ?? null,
-        sentinelReadback: sentinelAfterTerminate,
-      },
-    });
+      const terminateResult = await submitLiveRunControl(
+        controlIntent("terminate-terminal", afterStop),
+      );
+      const afterTerminate = await readLiveRunControl(row.id);
+      const terminalStatus = (await status()).find(
+        (candidate) => candidate.id === row.id,
+      );
+      const shellAfterTerminate = processReadback(shellRoot.pid);
+      const sentinelAfterTerminate = processReadback(survivingSentinel.pid);
+      if (
+        terminateResult.outcome.status !== "accepted" ||
+        terminateResult.observedPostState.termination.state !== "terminated" ||
+        terminateResult.observedPostState.termination.survivors.length !== 0 ||
+        terminateResult.observedPostState.shell.state !== "terminated" ||
+        terminateResult.observedPostState.processCensus.state !==
+          "terminated" ||
+        afterTerminate.termination.state !== "terminated" ||
+        afterTerminate.termination.survivors.length !== 0 ||
+        afterTerminate.shell.state !== "terminated" ||
+        afterTerminate.processCensus.state !== "terminated" ||
+        shellAfterTerminate.state !== "absent" ||
+        (terminalStatus !== undefined &&
+          !terminalStatuses.has(terminalStatus.status)) ||
+        sentinelAfterTerminate.state !== "live" ||
+        sentinelAfterTerminate.startToken !== sentinelStartToken
+      ) {
+        throw new Error(`${row.tool} Terminate Terminal final readback failed`);
+      }
+      providers.push({
+        provider: row.tool,
+        agentId: row.id,
+        locator: row.sessionLocator,
+        outcome: "proven",
+        before,
+        stop: {
+          skipped: stopResult === null,
+          skipReason:
+            stopResult === null
+              ? "provider run was not running; Stop Provider is not a mid-turn precondition"
+              : null,
+          mutation: stopResult,
+          independentProjection: afterStop,
+          providerProcessReadback: providerProcessAfterStop,
+          retainedShellReadback: shellAfterStop,
+          sentinelReadback: sentinelAfterStop,
+        },
+        terminate: {
+          mutation: terminateResult,
+          independentProjection: afterTerminate,
+          shellProcessReadback: shellAfterTerminate,
+          agentStatus: terminalStatus ?? null,
+          sentinelReadback: sentinelAfterTerminate,
+        },
+      });
     } catch (error) {
       providers.push({
         provider: row.tool,
@@ -2122,56 +2133,58 @@ async function runProof(): Promise<Record<string, unknown>> {
   let prior: SessionLocator | null = null;
   for (const { row } of spawned) {
     try {
-    const grant = await issueGrant(row, logicalViewerId, ["view"]);
-    const output = await SessiondViewerAttachClient.observeOutput({
-      locator: row.sessionLocator,
-      grant,
-      geometry,
-      viewerId: logicalViewerId,
-    });
-    const detachedAt = new Date().toISOString();
-    // This client attempts the exact locator but drops a compacted session's
-    // checkpoint snapshot and does not await attach readiness. Keep its screen
-    // readback explicitly unclaimed when the base state is missing; the
-    // production pane is the rendering oracle.
-    const auxiliaryReadback = classifyViewerReadback(
-      output.completeness,
-      output.screen,
-    );
-    const postSwitchRows = await status();
-    const after = requireExactAgent(postSwitchRows, row);
-    const capture = await observe(after);
-    const stableComposerObserved = stableComposer(capture, after.tool);
-    viewerAttempts.push({
-      ordinal: viewerAttempts.length + 1,
-      viewerId: logicalViewerId,
-      fromLocator: prior,
-      toLocator: row.sessionLocator,
-      grant: safeGrant(grant),
-      auxiliaryReadback: {
-        ...auxiliaryReadback,
-        outputThrough: output.outputThrough,
-        screenSha256: createHash("sha256").update(output.screen).digest("hex"),
-        screen: output.screen,
-      },
-      detachedAt,
-      postAttempt: {
-        agentId: after.id,
-        status: after.status,
-        locator: after.sessionLocator,
-        captureSha256: capture.sha256,
-        composer: capture.composer,
-        stableComposerObserved,
-      },
-    });
-    prior = row.sessionLocator;
-    writeEvidence("05-exact-locator-attempts.json", {
-      schemaVersion: 1,
-      logicalViewerId,
-      attemptPolicy: "one locator-fixed attempt at a time",
-      attempts: viewerAttempts,
-    });
-    await Bun.sleep(100);
+      const grant = await issueGrant(row, logicalViewerId, ["view"]);
+      const output = await SessiondViewerAttachClient.observeOutput({
+        locator: row.sessionLocator,
+        grant,
+        geometry,
+        viewerId: logicalViewerId,
+      });
+      const detachedAt = new Date().toISOString();
+      // This client attempts the exact locator but drops a compacted session's
+      // checkpoint snapshot and does not await attach readiness. Keep its screen
+      // readback explicitly unclaimed when the base state is missing; the
+      // production pane is the rendering oracle.
+      const auxiliaryReadback = classifyViewerReadback(
+        output.completeness,
+        output.screen,
+      );
+      const postSwitchRows = await status();
+      const after = requireExactAgent(postSwitchRows, row);
+      const capture = await observe(after);
+      const stableComposerObserved = stableComposer(capture, after.tool);
+      viewerAttempts.push({
+        ordinal: viewerAttempts.length + 1,
+        viewerId: logicalViewerId,
+        fromLocator: prior,
+        toLocator: row.sessionLocator,
+        grant: safeGrant(grant),
+        auxiliaryReadback: {
+          ...auxiliaryReadback,
+          outputThrough: output.outputThrough,
+          screenSha256: createHash("sha256")
+            .update(output.screen)
+            .digest("hex"),
+          screen: output.screen,
+        },
+        detachedAt,
+        postAttempt: {
+          agentId: after.id,
+          status: after.status,
+          locator: after.sessionLocator,
+          captureSha256: capture.sha256,
+          composer: capture.composer,
+          stableComposerObserved,
+        },
+      });
+      prior = row.sessionLocator;
+      writeEvidence("05-exact-locator-attempts.json", {
+        schemaVersion: 1,
+        logicalViewerId,
+        attemptPolicy: "one locator-fixed attempt at a time",
+        attempts: viewerAttempts,
+      });
+      await Bun.sleep(100);
     } catch (error) {
       viewerAttempts.push({
         ordinal: viewerAttempts.length + 1,

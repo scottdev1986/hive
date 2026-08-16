@@ -59,7 +59,11 @@ export function openFeedStdinJournal(
     feedStdinPositiveControlLine(nonce),
     receivedAt,
   );
-  return { schemaVersion: FEED_STDIN_JOURNAL_SCHEMA_VERSION, probe, entries: [] };
+  return {
+    schemaVersion: FEED_STDIN_JOURNAL_SCHEMA_VERSION,
+    probe,
+    entries: [],
+  };
 }
 
 /** Read-back check. The caller must have already appended the probe
