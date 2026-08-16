@@ -11,11 +11,14 @@ rig — uses the Makefile lifecycle instead:
     make qa-clean    # product uninstall --repo, then uninstall --purge
 
 `make qa` defaults `PROJECT` to `/Users/scottkellar/Projects/hive-test-project`
-and keeps every guard `make run` already has. Its home is `.qa/home` in the
-checkout, with `HIVE_HOME` and `HIVE_DEFAULT_HOME` both pinned there so
-uninstall cannot resolve to `~/.hive` or see the live fleet. `make qa-clean`
-runs the product repository and machine uninstall commands, checks that the QA
-installation paths are gone, and checks that `~/.hive`'s isolation inventory
+and keeps every guard `make run` already has. Its home is `/tmp/hvqa-<tag>/home`
+— the same isolated-QA-home family `docs/qa/rig.sh` uses for its own default,
+outside the checkout entirely — with `HIVE_HOME` and `HIVE_DEFAULT_HOME` both
+pinned there so uninstall cannot resolve to `~/.hive` or see the live fleet.
+A guard refuses the staging root by name if it ever resolves back inside the
+checkout. `make qa-clean` runs the product repository and machine uninstall
+commands, checks that the QA installation paths are gone, and checks that
+`~/.hive`'s isolation inventory
 (top-level names, instances, `run/`, `db-identity/`, default hive-qa
 install locations) matches the pre-qa snapshot. Nested live-fleet writes
 are not part of that compare — they would make every run red.

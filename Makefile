@@ -181,11 +181,16 @@ DEV_ENV := \
 	OTUI_ASSET_ROOT=$(ROOT)/node_modules \
 	TMPDIR=$(DEV)/tmp
 
-# Isolated qa variant. Home is NOT a named instance under ~/.hive: uninstall
-# resolves getHiveHome() (HIVE_HOME, else ~/.hive) and listInstances() walks
+# Isolated qa variant. Staging sits outside the checkout entirely, under the
+# same /tmp/hvqa-<tag> family docs/qa/rig.sh already uses for its own isolated
+# QA home (see docs/qa/qa-home.sh's qa_home_is_isolated) — not a third
+# location, and reusing DEV_HOME_TAG rather than a fresh hash. A build must
+# not write its staging root inside the source checkout it is staging from.
+# Home is also NOT a named instance under ~/.hive: uninstall resolves
+# getHiveHome() (HIVE_HOME, else ~/.hive) and listInstances() walks
 # defaultHiveHome()/instances (HIVE_DEFAULT_HOME, else ~/.hive). Both must
 # point at this tree or a qa uninstall sees — and can stop — the live fleet.
-QA := $(ROOT)/.qa
+QA := /tmp/hvqa-$(DEV_HOME_TAG)
 QA_DIST := $(QA)/dist
 QA_INSTALL_ROOT := $(QA)/root
 QA_BIN := $(QA_INSTALL_ROOT)/current/hive
@@ -368,6 +373,8 @@ run:
 # qa-clean can check that the isolated QA lifecycle did not reach it.
 qa:
 	@set -e; \
+	case "$(QA)" in "$(ROOT)"|"$(ROOT)"/*) \
+	  echo "refusing: QA staging root $(QA) is inside the hive checkout $(ROOT)" >&2; exit 2;; esac; \
 	case "$(QA_HOME)" in "$(HOME)/.hive"|"$(HOME)/.hive"/*) \
 	  echo "refusing: QA_HOME is under the user hive home $(HOME)/.hive" >&2; exit 2;; esac; \
 	[ "$(QA_HOME)" != "$(DEV_HOME)" ] || { echo "refusing: QA_HOME is the live dev home" >&2; exit 2; }; \
@@ -414,6 +421,8 @@ qa:
 # and ~/.hive matches the pre-qa inventory. Never rm -rf the test project.
 qa-clean:
 	@set -e; \
+	case "$(QA)" in "$(ROOT)"|"$(ROOT)"/*) \
+	  echo "refusing: QA staging root $(QA) is inside the hive checkout $(ROOT)" >&2; exit 2;; esac; \
 	case "$(QA_HOME)" in "$(HOME)/.hive"|"$(HOME)/.hive"/*) \
 	  echo "refusing: QA_HOME is under the user hive home $(HOME)/.hive" >&2; exit 2;; esac; \
 	[ "$(QA_HOME)" != "$(DEV_HOME)" ] || { echo "refusing: QA_HOME is the live dev home" >&2; exit 2; }; \

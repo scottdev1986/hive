@@ -112,6 +112,42 @@ test("make qa refuses a PROJECT inside the hive checkout that is not its root", 
   }
 });
 
+test("make -n qa resolves the default staging root outside the checkout", () => {
+  const result = Bun.spawnSync(["make", "-n", "qa"], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const output = result.stdout.toString() + result.stderr.toString();
+  expect(result.exitCode, output).toBe(0);
+  // Positive proof staging resolves somewhere real, not just an absence of
+  // the old path: the default names a concrete /tmp/hvqa-<tag> location, the
+  // same isolated-QA-home family docs/qa/rig.sh already uses.
+  expect(output).toMatch(/\/tmp\/hvqa-[0-9a-f]+/);
+  expect(output).not.toContain(`mkdir -p "${join(root, ".qa")}`);
+});
+
+test("make qa refuses a QA staging root inside the hive checkout", () => {
+  const fixture = mkdtempSync(
+    join(OUTSIDE_REPO_TMPDIR, "hive-qa-root-inside-"),
+  );
+  try {
+    const hiveBin = join(fixture, "hive-dev");
+    writeExec(hiveBin, "#!/bin/sh\nexit 0\n");
+    const result = runMake("qa", {
+      HIVE_BIN: hiveBin,
+      PROJECT: join(fixture, "project"),
+      QA: join(root, ".qa"),
+      USER_HIVE: join(fixture, "dot-hive"),
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("refusing: QA staging root");
+    expect(result.output).toContain("is inside the hive checkout");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test("make qa refuses a QA_HOME under the user hive home", () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-protected-"));
   try {
