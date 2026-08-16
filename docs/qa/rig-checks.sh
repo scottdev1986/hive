@@ -26,6 +26,8 @@ RACE_LINK=""
 NON_QA_TARGET=""
 SIBLING_HOME=""
 PLANT_HOME=""
+SESSIOND_HOME=""
+FAKE_SRC=""
 
 pass() { echo "  PASS: $*"; }
 fail() { echo "  FAIL: $*"; failures=$((failures + 1)); }
@@ -236,7 +238,7 @@ cleanup() {
       echo "rig checks: retaining $home because teardown is not clean" >&2
     fi
   done
-  for path in "$CHECK_HOME" "$TREE_HOME" "$DEFAULT_HOME" "$RACE_HOME" "$CHECK_REPO" "$SIBLING_HOME" "$SYMLINK_SCOPE" "$NON_QA_TARGET" "$PLANT_HOME"; do
+  for path in "$CHECK_HOME" "$TREE_HOME" "$DEFAULT_HOME" "$RACE_HOME" "$CHECK_REPO" "$SIBLING_HOME" "$SYMLINK_SCOPE" "$NON_QA_TARGET" "$PLANT_HOME" "$SESSIOND_HOME" "$FAKE_SRC"; do
     case "$retained_homes" in *" $path "*) continue;; esac
     remove_scratch_tree "$path" || status=1
   done
@@ -971,6 +973,30 @@ case "$wrong_message" in
   *) fail "refusal did not name the marker: '$wrong_message'" ;;
 esac
 rm -rf "$WRONG_ROOT"
+
+echo "[8/8] sessiond is resolved from QA_SRC_ROOT; a missing broker is a named refusal"
+# The primary checkout has a staged sessiond. If the default still pointed
+# there, bring-up would get past this check against last week's broker. The
+# inverted control is that that binary exists and is still not used.
+SESSIOND_HOME="$(mktemp -d /tmp/hvqa-sd.XXXXXX)" || exit 1
+FAKE_SRC="$(mktemp -d /tmp/hvqa-src.XXXXXX)" || exit 1
+mkdir -p "$FAKE_SRC/src" || exit 1
+PRIMARY_SESSIOND="$PRIMARY_CHECKOUT/native/sessiond/zig-out/bin/hive-sessiond"
+SRC_SESSIOND="$FAKE_SRC/native/sessiond/zig-out/bin/hive-sessiond"
+if [ ! -x "$PRIMARY_SESSIOND" ]; then
+  fail "inverted control missing: primary checkout has no sessiond at $PRIMARY_SESSIOND"
+else
+  sessiond_out="$(env -u QA_SESSIOND_BIN QA_SRC_ROOT="$FAKE_SRC" \
+    QA_HOME="$SESSIOND_HOME" QA_PROJECT="$CHECK_REPO" "$RIG" up 2>&1)"
+  sessiond_code=$?
+  if [ "$sessiond_code" -eq 2 ] &&
+     printf '%s' "$sessiond_out" | grep -Fq "$SRC_SESSIOND" &&
+     ! printf '%s' "$sessiond_out" | grep -Fq "$PRIMARY_SESSIOND"; then
+    pass "missing source-tree sessiond refused by name ($SRC_SESSIOND)"
+  else
+    fail "missing source-tree sessiond was not refused by name (exit $sessiond_code): $sessiond_out"
+  fi
+fi
 
 echo
 if [ "$failures" -eq 0 ]; then

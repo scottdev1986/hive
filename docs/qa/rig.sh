@@ -10,7 +10,7 @@
 #   QA_PROJECT       /Users/scottkellar/Projects/hive-test-project
 #   QA_SRC_ROOT      the checkout containing this script (the code under test)
 #   QA_HIVE_BIN      optional compiled Hive binary; source execution is the default
-#   QA_SESSIOND_BIN  the staged binary in the primary checkout
+#   QA_SESSIOND_BIN  optional override; default is the binary staged under QA_SRC_ROOT
 #   QA_SKIP_POLICY   1 leaves routing unconfigured, so spawns are refused
 #
 # The daemon runs FROM SOURCE: `bun run $QA_SRC_ROOT/src/cli.ts daemon`. No
@@ -37,7 +37,15 @@ QA_HOME_REQUESTED="${QA_HOME:-/tmp/hvqa-$QA_HOME_TAG}"
 QA_HOME="$QA_HOME_REQUESTED"
 QA_PROJECT="${QA_PROJECT:-/Users/scottkellar/Projects/hive-test-project}"
 QA_HIVE_BIN="${QA_HIVE_BIN:-}"
-QA_SESSIOND_BIN="${QA_SESSIOND_BIN:-$PRIMARY_CHECKOUT/native/sessiond/zig-out/bin/hive-sessiond}"
+# Sessiond is resolved from the source under test, the same way the daemon's
+# announcement hash is compared to those sources. Defaulting to the primary
+# checkout's staged binary is the stale-broker defect: a tip that changes
+# sessiond would be proven against last week's broker and still read green.
+# An explicit QA_SESSIOND_BIN stays an override (frozen M3 builds need it);
+# a silent fallback does not.
+if [ -z "${QA_SESSIOND_BIN:-}" ]; then
+  QA_SESSIOND_BIN="$QA_SRC_ROOT/native/sessiond/zig-out/bin/hive-sessiond"
+fi
 
 refuse() { echo "rig: refusing: $*" >&2; exit 2; }
 
@@ -366,8 +374,8 @@ rig_up() {
   require_project
   [ -z "$QA_HIVE_BIN" ] || [ -x "$QA_HIVE_BIN" ] \
     || refuse "QA_HIVE_BIN is not executable: $QA_HIVE_BIN"
-  [ -x "$QA_SESSIOND_BIN" ] || refuse "no executable hive-sessiond at" \
-    "$QA_SESSIOND_BIN — stage one there or set QA_SESSIOND_BIN explicitly"
+  [ -x "$QA_SESSIOND_BIN" ] || refuse "no executable hive-sessiond under QA_SRC_ROOT at" \
+    "$QA_SESSIOND_BIN — stage one from this source tree or set QA_SESSIOND_BIN"
   command -v bun >/dev/null || refuse "bun is required"
   mkdir -p "$QA_HOME" "$ARTIFACTS"
 
