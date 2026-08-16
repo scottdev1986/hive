@@ -52,7 +52,9 @@ describe("queen pin", () => {
     expect(QUEEN_PIN).toContain("hierarchy board");
     expect(QUEEN_PIN).toContain("hive_task_list");
     expect(QUEEN_PIN).toContain("No spawn without a current taskId");
-    expect(QUEEN_PIN).toContain("Worktrees and hive branches must match live agents");
+    expect(QUEEN_PIN).toContain(
+      "Worktrees and hive branches must match live agents",
+    );
     expect(QUEEN_PIN).toContain("hive_settlement_list");
   });
 
