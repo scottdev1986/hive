@@ -30,6 +30,10 @@ import {
   type MachineMutationPurpose,
 } from "../daemon/mutation-lease";
 import { projectStateDir } from "../daemon/project-identity-core/state";
+import {
+  AGENT_STANDARDS_FILE,
+  scaffoldAgentStandardsMd,
+} from "../daemon/spawn/agent-standards";
 import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 import { errorMessage } from "../shared/error-message";
 import { SHIPPED_SKILLS, shippedSkillAddresses } from "../skills/shipped";
@@ -171,6 +175,24 @@ async function removeOwnedSkillCopy(
   log(`Removed ${displayPath}.`);
 }
 
+/** Remove the generic AGENT_STANDARDS.md init wrote. Only a byte-identical scaffold is Hive's to remove; an edited file is the project's standing procedure. */
+async function removeScaffoldedAgentStandards(
+  root: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const path = join(root, AGENT_STANDARDS_FILE);
+  const current = await readFile(path, "utf8").catch(() => null);
+  if (current === null) return;
+  if (current !== scaffoldAgentStandardsMd()) {
+    log(
+      `Left ${AGENT_STANDARDS_FILE}: it differs from the generic scaffold, so it is yours.`,
+    );
+    return;
+  }
+  await rm(path, { force: true });
+  log(`Removed ${AGENT_STANDARDS_FILE}.`);
+}
+
 /** Remove the base skills Hive installed into `.hive/skills`, where they sit beside the user's own. Only byte-identical copies are Hive's to remove; an edited one is the user's and is reported instead, and their own skills are never candidates at all — a name Hive does not ship is not looked at. */
 async function removeBaseSkills(
   root: string,
@@ -263,6 +285,7 @@ export async function runUninstallRepo(
     "  - stops the selected daemon only when its handshake proves it serves this project",
     "  - asks the settlement service to release exact-safe worktrees and branches; unprovable work stays protected",
     "  - removes the skills Hive installed (edited copies are yours and stay)",
+    "  - removes AGENT_STANDARDS.md only when it still matches the generic scaffold",
     "  - removes Hive's entries from .mcp.json, .claude/settings.local.json, and .codex/",
     "  - deletes graphify-out/, the generated .graphifyignore, and this repo's derived state under ~/.hive/projects/",
     "The graphify tool under ~/.hive/tools is shared across repos and stays; `hive uninstall` removes it.",
@@ -296,6 +319,7 @@ export async function runUninstallRepo(
     return 1;
   }
   await removeBaseSkills(root, deps.log);
+  await removeScaffoldedAgentStandards(root, deps.log);
   // Remove byte-identical Hive skills from vendor directories too.
   for (const tool of CAPABILITY_PROVIDERS) {
     await removeShippedSkills(root, tool, deps.log);

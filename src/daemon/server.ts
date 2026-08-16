@@ -42,6 +42,7 @@ import type { EpisodicStore } from "../memory-service/episodic";
 import { MemoryIndex } from "../memory-service/fts-index";
 import {
   harvestPitfalls,
+  harvestVerification,
   isHarvestBoundaryEvent,
 } from "../memory-service/harvest";
 import {
@@ -2048,15 +2049,23 @@ export class HiveDaemon {
   ): void {
     const episodic = this.episodic;
     if (episodic === null) return;
-    void harvestPitfalls({
+    const harvestDeps = {
       store: episodic,
       repoRoot: this.repoRoot,
       agent: agentId,
       sessionId,
-      write: (input) => this.writeMemoryFact(input),
-      search: (query) => this.memory.search(query, { limit: 5 }),
-    }).catch((error) => {
+      write: (input: Parameters<typeof this.writeMemoryFact>[0]) =>
+        this.writeMemoryFact(input),
+      search: (query: string) => this.memory.search(query, { limit: 5 }),
+    };
+    void harvestPitfalls(harvestDeps).catch((error) => {
       const line = `Hive pitfall harvest (${reason}) failed for ${agentId}: ${errorMessage(
+        error,
+      )}`;
+      this.writeDaemonLog(line);
+    });
+    void harvestVerification(harvestDeps).catch((error) => {
+      const line = `Hive verification harvest (${reason}) failed for ${agentId}: ${errorMessage(
         error,
       )}`;
       this.writeDaemonLog(line);

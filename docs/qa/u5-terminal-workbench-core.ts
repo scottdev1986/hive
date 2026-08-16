@@ -453,10 +453,11 @@ export type NamedSpawnRefusalKind =
   | "cause-omitted"
   | "other";
 
-/** Isolated hive init does not write this file. The U5 harness stages the
- * checkout's real AGENT_STANDARDS.md so spawn can pass the project-owned
- * gate. An empty source is refused here: a stub that only satisfies
- * readFile dies one layer later at the declaration check. */
+/** Isolated hive init now writes a generic scaffold. The U5 harness still
+ * stages the checkout's real AGENT_STANDARDS.md so spawn uses Hive-the-repo
+ * procedure, not the generic product file. An empty source is refused here:
+ * a stub that only satisfies readFile dies one layer later at the
+ * declaration check. */
 export function stageIsolatedProjectAgentStandards(
   projectRoot: string,
   sourceText: string,

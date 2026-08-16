@@ -2,7 +2,7 @@
 
 import type { MemoryScope, MemoryWriteInput } from "../schemas/memory";
 import type { EpisodicEvent, EpisodicStore } from "./episodic";
-import { discoverMemoryFacts } from "./memory-store";
+import { discoverMemoryFacts, readMemoryFact } from "./memory-store";
 import { normalizeTitle } from "./article-format";
 import type { MemoryWriteFileResult } from "./store-records";
 import { errorMessage } from "../shared/error-message";
@@ -503,4 +503,89 @@ async function harvestPitfallsLocked(
     pruneHarvestReceipts(deps.store, deps.agent, maxExaminedId);
   }
   return report;
+}
+
+export const VERIFICATION_ARTICLE_ID = "verification";
+export const VERIFICATION_TITLE_PREFIX = "Verification: ";
+
+export function verificationCommandFromTitle(title: string): string | null {
+  if (!title.startsWith(VERIFICATION_TITLE_PREFIX)) return null;
+  const command = title.slice(VERIFICATION_TITLE_PREFIX.length).trim();
+  return command.length === 0 ? null : command;
+}
+
+export interface VerificationHarvestReport {
+  readonly wrote: boolean;
+  readonly command: string | null;
+  readonly id: string | null;
+}
+
+/** Record the most recent typed successful command as this repo's verification. No command field means nothing was measured; exit-0 prose is not a command. Same command as the current article is a no-op. */
+export async function harvestVerification(
+  deps: HarvestPitfallsDeps,
+): Promise<VerificationHarvestReport> {
+  const events = deps.store.eventsFor({ agent: deps.agent });
+  let command: string | null = null;
+  let sourceEvent: EpisodicEvent | null = null;
+  for (const event of events) {
+    if (episodeOutcome(event) !== "succeeded") continue;
+    const measured = nonEmptyString(eventData(event).command);
+    if (measured === null) continue;
+    command = measured;
+    sourceEvent = event;
+  }
+  if (command === null || sourceEvent === null) {
+    return { wrote: false, command: null, id: null };
+  }
+
+  const existing = await readMemoryFact(
+    deps.repoRoot,
+    "repo",
+    VERIFICATION_ARTICLE_ID,
+  );
+  if (
+    existing !== null &&
+    verificationCommandFromTitle(existing.title) === command
+  ) {
+    return { wrote: false, command, id: existing.id };
+  }
+
+  const previous =
+    existing === null ? null : verificationCommandFromTitle(existing.title);
+  const title = `${VERIFICATION_TITLE_PREFIX}${command}`.slice(0, TITLE_MAX);
+  const body = [
+    "## Command",
+    "",
+    `\`${command}\``,
+    "",
+    "## Measured",
+    "",
+    `- Agent: ${deps.agent}`,
+    `- Session: ${deps.sessionId ?? "unknown"}`,
+    `- Event: e${sourceEvent.id} \`${sourceEvent.type}\``,
+    previous === null || previous === command
+      ? "- First measured command for this repository."
+      : `- Replaces previously measured \`${previous}\`.`,
+    "",
+    "UNVERIFIED harvest — a later session must re-check this command still exists in the tree and call memory_verify before treating it as standing procedure.",
+    "",
+  ].join("\n");
+
+  const written = await deps.write({
+    scope: "repo",
+    id: VERIFICATION_ARTICLE_ID,
+    topic: "verification",
+    title,
+    body,
+    tags: ["verification"],
+    source: "orchestrator",
+    evidence:
+      `Measured successful command ${JSON.stringify(command)} from e${sourceEvent.id} ` +
+      `of agent ${deps.agent}, session ${deps.sessionId ?? "unknown"}`,
+    status: "unverified",
+    kind: "article",
+    supersedes: existing === null ? [] : [VERIFICATION_ARTICLE_ID],
+    author: deps.agent,
+  });
+  return { wrote: true, command, id: written.id };
 }

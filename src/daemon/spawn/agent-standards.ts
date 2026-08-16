@@ -29,7 +29,46 @@ export interface AgentAudienceFacts {
   category?: RoutingCategory;
 }
 
-const AGENT_STANDARDS_FILE = "AGENT_STANDARDS.md";
+export const AGENT_STANDARDS_FILE = "AGENT_STANDARDS.md";
+
+/**
+ * Product standards for a repository that has not written its own yet.
+ * Hive protocol only — no bun, typecheck, or any other toolchain. Init
+ * writes this file when it is missing; spawn uses it in memory when the
+ * file is absent so a stranger's repo can start workers.
+ */
+export function scaffoldAgentStandardsMd(): string {
+  return [
+    "# Agent standards",
+    "",
+    "Generic Hive product standards, scaffolded by `hive init`. This file is",
+    "this repository's standing procedure. Edit it as you learn how this",
+    "project works. Hive does not assume bun or any other toolchain.",
+    "",
+    "```standards",
+    "Hive protocol: everyone",
+    "Writer agents: writers",
+    "Read-only agents: read-only",
+    "```",
+    "",
+    "## Hive protocol",
+    "",
+    "Hive protocol (non-negotiable):",
+    '1. An absent field is unknown, never false. A missing or misspelled key does not raise — it reads back as "no". Before trusting a negative, prove your reader can see a positive (a positive control): an all-empty result is usually a bad key, not an empty world.',
+    '2. Measure, do not infer. Never accept an ACT as proof of a STATE: "the command exited 0" is not "the message was received"; "the skill shipped" is not "the agent read it"; "the screen redrew" is not "the agent is alive". Read the thing that records the state.',
+    "3. Skills live in the primary checkout, not an agent worktree. Resolve and read them there.",
+    "4. Full deliverables go into the artifact store, not into mail. Store reports, designs, reviews, and findings with `hive_artifact_put` keyed to your board task or run; your mail to queen carries the `artifactId` plus a short summary, never the full body. Settled mail bodies cannot be read again — an artifact can.",
+    "",
+    "## Writer agents",
+    "",
+    "Complete writer work must be committed, verified after rebasing the primary checkout's current branch using this repository's own verification, and landed through hive_land. Learn what \"green\" means from this file, AGENTS.md, and Hive memory — never from a compiled-in toolchain. If no verification command is known, discover it from the tree and record it with memory_write (topic verification) before treating it as standing procedure. Abort and report any rebase conflict; never merge into the primary checkout directly.",
+    "",
+    "## Read-only agents",
+    "",
+    "This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_mail_publish. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.",
+    "",
+  ].join("\n");
+}
 
 const DECLARATION_FENCE = "```standards";
 
@@ -46,6 +85,13 @@ export async function loadAgentStandards(
   try {
     source = await readFile(path, "utf8");
   } catch (error) {
+    const code =
+      error instanceof Error && "code" in error
+        ? (error as NodeJS.ErrnoException).code
+        : undefined;
+    if (code === "ENOENT") {
+      return parseAgentStandards(scaffoldAgentStandardsMd(), path);
+    }
     throw new Error(
       `Cannot spawn: agent standards are unreadable at ${path}: ${
         error instanceof Error ? error.message : "unknown error"

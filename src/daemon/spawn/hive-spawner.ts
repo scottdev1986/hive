@@ -24,7 +24,14 @@ import {
 } from "../../adapters/worktrees";
 import { getHiveHome } from "../../hive-home/home";
 import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
-import { buildMemoryIndex } from "../../memory-service/memory-store";
+import {
+  VERIFICATION_ARTICLE_ID,
+  verificationCommandFromTitle,
+} from "../../memory-service/harvest";
+import {
+  buildMemoryIndex,
+  readMemoryFact,
+} from "../../memory-service/memory-store";
 import type { AgentRecord, ExecutionIdentity } from "../../schemas/agent";
 import {
   type CapabilityDiscoveryResult,
@@ -1077,7 +1084,7 @@ export class HiveSpawner implements Spawner {
     const standards = await loadAgentStandards(this.dependencies.repoRoot);
     // Read once, before the prompt: the directive, the digest, and the MCP config below must all describe the same server observation.
     const graphifyUrl = this.dependencies.graphifyUrl?.() ?? null;
-    const [memoryIndex, graphBrief] = await Promise.all([
+    const [memoryIndex, graphBrief, verificationFact] = await Promise.all([
       // Memory resolves against the primary checkout, never the worktree: .hive/memory is gitignored, so worktrees never contain it.
       this.buildMemoryIndex(this.dependencies.repoRoot, {
         brief: request.task,
@@ -1094,7 +1101,16 @@ export class HiveSpawner implements Spawner {
               );
               return null;
             }),
+      readMemoryFact(
+        this.dependencies.repoRoot,
+        "repo",
+        VERIFICATION_ARTICLE_ID,
+      ).catch(() => null),
     ]);
+    const learnedCommand =
+      verificationFact === null
+        ? null
+        : verificationCommandFromTitle(verificationFact.title);
     const timestamp = new Date().toISOString();
     const providerRunId = crypto.randomUUID();
     // Hive names Grok's session id at launch because Grok has no lifecycle hooks. Do not select the newest session by cwd: reused worktrees also contain dead predecessors, while `--session-id` makes this row authoritative immediately.
@@ -1286,6 +1302,14 @@ export class HiveSpawner implements Spawner {
               : { handoffId: request.handoffId }),
             ...(spawnBrief === undefined ? {} : { spawnBrief }),
             ...(boardTaskId === undefined ? {} : { boardTaskId }),
+            ...(learnedCommand === null || verificationFact === null
+              ? {}
+              : {
+                  learnedVerification: {
+                    command: learnedCommand,
+                    status: verificationFact.status,
+                  },
+                }),
           },
         );
         const instructionPath = await writeLaunchPrompt(

@@ -2,11 +2,12 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { learnedVerificationInstruction } from "../../src/daemon/spawn/agent-prompt";
 import {
   type AgentStandards,
   loadAgentStandards,
 } from "../../src/daemon/spawn/agent-standards";
-import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
   buildAgentPrompt,
   HiveSpawner,
@@ -174,12 +175,18 @@ describe("agent standards come from the repo, not the binary", () => {
 });
 
 describe("a spawn without standards refuses", () => {
-  test("a missing file names the path it wanted", async () => {
+  test("a missing file loads the generic product scaffold", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-standards-none-"));
     temporaryRoots.push(root);
-    const message = await refusalFrom(root);
-    expect(message).toContain(join(root, "AGENT_STANDARDS.md"));
-    expect(message).toContain("Cannot spawn");
+    const standards = await loadAgentStandards(root);
+    expect(standards.sections.map((section) => section.heading)).toEqual([
+      "Hive protocol",
+      "Writer agents",
+      "Read-only agents",
+    ]);
+    expect(
+      standards.sections.some((section) => section.text.includes("bun run")),
+    ).toBe(false);
   });
 
   test("an empty file refuses instead of spawning a silent agent", async () => {
@@ -246,6 +253,14 @@ describe("which sections an agent gets", () => {
       );
     }
     expect(await build({})).not.toContain(textOf(standards, "Code review"));
+  });
+
+  test("a harvested verification command reaches the spawn prompt", async () => {
+    const learned = { command: "npm test", status: "unverified" };
+    const prompt = await build({ learnedVerification: learned });
+    expect(prompt).toContain(learnedVerificationInstruction(learned));
+    expect(prompt).toContain("npm test");
+    expect(await build({})).not.toContain("## Learned verification");
   });
 
   test("a reader gets the read-only clause and a writer the landing clause", async () => {
@@ -321,9 +336,10 @@ describe("which sections an agent gets", () => {
   });
 });
 
-// The loader refusing is not the spawn refusing. This drives the real spawner
-// over a repo root with no standards and measures what the caller gets back.
-test("a spawn over a repo with no standards refuses before it builds anything", async () => {
+// Missing AGENT_STANDARDS.md is no longer a spawn refusal: the generic
+// product scaffold loads so a stranger's repo can start workers. This drives
+// the real spawner and measures that worktree creation is reached.
+test("a spawn over a repo with no standards file uses the generic scaffold", async () => {
   const root = await mkdtemp(join(tmpdir(), "hive-standards-spawn-"));
   const home = await mkdtemp(join(tmpdir(), "hive-standards-spawn-home-"));
   temporaryRoots.push(root, home);
@@ -408,16 +424,13 @@ test("a spawn over a repo with no standards refuses before it builds anything", 
     },
   });
   try {
-    const spawn = spawner.spawn({
+    const record = await spawner.spawn({
       task: "Fix the parser",
       category: "simple_coding",
     });
-    await expect(spawn).rejects.toThrow(
-      /Cannot spawn: agent standards are unreadable/,
-    );
-    expect(worktreesCreated).toBe(0);
+    expect(record.taskDescription).toBe("Fix the parser");
+    expect(worktreesCreated).toBe(1);
   } finally {
-    db.close();
     if (previousHome === undefined) delete process.env.HIVE_HOME;
     else process.env.HIVE_HOME = previousHome;
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME;

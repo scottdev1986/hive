@@ -23,6 +23,7 @@ import { provisionGraphify } from "./graphify-command";
 import { reindexMemory } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { projectRootOrCwd } from "../daemon/project-identity-core/project-root";
+import { scaffoldAgentStandardsMd } from "../daemon/spawn/agent-standards";
 import { errorMessage } from "../shared/error-message";
 
 /** A narrative fact for init to seed. A stable id keeps a re-run upserting the same fact in place rather than accumulating duplicates. */
@@ -42,6 +43,7 @@ export interface InitOptions {
 
 export interface InitResult {
   agentsScaffolded: boolean;
+  standardsScaffolded: boolean;
   factsSeeded: string[];
   skills: BaseSkillInstallReport;
   messages: string[];
@@ -265,7 +267,22 @@ export async function runInit(
     }
   }
 
-  // 3. .gitignore: Hive's exact generated paths are local derived state. Never write a bare `.hive/`: project skills under it belong in version control.
+  // 3. AGENT_STANDARDS.md: spawn requires standing procedure. A missing file
+  // used to refuse every worker. Write the generic product scaffold once;
+  // never overwrite a file the project already owns.
+  const standardsPath = join(cwd, "AGENT_STANDARDS.md");
+  let standardsScaffolded = false;
+  if (await deps.fileExists(standardsPath)) {
+    messages.push("AGENT_STANDARDS.md already exists; leaving it untouched.");
+  } else {
+    await deps.writeFile(standardsPath, scaffoldAgentStandardsMd());
+    standardsScaffolded = true;
+    messages.push(
+      "Scaffolded AGENT_STANDARDS.md with generic Hive protocol — edit it as this repo's standing procedure.",
+    );
+  }
+
+  // 4. .gitignore: Hive's exact generated paths are local derived state. Never write a bare `.hive/`: project skills under it belong in version control.
   messages.push(await ensureHiveStateGitignored(cwd, deps));
 
   const facts = options.facts ?? [];
@@ -303,7 +320,13 @@ export async function runInit(
 
   await deps.writeInitStamp(cwd);
 
-  return { agentsScaffolded, factsSeeded, skills, messages };
+  return {
+    agentsScaffolded,
+    standardsScaffolded,
+    factsSeeded,
+    skills,
+    messages,
+  };
 }
 
 const EMBEDDINGS_FIX_HINT = "re-run `hive init` once the cause is fixed";

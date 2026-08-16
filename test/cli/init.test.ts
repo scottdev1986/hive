@@ -14,6 +14,10 @@ import {
   seedInitFacts,
 } from "../../src/cli/init";
 import {
+  loadAgentStandards,
+  scaffoldAgentStandardsMd,
+} from "../../src/daemon/spawn/agent-standards";
+import {
   discoverMemoryFacts,
   parseMemoryFile,
 } from "../../src/memory-service/memory-store";
@@ -173,11 +177,39 @@ describe("runInit", () => {
         testDeps(),
       );
       expect(result.agentsScaffolded).toBe(true);
+      expect(result.standardsScaffolded).toBe(true);
       expect(result.factsSeeded).toEqual(["flaky-login-test"]);
+      const standards = await readFile(join(root, "AGENT_STANDARDS.md"), "utf8");
+      expect(standards).toBe(scaffoldAgentStandardsMd());
+      expect(standards).not.toContain("bun run");
+      expect(standards).not.toContain("tsc --noEmit");
+      const parsed = await loadAgentStandards(root);
+      expect(parsed.sections.map((section) => section.heading)).toEqual([
+        "Hive protocol",
+        "Writer agents",
+        "Read-only agents",
+      ]);
       // Scaffold is a generic starter, not invented project-specific commands.
       const agents = await readFile(join(root, "AGENTS.md"), "utf8");
       expect(agents).toContain("Starter conventions scaffolded by `hive init`");
       expect(agents).toContain("## Commands");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("never overwrites an existing AGENT_STANDARDS.md", async () => {
+    const root = await tsRepo();
+    try {
+      await writeFile(
+        join(root, "AGENT_STANDARDS.md"),
+        "# project-owned standards\nkeep me\n",
+      );
+      const result = await runInit(root, {}, testDeps());
+      expect(result.standardsScaffolded).toBe(false);
+      expect(await readFile(join(root, "AGENT_STANDARDS.md"), "utf8")).toBe(
+        "# project-owned standards\nkeep me\n",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

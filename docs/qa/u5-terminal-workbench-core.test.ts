@@ -410,13 +410,15 @@ describe("U5 spawn cleanup reconciliation", () => {
 describe("U5 isolated project agent standards", () => {
   const repoRoot = join(import.meta.dir, "../..");
 
-  test("spawn still refuses by name when AGENT_STANDARDS.md is absent", async () => {
+  test("an absent AGENT_STANDARDS.md loads generic product standards", async () => {
     const root = await mkdtemp(join(tmpdir(), "u5-std-absent-"));
     try {
-      const refusal = await agentStandardsRefusalMessage(root);
-      expect(refusal).toMatch(/Cannot spawn: agent standards are unreadable/);
-      expect(refusal).toContain(join(root, "AGENT_STANDARDS.md"));
-      expect(nameSpawnRefusalCause(refusal)).toBe("standards-unreadable");
+      const parsed = await requireParsedAgentStandards(root);
+      expect(parsed.headings).toEqual([
+        "Hive protocol",
+        "Writer agents",
+        "Read-only agents",
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

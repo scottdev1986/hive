@@ -19,11 +19,12 @@ import {
   runUninstallRepo,
   type UninstallDeps,
 } from "../../src/cli/uninstall";
+import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
+import { projectStateDir } from "../../src/daemon/project-identity-core/state";
+import { scaffoldAgentStandardsMd } from "../../src/daemon/spawn/agent-standards";
 import { getHiveHome } from "../../src/hive-home/home";
 import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import { type HiveVariant, resolveVariant } from "../../src/hive-home/variant";
-import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
-import { projectStateDir } from "../../src/daemon/project-identity-core/state";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 import { required } from "../required";
 
@@ -159,6 +160,32 @@ describe("hive uninstall --repo", () => {
       expect(existsSync(join(root, "graphify-out"))).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("removes a byte-identical AGENT_STANDARDS scaffold and keeps an edited file", async () => {
+    const scaffoldRoot = await gitRepo();
+    const editedRoot = await gitRepo();
+    try {
+      await writeFile(
+        join(scaffoldRoot, "AGENT_STANDARDS.md"),
+        scaffoldAgentStandardsMd(),
+      );
+      await writeFile(
+        join(editedRoot, "AGENT_STANDARDS.md"),
+        `${scaffoldAgentStandardsMd()}\n# our bun suite\n`,
+      );
+      expect(await runUninstallRepo(scaffoldRoot, {}, probe(true).deps)).toBe(
+        0,
+      );
+      expect(await runUninstallRepo(editedRoot, {}, probe(true).deps)).toBe(0);
+      expect(existsSync(join(scaffoldRoot, "AGENT_STANDARDS.md"))).toBe(false);
+      expect(
+        await readFile(join(editedRoot, "AGENT_STANDARDS.md"), "utf8"),
+      ).toContain("# our bun suite");
+    } finally {
+      await rm(scaffoldRoot, { recursive: true, force: true });
+      await rm(editedRoot, { recursive: true, force: true });
     }
   });
 

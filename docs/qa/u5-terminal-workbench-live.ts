@@ -61,7 +61,6 @@ import {
 } from "./qa-client";
 import { qaRepoRoot } from "./repo-root";
 import {
-  agentStandardsRefusalMessage,
   assertIsolatedQaHiveHome,
   assertQaHomeFitsSocketPath,
   buildProviderMatrix,
@@ -1677,10 +1676,13 @@ async function runProof(): Promise<Record<string, unknown>> {
   if (unexpectedProjectRows.length > 0) {
     throw new Error(`QA project is not fresh: ${project}`);
   }
-  const absentStandards = await agentStandardsRefusalMessage(project);
-  if (!/Cannot spawn: agent standards are unreadable/.test(absentStandards)) {
+  const parsedAbsent = await requireParsedAgentStandards(project);
+  if (
+    parsedAbsent.headings.join(",") !==
+    "Hive protocol,Writer agents,Read-only agents"
+  ) {
     throw new Error(
-      `isolated project absence control did not name the unreadable refusal: ${absentStandards}`,
+      `isolated project without AGENT_STANDARDS.md did not load generic product standards: ${parsedAbsent.headings.join(", ")}`,
     );
   }
   const sourceStandards = readFileSync(
@@ -1701,7 +1703,7 @@ async function runProof(): Promise<Record<string, unknown>> {
     sha256: createHash("sha256").update(sourceStandards).digest("hex"),
     sectionCount: parsedStandards.sectionCount,
     headings: parsedStandards.headings,
-    absentRefusal: absentStandards,
+    genericHeadings: parsedAbsent.headings,
   });
   const initialAgents = await status();
   initialAgentIds = new Set(initialAgents.map((agent) => agent.id));

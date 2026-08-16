@@ -117,6 +117,25 @@ export interface AgentPromptOptions {
    * retelling of it. Absent when the spawn is not linked to a board task.
    */
   boardTaskId?: string;
+  /** Measured verification command from Hive memory, when one has been harvested. */
+  learnedVerification?: {
+    readonly command: string;
+    readonly status: string;
+  };
+}
+
+/** Standing instruction when this repo has a harvested verification command. Exported so tests can assert the exact prompt bytes. */
+export function learnedVerificationInstruction(learned: {
+  readonly command: string;
+  readonly status: string;
+}): string {
+  return [
+    "## Learned verification",
+    "",
+    `This repository has a measured verification command (${learned.status}): \`${learned.command}\`.`,
+    "Re-check that command still exists in the tree before treating it as the land gate.",
+    "If it does not, discover the current one from the repo and record it with memory_write (topic verification).",
+  ].join("\n");
 }
 
 /** Standing instruction when a spawn is linked to a hierarchy board task. Exported so tests can assert the exact prompt bytes. */
@@ -255,6 +274,9 @@ export function buildAgentPrompt(
       `this spawn loaded (the parsed sections, not the file's bytes), including any ` +
       `section your role did not receive. If it disagrees with a digest recomputed ` +
       `from the standards now on disk, this prompt is the stale copy and the file wins.`,
+    ...(options.learnedVerification === undefined
+      ? []
+      : [learnedVerificationInstruction(options.learnedVerification)]),
     ...(options.graphBrief === undefined || options.graphBrief === ""
       ? []
       : [options.graphBrief]),
