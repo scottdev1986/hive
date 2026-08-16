@@ -439,10 +439,18 @@ function verifyAppLifecycleRelease(release: AppLifecycleRelease): {
   const executableSha256 = createHash("sha256")
     .update(readFileSync(executablePath))
     .digest("hex");
-  const expectedInstanceId = createHash("sha256")
-    .update(home)
-    .digest("hex")
-    .slice(0, 10);
+  const publishedInstanceLine = readFileSync(
+    join(artifacts, "coordinates.txt"),
+    "utf8",
+  )
+    .split("\n")
+    .find((line) => line.startsWith("u5_instance_id="));
+  const expectedInstanceId = publishedInstanceLine?.slice(
+    "u5_instance_id=".length,
+  );
+  if (expectedInstanceId === undefined || expectedInstanceId.length === 0) {
+    throw new Error("published u5_instance_id is absent from coordinates");
+  }
   const liveFlagCount = release.launchArguments.filter(
     (argument) => argument === "--workspace-shell-live",
   ).length;
