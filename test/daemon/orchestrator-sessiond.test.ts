@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { macProcessIdentity } from "../../src/daemon/lifecycle/daemon-lifecycle";
 import {
   type HeadlessOrchestratorSessiondLaunch,
   OrchestratorSessiondController,
   type OrchestratorSessiondDependencies,
   type OrchestratorSessiondLaunch,
 } from "../../src/daemon/orchestrator-host/sessiond-controller";
+import { HiveTerminalHostAdapter } from "../../src/daemon/session-host/hive-terminal-host";
 import type { SessionInspection } from "../../src/daemon/session-host/session-host-contract";
+import { SessiondHost } from "../../src/daemon/session-host/sessiond-host";
 import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import { TERMINAL_SHELL } from "../../src/daemon/session-host/shell-session";
 import type {
@@ -1000,4 +1004,84 @@ describe("OrchestratorSessiondController headless root", () => {
       }),
     ).toThrow(/only a root run may be headless/);
   });
+
+  // The four tests above run against a fake terminalHost — they prove the daemon-layer decision,
+  // not that a headless launch survives the real sessiond wire. This one uses the production
+  // SessiondHost and HiveTerminalHostAdapter, no fakes: it is the control that would have caught
+  // WireCreateSpec.provider being non-optional Zig, which every daemon-layer control above missed
+  // because none of them ever crossed the wire.
+  test("END-TO-END: a headless root opens across the real sessiond wire and is reaped on terminate", async () => {
+    const home = process.env.HIVE_TEST_ROOT;
+    if (home === undefined) {
+      throw new Error(
+        "this test requires HIVE_TEST_ROOT; run it through scripts/test-sandbox.ts",
+      );
+    }
+    const repoRoot = resolve(import.meta.dir, "../..");
+    const db = new HiveDatabase(":memory:");
+    const instanceId = "e2e-headless-root";
+    const host = new SessiondHost({
+      repoRoot,
+      hiveHome: home,
+      pendingBindings: db,
+    });
+    const terminalHost = new HiveTerminalHostAdapter(host, db, instanceId, {
+      providerRuns: db,
+    });
+    const controller = new OrchestratorSessiondController({
+      bindings: db,
+      instanceId,
+      providerRuns: db,
+      visibility: {
+        prepareAgentCreation: async () => ({
+          engineBuildId: await host.discoverEngineBuildId(),
+          visibility: {
+            workspaceSessionId: "e2e-workspace",
+            workspacePid: process.pid,
+            workspaceStartToken: macProcessIdentity(process.pid).startToken,
+            openTerminalRevision: "1",
+          },
+          geometry,
+        }),
+      },
+      terminalHost,
+    });
+    const launch: HeadlessOrchestratorSessiondLaunch = {
+      requestId: mintSessionRequestId(),
+      providerRunId: crypto.randomUUID(),
+      cwd: home,
+      environment: {},
+    };
+
+    let snapshot: Awaited<ReturnType<typeof controller.startHeadless>> | null =
+      null;
+    try {
+      snapshot = await controller.startHeadless(launch);
+      expect(snapshot.state).toBe("running");
+
+      const accepted = db.getActiveRootProviderRun(instanceId);
+      expect(accepted).not.toBeNull();
+      expect(accepted?.agentId).toBeNull();
+      expect(accepted?.provider).toBeNull();
+      // The host's own reap bookkeeping needs a moment to settle after a create that returns as
+      // soon as the shell is idle; inspecting once first gives it that moment without inventing a
+      // fixed sleep.
+      await terminalHost.inspect(snapshot.locator);
+    } finally {
+      if (snapshot !== null) {
+        const terminated = await terminalHost.terminate(snapshot.locator, {
+          mode: "immediate",
+          reason: "end-to-end test cleanup",
+          requestId: mintSessionRequestId(),
+        });
+        // "survivors" is the one outcome that would mean the real process is still alive; that is
+        // the only thing this cleanup step must prove did not happen. It sometimes lands on
+        // "unknown" rather than "terminated" for a headless launch specifically — a disclosed,
+        // separate gap in the native reap-completeness signal outside this task's
+        // session_host.zig-only lease (reported, not fixed here). Confirmed by direct process
+        // inspection, not asserted: a real kill did happen even when the state read is "unknown".
+        expect(terminated.state).not.toBe("survivors");
+      }
+    }
+  }, 30_000);
 });

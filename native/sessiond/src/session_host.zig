@@ -1015,7 +1015,8 @@ fn viewerOutputAckThroughSeq(
 const WireCreateSpec = struct {
     schemaVersion: u8,
     locator: WireLocator,
-    provider: []const u8,
+    // Null for a headless orchestrator root: no vendor CLI is attached, so there is nothing honest to name. Parsed and never read below — the host launches whatever argv it is given regardless of which vendor, if any, is behind it.
+    provider: ?[]const u8 = null,
     cwd: []const u8,
     argv: []const []const u8,
     environment: std.json.Value,
@@ -1028,6 +1029,32 @@ const WireCreateSpec = struct {
         openTerminalRevision: []const u8,
     },
 };
+
+test "WireCreateSpec.provider parses identically whether the JSON key is explicit null or absent" {
+    const allocator = std.testing.allocator;
+    const locator_and_tail =
+        \\"locator":{"schemaVersion":1,"instanceId":"i","subject":{"kind":"root"},"generation":1,"sessionId":"s","hostKind":"sessiond","engineBuildId":"e"},"cwd":"/tmp","argv":["/bin/zsh"],"environment":{},"expectedExecutable":"/bin/zsh","geometry":{"columns":80,"rows":24,"widthPx":800,"heightPx":480,"cellWidthPx":10,"cellHeightPx":20},"visibility":{"workspaceSessionId":"w","workspacePid":1,"workspaceStartToken":"1:1","openTerminalRevision":"1"}}
+    ;
+    const with_explicit_null = "{\"schemaVersion\":1,\"provider\":null," ++ locator_and_tail;
+    const with_key_absent = "{\"schemaVersion\":1," ++ locator_and_tail;
+
+    var parsed_null = try std.json.parseFromSlice(WireCreateSpec, allocator, with_explicit_null, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed_null.deinit();
+    var parsed_absent = try std.json.parseFromSlice(WireCreateSpec, allocator, with_key_absent, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed_absent.deinit();
+
+    // TypeScript always sends the key explicitly (nullable(), not optional()), so only the first
+    // case occurs in production today. Both are proven so a future caller that omits the key
+    // instead is not a surprise.
+    try std.testing.expectEqual(@as(?[]const u8, null), parsed_null.value.provider);
+    try std.testing.expectEqual(@as(?[]const u8, null), parsed_absent.value.provider);
+}
 
 fn environmentEntries(
     allocator: std.mem.Allocator,
