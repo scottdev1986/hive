@@ -46,6 +46,36 @@ export function sessiondTerminalIsDead(
   );
 }
 
+/**
+ * The one answer to "did this teardown succeed", for every caller that decides
+ * anything on it — ending the provider run, reporting a teardown error, or
+ * refusing shutdown.
+ *
+ * `terminated` is unreachable for a process-tree target: the inspector reports
+ * `unknown` unconditionally there because macOS exposes neither containment nor
+ * a process-event stream, so a child can fork and reparent between two
+ * observations and snapshot evidence is never promoted to aggregate success. A
+ * caller that demands `terminated` is waiting for a state the platform cannot
+ * produce, which reads as a teardown that never finishes.
+ *
+ * So success is either positive termination, or the documented floor: no
+ * survivors, with the escapee gap stated outright rather than passed off as
+ * proof. Both arms require an empty survivor list — a survivor is a live
+ * process and no diagnostic excuses one.
+ */
+export function sessiondTeardownSucceeded(
+  result: Pick<TerminationResult, "state" | "survivors" | "errors">,
+): boolean {
+  if (result.survivors.length > 0) return false;
+  if (result.state === "terminated") return true;
+  return (
+    result.state === "unknown" &&
+    result.errors.some(
+      (error) => error.diagnosticId === "process-tree-escapees-unaccounted",
+    )
+  );
+}
+
 export function sessiondAgentProviderRunIsDead(
   inspection: Pick<
     SessionInspection,
@@ -644,7 +674,7 @@ export class HiveTerminalHostAdapter {
       completedAt: this.now().toISOString(),
       result: projected,
     });
-    if (projected.state === "terminated") {
+    if (sessiondTeardownSucceeded(projected)) {
       const active = this.providerRuns.getActiveProviderRunByTerminal(locator);
       if (active !== null) {
         this.providerRuns.endProviderRun(

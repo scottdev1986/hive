@@ -13,6 +13,7 @@ import {
 import {
   type HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
+  sessiondTeardownSucceeded,
 } from "../session-host/hive-terminal-host";
 import { mintSessionRequestId } from "../session-host/locators";
 import { SessiondWireError } from "../session-host/sessiond-host";
@@ -196,16 +197,7 @@ export async function stopSessiondAgentSession(
           requestId: mintSessionRequestId(),
         },
       );
-      const escapeesExplicitlyUnaccounted =
-        result.state === "unknown" &&
-        result.survivors.length === 0 &&
-        result.errors.some(
-          (error) => error.diagnosticId === "process-tree-escapees-unaccounted",
-        );
-      if (
-        (result.state !== "terminated" || result.survivors.length !== 0) &&
-        !escapeesExplicitlyUnaccounted
-      ) {
+      if (!sessiondTeardownSucceeded(result)) {
         terminalError = new Error(
           `Sessiond termination was not positively verified for ${agent.name}: ${
             result.errors.map((error) => error.diagnosticId).join(", ") ||

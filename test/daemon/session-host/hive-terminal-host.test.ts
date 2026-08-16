@@ -1516,3 +1516,136 @@ describe("requireSessiondRootLocator", () => {
     ).toThrow("Queen has a mismatched");
   });
 });
+
+// THE FAILURE IS A DATABASE ROW OUTLIVING ITS PROCESS, NOT A LEAKED PROCESS.
+// Nothing survives here — the tree is fully reaped with an empty survivor list.
+// What the platform cannot do is PROVE containment, so process_inspector reports
+// `unknown` for a process-tree target by design. The old gate demanded an exact
+// `terminated`, so it never ended the run and left the row at "running" forever.
+// A stale "running" root row makes getActiveRootProviderRun report an ACTIVE
+// root, and hive_run_bootstrap then binds to a dead run: a false accept, which
+// is strictly worse than the refusal it replaces.
+describe("a teardown the platform cannot positively prove still ends the run", () => {
+  const activeRun: ProviderRun = {
+    runId: "6f1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d",
+    agentId: "agent-fixture",
+    terminal: locator,
+    provider: "codex",
+    model: "gpt-5",
+    effort: null,
+    conversationId: null,
+    adapterChild: null,
+    protocolReceipt: null,
+    capabilityEpoch: 0,
+    launchGrantId: "launch-grant-fixture",
+    startedAt: "2026-07-18T01:00:00.000Z",
+    endedAt: null,
+    state: "running",
+    exitReason: null,
+  };
+
+  /** The row-J outcome: everything reaped, no survivors, escapees unprovable. */
+  const rowJ: TerminationResult = {
+    state: "unknown",
+    exit: null,
+    reap: {
+      authority: "direct-parent",
+      reaped: true,
+      status: null,
+      completeness: "complete",
+    },
+    survivors: [],
+    completeness: "complete",
+    diagnostics: ["process-tree-escapees-unaccounted"],
+  };
+
+  function adapterReturning(result: TerminationResult): {
+    adapter: HiveTerminalHostAdapter;
+    endedRuns: string[];
+  } {
+    const endedRuns: string[] = [];
+    const bindings = new MemoryBindings();
+    bindings.bindTerminalHostSession({ locator, visibility });
+    bindings.completeTerminalHostSession(locator, {
+      expectedExecutable: sessionSpec.expectedExecutable,
+      executableVerified: true,
+      verifiedShellRoot: createResult.inspection.shellRoot,
+      geometry,
+      visibility: createResult.inspection.visibility,
+    });
+    const adapter = new HiveTerminalHostAdapter(
+      {
+        waitForHostExit: async () => ({ kind: "inherited" as const }),
+        issueAttach: async () => {
+          throw new Error("issueAttach not under test");
+        },
+        create: async () => createResult,
+        claimInput: async () => {
+          throw new Error("claimInput not under test");
+        },
+        submitInput: async () => {
+          throw new Error("submitInput not under test");
+        },
+        resize: async () => {
+          throw new Error("resize not under test");
+        },
+        list: async () => [inspection],
+        inspect: async () => inspection,
+        terminate: async () => result,
+      },
+      bindings,
+      locator.instanceId,
+      {
+        providerRuns: {
+          getActiveProviderRunByTerminal: () => activeRun,
+          endProviderRun: (runId: string) => {
+            endedRuns.push(runId);
+            return null;
+          },
+        },
+      },
+    );
+    return { adapter, endedRuns };
+  }
+
+  test("the run is ended on the documented floor, so no 'running' row is left behind", async () => {
+    const { adapter, endedRuns } = adapterReturning(rowJ);
+
+    const projected = await adapter.terminate(locator, {
+      reason: "stop agent agent-fixture",
+      requestId: "request-fixture",
+      mode: "immediate",
+    });
+
+    // The honest report is preserved: this is still not positive proof, and
+    // nothing here promotes it to "terminated".
+    expect(projected.state).toBe("unknown");
+    expect(projected.survivors).toEqual([]);
+    // The row is closed anyway, which is the whole point.
+    expect(endedRuns).toEqual([activeRun.runId]);
+  });
+
+  // The loud fixture for the assertion above: an outcome that must NOT close the
+  // row, proving the test can tell the two apart rather than closing every row.
+  test("a survivor still leaves the run open", async () => {
+    const { adapter, endedRuns } = adapterReturning({
+      ...rowJ,
+      state: "survivors",
+      survivors: [
+        {
+          process: { processId: 4_100, startToken: "4100:123400" },
+          reason: "still running",
+        },
+      ],
+    });
+
+    const projected = await adapter.terminate(locator, {
+      reason: "stop agent agent-fixture",
+      requestId: "request-fixture",
+      mode: "immediate",
+    });
+
+    expect(projected.state).toBe("survivors");
+    expect(endedRuns).toEqual([]);
+  });
+});

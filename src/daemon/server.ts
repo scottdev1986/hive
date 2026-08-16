@@ -244,6 +244,7 @@ import {
   requireSessiondAgentLocator,
   requireSessiondRootLocator,
   sessiondAgentProviderRunIsDead,
+  sessiondTeardownSucceeded,
   sessiondTerminalIsDead,
 } from "./session-host/hive-terminal-host";
 import {
@@ -1992,10 +1993,7 @@ export class HiveDaemon {
               requestId: mintSessionRequestId(),
             },
           );
-          if (
-            terminated.state !== "terminated" ||
-            terminated.survivors.length > 0
-          ) {
+          if (!sessiondTeardownSucceeded(terminated)) {
             throw new Error(
               `Hive refused shutdown because the queen termination is ${terminated.state} with ${terminated.survivors.length} survivor(s)`,
             );
