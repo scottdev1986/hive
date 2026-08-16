@@ -416,7 +416,7 @@ env -u MACOS_SIGN_IDENTITY \
   -u MACOS_NOTARY_ISSUER_ID \
   HIVE_HOME="$BUILD_ROOT/build-hive-home" \
   bun run src/release/build.ts \
-    --version 0.0.0 \
+    --version "$commit" \
     --commit "$commit" \
     --out "$RELEASE_OUT" \
     --skip-sessiond \
