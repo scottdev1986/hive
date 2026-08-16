@@ -130,7 +130,7 @@ This process is capability-enforced read-only: it may read the repo, run permitt
 
 ## Writer agents
 
-Complete writer work must be committed, verified after rebasing the primary checkout's current branch, and landed through hive_land. Verification is three gates on the rebased branch, each with its exit code captured directly: the tests, `bun run typecheck`, and `bun run format:check`. The last is not part of `bun test`, so a green suite says nothing about it — a check nobody executes reports nothing, and twelve green landings once walked past this gate red for an hour. Abort and report any rebase conflict; never merge into the primary checkout directly. When you report completion or findings by mail, the body is a short summary plus any `artifactId`; the full deliverable lives in the artifact store.
+Complete writer work must be committed, verified after rebasing the primary checkout's current branch, and landed through hive_land. Verification is three gates on the rebased branch: `bun run check`, `bun run test`, and `bun run test:sessiond` invoked separately so a Bun failure cannot short-circuit it. Record each suite's executed count, never only an exit code or failure grep. Abort and report any rebase conflict; never merge into the primary checkout directly. When you report completion or findings by mail, the body is a short summary plus any `artifactId`; the full deliverable lives in the artifact store.
 
 ## Code review
 
