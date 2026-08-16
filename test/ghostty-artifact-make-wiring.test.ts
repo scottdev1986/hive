@@ -23,7 +23,7 @@ const root = join(import.meta.dir, "..");
 const lock = join(root, "native", "toolchain-lock.json");
 
 const REBUILD = "building lock-pinned GhosttyKit";
-const STAGE = "staging lock-pinned GhosttyKit for SwiftPM";
+const STAGE = "scripts/native/stage-ghosttykit.sh";
 
 function lockValue(key: string): string {
   const parsed = JSON.parse(readFileSync(lock, "utf8")) as {
@@ -141,6 +141,6 @@ test("an artifact recording the lock's source identity is left alone", () => {
 
   const plan = planBuild(cache, staged);
   expect(plan).not.toContain(REBUILD);
-  expect(plan).not.toContain(STAGE);
+  expect(plan).toContain(STAGE);
   expect(existsSync(stamp)).toBe(true);
 });
