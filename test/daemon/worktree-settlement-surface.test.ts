@@ -39,9 +39,9 @@ describe("settlement mutation surface", () => {
     expect("releaseStewardshipRef" in adapter).toBe(false);
   });
 
-  test("only the user can mint destructive authority", () => {
+  test("the user and the queen can mint destructive authority; writer and reader cannot", () => {
     expect(ROLE_GRANTS.user.actions).toContain("settlement:decide");
-    expect(ROLE_GRANTS.orchestrator.actions).not.toContain("settlement:decide");
+    expect(ROLE_GRANTS.orchestrator.actions).toContain("settlement:decide");
     expect(ROLE_GRANTS.writer.actions).not.toContain("settlement:decide");
     expect(ROLE_GRANTS.reader.actions).not.toContain("settlement:decide");
     expect(ROLE_GRANTS.orchestrator.actions).toContain("settlement:execute");

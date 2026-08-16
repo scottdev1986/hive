@@ -2021,6 +2021,15 @@ export class WorktreeLifecycleService {
     let stored = await this.cases.read(input.caseId);
     if (stored === null)
       throw new Error(`settlement case not found: ${input.caseId}`);
+    // A case with no measured evidence digest has nothing to bind a decision to. The
+    // digest mismatch check below would also catch this (null never equals the
+    // schema-required 64-hex string), but it must refuse by name so "unmeasured" is
+    // never mistaken for "measurement changed underneath me".
+    if (stored.record.evidenceDigest === null) {
+      throw new Error(
+        `settlement case has no evidence digest and cannot be decided until remeasured: ${input.caseId}`,
+      );
+    }
     // The revision tracks workflow updates, including periodic measurements. An older quote stays
     // valid only when its content-addressed evidence is still current and the fresh proof below
     // reproduces it; a revision from the future cannot describe this record.

@@ -242,7 +242,7 @@ export function registerAgentControlTools(
     {
       title: "Mint an exact destructive settlement decision",
       description:
-        "User-only: authorize discarding one measured settlement case at its exact revision and evidence digest. This mints a separate expiring decision; it does not weaken or waive the automatic-release proof.",
+        "Authorize discarding one measured settlement case at its exact revision and evidence digest. This mints a separate expiring decision; it does not weaken or waive the automatic-release proof. Refuses a case with no measured evidence digest.",
       inputSchema: SettlementDecisionRequestSchema,
     },
     async (input) => {

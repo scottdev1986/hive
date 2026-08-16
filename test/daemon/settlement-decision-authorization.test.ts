@@ -113,15 +113,16 @@ describe("settlement decision authorization", () => {
     expect(mint.inputs).toEqual([{ ...input, decisionOwner: "user" }]);
   });
 
-  test("the queen cannot mint and is told to escalate and wait", async () => {
+  test("the queen can mint, and the decision carries the queen as audit owner", async () => {
     const mint = await mintAs({
       role: "orchestrator",
       subject: "queen",
     } as Capability);
-    await expect(mint.mint()).rejects.toThrow(
-      "Queen may not use hive_settlement_decide: settlement-decision minting is the user's authority. Escalate to the user and wait for a user-minted decision.",
-    );
-    expect(mint.inputs).toEqual([]);
+    const minted = (await mint.mint()) as {
+      structuredContent: { decision: { decisionOwner: string } };
+    };
+    expect(mint.inputs).toEqual([{ ...input, decisionOwner: "queen" }]);
+    expect(minted.structuredContent.decision.decisionOwner).toBe("queen");
   });
 
   test("the queen can execute a user-minted settlement decision", async () => {

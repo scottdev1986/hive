@@ -97,6 +97,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "agent:kill",
       "agent:mark-dead",
       "agent:recover",
+      "settlement:decide",
       "settlement:execute",
       "approval:read",
       "approval:decide",
@@ -367,10 +368,7 @@ export class CapabilityStore {
       return deny(
         "capability.forbidden-action",
         403,
-        capability.role === "orchestrator" &&
-          request.action === "settlement:decide"
-          ? "Queen may not use hive_settlement_decide: settlement-decision minting is the user's authority. Escalate to the user and wait for a user-minted decision."
-          : `Role ${capability.role} may not ${request.action}`,
+        `Role ${capability.role} may not ${request.action}`,
       );
     }
 

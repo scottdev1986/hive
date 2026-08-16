@@ -916,6 +916,56 @@ describe("worktree settlement proof", () => {
     }
   });
 
+  test("a case with no measured evidence digest is refused by name, not remeasured", async () => {
+    const { repo, worktree, db, agent, lifecycle } = await fixture();
+    try {
+      await writeFile(join(worktree.path, "notes.txt"), "reviewed residue\n");
+      await settle(lifecycle, agent);
+      const cases = new SettlementCaseStore(repo);
+      const [measured] = await cases.list("main");
+      if (measured?.record.evidenceDigest === null || measured === undefined) {
+        throw new Error("settlement case has no measured evidence");
+      }
+      // Positive control: with its measured digest, the identical case mints. The
+      // refusal asserted below is specific to the null digest, not a fixture that
+      // could never mint at all.
+      const decision = await lifecycle.mintDestructiveDecision({
+        caseId: measured.record.caseId,
+        revision: measured.record.revision,
+        evidenceDigest: measured.record.evidenceDigest,
+        reason: "the user reviewed and chose to discard notes.txt",
+        expiresAt: "2026-08-12T12:06:00.000Z",
+        decisionOwner: "user",
+      });
+      expect(decision.evidenceDigest).toBe(measured.record.evidenceDigest);
+
+      // A case can carry a null digest between measurements (evidenceFormat migration,
+      // an in-flight remeasurement). Minting must refuse it by name so "unmeasured" is
+      // never reported as the generic "revision or evidence digest changed".
+      const [unmeasured] = await cases.list("main");
+      if (unmeasured === undefined) throw new Error("missing settlement case");
+      await cases.update(unmeasured, {
+        ...unmeasured.record,
+        evidenceDigest: null,
+        evidenceFormat: null,
+      });
+      await expect(
+        lifecycle.mintDestructiveDecision({
+          caseId: unmeasured.record.caseId,
+          revision: unmeasured.record.revision,
+          evidenceDigest: "0".repeat(64),
+          reason: "the user reviewed and chose to discard notes.txt",
+          expiresAt: "2026-08-12T12:06:00.000Z",
+          decisionOwner: "user",
+        }),
+      ).rejects.toThrow(
+        "no evidence digest and cannot be decided until remeasured",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   test("an accounting verdict change invalidates the listed digest", async () => {
     const { repo, worktree, db, agent, lifecycle } = await fixture();
     try {
