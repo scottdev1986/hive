@@ -498,6 +498,27 @@ rig_up() {
   # a path whose file survived a previous run would make a dead run look alive.
   # The rig home is created fresh per bring-up and torn down after, so nothing
   # here can be inherited; the check below states that rather than assuming it.
+  # The staged Workspace executable is an INPUT, never a path this file knows.
+  # It is produced into a fresh mktemp directory by the release build, so any
+  # literal path here would bind QA to one extraction that a reboot or a tmp
+  # sweep deletes, and the rig would then publish a coordinate pointing at
+  # nothing. Validated on the way through — a wrong binary must be refused here
+  # rather than discovered by a driver that has already launched it.
+  local u5_app="${QA_U5_APP_EXECUTABLE:-}"
+  if [ -n "$u5_app" ]; then
+    case "$u5_app" in
+      */HiveWorkspace.app/Contents/MacOS/HiveWorkspace) ;;
+      *) rig_down || true
+         refuse "QA_U5_APP_EXECUTABLE is not a canonical app executable: $u5_app" ;;
+    esac
+    [ -x "$u5_app" ] \
+      || { rig_down || true; refuse "QA_U5_APP_EXECUTABLE is not executable: $u5_app"; }
+    file "$u5_app" 2>/dev/null | grep -q 'Mach-O' \
+      || { rig_down || true; refuse "QA_U5_APP_EXECUTABLE is not a Mach-O binary: $u5_app"; }
+    file "$u5_app" 2>/dev/null | grep -q "$(uname -m)" \
+      || { rig_down || true; refuse "QA_U5_APP_EXECUTABLE has no $(uname -m) slice: $u5_app"; }
+  fi
+
   # The instance identity the Workspace is launched with, derived ONCE from the
   # resolved home and published so both sides read it instead of each computing
   # it. QA_HOME_TAG above is a ten-character sha256 prefix too, but of the
@@ -522,6 +543,7 @@ rig_up() {
     echo "project=$QA_PROJECT"
     echo "source=$QA_SRC_ROOT"
     echo "hive_bin=$hive_bin"
+    echo "u5_app_executable=${u5_app:-}"
     echo "u5_instance_id=$u5_instance_id"
     echo "u5_feed_bridge=$feed_bridge"
     echo "u5_ready_path=$u5_ready"
