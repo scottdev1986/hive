@@ -1,14 +1,20 @@
 /**
  * Proves that repo uninstall removed Hive's own files without changing content
  * that was already in the repository. The comparison is deliberately
- * asymmetric: a tool such as an IDE may create a new non-Hive file while QA is
- * running, and its presence is not evidence that Hive wrote it. New paths in
- * Hive's exact footprint still fail as residue.
+ * asymmetric: another tool may create a new non-Hive file while QA is running,
+ * and its presence is not evidence that Hive wrote it. New paths in Hive's
+ * exact footprint still fail as residue.
  */
+import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { nativeSkillDirectory } from "../../src/adapters/skills";
+import { stripHiveGitignoreEntries } from "../../src/cli/repo-gitignore";
+import {
+  AGENT_STANDARDS_FILE,
+  scaffoldAgentStandardsMd,
+} from "../../src/daemon/spawn/agent-standards";
 import {
   SHIPPED_SKILLS,
   shippedSkillAddresses,
@@ -25,12 +31,18 @@ interface RepoInventory {
   readonly root: string;
   readonly branches: readonly string[];
   readonly index: readonly string[];
+  readonly proofContent: ReadonlyMap<string, string>;
   readonly tree: ReadonlyMap<string, TreeEntry>;
 }
 
 interface ShippedSkillFile {
   readonly digest: string;
   readonly root: string;
+}
+
+interface ExpectedFileCleanup {
+  readonly content: string | null;
+  readonly description: string;
 }
 
 const WHOLE_HIVE_ROOTS = ["graphify-out", ".hive/worktrees"] as const;
@@ -55,17 +67,28 @@ async function readRepoInventory(path: string): Promise<RepoInventory> {
     throw new Error(`${path}: not a repo inventory`);
   }
 
-  let section: "header" | "git-status" | "git-index" | "tree" = "header";
+  let section:
+    | "header"
+    | "git-status"
+    | "git-index"
+    | "proof-content"
+    | "tree" = "header";
   let root: string | null = null;
   const branches: string[] = [];
   const index: string[] = [];
+  const proofContent = new Map<string, string>();
   const tree = new Map<string, TreeEntry>();
 
   for (const line of lines) {
     if (line === "") continue;
     if (line.startsWith("section\t")) {
       const name = line.slice("section\t".length);
-      if (name !== "git-status" && name !== "git-index" && name !== "tree") {
+      if (
+        name !== "git-status" &&
+        name !== "git-index" &&
+        name !== "proof-content" &&
+        name !== "tree"
+      ) {
         throw new Error(`${path}: unknown inventory section ${name}`);
       }
       section = name;
@@ -87,6 +110,22 @@ async function readRepoInventory(path: string): Promise<RepoInventory> {
       index.push(line);
       continue;
     }
+    if (section === "proof-content") {
+      const [kind, contentPath, encoded, extra] = line.split("\t");
+      if (
+        kind !== "B" ||
+        contentPath === undefined ||
+        encoded === undefined ||
+        extra !== undefined
+      ) {
+        throw new Error(`${path}: malformed proof content: ${line}`);
+      }
+      proofContent.set(
+        contentPath,
+        Buffer.from(encoded, "base64").toString("utf8"),
+      );
+      continue;
+    }
     if (section === "tree") {
       const [entryPath, entry] = parseTreeEntry(line, path);
       tree.set(entryPath, entry);
@@ -96,7 +135,7 @@ async function readRepoInventory(path: string): Promise<RepoInventory> {
   }
 
   if (root === null) throw new Error(`${path}: inventory has no root`);
-  return { root, branches, index, tree };
+  return { root, branches, index, proofContent, tree };
 }
 
 function digest(content: string): string {
@@ -156,6 +195,7 @@ async function proveRepoUninstall(
   const failures: string[] = [];
   const externalAdditions: string[] = [];
   const expectedRemovals = new Set<string>();
+  const expectedFileCleanups = new Map<string, ExpectedFileCleanup>();
   const allowedRemovalRoots = new Set<string>();
   const requiredAbsentRoots = new Set<string>();
 
@@ -169,6 +209,38 @@ async function proveRepoUninstall(
   }
   if (!linesEqual(before.branches, after.branches)) {
     failures.push("checked-out branch identity changed during repo uninstall");
+  }
+  for (const inventory of [before, after]) {
+    for (const [path, content] of inventory.proofContent) {
+      const entry = inventory.tree.get(path);
+      if (entry?.kind !== "F" || entry.detail !== digest(content)) {
+        failures.push(`inventory content does not match tree entry ${path}`);
+      }
+    }
+  }
+
+  const standardsEntry = before.tree.get(AGENT_STANDARDS_FILE);
+  if (
+    standardsEntry?.kind === "F" &&
+    standardsEntry.detail === digest(scaffoldAgentStandardsMd())
+  ) {
+    expectedFileCleanups.set(AGENT_STANDARDS_FILE, {
+      content: null,
+      description: AGENT_STANDARDS_FILE,
+    });
+    expectedRemovals.add(AGENT_STANDARDS_FILE);
+  }
+
+  const beforeGitignore = before.proofContent.get(".gitignore");
+  if (beforeGitignore !== undefined) {
+    const cleanup = stripHiveGitignoreEntries(beforeGitignore);
+    if (cleanup.removedEntries.length > 0) {
+      expectedFileCleanups.set(".gitignore", {
+        content: cleanup.content === "" ? null : cleanup.content,
+        description: "Hive's marked .gitignore entries",
+      });
+      expectedRemovals.add("Hive's marked .gitignore entries");
+    }
   }
 
   for (const [path, shipped] of shippedSkillFiles()) {
@@ -203,6 +275,20 @@ async function proveRepoUninstall(
   for (const [path, entry] of before.tree) {
     if (path === ".") continue;
     const current = after.tree.get(path);
+    const expectedCleanup = expectedFileCleanups.get(path);
+    if (expectedCleanup !== undefined) {
+      const matches =
+        expectedCleanup.content === null
+          ? current === undefined
+          : current?.kind === "F" &&
+            current.detail === digest(expectedCleanup.content);
+      if (!matches) {
+        failures.push(
+          `unexpected cleanup result for ${expectedCleanup.description}`,
+        );
+      }
+      continue;
+    }
     if (current !== undefined) {
       if (!entryEquals(entry, current)) {
         failures.push(`changed non-Hive path ${path}`);
@@ -218,13 +304,23 @@ async function proveRepoUninstall(
   const allSkillRoots = new Set(
     [...shippedSkillFiles().values()].map((skill) => skill.root),
   );
-  for (const [path] of after.tree) {
+  for (const [path, entry] of after.tree) {
     if (path === "." || before.tree.has(path)) continue;
-    const hiveResidue = [
-      ...allSkillRoots,
-      ...WHOLE_HIVE_ROOTS,
-      ...GENERATED_HIVE_FILES,
-    ].some((root) => isAtOrBelow(path, root));
+    const generatedStandardsResidue =
+      path === AGENT_STANDARDS_FILE &&
+      entry.kind === "F" &&
+      entry.detail === digest(scaffoldAgentStandardsMd());
+    const gitignoreContent =
+      path === ".gitignore" ? after.proofContent.get(path) : undefined;
+    const generatedGitignoreResidue =
+      gitignoreContent !== undefined &&
+      stripHiveGitignoreEntries(gitignoreContent).removedEntries.length > 0;
+    const hiveResidue =
+      generatedStandardsResidue ||
+      generatedGitignoreResidue ||
+      [...allSkillRoots, ...WHOLE_HIVE_ROOTS, ...GENERATED_HIVE_FILES].some(
+        (root) => isAtOrBelow(path, root),
+      );
     if (hiveResidue) failures.push(`Hive residue ${path}`);
     else externalAdditions.push(path);
   }

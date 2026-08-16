@@ -22,9 +22,15 @@ import { ensureEmbeddingsRuntime } from "./embeddings-command";
 import { provisionGraphify } from "./graphify-command";
 import { reindexMemory } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
+import {
+  HIVE_GITIGNORE_ENTRIES,
+  HIVE_GITIGNORE_HEADER,
+} from "./repo-gitignore";
 import { projectRootOrCwd } from "../daemon/project-identity-core/project-root";
 import { scaffoldAgentStandardsMd } from "../daemon/spawn/agent-standards";
 import { errorMessage } from "../shared/error-message";
+
+export { HIVE_GITIGNORE_ENTRIES } from "./repo-gitignore";
 
 /** A narrative fact for init to seed. A stable id keeps a re-run upserting the same fact in place rather than accumulating duplicates. */
 export interface InitFact {
@@ -142,14 +148,6 @@ export async function seedInitFacts(
   return seeded;
 }
 
-/** Never collapse the first two entries into `.hive/`: that directory also contains project skills. */
-export const HIVE_GITIGNORE_ENTRIES = [
-  ".hive/memory/",
-  ".hive/worktrees/",
-  "graphify-out/",
-  ".graphifyignore",
-] as const;
-
 function normalizedGitignoreLine(line: string): string | null {
   const trimmed = line.trim();
   if (trimmed === "" || trimmed.startsWith("#") || trimmed.startsWith("!")) {
@@ -183,7 +181,7 @@ export async function ensureHiveStateGitignored(
   const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
   await deps.writeFile(
     path,
-    `${existing}${separator}${existing === "" ? "" : "\n"}# Hive local state\n${missing.join("\n")}\n`,
+    `${existing}${separator}${existing === "" ? "" : "\n"}${HIVE_GITIGNORE_HEADER}\n${missing.join("\n")}\n`,
   );
   return `${exists ? "Updated" : "Created"} .gitignore with Hive's local derived-state entries.`;
 }

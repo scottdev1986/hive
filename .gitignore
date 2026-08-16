@@ -12,7 +12,6 @@ Icon?
 .VolumeIcon.icns
 
 # --- IDEs & editors ---
-.idea/
 *.iml
 .vscode/
 !.vscode/extensions.json

@@ -26,6 +26,10 @@ import { getHiveHome } from "../../src/hive-home/home";
 import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import { type HiveVariant, resolveVariant } from "../../src/hive-home/variant";
 import { shippedSkillsFor } from "../../src/skills/shipped";
+import {
+  HIVE_GITIGNORE_ENTRIES,
+  HIVE_GITIGNORE_HEADER,
+} from "../../src/cli/repo-gitignore";
 import { required } from "../required";
 
 let hiveHome: string;
@@ -186,6 +190,52 @@ describe("hive uninstall --repo", () => {
     } finally {
       await rm(scaffoldRoot, { recursive: true, force: true });
       await rm(editedRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("removes only Hive's marked .gitignore entries", async () => {
+    const existingRoot = await gitRepo();
+    const hiveCreatedRoot = await gitRepo();
+    try {
+      const projectRules = "node_modules/\n.hive/memory/\n";
+      const projectOwnedRules = "# Project scratch state\nproject-scratch/\n";
+      await writeFile(
+        join(existingRoot, ".gitignore"),
+        `${projectRules}\n${HIVE_GITIGNORE_HEADER}\n${HIVE_GITIGNORE_ENTRIES[1]}\n${projectOwnedRules}${HIVE_GITIGNORE_ENTRIES.slice(2).join("\n")}\n`,
+      );
+      await writeFile(
+        join(hiveCreatedRoot, ".gitignore"),
+        `${HIVE_GITIGNORE_HEADER}\n${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`,
+      );
+
+      expect(await runUninstallRepo(existingRoot, {}, probe(true).deps)).toBe(
+        0,
+      );
+      expect(
+        await runUninstallRepo(hiveCreatedRoot, {}, probe(true).deps),
+      ).toBe(0);
+
+      expect(await readFile(join(existingRoot, ".gitignore"), "utf8")).toBe(
+        `${projectRules}\n${projectOwnedRules}`,
+      );
+      expect(existsSync(join(hiveCreatedRoot, ".gitignore"))).toBe(false);
+    } finally {
+      await rm(existingRoot, { recursive: true, force: true });
+      await rm(hiveCreatedRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps unmarked project gitignore rules even when they name Hive paths", async () => {
+    const root = await gitRepo();
+    const projectRules = `${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`;
+    try {
+      await writeFile(join(root, ".gitignore"), projectRules);
+      expect(await runUninstallRepo(root, {}, probe(true).deps)).toBe(0);
+      expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(
+        projectRules,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

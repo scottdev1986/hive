@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  HIVE_GITIGNORE_ENTRIES,
+  HIVE_GITIGNORE_HEADER,
+} from "../../src/cli/repo-gitignore";
+import { scaffoldAgentStandardsMd } from "../../src/daemon/spawn/agent-standards";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 import { required } from "../required";
@@ -140,7 +145,7 @@ test("repo inventory reds on an untracked file the same way", () => {
   }
 });
 
-test("repo uninstall proof accepts committed Hive removals and leaves new IDE files out of scope", () => {
+test("repo uninstall proof accepts committed Hive removals and leaves new non-Hive files out of scope", () => {
   const fixture = mkdtempSync(
     join(OUTSIDE_REPO_TMPDIR, "hive-repo-proof-clean-"),
   );
@@ -155,7 +160,15 @@ test("repo uninstall proof accepts committed Hive removals and leaves new IDE fi
     const skillDirectory = join(repo, ".hive", "skills", "agent", shipped.name);
     mkdirSync(skillDirectory, { recursive: true });
     writeFileSync(join(skillDirectory, "SKILL.md"), shipped.content);
-    const add = Bun.spawnSync(["git", "add", ".hive/skills"], { cwd: repo });
+    writeFileSync(
+      join(repo, ".gitignore"),
+      `ignored.txt\n\n${HIVE_GITIGNORE_HEADER}\n${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`,
+    );
+    writeFileSync(join(repo, "AGENT_STANDARDS.md"), scaffoldAgentStandardsMd());
+    const add = Bun.spawnSync(
+      ["git", "add", ".hive/skills", ".gitignore", "AGENT_STANDARDS.md"],
+      { cwd: repo },
+    );
     expect(add.exitCode, add.stderr.toString()).toBe(0);
     const commit = Bun.spawnSync(["git", "commit", "-m", "commit Hive skill"], {
       cwd: repo,
@@ -175,16 +188,63 @@ test("repo uninstall proof accepts committed Hive removals and leaves new IDE fi
     const after = join(fixture, "after");
     expect(run([inventory, "capture-repo", repo, before]).exitCode).toBe(0);
     rmSync(skillDirectory, { recursive: true });
-    mkdirSync(join(repo, ".idea"));
-    writeFileSync(join(repo, ".idea", "workspace.xml"), "<project />\n");
+    rmSync(join(repo, "AGENT_STANDARDS.md"));
+    writeFileSync(join(repo, ".gitignore"), "ignored.txt\n");
+    mkdirSync(join(repo, "local-tool-state"));
+    writeFileSync(join(repo, "local-tool-state", "state.json"), "{}\n");
     expect(run([inventory, "capture-repo", repo, after]).exitCode).toBe(0);
 
     const proved = run(["bun", "run", repoUninstallProof, before, after]);
     expect(proved.exitCode, proved.stdout + proved.stderr).toBe(0);
     expect(proved.stdout).toContain("expected Hive removals");
-    expect(proved.stdout).toContain(".idea/workspace.xml");
+    expect(proved.stdout).toContain("AGENT_STANDARDS.md");
+    expect(proved.stdout).toContain("marked .gitignore entries");
+    expect(proved.stdout).toContain("local-tool-state/state.json");
     expect(proved.stdout).toContain("out of scope");
     expect(proved.stdout).toContain("non-Hive content is unchanged");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("repo uninstall proof rejects collateral .gitignore edits", () => {
+  const fixture = mkdtempSync(
+    join(OUTSIDE_REPO_TMPDIR, "hive-repo-proof-gitignore-"),
+  );
+  try {
+    const repo = join(fixture, "repo");
+    initRepo(repo);
+    writeFileSync(
+      join(repo, ".gitignore"),
+      `ignored.txt\n\n${HIVE_GITIGNORE_HEADER}\n${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`,
+    );
+    const add = Bun.spawnSync(["git", "add", ".gitignore"], { cwd: repo });
+    expect(add.exitCode, add.stderr.toString()).toBe(0);
+    const commit = Bun.spawnSync(["git", "commit", "-m", "Hive rules"], {
+      cwd: repo,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "hive-qa",
+        GIT_AUTHOR_EMAIL: "qa@hive.local",
+        GIT_COMMITTER_NAME: "hive-qa",
+        GIT_COMMITTER_EMAIL: "qa@hive.local",
+      },
+    });
+    expect(commit.exitCode, commit.stderr.toString()).toBe(0);
+
+    const before = join(fixture, "before");
+    const after = join(fixture, "after");
+    expect(run([inventory, "capture-repo", repo, before]).exitCode).toBe(0);
+    writeFileSync(join(repo, ".gitignore"), "different-project-rule\n");
+    expect(run([inventory, "capture-repo", repo, after]).exitCode).toBe(0);
+
+    const proved = run(["bun", "run", repoUninstallProof, before, after]);
+    expect(proved.exitCode).toBe(1);
+    expect(proved.stdout + proved.stderr).toContain(
+      "unexpected cleanup result for Hive's marked .gitignore entries",
+    );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

@@ -17,7 +17,7 @@ So unavailable (offline channel, missing platform bundle), broken (extract faili
 
 ## Ignore hygiene
 
-Hive's repository-wide generated paths belong in the tracked `.gitignore`. `hive init` appends exactly `.hive/memory/`, `.hive/worktrees/`, `graphify-out/`, and `.graphifyignore`. It never writes the parent `.hive/` entry: `.hive/skills/` is user-authored project knowledge intended for version control, and ignoring the parent also caused the 2026-07-20 worktree-deletion incident.
+Hive's repository-wide generated paths belong in the tracked `.gitignore`. `hive init` appends exactly `.hive/memory/`, `.hive/worktrees/`, `graphify-out/`, and `.graphifyignore` beneath its `# Hive local state` marker. `hive uninstall --repo` removes those marked entries, even when the file was committed, while leaving every rule outside that marked group untouched. Init never writes the parent `.hive/` entry: `.hive/skills/` is user-authored project knowledge intended for version control, and ignoring the parent also caused the 2026-07-20 worktree-deletion incident.
 
 The command-boundary test proves all four entries with `git check-ignore --no-index` on fresh probe names. Plain `check-ignore` consults the index and can lie for tracked files.
 

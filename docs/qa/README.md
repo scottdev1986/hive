@@ -16,11 +16,12 @@ checkout, with `HIVE_HOME` and `HIVE_DEFAULT_HOME` both pinned there so
 uninstall cannot resolve to `~/.hive` or see the live fleet. `make qa-clean`
 runs the product uninstall and checks a full working-tree inventory (tracked,
 staged, untracked, ignored, plus git status) against the pre-init snapshot.
-Committed byte-identical Hive skills are expected removals. Content that was
-already present outside Hive's exact footprint must stay byte-identical, while
-new non-Hive files from another tool (for example `.idea/`) remain untouched
-and outside the proof. New Hive paths still fail as residue. It then proves the
-qa paths are gone and `~/.hive`'s isolation inventory
+Committed byte-identical Hive skills and `AGENT_STANDARDS.md`, plus Hive's
+marked `.gitignore` entries, are expected cleanup. Content that was already
+present outside Hive's exact footprint must stay byte-identical, while new
+non-Hive files from another tool remain untouched and outside the proof. New
+Hive paths still fail as residue. It then proves the qa paths are gone and
+`~/.hive`'s isolation inventory
 (top-level names, instances, `run/`, `db-identity/`, default hive-qa
 install locations) matches the pre-qa snapshot. Nested live-fleet writes
 are not part of that compare — they would make every run red.

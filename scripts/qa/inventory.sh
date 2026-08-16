@@ -69,6 +69,11 @@ capture_repo() {
     git -C "$root" status --porcelain=v2 --untracked-files=all --ignored=matching --branch
     printf 'section\tgit-index\n'
     git -C "$root" ls-files -s
+    printf 'section\tproof-content\n'
+    if [ -f "$root/.gitignore" ] && [ ! -L "$root/.gitignore" ]; then
+      encoded="$(/usr/bin/base64 <"$root/.gitignore" | tr -d '\n')"
+      printf 'B\t.gitignore\t%s\n' "$encoded"
+    fi
     printf 'section\ttree\n'
   } >"$tmp"
   write_tree "$root" ".git" >>"$tmp"
