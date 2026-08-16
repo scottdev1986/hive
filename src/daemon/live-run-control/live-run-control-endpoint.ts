@@ -267,8 +267,15 @@ async function project(
     shell.state === "retained" &&
     shell.foreground === "provider" &&
     processCensus.state === "complete";
-  const terminateEnabled =
-    shell.state === "retained" && processCensus.state === "complete";
+  // Terminate destroys the terminal, and what identifies WHICH terminal is the
+  // retained shell — presence, a verified executable, and a non-null verified
+  // shellRoot. The kill is keyed on that session locator and never on the
+  // census members, so a census adds no identity safety here; it is an
+  // enumeration, which is what reporting survivors afterwards needs, not what
+  // deciding to act needs. Requiring it withheld the destructive fallback in
+  // exactly the degraded state that fallback exists for. Stop keeps the
+  // requirement above, where it is aiming at one specific process group.
+  const terminateEnabled = shell.state === "retained";
   return LiveRunControlProjectionSchema.parse({
     schemaVersion: 1,
     observedAt: deps.now().toISOString(),

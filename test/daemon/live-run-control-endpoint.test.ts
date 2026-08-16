@@ -554,3 +554,52 @@ describe("a clean kill the platform cannot positively prove", () => {
     expect(projection.termination.state).toBe("unknown");
   });
 });
+
+// Terminate is the destructive fallback. Requiring a complete census to reach
+// it withheld that fallback in exactly the degraded state it exists for, and
+// bought nothing: the kill is keyed on the agent's session locator and the
+// verified shell root, never on the census members. Stop is different — it aims
+// at one specific foreground process group — so it keeps the requirement.
+describe("admission when the process census is not complete", () => {
+  function degradedCensus() {
+    const { deps } = harness();
+    return {
+      ...deps,
+      terminalHost: {
+        ...deps.terminalHost,
+        inspectControl: async () => {
+          const live = liveInspection(providerChild.processGroupId);
+          return {
+            ...live,
+            processCensus: {
+              ...live.processCensus,
+              completeness: "partial" as const,
+              diagnostics: ["job-control-evidence-unavailable"],
+            },
+          };
+        },
+      },
+    };
+  }
+
+  test("Terminate is admitted: the retained shell is what identifies the terminal", async () => {
+    const response = await liveRunControlEndpoint(degradedCensus(), request());
+    const projection = LiveRunControlProjectionSchema.parse(
+      await response.json(),
+    );
+
+    expect(projection.processCensus.state).toBe("unknown");
+    expect(projection.controls.terminateTerminal.enabled).toBe(true);
+  });
+
+  // The loud sibling: Stop must still refuse on the same input, so this proves
+  // the change is confined to Terminate rather than relaxing admission at large.
+  test("Stop still refuses, because it aims at one process group", async () => {
+    const response = await liveRunControlEndpoint(degradedCensus(), request());
+    const projection = LiveRunControlProjectionSchema.parse(
+      await response.json(),
+    );
+
+    expect(projection.controls.stopProvider.enabled).toBe(false);
+  });
+});
