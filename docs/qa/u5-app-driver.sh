@@ -80,26 +80,47 @@ identity_matches() {
 # developer's machine would kill the Workspace they are using, and a QA rig has
 # no business being able to do that.
 #
-# Prints the wait status in the shell's 128+signal encoding, which is what the
-# release contract asks for. A raw waitpid status reports SIGKILL as 9, not 137,
-# so the normalisation is explicit rather than assumed.
+# The reaped status is MEASURED, never computed. `128 + 9` prints the number the
+# contract expects on every platform, including one that reaped something else
+# entirely, so it would report a SIGKILL that never happened. reap_sigkill
+# records what wait actually returned and refuses anything that does not denote
+# a SIGKILL death: above 128, because that is how the shell encodes death by
+# signal, and KILL by the platform's own signal table, because a process that
+# merely exited 9 is not a process that was killed.
+#
+# The reap has to happen in the shell that owns the child — a subshell cannot
+# wait for its parent's job — so the status is left in KILL_WAIT_STATUS instead
+# of printed into a command substitution.
+KILL_WAIT_STATUS=""
+
+reap_sigkill() {
+  local pid="$1" status
+  wait "$pid" 2>/dev/null
+  status=$?
+  if [ "$status" -le 128 ] || [ "$(kill -l "$status" 2>/dev/null)" != "KILL" ]; then
+    echo "u5-driver: $pid reaped status $status, which does not denote SIGKILL" >&2
+    return 1
+  fi
+  KILL_WAIT_STATUS="$status"
+}
+
 kill_scoped() {
-  local identity="${1:-}" pid="${identity%%:*}"
+  local identity="${1:-}"
+  # Declared on its own line: bash 3.2, which is the bash on this rig, does not
+  # expand a variable declared earlier on the SAME `local` line, so folding
+  # these two together leaves pid empty and the kill silently signals nothing.
+  local pid="${identity%%:*}"
+  KILL_WAIT_STATUS=""
   if ! identity_matches "$identity"; then
     echo "u5-driver: refusing to signal '${pid:-none}': not the captured process" >&2
     return 1
   fi
   kill -KILL "$pid" 2>/dev/null || true
-  local waited=0
-  while process_alive "$pid" && [ "$waited" -lt 100 ]; do
-    sleep 0.1
-    waited=$((waited + 1))
-  done
+  reap_sigkill "$pid" || return 1
   if process_alive "$pid"; then
     echo "u5-driver: $pid survived SIGKILL" >&2
     return 1
   fi
-  printf '%s\n' "$((128 + 9))"
 }
 
 # --- readiness --------------------------------------------------------------
@@ -146,11 +167,12 @@ self_check() {
   lookalike="$(capture_identity "$lookalike_pid")" || bad "could not capture the look-alike identity"
 
   local status
-  status="$(kill_scoped "$target")"
+  kill_scoped "$target"
+  status="$KILL_WAIT_STATUS"
   if [ "$status" = "137" ]; then
-    ok "the captured process was killed and reported wait status 137"
+    ok "the captured process was killed and the shell reaped status 137"
   else
-    bad "expected wait status 137, got '${status:-none}'"
+    bad "expected a reaped status of 137, got '${status:-none}'"
   fi
   if process_alive "$lookalike_pid"; then
     ok "the identically-named look-alike SURVIVED"
@@ -181,8 +203,28 @@ self_check() {
   fi
 
   kill -KILL "$lookalike_pid" 2>/dev/null || true
-  wait "$target_pid" 2>/dev/null
   wait "$lookalike_pid" 2>/dev/null
+
+  # The reaped status is a measurement, so it must be able to come back wrong.
+  # A SIGTERM death and a plain exit with code 9 are the two ways the old
+  # computed 137 would have lied: one died by the wrong signal, and the other
+  # never died by a signal at all, yet `kill -l 9` still reads KILL.
+  /bin/sh -c 'sleep 60' &
+  local termed_pid=$!
+  sleep 0.2
+  kill -TERM "$termed_pid" 2>/dev/null || true
+  if reap_sigkill "$termed_pid"; then
+    bad "a SIGTERM death was recorded as SIGKILL: '$KILL_WAIT_STATUS'"
+  else
+    ok "a SIGTERM death was refused rather than recorded as a SIGKILL"
+  fi
+  /bin/sh -c 'exit 9' &
+  local exited_pid=$!
+  if reap_sigkill "$exited_pid"; then
+    bad "an exit with code 9 was recorded as SIGKILL: '$KILL_WAIT_STATUS'"
+  else
+    ok "an exit with code 9 was refused rather than read as a SIGKILL"
+  fi
 
   # Readiness fails as not-ready, in bounded time, rather than hanging.
   never_ready() { return 1; }
