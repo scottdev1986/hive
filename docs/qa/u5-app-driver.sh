@@ -263,6 +263,75 @@ workspace_launch_tokens() {
     --feed "$8"
 }
 
+# Production's argv for `open`. Not a second listing of those flags.
+production_open_arguments() {
+  local app="$1"
+  shift
+  local root
+  root="$(qa_repo_root "$QA_DIR")" || return 1
+  (cd "$root" && bun -e '
+import { workspaceOpenArguments } from "./src/cli/workspace.ts";
+const app = process.argv[1];
+const args = process.argv.slice(2);
+if (!app) throw new Error("app path required");
+for (const token of workspaceOpenArguments(
+  app,
+  args,
+  process.env.PATH,
+  process.env.TMPDIR,
+)) {
+  process.stdout.write(`${token}\n`);
+}
+' "$app" "$@")
+}
+
+# QA feed coordinates are not a launch flag. They go in as --env
+# immediately before --args so the builder's -n/-a/--stderr/--args stay
+# the production spine.
+insert_env_before_args() {
+  python3 -c '
+import sys
+tokens = [line for line in sys.stdin.read().splitlines() if line != ""]
+envs = sys.argv[1:]
+out = []
+inserted = False
+for token in tokens:
+    if token == "--args" and not inserted:
+        for item in envs:
+            out.append("--env")
+            out.append(item)
+        inserted = True
+    out.append(token)
+if not inserted:
+    raise SystemExit("open argv has no --args")
+print("\n".join(out))
+' "$@"
+}
+
+# `open` returns without a pid. Bind the process that carries THIS
+# launch's published --instance-id, then confirm it is the executable
+# we launched. Not a name match. A second HiveWorkspace on the host
+# (production) is ignored unless it has this instance id.
+bind_open_app_pid() {
+  local instance_id="$1" executable="$2"
+  local waited=0 pid command
+  while [ "$waited" -lt 20 ]; do
+    pid="$(ps -axww -o pid=,command= | awk -v needle="--instance-id ${instance_id}" '
+      index($0, needle) { print $1; exit }
+    ')"
+    if [ -n "$pid" ] && process_alive "$pid"; then
+      command="$(ps -ww -p "$pid" -o command=)" || return 1
+      printf '%s\n' "$command" | grep -qF "$executable" \
+        || return 1
+      printf '%s\n' "$pid"
+      return 0
+    fi
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
 format_timeout_diagnosis() {
   local reason="$1"
   local shown="$2"
@@ -544,10 +613,13 @@ run_driver() {
   screenshot_paths="$(derive_screenshot_paths "$ready_path" "$evidence_root")" \
     || die "could not derive screenshot paths from the ready marker"
 
-  local app_log
+  local app_bundle app_log
+  app_bundle="${executable%/Contents/MacOS/HiveWorkspace}"
+  [ "$app_bundle/Contents/MacOS/HiveWorkspace" = "$executable" ] \
+    || die "cannot derive the .app bundle from $executable"
   APP_LLDB_LOG="$evidence_root/08-workspace-lldb.log"
-  app_log="$evidence_root/08-workspace-app.log"
-  [ ! -e "$app_log" ] || die "app log already exists: $app_log"
+  app_log="$home/workspace.log"
+  [ ! -e "$app_log" ] || die "workspace.log already exists: $app_log"
   DRIVER_APP_LOG="$app_log"
 
   local launch_args
@@ -570,23 +642,46 @@ EOF
   [ "${#launch_tokens[@]}" -eq 17 ] \
     || die "launch argv is incomplete: ${#launch_tokens[@]} tokens"
 
+  local open_args
+  open_args="$(production_open_arguments "$app_bundle" "${launch_tokens[@]}")" \
+    || die "workspaceOpenArguments refused to build the open argv"
+  printf '%s\n' "$open_args" | grep -qx -- '-n' \
+    || die "production open argv dropped -n"
+  printf '%s\n' "$open_args" | grep -qx -- '--stderr' \
+    || die "production open argv dropped --stderr"
+  printf '%s\n' "$open_args" | grep -qx -- "$app_log" \
+    || die "production open argv did not bind stderr to $app_log"
+
+  open_args="$(printf '%s\n' "$open_args" | insert_env_before_args \
+    "HIVE_QA_HOME=$home" \
+    "HIVE_QA_PROJECT=$project" \
+    "HIVE_QA_PORT=$port" \
+    "HIVE_QA_ARTIFACTS=$artifacts" \
+    "HIVE_QA_SRC_ROOT=$source_root" \
+    "HIVE_QA_U5_APP_READY_PATH=$ready_path" \
+    "HIVE_QA_U5_APP_FEED_RECEIPT=$receipt_path")" \
+    || die "could not insert QA feed environment before --args"
+
+  local -a open_tokens
+  open_tokens=()
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
+    open_tokens+=("$tok")
+  done <<EOF
+$open_args
+EOF
+
+  if bind_open_app_pid "$instance_id" "$executable" >/dev/null; then
+    die "a process already carries --instance-id $instance_id"
+  fi
+
   trap cleanup_launch EXIT HUP INT TERM
 
   local launched_at
   launched_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  env -u HIVE_SHELL_PROOF -u HIVE_SHELL_PROOF_MUTATE -u HIVE_SHELL_SCENARIO \
-    HIVE_HOME="$home" \
-    HIVE_QA_HOME="$home" \
-    HIVE_QA_PROJECT="$project" \
-    HIVE_QA_PORT="$port" \
-    HIVE_QA_ARTIFACTS="$artifacts" \
-    HIVE_QA_SRC_ROOT="$source_root" \
-    HIVE_QA_U5_APP_READY_PATH="$ready_path" \
-    HIVE_QA_U5_APP_FEED_RECEIPT="$receipt_path" \
-    "$executable" \
-    "${launch_tokens[@]}" \
-    >"$app_log" 2>&1 &
-  APP_PID=$!
+  /usr/bin/open "${open_tokens[@]}" || die "open refused to launch the Workspace"
+  APP_PID="$(bind_open_app_pid "$instance_id" "$executable")" \
+    || die "could not bind the launched Workspace pid for --instance-id $instance_id"
   LAUNCH_IDENTITY="$(capture_identity "$APP_PID")" \
     || die "could not capture the launched Workspace identity"
 
@@ -888,6 +983,31 @@ PY
     ok "launch argv is one list and includes project identity flags"
   else
     bad "launch argv helper dropped project identity flags: $tokens"
+  fi
+
+  local built with_env
+  built="$(production_open_arguments /tmp/HiveWorkspace.app \
+    --instance-home /tmp/hq-open --project /tmp/p || true)"
+  if printf '%s\n' "$built" | grep -qx -- '-n' \
+    && printf '%s\n' "$built" | grep -qx -- '-a' \
+    && printf '%s\n' "$built" | grep -qx -- '/tmp/HiveWorkspace.app' \
+    && printf '%s\n' "$built" | grep -qx -- '--stderr' \
+    && printf '%s\n' "$built" | grep -qx -- '/tmp/hq-open/workspace.log' \
+    && printf '%s\n' "$built" | grep -qx -- '--args'; then
+    ok "open argv comes from workspaceOpenArguments and binds --stderr"
+  else
+    bad "production open argv is wrong: $built"
+  fi
+  with_env="$(printf '%s\n' "$built" | insert_env_before_args "HIVE_QA_HOME=/tmp/hq-open" || true)"
+  if printf '%s\n' "$with_env" | awk '
+      $0 == "--env" { getline; if ($0 == "HIVE_QA_HOME=/tmp/hq-open") env=1 }
+      $0 == "--args" { args=1; exit }
+      END { exit !(env && args) }
+    ' \
+    && printf '%s\n' "$with_env" | grep -qx -- '/tmp/hq-open/workspace.log'; then
+    ok "QA feed env is inserted before --args without rewriting --stderr"
+  else
+    bad "QA env insert broke the production open argv: $with_env"
   fi
 
   if [ "$(format_timeout_diagnosis "feed receipt never selected claude/x" "Terminal transport is absent in this launch." empty)" \
