@@ -25,7 +25,14 @@ const SETTLE_WAIT_MS = 15_000;
 const SETTLE_POLL_MS = 250;
 /** Enough dirty paths to identify what was found without pasting a whole tree into a notice. */
 const DIRTY_PATHS_SHOWN = 10;
-const TEST_TIMEOUT_MS = 5 * 60_000;
+// Covers three things, and 5 minutes covered only the first: the Bun suite's
+// own wall clock, measured 292.50s at 62e4471fe; the sandbox image the runner
+// mounts around it; and the sessiond freshness gate the runner shells out to
+// before the suite, which rebuilds a missing or stale binary in about 40s
+// (`make sessiond`, measured 38.7s in a fresh worktree with no Ghostty
+// compile). A run killed for time reports as a timeout rather than as a test
+// failure, but it is still a red main nobody can act on.
+const TEST_TIMEOUT_MS = 8 * 60_000;
 const OUTPUT_LIMIT_BYTES = 32 * 1_024;
 const SCRATCH_LIMIT_KB = 1_024 * 1_024;
 const SCRATCH_CHECK_MS = 1_000;

@@ -47,6 +47,9 @@ QA_HIVE_BIN="${QA_HIVE_BIN:-}"
 # a silent fallback does not.
 if [ -z "${QA_SESSIOND_BIN:-}" ]; then
   QA_SESSIOND_BIN="$QA_SRC_ROOT/native/sessiond/zig-out/bin/hive-sessiond"
+  QA_SESSIOND_DEFAULTED=1
+else
+  QA_SESSIOND_DEFAULTED=0
 fi
 
 refuse() { echo "rig: refusing: $*" >&2; exit 2; }
@@ -396,6 +399,17 @@ rig_up() {
     || refuse "QA_HIVE_BIN is not executable: $QA_HIVE_BIN"
   [ -x "$QA_SESSIOND_BIN" ] || refuse "no executable hive-sessiond under QA_SRC_ROOT at" \
     "$QA_SESSIOND_BIN — stage one from this source tree or set QA_SESSIOND_BIN"
+  # Present is not the same as current. A binary older than the sessiond
+  # sources under test is the stale-broker defect the default above exists to
+  # prevent, arriving by a second door. The rig refuses instead of building,
+  # because QA_SRC_ROOT may be a frozen build or a checkout somebody else owns;
+  # an explicit QA_SESSIOND_BIN opts out of the freshness question entirely,
+  # the same way it opts out of the default path.
+  if [ "$QA_SESSIOND_DEFAULTED" -eq 1 ]; then
+    local sessiond_state
+    sessiond_state="$("$QA_SRC_ROOT/scripts/native/ensure-sessiond.sh" \
+      --check "$QA_SRC_ROOT" 2>&1)" || refuse "$sessiond_state"
+  fi
   command -v bun >/dev/null || refuse "bun is required"
   mkdir -p "$QA_HOME" "$ARTIFACTS"
 

@@ -449,15 +449,38 @@ async function selfTest(): Promise<void> {
   );
 }
 
+/**
+ * Builds a missing or stale `hive-sessiond` before the suite starts, and
+ * always prints which of the three states it found.
+ *
+ * This runner is where it belongs because it is the only way into the Bun
+ * suite: test/test-root-preload.ts refuses a bare `bun test`, so package.json,
+ * native/sessiond/test.sh and the main-health monitor all arrive here. The
+ * sandbox denies writes outside its volume, so the build has to happen out
+ * here in the parent, before the mount exists.
+ *
+ * The gate is not conditional on which tests were asked for. A flag to skip it
+ * would be a way to reintroduce the failure it removes, and the cost of not
+ * skipping is one `make -q` query, measured at 0.37s.
+ */
+function ensureSessiond(): void {
+  const gate = Bun.spawnSync(
+    [join(REPO_ROOT, "scripts", "native", "ensure-sessiond.sh")],
+    { cwd: REPO_ROOT, stdout: "inherit", stderr: "inherit" },
+  );
+  if (gate.exitCode !== 0) process.exit(gate.exitCode);
+}
+
 if (import.meta.main) {
   const args = process.argv.slice(2);
-  const exitCode =
-    args.length === 1 && args[0] === "--self-test"
-      ? await selfTest().then(() => 0)
-      : await runInBoundedTestRoot(args[0] === "--" ? args.slice(1) : args, {
-          key: "suite",
-          imageSize: DEFAULT_IMAGE_SIZE,
-          maxBytes: DEFAULT_MAX_BYTES,
-        });
+  const selfTestOnly = args.length === 1 && args[0] === "--self-test";
+  if (!selfTestOnly) ensureSessiond();
+  const exitCode = selfTestOnly
+    ? await selfTest().then(() => 0)
+    : await runInBoundedTestRoot(args[0] === "--" ? args.slice(1) : args, {
+        key: "suite",
+        imageSize: DEFAULT_IMAGE_SIZE,
+        maxBytes: DEFAULT_MAX_BYTES,
+      });
   process.exit(exitCode);
 }
