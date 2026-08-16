@@ -604,11 +604,14 @@ async function readLiveRunControl(
 async function submitLiveRunControl(
   intent: LiveRunControlIntent,
 ): Promise<ReturnType<typeof LiveRunControlResultSchema.parse>> {
-  const response = await userFetch(`http://127.0.0.1:${port}/live-run-control`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(intent),
-  });
+  const response = await userFetch(
+    `http://127.0.0.1:${port}/live-run-control`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(intent),
+    },
+  );
   const body = await response.text();
   if (!response.ok && response.status !== 409) {
     throw new Error(
@@ -667,7 +670,9 @@ async function proveLiveRunControls(
 ) {
   const sentinelBefore = processReadback(survivingSentinel.pid);
   if (sentinelBefore.state !== "live") {
-    throw new Error("the unrelated process sentinel was not live before control proof");
+    throw new Error(
+      "the unrelated process sentinel was not live before control proof",
+    );
   }
   const sentinelStartToken = sentinelBefore.startToken;
   const providers = [];
@@ -789,7 +794,9 @@ async function proveLiveRunControls(
     sentinelAfter.state !== "live" ||
     sentinelAfter.startToken !== sentinelStartToken
   ) {
-    throw new Error("the unrelated process sentinel did not survive control proof");
+    throw new Error(
+      "the unrelated process sentinel did not survive control proof",
+    );
   }
   const evidence = {
     schemaVersion: 1,
