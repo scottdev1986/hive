@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { realpathSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { loadAgentStandards } from "../../src/daemon/spawn/agent-standards";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
@@ -397,4 +398,120 @@ export function reconcileSpawnRequests(
     invalidAdmissionProviders,
     refusalReadbacksComplete,
   };
+}
+
+export const AGENT_STANDARDS_RELATIVE = "AGENT_STANDARDS.md";
+
+export type NamedSpawnRefusalKind =
+  | "standards-unreadable"
+  | "standards-undeclared"
+  | "cause-omitted"
+  | "other";
+
+/** Isolated hive init does not write this file. The U5 harness stages the
+ * checkout's real AGENT_STANDARDS.md so spawn can pass the project-owned
+ * gate. An empty source is refused here: a stub that only satisfies
+ * readFile dies one layer later at the declaration check. */
+export function stageIsolatedProjectAgentStandards(
+  projectRoot: string,
+  sourceText: string,
+): { path: string; bytes: number } {
+  if (sourceText.trim() === "") {
+    throw new Error(
+      "U5 isolated project refuses to stage empty AGENT_STANDARDS.md",
+    );
+  }
+  const path = join(projectRoot, AGENT_STANDARDS_RELATIVE);
+  writeFileSync(path, sourceText);
+  return { path, bytes: Buffer.byteLength(sourceText, "utf8") };
+}
+
+/** The named refusal loadAgentStandards throws. Succeeding is the
+ * failure: an absence control that cannot tell "refused" from "did not
+ * run" is not a control. */
+export async function agentStandardsRefusalMessage(
+  repoRoot: string,
+): Promise<string> {
+  try {
+    await loadAgentStandards(repoRoot);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error(
+    `loadAgentStandards(${repoRoot}) resolved; isolated absence control requires a named refusal`,
+  );
+}
+
+export async function requireParsedAgentStandards(repoRoot: string): Promise<{
+  path: string;
+  sectionCount: number;
+  headings: string[];
+}> {
+  const standards = await loadAgentStandards(repoRoot);
+  if (standards.sections.length === 0) {
+    throw new Error(
+      `staged AGENT_STANDARDS.md at ${join(repoRoot, AGENT_STANDARDS_RELATIVE)} parsed to zero sections`,
+    );
+  }
+  return {
+    path: join(repoRoot, AGENT_STANDARDS_RELATIVE),
+    sectionCount: standards.sections.length,
+    headings: standards.sections.map((section) => section.heading),
+  };
+}
+
+export function nameSpawnRefusalCause(cause: string): NamedSpawnRefusalKind {
+  if (cause.trim() === "") return "cause-omitted";
+  if (/Cannot spawn: agent standards are unreadable/i.test(cause)) {
+    return "standards-unreadable";
+  }
+  if (/Cannot spawn:/i.test(cause)) return "standards-undeclared";
+  return "other";
+}
+
+/** First spawn has no prior live admissions. Empty positiveControlIds is
+ * therefore not "status unreadable" — a readable list with zero matching
+ * rows is the absence proof. Requiring a prior live row made every first
+ * refusal collapse into an unattributed admission-absence error. */
+export function explicitRefusalReadbackState(input: {
+  positiveControlIds: readonly string[];
+  visiblePositiveControlCount: number;
+  matchingCount: number;
+}): { state: "absent" | "unknown"; reason?: string } {
+  if (input.matchingCount > 0) {
+    return {
+      state: "unknown",
+      reason: "the refused request has a marker-bound agent row",
+    };
+  }
+  if (
+    input.positiveControlIds.length > 0 &&
+    input.visiblePositiveControlCount !== input.positiveControlIds.length
+  ) {
+    return {
+      state: "unknown",
+      reason:
+        "the status read could not see every required live positive control",
+    };
+  }
+  return { state: "absent" };
+}
+
+export function spawnRefusalProofError(
+  provider: string,
+  exactRefusal: string,
+  readback: { state?: unknown; reason?: unknown },
+): string | null {
+  const cause = exactRefusal.trim();
+  if (cause === "") return `${provider} refusal omitted its cause`;
+  if (readback.state === "absent") return null;
+  const kind = nameSpawnRefusalCause(cause);
+  const reason =
+    typeof readback.reason === "string" && readback.reason.length > 0
+      ? readback.reason
+      : "admission absence unproven";
+  if (reason === "the refused request has a marker-bound agent row") {
+    return `${provider} refusal is ${kind}: ${cause}; marker-bound admission present`;
+  }
+  return `${provider} refusal is ${kind}: ${cause}; ${reason}`;
 }

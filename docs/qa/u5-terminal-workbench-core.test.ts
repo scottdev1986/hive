@@ -1,13 +1,21 @@
-import { resolve } from "node:path";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
 } from "../../src/schemas/capability";
 import {
+  agentStandardsRefusalMessage,
   classifyViewerReadback,
+  explicitRefusalReadbackState,
   finalU5Result,
+  nameSpawnRefusalCause,
   reconcileSpawnRequests,
+  requireParsedAgentStandards,
+  spawnRefusalProofError,
+  stageIsolatedProjectAgentStandards,
   assertIsolatedQaHiveHome,
   assertQaHomeFitsSocketPath,
   assertQaHomeOwner,
@@ -415,5 +423,129 @@ describe("U5 spawn cleanup reconciliation", () => {
     expect(
       reconcileSpawnRequests(admissionWithoutId, admittedRows).complete,
     ).toBeFalse();
+  });
+});
+
+describe("U5 isolated project agent standards", () => {
+  const repoRoot = join(import.meta.dir, "../..");
+
+  test("spawn still refuses by name when AGENT_STANDARDS.md is absent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "u5-std-absent-"));
+    try {
+      const refusal = await agentStandardsRefusalMessage(root);
+      expect(refusal).toMatch(/Cannot spawn: agent standards are unreadable/);
+      expect(refusal).toContain(join(root, "AGENT_STANDARDS.md"));
+      expect(nameSpawnRefusalCause(refusal)).toBe("standards-unreadable");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a stub that only satisfies readFile is refused as undeclared", async () => {
+    const root = await mkdtemp(join(tmpdir(), "u5-std-stub-"));
+    try {
+      await writeFile(
+        join(root, "AGENT_STANDARDS.md"),
+        "# notes\n\n## Coding guidelines\n\nbody\n",
+      );
+      const refusal = await agentStandardsRefusalMessage(root);
+      expect(refusal).toMatch(/declares no sections/);
+      expect(nameSpawnRefusalCause(refusal)).toBe("standards-undeclared");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the staged checkout file parses against the declaration check", async () => {
+    const root = await mkdtemp(join(tmpdir(), "u5-std-real-"));
+    try {
+      const source = await readFile(join(repoRoot, "AGENT_STANDARDS.md"), "utf8");
+      const staged = stageIsolatedProjectAgentStandards(root, source);
+      expect(staged.path).toBe(join(root, "AGENT_STANDARDS.md"));
+      expect(staged.bytes).toBeGreaterThan(0);
+      const parsed = await requireParsedAgentStandards(root);
+      expect(parsed.sectionCount).toBeGreaterThan(0);
+      expect(parsed.headings).toContain("Coding guidelines");
+      expect(parsed.headings).toContain("Hive protocol");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an empty stage source is refused rather than written", () => {
+    expect(() => stageIsolatedProjectAgentStandards("/tmp/unused", "")).toThrow(
+      "U5 isolated project refuses to stage empty AGENT_STANDARDS.md",
+    );
+    expect(() =>
+      stageIsolatedProjectAgentStandards("/tmp/unused", "   \n"),
+    ).toThrow("U5 isolated project refuses to stage empty AGENT_STANDARDS.md");
+  });
+});
+
+describe("U5 spawn refusal attribution", () => {
+  const unreadable =
+    "Cannot spawn: agent standards are unreadable at /private/tmp/u5p-h/AGENT_STANDARDS.md: ENOENT";
+  const undeclared =
+    'Cannot spawn: /private/tmp/u5p-h/AGENT_STANDARDS.md declares no sections. Above the first "##" heading it needs a ```standards block';
+
+  test("first spawn with no prior live admissions can prove absence", () => {
+    expect(
+      explicitRefusalReadbackState({
+        positiveControlIds: [],
+        visiblePositiveControlCount: 0,
+        matchingCount: 0,
+      }),
+    ).toEqual({ state: "absent" });
+  });
+
+  test("a marker-bound row and a missing live control stay unknown", () => {
+    expect(
+      explicitRefusalReadbackState({
+        positiveControlIds: [],
+        visiblePositiveControlCount: 0,
+        matchingCount: 1,
+      }),
+    ).toEqual({
+      state: "unknown",
+      reason: "the refused request has a marker-bound agent row",
+    });
+    expect(
+      explicitRefusalReadbackState({
+        positiveControlIds: ["claude-id"],
+        visiblePositiveControlCount: 0,
+        matchingCount: 0,
+      }),
+    ).toEqual({
+      state: "unknown",
+      reason:
+        "the status read could not see every required live positive control",
+    });
+  });
+
+  test("proofError names the spawn refusal instead of collapsing it", () => {
+    const collapsed =
+      "claude refusal could not prove the absence of a marker-bound admission";
+    const firstSpawnUnknown = spawnRefusalProofError("claude", unreadable, {
+      state: "unknown",
+      reason:
+        "the status read could not see every required live positive control",
+    });
+    expect(firstSpawnUnknown).toContain("standards-unreadable");
+    expect(firstSpawnUnknown).toContain(unreadable);
+    expect(firstSpawnUnknown).not.toBe(collapsed);
+
+    expect(
+      spawnRefusalProofError("claude", undeclared, {
+        state: "unknown",
+        reason: "the refused request has a marker-bound agent row",
+      }),
+    ).toContain("standards-undeclared");
+
+    expect(
+      spawnRefusalProofError("claude", unreadable, { state: "absent" }),
+    ).toBeNull();
+    expect(spawnRefusalProofError("claude", "", { state: "absent" })).toBe(
+      "claude refusal omitted its cause",
+    );
   });
 });

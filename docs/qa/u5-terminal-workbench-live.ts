@@ -57,7 +57,9 @@ import {
 } from "./qa-client";
 import { qaRepoRoot } from "./repo-root";
 import {
+  agentStandardsRefusalMessage,
   classifyViewerReadback,
+  explicitRefusalReadbackState,
   finalU5Result,
   headlessRootReapVerdict,
   reconcileSpawnRequests,
@@ -66,10 +68,13 @@ import {
   assertSessiondEmbedsTreeSchema,
   isIsolatedQaHomePath,
   requireHeadlessRootRunning,
+  requireParsedAgentStandards,
   SESSION_PROTOCOL_SCHEMA_RELATIVE,
   requireU5AccountabilityTaskId,
   requireU5WorkspaceApp,
   resolveU5Scope,
+  spawnRefusalProofError,
+  stageIsolatedProjectAgentStandards,
   summarizeProviderOutcomes,
   U5_REQUIRED_LIVE_PROVIDERS,
   type U5ProviderOutcome,
@@ -1299,21 +1304,19 @@ async function readBackExplicitRefusal(
     ownedIds.add(row.id);
     ownedNames.set(row.id, row.name);
   }
-  if (
-    positiveControlIds.length === 0 ||
-    visiblePositiveControls.length !== positiveControlIds.length ||
-    matching.length > 0
-  ) {
+  const decision = explicitRefusalReadbackState({
+    positiveControlIds,
+    visiblePositiveControlCount: visiblePositiveControls.length,
+    matchingCount: matching.length,
+  });
+  if (decision.state === "unknown") {
     return {
       state: "unknown",
       observedAt: new Date().toISOString(),
       positiveControlIds,
       visiblePositiveControls,
       diagnosticIds: matching.map((row) => row.id),
-      reason:
-        matching.length > 0
-          ? "the refused request has a marker-bound agent row"
-          : "the status read could not see every required live positive control",
+      reason: decision.reason,
     };
   }
   return {
@@ -1595,6 +1598,32 @@ async function runProof(): Promise<Record<string, unknown>> {
   if (unexpectedProjectRows.length > 0) {
     throw new Error(`QA project is not fresh: ${project}`);
   }
+  const absentStandards = await agentStandardsRefusalMessage(project);
+  if (!/Cannot spawn: agent standards are unreadable/.test(absentStandards)) {
+    throw new Error(
+      `isolated project absence control did not name the unreadable refusal: ${absentStandards}`,
+    );
+  }
+  const sourceStandards = readFileSync(
+    join(sourceRoot, "AGENT_STANDARDS.md"),
+    "utf8",
+  );
+  const stagedStandards = stageIsolatedProjectAgentStandards(
+    project,
+    sourceStandards,
+  );
+  const parsedStandards = await requireParsedAgentStandards(project);
+  initialProjectStatus = git(project, "status", "--porcelain");
+  writeEvidence("00-isolated-project-standards.json", {
+    schemaVersion: 1,
+    project,
+    stagedPath: stagedStandards.path,
+    bytes: stagedStandards.bytes,
+    sha256: createHash("sha256").update(sourceStandards).digest("hex"),
+    sectionCount: parsedStandards.sectionCount,
+    headings: parsedStandards.headings,
+    absentRefusal: absentStandards,
+  });
   const initialAgents = await status();
   initialAgentIds = new Set(initialAgents.map((agent) => agent.id));
   const preexistingLive = initialAgents.filter(
@@ -1876,7 +1905,12 @@ async function runProof(): Promise<Record<string, unknown>> {
         `raw/${provider}-attempt-1-refusal.txt`,
         exactRefusal,
       );
-      if (request.state !== "refused" || exactRefusal.trim() === "") {
+      const attributed = spawnRefusalProofError(
+        provider,
+        exactRefusal,
+        refusalReadback,
+      );
+      if (attributed !== null) {
         writeProviderOutcome({
           provider,
           outcome: "unknown",
@@ -1894,11 +1928,7 @@ async function runProof(): Promise<Record<string, unknown>> {
           terminalAvailability: refusalReadback,
         });
         writeAdmissions();
-        throw new Error(
-          exactRefusal.trim() === ""
-            ? `${provider} refusal omitted its cause`
-            : `${provider} refusal could not prove the absence of a marker-bound admission`,
-        );
+        throw new Error(attributed);
       }
       const outcome = classifyExplicitRefusal(provider, exactRefusal);
       writeProviderOutcome({
