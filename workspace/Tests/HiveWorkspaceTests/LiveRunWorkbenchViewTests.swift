@@ -258,7 +258,8 @@ struct LiveRunWorkbenchViewTests {
         view.setRouteVisible(true)
         view.apply(try projection([agent("a", provider: "claude", generation: 1)]))
 
-        let placeholder = try #require(firstSubview(of: NSTextField.self, in: view))
+        let placeholder = try #require(
+            findView(in: view, identifier: "live-run-terminal-placeholder") as? NSTextField)
         #expect(
             placeholder.stringValue ==
                 "Terminal renderer unavailable: surface creation failed. The terminal is waiting and will appear automatically.")

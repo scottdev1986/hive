@@ -291,6 +291,7 @@ final class LiveRunWorkbenchView: NSView {
         terminalPlaceholder.textColor = .secondaryLabelColor
         terminalPlaceholder.alignment = .center
         terminalPlaceholder.maximumNumberOfLines = 0
+        terminalPlaceholder.setAccessibilityIdentifier("live-run-terminal-placeholder")
         terminalHost.addSubview(terminalPlaceholder)
         NSLayoutConstraint.activate([
             terminalPlaceholder.centerXAnchor.constraint(equalTo: terminalHost.centerXAnchor),
