@@ -4,35 +4,46 @@ import { join } from "node:path";
 import {
   assertSessiondSchemaDigest,
   assertStagedSessiondSchemaDigest,
+  extractEmbeddedSessionProtocolSchema,
   SESSIOND_SCHEMA_DIGEST_MISMATCH,
   SESSIOND_SCHEMA_EMPTY_TREE,
   schemaDigest,
+  stagedEmbeddedSchemaDigest,
 } from "../src/sessiond-schema-digest";
 import { OUTSIDE_REPO_TMPDIR } from "./outside-repo-tmpdir";
 
-const TREE = Buffer.from('{"schemaVersion":1,"title":"session-protocol"}');
+const STAGED = Buffer.from(
+  '{"schemaVersion":1,"generatedFrom":["src/schemas/session-protocol.ts"]}',
+);
+const STAGED_DIGEST = schemaDigest(STAGED);
+const TREE = Buffer.from(
+  '{"schemaVersion":999,"generatedFrom":["src/schemas/session-protocol.ts"]}',
+);
 const TREE_DIGEST = schemaDigest(TREE);
 
-test("agreement is green only when the staged binary embeds the tree schema bytes", () => {
+test("agreement is green when the binary embed digest equals the tree digest", () => {
   const match = assertSessiondSchemaDigest(
-    Buffer.concat([Buffer.from("hdr"), TREE, Buffer.from("tlr")]),
-    TREE,
+    Buffer.concat([Buffer.from("hdr"), STAGED, Buffer.from("tlr")]),
+    STAGED,
   );
-  expect(match.treeDigest).toBe(TREE_DIGEST);
-  expect(match.stagedDigest).toBe(TREE_DIGEST);
+  expect(match.treeDigest).toBe(STAGED_DIGEST);
+  expect(match.stagedDigest).toBe(STAGED_DIGEST);
 });
 
-test("a mutated tree schema is refused by the digest-mismatch name", () => {
-  const binary = Buffer.concat([Buffer.from("hdr"), TREE, Buffer.from("tlr")]);
-  const mutated = Buffer.from('{"schemaVersion":1,"title":"MUTATED"}');
-  const mutatedDigest = schemaDigest(mutated);
-  expect(mutatedDigest).not.toBe(TREE_DIGEST);
-  expect(() => assertSessiondSchemaDigest(binary, mutated)).toThrow(
-    `${SESSIOND_SCHEMA_DIGEST_MISMATCH}: staged=absent tree=${mutatedDigest}`,
+test("a stale present binary is refused naming both real digests, not absent", () => {
+  const binary = Buffer.concat([
+    Buffer.from("hdr"),
+    STAGED,
+    Buffer.from("tlr"),
+  ]);
+  expect(stagedEmbeddedSchemaDigest(binary)).toBe(STAGED_DIGEST);
+  expect(TREE_DIGEST).not.toBe(STAGED_DIGEST);
+  expect(() => assertSessiondSchemaDigest(binary, TREE)).toThrow(
+    `${SESSIOND_SCHEMA_DIGEST_MISMATCH}: staged=${STAGED_DIGEST} tree=${TREE_DIGEST}`,
   );
 });
 
-test("an unrelated staged binary is a named digest mismatch, not a generic error", () => {
+test("an unrelated staged binary is a named digest mismatch", () => {
   expect(() =>
     assertSessiondSchemaDigest(Buffer.from("unrelated binary"), TREE),
   ).toThrow(
@@ -46,7 +57,15 @@ test("an empty tree schema is refused by name", () => {
   ).toThrow(SESSIOND_SCHEMA_EMPTY_TREE);
 });
 
-test("path check: mutating the on-disk schema file fires the named refusal, then the unmutated file passes", () => {
+test("extract reads the embed from the binary without consulting the tree", () => {
+  const binary = Buffer.concat([Buffer.from("xx"), STAGED, Buffer.from("yy")]);
+  expect(extractEmbeddedSessionProtocolSchema(binary)?.equals(STAGED)).toBe(
+    true,
+  );
+  expect(extractEmbeddedSessionProtocolSchema(Buffer.from("nope"))).toBeNull();
+});
+
+test("path check: mutating the on-disk tree names both digests, then the unmutated file passes", () => {
   const fixture = mkdtempSync(
     join(OUTSIDE_REPO_TMPDIR, "hive-sessiond-schema-digest-"),
   );
@@ -54,18 +73,17 @@ test("path check: mutating the on-disk schema file fires the named refusal, then
     mkdirSync(fixture, { recursive: true });
     const binaryPath = join(fixture, "hive-sessiond");
     const schemaPath = join(fixture, "session-protocol.schema.json");
-    writeFileSync(binaryPath, Buffer.concat([Buffer.from("bin"), TREE]));
-    writeFileSync(
-      schemaPath,
-      Buffer.from('{"schemaVersion":1,"title":"MUTATED"}'),
-    );
+    writeFileSync(binaryPath, Buffer.concat([Buffer.from("bin"), STAGED]));
+    writeFileSync(schemaPath, TREE);
     expect(() =>
       assertStagedSessiondSchemaDigest(binaryPath, schemaPath),
-    ).toThrow(SESSIOND_SCHEMA_DIGEST_MISMATCH);
-    writeFileSync(schemaPath, TREE);
+    ).toThrow(
+      `${SESSIOND_SCHEMA_DIGEST_MISMATCH}: staged=${STAGED_DIGEST} tree=${TREE_DIGEST}`,
+    );
+    writeFileSync(schemaPath, STAGED);
     const match = assertStagedSessiondSchemaDigest(binaryPath, schemaPath);
-    expect(match.treeDigest).toBe(TREE_DIGEST);
-    expect(match.stagedDigest).toBe(TREE_DIGEST);
+    expect(match.treeDigest).toBe(STAGED_DIGEST);
+    expect(match.stagedDigest).toBe(STAGED_DIGEST);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

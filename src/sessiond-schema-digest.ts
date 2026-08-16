@@ -1,6 +1,8 @@
 /** Staged hive-sessiond embeds session-protocol.schema.json at compile time
  * (`@embedFile`). A binary staged before a wire-schema change is present and
- * still wrong. This check compares digests, not existence. */
+ * still wrong. This check hashes the embed OUT OF THE BINARY, then compares
+ * that digest to the tree file. It must not look up the staged artifact by
+ * the tree's digest — that turns a stale binary into an absence. */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -13,6 +15,11 @@ export const SESSIOND_SCHEMA_EMPTY_TREE =
 export const SESSIOND_SCHEMA_DIGEST_MISMATCH =
   "sessiond schema digest mismatch";
 
+/** Stable token inside the production schema (and any fixture that wants
+ * to be extractable). Used only to locate the embed; the digest is of the
+ * whole JSON object, not of this token. */
+const EMBED_LOCATOR = Buffer.from('"generatedFrom"');
+
 export function schemaDigest(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -21,17 +28,59 @@ function asBuffer(bytes: Uint8Array): Buffer {
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
-/** SHA-256 of the schema bytes `@embedFile`d into the binary, or null when
- * those exact bytes are not present. Absence of the tree bytes is a digest
- * mismatch, not a missing-file pass. */
-export function stagedEmbeddedSchemaDigest(
+function jsonObjectEnd(buf: Buffer, start: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < buf.length; i += 1) {
+    const c = buf[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (c === 0x5c) {
+        escaped = true;
+        continue;
+      }
+      if (c === 0x22) inString = false;
+      continue;
+    }
+    if (c === 0x22) {
+      inString = true;
+      continue;
+    }
+    if (c === 0x7b) depth += 1;
+    else if (c === 0x7d) {
+      depth -= 1;
+      if (depth === 0) {
+        const after = i + 1;
+        return buf[after] === 0x0a ? after + 1 : after;
+      }
+    }
+  }
+  return null;
+}
+
+/** Raw `@embedFile` bytes of session-protocol.schema.json inside a staged
+ * hive-sessiond, or null when that JSON object is not in the binary. */
+export function extractEmbeddedSessionProtocolSchema(
   binary: Uint8Array,
-  treeSchema: Uint8Array,
-): string | null {
-  if (treeSchema.byteLength === 0) return null;
-  return asBuffer(binary).includes(asBuffer(treeSchema))
-    ? schemaDigest(treeSchema)
-    : null;
+): Buffer | null {
+  const buf = asBuffer(binary);
+  const locator = buf.indexOf(EMBED_LOCATOR);
+  if (locator < 0) return null;
+  let start = locator;
+  while (start > 0 && buf[start] !== 0x7b) start -= 1;
+  if (buf[start] !== 0x7b) return null;
+  const end = jsonObjectEnd(buf, start);
+  if (end === null) return null;
+  return buf.subarray(start, end);
+}
+
+export function stagedEmbeddedSchemaDigest(binary: Uint8Array): string | null {
+  const embedded = extractEmbeddedSessionProtocolSchema(binary);
+  return embedded === null ? null : schemaDigest(embedded);
 }
 
 export function assertSessiondSchemaDigest(
@@ -42,8 +91,8 @@ export function assertSessiondSchemaDigest(
     throw new Error(SESSIOND_SCHEMA_EMPTY_TREE);
   }
   const treeDigest = schemaDigest(treeSchema);
-  const stagedDigest = stagedEmbeddedSchemaDigest(binary, treeSchema);
-  if (stagedDigest !== treeDigest) {
+  const stagedDigest = stagedEmbeddedSchemaDigest(binary);
+  if (stagedDigest === null || stagedDigest !== treeDigest) {
     throw new Error(
       `${SESSIOND_SCHEMA_DIGEST_MISMATCH}: staged=${stagedDigest ?? "absent"} tree=${treeDigest}`,
     );
