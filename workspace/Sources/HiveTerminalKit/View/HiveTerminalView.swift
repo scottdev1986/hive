@@ -59,6 +59,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     var newOutputIndicatorStorage: NSButton?
     var scrollStateStorage = TerminalScrollState()
     private var pendingDraw = false
+    private var pendingDisplay = false
     private var hasCompletedInitialDraw = false
     private var renderingSuspended = false
     private var closed = false
@@ -189,6 +190,14 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private func schedulePendingDrawIfPossible() {
         guard pendingDraw, canPresentGhosttyFrame else { return }
         needsDisplay = true
+        guard !pendingDisplay else { return }
+        pendingDisplay = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingDisplay = false
+            guard self.pendingDraw, self.canPresentGhosttyFrame else { return }
+            self.displayIfNeeded()
+        }
     }
 
     private var canPresentGhosttyFrame: Bool {

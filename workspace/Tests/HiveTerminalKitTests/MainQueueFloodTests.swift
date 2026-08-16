@@ -27,6 +27,7 @@ final class MainQueueFloodTests: XCTestCase {
             viewerId: "flood-viewer"
         )
         let deliveriesBefore = engine.callbackContext.invalidateDeliveryCount
+        let drawsBefore = view.drawScheduledCount
 
         // Posted from off-main, exactly like the terminal I/O thread, and with
         // the main queue unable to run in between: this is the saturated case
@@ -43,14 +44,17 @@ final class MainQueueFloodTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.2))
 
         let delivered = engine.callbackContext.invalidateDeliveryCount - deliveriesBefore
+        let draws = view.drawScheduledCount - drawsBefore
         XCTAssertGreaterThan(delivered, 0, "the burst never reached the main thread at all")
+        XCTAssertEqual(delivered, 1, "the fixed burst must use one main-queue delivery")
         XCTAssertLessThan(
             delivered,
             posted / 10,
             "\(posted) INVALIDATEs produced \(delivered) main-queue deliveries; "
                 + "redundant invalidates are not being collapsed"
         )
-        XCTAssertGreaterThan(view.drawScheduledCount, 0, "collapsing dropped the draw entirely")
+        XCTAssertGreaterThan(draws, 0, "collapsing dropped the draw entirely")
+        XCTAssertEqual(draws, 1, "the fixed burst must use one AppKit draw")
     }
 
     /// Output-driven invalidates must not export the viewport on the main thread
