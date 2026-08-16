@@ -682,6 +682,169 @@ describe("worktree settlement proof", () => {
     }
   });
 
+  test("a target branch change remeasures the case before rendering its reason", async () => {
+    const { repo, worktree, db, lifecycle } = await fixture();
+    try {
+      await writeFile(join(worktree.path, "first.txt"), "first\n");
+      await git(worktree.path, "add", "first.txt");
+      await git(worktree.path, "commit", "-m", "first unlanded commit");
+      const first = await git(worktree.path, "rev-parse", "HEAD");
+      await writeFile(join(worktree.path, "second.txt"), "second\n");
+      await git(worktree.path, "add", "second.txt");
+      await git(worktree.path, "commit", "-m", "second unlanded commit");
+      const second = await git(worktree.path, "rev-parse", "HEAD");
+      await git(repo, "branch", "dev", first);
+
+      // The two targets deliberately disagree. If the sweep only rewrites the sentence,
+      // it will say dev while retaining main's two-commit evidence.
+      expect(
+        await git(repo, "rev-list", "--count", `main..${worktree.branch}`),
+      ).toBe("2");
+      expect(
+        await git(repo, "rev-list", "--count", `dev..${worktree.branch}`),
+      ).toBe("1");
+
+      await lifecycle.reconcileOrphanedWorktrees();
+      const cases = new SettlementCaseStore(repo);
+      const [measuredOnMain] = await cases.list("main");
+      expect(measuredOnMain?.record.residue?.targetRef).toBe("refs/heads/main");
+      expect(
+        measuredOnMain?.record.residue?.unaccountedCommitOids,
+      ).toHaveLength(2);
+
+      await git(repo, "checkout", "dev");
+      await lifecycle.reconcileOrphanedWorktrees();
+
+      const [measuredOnDev] = await cases.list("dev");
+      expect(measuredOnDev?.record.residue?.targetRef).toBe("refs/heads/dev");
+      expect(measuredOnDev?.record.residue?.targetOid).toBe(first);
+      expect(measuredOnDev?.record.residue?.unaccountedCommitOids).toEqual([
+        second,
+      ]);
+      expect(measuredOnDev?.record.reason).toBe(
+        "1 commit(s) are not accounted for on dev",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("target movement refreshes an owner decision without closing it", async () => {
+    const { repo, worktree, db, lifecycle } = await fixture();
+    try {
+      await writeFile(join(worktree.path, "work.txt"), "work\n");
+      await git(worktree.path, "add", "work.txt");
+      await git(worktree.path, "commit", "-m", "work awaiting integration");
+      const tip = await git(worktree.path, "rev-parse", "HEAD");
+
+      await lifecycle.reconcileOrphanedWorktrees();
+      const cases = new SettlementCaseStore(repo);
+      const [measured] = await cases.list("main");
+      if (measured === undefined || measured.record.residue === null) {
+        throw new Error("missing measured settlement case");
+      }
+      expect(measured.record.residue.unaccountedCommitOids).toEqual([tip]);
+      const held = await cases.update(measured, {
+        ...measured.record,
+        state: "owner-decision",
+        owner: "user",
+        reason:
+          "1 commit(s) are not accounted for on main; only an owner decision can settle it",
+        due: { nextActionAt: null, watchedTrigger: "owner-decision" },
+        blockedOn: null,
+        reviewAt: null,
+        proofDigest: null,
+      });
+
+      // Landing the exact commit makes a stale read maximally loud: the old evidence says one
+      // commit is unaccounted, while a fresh measurement says none is.
+      await git(repo, "merge", "--ff-only", worktree.branch);
+      expect(
+        await git(repo, "rev-list", "--count", `main..${worktree.branch}`),
+      ).toBe("0");
+
+      await lifecycle.reconcileOrphanedWorktrees();
+
+      const refreshed = await cases.read(held.record.caseId);
+      expect(refreshed?.record.revision).toBeGreaterThan(held.record.revision);
+      expect(refreshed?.record.state).toBe("owner-decision");
+      expect(refreshed?.record.owner).toBe("user");
+      expect(refreshed?.record.residue?.targetRef).toBe("refs/heads/main");
+      expect(refreshed?.record.residue?.targetOid).toBe(tip);
+      expect(refreshed?.record.residue?.unaccountedCommitOids).toEqual([]);
+      expect(refreshed?.record.reason).toBe(
+        "exact content accounted for on main; owner decision retained after target remeasurement",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a failed target remeasurement marks owner evidence stale and undecidable", async () => {
+    const { repo, worktree, db, lifecycle } = await fixture();
+    try {
+      await writeFile(join(worktree.path, "notes.txt"), "reviewed residue\n");
+      await lifecycle.reconcileOrphanedWorktrees();
+      const cases = new SettlementCaseStore(repo);
+      const [measured] = await cases.list("main");
+      if (
+        measured === undefined ||
+        measured.record.residue === null ||
+        measured.record.evidenceDigest === null
+      ) {
+        throw new Error("missing measured settlement case");
+      }
+      const held = await cases.update(measured, {
+        ...measured.record,
+        state: "owner-decision",
+        owner: "user",
+        reason: "the owner is reviewing notes.txt",
+        due: { nextActionAt: null, watchedTrigger: "owner-decision" },
+        blockedOn: null,
+        reviewAt: null,
+        proofDigest: null,
+      });
+
+      await writeFile(join(repo, "target-moved.txt"), "new target tip\n");
+      await git(repo, "add", "target-moved.txt");
+      await git(repo, "commit", "-m", "move the landing target");
+      const movedTargetOid = await git(repo, "rev-parse", "main");
+      expect(held.record.residue?.targetOid).not.toBe(movedTargetOid);
+      const gitDir = await git(
+        worktree.path,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-dir",
+      );
+      await mkdir(join(gitDir, "rebase-merge"));
+
+      await lifecycle.reconcileOrphanedWorktrees();
+
+      const stale = await cases.read(held.record.caseId);
+      expect(stale?.record.state).toBe("owner-decision");
+      expect(stale?.record.residue).toEqual(held.record.residue);
+      expect(stale?.record.evidenceDigest).toBeNull();
+      expect(stale?.record.evidenceFormat).toBeNull();
+      expect(stale?.record.reason).toBe(
+        "settlement evidence is stale after the landing target moved to main; remeasurement failed: git operation is in progress",
+      );
+      await expect(
+        lifecycle.mintDestructiveDecision({
+          caseId: held.record.caseId,
+          revision: held.record.revision,
+          evidenceDigest: measured.record.evidenceDigest,
+          reason: "the user reviewed and chose to discard notes.txt",
+          expiresAt: "2026-08-12T12:06:00.000Z",
+          decisionOwner: "user",
+        }),
+      ).rejects.toThrow(
+        "no evidence digest and cannot be decided until remeasured",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   test("reconciler eligibility is released only through the settlement proof", async () => {
     const { repo, worktree, db, lifecycle } = await fixture(
       "dead",

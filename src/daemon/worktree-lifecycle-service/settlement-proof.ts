@@ -77,6 +77,18 @@ export type SettlementProofResult =
         | "owner-decision";
     };
 
+/** Render the sentence from one target ref and the count measured against that ref. */
+export function renderUnaccountedCommitReason(
+  targetRef: string,
+  unaccountedCommitCount: number,
+): string {
+  const prefix = "refs/heads/";
+  const target = targetRef.startsWith(prefix)
+    ? targetRef.slice(prefix.length)
+    : targetRef;
+  return `${unaccountedCommitCount} commit(s) are not accounted for on ${target}`;
+}
+
 class SettlementInstrumentError extends Error {}
 
 function assertGitSuccess(
@@ -743,7 +755,10 @@ export async function measureAutomaticRelease(
       return {
         kind: "kept",
         state: "needs-integration",
-        reason: "candidate content is not accounted for on the landing target",
+        reason: renderUnaccountedCommitReason(
+          measured.targetRef,
+          measured.unaccountedCommitOids.length,
+        ),
         snapshot: measured,
       };
     }

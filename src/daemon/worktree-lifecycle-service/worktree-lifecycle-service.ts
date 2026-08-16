@@ -48,6 +48,7 @@ import {
 import { NAME_POOL } from "../spawn/agent-name-selection";
 import {
   measureAutomaticRelease,
+  renderUnaccountedCommitReason,
   type SettlementProcessLiveness,
   type SettlementProofResult,
   type SettlementSnapshot,
@@ -279,6 +280,62 @@ export interface SettledCaseEvidence {
   evidenceDigest: string;
   accountedBy: NonNullable<SettlementSnapshot["accountedBy"]>;
   missing: Array<SettlementSnapshot["missing"][number]>;
+}
+
+type SettlementMeasurementStatus =
+  | "current"
+  | "unmeasured"
+  | "target-moved"
+  | "subject-moved";
+
+/** Classify cached evidence against the one target read for this reconciliation pass. */
+function settlementMeasurementStatus(
+  record: SettlementCase,
+  targetBranch: string,
+  targetOid: string,
+  headOid?: string,
+): SettlementMeasurementStatus {
+  const residue = record.residue;
+  if (
+    residue !== null &&
+    (residue.targetRef !== `refs/heads/${targetBranch}` ||
+      residue.targetOid !== targetOid)
+  ) {
+    return "target-moved";
+  }
+  if (record.evidenceFormat !== "disposition-v1" || residue === null) {
+    return "unmeasured";
+  }
+  if (headOid !== undefined && record.headOid !== headOid) {
+    return "subject-moved";
+  }
+  return "current";
+}
+
+function retainedRemeasurementReason(
+  state: SettlementCase["state"],
+  snapshot: SettlementSnapshot,
+  measuredReason: string | null,
+  measurementStatus: Exclude<SettlementMeasurementStatus, "current">,
+): string {
+  const finding =
+    snapshot.residue.length > 0
+      ? `${measuredReason ?? "candidate content remains unaccounted"}; evidence measured against ${snapshot.targetBranch}`
+      : snapshot.accountedBy !== null
+        ? `exact content accounted for on ${snapshot.targetBranch}`
+        : snapshot.unaccountedCommitOids.length > 0
+          ? renderUnaccountedCommitReason(
+              snapshot.targetRef,
+              snapshot.unaccountedCommitOids.length,
+            )
+          : `${measuredReason ?? "candidate content remains unaccounted"}; evidence measured against ${snapshot.targetBranch}`;
+  const subject =
+    measurementStatus === "target-moved"
+      ? "target"
+      : measurementStatus === "subject-moved"
+        ? "subject"
+        : "evidence";
+  return `${finding}; ${state.replaceAll("-", " ")} retained after ${subject} remeasurement`;
 }
 
 export interface SettlementReconciliationReport
@@ -570,6 +627,7 @@ export class WorktreeLifecycleService {
     agent: AgentRecord | null,
     targetBranch: string,
     at: string,
+    measurementStatus: Exclude<SettlementMeasurementStatus, "current">,
   ): Promise<StoredSettlementCase> {
     const measured = await measureAutomaticRelease(
       {
@@ -581,7 +639,19 @@ export class WorktreeLifecycleService {
       targetBranch,
     );
     if (measured.snapshot === null) {
-      if (OWNED_ELSEWHERE.includes(stored.record.state)) return stored;
+      if (OWNED_ELSEWHERE.includes(stored.record.state)) {
+        if (measurementStatus === "unmeasured") return stored;
+        const movement =
+          measurementStatus === "target-moved"
+            ? `the landing target moved to ${targetBranch}`
+            : "the settlement subject moved";
+        return this.updateCase(stored, {
+          ...stored.record,
+          reason: `settlement evidence is stale after ${movement}; remeasurement failed: ${measured.kind === "kept" ? measured.reason : "measurement returned no evidence"}`,
+          evidenceDigest: null,
+          evidenceFormat: null,
+        } as SettlementCase);
+      }
       return (await this.assessStoredCase(stored, agent, at)).case;
     }
     if (
@@ -592,6 +662,14 @@ export class WorktreeLifecycleService {
     }
     return this.updateCase(stored, {
       ...stored.record,
+      reason: OWNED_ELSEWHERE.includes(stored.record.state)
+        ? retainedRemeasurementReason(
+            stored.record.state,
+            measured.snapshot,
+            measured.kind === "kept" ? measured.reason : null,
+            measurementStatus,
+          )
+        : stored.record.reason,
       lastMeasuredAt: at,
       headOid: measured.snapshot.headOid,
       evidenceDigest: measured.snapshot.digest,
@@ -1175,6 +1253,7 @@ export class WorktreeLifecycleService {
             agent,
             targetBranch,
             timestamp,
+            "unmeasured",
           );
         }
       }
@@ -1196,6 +1275,13 @@ export class WorktreeLifecycleService {
   private async reconcileOrphanedWorktreesWrite(): Promise<SettlementReconciliationReport> {
     let agents = this.deps.db.listAgents();
     const targetBranch = await resolveLandingTargetBranch(this.deps.repoRoot);
+    const targetOid = await readRefOid(
+      this.deps.repoRoot,
+      `refs/heads/${targetBranch}`,
+    );
+    if (targetOid === null) {
+      throw new Error(`landing target is absent: ${targetBranch}`);
+    }
     const branchInventory = await this.deps.listSettlementBranches(
       this.deps.repoRoot,
       targetBranch,
@@ -1328,12 +1414,19 @@ export class WorktreeLifecycleService {
           reason: "discovered unlanded branch is awaiting settlement",
         }));
       casesByBranch.set(branch.branch, stored);
-      if (stored.record.evidenceFormat !== "disposition-v1") {
+      const measurementStatus = settlementMeasurementStatus(
+        stored.record,
+        targetBranch,
+        targetOid,
+        branch.tip,
+      );
+      if (measurementStatus !== "current") {
         stored = await this.measureResolverCase(
           stored,
           agent ?? null,
           targetBranch,
           at,
+          measurementStatus,
         );
         casesByBranch.set(branch.branch, stored);
         if (stored.record.worktreePath !== null) {
@@ -1399,7 +1492,16 @@ export class WorktreeLifecycleService {
         }
         continue;
       }
-      const reason = `${branch.unmergedCommits} commit(s) are not accounted for on ${targetBranch}`;
+      const reason =
+        stored.record.residue === null
+          ? renderUnaccountedCommitReason(
+              `refs/heads/${targetBranch}`,
+              branch.unmergedCommits,
+            )
+          : renderUnaccountedCommitReason(
+              stored.record.residue.targetRef,
+              stored.record.residue.unaccountedCommitOids.length,
+            );
       if (
         stored.record.state !== "needs-integration" ||
         stored.record.reason !== reason ||
@@ -1450,12 +1552,18 @@ export class WorktreeLifecycleService {
         OWNED_ELSEWHERE.includes(existing.record.state)
       ) {
         let held = existing;
-        if (held.record.evidenceFormat !== "disposition-v1") {
+        const measurementStatus = settlementMeasurementStatus(
+          held.record,
+          targetBranch,
+          targetOid,
+        );
+        if (measurementStatus !== "current") {
           held = await this.measureResolverCase(
             held,
             agent ?? null,
             targetBranch,
             at,
+            measurementStatus,
           );
           casesByPath.set(outcome.path, held);
           if (outcome.branch !== null) {
@@ -1550,7 +1658,12 @@ export class WorktreeLifecycleService {
     for (const entry of stewardship) {
       let stored = await this.caseForStewardshipRef(entry, targetBranch);
       if (OWNED_ELSEWHERE.includes(stored.record.state)) {
-        if (stored.record.evidenceFormat !== "disposition-v1") {
+        const measurementStatus = settlementMeasurementStatus(
+          stored.record,
+          targetBranch,
+          targetOid,
+        );
+        if (measurementStatus !== "current") {
           await this.measureResolverCase(
             stored,
             stored.record.agentId === null
@@ -1560,6 +1673,7 @@ export class WorktreeLifecycleService {
                 ) ?? null),
             targetBranch,
             at,
+            measurementStatus,
           );
         }
         continue;
@@ -1581,7 +1695,12 @@ export class WorktreeLifecycleService {
           stored = await this.caseForStewardshipRef(entry, targetBranch);
         }
       }
-      if (stored.record.evidenceFormat !== "disposition-v1") {
+      const measurementStatus = settlementMeasurementStatus(
+        stored.record,
+        targetBranch,
+        targetOid,
+      );
+      if (measurementStatus !== "current") {
         await this.measureResolverCase(
           stored,
           stored.record.agentId === null
@@ -1591,6 +1710,7 @@ export class WorktreeLifecycleService {
               ) ?? null),
           targetBranch,
           at,
+          measurementStatus,
         );
       }
     }
