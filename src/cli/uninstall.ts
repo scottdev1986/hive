@@ -1,6 +1,6 @@
-/** `hive uninstall` removes Hive-owned integration without treating the command as authority to discard unsettled work. Repo uninstall asks the live settlement service to close exact-safe cases before stopping it, then removes byte-identical skills and standards, Hive's marked `.gitignore` entries, leaked runtime config, graph output, and derived project state. Any remaining worktree, branch, edited Hive file, or user file stays and is named. Machine uninstall removes the shared Hive home and managed install only after its separate live-team and mutation-lease checks. */
+/** `hive uninstall` removes Hive-owned integration without treating the command as authority to discard unsettled work. Repo uninstall asks the live settlement service to close exact-safe cases before stopping it, then removes byte-identical skills, leaked runtime config, graph output, and derived project state. Any remaining worktree, branch, edited skill, or user file stays and is named. Machine uninstall removes the shared Hive home and managed install only after its separate live-team and mutation-lease checks. */
 import { existsSync } from "node:fs";
-import { readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
+import { readdir, readFile, rm, rmdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
   type CommandRunner,
@@ -30,10 +30,6 @@ import {
   type MachineMutationPurpose,
 } from "../daemon/mutation-lease";
 import { projectStateDir } from "../daemon/project-identity-core/state";
-import {
-  AGENT_STANDARDS_FILE,
-  scaffoldAgentStandardsMd,
-} from "../daemon/spawn/agent-standards";
 import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 import { errorMessage } from "../shared/error-message";
 import { SHIPPED_SKILLS, shippedSkillAddresses } from "../skills/shipped";
@@ -46,7 +42,6 @@ import { stopHive } from "./control";
 import { fetchAgentStatus, requestSettlementSweep } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { type ConfirmFn, confirmOnTty } from "./prompt";
-import { stripHiveGitignoreEntries } from "./repo-gitignore";
 
 export interface UninstallDeps {
   run: CommandRunner;
@@ -161,7 +156,6 @@ async function removeOwnedSkillCopy(
   directory: string,
   displayPath: string,
   shippedContent: string,
-  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
@@ -174,9 +168,9 @@ async function removeOwnedSkillCopy(
     );
     return;
   }
-  const tracking = await run(
+  const tracking = Bun.spawnSync(
     ["git", "-C", root, "ls-files", "--error-unmatch", "--", displayPath],
-    { cwd: root, timeoutMs: 5_000 },
+    { stdout: "ignore", stderr: "ignore" },
   );
   if (tracking.exitCode === 0) {
     log(`Left ${displayPath}: it is tracked by Git, so it is yours.`);
@@ -190,49 +184,9 @@ async function removeOwnedSkillCopy(
   log(`Removed ${displayPath}.`);
 }
 
-/** Remove the generic AGENT_STANDARDS.md init wrote. Only a byte-identical scaffold is Hive's to remove; an edited file is the project's standing procedure. */
-async function removeScaffoldedAgentStandards(
-  root: string,
-  log: (line: string) => void,
-): Promise<void> {
-  const path = join(root, AGENT_STANDARDS_FILE);
-  const current = await readFile(path, "utf8").catch(() => null);
-  if (current === null) return;
-  if (current !== scaffoldAgentStandardsMd()) {
-    log(
-      `Left ${AGENT_STANDARDS_FILE}: it differs from the generic scaffold, so it is yours.`,
-    );
-    return;
-  }
-  await rm(path, { force: true });
-  log(`Removed ${AGENT_STANDARDS_FILE}.`);
-}
-
-/** Remove the exact local-state rules init placed beneath Hive's marker. */
-async function removeHiveGitignoreEntries(
-  root: string,
-  log: (line: string) => void,
-): Promise<void> {
-  const path = join(root, ".gitignore");
-  const current = await readFile(path, "utf8").catch(() => null);
-  if (current === null) return;
-
-  const cleanup = stripHiveGitignoreEntries(current);
-  if (cleanup.removedEntries.length === 0) return;
-
-  if (cleanup.content === "") {
-    await rm(path, { force: true });
-    log("Removed .gitignore after removing Hive's local-state block.");
-    return;
-  }
-  await writeFile(path, cleanup.content);
-  log("Removed Hive's local-state entries from .gitignore.");
-}
-
 /** Remove the base skills Hive installed into `.hive/skills`, where they sit beside the user's own. Only byte-identical, untracked copies are Hive's to remove; an edited or tracked one is the user's and is reported instead, and their own skills are never candidates at all — a name Hive does not ship is not looked at. */
 async function removeBaseSkills(
   root: string,
-  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const skillsRoot = join(root, ".hive", "skills");
@@ -246,7 +200,6 @@ async function removeBaseSkills(
         directory,
         relativePath,
         skill.content,
-        run,
         log,
       );
     }
@@ -265,7 +218,6 @@ async function removeBaseSkills(
 async function removeShippedSkills(
   root: string,
   tool: SkillTool,
-  run: CommandRunner,
   log: (line: string) => void,
 ): Promise<void> {
   const nativeDirectory = nativeSkillDirectory(tool);
@@ -280,7 +232,6 @@ async function removeShippedSkills(
       directory,
       join(nativeDirectory, skill.name),
       skill.content,
-      run,
       log,
     );
   }
@@ -332,8 +283,6 @@ export async function runUninstallRepo(
     "  - stops the selected daemon only when its handshake proves it serves this project",
     "  - asks the settlement service to release exact-safe worktrees and branches; unprovable work stays protected",
     "  - removes the skills Hive installed (edited copies are yours and stay)",
-    "  - removes AGENT_STANDARDS.md only when it still matches the generic scaffold",
-    "  - removes Hive's marked local-state entries from .gitignore",
     "  - removes Hive's entries from .mcp.json, .claude/settings.local.json, and .codex/",
     "  - deletes graphify-out/, the generated .graphifyignore, and this repo's derived state under ~/.hive/projects/",
     "The graphify tool under ~/.hive/tools is shared across repos and stays; `hive uninstall` removes it.",
@@ -366,12 +315,10 @@ export async function runUninstallRepo(
     );
     return 1;
   }
-  await removeBaseSkills(root, deps.run, deps.log);
-  await removeScaffoldedAgentStandards(root, deps.log);
-  await removeHiveGitignoreEntries(root, deps.log);
+  await removeBaseSkills(root, deps.log);
   // Remove byte-identical Hive skills from vendor directories too.
   for (const tool of CAPABILITY_PROVIDERS) {
-    await removeShippedSkills(root, tool, deps.run, deps.log);
+    await removeShippedSkills(root, tool, deps.log);
   }
   const repaired = await repairLeakedProjectConfig(root);
   for (const path of repaired) deps.log(`Removed Hive's entries from ${path}.`);

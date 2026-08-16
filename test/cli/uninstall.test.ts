@@ -391,7 +391,9 @@ describe("hive uninstall --repo", () => {
   test("refuses to remove a byte-identical skill when Git tracking cannot be determined", async () => {
     const root = await gitRepo();
     try {
-      const skill = required(shippedSkillsFor({ role: "agent", tool: "claude" })[0]);
+      const skill = required(
+        shippedSkillsFor({ role: "agent", tool: "claude" })[0],
+      );
       const path = join(root, ".claude", "skills", skill.name, "SKILL.md");
       await mkdir(dirname(path), { recursive: true });
       await writeFile(path, skill.content);
@@ -409,7 +411,9 @@ describe("hive uninstall --repo", () => {
       });
       expect(await runUninstallRepo(root, {}, deps)).toBe(0);
       expect(existsSync(path)).toBe(true);
-      expect(lines.join("\n")).toContain("could not determine whether it is tracked");
+      expect(lines.join("\n")).toContain(
+        "could not determine whether it is tracked",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -520,7 +524,8 @@ describe("hive uninstall", () => {
     } finally {
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
-      if (previousDefaultHome === undefined) delete process.env.HIVE_DEFAULT_HOME;
+      if (previousDefaultHome === undefined)
+        delete process.env.HIVE_DEFAULT_HOME;
       else process.env.HIVE_DEFAULT_HOME = previousDefaultHome;
       if (previousVariant === undefined) delete process.env.HIVE_BUILD_VARIANT;
       else process.env.HIVE_BUILD_VARIANT = previousVariant;
