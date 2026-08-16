@@ -52,6 +52,7 @@ LEG_FILES=(
   workspace-ui-rows.jsonl
   queen-scenario.jsonl
   agent-scenario.jsonl
+  u5-terminal-workbench-live.jsonl
 )
 # Comma/space-separated leg basenames that MUST exist for this run (red if absent).
 # Default: empty — optional legs (Q/A) may be absent when those legs did not run.
@@ -63,7 +64,7 @@ log() { echo "suite: $*" >&2; }
 
 usage() {
   echo "usage: qa/suite.sh fixture" >&2
-  echo "       qa/suite.sh probe missing-row|forged-tier|teardown-leak|schema|broken-exit|shared-home|cleanup-trap|raw-d|green-needs|tour-calibration|tour-interaction-row|declared-screens|declared-catalog|screen-id-binding|queen-leg|workspace-ui" >&2
+  echo "       qa/suite.sh probe missing-row|forged-tier|teardown-leak|schema|broken-exit|shared-home|cleanup-trap|raw-d|green-needs|tour-calibration|tour-interaction-row|declared-screens|declared-catalog|screen-id-binding|u5-live-rows|queen-leg|workspace-ui" >&2
   exit 2
 }
 
@@ -153,6 +154,9 @@ WSUI-03|yes|W
 WSUI-04|yes|W
 WSUI-05|yes|W
 WSUI-06|yes|W
+U5-LIVE-01|bounded|L
+U5-LIVE-02|bounded|L
+U5-LIVE-03|bounded|L
 EOF
 )"
 # Derived from the catalog above and never restated. A second copy of this
@@ -399,7 +403,7 @@ for line in matrix_text.strip().splitlines():
 
 # Catalog owners whose rows are filled as NOT-RUN-BY-S when their leg file is
 # absent (this S wave does not execute A/Q/F).
-not_run_owners = {"A", "Q", "F"}
+not_run_owners = {"A", "Q", "F", "L"}
 # Every enumerated leg file maps to exactly one matrix owner. A row ID in a
 # file may only claim matrix rows whose catalog owner matches that file.
 LEG_OWNER = {
@@ -410,6 +414,7 @@ LEG_OWNER = {
     "workspace-ui-rows.jsonl": "W",
     "queen-scenario.jsonl": "Q",
     "agent-scenario.jsonl": "A",
+    "u5-terminal-workbench-live.jsonl": "L",
 }
 collected = {}
 schema_errors = []
@@ -754,6 +759,42 @@ publish_workspace_ui_rows() {
   fi
 }
 
+# Live-leg publisher. The emitter's stdout ROW lines are the verdict; its
+# exit code is discarded. An empty stdout is a failed measurement, not a
+# green inferred from $? == 0.
+publish_u5_live_rows() {
+  local legs="$1" source_sha="$2" artifacts="$3" stdout_file="${4:-}"
+  local out="$legs/u5-terminal-workbench-live.jsonl"
+  local rows="$artifacts/u5-live-rows.txt"
+  mkdir -p "$artifacts"
+  if [ -n "$stdout_file" ]; then
+    cat "$stdout_file" > "$rows"
+  elif [ "${QA_SUITE_RUN_U5_LIVE:-}" = "1" ]; then
+    bun run "$SCRIPT_DIR/u5-terminal-workbench-live.ts" \
+      >"$rows" 2>"$artifacts/u5-live.log" || true
+  else
+    rm -f "$out"
+    return 0
+  fi
+  : > "$out"
+  local -a parts=()
+  local seen=0
+  while IFS='|' read -r -a parts; do
+    [ "${parts[0]:-}" = ROW ] || continue
+    write_row "$out" "${parts[1]}" "live" "${parts[2]}" "bounded" "$source_sha" \
+      "${parts[@]:3}"
+    seen=$((seen + 1))
+  done < "$rows"
+  if [ "$seen" -eq 0 ]; then
+    log "u5-live: no ROW lines on stdout — exit code is not a verdict"
+    local rid
+    for rid in U5-LIVE-01 U5-LIVE-02 U5-LIVE-03; do
+      write_row "$out" "$rid" "live" "broken" "bounded" "$source_sha" \
+        "u5-live emitted no ROW lines" "stdout-rows-decide-not-exit-code"
+    done
+  fi
+}
+
 # Teardown installed immediately after successful rig up.
 SUITE_RIG_UP=0
 suite_cleanup() {
@@ -923,6 +964,8 @@ PY
   log "running workspace-ui shell proofs"
   publish_workspace_ui_rows "$run_dir/legs" "$source_sha" \
     "$run_dir/artifacts/workspace-ui" "$home" "$port" "$hive_bin"
+  publish_u5_live_rows "$run_dir/legs" "$source_sha" \
+    "$run_dir/artifacts/u5-live" "${QA_SUITE_U5_LIVE_STDOUT:-}"
 
   if [ -f "$tour_artifacts/declared-screens.txt" ]; then
     QA_SUITE_DECLARED_SCREENS="$tour_artifacts/declared-screens.txt"
@@ -1608,6 +1651,61 @@ probe_screen_id_binding() {
   log "probe screen-id-binding: re-point, swap and tombstone reuse all fail by name"
 }
 
+probe_u5_live_rows() {
+  local root artifacts legs stdout
+  root="$(mktemp -d -t hive-suite-u5-live-XXXXXX)"
+  artifacts="$root/artifacts"
+  legs="$root/legs"
+  stdout="$root/stdout.txt"
+  mkdir -p "$artifacts" "$legs"
+  log "probe u5-live-rows: stdout rows decide"
+
+  {
+    printf 'noise from a failing process\n'
+    printf 'ROW|U5-LIVE-01|working|viewer-attached\n'
+    printf 'ROW|U5-LIVE-02|working|exact-locator\n'
+    printf 'ROW|U5-LIVE-03|working|cleanup-clean\n'
+  } > "$stdout"
+  publish_u5_live_rows "$legs" probe-sha "$artifacts" "$stdout"
+  grep -q '"id":"U5-LIVE-01".*"verdict":"working"' "$legs/u5-terminal-workbench-live.jsonl" \
+    || die "probe u5-live-rows: working stdout did not publish working"
+  grep -q '"determinism":"bounded"' "$legs/u5-terminal-workbench-live.jsonl" \
+    || die "probe u5-live-rows: live rows were not bounded"
+
+  {
+    printf 'ROW|U5-LIVE-01|broken|viewer-missing\n'
+    printf 'ROW|U5-LIVE-02|working|exact-locator\n'
+    printf 'ROW|U5-LIVE-03|working|cleanup-clean\n'
+  } > "$stdout"
+  publish_u5_live_rows "$legs" probe-sha "$artifacts" "$stdout"
+  grep -q '"id":"U5-LIVE-01".*"verdict":"broken"' "$legs/u5-terminal-workbench-live.jsonl" \
+    || die "probe u5-live-rows: broken stdout published working"
+  grep -q '"id":"U5-LIVE-02".*"verdict":"working"' "$legs/u5-terminal-workbench-live.jsonl" \
+    || die "probe u5-live-rows: sibling working row was lost"
+
+  printf 'process exited 0 with no ROW lines\n' > "$stdout"
+  publish_u5_live_rows "$legs" probe-sha "$artifacts" "$stdout"
+  grep -q '"verdict":"broken"' "$legs/u5-terminal-workbench-live.jsonl" \
+    || die "probe u5-live-rows: empty stdout inferred working from silence"
+  grep -q 'stdout-rows-decide-not-exit-code' "$legs/u5-terminal-workbench-live.jsonl" \
+    || die "probe u5-live-rows: empty stdout did not name the rule"
+
+  write_complete_stub_legs "$legs" probe-sha
+  rm -f "$legs/u5-terminal-workbench-live.jsonl"
+  set +e
+  aggregate_report "$root" probe-sha "$root/suite-report.jsonl" 2>"$root/agg.err"
+  set -e
+  python3 - "$root/suite-report.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+live = [row for row in rows if row["id"].startswith("U5-LIVE-")]
+assert len(live) == 3, live
+assert all(row["verdict"] == "NOT-RUN-BY-S" for row in live), live
+assert all(row.get("ownerLeg") == "L" for row in live), live
+PY
+  log "probe u5-live-rows: working/broken/empty-stdout/not-run pinned"
+}
+
 probe_shared_home() {
   log "probe shared-home: preflight must refuse before reset/up"
   local saved="$QA_HOME" code
@@ -1691,6 +1789,7 @@ case "$mode" in
       declared-screens) probe_declared_screens ;;
       declared-catalog) probe_declared_catalog ;;
       screen-id-binding) probe_screen_id_binding ;;
+      u5-live-rows) probe_u5_live_rows ;;
       queen-leg) probe_queen_leg ;;
       workspace-ui) probe_workspace_ui ;;
       *) usage ;;
