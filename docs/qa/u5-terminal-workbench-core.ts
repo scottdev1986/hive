@@ -325,6 +325,50 @@ export function summarizeProviderOutcomes(
   };
 }
 
+/** A dropped vendor is a named NOT-PROVEN row, never an omitted one.
+ * Absence from the attested list reads as "not applicable"; this row is the gap. */
+export function disclosedMatrixRow(input: {
+  provider: string;
+  outcome: U5ProviderOutcome | undefined;
+  cause?: unknown;
+}): {
+  provider: string;
+  proven: boolean;
+  disposition: "proven" | "not-proven";
+  outcome: string;
+  cause: string;
+} {
+  if (input.outcome === undefined) {
+    return {
+      provider: input.provider,
+      proven: false,
+      disposition: "not-proven",
+      outcome: "unknown",
+      cause: "no provider outcome was written",
+    };
+  }
+  if (input.outcome === "attested") {
+    return {
+      provider: input.provider,
+      proven: true,
+      disposition: "proven",
+      outcome: "attested",
+      cause: "",
+    };
+  }
+  const cause =
+    typeof input.cause === "string" && input.cause.trim().length > 0
+      ? input.cause
+      : `${input.provider} ${input.outcome}`;
+  return {
+    provider: input.provider,
+    proven: false,
+    disposition: "not-proven",
+    outcome: input.outcome,
+    cause,
+  };
+}
+
 export function finalU5Result(
   proof: "passed" | "partial" | "failed",
   cleanup: "clean" | "failed" | "unknown",

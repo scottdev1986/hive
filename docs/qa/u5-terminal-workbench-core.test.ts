@@ -11,6 +11,7 @@ import {
   classifyViewerReadback,
   explicitRefusalReadbackState,
   finalU5Result,
+  disclosedMatrixRow,
   liveRunControlSubjectReady,
   nameSpawnRefusalCause,
   partitionLiveProofSubjects,
@@ -588,6 +589,34 @@ describe("U5 live-proof subject liveness", () => {
         reason: "session process tree is absent (agent status done)",
       },
     ]);
+  });
+
+  test("a dropped vendor is a named not-proven row, never an omitted one", () => {
+    expect(
+      disclosedMatrixRow({
+        provider: "kimi",
+        outcome: "launch-refused",
+        cause: "pool-exclusion: quota pool subscription is drained",
+      }),
+    ).toEqual({
+      provider: "kimi",
+      proven: false,
+      disposition: "not-proven",
+      outcome: "launch-refused",
+      cause: "pool-exclusion: quota pool subscription is drained",
+    });
+    expect(
+      disclosedMatrixRow({ provider: "opencode", outcome: undefined }),
+    ).toMatchObject({
+      provider: "opencode",
+      proven: false,
+      disposition: "not-proven",
+      outcome: "unknown",
+      cause: "no provider outcome was written",
+    });
+    expect(
+      disclosedMatrixRow({ provider: "claude", outcome: "attested" }),
+    ).toMatchObject({ disposition: "proven", proven: true });
   });
 
   test("Stop/Terminate entry keys on the tree, not provider-run busy-ness", () => {
