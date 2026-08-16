@@ -266,9 +266,30 @@ workspace_launch_tokens() {
 format_timeout_diagnosis() {
   local reason="$1"
   local shown="$2"
+  local applog="$3"
   shown="$(printf '%s' "$shown" | tr '\n\r' '  ' | sed 's/  */ /g;s/^ //;s/ $//')"
   [ -n "$shown" ] || shown="unreadable"
-  printf '%s (on-screen: %s)\n' "$reason" "$shown"
+  [ -n "$applog" ] || applog="unreported"
+  printf '%s (on-screen: %s; app-log: %s)\n' "$reason" "$shown" "$applog"
+}
+
+# 0-byte and missing logs are named states, never a silent "app said nothing".
+app_log_capture_status() {
+  local path="${DRIVER_APP_LOG:-}"
+  local bytes
+  if [ -z "$path" ] && [ -n "${DRIVER_EVIDENCE_ROOT:-}" ]; then
+    path="$DRIVER_EVIDENCE_ROOT/08-workspace-app.log"
+  fi
+  if [ -z "$path" ] || [ ! -e "$path" ]; then
+    printf '%s' "absent"
+    return
+  fi
+  bytes="$(wc -c < "$path" | tr -d ' ')"
+  if [ "${bytes:-0}" -eq 0 ]; then
+    printf '%s' "empty"
+    return
+  fi
+  printf 'captured %s bytes' "$bytes"
 }
 
 ready_agent_rows() {
@@ -349,6 +370,7 @@ LAUNCH_IDENTITY=""
 APP_PID=""
 APP_LLDB_LOG=""
 DRIVER_EVIDENCE_ROOT=""
+DRIVER_APP_LOG=""
 
 cleanup_launch() {
   local status=$?
@@ -424,7 +446,7 @@ capture_timeout_on_screen() {
 }
 
 emit_timeout_diagnosis() {
-  format_timeout_diagnosis "$1" "$(capture_timeout_on_screen)"
+  format_timeout_diagnosis "$1" "$(capture_timeout_on_screen)" "$(app_log_capture_status)"
 }
 
 die_after_launch() {
@@ -526,6 +548,7 @@ run_driver() {
   APP_LLDB_LOG="$evidence_root/08-workspace-lldb.log"
   app_log="$evidence_root/08-workspace-app.log"
   [ ! -e "$app_log" ] || die "app log already exists: $app_log"
+  DRIVER_APP_LOG="$app_log"
 
   local launch_args
   launch_args="$(workspace_launch_tokens \
@@ -867,10 +890,10 @@ PY
     bad "launch argv helper dropped project identity flags: $tokens"
   fi
 
-  if [ "$(format_timeout_diagnosis "feed receipt never selected claude/x" "Terminal transport is absent in this launch.")" \
-      = "feed receipt never selected claude/x (on-screen: Terminal transport is absent in this launch.)" ] \
-    && [ "$(format_timeout_diagnosis "feed receipt never arrived" "")" \
-      = "feed receipt never arrived (on-screen: unreadable)" ]; then
+  if [ "$(format_timeout_diagnosis "feed receipt never selected claude/x" "Terminal transport is absent in this launch." empty)" \
+      = "feed receipt never selected claude/x (on-screen: Terminal transport is absent in this launch.; app-log: empty)" ] \
+    && [ "$(format_timeout_diagnosis "feed receipt never arrived" "" absent)" \
+      = "feed receipt never arrived (on-screen: unreadable; app-log: absent)" ]; then
     ok "timeout names the on-screen placeholder rather than only the missing receipt"
   else
     bad "timeout diagnosis does not surface on-screen text"
@@ -878,15 +901,17 @@ PY
 
   # Formatter-only is not the capture path. Induce a bounded wait
   # failure and run the same emit die_after_launch uses.
-  local saved_evidence timeout_miss timeout_hit
+  local saved_evidence saved_app_log timeout_miss timeout_hit timeout_empty timeout_bytes
   saved_evidence="${DRIVER_EVIDENCE_ROOT:-}"
+  saved_app_log="${DRIVER_APP_LOG:-}"
   DRIVER_EVIDENCE_ROOT="$scratch/timeout-evidence"
+  DRIVER_APP_LOG=""
   mkdir -p "$DRIVER_EVIDENCE_ROOT"
   if wait_until_ready 1 never_ready >/dev/null 2>&1; then
     bad "induced timeout did not fail"
   else
     timeout_miss="$(emit_timeout_diagnosis "feed receipt never selected claude/x")"
-    if [ "$timeout_miss" = "feed receipt never selected claude/x (on-screen: unreadable)" ]; then
+    if [ "$timeout_miss" = "feed receipt never selected claude/x (on-screen: unreadable; app-log: absent)" ]; then
       ok "induced timeout with no capture file reports unreadable"
     else
       bad "empty capture was not unreadable: $timeout_miss"
@@ -894,13 +919,29 @@ PY
     printf '%s\n' "Terminal transport is absent in this launch." \
       > "$DRIVER_EVIDENCE_ROOT/08-timeout-on-screen.txt"
     timeout_hit="$(emit_timeout_diagnosis "feed receipt never selected claude/x")"
-    if [ "$timeout_hit" = "feed receipt never selected claude/x (on-screen: Terminal transport is absent in this launch.)" ]; then
+    if [ "$timeout_hit" = "feed receipt never selected claude/x (on-screen: Terminal transport is absent in this launch.; app-log: absent)" ]; then
       ok "induced timeout reports the on-screen placeholder the capture wrote"
     else
       bad "capture did not report the induced on-screen text: $timeout_hit"
     fi
+    : > "$DRIVER_EVIDENCE_ROOT/08-workspace-app.log"
+    DRIVER_APP_LOG="$DRIVER_EVIDENCE_ROOT/08-workspace-app.log"
+    timeout_empty="$(emit_timeout_diagnosis "feed receipt never selected claude/x")"
+    if [ "$timeout_empty" = "feed receipt never selected claude/x (on-screen: Terminal transport is absent in this launch.; app-log: empty)" ]; then
+      ok "a 0-byte app log is reported empty rather than treated as silence"
+    else
+      bad "0-byte app log was not named empty: $timeout_empty"
+    fi
+    printf 'nslog line\n' > "$DRIVER_APP_LOG"
+    timeout_bytes="$(emit_timeout_diagnosis "feed receipt never selected claude/x")"
+    if [ "$timeout_bytes" = "feed receipt never selected claude/x (on-screen: Terminal transport is absent in this launch.; app-log: captured 11 bytes)" ]; then
+      ok "a non-empty app log reports a captured byte count"
+    else
+      bad "non-empty app log was not named as captured: $timeout_bytes"
+    fi
   fi
   DRIVER_EVIDENCE_ROOT="$saved_evidence"
+  DRIVER_APP_LOG="$saved_app_log"
 
   if [ "$(published_instance_id "$coordinates_file")" = "abcdef0123" ]; then
     ok "the published instance id is read, not computed"
