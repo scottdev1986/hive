@@ -83,4 +83,5 @@ if [ "$MIN_OS" != "14.0" ]; then
 fi
 cd "$ROOT"
 bun run "$ROOT/scripts/test-sandbox.ts" -- \
-  bun test ./native/sessiond/test/identity-parity.ts ./native/sessiond/test/ts-live-create.ts
+  bun test ./native/sessiond/test/identity-parity.ts ./native/sessiond/test/ts-live-create.ts \
+  ./native/tests/vendor-ghostty-verify.ts

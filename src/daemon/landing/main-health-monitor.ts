@@ -25,14 +25,25 @@ const SETTLE_WAIT_MS = 15_000;
 const SETTLE_POLL_MS = 250;
 /** Enough dirty paths to identify what was found without pasting a whole tree into a notice. */
 const DIRTY_PATHS_SHOWN = 10;
-// Covers three things, and 5 minutes covered only the first: the Bun suite's
-// own wall clock, measured 292.50s at 62e4471fe; the sandbox image the runner
-// mounts around it; and the sessiond freshness gate the runner shells out to
-// before the suite, which rebuilds a missing or stale binary in about 40s
-// (`make sessiond`, measured 38.7s in a fresh worktree with no Ghostty
-// compile). A run killed for time reports as a timeout rather than as a test
-// failure, but it is still a red main nobody can act on.
-const TEST_TIMEOUT_MS = 8 * 60_000;
+// A backstop against a suite that never returns, not a health signal. It
+// cannot be one: killing this child does not stop the run. scripts/test-sandbox.ts
+// spawns sandbox-exec detached, so the suite lives in a different process
+// group from the wrapper spawned here, and the group kill below misses it.
+// Measured — wrapper group SIGKILLed, the inner `bun` reparented to pid 1 and
+// ran to completion, and its output still arrived down this pipe. So a run
+// over the cap is flagged, never truncated, and its tallies are real.
+//
+// The number: the Bun suite's own measured body is 191.6s (3414 tests, summed
+// durations, excluding the one whole-tree vendor verification that used to sit
+// in it at 111.92s and now runs in the native gate), plus about 9s of sandbox
+// image setup, plus the sessiond freshness gate the runner shells out to first
+// — 0.37s when current, about 40s when it has to build. Machine load moves the
+// total by a factor of 1.35 on its own: the same suite measured 292.50s in a
+// quiet primary checkout and 406.05s under a five-agent fleet. Ten minutes is
+// roughly three times the quiet body and twice the loaded one. The old five
+// minutes was under the loaded number, so it fired on suite health it was
+// never measuring.
+const TEST_TIMEOUT_MS = 10 * 60_000;
 const OUTPUT_LIMIT_BYTES = 32 * 1_024;
 const SCRATCH_LIMIT_KB = 1_024 * 1_024;
 const SCRATCH_CHECK_MS = 1_000;
