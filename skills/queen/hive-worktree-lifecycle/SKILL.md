@@ -9,6 +9,7 @@ Hive treats unfinished work as evidence to preserve, not clutter to remove. Use 
 
 ## Non-negotiable invariants
 
+- Worktrees and hive branches must match live agents. Extra trees or branches are settlement cases, not leftover clutter to ignore.
 - One Git-backed settlement case owns the agent generation, worktree, branch, preserved ref, and salvage ref as a bundle. It survives daemon or database replacement.
 - Automatic release requires a self-validating proof: exact identity and ownership, proven process absence, no Git operation in progress, a complete tracked/staged/untracked/ignored inventory, exact content accounting, and the same result on the read immediately before mutation.
 - Unknown, missing, malformed, or contradictory measurements are `measurement-blocked`, never clean. Cleanup pauses for that case without blocking spawns or unrelated work.

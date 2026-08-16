@@ -44,7 +44,7 @@ describe("queen pin", () => {
     );
   });
 
-  test("names the role, the board, and the spawn gate", () => {
+  test("names the role, the board, the spawn gate, and worktree residue", () => {
     expect(QUEEN_PIN).toContain("project manager");
     expect(QUEEN_PIN).toContain("tech lead");
     expect(QUEEN_PIN).toContain("architect");
@@ -52,6 +52,8 @@ describe("queen pin", () => {
     expect(QUEEN_PIN).toContain("hierarchy board");
     expect(QUEEN_PIN).toContain("hive_task_list");
     expect(QUEEN_PIN).toContain("No spawn without a current taskId");
+    expect(QUEEN_PIN).toContain("Worktrees and hive branches must match live agents");
+    expect(QUEEN_PIN).toContain("hive_settlement_list");
   });
 
   test("compact reload carries the exact pin bytes plus the live board", () => {
