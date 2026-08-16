@@ -220,6 +220,32 @@ for agent in agents:
 PY
 }
 
+# Same identity production launchWorkspace passes: the registry uuid and
+# the project basename. Inventing either would complete LaunchConfig
+# against a project the daemon does not know.
+published_project_id() {
+  python3 - "$1" "$2" <<'PY'
+import json, os, sys
+home, project = sys.argv[1], sys.argv[2]
+path = os.path.join(home, "project-registry.json")
+try:
+    registry = json.load(open(path))
+except FileNotFoundError:
+    raise SystemExit("project-registry.json is absent")
+for record in registry.get("records") or []:
+    if not isinstance(record, dict):
+        continue
+    if record.get("confirmedCanonicalPath") == project or record.get(
+        "identityKey"
+    ) == project:
+        uuid = record.get("hiveUuid")
+        if isinstance(uuid, str) and uuid:
+            print(uuid)
+            raise SystemExit(0)
+raise SystemExit("no registry identity for this project")
+PY
+}
+
 ready_agent_rows() {
   python3 - "$1" <<'PY'
 import json, sys
@@ -242,24 +268,6 @@ for agent in agents:
     seen.add(provider)
     print(f"{provider}\t{agent_id}")
 PY
-}
-
-# The first other row, if any. Used to force a visibility edge: the app
-# publishes locator changes, not the current selection. Clicking the
-# already-visible row is a no-op and writes nothing.
-other_session_row() {
-  python3 -c '
-import sys
-target = sys.argv[1]
-for line in sys.argv[2].splitlines():
-    if line == "":
-        continue
-    provider, sep, agent_id = line.partition("\t")
-    if sep and agent_id and agent_id != target:
-        print(line)
-        raise SystemExit(0)
-raise SystemExit(1)
-' "$2" "$1"
 }
 
 receipt_has_agent() {
@@ -410,6 +418,12 @@ run_driver() {
   instance_id="$(published_instance_id "$coordinates")" \
     || die "published u5_instance_id is absent from $coordinates"
 
+  local project_id project_name
+  project_id="$(published_project_id "$home" "$project")" \
+    || die "published project identity is absent from $home/project-registry.json"
+  project_name="$(basename "$project")"
+  [ -n "$project_name" ] || die "project name is empty"
+
   local hive_bin feed_bin
   hive_bin="$artifacts/hive-bin"
   feed_bin="$artifacts/u5-workspace-feed-bridge"
@@ -450,6 +464,8 @@ run_driver() {
 --instance-home $home
 --hive $hive_bin
 --project $project
+--project-id $project_id
+--project-name $project_name
 --instance-id $instance_id
 --feed $feed_bin"
 
@@ -528,22 +544,7 @@ PY
   [ "$win_id" != "0" ] || die "live-run-workbench window number is zero"
 
   while IFS="$(printf '\t')" read -r provider agent_id; do
-    local hit other other_provider other_id
-    other="$(other_session_row "$rows" "$agent_id" || true)"
-    if [ -z "$other" ]; then
-      die "cannot force a visibility edge: only one session row ($provider/$agent_id)"
-    fi
-    other_provider="${other%%	*}"
-    other_id="${other#*	}"
-    hit="$(click_session "$other_id" 2>/dev/null || true)"
-    [ -n "$hit" ] && [ "$hit" != "0" ] \
-      || die "row control is absent for $other_provider/$other_id"
-    other_receipt_ready() {
-      [ -f "$receipt_path" ] || return 1
-      receipt_has_agent "$receipt_path" "$other_id"
-    }
-    wait_until_ready 90 other_receipt_ready >/dev/null \
-      || die "feed receipt never selected $other_provider/$other_id after force-change"
+    local hit
     hit="$(click_session "$agent_id" 2>/dev/null || true)"
     [ -n "$hit" ] && [ "$hit" != "0" ] \
       || die "row control is absent for $provider/$agent_id"
@@ -752,13 +753,6 @@ json.dump({
 }, open(sys.argv[1], "w"))
 PY
   local shots
-  if [ "$(other_session_row "$(printf 'claude\ta1\ncodex\ta2\n')" a1)" = "$(printf 'codex\ta2')" ] \
-    && ! other_session_row "$(printf 'claude\ta1\n')" a1 >/dev/null 2>&1; then
-    ok "force-change picks another session row and refuses a singleton"
-  else
-    bad "force-change other-row helper is wrong"
-  fi
-
   shots="$(derive_screenshot_paths "$ready_json" "$scratch" || true)"
   if printf '%s\n' "$shots" | grep -Fq "workspace-final-kimi.png"; then
     bad "a four-agent ready marker produced a kimi screenshot"
@@ -769,6 +763,25 @@ PY
   fi
 
   printf 'u5_instance_id=abcdef0123\n' > "$coordinates_file"
+  python3 - "$scratch/project-registry.json" <<'PY'
+import json, sys
+json.dump({
+    "records": [{
+        "hiveUuid": "48558525-a01d-4037-875e-8b72203eef0a",
+        "identityKey": "/private/tmp/u5p-h",
+        "confirmedCanonicalPath": "/private/tmp/u5p-h",
+    }],
+    "tombstones": [],
+}, open(sys.argv[1], "w"))
+PY
+  if [ "$(published_project_id "$scratch" "/private/tmp/u5p-h")" = "48558525-a01d-4037-875e-8b72203eef0a" ] \
+    && ! published_project_id "$scratch" "/private/tmp/other" >/dev/null 2>&1 \
+    && ! published_project_id "$scratch/missing" "/private/tmp/u5p-h" >/dev/null 2>&1; then
+    ok "project identity is read from the registry and refused when absent"
+  else
+    bad "project identity helper did not read or refuse correctly"
+  fi
+
   if [ "$(published_instance_id "$coordinates_file")" = "abcdef0123" ]; then
     ok "the published instance id is read, not computed"
   else
