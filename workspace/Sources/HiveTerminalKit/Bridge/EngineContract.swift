@@ -44,7 +44,7 @@ public struct HiveTerminalRenderEvidence: Equatable, Sendable {
     }
 }
 
-public enum HiveTerminalBindingError: Error, Equatable, CustomStringConvertible, Sendable {
+public enum HiveTerminalBindingError: Error, Equatable, LocalizedError, CustomStringConvertible, Sendable {
     case locatorChanged(expected: SessionLocator, attempted: SessionLocator)
     case closed
 
@@ -56,4 +56,6 @@ public enum HiveTerminalBindingError: Error, Equatable, CustomStringConvertible,
             return "HiveTerminalView is closed"
         }
     }
+
+    public var errorDescription: String? { description }
 }

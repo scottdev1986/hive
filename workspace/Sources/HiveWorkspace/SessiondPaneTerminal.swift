@@ -395,7 +395,7 @@ final class SessiondPaneTerminal {
     )
 }
 
-enum SessiondPaneTerminalError: Error, CustomStringConvertible {
+enum SessiondPaneTerminalError: Error, LocalizedError, CustomStringConvertible {
     case detached
     case locatorEncodingFailed
     case grantLocatorMismatch
@@ -410,4 +410,6 @@ enum SessiondPaneTerminalError: Error, CustomStringConvertible {
         case .grantRefused(let reason): return "attach grant refused: \(reason)"
         }
     }
+
+    var errorDescription: String? { description }
 }

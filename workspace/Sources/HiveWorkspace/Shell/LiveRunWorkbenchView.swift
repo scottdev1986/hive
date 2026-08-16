@@ -459,7 +459,9 @@ final class LiveRunWorkbenchView: NSView {
             publishVisibleSessionIfChanged(session)
         } catch {
             fresh.detach()
-            terminalPlaceholder.stringValue = "Terminal renderer unavailable: \(error.localizedDescription)"
+            let message = "Terminal renderer unavailable: \(error.localizedDescription). The terminal is waiting and will appear automatically."
+            NSLog("%@", message)
+            terminalPlaceholder.stringValue = message
             terminalPlaceholder.isHidden = false
             publishVisibleSessionIfChanged(nil)
         }

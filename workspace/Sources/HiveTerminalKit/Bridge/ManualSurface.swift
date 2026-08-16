@@ -849,7 +849,7 @@ final class GhosttyAppOwner {
 }
 
 enum GhosttyBridgeFactory {
-    enum FactoryError: Error, CustomStringConvertible {
+    enum FactoryError: Error, LocalizedError, CustomStringConvertible {
         case initFailed
         case configFailed
         case invalidConfig(UInt32)
@@ -865,6 +865,8 @@ enum GhosttyBridgeFactory {
             case .surfaceFailed: return "hive_ghostty_surface_new_manual_v1 failed"
             }
         }
+
+        var errorDescription: String? { description }
     }
 
     static var creationObserver: ((String) -> Void)?

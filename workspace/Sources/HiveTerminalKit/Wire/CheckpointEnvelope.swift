@@ -26,7 +26,7 @@ public struct CheckpointEnvelope: Equatable, Sendable {
         engineBuildId.map { String(format: "%02x", $0) }.joined()
     }
 
-    public enum ParseError: Error, Equatable, CustomStringConvertible {
+    public enum ParseError: Error, Equatable, LocalizedError, CustomStringConvertible {
         case tooShort(Int)
         case badMagic
         case badVersion(UInt16)
@@ -48,6 +48,8 @@ public struct CheckpointEnvelope: Equatable, Sendable {
             case .engineMismatch(let e, let f): return "ENGINE_MISMATCH want \(e) got \(f)"
             }
         }
+
+        public var errorDescription: String? { description }
     }
 
     public static func parse(_ data: Data) throws -> CheckpointEnvelope {

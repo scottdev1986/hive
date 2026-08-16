@@ -250,6 +250,20 @@ struct LiveRunWorkbenchViewTests {
         #expect(controller.selectedLiveRunLocator?.generation == 4)
     }
 
+    @Test("A renderer failure waits and appears automatically")
+    func rendererFailureIsActionable() throws {
+        let view = LiveRunWorkbenchView { session in
+            FailingSurface(locator: session.locator!)
+        }
+        view.setRouteVisible(true)
+        view.apply(try projection([agent("a", provider: "claude", generation: 1)]))
+
+        let placeholder = try #require(firstSubview(of: NSTextField.self, in: view))
+        #expect(
+            placeholder.stringValue ==
+                "Terminal renderer unavailable: surface creation failed. The terminal is waiting and will appear automatically.")
+    }
+
     private func projection(_ agents: [String]) throws -> LiveRunProjection {
         let line = try #require(FeedLine.parse(
             "{\"v\":1,\"agents\":[\(agents.joined(separator: ","))]}"))
@@ -330,4 +344,25 @@ private final class FakeSurface: LiveRunTerminalSurface {
 
     func start() {}
     func detach() { detached = true }
+}
+
+@MainActor
+private final class FailingSurface: LiveRunTerminalSurface {
+    let locator: AgentSessionLocator
+    var installedView: NSView? { nil }
+
+    init(locator: AgentSessionLocator) {
+        self.locator = locator
+    }
+
+    func makeView() throws -> NSView {
+        throw RendererFailure()
+    }
+
+    func start() {}
+    func detach() {}
+}
+
+private struct RendererFailure: LocalizedError {
+    var errorDescription: String? { "surface creation failed" }
 }

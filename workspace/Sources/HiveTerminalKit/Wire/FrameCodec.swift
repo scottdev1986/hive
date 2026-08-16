@@ -56,7 +56,7 @@ public struct WireFrame: Equatable, Sendable {
     }
 }
 
-public enum WireError: Error, Equatable, CustomStringConvertible {
+public enum WireError: Error, Equatable, LocalizedError, CustomStringConvertible {
     case malformedFrame(String)
     case protocolMismatch(String)
     case unsupportedFrame(UInt16)
@@ -82,6 +82,8 @@ public enum WireError: Error, Equatable, CustomStringConvertible {
         case .receiveTimeout: return "RECEIVE_TIMEOUT"
         }
     }
+
+    public var errorDescription: String? { description }
 }
 
 public enum FrameCodec {
