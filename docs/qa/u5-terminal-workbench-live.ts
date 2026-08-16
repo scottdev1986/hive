@@ -34,6 +34,7 @@ import {
 } from "../../src/schemas/live-run-control";
 import {
   CandidateEffortSchema,
+  RouterModeSchema,
   RoutingCategorySchema,
   type RoutingPolicy,
   RoutingPolicyMutationSchema,
@@ -99,6 +100,7 @@ const InventoryModelSchema = z.strictObject({
   roles: z.array(
     z.strictObject({
       scope: z.union([RoutingCategorySchema, z.literal("global")]),
+      mode: RouterModeSchema,
       weight: z.number().int().min(1).max(100),
       effort: CandidateEffortSchema,
     }),
