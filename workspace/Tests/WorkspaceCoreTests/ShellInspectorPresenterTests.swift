@@ -361,7 +361,7 @@ final class ShellInspectorPresenterTests: XCTestCase {
     func testEmptyTaskScopeIsDistinctFromAbsentTaskScope() throws {
         let wire = """
         {
-          "schemaVersion": 2,
+          "schemaVersion": 3,
           "nodeId": "node_018f4f5e-0000-7000-8000-000000000104",
           "runId": "run_018f4f5e-0000-7000-8000-000000000001",
           "entityRevision": "2",

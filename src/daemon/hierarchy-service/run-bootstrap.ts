@@ -72,7 +72,7 @@ const ref = (record: { revision: string; digest: string }) => ({
   digest: record.digest,
 });
 
-/** Every budget dimension at zero. This run is opened to hold the board root, not to spend: it declares no sessions, no spawns, and no landings. Zero is the honest declaration for a package no engineer sized, and it stays zero rather than carrying a generous default nobody chose. */
+/** Every budget dimension at zero. This run is opened to hold the board root, not to spend, and zero is the honest number for a package no engineer sized. It is a declaration, not a ceiling: nothing reads the RunBudget to refuse work. It stays zero rather than carrying a generous default nobody chose. */
 const NO_SPEND = { hard: 0, soft: 0, reserved: 0, used: 0 } as const;
 
 /** The whole P0 package for a coordination run, assembled in dependency order because each record binds the digest of the one before it. `proposer` is the authenticated caller: the daemon wrote these bytes, but it wrote them because that subject asked. */

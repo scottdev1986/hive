@@ -2839,3 +2839,115 @@ describe("run-root grant issuance", () => {
     ).toThrow();
   });
 });
+
+describe("stored Runs from before the G1 removal", () => {
+  let db: HiveDatabase;
+
+  // The pre-removal shape, written straight to the table so the row really
+  // carries what an existing instance holds. RunSchema is strict, so putRun
+  // could not produce this and a fixture in the current shape would prove
+  // nothing: "the migration ran" and "there was nothing to do" look identical.
+  function insertLegacyRun(
+    document: Record<string, unknown>,
+    id = runId,
+  ): void {
+    db.database
+      .query(
+        `INSERT INTO hierarchy_records (kind, id, runId, revision, document)
+         VALUES ('run', ?, ?, '1', ?)`,
+      )
+      .run(id, runId, JSON.stringify(document));
+  }
+
+  function legacyRun(overrides: Record<string, unknown> = {}) {
+    const { spec: _dropped, ...rest } = validRun();
+    return {
+      ...rest,
+      approvedSpec: null,
+      g1: { state: "pending" },
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    db = new HiveDatabase(":memory:");
+    // Open the tables without running the migration over an empty table.
+    new HierarchyStore(db);
+    db.database.query("DELETE FROM hierarchy_records").run();
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test("a row the gate never approved is pointed at the spec the run states", () => {
+    insertLegacyRun(legacyRun());
+    // Two revisions, so "the highest" is a choice the migration has to make
+    // rather than the only row available.
+    const store = new HierarchyStore(db);
+    store.putSpecRevision(validSpec());
+    store.putSpecRevision(
+      validSpec({ revision: "2", digest: `sha256:${"b".repeat(64)}` }),
+    );
+
+    const migrated = new HierarchyStore(db).getRun(runId);
+
+    expect(migrated?.spec).toEqual({
+      revision: "2",
+      digest: `sha256:${"b".repeat(64)}`,
+    });
+    expect(Object.keys(migrated ?? {})).not.toContain("g1");
+    expect(Object.keys(migrated ?? {})).not.toContain("approvedSpec");
+  });
+
+  test("a row the gate did approve keeps the exact ref it approved", () => {
+    const approved = { revision: "1", digest };
+    insertLegacyRun(
+      legacyRun({
+        approvedSpec: approved,
+        g1: {
+          state: "approved",
+          decider: "engineer",
+          decidedAt: createdAt,
+          spec: approved,
+          plan: { revision: "1", digest },
+          topology: { revision: "1", digest },
+          budget: { revision: "1", digest },
+        },
+      }),
+    );
+    new HierarchyStore(db).putSpecRevision(
+      validSpec({ revision: "2", digest: `sha256:${"b".repeat(64)}` }),
+    );
+
+    // The approved ref wins over the newer stored revision: carrying the run
+    // forward onto a spec nobody approved would be inventing authority.
+    expect(new HierarchyStore(db).getRun(runId)?.spec).toEqual(approved);
+  });
+
+  test("running it a second time changes nothing", () => {
+    insertLegacyRun(legacyRun());
+    new HierarchyStore(db).putSpecRevision(validSpec());
+
+    const once = new HierarchyStore(db);
+    const afterFirst = db.database
+      .query("SELECT document FROM hierarchy_records WHERE kind = 'run'")
+      .get() as { document: string };
+    expect(once.getRun(runId)?.spec).toEqual({ revision: "1", digest });
+
+    new HierarchyStore(db);
+    const afterSecond = db.database
+      .query("SELECT document FROM hierarchy_records WHERE kind = 'run'")
+      .get() as { document: string };
+
+    expect(afterSecond.document).toBe(afterFirst.document);
+  });
+
+  test("a run with no stored SpecRevision is left alone rather than guessed at", () => {
+    insertLegacyRun(legacyRun());
+
+    // Nothing to point the run at, so the row keeps its old shape and fails
+    // its parse loudly instead of being rewritten onto an invented ref.
+    expect(() => new HierarchyStore(db).getRun(runId)).toThrow();
+  });
+});

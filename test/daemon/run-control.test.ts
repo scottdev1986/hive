@@ -21,6 +21,7 @@ import type {
 } from "../../src/schemas/hierarchy-run";
 import type { IntegrationStage } from "../../src/schemas/integration-stage";
 import {
+  ABSENT_RUN_EXPECTATION,
   RUN_CONTROL_FAILURE_CODES,
   type RunControlBody,
   type RunControlIntent,
@@ -1029,5 +1030,188 @@ describe("run-delegate", () => {
       },
     });
     expect(store.getGrant(grantId)).toBeNull();
+  });
+});
+
+// THE POINT OF REMOVING G1. Before the removal every hierarchy spawn was
+// refused at admission — run.g1 was pending, nothing in the product could
+// approve it, and only a flat spawn without a runId worked. This walks the
+// whole path on real records: run-create writes the package, run-delegate
+// writes the node, task and grant, and a runId-carrying request is ADMITTED.
+// Nothing here is stubbed; the store is a real HierarchyStore over a real
+// database and preflight runs the real requireAuthority.
+describe("a runId-carrying spawn is admitted end to end", () => {
+  const childNodeId = "node_018f4f5e-0000-7000-8000-0000000000c1";
+  const childRef = {
+    nodeId: childNodeId,
+    agentId: "worker-child",
+    generation: 1,
+  };
+  const rootIssuer = { nodeId, agentId: ORCHESTRATOR_NAME, generation: 1 };
+
+  function delegatedTask(): TaskDetail {
+    return {
+      taskId,
+      revision: "1",
+      parentTaskId: null,
+      dependsOn: [],
+      delegationSpec: {
+        objective: "Do the first unit of work in this run",
+        parentAcceptanceIds: ["A1"],
+        childOutcome: "The unit is delivered",
+        terminationCondition: "Acceptance A1 is met",
+        inputs: {
+          specRevision: { revision: "1", digest: specDigest },
+          planRevision: { revision: "1", digest: planDigest },
+          taskRevisions: [{ taskId, revision: "1" }],
+          interfaceRevisions: [],
+          baseSha,
+          prerequisites: [],
+          sourceArtifactRefs: [],
+        },
+        boundaries: { allowedPaths: ["src/daemon"] },
+        authority: {
+          grantId,
+          permittedOperations: ["read", "write", "promote"],
+          environment: "worktree",
+          worktree: "/worktrees/child",
+          branch: "hive/worker",
+          explicitNonAuthority: [],
+        },
+        allowance: {
+          sessions: 1,
+          tokens: 1_000,
+          costCents: 10,
+          wallTimeMs: 60_000,
+          retries: 0,
+          blockers: [],
+          owner: rootIssuer,
+        },
+      },
+      acceptanceIds: ["A1"],
+      ownerNodeId: nodeId,
+      assigneeNodeId: childNodeId,
+      pathLeases: [{ path: "src/daemon", mode: "write" as const }],
+      branch: "hive/worker",
+      baseSha,
+      state: "assigned" as const,
+      blockers: [],
+      evidence: [],
+      artifactRefs: [],
+    };
+  }
+
+  function createAndDelegate(): void {
+    const created = control.apply(
+      RunControlIntentSchema.parse({
+        schemaVersion: 1,
+        intentId: "intent-run-create",
+        expected: { kind: "revision-and-epoch", ...ABSENT_RUN_EXPECTATION },
+        idempotencyKey: "key-e2e-create",
+        body: {
+          operation: "run-create",
+          runId,
+          repo: "hive",
+          instanceId: "instance-1",
+          baseSha,
+          rootNodeId: nodeId,
+          spec: validSpec(),
+          plan: validPlan(),
+          topology: validTopology(),
+          budget: validBudget(),
+        },
+      }),
+      "engineer",
+    );
+    expect(created.outcome).toEqual({ status: "accepted" });
+
+    const delegated = control.apply(
+      RunControlIntentSchema.parse({
+        schemaVersion: 1,
+        intentId: "intent-run-delegate",
+        expected: { kind: "revision-and-epoch", revision: "1", epoch: "0" },
+        idempotencyKey: "key-e2e-delegate",
+        body: {
+          operation: "run-delegate",
+          runId,
+          node: {
+            nodeId: childNodeId,
+            runId,
+            parentNodeId: nodeId,
+            ownerNodeId: nodeId,
+            organizationalRole: "worker",
+            assignmentKind: "author",
+            taskScope: [taskId],
+            capacityCharge: 1,
+            lifecycle: "active",
+            revision: "1",
+          },
+          task: delegatedTask(),
+          grant: {
+            ...validGrant(),
+            issuer: rootIssuer,
+            capabilityEpoch: 0,
+            subject: childRef,
+            descendantNodeIds: [childNodeId],
+            actions: ["read", "write", "test", "promote"],
+          },
+        },
+      }),
+      "engineer",
+    );
+    expect(delegated.outcome).toEqual({ status: "accepted" });
+  }
+
+  test("run-create then run-delegate leaves a spawn admission can accept", () => {
+    createAndDelegate();
+
+    // The run carries the spec run-create was given, which is what admission
+    // now fences on in place of the gate's approved package.
+    expect(store.getRun(runId)?.spec).toEqual({
+      revision: "1",
+      digest: specDigest,
+    });
+
+    const admitted = new SpawnAdmission(store, () => new Date(createdAt))
+      .preflight(
+        {
+          runId,
+          runEpoch: 0,
+          nodeId: childNodeId,
+          taskId,
+          delegationSpec: delegatedTask().delegationSpec,
+          grantId,
+        },
+        "author",
+      );
+
+    expect(admitted).toMatchObject(childRef);
+  });
+
+  test("the same request is refused once the run's SpecRevision does not resolve", () => {
+    // The positive control for the test above: admission accepted because the
+    // authority facts were there, not because the checks stopped running. Point
+    // the run at a revision nobody stored and the same request is refused.
+    createAndDelegate();
+    const run = store.getRun(runId);
+    if (run === null) throw new Error("the chain must have stored a run");
+    store.putRun(
+      { ...run, revision: "2", spec: { revision: "9", digest: specDigest } },
+      run.revision,
+    );
+
+    expect(() =>
+      new SpawnAdmission(store, () => new Date(createdAt)).preflight(
+        {
+          runId,
+          runEpoch: 0,
+          nodeId: childNodeId,
+          taskId,
+          delegationSpec: delegatedTask().delegationSpec,
+          grantId,
+        },
+        "author",
+      ),
+    ).toThrow("has no stored SpecRevision");
   });
 });

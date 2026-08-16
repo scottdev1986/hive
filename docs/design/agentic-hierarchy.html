@@ -24,7 +24,7 @@
         <aside class="hero-aside" aria-label="Core operating principle">
           <p class="kicker">Core operating principle</p>
           <h2>Delegate execution.<br>Bound every authority.</h2>
-          <p>Operational capabilities attenuate at every hop; the engineer keeps accountability and the G1/G2 gates. Parallelism is earned by file-disjoint work and explicit interfaces.</p>
+          <p>Operational capabilities attenuate at every hop; the engineer keeps accountability and the G2 gate. Parallelism is earned by file-disjoint work and explicit interfaces.</p>
           <div class="authority-line">The user engineer remains in charge.</div>
         </aside>
       </div>
@@ -176,7 +176,7 @@
             <p class="section-label">02 · Adaptive topology</p>
             <h2>The hierarchy is capacity, not mandate.</h2>
           </div>
-          <p>The queen is the permanent root and never writes code. The lead-worker tier appears only when it reduces coordination load for a genuinely separable build. Every run chooses the smallest shape that can do the work, and the engineer can override that choice at G1.</p>
+          <p>The queen is the permanent root and never writes code. The lead-worker tier appears only when it reduces coordination load for a genuinely separable build. Every run chooses the smallest shape that can do the work, and the engineer can override that choice by revising the TopologyDecision.</p>
         </div>
 
         <div class="phase-grid">
@@ -193,7 +193,7 @@
           <article class="phase-card">
             <span class="phase-tag">FULL HIVE · QUEEN → LEADS → CREWS</span>
             <h3>Lead-worker crews</h3>
-            <p>Use when the run contains multiple coherent domains that can own separate interfaces and integration refs. A crew normally has 2–3 workers. Lead workers coordinate, integrate, and report; they do not become ambient-authority managers. Full hive may mix lead-worker subtrees with queen-owned direct workers for cross-cutting tasks or independent review; G1 approves the exact tree, not a uniform tier template.</p>
+            <p>Use when the run contains multiple coherent domains that can own separate interfaces and integration refs. A crew normally has 2–3 workers. Lead workers coordinate, integrate, and report; they do not become ambient-authority managers. Full hive may mix lead-worker subtrees with queen-owned direct workers for cross-cutting tasks or independent review; the TopologyDecision names the exact tree, not a uniform tier template.</p>
           </article>
         </div>
 
@@ -201,7 +201,7 @@
 
         <div class="table-wrap">
           <table>
-            <thead><tr><th>TopologyDecision field</th><th>Required evidence at G1</th></tr></thead>
+            <thead><tr><th>TopologyDecision field</th><th>Required evidence</th></tr></thead>
             <tbody>
               <tr><td>shape</td><td><code>direct</code>, <code>flat</code>, or <code>full-hive</code>; the engineer sees and may override it.</td></tr>
               <tr><td>decomposition</td><td>Exact PlanRevision and task dependency graph used to justify the shape.</td></tr>
@@ -220,7 +220,7 @@
             <ul class="check-list">
               <li>Record lead tokens, wall time, wakeups, queue wait, escalations, and rework separately from worker execution.</li>
               <li>Measure accepted promotions, conflicts caught before promotion, interface violations, idle worker time, and critical-path change.</li>
-              <li>Compare the observed fan-out and coordination cost with the G1 prediction in a terminal TopologyReview.</li>
+              <li>Compare the observed fan-out and coordination cost with the TopologyDecision's prediction in a terminal TopologyReview.</li>
               <li>Use the evidence to recommend a future shape; never rewrite the approved shape mid-run without a revisioned decision.</li>
             </ul>
           </article>
@@ -240,7 +240,7 @@
             <p class="section-label">03 · Operating process</p>
             <h2>Seven phases, two user gates.</h2>
           </div>
-          <p>Autonomy increases after the proposal package is approved, then narrows again at land. G1 prevents premature execution; G2 prevents an assembled feature from silently becoming production policy.</p>
+          <p>Autonomy narrows again at land. G2 prevents an assembled feature from silently becoming production policy.</p>
         </div>
 
         <div class="table-wrap">
@@ -259,28 +259,23 @@
         <div class="callout"><strong>Three translations, one invariant.</strong> Engineer → queen, queen → lead worker or direct worker, and lead worker → worker each refine the same approved acceptance IDs. A child DelegationSpec may narrow scope and add detail; it may not change the goal, acceptance boundary, outward effects, or gate policy. Those changes require a new engineer-approved spec revision.</div>
 
 
-        <figure class="diagram" aria-label="Seven-phase pipeline with engineer approval gates G1 and G2">
+        <figure class="diagram" aria-label="Seven-phase pipeline with engineer approval gate G2">
           <svg viewBox="0 0 1100 410" role="img" aria-labelledby="pipeline-title pipeline-desc">
             <title id="pipeline-title">The seven-phase Queen’s Hive pipeline</title>
-            <desc id="pipeline-desc">P0 Intake and Grill produces the proposal package for engineer gate G1, followed by P1 Materialize and Route, P2 Build, P3 Independent Review and Promotion, P4 Assemble and Validate, engineer gate G2 on the exact run-stage SHA, P5 daemon-only Land, and P6 Close-out.</desc>
+            <desc id="pipeline-desc">P0 Intake and Grill produces the proposal package, followed by P1 Materialize and Route, P2 Build, P3 Independent Review and Promotion, P4 Assemble and Validate, engineer gate G2 on the exact run-stage SHA, P5 daemon-only Land, and P6 Close-out.</desc>
             <defs>
               <marker id="pipe-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/>
               </marker>
             </defs>
 
-            <text x="36" y="38" class="svg-label svg-muted">Ground → approve → distribute</text>
+            <text x="36" y="38" class="svg-label svg-muted">Ground → distribute</text>
             <rect x="36" y="59" width="210" height="106" rx="16" class="node node-queen"/>
             <text x="56" y="88" class="svg-label" fill="var(--green)">P0</text>
             <text x="56" y="116" class="svg-title">Intake &amp; Grill</text>
             <text x="56" y="141" class="svg-copy svg-muted">interview + scouts → proposal</text>
 
-            <path d="M246 112 H290" class="connector-strong" marker-end="url(#pipe-arrow)"/>
-            <circle cx="329" cy="112" r="37" class="node-gate"/>
-            <text x="329" y="107" text-anchor="middle" class="svg-label" fill="var(--amber)">G1</text>
-            <text x="329" y="126" text-anchor="middle" class="svg-small">PACKAGE</text>
-
-            <path d="M366 112 H410" class="connector-strong" marker-end="url(#pipe-arrow)"/>
+            <path d="M246 112 H410" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <rect x="412" y="59" width="222" height="106" rx="16" class="node"/>
             <text x="432" y="88" class="svg-label" fill="var(--green)">P1</text>
             <text x="432" y="116" class="svg-title">Materialize &amp; Route</text>
@@ -330,12 +325,12 @@
           <article class="phase-card">
             <span class="phase-id">P0</span>
             <h3>Intake &amp; Grill</h3>
-            <p>The queen interviews until scope, acceptance criteria, and non-goals are pinned. Read-only scouts ground the task in real code. Output: a proposed SpecRevision plus preliminary PlanRevision/dependency DAG, TopologyDecision, and RunBudget/gate policy — the exact package G1 approves.</p>
+            <p>The queen interviews until scope, acceptance criteria, and non-goals are pinned. Read-only scouts ground the task in real code. Output: a SpecRevision plus preliminary PlanRevision/dependency DAG, TopologyDecision, and RunBudget/gate policy — the exact package the Run is opened on and admission fences against.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P1</span>
             <h3>Materialize &amp; Route</h3>
-            <p>Materialize Tasks, DelegationSpecs, nodes, grants, stages, and path leases within the G1-approved boundaries. Parallelize only file-disjoint, independent parts; use one agent for tightly coupled decisions. A broader plan, topology, or spec change returns to the engineer.</p>
+            <p>Materialize Tasks, DelegationSpecs, nodes, grants, stages, and path leases within the Run's package boundaries. Parallelize only file-disjoint, independent parts; use one agent for tightly coupled decisions. A broader plan, topology, or spec change returns to the engineer.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P2</span>
@@ -364,11 +359,7 @@
           </article>
         </div>
 
-        <div class="gate-band" aria-label="Engineer approval gates">
-          <div class="gate-card">
-            <span class="gate-id">G1</span>
-            <div><strong>Engineer CAS-approves the exact proposal package</strong><p>SpecRevision, preliminary PlanRevision, TopologyDecision, and RunBudget/gate policy together. No spawn, authoring, or work-bearing delegation before G1.</p></div>
-          </div>
+        <div class="gate-band" aria-label="Engineer approval gate">
           <div class="gate-card">
             <span class="gate-id">G2</span>
             <div><strong>Engineer approves the exact assembled run-stage SHA</strong><p>The approval binds SHA, digest, evidence, and target base. No main movement before the integrated result is accepted.</p></div>
@@ -589,7 +580,7 @@
           <article class="detail-panel">
             <h3>Allowed routes</h3>
             <ul class="check-list">
-              <li><strong>Engineer ↔ queen:</strong> guidance, updates, and answers whenever requested; G1/G2 and run control remain typed operations, never prose.</li>
+              <li><strong>Engineer ↔ queen:</strong> guidance, updates, and answers whenever requested; G2 and run control remain typed operations, never prose.</li>
               <li><strong>Queen ↔ owned nodes (direct/flat workers and leads):</strong> status/event envelopes and bounded delta rollups on meaningful events or request; a quiet run emits no transcript heartbeat.</li>
               <li><strong>Owner ↔ its workers:</strong> tasking, monitoring, and lifecycle within the current ownership edge.</li>
               <li><strong>Lead ↔ lead:</strong> only through an explicit interface channel bound to an InterfaceContract.</li>
@@ -628,8 +619,8 @@
           <table>
             <thead><tr><th>Durable record</th><th>Required fields and invariant</th></tr></thead>
             <tbody>
-              <tr><td><strong>SpecRevision</strong></td><td>runId, spec revision, objective, acceptance IDs, scope and non-goals, architecture/security/outward-effect constraints, gate policy, evidence ArtifactRefs, proposer, createdAt, digest, lifecycle, engineer approval. The queen proposes spec and plan changes through bounded typed daemon operations into daemon-controlled storage — she holds no arbitrary filesystem or code write. A supporting worker artifact is evidence for a proposal, never the spec itself. G1 binds the exact SpecRevision with its preliminary PlanRevision, TopologyDecision, and RunBudget; a broader change is a new SpecRevision and a new G1.</td></tr>
-              <tr><td><strong>Run</strong></td><td>runId, repo/instance, immutable approved SpecRevision, current PlanRevision, TopologyDecision, P0–P6 phase, G1/G2 state and decider, base SHA, RunBudget, run epoch, lifecycle, revision. G2 binds the exact run-stage SHA, digest, evidence set, and target-main base; it is not approval of a floating branch.</td></tr>
+              <tr><td><strong>SpecRevision</strong></td><td>runId, spec revision, objective, acceptance IDs, scope and non-goals, architecture/security/outward-effect constraints, gate policy, evidence ArtifactRefs, proposer, createdAt, digest, lifecycle, engineer approval. The queen proposes spec and plan changes through bounded typed daemon operations into daemon-controlled storage — she holds no arbitrary filesystem or code write. A supporting worker artifact is evidence for a proposal, never the spec itself. The Run binds the exact SpecRevision it was opened on; a broader change is a new SpecRevision and a new Run.</td></tr>
+              <tr><td><strong>Run</strong></td><td>runId, repo/instance, immutable SpecRevision, current PlanRevision, TopologyDecision, P0–P6 phase, G2 state and decider, base SHA, RunBudget, run epoch, lifecycle, revision. G2 binds the exact run-stage SHA, digest, evidence set, and target-main base; it is not approval of a floating branch.</td></tr>
               <tr><td><strong>PlanRevision</strong></td><td>runId, parent revision, task DAG, topology rationale, proposer, createdAt, digest, lifecycle. Queen and lead workers may revise decomposition by compare-and-swap inside approved acceptance boundaries. Goal, acceptance, scope, outward-effect, gate, or budget increases require engineer approval.</td></tr>
               <tr><td><strong>HierarchyNode</strong></td><td>nodeId, runId, parentNodeId, ownerNodeId, organizational role = <code>lead-worker</code> or <code>worker</code>, assignment kind, task scope, capacity charge, lifecycle, revision. Reviewer is an assignment kind, never a hierarchy tier.</td></tr>
               <tr><td><strong>AgentBinding</strong></td><td>nodeId, reserved agentId + generation, provider/model, immutable SessionLocator, worktree/branch/base, credential ID, capability epoch, boundAt/unboundAt. Provider session and display name are locators, not identity.</td></tr>
@@ -664,7 +655,7 @@
         <div class="split">
           <article class="detail-panel">
             <h3>Specification is stable; plans may move</h3>
-            <p>G1 approves the exact SpecRevision, preliminary PlanRevision, TopologyDecision, RunBudget, and gate policy as one package. PlanRevision may change task decomposition, ordering, or assignee within those boundaries by compare-and-swap. Any broader change returns to the engineer; agents cannot smuggle scope expansion through a child task or message.</p>
+            <p>The Run names the exact SpecRevision, preliminary PlanRevision, TopologyDecision, RunBudget, and gate policy it was opened on. PlanRevision may change task decomposition, ordering, or assignee within those boundaries by compare-and-swap. Any broader change returns to the engineer; agents cannot smuggle scope expansion through a child task or message.</p>
           </article>
           <article class="detail-panel">
             <h3>Authority is monotonic attenuation</h3>
@@ -707,7 +698,7 @@
               <tr><td><strong>message/channel</strong></td><td>Current owner edge or explicit channel participant</td><td>Apply <a href="Done/hive-communication.html">Communication Fabric</a> admission and delivery-time authorization. Messaging grants no filesystem, task, review, or landing right.</td></tr>
               <tr><td><strong>review</strong></td><td>Distinct reviewer assignment with review grant</td><td>Verify reviewer independence over merge-base..head, exact candidate/patch/base/environment, task/contract revisions, capacity charge, and evidence. Fresh-context and cross-vendor review are preferred when quota permits.</td></tr>
               <tr><td><strong>promotion request</strong></td><td>Author to current owner for a source candidate; lead or queen for an already-validated stage candidate</td><td>Caller never supplies a ref. The daemon derives the next IntegrationStage from current topology/ownership, constructs the PromotionGrant, validates the predicted result SHA, and alone CAS-moves the stage ref.</td></tr>
-              <tr><td><strong>G1 / G2</strong></td><td>Engineer</td><td>G1 approves the exact SpecRevision/PlanRevision/TopologyDecision/RunBudget/gate package. G2 approves the exact run-stage SHA, digest, evidence, and target-main base. Any bound value movement invalidates the gate.</td></tr>
+              <tr><td><strong>G2</strong></td><td>Engineer</td><td>G2 approves the exact run-stage SHA, digest, evidence, and target-main base. Any bound value movement invalidates the gate.</td></tr>
               <tr><td><strong>land</strong></td><td>Engineer through a valid G2 decision</td><td>Daemon revalidates the exact run stage, target-main base, hierarchyRevision/runEpoch, evidence, and expected main ref, then alone CAS-moves main. No caller supplies the target.</td></tr>
               <tr><td><strong>pause / resume / abort</strong></td><td>Engineer; queen may request a safety or budget pause</td><td>Daemon advances the run epoch, fences authority, records partial measured process state, and follows the run-control protocol below. No agent process is trusted to police its own hard limit.</td></tr>
               <tr><td><strong>close / reap</strong></td><td>Owner requests normal closure; daemon executes and retains safety authority</td><td>Capture process tree and task/worktree state before terminal destruction. Complete durable teardown finalizers before cleanup; normal ownership does not disable the daemon’s orphan reaper.</td></tr>
@@ -963,7 +954,7 @@
         <article class="detail-panel" style="margin-top: 16px;">
           <h3>Definition of done</h3>
           <ul class="check-list">
-            <li>G1 displays direct, flat, or full-hive choice, evidence, budget, and engineer override; queen never codes in any shape.</li>
+            <li>The TopologyDecision displays direct, flat, or full-hive choice, evidence, budget, and engineer override; queen never codes in any shape.</li>
             <li>A lead worker attempts to mutate its integration ref or code directly on it: both fail; the same agent can author only through a separate scoped task branch.</li>
             <li>A speculative three-candidate train passes, fails in the middle, bisects, promotes the first, requeues the innocent third, and returns exact evidence for the culprit without concurrent ref mutation.</li>
             <li>A source rebase preserves patch digest: semantic review survives only after exact-SHA automated revalidation. A changed patch invalidates review.</li>
@@ -989,7 +980,7 @@
         </div>
         <div class="phase-grid">
           <article class="phase-card"><span class="phase-tag">H0 · SCHEMA</span><h3>Shadow records</h3><p>Add every §06 hierarchy record not already supplied by Communication C0 — SpecRevision, PlanRevision, HierarchyNode/AgentBinding, IntegrationStage, PromotionGrant, Run/Task/TaskDetail, grants, channels, budgets, decisions, checkpoints, reviews, contracts, and ArtifactRef; project legacy flat Assignments without changing their authority.</p></article>
-          <article class="phase-card"><span class="phase-tag">H1 · DIRECT + FLAT</span><h3>New-run control plane</h3><p>Enable typed G1 on the exact proposal package and G2 on the exact run-stage SHA/base/evidence, one queen-owned run IntegrationStage, DelegationSpec, stable identity, scoped tasks, independent authored-candidate review, budget fencing, daemon-only promotion, and WorkManifest recovery for new direct and flat runs — no lead record required.</p></article>
+          <article class="phase-card"><span class="phase-tag">H1 · DIRECT + FLAT</span><h3>New-run control plane</h3><p>Enable typed G2 on the exact run-stage SHA/base/evidence, one queen-owned run IntegrationStage, DelegationSpec, stable identity, scoped tasks, independent authored-candidate review, budget fencing, daemon-only promotion, and WorkManifest recovery for new direct and flat runs — no lead record required.</p></article>
           <article class="phase-card"><span class="phase-tag">H2 · FULL HIVE</span><h3>Optional lead tier</h3><p>Add lead IntegrationStages, attenuated crew delegation, InterfaceContracts, pair channels, subtree rollups, owner recovery, and TopologyDecision under strict attenuation — full-hive only; direct and flat runs never fabricate the tier.</p></article>
           <article class="phase-card"><span class="phase-tag">H3 · THROUGHPUT</span><h3>Promotion trains</h3><p>Add synthetic predicted states, speculative exact-SHA validation, failure bisect/requeue, and promotion-time contract/policy revalidation.</p></article>
           <article class="phase-card"><span class="phase-tag">H4 · RECOVERY</span><h3>Succession and run control</h3><p>Exercise semantic checkpointing with the absolute-ceiling reserve, WorkManifest-backed ownership transfer and queen succession, lead loss, bounded quiesce, SIGSTOP fallback, abort retention, teardown finalizers, and anomaly circuit breakers.</p></article>
@@ -1008,7 +999,7 @@
             <p>The hierarchy expands execution capacity. It does not transfer accountability.</p>
           </div>
           <ul class="decision-list">
-            <li>Spec approval · G1</li>
+            <li>Spec and scope</li>
             <li>Architecture and tradeoffs</li>
             <li>Security design</li>
             <li>Irreversible or outward-facing actions</li>
