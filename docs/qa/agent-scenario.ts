@@ -13,12 +13,12 @@ import {
   isProductFailure,
   planTeardown,
   readbackAllowsRemoval,
-  teardownReport,
   type TeardownReadback,
+  teardownReport,
 } from "./agent-scenario-core";
 import { callMcpTool } from "./qa-client";
 
-const home = requiredEnv("HIVE_QA_HOME");
+requiredEnv("HIVE_QA_HOME");
 const project = requiredEnv("HIVE_QA_PROJECT");
 const port = z.coerce
   .number()

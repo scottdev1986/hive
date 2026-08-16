@@ -5,6 +5,20 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+import {
+  type AgentRow,
+  asAgentRow,
+  asCapture,
+  findAgent,
+  isRecord,
+  observeCapture,
+  recordField,
+  requireSessionLocator,
+  structuredContent,
+  type TerminalCapture,
+  terminalWritesTotal,
+  toolMail,
+} from "./unknown-record";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -97,13 +111,13 @@ const client = new Client(
   { name: "qa-mail-vendor-conformance", version: "1" },
   { versionNegotiation: HIVE_MCP_VERSION_NEGOTIATION },
 );
-let agent: Record<string, any> | null = null;
+let agent: AgentRow | null = null;
 let providerArmed = false;
 
 async function callTool(
   name: string,
   args: Record<string, unknown>,
-): Promise<any> {
+): Promise<unknown> {
   const result = await client.callTool({ name, arguments: args });
   if (result.isError === true) {
     throw new Error(`${name}: ${stringify(result.content).trim()}`);
@@ -111,18 +125,19 @@ async function callTool(
   return result;
 }
 
-async function status(): Promise<any> {
+async function status(): Promise<unknown> {
   return callTool("hive_status", { detail: "full" });
 }
 
-async function observe(row: Record<string, any>): Promise<any> {
+async function observe(row: AgentRow): Promise<TerminalCapture | null> {
+  const locator = requireSessionLocator(row);
   const result = await callTool("hive_terminal_observe", {
-    sessionId: row.sessionLocator.sessionId,
-    generation: row.sessionLocator.generation,
+    sessionId: locator.sessionId,
+    generation: locator.generation,
     include: "visible-text",
     maxRows: 200,
   });
-  return result.structuredContent?.terminalObservation?.capture;
+  return asCapture(observeCapture(result));
 }
 
 /**
@@ -133,20 +148,28 @@ async function observe(row: Record<string, any>): Promise<any> {
  * measurement. When status dimensions are present, turn idle/ready/done is a
  * positive control; absence of the dimension is not a failure (unknown ≠ false).
  */
-function turnLooksIdle(row: Record<string, any>): boolean {
-  const turn = row.statusDimensions?.turn;
-  if (turn?.kind !== "observed" || turn.field?.value == null) return true;
-  return ["idle", "ready", "done"].includes(turn.field.value);
+function turnLooksIdle(row: AgentRow): boolean {
+  const turn = recordField(row.statusDimensions, "turn");
+  const field = recordField(turn, "field");
+  if (
+    recordField(turn, "kind") !== "observed" ||
+    recordField(field, "value") == null
+  )
+    return true;
+  const value = recordField(field, "value");
+  return typeof value === "string" && ["idle", "ready", "done"].includes(value);
 }
 
-async function waitForIdle(name: string): Promise<Record<string, any>> {
+async function waitForIdle(name: string): Promise<AgentRow> {
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     const result = await status();
-    const row = result.structuredContent?.agents?.find(
-      (candidate_: Record<string, any>) => candidate_.name === name,
-    );
-    if (row && ["dead", "done", "failed"].includes(row.status)) {
+    const row = findAgent(result, name);
+    if (
+      row &&
+      row.status !== undefined &&
+      ["dead", "done", "failed"].includes(row.status)
+    ) {
       throw new Error(`agent ended during startup with status ${row.status}`);
     }
     if (row?.sessionLocator && row.status === "idle" && turnLooksIdle(row)) {
@@ -157,16 +180,16 @@ async function waitForIdle(name: string): Promise<Record<string, any>> {
   throw new Error("agent did not reach an idle session after mail settlement");
 }
 
-async function waitForAuthenticated(
-  name: string,
-): Promise<Record<string, any>> {
+async function waitForAuthenticated(name: string): Promise<AgentRow> {
   const deadline = Date.now() + 180_000;
   while (Date.now() < deadline) {
     const result = await status();
-    const row = result.structuredContent?.agents?.find(
-      (candidate_: Record<string, any>) => candidate_.name === name,
-    );
-    if (row && ["dead", "done", "failed"].includes(row.status)) {
+    const row = findAgent(result, name);
+    if (
+      row &&
+      row.status !== undefined &&
+      ["dead", "done", "failed"].includes(row.status)
+    ) {
       throw new Error(
         `agent ended during authentication with status ${row.status}`,
       );
@@ -184,11 +207,29 @@ async function waitForAuthenticated(
   throw new Error("vendor did not emit the authentication marker");
 }
 
-function mail(result: any): Record<string, any> {
-  return result.structuredContent?.mail ?? {};
+function mail(result: unknown): Record<string, unknown> {
+  return toolMail(result);
 }
 
-function journal(itemIds: string[]): Record<string, any>[] {
+function mailItemId(record: Record<string, unknown>): string {
+  const itemId = record.itemId;
+  if (typeof itemId !== "string") {
+    throw new Error(`mail receipt omitted itemId: ${stringify(record)}`);
+  }
+  return itemId;
+}
+
+type MailEvent = {
+  itemId: unknown;
+  kind: unknown;
+};
+
+function asMailEvent(value: unknown): MailEvent | null {
+  if (!isRecord(value)) return null;
+  return { itemId: value.itemId, kind: value.kind };
+}
+
+function journal(itemIds: string[]): MailEvent[] {
   const db = new Database(`${qaHome}/hive.db`, { readonly: true });
   try {
     return db
@@ -198,15 +239,17 @@ function journal(itemIds: string[]): Record<string, any>[] {
           WHERE itemId IN (${itemIds.map(() => "?").join(",")})
           ORDER BY rowid`,
       )
-      .all(...itemIds) as Record<string, any>[];
+      .all(...itemIds)
+      .flatMap((row) => {
+        const event = asMailEvent(row);
+        return event === null ? [] : [event];
+      });
   } finally {
     db.close();
   }
 }
 
-async function waitForSettled(
-  itemIds: string[],
-): Promise<Record<string, any>[]> {
+async function waitForSettled(itemIds: string[]): Promise<MailEvent[]> {
   const timeout = Number(process.env.M3_SETTLE_TIMEOUT_MS ?? "360000");
   if (!Number.isFinite(timeout) || timeout <= 0) {
     throw new Error("M3_SETTLE_TIMEOUT_MS must be a positive number");
@@ -295,7 +338,7 @@ try {
     category: "simple_coding",
     readOnly: true,
   });
-  agent = spawn.structuredContent?.agent;
+  agent = asAgentRow(recordField(structuredContent(spawn), "agent"));
   if (!agent?.name) throw new Error("spawn omitted the agent identity");
   if (authProbe) {
     agent = await waitForAuthenticated(agent.name);
@@ -303,7 +346,7 @@ try {
     const authenticatedCapture = await observe(agent);
     await writeJson(
       `${root}/auth-probe-status.json`,
-      afterSpawn.structuredContent,
+      structuredContent(afterSpawn),
     );
     await writeJson(`${root}/auth-probe-terminal.json`, authenticatedCapture);
     outcome = {
@@ -320,7 +363,7 @@ try {
     await writeJson(`${root}/result.json`, outcome);
   } else {
     const afterSpawn = await status();
-    const spawnWrites = afterSpawn.structuredContent?.terminalWrites?.total;
+    const spawnWrites = terminalWritesTotal(afterSpawn);
     if (typeof spawnWrites !== "number") {
       throw new Error("terminal-write counter is absent");
     }
@@ -331,13 +374,15 @@ try {
     // the baseline waits for the turn to start: the task bytes are delivered
     // by then, and anything afterwards belongs to the measured window.
     const workingDeadline = Date.now() + 180_000;
-    let baselineStatus: any = null;
+    let baselineStatus: unknown = null;
     for (;;) {
       const current = await status();
-      const row = current.structuredContent?.agents?.find(
-        (candidate_: Record<string, any>) => candidate_.name === agent?.name,
-      );
-      if (row && ["dead", "done", "failed"].includes(row.status)) {
+      const row = agent === null ? undefined : findAgent(current, agent.name);
+      if (
+        row &&
+        row.status !== undefined &&
+        ["dead", "done", "failed"].includes(row.status)
+      ) {
         throw new Error(
           `agent ended before its first turn with status ${row.status}`,
         );
@@ -351,8 +396,7 @@ try {
       }
       await sleep(1_000);
     }
-    const baselineWrites =
-      baselineStatus.structuredContent?.terminalWrites?.total;
+    const baselineWrites = terminalWritesTotal(baselineStatus);
     if (typeof baselineWrites !== "number") {
       throw new Error(
         "terminal-write counter is absent at the working baseline",
@@ -360,7 +404,7 @@ try {
     }
     await writeJson(
       `${root}/status-working.json`,
-      baselineStatus.structuredContent,
+      structuredContent(baselineStatus),
     );
 
     const controlKey = `m3-${vendor}-control-${stamp}`;
@@ -379,7 +423,7 @@ try {
     const controlReplay = mail(
       await callTool("hive_mail_publish", controlRequest),
     );
-    if (controlReplay.itemId !== controlFirst.itemId) {
+    if (mailItemId(controlReplay) !== mailItemId(controlFirst)) {
       throw new Error("idempotent publish returned a different control item");
     }
     const workFirst = mail(
@@ -403,22 +447,21 @@ try {
       }),
     );
     if (
-      workMerged.itemId !== workFirst.itemId ||
+      mailItemId(workMerged) !== mailItemId(workFirst) ||
       workMerged.mergedCount !== 1
     ) {
       throw new Error("work lane did not coalesce by sender and topic");
     }
-    publishedItemIds.push(controlFirst.itemId, workFirst.itemId);
+    publishedItemIds.push(mailItemId(controlFirst), mailItemId(workFirst));
 
     const writesBeforeMail = baselineWrites;
     const events = await waitForSettled([
-      controlFirst.itemId,
-      workFirst.itemId,
+      mailItemId(controlFirst),
+      mailItemId(workFirst),
     ]);
     agent = await waitForIdle(agent.name);
     const finalStatus = await status();
-    const writesAfterMail =
-      finalStatus.structuredContent?.terminalWrites?.total;
+    const writesAfterMail = terminalWritesTotal(finalStatus);
     if (writesAfterMail !== writesBeforeMail) {
       throw new Error("mail handling caused an automated terminal write");
     }
@@ -430,19 +473,21 @@ try {
         `capture.composer must be null after arbiter reduction; got ${JSON.stringify(finalCapture.composer)}`,
       );
     }
-    const finalAgent = finalStatus.structuredContent?.agents?.find(
-      (candidate_: Record<string, any>) => candidate_.name === agent?.name,
-    );
+    const finalAgent =
+      agent === null ? undefined : findAgent(finalStatus, agent.name);
     await writeJson(`${root}/journal.json`, events);
     await writeJson(
       `${root}/status-before-spawn.json`,
-      beforeSpawn.structuredContent,
+      structuredContent(beforeSpawn),
     );
     await writeJson(
       `${root}/status-after-spawn.json`,
-      afterSpawn.structuredContent,
+      structuredContent(afterSpawn),
     );
-    await writeJson(`${root}/status-final.json`, finalStatus.structuredContent);
+    await writeJson(
+      `${root}/status-final.json`,
+      structuredContent(finalStatus),
+    );
     if (finalCapture != null) {
       await writeJson(`${root}/terminal-final.json`, finalCapture);
     }
@@ -461,17 +506,26 @@ try {
       publish: { controlFirst, controlReplay, workFirst, workMerged },
       // Protocol receipts: durable mail journal settlement, not terminal delivery.
       settlement: {
-        itemIds: [controlFirst.itemId, workFirst.itemId],
+        itemIds: [mailItemId(controlFirst), mailItemId(workFirst)],
         completedKinds: events
           .filter((event) => event.kind === "completed")
           .map((event) => event.itemId),
         eventCount: events.length,
       },
       terminalWrites: {
-        beforeSpawn: beforeSpawn.structuredContent?.terminalWrites,
-        afterSpawn: afterSpawn.structuredContent?.terminalWrites,
-        workingBaseline: baselineStatus.structuredContent?.terminalWrites,
-        final: finalStatus.structuredContent?.terminalWrites,
+        beforeSpawn: recordField(
+          structuredContent(beforeSpawn),
+          "terminalWrites",
+        ),
+        afterSpawn: recordField(
+          structuredContent(afterSpawn),
+          "terminalWrites",
+        ),
+        workingBaseline: recordField(
+          structuredContent(baselineStatus),
+          "terminalWrites",
+        ),
+        final: recordField(structuredContent(finalStatus), "terminalWrites"),
       },
       captureComposerNull: finalCapture == null ? "unobserved" : true,
       eventCount: events.length,
@@ -480,13 +534,14 @@ try {
 } catch (error) {
   if (agent?.name) {
     const failureStatus = await status().catch(() => null);
-    const currentAgent = failureStatus?.structuredContent?.agents?.find(
-      (candidate_: Record<string, any>) => candidate_.name === agent?.name,
-    );
+    const currentAgent =
+      failureStatus === null || agent === null
+        ? undefined
+        : findAgent(failureStatus, agent.name);
     if (failureStatus) {
       await writeJson(
         `${root}/failure-status.json`,
-        failureStatus.structuredContent,
+        structuredContent(failureStatus),
       ).catch(() => undefined);
     }
     if (currentAgent?.sessionLocator) {

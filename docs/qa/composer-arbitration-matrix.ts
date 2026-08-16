@@ -4,6 +4,19 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+import {
+  type AgentRow,
+  asAgentRow,
+  asCapture,
+  findAgent,
+  isRecord,
+  observeCapture,
+  recordField,
+  requireSessionLocator,
+  structuredContent,
+  type TerminalCapture,
+  terminalWritesTotal,
+} from "./unknown-record";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -110,13 +123,13 @@ const client = new Client(
   { name: "qa-composer-arbitration", version: "1" },
   { versionNegotiation: HIVE_MCP_VERSION_NEGOTIATION },
 );
-let agent: Record<string, any> | null = null;
+let agent: AgentRow | null = null;
 let providerArmed = false;
 
 async function callTool(
   name: string,
   args: Record<string, unknown>,
-): Promise<any> {
+): Promise<unknown> {
   const result = await client.callTool({ name, arguments: args });
   if (result.isError === true) {
     throw new Error(`${name}: ${stringify(result.content).trim()}`);
@@ -128,7 +141,7 @@ async function callAgentTool(
   agentName: string,
   name: string,
   args: Record<string, unknown>,
-): Promise<any> {
+): Promise<unknown> {
   const agentClient = new Client(
     { name: "qa-composer-agent", version: "1" },
     { versionNegotiation: HIVE_MCP_VERSION_NEGOTIATION },
@@ -149,7 +162,7 @@ async function callAgentTool(
   }
 }
 
-async function status(): Promise<any> {
+async function status(): Promise<unknown> {
   return callTool("hive_status", { detail: "full" });
 }
 
@@ -158,14 +171,16 @@ async function status(): Promise<any> {
  * always null. Readiness is a live session that has painted visible text so a
  * user INPUT_SUBMIT is not lost on a pre-raw-mode boot screen.
  */
-async function waitForLiveSession(name: string): Promise<Record<string, any>> {
+async function waitForLiveSession(name: string): Promise<AgentRow> {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     const result = await status();
-    const row = result.structuredContent?.agents?.find(
-      (candidate_: Record<string, any>) => candidate_.name === name,
-    );
-    if (row && ["dead", "done", "failed"].includes(row.status)) {
+    const row = findAgent(result, name);
+    if (
+      row &&
+      row.status !== undefined &&
+      ["dead", "done", "failed"].includes(row.status)
+    ) {
       throw new Error(`agent ended during startup with status ${row.status}`);
     }
     if (row?.sessionLocator) {
@@ -185,10 +200,10 @@ async function waitForLiveSession(name: string): Promise<Record<string, any>> {
 }
 
 async function issueGrant(
-  row: Record<string, any>,
+  row: AgentRow,
   operations: string[],
   viewerId: string,
-): Promise<any> {
+): Promise<unknown> {
   const response = await authorizedFetch(
     `http://127.0.0.1:${port}/agents/${encodeURIComponent(row.name)}/attach-grant`,
     {
@@ -202,21 +217,22 @@ async function issueGrant(
       }),
     },
   );
-  const body = (await response.json()) as any;
-  if (!response.ok || body.state !== "granted") {
+  const body: unknown = await response.json();
+  if (!response.ok || !isRecord(body) || body.state !== "granted") {
     throw new Error(`attach grant ${response.status}: ${JSON.stringify(body)}`);
   }
   return body.grant;
 }
 
-async function observe(row: Record<string, any>): Promise<any> {
+async function observe(row: AgentRow): Promise<TerminalCapture> {
+  const locator = requireSessionLocator(row);
   const result = await callTool("hive_terminal_observe", {
-    sessionId: row.sessionLocator.sessionId,
-    generation: row.sessionLocator.generation,
+    sessionId: locator.sessionId,
+    generation: locator.generation,
     include: "visible-text",
     maxRows: 200,
   });
-  const capture = result.structuredContent?.terminalObservation?.capture;
+  const capture = asCapture(observeCapture(result));
   if (capture == null) throw new Error("terminal capture omitted");
   // Positive control on the reduced arbiter wire: the key stays, value is null.
   if (capture.composer != null) {
@@ -228,12 +244,12 @@ async function observe(row: Record<string, any>): Promise<any> {
 }
 
 async function waitForCapture(
-  row: Record<string, any>,
+  row: AgentRow,
   state: string,
-  predicate: (capture: any) => boolean,
-): Promise<any> {
+  predicate: (capture: TerminalCapture) => boolean,
+): Promise<TerminalCapture> {
   const deadline = Date.now() + 30_000;
-  let capture: any = null;
+  let capture: TerminalCapture | null = null;
   while (Date.now() < deadline) {
     capture = await observe(row);
     if (predicate(capture)) {
@@ -247,32 +263,52 @@ async function waitForCapture(
 }
 
 /** Pane has painted text; draft marker presence is checked separately. */
-function baseReady(capture: any): boolean {
-  return (
-    capture != null &&
-    capture.composer === null &&
-    typeof capture.text === "string"
-  );
+function baseReady(capture: TerminalCapture): boolean {
+  return capture.composer === null && typeof capture.text === "string";
 }
 
-function hasDraftMarker(capture: any, marker: string): boolean {
+function hasDraftMarker(capture: TerminalCapture, marker: string): boolean {
   return (capture.text ?? "").includes(marker);
 }
 
+type AttachClient = {
+  request: (
+    type: string,
+    expect: string,
+    flags: number,
+    payload: Record<string, unknown>,
+  ) => Promise<{ payload: Uint8Array }>;
+  close: () => void;
+};
+
+function asAttachClient(value: unknown): AttachClient {
+  if (
+    !isRecord(value) ||
+    typeof value.request !== "function" ||
+    typeof value.close !== "function"
+  ) {
+    throw new Error("attach client is missing request/close");
+  }
+  return value as AttachClient;
+}
+
 async function injectUser(
-  row: Record<string, any>,
+  row: AgentRow,
   bytes: Uint8Array,
   action: "edit" | "submit" | "cancel" | "gesture",
   label: string,
-): Promise<any> {
+): Promise<unknown> {
   const viewerId = `qa-user-${vendor}-${label}-${stamp}`;
   const grant = await issueGrant(row, ["view", "user-input"], viewerId);
-  const attached: any = await SessiondViewerAttachClient.attach({
-    locator: row.sessionLocator,
-    grant,
-    geometry,
-    viewerId,
-  });
+  const locator = requireSessionLocator(row);
+  const attached = asAttachClient(
+    await SessiondViewerAttachClient.attach({
+      locator: row.sessionLocator,
+      grant,
+      geometry,
+      viewerId,
+    }),
+  );
   const transactionId = `qa-${vendor}-${label}-${stamp}`;
   try {
     const frame = await attached.request(
@@ -282,8 +318,8 @@ async function injectUser(
       {
         schemaVersion: 1,
         session: {
-          key: row.sessionLocator.sessionId,
-          incarnation: String(row.sessionLocator.generation),
+          key: locator.sessionId,
+          incarnation: String(locator.generation),
         },
         provenance: "user",
         action,
@@ -296,8 +332,10 @@ async function injectUser(
         },
       },
     );
-    const applied = JSON.parse(new TextDecoder().decode(frame.payload));
-    if (applied.resultKind !== "input") {
+    const applied: unknown = JSON.parse(
+      new TextDecoder().decode(frame.payload),
+    );
+    if (!isRecord(applied) || applied.resultKind !== "input") {
       throw new Error(`unexpected input result: ${JSON.stringify(applied)}`);
     }
     await writeJson(`${root}/${label}-receipt.json`, applied.receipt);
@@ -313,7 +351,7 @@ async function injectUser(
  * on the daemon wire (aaron's agent-ui seam); until it is, the marker in
  * capture.text plus the user INPUT_SUBMIT receipt is the proof.
  */
-function draftMarkerSnapshot(capture: any, marker: string): string {
+function draftMarkerSnapshot(capture: TerminalCapture, marker: string): string {
   return hasDraftMarker(capture, marker) ? `present:${marker}` : "absent";
 }
 
@@ -379,7 +417,7 @@ try {
     category: "simple_coding",
     readOnly: true,
   });
-  agent = spawn.structuredContent?.agent;
+  agent = asAgentRow(recordField(structuredContent(spawn), "agent"));
   if (!agent?.name) throw new Error("spawn omitted the agent identity");
   agent = await waitForLiveSession(agent.name);
 
@@ -395,7 +433,7 @@ try {
     "edit",
     "user-edit",
   );
-  if (editReceipt.stage !== "written-to-terminal") {
+  if (!isRecord(editReceipt) || editReceipt.stage !== "written-to-terminal") {
     throw new Error(
       `user edit was not written: ${JSON.stringify(editReceipt)}`,
     );
@@ -406,8 +444,7 @@ try {
     (capture) => baseReady(capture) && hasDraftMarker(capture, draftMarker),
   );
 
-  const writesBeforeBusy =
-    (await status()).structuredContent?.terminalWrites?.total ?? null;
+  const writesBeforeBusy = terminalWritesTotal(await status()) ?? null;
   const busyResult = await callTool("hive_mail_publish", {
     from: "queen",
     to: agent.name,
@@ -416,8 +453,8 @@ try {
     body: `busy delivery probe ${stamp}`,
     idempotencyKey: `qa-${vendor}-busy-${stamp}`,
   });
-  const busyMessage = busyResult.structuredContent?.mail;
-  if (typeof busyMessage?.itemId !== "string") {
+  const busyMessage = recordField(structuredContent(busyResult), "mail");
+  if (typeof recordField(busyMessage, "itemId") !== "string") {
     throw new Error(`busy publish was not accepted: ${stringify(busyMessage)}`);
   }
   // Proof: durable mailbox accept while a user is mid-draft; the draft marker
@@ -441,8 +478,7 @@ try {
       })}`,
     );
   }
-  const writesAfterBusy =
-    (await status()).structuredContent?.terminalWrites?.total ?? null;
+  const writesAfterBusy = terminalWritesTotal(await status()) ?? null;
   if (
     typeof writesBeforeBusy === "number" &&
     typeof writesAfterBusy === "number" &&
@@ -459,7 +495,7 @@ try {
     "edit",
     "user-clear",
   );
-  if (clearReceipt.stage !== "written-to-terminal") {
+  if (!isRecord(clearReceipt) || clearReceipt.stage !== "written-to-terminal") {
     throw new Error(
       `user clear was not written: ${JSON.stringify(clearReceipt)}`,
     );
@@ -470,8 +506,7 @@ try {
     (capture) => baseReady(capture) && !hasDraftMarker(capture, draftMarker),
   );
 
-  const writesBeforeDeliver =
-    (await status()).structuredContent?.terminalWrites?.total ?? null;
+  const writesBeforeDeliver = terminalWritesTotal(await status()) ?? null;
   const deliveredResult = await callTool("hive_mail_publish", {
     from: "queen",
     to: agent.name,
@@ -480,8 +515,11 @@ try {
     body: `verified delivery probe ${stamp}`,
     idempotencyKey: `qa-${vendor}-delivered-${stamp}`,
   });
-  const deliveredMessage = deliveredResult.structuredContent?.mail;
-  if (typeof deliveredMessage?.itemId !== "string") {
+  const deliveredMessage = recordField(
+    structuredContent(deliveredResult),
+    "mail",
+  );
+  if (typeof recordField(deliveredMessage, "itemId") !== "string") {
     await writeJson(
       `${root}/05-delivery-failure-observe.json`,
       await observe(agent),
@@ -514,8 +552,7 @@ try {
       })}`,
     );
   }
-  const writesAfterDeliver =
-    (await status()).structuredContent?.terminalWrites?.total ?? null;
+  const writesAfterDeliver = terminalWritesTotal(await status()) ?? null;
   if (
     typeof writesBeforeDeliver === "number" &&
     typeof writesAfterDeliver === "number" &&
@@ -528,8 +565,11 @@ try {
   const backlog = await callAgentTool(agent.name, "hive_mail_status", {
     recipient: agent.name,
   });
-  const lanes = backlog.structuredContent?.mail?.lanes;
-  if (lanes?.control?.available !== 2) {
+  const lanes = recordField(
+    recordField(structuredContent(backlog), "mail"),
+    "lanes",
+  );
+  if (recordField(recordField(lanes, "control"), "available") !== 2) {
     throw new Error(
       `both messages should be waiting in the mailbox: ${stringify(lanes)}`,
     );
@@ -547,7 +587,7 @@ try {
     },
     busyMessage,
     deliveredMessage,
-    backlog: backlog.structuredContent?.mail,
+    backlog: recordField(structuredContent(backlog), "mail"),
     userReceipts: { edit: editReceipt, clear: clearReceipt },
     terminalWrites: {
       beforeBusy: writesBeforeBusy,
