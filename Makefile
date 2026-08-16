@@ -13,7 +13,7 @@
 # QA lifecycle (separate from the five; they keep their meaning):
 #
 #   make qa          install hive-qa into an isolated home, init the test project, run it
-#   make qa-clean    product uninstall from the test project, prove no mark, remove qa
+#   make qa-clean    uninstall from the test project, prove cleanup scope, remove qa
 #
 # Everything else here is internal structure, never a command to run by hand:
 # heals and remediation run inside these five. build is complete every time;
@@ -366,7 +366,9 @@ run:
 # ~/.hive (qa's sharedWithDefaultHome is empty) and never calls
 # dev-memory-setup. Inventories the test repo — tracked, staged, untracked,
 # ignored, plus git status — and ~/.hive before init so qa-clean can prove
-# both are unmarked.
+# Hive removed its own footprint without changing anything that was already
+# the user's. New non-Hive files created by another tool during QA are outside
+# that proof and stay untouched.
 qa:
 	@set -e; \
 	case "$(QA_HOME)" in "$(HOME)/.hive"|"$(HOME)/.hive"/*) \
@@ -412,7 +414,7 @@ qa:
 	fi
 
 # Product uninstall, then proofs. Order is load-bearing: repo uninstall first,
-# no-mark compare, machine uninstall --purge, then prove the qa paths are gone
+# scoped repo proof, machine uninstall --purge, then prove the qa paths are gone
 # and ~/.hive matches the pre-qa inventory. Never rm -rf the test project.
 qa-clean:
 	@set -e; \
@@ -438,7 +440,7 @@ qa-clean:
 	env $(QA_ENV) "$(QA_BIN)" uninstall --repo --yes; \
 	"$(ROOT)/scripts/qa/inventory.sh" capture-repo "$$proj" "$(QA_PROOF)/repo-after"; \
 	mark_status=0; \
-	"$(ROOT)/scripts/qa/inventory.sh" compare "$(QA_PROOF)/repo-before" "$(QA_PROOF)/repo-after" || mark_status=$$?; \
+	bun run "$(ROOT)/scripts/qa/repo-uninstall-proof.ts" "$(QA_PROOF)/repo-before" "$(QA_PROOF)/repo-after" || mark_status=$$?; \
 	env $(QA_ENV) "$(QA_BIN)" uninstall --yes --purge; \
 	/bin/rm -rf "$(QA_HOME)" "$(QA_HOME).runtime" "$(QA_INSTALL_ROOT)" "$(QA_DIST)" "$(QA)/bin" "$(QA)/tmp" "$(QA_DAEMON_STARTUP_LOG)"; \
 	"$(ROOT)/scripts/qa/assert-qa-gone.sh" \
@@ -447,10 +449,10 @@ qa-clean:
 	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_PROOF)/hive-after"; \
 	"$(ROOT)/scripts/qa/inventory.sh" compare "$(QA_PROOF)/hive-before" "$(QA_PROOF)/hive-after"; \
 	if [ "$$mark_status" -ne 0 ]; then \
-	  echo "qa-clean: uninstall left a mark on the repo; the inventory diff is above" >&2; \
+	  echo "qa-clean: uninstall touched non-Hive content or left Hive residue; the repo proof is above" >&2; \
 	  exit 1; \
 	fi; \
-	echo "qa-clean: repo unmarked and qa variant removed"; \
+	echo "qa-clean: Hive removed, non-Hive repo content untouched, and qa variant removed"; \
 	/bin/rm -rf "$(QA_PROOF)" "$(QA)"
 
 # No pipes anywhere: a red suite must exit red. The real-CLI e2e suite is already

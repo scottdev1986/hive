@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { shippedSkillsFor } from "../../src/skills/shipped";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
+import { required } from "../required";
 
 const inventory = join(
   import.meta.dir,
@@ -18,6 +20,14 @@ const assertGone = join(
   "scripts",
   "qa",
   "assert-qa-gone.sh",
+);
+const repoUninstallProof = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "scripts",
+  "qa",
+  "repo-uninstall-proof.ts",
 );
 
 function run(argv: string[]): {
@@ -125,6 +135,103 @@ test("repo inventory reds on an untracked file the same way", () => {
     const compared = run([inventory, "compare", before, after]);
     expect(compared.exitCode).toBe(1);
     expect(compared.stdout + compared.stderr).toContain("untracked.txt");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("repo uninstall proof accepts committed Hive removals and leaves new IDE files out of scope", () => {
+  const fixture = mkdtempSync(
+    join(OUTSIDE_REPO_TMPDIR, "hive-repo-proof-clean-"),
+  );
+  try {
+    const repo = join(fixture, "repo");
+    initRepo(repo);
+    const shipped = required(
+      shippedSkillsFor({ role: "agent", tool: "claude" }).find(
+        (skill) => skill.name === "hive-memory",
+      ),
+    );
+    const skillDirectory = join(repo, ".hive", "skills", "agent", shipped.name);
+    mkdirSync(skillDirectory, { recursive: true });
+    writeFileSync(join(skillDirectory, "SKILL.md"), shipped.content);
+    const add = Bun.spawnSync(["git", "add", ".hive/skills"], { cwd: repo });
+    expect(add.exitCode, add.stderr.toString()).toBe(0);
+    const commit = Bun.spawnSync(["git", "commit", "-m", "commit Hive skill"], {
+      cwd: repo,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "hive-qa",
+        GIT_AUTHOR_EMAIL: "qa@hive.local",
+        GIT_COMMITTER_NAME: "hive-qa",
+        GIT_COMMITTER_EMAIL: "qa@hive.local",
+      },
+    });
+    expect(commit.exitCode, commit.stderr.toString()).toBe(0);
+
+    const before = join(fixture, "before");
+    const after = join(fixture, "after");
+    expect(run([inventory, "capture-repo", repo, before]).exitCode).toBe(0);
+    rmSync(skillDirectory, { recursive: true });
+    mkdirSync(join(repo, ".idea"));
+    writeFileSync(join(repo, ".idea", "workspace.xml"), "<project />\n");
+    expect(run([inventory, "capture-repo", repo, after]).exitCode).toBe(0);
+
+    const proved = run(["bun", "run", repoUninstallProof, before, after]);
+    expect(proved.exitCode, proved.stdout + proved.stderr).toBe(0);
+    expect(proved.stdout).toContain("expected Hive removals");
+    expect(proved.stdout).toContain(".idea/workspace.xml");
+    expect(proved.stdout).toContain("out of scope");
+    expect(proved.stdout).toContain("non-Hive content is unchanged");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("repo uninstall proof rejects removal of a pre-existing non-Hive file", () => {
+  const fixture = mkdtempSync(
+    join(OUTSIDE_REPO_TMPDIR, "hive-repo-proof-user-file-"),
+  );
+  try {
+    const repo = join(fixture, "repo");
+    initRepo(repo);
+    const before = join(fixture, "before");
+    const after = join(fixture, "after");
+    expect(run([inventory, "capture-repo", repo, before]).exitCode).toBe(0);
+    rmSync(join(repo, "tracked.txt"));
+    expect(run([inventory, "capture-repo", repo, after]).exitCode).toBe(0);
+
+    const proved = run(["bun", "run", repoUninstallProof, before, after]);
+    expect(proved.exitCode).toBe(1);
+    expect(proved.stdout + proved.stderr).toContain(
+      "removed non-Hive path tracked.txt",
+    );
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("repo uninstall proof rejects new Hive residue", () => {
+  const fixture = mkdtempSync(
+    join(OUTSIDE_REPO_TMPDIR, "hive-repo-proof-residue-"),
+  );
+  try {
+    const repo = join(fixture, "repo");
+    initRepo(repo);
+    const before = join(fixture, "before");
+    const after = join(fixture, "after");
+    expect(run([inventory, "capture-repo", repo, before]).exitCode).toBe(0);
+    mkdirSync(join(repo, "graphify-out"));
+    writeFileSync(join(repo, "graphify-out", "graph.json"), "{}\n");
+    expect(run([inventory, "capture-repo", repo, after]).exitCode).toBe(0);
+
+    const proved = run(["bun", "run", repoUninstallProof, before, after]);
+    expect(proved.exitCode).toBe(1);
+    expect(proved.stdout + proved.stderr).toContain(
+      "Hive residue graphify-out/graph.json",
+    );
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

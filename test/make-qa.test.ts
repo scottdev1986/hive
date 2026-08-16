@@ -44,7 +44,7 @@ function writeExec(path: string, body: string): void {
   chmodSync(path, 0o755);
 }
 
-function initRepo(repo: string, ignore = ""): void {
+function initRepo(repo: string): void {
   mkdirSync(repo, { recursive: true });
   const git = Bun.spawnSync(["git", "init", "-b", "main"], {
     cwd: repo,
@@ -53,12 +53,7 @@ function initRepo(repo: string, ignore = ""): void {
   });
   expect(git.exitCode, git.stderr.toString()).toBe(0);
   writeFileSync(join(repo, "README"), "seed\n");
-  const toAdd = ["README"];
-  if (ignore.length > 0) {
-    writeFileSync(join(repo, ".gitignore"), ignore);
-    toAdd.push(".gitignore");
-  }
-  Bun.spawnSync(["git", "add", ...toAdd], { cwd: repo });
+  Bun.spawnSync(["git", "add", "README"], { cwd: repo });
   const commit = Bun.spawnSync(["git", "commit", "-m", "seed"], {
     cwd: repo,
     stdout: "pipe",
@@ -81,6 +76,7 @@ test("the five public .PHONY names are unchanged and qa is declared beside them"
   );
   expect(makefile).toContain(".PHONY: qa qa-clean");
   expect(makefile).toContain("HIVE_DEFAULT_HOME=$(QA_HOME)");
+  expect(makefile).toContain("scripts/qa/repo-uninstall-proof.ts");
 });
 
 test("make -n qa defaults PROJECT to the designated test repo", () => {
@@ -143,7 +139,7 @@ test("make qa refuses a QA_HOME under the user hive home", () => {
   }
 });
 
-test("make qa-clean runs repo uninstall then purge and proves the no-mark check", () => {
+test("make qa-clean runs repo uninstall then purge and proves cleanup scope", () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-clean-"));
   try {
     const qa = join(fixture, "qa");
@@ -194,7 +190,7 @@ test("make qa-clean runs repo uninstall then purge and proves the no-mark check"
       USER_HIVE: userHive,
     });
     expect(result.exitCode, result.output).toBe(0);
-    expect(result.output).toContain("identical");
+    expect(result.output).toContain("repo-proof: CLEAN");
     expect(result.output).toContain("no listed qa path remains");
     expect(readFileSync(argvLog, "utf8")).toBe(
       "stop --force\nuninstall --repo --yes\nuninstall --yes --purge\n",
@@ -208,13 +204,13 @@ test("make qa-clean runs repo uninstall then purge and proves the no-mark check"
   }
 });
 
-test("make qa-clean reds the no-mark proof when a stray ignored file is left", () => {
+test("make qa-clean reds the repo proof when Hive residue is left", () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-clean-red-"));
   try {
     const qa = join(fixture, "qa");
     const project = join(fixture, "project");
     const userHive = join(fixture, "dot-hive");
-    initRepo(project, "stray.txt\n");
+    initRepo(project);
     mkdirSync(userHive, { recursive: true });
     const hiveBin = join(fixture, "hive-dev");
     writeExec(hiveBin, "#!/bin/sh\nexit 0\n");
@@ -237,7 +233,8 @@ test("make qa-clean reds the no-mark proof when a stray ignored file is left", (
       ],
       { stdout: "pipe", stderr: "pipe" },
     );
-    writeFileSync(join(project, "stray.txt"), "left behind\n");
+    mkdirSync(join(project, "graphify-out"));
+    writeFileSync(join(project, "graphify-out", "graph.json"), "{}\n");
 
     const result = runMake("qa-clean", {
       HIVE_BIN: hiveBin,
@@ -247,8 +244,8 @@ test("make qa-clean reds the no-mark proof when a stray ignored file is left", (
       USER_HIVE: userHive,
     });
     expect(result.exitCode, result.output).not.toBe(0);
-    expect(result.output).toContain("DIFFER");
-    expect(result.output).toContain("stray.txt");
+    expect(result.output).toContain("Hive residue");
+    expect(result.output).toContain("graphify-out/graph.json");
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
