@@ -161,6 +161,10 @@ const pendingBindings: TerminalHostBindingStore = {
     ...pendingBinding,
     terminationAudit,
   }),
+  recordTerminalHostTerminationEvidence: (_locator, terminationEvidence) => ({
+    ...pendingBinding,
+    terminationEvidence,
+  }),
   getTerminalHostBindingByLocator: (locator) =>
     locator.sessionId === brokerLocator.sessionId ? pendingBinding : null,
   listTerminalHostBindings: (instanceId) =>

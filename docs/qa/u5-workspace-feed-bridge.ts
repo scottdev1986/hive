@@ -154,6 +154,7 @@ for await (const chunk of Bun.stdin.stream()) {
       appInventoryRevision: input.inventoryRevision,
       publishedInventoryRevision: projected.inventoryRevision,
       terminalCount: projected.terminals.length,
+      terminals: projected.terminals,
       durationMs: result.durationMs,
     });
     writeReceipt(receiptPath, {

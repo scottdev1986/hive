@@ -38,11 +38,13 @@ describe("U5 proof decisions", () => {
           "/tmp/HiveWorkspace.app/Contents/MacOS/HiveWorkspace",
         HIVE_QA_U5_APP_READY_PATH: "/tmp/ready",
         HIVE_QA_U5_APP_RELEASE_PATH: "/tmp/release",
+        HIVE_QA_U5_APP_FEED_RECEIPT: "/tmp/feed-receipt",
       }),
     ).toEqual({
       executablePath: "/tmp/HiveWorkspace.app/Contents/MacOS/HiveWorkspace",
       readyPath: "/tmp/ready",
       releasePath: "/tmp/release",
+      feedReceiptPath: "/tmp/feed-receipt",
     });
   });
 

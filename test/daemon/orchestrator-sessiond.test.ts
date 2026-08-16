@@ -52,6 +52,9 @@ class MemoryBindings implements TerminalHostBindingStore {
   recordTerminalHostTermination(): HiveTerminalBinding {
     throw new Error("not under test");
   }
+  recordTerminalHostTerminationEvidence(): HiveTerminalBinding {
+    throw new Error("not under test");
+  }
   getTerminalHostBindingByLocator(
     locator: HiveTerminalBinding["locator"],
   ): HiveTerminalBinding | null {

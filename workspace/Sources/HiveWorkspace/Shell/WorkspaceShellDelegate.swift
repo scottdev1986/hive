@@ -9,6 +9,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     private let launch: WorkspaceShellLaunch
     private var controller: WorkspaceShellWindowController?
     private var liveRunFeed: FeedClient?
+    private var liveRunControlGateway: LiveRunControlGateway?
     private let liveRunWorkspaceSessionID = "workspace-shell-\(UUID().uuidString)"
     private var liveRunInventoryRevision = 0
 
@@ -43,6 +44,12 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             let controller = WorkspaceShellWindowController(context: context, state: state)
             if launch.isLive {
                 let workbench = LiveRunWorkbenchView(config: config)
+                do {
+                    liveRunControlGateway = LiveRunControlGateway(
+                        client: try await ShellLiveStore(config: config).makeClient())
+                } catch {
+                    workbench.showControlUnavailable(error.localizedDescription)
+                }
                 controller.installLiveRunWorkbench(workbench)
                 startLiveRunFeed(workbench: workbench)
                 controller.memoryRecallHandler = { [weak self, weak controller] query in
@@ -304,6 +311,12 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
         workbench.onVisibleSessionChanged = { [weak self, weak workbench] session in
             guard let self, let workbench else { return }
             publishVisibility(session, workbench: workbench)
+            refreshLiveRunControls(session, workbench: workbench)
+        }
+        workbench.onControlRequested = { [weak self, weak workbench] operation, projection in
+            guard let self, let workbench else { return }
+            submitLiveRunControl(
+                operation, projection: projection, workbench: workbench)
         }
         feed.onLine = { [weak workbench] line in
             do {
@@ -327,6 +340,70 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
         } catch {
             workbench.showUnavailable(
                 "workspace-feed could not start: \(error.localizedDescription)")
+        }
+    }
+
+    @MainActor
+    private func refreshLiveRunControls(
+        _ session: LiveRunSessionSummary?,
+        workbench: LiveRunWorkbenchView
+    ) {
+        let expectedLocator = session?.locator
+        guard let agentID = session?.agentID else {
+            workbench.showControlUnavailable(
+                "No exact agent identity is available for process control.")
+            return
+        }
+        guard let liveRunControlGateway else {
+            workbench.showControlUnavailable(
+                "The authenticated Live Run process-control gateway is unavailable.")
+            return
+        }
+        Task { @MainActor [weak workbench] in
+            let result = await liveRunControlGateway.fetch(agentID: agentID)
+            guard let workbench else { return }
+            guard workbench.selectedLocator == expectedLocator else { return }
+            guard result.availability == .current, let projection = result.value else {
+                workbench.showControlUnavailable(
+                    "The daemon did not provide current process-control proof.")
+                return
+            }
+            workbench.applyControlProjection(projection)
+        }
+    }
+
+    @MainActor
+    private func submitLiveRunControl(
+        _ operation: LiveRunControlOperation,
+        projection: LiveRunControlProjection,
+        workbench: LiveRunWorkbenchView
+    ) {
+        guard let liveRunControlGateway else {
+            workbench.showControlUnavailable(
+                "The authenticated Live Run process-control gateway is unavailable.")
+            return
+        }
+        Task { @MainActor [weak workbench] in
+            do {
+                let intentID = UUID().uuidString
+                let result = try await liveRunControlGateway.submit(MutationIntent(
+                    intentID: intentID,
+                    expected: .epoch(String(projection.locator.generation)),
+                    idempotencyKey: intentID,
+                    body: try LiveRunControlBody(
+                        operation: operation, projection: projection)))
+                guard let workbench else { return }
+                guard workbench.selectedLocator == projection.locator else { return }
+                workbench.applyControlProjection(result.observedPostState)
+                if case .rejected(let failure) = result.outcome {
+                    workbench.showControlMessage(failure.message)
+                }
+            } catch {
+                guard let workbench,
+                      workbench.selectedLocator == projection.locator
+                else { return }
+                workbench.showControlUnavailable(error.localizedDescription)
+            }
         }
     }
 

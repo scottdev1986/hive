@@ -3,7 +3,7 @@
 // blocked providers typed and non-passing while it measures every live route,
 // exact-locator viewer attempt, and cleanup obligation before returning.
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -15,11 +15,20 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { agentFetch, userFetch } from "../../src/cli/credential";
+import { macProcessIdentity } from "../../src/daemon/lifecycle/daemon-lifecycle";
 import { sameSessionLocator } from "../../src/daemon/session-host/locators";
 import { SessiondViewerAttachClient } from "../../src/daemon/session-host/sessiond-viewer-attach";
+import { WorkspaceVisibleTerminalSchema } from "../../src/daemon/session-host/workspace-visibility";
 import { type AgentRecord, AgentRecordSchema } from "../../src/schemas/agent";
 import { AttachGrantSchema, CaptureResultSchema, type SessionLocator } from "../../src/schemas/session-protocol";
 import { CAPABILITY_PROVIDERS, type CapabilityProvider, CapabilityProviderSchema } from "../../src/schemas/capability";
+import {
+  LiveRunControlIntentSchema,
+  LiveRunControlProjectionSchema,
+  LiveRunControlResultSchema,
+  type LiveRunControlIntent,
+  type LiveRunControlProjection,
+} from "../../src/schemas/live-run-control";
 import { CandidateEffortSchema, RoutingCategorySchema, type RoutingPolicy, RoutingPolicyMutationSchema, RoutingPolicySchema } from "../../src/schemas/routing-policy";
 import {
   callMcpTool,
@@ -136,10 +145,45 @@ const AppLifecycleReleaseSchema = z.strictObject({
   postKillProbe: z.string().min(1),
   screenshots: z.array(z.string().min(1)).min(1),
 });
+const WorkspaceFeedReceiptSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  state: z.enum(["snapshot-emitted", "visibility-accepted"]),
+  emittedAt: z.iso.datetime({ offset: true }),
+  sourceReadyPath: z.string().min(1),
+  agentCount: z.number().int().nonnegative(),
+  agents: z.array(z.record(z.string(), z.unknown())),
+  acceptedVisibility: z.array(
+    z.strictObject({
+      acceptedAt: z.iso.datetime({ offset: true }),
+      appInventoryRevision: z.string().regex(/^[1-9][0-9]*$/),
+      publishedInventoryRevision: z.string().regex(/^[1-9][0-9]*$/),
+      terminalCount: z.number().int().nonnegative(),
+      terminals: z.array(WorkspaceVisibleTerminalSchema),
+      durationMs: z.number().nonnegative(),
+    }),
+  ),
+});
 
 type InventoryModel = z.infer<typeof InventoryModelSchema>;
 type ModelInventory = z.infer<typeof ModelInventorySchema>;
 type AppLifecycleRelease = z.infer<typeof AppLifecycleReleaseSchema>;
+type ProcessReadback =
+  | {
+      state: "live";
+      pid: number;
+      startToken: string;
+      executablePath: string;
+      psExitCode: number;
+      stdout: string;
+      stderr: string;
+    }
+  | {
+      state: "absent" | "unknown";
+      pid: number;
+      psExitCode: number;
+      stdout: string;
+      stderr: string;
+    };
 
 const { scope, scopedPartial, attemptProviders } = resolveU5Scope(
   process.env.HIVE_QA_U5_SCOPE,
@@ -219,7 +263,8 @@ if (
 }
 const appReadyPath = resolve(workspaceApp.readyPath);
 const appReleasePath = resolve(workspaceApp.releasePath);
-for (const path of [appReadyPath, appReleasePath]) {
+const appFeedReceiptPath = resolve(workspaceApp.feedReceiptPath);
+for (const path of [appReadyPath, appReleasePath, appFeedReceiptPath]) {
   if (!path.startsWith(`${artifacts}/`)) {
     throw new Error(`app proof rendezvous is outside the artifact root: ${path}`);
   }
@@ -252,6 +297,10 @@ const selectedModels = new Map<CapabilityProvider, InventoryModel>();
 const selectedModelOverrides = new Map<CapabilityProvider, string>();
 const providerOutcomes = new Map<CapabilityProvider, ProviderOutcomeRecord>();
 const spawnRequests: SpawnRequestRecord[] = [];
+const survivingSentinel = Bun.spawn(["/bin/sleep", "3600"], {
+  stdout: "ignore",
+  stderr: "ignore",
+});
 let interruptedBy: "SIGINT" | "SIGTERM" | null = null;
 let initialPolicy: RoutingPolicy | null = null;
 let initialAgentIds = new Set<string>();
@@ -486,6 +535,252 @@ async function mutatePolicy(mutation: unknown): Promise<RoutingPolicy> {
     );
   }
   return RoutingPolicySchema.parse(JSON.parse(body));
+}
+
+function processReadback(pid: number): ProcessReadback {
+  const ps = Bun.spawnSync([
+    "/bin/ps",
+    "-p",
+    String(pid),
+    "-o",
+    "pid=,ppid=,lstart=,command=",
+  ]);
+  const stdout = new TextDecoder().decode(ps.stdout).trim();
+  const stderr = new TextDecoder().decode(ps.stderr).trim();
+  if (ps.exitCode === 0 && stdout.length > 0) {
+    const identity = macProcessIdentity(pid);
+    return {
+      state: "live",
+      pid,
+      startToken: identity.startToken,
+      executablePath: identity.executablePath,
+      psExitCode: ps.exitCode,
+      stdout,
+      stderr,
+    };
+  }
+  return {
+    state: ps.exitCode === 1 && stdout.length === 0 ? "absent" : "unknown",
+    pid,
+    psExitCode: ps.exitCode,
+    stdout,
+    stderr,
+  };
+}
+
+async function readLiveRunControl(
+  agentId: string,
+): Promise<LiveRunControlProjection> {
+  const response = await userFetch(
+    `http://127.0.0.1:${port}/live-run-control?agentId=${encodeURIComponent(agentId)}`,
+  );
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `GET /live-run-control refused (${response.status}): ${body}`,
+    );
+  }
+  return LiveRunControlProjectionSchema.parse(JSON.parse(body));
+}
+
+async function submitLiveRunControl(
+  intent: LiveRunControlIntent,
+): Promise<ReturnType<typeof LiveRunControlResultSchema.parse>> {
+  const response = await userFetch(`http://127.0.0.1:${port}/live-run-control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(intent),
+  });
+  const body = await response.text();
+  if (!response.ok && response.status !== 409) {
+    throw new Error(
+      `POST /live-run-control refused (${response.status}): ${body}`,
+    );
+  }
+  return LiveRunControlResultSchema.parse(JSON.parse(body));
+}
+
+function controlIntent(
+  operation: "stop-provider" | "terminate-terminal",
+  projection: LiveRunControlProjection,
+): LiveRunControlIntent {
+  if (projection.shell.state !== "retained") {
+    throw new Error(`${projection.agentName} has no verified retained shell`);
+  }
+  const intentId = randomUUID();
+  return LiveRunControlIntentSchema.parse({
+    schemaVersion: 1,
+    intentId,
+    expected: {
+      kind: "epoch",
+      epoch: String(projection.locator.generation),
+    },
+    idempotencyKey: intentId,
+    body: {
+      operation,
+      agentId: projection.agentId,
+      locator: projection.locator,
+      expectedShellRoot: projection.shell.root,
+      ...(operation === "stop-provider"
+        ? {
+            expectedProviderRunId:
+              projection.providerRun.state === "running"
+                ? projection.providerRun.runId
+                : null,
+          }
+        : {}),
+    },
+  });
+}
+
+function sameProcessRoot(
+  left: { pid: number; startToken: string; processGroupId: number },
+  right: { pid: number; startToken: string; processGroupId: number },
+): boolean {
+  return (
+    left.pid === right.pid &&
+    left.startToken === right.startToken &&
+    left.processGroupId === right.processGroupId
+  );
+}
+
+async function proveLiveRunControls(
+  rows: readonly (AgentRecord & { sessionLocator: SessionLocator })[],
+) {
+  const sentinelBefore = processReadback(survivingSentinel.pid);
+  if (sentinelBefore.state !== "live") {
+    throw new Error("the unrelated process sentinel was not live before control proof");
+  }
+  const sentinelStartToken = sentinelBefore.startToken;
+  const providers = [];
+  for (const row of rows) {
+    const before = await readLiveRunControl(row.id);
+    if (
+      before.provider !== row.tool ||
+      !sameSessionLocator(before.locator, row.sessionLocator) ||
+      before.providerRun.state !== "running" ||
+      before.providerRun.provider !== row.tool ||
+      before.shell.state !== "retained" ||
+      before.shell.foreground !== "provider" ||
+      before.processCensus.state !== "complete" ||
+      !before.controls.stopProvider.enabled ||
+      !before.controls.terminateTerminal.enabled
+    ) {
+      throw new Error(`${row.tool} has no complete pre-control process proof`);
+    }
+    const shellRoot = before.shell.root;
+    const providerProcess = before.providerRun.process;
+    if (
+      !before.processCensus.members.some(
+        (member) =>
+          member.pid === shellRoot.pid &&
+          member.startToken === shellRoot.startToken,
+      ) ||
+      !before.processCensus.members.some(
+        (member) =>
+          member.pid === providerProcess.pid &&
+          member.startToken === providerProcess.startToken,
+      ) ||
+      before.processCensus.members.some(
+        (member) => member.pid === survivingSentinel.pid,
+      )
+    ) {
+      throw new Error(`${row.tool} returned an invalid process-tree census`);
+    }
+
+    const stopResult = await submitLiveRunControl(
+      controlIntent("stop-provider", before),
+    );
+    const afterStop = await readLiveRunControl(row.id);
+    if (
+      stopResult.outcome.status !== "accepted" ||
+      stopResult.observedPostState.providerRun.state !== "absent" ||
+      stopResult.observedPostState.shell.state !== "retained" ||
+      !sameProcessRoot(stopResult.observedPostState.shell.root, shellRoot) ||
+      stopResult.observedPostState.shell.foreground !== "shell" ||
+      afterStop.providerRun.state !== "absent" ||
+      afterStop.shell.state !== "retained" ||
+      !sameProcessRoot(afterStop.shell.root, shellRoot) ||
+      afterStop.shell.foreground !== "shell"
+    ) {
+      throw new Error(`${row.tool} Stop Provider did not retain the same zsh`);
+    }
+    const providerProcessAfterStop = processReadback(providerProcess.pid);
+    const shellAfterStop = processReadback(shellRoot.pid);
+    const sentinelAfterStop = processReadback(survivingSentinel.pid);
+    if (
+      providerProcessAfterStop.state !== "absent" ||
+      shellAfterStop.state !== "live" ||
+      shellAfterStop.startToken !== shellRoot.startToken ||
+      sentinelAfterStop.state !== "live" ||
+      sentinelAfterStop.startToken !== sentinelStartToken
+    ) {
+      throw new Error(`${row.tool} Stop Provider process readback failed`);
+    }
+
+    const terminateResult = await submitLiveRunControl(
+      controlIntent("terminate-terminal", afterStop),
+    );
+    const afterTerminate = await readLiveRunControl(row.id);
+    const terminalStatus = (await status()).find(
+      (candidate) => candidate.id === row.id,
+    );
+    const shellAfterTerminate = processReadback(shellRoot.pid);
+    const sentinelAfterTerminate = processReadback(survivingSentinel.pid);
+    if (
+      terminateResult.outcome.status !== "accepted" ||
+      terminateResult.observedPostState.termination.state !== "terminated" ||
+      terminateResult.observedPostState.termination.survivors.length !== 0 ||
+      terminateResult.observedPostState.shell.state !== "terminated" ||
+      terminateResult.observedPostState.processCensus.state !== "terminated" ||
+      afterTerminate.termination.state !== "terminated" ||
+      afterTerminate.termination.survivors.length !== 0 ||
+      afterTerminate.shell.state !== "terminated" ||
+      afterTerminate.processCensus.state !== "terminated" ||
+      shellAfterTerminate.state !== "absent" ||
+      (terminalStatus !== undefined &&
+        !terminalStatuses.has(terminalStatus.status)) ||
+      sentinelAfterTerminate.state !== "live" ||
+      sentinelAfterTerminate.startToken !== sentinelStartToken
+    ) {
+      throw new Error(`${row.tool} Terminate Terminal final readback failed`);
+    }
+    providers.push({
+      provider: row.tool,
+      agentId: row.id,
+      locator: row.sessionLocator,
+      before,
+      stop: {
+        mutation: stopResult,
+        independentProjection: afterStop,
+        providerProcessReadback: providerProcessAfterStop,
+        retainedShellReadback: shellAfterStop,
+        sentinelReadback: sentinelAfterStop,
+      },
+      terminate: {
+        mutation: terminateResult,
+        independentProjection: afterTerminate,
+        shellProcessReadback: shellAfterTerminate,
+        agentStatus: terminalStatus ?? null,
+        sentinelReadback: sentinelAfterTerminate,
+      },
+    });
+  }
+  const sentinelAfter = processReadback(survivingSentinel.pid);
+  if (
+    sentinelAfter.state !== "live" ||
+    sentinelAfter.startToken !== sentinelStartToken
+  ) {
+    throw new Error("the unrelated process sentinel did not survive control proof");
+  }
+  const evidence = {
+    schemaVersion: 1,
+    observedAt: new Date().toISOString(),
+    sentinel: { before: sentinelBefore, after: sentinelAfter },
+    providers,
+  };
+  writeEvidence("09-live-run-process-controls.json", evidence);
+  return evidence;
 }
 
 function modelSafetyRank(model: InventoryModel): readonly (number | string)[] {
@@ -1522,6 +1817,45 @@ async function runProof(): Promise<Record<string, unknown>> {
       }
     }
 
+    const feedReceipt = WorkspaceFeedReceiptSchema.parse(
+      JSON.parse(readFileSync(appFeedReceiptPath, "utf8")),
+    );
+    if (
+      resolve(feedReceipt.sourceReadyPath) !== appReadyPath ||
+      feedReceipt.agentCount !== spawned.length ||
+      feedReceipt.acceptedVisibility.length === 0 ||
+      feedReceipt.acceptedVisibility.some(
+        (entry) =>
+          entry.terminalCount !== entry.terminals.length ||
+          entry.terminalCount > 1,
+      )
+    ) {
+      throw new Error(
+        "production Workspace visibility did not preserve one exact live viewer",
+      );
+    }
+    const exactSelectionTrace = spawned.map(({ row }) => {
+      const event = feedReceipt.acceptedVisibility.find((entry) => {
+        const terminal = entry.terminals[0];
+        return (
+          terminal !== undefined &&
+          terminal.agentId === row.id &&
+          sameSessionLocator(terminal.locator, row.sessionLocator)
+        );
+      });
+      if (event === undefined) {
+        throw new Error(
+          `production Workspace never selected exact ${row.tool} generation`,
+        );
+      }
+      return {
+        provider: row.tool,
+        agentId: row.id,
+        locator: row.sessionLocator,
+        acceptedVisibility: event,
+      };
+    });
+
     const postKillRows = await status();
     const postKillAgents = [];
     for (const { row } of spawned) {
@@ -1549,6 +1883,9 @@ async function runProof(): Promise<Record<string, unknown>> {
       releaseVerification,
       allExactGenerationsRetained,
       stableComposerCount,
+      oneVisibleTerminalAtAllTimes: true,
+      exactSelectionTrace,
+      feedReceipt,
       agents: postKillAgents,
     };
     writeEvidence("08-app-sigkill-session-readback.json", {
@@ -1606,6 +1943,17 @@ async function runProof(): Promise<Record<string, unknown>> {
     });
   }
   writeAdmissions();
+  const liveRunProcessControls = await proveLiveRunControls(
+    spawned.map(({ row }) => row),
+  );
+  for (const providerControl of liveRunProcessControls.providers) {
+    const provider = providerControl.provider;
+    const record = providerOutcomes.get(provider);
+    if (record?.outcome !== "attested") {
+      throw new Error(`${provider} has no attested provider outcome`);
+    }
+    writeProviderOutcome({ ...record, liveRunProcessControl: providerControl });
+  }
   const outcomeSummary = summarizeProviderOutcomes(
     attemptProviders,
     new Map(
@@ -1642,6 +1990,7 @@ async function runProof(): Promise<Record<string, unknown>> {
     backgroundRows: "typed status only; no background viewer was created",
     backgroundDraftPreserved: "not claimed by this bounded proof",
     appViewerLifecycle,
+    liveRunProcessControls,
   };
 }
 
@@ -1908,13 +2257,27 @@ const routingRestore = await restoreRouting().catch((error) => ({
   state: "failed",
   error: error instanceof Error ? error.message : String(error),
 }));
+const sentinelBeforeCleanup = processReadback(survivingSentinel.pid);
+survivingSentinel.kill();
+const sentinelExitCode = await survivingSentinel.exited;
+const sentinelAfterCleanup = processReadback(survivingSentinel.pid);
+const sentinelCleanup = {
+  state:
+    sentinelBeforeCleanup.state === "live" &&
+    sentinelAfterCleanup.state === "absent"
+      ? "clean"
+      : "failed",
+  before: sentinelBeforeCleanup,
+  exitCode: sentinelExitCode,
+  after: sentinelAfterCleanup,
+};
 const finalDecision = finalU5Result(
   proof.result === "passed" || proof.result === "partial"
     ? proof.result
     : "failed",
-  cleanup.state === "clean"
+  cleanup.state === "clean" && sentinelCleanup.state === "clean"
     ? "clean"
-    : cleanup.state === "failed"
+    : cleanup.state === "failed" || sentinelCleanup.state === "failed"
       ? "failed"
       : "unknown",
   routingRestore.state === "restored" ? "restored" : "failed",
@@ -1932,9 +2295,8 @@ const result = {
   proofError,
   cleanup,
   routingRestore,
+  sentinelCleanup,
   limitations: [
-    "Stop Provider is unmeasured until its production control endpoint exists.",
-    "Terminate Terminal is unmeasured until its production control endpoint exists.",
     ...(proof.result === "partial"
       ? [
           "Five-provider concurrency is not established; every blocked provider is a deferred obligation requiring a full fresh proof after restart.",

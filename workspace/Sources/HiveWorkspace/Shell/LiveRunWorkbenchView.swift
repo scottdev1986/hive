@@ -32,8 +32,16 @@ final class LiveRunSessiondSurface: LiveRunTerminalSurface {
 
 final class LiveRunWorkbenchView: NSView {
     typealias TerminalFactory = (LiveRunSessionSummary) -> LiveRunTerminalSurface
+    typealias ConfirmControl = (LiveRunControlOperation, LiveRunControlProjection) -> Bool
+
+    struct ControlConfirmation {
+        let title: String
+        let message: String
+        let confirmTitle: String
+    }
 
     private let terminalFactory: TerminalFactory?
+    private let confirmControl: ConfirmControl
     private let railStack = NSStackView()
     private let terminalHost = NSView()
     private let terminalPlaceholder = NSTextField(wrappingLabelWithString: "")
@@ -57,9 +65,11 @@ final class LiveRunWorkbenchView: NSView {
     private var selectedID: String?
     private var terminal: LiveRunTerminalSurface?
     private var visibleLocator: AgentSessionLocator?
+    private var controlProjection: LiveRunControlProjection?
     private var routeVisible = false
 
     var onVisibleSessionChanged: ((LiveRunSessionSummary?) -> Void)?
+    var onControlRequested: ((LiveRunControlOperation, LiveRunControlProjection) -> Void)?
 
     convenience init(config: LaunchConfig) {
         let factory: TerminalFactory? = config.isComplete
@@ -68,8 +78,12 @@ final class LiveRunWorkbenchView: NSView {
         self.init(terminalFactory: factory)
     }
 
-    init(terminalFactory: TerminalFactory?) {
+    init(
+        terminalFactory: TerminalFactory?,
+        confirmControl: @escaping ConfirmControl = LiveRunWorkbenchView.confirm
+    ) {
         self.terminalFactory = terminalFactory
+        self.confirmControl = confirmControl
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         setAccessibilityElement(true)
@@ -87,6 +101,8 @@ final class LiveRunWorkbenchView: NSView {
     var rowCount: Int { sessions.count }
     var stopProviderControlEnabled: Bool { stopButton.isEnabled }
     var terminateTerminalControlEnabled: Bool { terminateButton.isEnabled }
+    var stopProviderControlHidden: Bool { stopButton.isHidden }
+    var terminateTerminalControlHidden: Bool { terminateButton.isHidden }
     var terminationFactText: String { terminationValue.stringValue }
 
     func apply(_ projection: LiveRunProjection) {
@@ -118,7 +134,36 @@ final class LiveRunWorkbenchView: NSView {
         locatorLabel.stringValue = "Exact generation · unknown"
         terminalPlaceholder.stringValue = reason
         terminalPlaceholder.isHidden = false
+        controlProjection = nil
         updateInspector(nil)
+    }
+
+    func applyControlProjection(_ projection: LiveRunControlProjection) {
+        guard let session = sessions.first(where: { $0.id == selectedID }),
+              session.id == projection.agentID,
+              session.provider == projection.provider,
+              session.locator == projection.locator
+        else {
+            return
+        }
+        controlProjection = projection
+        updateInspector(session)
+    }
+
+    func showControlUnavailable(_ reason: String) {
+        controlProjection = nil
+        guard let session = sessions.first(where: { $0.id == selectedID }) else {
+            updateInspector(nil)
+            return
+        }
+        updateInspector(session)
+        stopButton.toolTip = reason
+        terminateButton.toolTip = reason
+    }
+
+    func showControlMessage(_ message: String) {
+        errorLabel.stringValue = message
+        errorLabel.isHidden = false
     }
 
     func setRouteVisible(_ visible: Bool) {
@@ -175,7 +220,7 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func makeRail() -> NSView {
-        let heading = sectionLabel("RUN HIERARCHY")
+        let heading = sectionLabel("SESSIONS")
         let summary = NSTextField(labelWithString: "typed status · one live viewer")
         summary.font = Theme.Font.caption
         summary.textColor = .secondaryLabelColor
@@ -309,9 +354,17 @@ final class LiveRunWorkbenchView: NSView {
         }
         stack.addArrangedSubview(NSBox.hdsSeparator())
         stopButton.bezelStyle = .rounded
+        stopButton.target = self
+        stopButton.action = #selector(stopProvider)
         stopButton.isEnabled = false
+        stopButton.isHidden = true
+        stopButton.setAccessibilityIdentifier("live-run-stop-provider")
         terminateButton.bezelStyle = .rounded
+        terminateButton.target = self
+        terminateButton.action = #selector(terminateTerminal)
         terminateButton.isEnabled = false
+        terminateButton.isHidden = true
+        terminateButton.setAccessibilityIdentifier("live-run-terminate-terminal")
         stack.addArrangedSubview(stopButton)
         stack.addArrangedSubview(terminateButton)
         stopButton.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -344,6 +397,7 @@ final class LiveRunWorkbenchView: NSView {
 
     private func renderSelection() {
         guard let session = sessions.first(where: { $0.id == selectedID }) else {
+            controlProjection = nil
             detachTerminal()
             titleLabel.stringValue = "No live session selected"
             subtitleLabel.stringValue = "Background rows remain typed-only"
@@ -353,6 +407,12 @@ final class LiveRunWorkbenchView: NSView {
             updateInspector(nil)
             publishVisibleSessionIfChanged(nil)
             return
+        }
+
+        if controlProjection?.agentID != session.id
+            || controlProjection?.locator != session.locator
+        {
+            controlProjection = nil
         }
 
         titleLabel.stringValue = session.name
@@ -420,6 +480,10 @@ final class LiveRunWorkbenchView: NSView {
 
     private func updateInspector(_ session: LiveRunSessionSummary?) {
         for view in providerHost.subviews { view.removeFromSuperview() }
+        stopButton.isEnabled = false
+        terminateButton.isEnabled = false
+        stopButton.isHidden = true
+        terminateButton.isHidden = true
         guard let session else {
             inspectorName.stringValue = "No selection"
             inspectorModel.stringValue = "model unknown"
@@ -441,6 +505,13 @@ final class LiveRunWorkbenchView: NSView {
         inspectorName.stringValue = session.name
         inspectorModel.stringValue = session.model ?? "model unknown"
         statusValue.stringValue = session.rawStatus
+        if let projection = controlProjection,
+           projection.agentID == session.id,
+           projection.locator == session.locator
+        {
+            renderControlProjection(projection)
+            return
+        }
         set(shellValue, fact: session.shellRoot)
         set(providerRunValue, fact: session.providerRun)
         set(inputValue, fact: session.inputOwner)
@@ -450,6 +521,132 @@ final class LiveRunWorkbenchView: NSView {
         terminateButton.toolTip = session.termination.reason
         stopButton.setAccessibilityHelp(session.providerRun.reason)
         terminateButton.setAccessibilityHelp(session.termination.reason)
+    }
+
+    private func renderControlProjection(_ projection: LiveRunControlProjection) {
+        switch projection.shell.state {
+        case .retained:
+            let root = projection.shell.root!
+            shellValue.stringValue = "retained · zsh pid \(root.pid) · foreground \(projection.shell.foreground!.rawValue)"
+        case .terminated:
+            shellValue.stringValue = "terminated"
+        case .unknown:
+            shellValue.stringValue = "unknown · \(projection.shell.reason!)"
+        }
+        switch projection.providerRun.state {
+        case .running:
+            let process = projection.providerRun.process!
+            providerRunValue.stringValue = "\(projection.providerRun.runID!) · pid \(process.pid) · pgid \(process.processGroupId)"
+        case .absent:
+            providerRunValue.stringValue = "absent"
+        case .unknown:
+            providerRunValue.stringValue = "unknown · \(projection.providerRun.reason!)"
+        }
+        switch projection.inputOwner.state {
+        case .free:
+            inputValue.stringValue = "free"
+        case .owned:
+            inputValue.stringValue = "\(projection.inputOwner.kind!.rawValue) · \(projection.inputOwner.writer!)"
+        case .unknown:
+            inputValue.stringValue = "unknown · \(projection.inputOwner.reason!)"
+        }
+        switch projection.processCensus.state {
+        case .complete:
+            censusValue.stringValue = "\(projection.processCensus.members.count) verified process-tree members"
+        case .terminated:
+            censusValue.stringValue = "terminated · no survivors"
+        case .unknown:
+            censusValue.stringValue = "unknown · \(projection.processCensus.reason!)"
+        }
+        switch projection.termination.state {
+        case .notRequested:
+            terminationValue.stringValue = "not requested"
+        case .terminated:
+            terminationValue.stringValue = "terminated · \(projection.termination.completedAt!)"
+        case .survivors:
+            terminationValue.stringValue = "\(projection.termination.survivors.count) verified survivors"
+        case .unknown:
+            terminationValue.stringValue = "unknown · \(projection.termination.reason!)"
+        }
+        apply(
+            projection.controls.stopProvider,
+            to: stopButton,
+            help: "Stops only the verified provider process group and retains zsh.")
+        apply(
+            projection.controls.terminateTerminal,
+            to: terminateButton,
+            help: "Terminates the verified terminal process tree.")
+    }
+
+    private func apply(
+        _ availability: LiveRunControlAvailability,
+        to button: NSButton,
+        help: String
+    ) {
+        button.isEnabled = availability.enabled
+        button.isHidden = !availability.enabled
+        button.toolTip = availability.reason ?? help
+        button.setAccessibilityHelp(availability.reason ?? help)
+    }
+
+    func controlConfirmation(
+        for operation: LiveRunControlOperation,
+        projection: LiveRunControlProjection
+    ) -> ControlConfirmation {
+        Self.confirmation(for: operation, projection: projection)
+    }
+
+    private static func confirmation(
+        for operation: LiveRunControlOperation,
+        projection: LiveRunControlProjection
+    ) -> ControlConfirmation {
+        let rootPID = projection.shell.root!.pid
+        switch operation {
+        case .stopProvider:
+            return ControlConfirmation(
+                title: "Stop \(ProviderBranding.title(for: projection.provider)) provider?",
+                message: "Stop ProviderRun \(projection.providerRun.runID!) and return control to the retained zsh pid \(rootPID). The retained zsh pid \(rootPID) stays running.",
+                confirmTitle: "Stop Provider")
+        case .terminateTerminal:
+            return ControlConfirmation(
+                title: "Terminate terminal generation \(projection.locator.generation)?",
+                message: "Terminate retained zsh pid \(rootPID) and all \(projection.processCensus.members.count) verified process-tree members. This ends the terminal and cannot be undone.",
+                confirmTitle: "Terminate Terminal")
+        }
+    }
+
+    @objc private func stopProvider() {
+        request(.stopProvider)
+    }
+
+    @objc private func terminateTerminal() {
+        request(.terminateTerminal)
+    }
+
+    private func request(_ operation: LiveRunControlOperation) {
+        guard let projection = controlProjection else { return }
+        let availability = switch operation {
+        case .stopProvider: projection.controls.stopProvider
+        case .terminateTerminal: projection.controls.terminateTerminal
+        }
+        guard availability.enabled, confirmControl(operation, projection) else { return }
+        stopButton.isEnabled = false
+        terminateButton.isEnabled = false
+        onControlRequested?(operation, projection)
+    }
+
+    private static func confirm(
+        _ operation: LiveRunControlOperation,
+        _ projection: LiveRunControlProjection
+    ) -> Bool {
+        let copy = confirmation(for: operation, projection: projection)
+        let alert = NSAlert()
+        alert.alertStyle = operation == .terminateTerminal ? .critical : .warning
+        alert.messageText = copy.title
+        alert.informativeText = copy.message
+        alert.addButton(withTitle: copy.confirmTitle)
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func set(_ label: NSTextField, fact: LiveRunContractFact) {

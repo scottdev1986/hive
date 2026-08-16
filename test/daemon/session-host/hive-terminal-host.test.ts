@@ -209,7 +209,8 @@ class MemoryBindings implements TerminalHostBindingStore {
         binding.locator.sessionId === locator.sessionId &&
         binding.locator.generation === locator.generation &&
         binding.createEvidence === undefined &&
-        binding.terminationAudit === undefined,
+        binding.terminationAudit === undefined &&
+        binding.terminationEvidence === undefined,
     );
     if (index < 0) return false;
     this.values.splice(index, 1);
@@ -268,6 +269,21 @@ class MemoryBindings implements TerminalHostBindingStore {
     );
     if (index < 0) throw new Error("missing binding");
     const recorded = { ...required(this.values[index]), terminationAudit };
+    this.values[index] = recorded;
+    return recorded;
+  }
+
+  recordTerminalHostTerminationEvidence(
+    locator: HiveTerminalBinding["locator"],
+    terminationEvidence: NonNullable<
+      HiveTerminalBinding["terminationEvidence"]
+    >,
+  ): HiveTerminalBinding {
+    const index = this.values.findIndex(
+      (binding) => binding.locator.sessionId === locator.sessionId,
+    );
+    if (index < 0) throw new Error("missing binding");
+    const recorded = { ...required(this.values[index]), terminationEvidence };
     this.values[index] = recorded;
     return recorded;
   }
@@ -642,6 +658,83 @@ describe("HiveTerminalHostAdapter", () => {
     });
   });
 
+  test("projects the sessiond process census and input owner for Live Run controls", async () => {
+    const bindings = new MemoryBindings();
+    bindings.bindTerminalHostSession({ locator, visibility });
+    bindings.completeTerminalHostSession(locator, {
+      expectedExecutable: sessionSpec.expectedExecutable,
+      executableVerified: true,
+      verifiedShellRoot: createResult.inspection.shellRoot,
+      geometry,
+      visibility: createResult.inspection.visibility,
+    });
+    const observed = {
+      ...inspection,
+      inputOwner: {
+        token: "input-token",
+        writer: "workspace-fixture",
+        kind: "user" as const,
+        leaseExpiresAt: "2026-07-18T01:00:15.000Z",
+      },
+      descendants: [
+        { processId: 4_100, startToken: "4100:123400" },
+        { processId: 4_200, startToken: "4200:123400" },
+      ],
+    };
+    const adapter = new HiveTerminalHostAdapter(
+      {
+        waitForHostExit: async () => ({ kind: "inherited" as const }),
+        issueAttach: async () => {
+          throw new Error("issueAttach not under test");
+        },
+        create: async () => createResult,
+        claimInput: async () => ({
+          state: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        submitInput: async () => ({
+          transactionId: "transaction-fixture",
+          stage: "unknown" as const,
+          byteRange: null,
+          orderedAt: null,
+          availableCreditBytes: 0,
+          consumedByProcess: "not-claimed" as const,
+          completeness: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        resize: async () => ({
+          state: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        list: async () => [observed],
+        inspect: async () => observed,
+        terminate: async () => termination,
+      },
+      bindings,
+      locator.instanceId,
+      { providerRuns },
+    );
+
+    await expect(adapter.inspectControl(locator)).resolves.toMatchObject({
+      terminal: {
+        shellRoot: createResult.inspection.shellRoot,
+      },
+      processCensus: {
+        completeness: "complete",
+        members: [
+          { pid: 4_000, startToken: "4000:123400" },
+          { pid: 4_100, startToken: "4100:123400" },
+          { pid: 4_200, startToken: "4200:123400" },
+        ],
+      },
+      inputOwner: {
+        writer: "workspace-fixture",
+        kind: "user",
+      },
+      foregroundProcessGroupId: 4_000,
+    });
+  });
+
   test("derives positive pixels and downgrades stale lifecycle evidence", async () => {
     const bindings = new MemoryBindings();
     bindings.bindTerminalHostSession({ locator, visibility });
@@ -816,6 +909,24 @@ describe("HiveTerminalHostAdapter", () => {
           diagnosticId: "SESSIOND_TERMINATION_UNREAPED",
         },
       ],
+    });
+    expect(
+      bindings.getTerminalHostBindingByLocator(locator)?.terminationEvidence,
+    ).toEqual({
+      completedAt: expect.any(String),
+      result: {
+        locator,
+        state: "terminated",
+        exit: null,
+        survivors: [],
+        errors: [
+          {
+            phase: "neutral-control",
+            code: "UNKNOWN",
+            diagnosticId: "SESSIOND_TERMINATION_UNREAPED",
+          },
+        ],
+      },
     });
   });
 

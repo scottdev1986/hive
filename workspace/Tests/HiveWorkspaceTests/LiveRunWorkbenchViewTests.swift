@@ -51,7 +51,7 @@ struct LiveRunWorkbenchViewTests {
         #expect(view.selectedLocator?.generation == 8)
     }
 
-    @Test("Five background rows stay typed-only and unavailable controls say unknown")
+    @Test("Five background rows stay typed-only and unproved controls stay absent")
     func fiveTypedRowsOneSurface() throws {
         var surfaceCount = 0
         let view = LiveRunWorkbenchView { session in
@@ -72,8 +72,55 @@ struct LiveRunWorkbenchViewTests {
         #expect(view.installedTerminalCount == 1)
         #expect(!view.stopProviderControlEnabled)
         #expect(!view.terminateTerminalControlEnabled)
+        #expect(view.stopProviderControlHidden)
+        #expect(view.terminateTerminalControlHidden)
         #expect(view.terminationFactText.contains("unknown"))
         #expect(view.terminationFactText.contains("process-tree-escapees-unaccounted"))
+    }
+
+    @Test("Verified controls are visible, distinct, and carry exact confirmation copy")
+    func verifiedControls() throws {
+        var confirmed: [LiveRunControlOperation] = []
+        var requested: [LiveRunControlOperation] = []
+        let view = LiveRunWorkbenchView(
+            terminalFactory: { FakeSurface(locator: $0.locator!) },
+            confirmControl: { operation, _ in
+                confirmed.append(operation)
+                return true
+            })
+        view.onControlRequested = { operation, _ in requested.append(operation) }
+        view.setRouteVisible(true)
+        view.apply(try projection([agent("a", provider: "codex", generation: 1)]))
+        let control = try controlProjection()
+
+        view.applyControlProjection(control)
+
+        #expect(!view.stopProviderControlHidden)
+        #expect(!view.terminateTerminalControlHidden)
+        #expect(view.stopProviderControlEnabled)
+        #expect(view.terminateTerminalControlEnabled)
+        let stopCopy = view.controlConfirmation(for: .stopProvider, projection: control)
+        #expect(stopCopy.title == "Stop Codex provider?")
+        #expect(stopCopy.message.contains("ProviderRun 018f1e90"))
+        #expect(stopCopy.message.contains("retained zsh pid 4000 stays running"))
+        #expect(!stopCopy.message.contains("whole terminal"))
+        let terminateCopy = view.controlConfirmation(
+            for: .terminateTerminal, projection: control)
+        #expect(terminateCopy.title == "Terminate terminal generation 1?")
+        #expect(terminateCopy.message.contains("retained zsh pid 4000"))
+        #expect(terminateCopy.message.contains("all 3 verified process-tree members"))
+        #expect(terminateCopy.message.contains("ends the terminal"))
+
+        let stopButton = try #require(
+            findView(in: view, identifier: "live-run-stop-provider") as? NSButton)
+        let terminateButton = try #require(
+            findView(in: view, identifier: "live-run-terminate-terminal") as? NSButton)
+        stopButton.performClick(nil)
+        view.applyControlProjection(control)
+        terminateButton.performClick(nil)
+
+        #expect(confirmed == [.stopProvider, .terminateTerminal])
+        #expect(requested == [.stopProvider, .terminateTerminal])
     }
 
     @Test("Leaving Live Run detaches its viewer and returning creates a fresh one")
@@ -168,12 +215,15 @@ struct LiveRunWorkbenchViewTests {
         #expect(visibility == ["id-a:1", "id-a:2"])
     }
 
-    @Test("Run hierarchy rows use a top-origin clip view")
+    @Test("Live session rows use a truthful label and top-origin clip view")
     func railClipViewIsFlipped() throws {
         let view = LiveRunWorkbenchView(terminalFactory: nil)
         let scrollView = try #require(firstSubview(of: NSScrollView.self, in: view))
+        let labels = textFields(in: view).map(\.stringValue)
 
         #expect(scrollView.contentView.isFlipped)
+        #expect(labels.contains("SESSIONS"))
+        #expect(!labels.contains("RUN HIERARCHY"))
     }
 
     @Test("Shell attach and detach commands consume the workbench's exact locator")
@@ -216,6 +266,29 @@ struct LiveRunWorkbenchViewTests {
         """
     }
 
+    private func controlProjection() throws -> LiveRunControlProjection {
+        try JSONDecoder().decode(LiveRunControlProjection.self, from: Data(#"""
+        {"schemaVersion":1,"observedAt":"2026-08-15T20:00:00.000Z",
+         "agentId":"id-a","agentName":"a","provider":"codex",
+         "locator":{"schemaVersion":1,"instanceId":"rig",
+           "subject":{"kind":"agent","agentId":"id-a"},"generation":1,
+           "sessionId":"ses_018f1e90-7b5a-7cc0-8000-000000000001",
+           "hostKind":"sessiond","engineBuildId":"engine"},
+         "providerRun":{"state":"running","runId":"018f1e90-7b5a-7cc0-8000-000000000902",
+           "provider":"codex","process":{"pid":4100,"startToken":"4100:1",
+           "processGroupId":4100,"observedAt":"2026-08-15T20:00:00.000Z"}},
+         "shell":{"state":"retained","root":{"pid":4000,"startToken":"4000:1",
+           "processGroupId":4000},"foreground":"provider"},
+         "inputOwner":{"state":"free"},
+         "processCensus":{"state":"complete","source":"sessiond-process-tree",
+           "members":[{"pid":4000,"startToken":"4000:1"},{"pid":4100,"startToken":"4100:1"},
+           {"pid":4200,"startToken":"4200:1"}],"observedAt":"2026-08-15T20:00:00.000Z"},
+         "termination":{"state":"not-requested"},
+         "controls":{"stopProvider":{"enabled":true,"reason":null},
+           "terminateTerminal":{"enabled":true,"reason":null}}}
+        """#.utf8))
+    }
+
     private func findView(in view: NSView, identifier: String) -> NSView? {
         if view.accessibilityIdentifier() == identifier { return view }
         for subview in view.subviews {
@@ -230,6 +303,11 @@ struct LiveRunWorkbenchViewTests {
             if let match = firstSubview(of: type, in: subview) { return match }
         }
         return nil
+    }
+
+    private func textFields(in view: NSView) -> [NSTextField] {
+        let nested = view.subviews.flatMap { textFields(in: $0) }
+        return (view as? NSTextField).map { [$0] } ?? nested
     }
 }
 
