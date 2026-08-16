@@ -557,7 +557,9 @@ const FixtureTaskReceiptSchema = z
   })
   .loose();
 
-async function seedIsolatedFixtureTask(): Promise<string> {
+async function seedIsolatedFixtureTask(
+  provider: CapabilityProvider,
+): Promise<string> {
   assertIsolatedQaHiveHome(
     process.env.HIVE_HOME ?? "",
     join(homedir(), ".hive"),
@@ -576,7 +578,7 @@ async function seedIsolatedFixtureTask(): Promise<string> {
       revision: "1",
       parentTaskId: null,
       dependsOn: [],
-      acceptanceIds: ["u5-isolated-fixture"],
+      acceptanceIds: [`u5-isolated-fixture-${provider}`],
       assigneeNodeId: null,
       pathLeases: [{ path: "docs/qa/", mode: "read" }],
       branch: "dev",
@@ -587,8 +589,8 @@ async function seedIsolatedFixtureTask(): Promise<string> {
       artifactRefs: [],
       runId: bootstrap.runId,
       delegationSpec: {
-        objective: "Isolated U5 fixture task so hive_spawn has a board story",
-        parentAcceptanceIds: ["u5-isolated-fixture"],
+        objective: `Isolated U5 fixture task for the ${provider} spawn`,
+        parentAcceptanceIds: [`u5-isolated-fixture-${provider}`],
         childOutcome:
           "The isolated spawn is accountable on this ephemeral board",
         terminationCondition: "The U5 live harness finishes or refuses by name",
@@ -1367,12 +1369,13 @@ function safeGrant(
 }
 
 async function runProof(): Promise<Record<string, unknown>> {
-  const fixtureSpawnTaskId = await seedIsolatedFixtureTask();
+  const isolatedFixtureTasks: Partial<Record<CapabilityProvider, string>> = {};
   writeEvidence("00-isolated-fixture-task.json", {
     schemaVersion: 1,
     liveAccountabilityTaskId,
     isolatedHiveHome,
-    fixtureTaskId: fixtureSpawnTaskId,
+    fixtureTasks: isolatedFixtureTasks,
+    note: "one fixture task is seeded per spawn, never one for the run",
   });
   initialProjectHead = git(project, "rev-parse", "HEAD");
   initialProjectStatus = git(project, "status", "--porcelain");
@@ -1610,6 +1613,15 @@ async function runProof(): Promise<Record<string, unknown>> {
       state: "pending",
     };
     spawnRequests.push(request);
+    const fixtureSpawnTaskId = await seedIsolatedFixtureTask(provider);
+    isolatedFixtureTasks[provider] = fixtureSpawnTaskId;
+    writeEvidence("00-isolated-fixture-task.json", {
+      schemaVersion: 1,
+      liveAccountabilityTaskId,
+      isolatedHiveHome,
+      fixtureTasks: isolatedFixtureTasks,
+      note: "one fixture task is seeded per spawn, never one for the run",
+    });
     let admission: z.infer<typeof SpawnSummarySchema>;
     try {
       admission = await callTool(
