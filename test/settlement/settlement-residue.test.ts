@@ -437,7 +437,10 @@ describe("Git-backed settlement residue", () => {
       await expect(
         lifecycle.executeDestructiveDecision(decision.decisionId, "queen"),
       ).rejects.toThrow("settlement evidence changed");
-      expect(await git(repo, "rev-parse", preserved)).toBe(tip);
+      // Positive control for the reader that must report this ref gone below.
+      expect(
+        await git(repo, "for-each-ref", "--format=%(objectname)", preserved),
+      ).toBe(tip);
 
       await git(repo, "branch", "-D", worktree.branch);
       const executed = await lifecycle.executeDestructiveDecision(
@@ -449,7 +452,9 @@ describe("Git-backed settlement residue", () => {
       // The receipt names only what execution removed: a branch that was already gone
       // was never this execution's to claim.
       expect(executed.removedRefs).toEqual([preserved]);
-      expect(await git(repo, "for-each-ref", preserved)).toBe("");
+      expect(
+        await git(repo, "for-each-ref", "--format=%(objectname)", preserved),
+      ).toBe("");
       expect(await cases.list("main")).toEqual([]);
     } finally {
       db.close();
