@@ -24,6 +24,7 @@ import {
   readRefOid,
   type StewardshipRef,
   type SettlementMutationIssuer,
+  settlementBranchTarget,
   stewardshipBundleRefs,
   type WorktreeSettlementMutator,
   unavailableAgentNames,
@@ -990,8 +991,10 @@ export class WorktreeLifecycleService {
       worktreePath: proof.snapshot.worktreePath,
       // A branch the proof could not find is a branch there is nothing to delete: the record still
       // names it, and only the measurement knows whether it is still there.
-      branch: proof.snapshot.branchOid === null ? null : stored.record.branch,
-      branchOid: proof.snapshot.branchOid,
+      branch: settlementBranchTarget(
+        stored.record.branch,
+        proof.snapshot.branchOid,
+      ),
       expectedDigest: proof.snapshot.digest,
       revalidate: async () => {
         const current = await this.cases.read(stored.record.caseId);
@@ -2276,13 +2279,19 @@ export class WorktreeLifecycleService {
       throw new Error("settlement case changed after the decision was minted");
     }
     const expectedDigest = this.decisionDigest(decision.record);
+    // The decision was minted from a measurement, so a null oid means the proof found no
+    // branch to delete. The revalidation below re-measures: a branch that came back changes
+    // the evidence digest and invalidates this decision before anything is removed.
+    const branch = settlementBranchTarget(
+      decision.record.branch,
+      decision.record.branchOid,
+    );
     const authority = this.settlementIssuer.issue({
       kind: "discard-bundle",
       decisionId,
       repoRoot: this.deps.repoRoot,
       worktreePath: decision.record.worktreePath,
-      branch: decision.record.branch,
-      branchOid: decision.record.branchOid,
+      branch,
       refs: decision.record.refs,
       expectedDigest,
       revalidate: async () => {
@@ -2358,9 +2367,7 @@ export class WorktreeLifecycleService {
       }
     }
     const removedRefs = [
-      ...(decision.record.branch === null
-        ? []
-        : [`refs/heads/${decision.record.branch}`]),
+      ...(branch === null ? [] : [`refs/heads/${branch.name}`]),
       ...decision.record.refs.map(({ ref }) => ref),
     ];
     const executed = await this.decisions.markExecuted(decision, {

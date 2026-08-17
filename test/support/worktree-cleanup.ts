@@ -2,6 +2,7 @@ import {
   createWorktreeSettlementBoundary,
   listWorktrees,
   readRefOid,
+  settlementBranchTarget,
 } from "../../src/adapters/worktrees";
 
 export async function releaseTestWorktree(
@@ -28,8 +29,7 @@ export async function releaseTestWorktree(
       kind: "release-worktree",
       repoRoot,
       worktreePath,
-      branch,
-      branchOid,
+      branch: settlementBranchTarget(branch, branchOid),
       expectedDigest: "test-cleanup",
       revalidate: async () => "test-cleanup",
     }),

@@ -82,14 +82,38 @@ export type SettlementMutationResult =
   | { readonly kind: "branch-reset"; readonly branch: string }
   | { readonly kind: "bundle-discarded"; readonly decisionId: string };
 
+/**
+ * The branch a settlement mutation is authorized to delete, carried as one value so a name
+ * can never arrive without the oid that proves the branch has not moved since it was measured.
+ */
+export interface SettlementBranchTarget {
+  readonly name: string;
+  readonly oid: string;
+}
+
+/**
+ * Pairs a branch name with the oid a proof measured for it.
+ *
+ * Null means there is no branch left to delete, and it is a measured result rather than a gap:
+ * a proof that cannot read the ref fails instead of reporting a null oid. Every mutation builds
+ * its target through here, so no caller can hand the mutator a name whose oid it must guess at.
+ */
+export function settlementBranchTarget(
+  branch: string | null,
+  measuredOid: string | null,
+): SettlementBranchTarget | null {
+  return branch === null || measuredOid === null
+    ? null
+    : { name: branch, oid: measuredOid };
+}
+
 type SettlementMutation =
   | {
       readonly kind: "release-worktree";
       readonly repoRoot: string;
       /** Null when the proof found nothing to remove: a case that never held a worktree, or one whose registration and directory are both already gone. The branch below is then all that is left to release. */
       readonly worktreePath: string | null;
-      readonly branch: string | null;
-      readonly branchOid: string | null;
+      readonly branch: SettlementBranchTarget | null;
       readonly expectedDigest: string;
       readonly revalidate: () => Promise<string>;
     }
@@ -114,8 +138,7 @@ type SettlementMutation =
       readonly decisionId: string;
       readonly repoRoot: string;
       readonly worktreePath: string | null;
-      readonly branch: string | null;
-      readonly branchOid: string | null;
+      readonly branch: SettlementBranchTarget | null;
       readonly refs: ReadonlyArray<{ ref: string; oid: string }>;
       readonly expectedDigest: string;
       readonly revalidate: () => Promise<string>;
@@ -1717,23 +1740,24 @@ export function createWorktreeSettlementBoundary(): {
                 discardTracked: true,
                 ...(mutation.branch === null
                   ? {}
-                  : { branch: mutation.branch }),
+                  : { branch: mutation.branch.name }),
               });
             }
             if (mutation.branch !== null) {
-              if (mutation.branchOid === null) {
-                throw new Error("settlement proof omitted the branch oid");
-              }
               await assertBranchMutationAllowed(
                 mutation.repoRoot,
-                mutation.branch,
+                mutation.branch.name,
               );
               await compareAndDeleteRef(
                 mutation.repoRoot,
-                `refs/heads/${mutation.branch}`,
-                mutation.branchOid,
+                `refs/heads/${mutation.branch.name}`,
+                mutation.branch.oid,
               );
-              await markBranchOwned(mutation.repoRoot, mutation.branch, false);
+              await markBranchOwned(
+                mutation.repoRoot,
+                mutation.branch.name,
+                false,
+              );
             }
             return {
               kind: "worktree-released",
@@ -1789,19 +1813,20 @@ export function createWorktreeSettlementBoundary(): {
                 branchOwnership: "decision-bound",
                 ...(mutation.branch === null
                   ? {}
-                  : { branch: mutation.branch }),
+                  : { branch: mutation.branch.name }),
               });
             }
             if (mutation.branch !== null) {
-              if (mutation.branchOid === null) {
-                throw new Error("destructive decision omitted the branch oid");
-              }
               await compareAndDeleteRef(
                 mutation.repoRoot,
-                `refs/heads/${mutation.branch}`,
-                mutation.branchOid,
+                `refs/heads/${mutation.branch.name}`,
+                mutation.branch.oid,
               );
-              await markBranchOwned(mutation.repoRoot, mutation.branch, false);
+              await markBranchOwned(
+                mutation.repoRoot,
+                mutation.branch.name,
+                false,
+              );
             }
             for (const { ref, oid } of mutation.refs) {
               await compareAndDeleteRef(mutation.repoRoot, ref, oid);

@@ -133,6 +133,7 @@ async function remeasure(
     evidenceFormat: "disposition-v1",
     regenerable: [...proof.snapshot.regenerable],
   });
+  return proof.snapshot;
 }
 
 describe("Git-backed settlement residue", () => {
@@ -381,6 +382,75 @@ describe("Git-backed settlement residue", () => {
         lifecycle.executeDestructiveDecision(decision.decisionId, "queen"),
       ).rejects.toThrow("settlement evidence changed");
       expect(await git(repo, "branch", "--list", worktree.branch)).not.toBe("");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("D4 a decision executes on a branch measured absent and refuses one that returns", async () => {
+    const { repo, worktree, db, agent, lifecycle } = await fixture();
+    try {
+      await writeFile(join(worktree.path, "work.txt"), "unlanded work\n");
+      await git(worktree.path, "add", "work.txt");
+      await git(worktree.path, "commit", "-m", "work that never landed");
+      const tip = await git(worktree.path, "rev-parse", "HEAD");
+      const preserved = `refs/hive-preserved/${worktree.branch}`;
+      await git(repo, "update-ref", preserved, tip);
+      // The owner deletes the worktree and the branch by hand. The preserved ref is the only
+      // thing still holding the commits, so the case has content and cannot release itself.
+      await git(repo, "worktree", "remove", "--force", worktree.path);
+      await git(repo, "branch", "-D", worktree.branch);
+      const cases = new SettlementCaseStore(repo);
+      const [opened] = await cases.list("main");
+      if (opened === undefined) throw new Error("missing settlement case");
+      await cases.update(opened, {
+        ...opened.record,
+        preservedRef: preserved,
+      });
+      const measured = await remeasure(
+        cases,
+        repo,
+        agent,
+        "2026-08-14T12:10:00.000Z",
+      );
+      expect(measured.branchOid).toBeNull();
+      expect(measured.missing).toEqual(["branch", "worktree"]);
+
+      const [ready] = await cases.list("main");
+      if (ready === undefined || ready.record.evidenceDigest === null) {
+        throw new Error("absent-branch case has no measured evidence");
+      }
+      const decision = await lifecycle.mintDestructiveDecision({
+        caseId: ready.record.caseId,
+        revision: ready.record.revision,
+        evidenceDigest: ready.record.evidenceDigest,
+        reason: "the owner deleted the worktree and branch by hand",
+        expiresAt: "2026-08-14T12:15:00.000Z",
+        decisionOwner: "user",
+      });
+      expect(decision.branchOid).toBeNull();
+      expect(decision.refs).toEqual([{ ref: preserved, oid: tip }]);
+
+      // A branch that comes back is drift, and the decision minted against its absence
+      // must refuse rather than delete a ref nobody measured.
+      await git(repo, "branch", worktree.branch, tip);
+      await expect(
+        lifecycle.executeDestructiveDecision(decision.decisionId, "queen"),
+      ).rejects.toThrow("settlement evidence changed");
+      expect(await git(repo, "rev-parse", preserved)).toBe(tip);
+
+      await git(repo, "branch", "-D", worktree.branch);
+      const executed = await lifecycle.executeDestructiveDecision(
+        decision.decisionId,
+        "queen",
+      );
+
+      expect(executed.executedBy).toBe("queen");
+      // The receipt names only what execution removed: a branch that was already gone
+      // was never this execution's to claim.
+      expect(executed.removedRefs).toEqual([preserved]);
+      expect(await git(repo, "for-each-ref", preserved)).toBe("");
+      expect(await cases.list("main")).toEqual([]);
     } finally {
       db.close();
     }
