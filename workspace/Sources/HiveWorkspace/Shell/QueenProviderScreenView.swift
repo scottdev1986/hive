@@ -52,11 +52,6 @@ final class QueenProviderScreenView: NSView {
         stack.addArrangedSubview(confirmation)
         confirmation.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        let availability = ShellAvailabilityPanel(
-            route: .queen, screen: screen, contentInset: 0)
-        stack.addArrangedSubview(availability)
-        availability.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Space.page),

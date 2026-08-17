@@ -49,10 +49,6 @@ final class ModelsQuotaScreenView: NSView {
         }
 
         if let view {
-            let evidence = ShellAvailabilityPanel(
-                route: .modelsQuota, screen: screen, contentInset: 0)
-            stack.addArrangedSubview(evidence)
-            evidence.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
             let cards = Self.providerCards(
                 view: view,
                 writable: mutationsAllowed,
