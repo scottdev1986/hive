@@ -57,7 +57,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 . "$SCRIPT_DIR/repo-root.sh"
 . "$SCRIPT_DIR/declared-screens.sh"
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(qa_repo_root "$SCRIPT_DIR")/workspace}"
-BINARY="$WORKSPACE_ROOT/.build/debug/HiveWorkspace"
+BINARY="$WORKSPACE_ROOT/.build/debug/HiveWorkspaceQA"
 ARTIFACTS="${ARTIFACTS:-$(mktemp -d -t workspace-tour)}"
 
 die() {
@@ -121,6 +121,13 @@ window_chrome_hidden() {
 # menu bar, so frame is a target no such window can ever reach.
 window_fills_screen() {
   lldb_value "NSWindow *tourWindow = (NSWindow*)[[$NSAPP windows] objectAtIndex:0]; NSRect tourFrame = (NSRect)[tourWindow frame]; NSRect tourScreen = (NSRect)[(NSScreen*)[tourWindow screen] visibleFrame]; (long)(tourFrame.size.width >= tourScreen.size.width && tourFrame.size.height >= tourScreen.size.height)"
+}
+
+# Set the window against its current screen immediately before each route
+# capture. The shell can move between screens during a long QA walk, and the
+# evidence must use the visible frame of the screen that actually owns it.
+zoom_window_to_active_screen() {
+  lldb_value "extern void objc_msgSend(void); typedef struct { double x; double y; double width; double height; } TourRect; NSWindow *tourWindow = (NSWindow*)[[$NSAPP windows] objectAtIndex:0]; NSScreen *tourScreen = (NSScreen*)[tourWindow screen]; TourRect tourTarget = ((TourRect(*)(id,SEL))(void*)&objc_msgSend)(tourScreen,@selector(visibleFrame)); ((void(*)(id,SEL,TourRect,BOOL,BOOL))(void*)&objc_msgSend)(tourWindow,@selector(setFrame:display:animate:),tourTarget,YES,NO); [[tourWindow contentView] layoutSubtreeIfNeeded]; (long)tourWindow"
 }
 
 # BFS the window's view tree for the button with this exact title and schedule
@@ -238,6 +245,19 @@ png_defect() {
     return 1
   fi
   return 0
+}
+
+# The image file is the evidence, so read the dimensions it actually encoded
+# instead of reporting the window geometry that was only requested of AppKit.
+png_pixel_size() {
+  local dimensions width height
+  dimensions=$(sips -g pixelWidth -g pixelHeight "$1" 2>/dev/null \
+    | awk '/pixelWidth:/{width=$2} /pixelHeight:/{height=$2} END {print width " " height}')
+  read -r width height <<< "$dimensions"
+  case "$width" in ''|*[!0-9]*) return 1;; esac
+  case "$height" in ''|*[!0-9]*) return 1;; esac
+  [ "$width" -gt 0 ] && [ "$height" -gt 0 ] || return 1
+  printf '%sx%s px' "$width" "$height"
 }
 
 # WindowServer re-encodes attached menu shadows on each capture and can move a
@@ -602,6 +622,12 @@ live)
     --workspace-shell-fullscreen)
   if [ -n "${HIVE_QA_PROJECT:-}" ]; then
     LAUNCH_ARGS+=(--project "$HIVE_QA_PROJECT")
+  fi
+  if [ -n "${HIVE_QA_PROJECT_ID:-}" ]; then
+    LAUNCH_ARGS+=(--project-id "$HIVE_QA_PROJECT_ID")
+  fi
+  if [ -n "${HIVE_QA_PROJECT_NAME:-}" ]; then
+    LAUNCH_ARGS+=(--project-name "$HIVE_QA_PROJECT_NAME")
   fi
   if [ -n "${HIVE_QA_INSTANCE_ID:-}" ]; then
     LAUNCH_ARGS+=(--instance-id "$HIVE_QA_INSTANCE_ID")
@@ -1131,6 +1157,15 @@ for i in "${!TITLES[@]}"; do
     continue
   fi
 
+  zoomed=$(zoom_window_to_active_screen)
+  if [ -z "$zoomed" ] || [ "$zoomed" = "0" ] \
+    || [ "$(window_fills_screen)" != "1" ]; then
+    route_red "$slug" window-size \
+      "window did not fill the active screen's visible frame before capture"
+    route_status "$slug" blocked "window size is not assessable for this capture"
+    continue
+  fi
+
   # There is no rendering-finished signal, so settledness is measured instead
   # of guessed: two captures a second apart must be identical. This also
   # catches a stray keystroke landing in the window between captures.
@@ -1147,6 +1182,8 @@ for i in "${!TITLES[@]}"; do
     route_status "$slug" blocked "capture unusable; nothing about this screen was assessable"
     continue
   fi
+  pixels=$(png_pixel_size "$png") \
+    || { route_red "$slug" pixel-size "could not read captured PNG dimensions"; route_status "$slug" blocked "capture dimensions are not assessable"; continue; }
   sleep 1
   # screencapture refuses dot-prefixed destinations, so the scratch capture
   # gets a visible name and is removed after the comparison.
@@ -1188,8 +1225,8 @@ for i in "${!TITLES[@]}"; do
   fi
 
   if [ "${#REDS[@]}" -eq "$reds_before" ]; then
-    route_status "$slug" ok "captured and settled"
-    echo "ok $slug -> $png"
+    route_status "$slug" ok "captured ${pixels} and settled"
+    echo "ok $slug -> $png (${pixels})"
   elif [ -n "$identical" ]; then
     route_status "$slug" blocked "renders the same pixels as the previous route; anything needing to tell the two apart is unassessable here"
   else
