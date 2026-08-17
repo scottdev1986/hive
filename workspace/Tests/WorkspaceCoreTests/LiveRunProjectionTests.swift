@@ -39,6 +39,37 @@ struct LiveRunProjectionTests {
         })
     }
 
+    @Test("Queen is the first attachable session from the orchestrator snapshot")
+    func queenIsFirstSessionFromOrchestrator() throws {
+        let line = try #require(FeedLine.parse(
+            """
+            {"v":1,"agents":[{"id":"id-a","name":"david","tool":"codex","status":"idle",
+             "sessionLocator":{"schemaVersion":1,"instanceId":"rig",
+               "subject":{"kind":"agent","agentId":"id-a"},"generation":2,
+               "sessionId":"ses_018f1e90-7b5a-7cc0-8000-000000000002",
+               "hostKind":"sessiond","engineBuildId":"engine"}}],
+             "orchestrator":{"status":"working","host":"sessiond","hostState":"running",
+               "sessionLocator":{"schemaVersion":1,"instanceId":"rig",
+                 "subject":{"kind":"root"},"generation":6,
+                 "sessionId":"ses_018f1e90-7b5a-7cc0-8000-000000000001",
+                 "hostKind":"sessiond","engineBuildId":"engine"},
+               "presentation":{"panePresence":"visible","terminalState":"live",
+                 "headerDetail":"working","paneStatus":{"kind":"running"},
+                 "activity":"working"}}}
+            """))
+
+        let projection = try LiveRunProjection(feedLine: line)
+
+        #expect(projection.sessions.count == 2)
+        let queen = try #require(projection.sessions.first)
+        #expect(queen.isQueen)
+        #expect(queen.name == "queen")
+        #expect(queen.agentID == "root")
+        #expect(queen.locator?.subject.kind == "root")
+        #expect(queen.locator?.generation == 6)
+        #expect(projection.sessions[1].name == "david")
+    }
+
     @Test("An incomplete locator stays visible as unknown and never attachable")
     func incompleteLocator() throws {
         let line = try #require(FeedLine.parse(

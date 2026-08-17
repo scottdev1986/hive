@@ -15,7 +15,8 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
         screen: ShellScreenProjection,
         horizon: OuterHorizonScreenState,
         onSelect: @escaping (String) -> Void,
-        onToggleExpansion: @escaping (String) -> Void
+        onToggleExpansion: @escaping (String) -> Void,
+        showsDetail: Bool = true
     ) {
         self.horizon = horizon
         rows = horizon.visibleRows
@@ -31,18 +32,24 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
         let hierarchyWidth = hierarchy.widthAnchor.constraint(equalToConstant: 292)
         hierarchyWidth.priority = NSLayoutConstraint.Priority(200)
         hierarchy.widthAnchor.constraint(lessThanOrEqualToConstant: 292).isActive = true
-        let separator = NSBox.hdsSeparator()
-        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        let detail = makeDetailScroll(screen: screen)
 
-        let row = NSStackView(views: [hierarchy, separator, detail])
+        let row: NSStackView
+        if showsDetail {
+            let separator = NSBox.hdsSeparator()
+            separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+            let detail = makeDetailScroll(screen: screen)
+            detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            row = NSStackView(views: [hierarchy, separator, detail])
+            separator.heightAnchor.constraint(equalTo: row.heightAnchor).isActive = true
+        } else {
+            row = NSStackView(views: [hierarchy])
+        }
         row.translatesAutoresizingMaskIntoConstraints = false
         row.orientation = .horizontal
         row.distribution = .fill
         row.spacing = 0
         row.alignment = .top
         row.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(row)
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -50,7 +57,6 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
             row.topAnchor.constraint(equalTo: topAnchor),
             row.bottomAnchor.constraint(equalTo: bottomAnchor),
             hierarchyWidth,
-            separator.heightAnchor.constraint(equalTo: row.heightAnchor),
         ])
         synchronizeSelection()
     }
@@ -566,13 +572,15 @@ private final class OuterHorizonTreeCell: NSTableCellView {
         let assignment = Self.present(row.node.assignmentKind) { $0.rawValue }
             ?? "assignment absent"
         let lifecycle = Self.present(row.node.lifecycle) { $0.rawValue } ?? "lifecycle absent"
+        let titleText = assignment == "assignment absent"
+            ? binding
+            : "\(binding) · \(assignment)"
 
-        let title = NSTextField(labelWithString: binding)
+        let title = NSTextField(labelWithString: titleText)
         title.font = Theme.Font.headline
         title.lineBreakMode = .byTruncatingTail
-        title.compressHorizontally(priority: 300, toolTip: binding)
-        let detail = NSTextField(labelWithString:
-            "\(row.node.nodeId) · \(role) / \(assignment) · \(lifecycle)")
+        title.compressHorizontally(priority: 300, toolTip: titleText)
+        let detail = NSTextField(labelWithString: "\(role) · \(lifecycle)")
         detail.font = Theme.Font.caption
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail

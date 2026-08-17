@@ -13,19 +13,19 @@ final class CapsuleBadge: NSView {
 
         var fill: NSColor {
             switch self {
-            case .neutral: return Theme.neutralBadgeFill
-            case .info: return Theme.infoBadgeFill
-            case .warning: return Theme.warningBadgeFill
-            case .critical: return Theme.criticalBadgeFill
+            case .neutral: return Theme.Chrome.panel2
+            case .info: return Theme.Chrome.mockup(0x13231C)
+            case .warning: return Theme.Chrome.mockup(0x211D16)
+            case .critical: return Theme.Chrome.mockup(0x261615)
             }
         }
 
         var tint: NSColor {
             switch self {
-            case .neutral: return .secondaryLabelColor
-            case .info: return .systemBlue
-            case .warning: return .systemOrange
-            case .critical: return .systemRed
+            case .neutral: return Theme.Chrome.muted
+            case .info: return Theme.Chrome.accent
+            case .warning: return Theme.Chrome.yellow
+            case .critical: return Theme.Chrome.red
             }
         }
     }

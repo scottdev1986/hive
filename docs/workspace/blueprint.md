@@ -1,17 +1,17 @@
 # Workspace Blueprint
 
-Updated: 2026-07-14
+Updated: 2026-08-16
 Source: Hive source tree, 2026-07-14
 
 ## Summary
 
-The Workspace is a shipping signed Swift/AppKit app (`workspace/`) whose panes are native terminal surfaces attached to daemon-owned sessiond sessions running the vendors' own TUIs; Hive owns the window, the layout, status, attention, and the project boundary, and owns none of the conversation. This article records the reasoning the code cannot state — what was rejected, what reversed, and why.
+The Workspace is a shipping signed Swift/AppKit app (`workspace/`) whose Live Run surface attaches one HiveTerminalKit viewer to a daemon-owned sessiond session running Hive Agent UI. Hive owns the window, the mockup chrome, status, attention, and the project boundary. Agent UI owns the conversation pixels. This article records the reasoning the code cannot state — what was rejected, what reversed, and why.
 
 ## What is settled
 
 **Hive owns the experience.** The flagship is a signed AppKit application, not AppleScript around Terminal.app. Owning windows buys native focus, animation, restoration, VoiceOver, IME, selection, and links, and removes Terminal.app's mutable tab identity, Automation timing, and Accessibility-permission failure modes.
 
-**Hyprland inspires behavior; the visual language is macOS HIG.** The tiling model — stable master, satellite workers, attention that never steals focus — is Hyprland's. The surface is standard AppKit. A custom-skinned tiling-WM aesthetic was rejected because it would spend the platform behavior that owning the windows was chosen to gain (appearance adaptation, accessibility, familiarity) to buy only novelty. See [ui-design-system.md](ui-design-system.md).
+**Hyprland inspires tiling behavior. The visual language is the Workspace mockup.** The tiling model — stable master, satellite workers, attention that never steals focus — is Hyprland's. The surface is still AppKit so focus, VoiceOver, IME, and window management stay native. Color, density, chrome, and layout follow `docs/design/split-horizon-transition.html`. A screen that does not look like that mockup is unfinished, not a permitted HIG reinterpretation. See [ui-design-system.md](ui-design-system.md).
 
 **Structured events are truth.** Codex app-server, Claude stream-json control and hooks, and conformant future adapters drive lifecycle and attention. Screen scraping is never authoritative. Panes render bytes; agent state never depends on terminal contents.
 

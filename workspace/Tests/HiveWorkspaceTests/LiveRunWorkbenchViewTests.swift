@@ -222,8 +222,61 @@ struct LiveRunWorkbenchViewTests {
         let labels = textFields(in: view).map(\.stringValue)
 
         #expect(scrollView.contentView.isFlipped)
-        #expect(labels.contains("SESSIONS"))
-        #expect(!labels.contains("RUN HIERARCHY"))
+        #expect(labels.contains("Run hierarchy"))
+        #expect(!labels.contains("SESSIONS"))
+    }
+
+    @Test("Queen is selected and attached from the orchestrator snapshot")
+    func queenIsSelectedAndAttached() throws {
+        var surfaces: [FakeSurface] = []
+        let view = LiveRunWorkbenchView { session in
+            let surface = FakeSurface(locator: session.locator!)
+            surfaces.append(surface)
+            return surface
+        }
+        view.setRouteVisible(true)
+        view.apply(try projection([
+            agent("david", provider: "codex", generation: 2),
+        ], orchestrator: queenOrchestrator(generation: 6)))
+
+        #expect(view.rowCount == 2)
+        #expect(view.selectedLocator?.subject.kind == "root")
+        #expect(view.selectedLocator?.generation == 6)
+        #expect(surfaces.count == 1)
+        let labels = textFields(in: view).map(\.stringValue)
+        #expect(labels.contains("queen · root"))
+        #expect(labels.contains { $0.contains("Agent UI") })
+        #expect(!labels.contains { $0.contains("TUI") })
+        #expect(labels.filter { $0 == "Run hierarchy" }.count == 1)
+    }
+
+    @Test("Live Run chrome matches the workspace mockup")
+    func mockupChrome() throws {
+        let view = LiveRunWorkbenchView { session in
+            FakeSurface(locator: session.locator!)
+        }
+        view.setRouteVisible(true)
+        view.apply(try projection([agent("david", provider: "codex", generation: 3)]))
+
+        let labels = textFields(in: view).map(\.stringValue)
+        #expect(labels.contains("Run hierarchy"))
+        #expect(labels.contains("Viewed scope"))
+        #expect(labels.contains("Keyboard focus"))
+        #expect(labels.contains("Input owner"))
+        #expect(labels.contains("Generation"))
+        #expect(labels.contains("3 · exact"))
+        #expect(labels.contains { $0.contains("Agent UI") })
+        #expect(!labels.contains { $0.contains("TUI") })
+        #expect(findView(in: view, identifier: "live-run-control-strip") != nil)
+        #expect(findView(in: view, identifier: "live-run-snapshot") != nil)
+        #expect(findView(in: view, identifier: "live-run-release-input") != nil)
+        #expect(findView(in: view, identifier: "live-run-attach") != nil)
+        #expect(findView(in: view, identifier: "live-run-inspector-tab-task") != nil)
+        #expect(findView(in: view, identifier: "live-run-inspector-tab-events") != nil)
+        #expect(findView(in: view, identifier: "live-run-inspector-tab-session") != nil)
+        let attach = try #require(
+            findView(in: view, identifier: "live-run-attach") as? NSButton)
+        #expect(attach.title == "Attached live · g3")
     }
 
     @Test("Shell attach and detach commands consume the workbench's exact locator")
@@ -265,10 +318,30 @@ struct LiveRunWorkbenchViewTests {
                 "Terminal renderer unavailable: surface creation failed. The terminal is waiting and will appear automatically.")
     }
 
-    private func projection(_ agents: [String]) throws -> LiveRunProjection {
-        let line = try #require(FeedLine.parse(
-            "{\"v\":1,\"agents\":[\(agents.joined(separator: ","))]}"))
+    private func projection(
+        _ agents: [String],
+        orchestrator: String? = nil
+    ) throws -> LiveRunProjection {
+        var json = "{\"v\":1,\"agents\":[\(agents.joined(separator: ","))]"
+        if let orchestrator {
+            json += ",\"orchestrator\":\(orchestrator)"
+        }
+        json += "}"
+        let line = try #require(FeedLine.parse(json))
         return try LiveRunProjection(feedLine: line)
+    }
+
+    private func queenOrchestrator(generation: Int) -> String {
+        """
+        {"status":"working","host":"sessiond","hostState":"running",
+         "sessionLocator":{"schemaVersion":1,"instanceId":"rig",
+           "subject":{"kind":"root"},"generation":\(generation),
+           "sessionId":"ses_018f1e90-7b5a-7cc0-8000-000000000099",
+           "hostKind":"sessiond","engineBuildId":"engine"},
+         "presentation":{"panePresence":"visible","terminalState":"live",
+           "headerDetail":"working","paneStatus":{"kind":"running"},
+           "activity":"working"}}
+        """
     }
 
     private func agent(_ name: String, provider: String, generation: Int) -> String {

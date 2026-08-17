@@ -61,7 +61,7 @@ The native macOS app, its visual language, and the platform underneath it.
 | Article | Summary | Updated |
 | --- | --- | --- |
 | [Workspace blueprint](workspace/blueprint.md) | A shipping AppKit app whose HiveTerminalKit panes attach to daemon-owned sessiond sessions while structured feeds carry status and control state. | 2026-07-23 |
-| [UI design system](workspace/ui-design-system.md) | Semantic colors, native controls, honest unknown states, and the AppKit layout invariants the Workspace enforces. | 2026-07-14 |
+| [UI design system](workspace/ui-design-system.md) | Split Horizon mockup colors and chrome, honest unknown states, and the AppKit layout invariants the Workspace enforces. | 2026-08-16 |
 | [Platform constraints](workspace/platform-constraints.md) | macOS traps a native Workspace keeps rediscovering: bookmark identity, XPC authority, pasteboard limits, and terminal-renderer boundaries. | 2026-07-14 |
 
 ## agents

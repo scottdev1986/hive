@@ -36,6 +36,10 @@ public enum LiveRunContractFact: Equatable, Sendable {
 }
 
 public struct LiveRunSessionSummary: Equatable {
+    /// Workspace visibility id for the root. The queen has no AgentRecord, so the feed carries her beside `agents`.
+    public static let queenID = "root"
+    public static let queenName = "queen"
+
     public let id: String
     public let agentID: String?
     public let name: String
@@ -51,6 +55,7 @@ public struct LiveRunSessionSummary: Equatable {
     public let shellRoot: LiveRunContractFact
     public let processCensus: LiveRunContractFact
     public let termination: LiveRunContractFact
+    public var isQueen: Bool { id == Self.queenID }
 
     public init(agent: AgentSnapshot) {
         id = agent.id ?? "name:\(agent.name)"
@@ -62,17 +67,8 @@ public struct LiveRunSessionSummary: Equatable {
         activity = agent.presentation.renderedActivity
         task = agent.taskDescription
 
-        if let agentID = agent.id,
-           !agentID.isEmpty,
-           let candidate = agent.sessionLocator,
-           candidate.schemaVersion == 1,
-           !candidate.instanceId.isEmpty,
-           candidate.subject.kind == "agent",
-           candidate.subject.agentId == agentID,
-           candidate.hostKind == "sessiond",
-           candidate.engineBuildId?.isEmpty == false,
-           candidate.generation > 0,
-           !candidate.sessionId.isEmpty {
+        if let candidate = agent.sessionLocator,
+           Self.isAttachable(candidate, agentID: agent.id) {
             locator = candidate
             locatorFact = nil
         } else {
@@ -92,6 +88,87 @@ public struct LiveRunSessionSummary: Equatable {
             reason: "workspace-feed termination evidence absent · process-tree-escapees-unaccounted")
     }
 
+    public init(orchestrator: OrchestratorSnapshot) {
+        id = Self.queenID
+        agentID = Self.queenID
+        name = Self.queenName
+        provider = ProviderID("unknown")
+        model = nil
+        rawStatus = orchestrator.status ?? "unknown"
+        let presented = orchestrator.presentation.renderedActivity
+        activity = presented == .unknown
+            ? AgentFeedPresentation(
+                panePresence: "visible",
+                terminalState: "live",
+                headerDetail: rawStatus,
+                paneStatus: FeedPanePresentation(kind: "running"),
+                activity: rawStatus).renderedActivity
+            : presented
+        task = "Own the run, escalation, and current-owner policy"
+        if let candidate = orchestrator.sessionLocator,
+           Self.isAttachable(candidate, agentID: Self.queenID) {
+            locator = candidate
+            locatorFact = nil
+        } else {
+            locator = nil
+            locatorFact = .unknown(reason: Self.queenLocatorReason(orchestrator))
+        }
+        providerRun = .absent(
+            reason: "workspace-feed does not project exact ProviderRun identity")
+        inputOwner = .unknown(
+            reason: "workspace-feed does not project the terminal input owner")
+        shellRoot = .unknown(
+            reason: "workspace-feed does not project retained-shell ancestry")
+        processCensus = .absent(
+            reason: "workspace-feed has no independent cwd-inode process census")
+        termination = .unknown(
+            reason: "workspace-feed termination evidence absent · process-tree-escapees-unaccounted")
+    }
+
+    private static func isAttachable(
+        _ locator: AgentSessionLocator,
+        agentID: String?
+    ) -> Bool {
+        guard locator.schemaVersion == 1,
+              !locator.instanceId.isEmpty,
+              locator.hostKind == "sessiond",
+              locator.engineBuildId?.isEmpty == false,
+              locator.generation > 0,
+              !locator.sessionId.isEmpty
+        else { return false }
+        if locator.subject.kind == "root" {
+            return agentID == queenID
+        }
+        return locator.subject.kind == "agent"
+            && locator.subject.agentId == agentID
+            && agentID?.isEmpty == false
+    }
+
+    private static func queenLocatorReason(_ orchestrator: OrchestratorSnapshot) -> String {
+        guard let locator = orchestrator.sessionLocator else {
+            if orchestrator.host == "sessiond" {
+                return "workspace-feed has no exact terminal locator for queen"
+            }
+            return "queen host \(orchestrator.host ?? "unknown") is not an attachable sessiond terminal"
+        }
+        if locator.subject.kind != "root" {
+            return "queen locator subject is \(locator.subject.kind), not root"
+        }
+        if locator.hostKind != "sessiond" {
+            return "queen terminal host kind \(locator.hostKind) is unsupported"
+        }
+        if locator.instanceId.isEmpty {
+            return "queen terminal locator has no instance identity"
+        }
+        if locator.engineBuildId?.isEmpty != false {
+            return "queen terminal locator has no engine build identity"
+        }
+        if locator.generation <= 0 || locator.sessionId.isEmpty {
+            return "queen terminal locator is incomplete"
+        }
+        return "queen terminal locator is not attachable"
+    }
+
     private static func locatorReason(_ agent: AgentSnapshot) -> String {
         guard let agentID = agent.id, !agentID.isEmpty else {
             return "workspace-feed has no stable agent id for this terminal"
@@ -107,6 +184,9 @@ public struct LiveRunSessionSummary: Equatable {
         }
         if locator.instanceId.isEmpty {
             return "terminal locator has no instance identity"
+        }
+        if locator.subject.kind == "root" {
+            return "root locator cannot attach a worker agent"
         }
         if locator.subject.kind != "agent" || locator.subject.agentId != agentID {
             return "terminal locator subject does not match this agent"
@@ -136,9 +216,14 @@ public struct LiveRunProjection: Equatable {
             throw LiveRunFeedError.missingSnapshot
         }
         schemaVersion = 1
-        sessions = agents
+        let workers = agents
             .filter { $0.closedAt == nil }
             .map(LiveRunSessionSummary.init(agent:))
+        if let orchestrator = feedLine.orchestrator {
+            sessions = [LiveRunSessionSummary(orchestrator: orchestrator)] + workers
+        } else {
+            sessions = workers
+        }
     }
 }
 

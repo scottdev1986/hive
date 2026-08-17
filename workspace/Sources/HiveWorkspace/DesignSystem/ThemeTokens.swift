@@ -1,6 +1,6 @@
 import AppKit
 
-/// THE HIVE WORKSPACE DESIGN SYSTEM — tokens. These tokens and the components beside them form the visual language for the whole app: settings, terminal pane chrome, the agent feed, the attention queue, headers, and status indicators alike. Build new surfaces from these tokens; do not invent parallel ones. Ground rules: - System semantic colors and dynamic derivatives only — light/dark, the user's accent color, and Increase Contrast come for free. No hex that works in one appearance. - Spacing, radii, and type come from the scales below, never ad-hoc. - Focus is the system's: `keyboardFocusIndicatorColor` (see `PaneFocusRingView`, the canonical focus treatment). - Motion is subtle, fast, and always behind `Theme.reduceMotion`. - States are never color alone: pair every colored state with a symbol or words (see `CapsuleBadge`). - Honest data display: a missing reading renders as a distinct unknown treatment (see `UsageMeterView`), never as zero.
+/// THE HIVE WORKSPACE DESIGN SYSTEM — tokens. `Theme.Chrome` is the Split Horizon mockup palette from `docs/design/split-horizon-transition.html`. A Workspace screen that does not use these colors is unfinished. Spacing and type stay on the scales below. States are never color alone (`CapsuleBadge`). Missing readings stay visibly unknown (`UsageMeterView`).
 extension Theme {
 
     enum Space {
@@ -43,7 +43,38 @@ extension Theme {
         static let monoDigits = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
     }
 
-    /// A named dynamic color resolved per effective appearance — the one sanctioned way to give light and dark different derivations of a semantic color. Never hardcode a hex pair.
+    /// Split Horizon mockup colors. Values are the prototype's `--app-*` tokens.
+    enum Chrome {
+        static let bg = mockup(0x091117)
+        static let top = mockup(0x111A20)
+        static let sidebar = mockup(0x0E171C)
+        static let panel = mockup(0x101B22)
+        static let panel2 = mockup(0x172630)
+        static let navActive = mockup(0x1B3039)
+        static let navHover = mockup(0x17272E)
+        static let line = mockup(0x263A45)
+        static let buttonFill = mockup(0x19272E)
+        static let buttonBorder = mockup(0x3B4E58)
+        static let text = mockup(0xEDF4F7)
+        static let muted = mockup(0x8599A4)
+        static let faint = mockup(0x536873)
+        static let accent = mockup(0x73D8E8)
+        static let accentInk = mockup(0x071216)
+        static let green = mockup(0x69D49F)
+        static let yellow = mockup(0xEFB161)
+        static let red = mockup(0xEC7770)
+        static let violet = mockup(0xC1A0DD)
+
+        static func mockup(_ hex: Int, alpha: CGFloat = 1) -> NSColor {
+            NSColor(
+                srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+                green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255,
+                alpha: alpha)
+        }
+    }
+
+    /// A named dynamic color resolved per effective appearance. Dark values come from the mockup; light is a readable counterpart, not a reason to drop the mockup in dark.
     static func dynamic(
         _ name: String,
         light: @escaping () -> NSColor,
@@ -57,15 +88,15 @@ extension Theme {
     static let cardFill = dynamic(
         "hdsCardFill",
         light: { NSColor.controlBackgroundColor },
-        dark: { NSColor.white.withAlphaComponent(0.05) })
+        dark: { Chrome.panel2 })
     static let insetFill = dynamic(
         "hdsInsetFill",
         light: { NSColor.labelColor.withAlphaComponent(0.045) },
-        dark: { NSColor.white.withAlphaComponent(0.055) })
+        dark: { Chrome.panel })
     static let cardStroke = dynamic(
         "hdsCardStroke",
         light: { NSColor.separatorColor },
-        dark: { NSColor.separatorColor })
+        dark: { Chrome.line })
 
     static let meterTrack = dynamic(
         "hdsMeterTrack",

@@ -32,15 +32,15 @@ class CardView: NSView {
         let radius = Theme.Metric.cardCornerRadius
         let inset = bounds.insetBy(dx: 0.5, dy: 0.5)
         let path = NSBezierPath(roundedRect: inset, xRadius: radius, yRadius: radius)
-        Theme.cardFill.setFill()
+        Theme.Chrome.panel2.setFill()
         path.fill()
         if dashed {
             path.setLineDash([4, 3], count: 2, phase: 0)
             path.lineWidth = 1
-            NSColor.tertiaryLabelColor.setStroke()
+            Theme.Chrome.faint.setStroke()
         } else {
             path.lineWidth = 1
-            Theme.cardStroke.setStroke()
+            Theme.Chrome.line.setStroke()
         }
         path.stroke()
     }

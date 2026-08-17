@@ -55,6 +55,7 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
         window.minSize = NSSize(width: 940, height: 560)
         window.title = "Hive Workspace — \(context.projectName)"
         window.center()
+        Theme.applyWorkspaceChrome(to: window)
         super.init(window: window)
         sidebar.onSelect = { [weak self] route in
             self?.performRoute(route)
@@ -131,6 +132,10 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
         mainRow.spacing = 0
         mainRow.alignment = .top
         mainRow.translatesAutoresizingMaskIntoConstraints = false
+        // The screen column must follow the window height. Top-alignment leaves the
+        // Live Run workbench at its intrinsic height and paints a blank band under it.
+        screenScrollView.setContentHuggingPriority(.init(1), for: .vertical)
+        screenScrollView.setContentCompressionResistancePriority(.init(1), for: .vertical)
 
         sidebar.widthAnchor.constraint(equalToConstant: 224).isActive = true
 
@@ -141,7 +146,8 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
 
         screenScrollView.translatesAutoresizingMaskIntoConstraints = false
         screenScrollView.hasVerticalScroller = true
-        screenScrollView.drawsBackground = false
+        screenScrollView.drawsBackground = true
+        screenScrollView.backgroundColor = Theme.Chrome.bg
         screenScrollView.documentView = screenHost
         screenScrollView.setAccessibilityIdentifier("shell-screen-scroll")
         screenHost.translatesAutoresizingMaskIntoConstraints = false
@@ -176,9 +182,11 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
                 equalTo: screenScrollView.contentView.widthAnchor),
             screenHost.heightAnchor.constraint(
                 greaterThanOrEqualTo: screenScrollView.contentView.heightAnchor),
+            screenScrollView.heightAnchor.constraint(equalTo: mainRow.heightAnchor),
+            sidebar.heightAnchor.constraint(equalTo: mainRow.heightAnchor),
         ])
         liveRunHeightCeiling = screenHost.heightAnchor
-            .constraint(lessThanOrEqualTo: screenScrollView.contentView.heightAnchor)
+            .constraint(equalTo: screenScrollView.contentView.heightAnchor)
         separator.heightAnchor.constraint(equalTo: mainRow.heightAnchor).isActive = true
     }
 
@@ -284,7 +292,7 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
         chainKeyViews()
         let count = state.attentionQueue.count
         attentionToolbarItem?.label =
-            count > 0 ? "Attention (\(count))" : "Attention"
+            count > 0 ? "Attention \(count)" : "Attention"
     }
 
     private func renderBanners() {
@@ -345,6 +353,20 @@ final class WorkspaceShellWindowController: NSWindowController, NSToolbarDelegat
         let panel: NSView
         switch (state.activeRoute, state.router) {
         case (.liveRun, _) where liveRunWorkbench != nil:
+            liveRunWorkbench!.applyQueenProvider(
+                state.queenProvider?.observed.liveProvider)
+            liveRunWorkbench!.applyHierarchy(
+                state.outerHorizon,
+                screen: state.screens[.liveRun]
+                    ?? .notFrozen("Live Run hierarchy is observed without a screen projection."),
+                onSelect: { [weak self] nodeId in
+                    self?.apply { $0.editOuterHorizon { $0.select(nodeId: nodeId) } }
+                },
+                onToggleExpansion: { [weak self] nodeId in
+                    self?.apply {
+                        $0.editOuterHorizon { $0.toggleExpansion(nodeId: nodeId) }
+                    }
+                })
             panel = liveRunWorkbench!
         case (.liveRun, _) where state.outerHorizon != nil:
             panel = OuterHorizonScreenView(

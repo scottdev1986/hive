@@ -432,6 +432,20 @@ public struct StatusAppearance: Equatable {
 }
 
 extension AgentActivity {
+    public var displayLabel: String {
+        switch self {
+        case .working: return "working"
+        case .idle: return "idle"
+        case .needsUser: return "needs user"
+        case .held: return "held"
+        case .spawning: return "spawning"
+        case .done: return "done"
+        case .failed: return "failed"
+        case .disconnected: return "disconnected"
+        case .unknown: return "unknown"
+        }
+    }
+
     public var appearance: StatusAppearance {
         switch self {
         case .working: return StatusAppearance(color: .green, symbol: "circle.fill", border: .solid)

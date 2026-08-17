@@ -21,6 +21,7 @@ final class ShellSidebarView: NSView {
         self.onSelect = onSelect
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        Theme.paint(self, Theme.Chrome.sidebar)
 
         let stack = NSStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -30,21 +31,45 @@ final class ShellSidebarView: NSView {
         stack.edgeInsets = NSEdgeInsets(
             top: Theme.Space.l, left: Theme.Space.m,
             bottom: Theme.Space.l, right: Theme.Space.m)
-        addSubview(stack)
+        stack.setContentHuggingPriority(.defaultLow, for: .vertical)
+        stack.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        setContentHuggingPriority(.defaultLow, for: .vertical)
+        setContentCompressionResistancePriority(.init(100), for: .vertical)
+
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.contentView = SidebarClipView()
+        scroll.documentView = stack
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        scroll.setContentCompressionResistancePriority(.init(100), for: .vertical)
+        addSubview(scroll)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
 
-        stack.addArrangedSubview(Self.contextBlock(context))
+        stack.addArrangedSubview(Self.brandBlock())
         stack.setCustomSpacing(Theme.Space.l, after: stack.arrangedSubviews[0])
+        let project = CardView()
+        let contextBlock = Self.contextBlock(context)
+        project.contentStack.addArrangedSubview(contextBlock)
+        project.pinToContentWidth(contextBlock)
+        stack.addArrangedSubview(project)
+        project.widthAnchor.constraint(
+            equalTo: stack.widthAnchor, constant: -Theme.Space.m * 2
+        ).isActive = true
+        stack.setCustomSpacing(Theme.Space.l, after: project)
 
         for (index, group) in ShellScreenRegistry.groups.enumerated() {
             let groupLabel = NSTextField(labelWithString: group.title.uppercased())
             groupLabel.font = Theme.Font.sectionLabel
-            groupLabel.textColor = .tertiaryLabelColor
+            groupLabel.textColor = Theme.Chrome.faint
             stack.addArrangedSubview(groupLabel)
             if index > 0, stack.arrangedSubviews.count >= 2 {
                 stack.setCustomSpacing(
@@ -77,7 +102,7 @@ final class ShellSidebarView: NSView {
             let selected = candidate == route
             button.isBordered = false
             button.state = selected ? .on : .off
-            button.contentTintColor = selected ? .controlAccentColor : .labelColor
+            button.contentTintColor = selected ? Theme.Chrome.accent : Theme.Chrome.muted
             (button as? ShellNavButton)?.isRouteSelected = selected
         }
     }
@@ -86,9 +111,40 @@ final class ShellSidebarView: NSView {
         ShellNavGroup.allCases.flatMap(\.routes).compactMap { navButtons[$0] }
     }
 
+    private static func brandBlock() -> NSView {
+        let icon = NSImageView()
+        icon.image = NSApp.applicationIconImage
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 22).isActive = true
+
+        let name = NSTextField(labelWithString: "Hive")
+        name.font = Theme.Font.title
+        name.textColor = Theme.Chrome.text
+        let mark = NSTextField(labelWithString: "AGENTIC WORKSPACE")
+        mark.font = Theme.Font.sectionLabel
+        mark.textColor = Theme.Chrome.muted
+        let copy = NSStackView(views: [name, mark])
+        copy.orientation = .vertical
+        copy.alignment = .leading
+        copy.spacing = 1
+
+        let row = NSStackView(views: [icon, copy])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = Theme.Space.s
+        row.setAccessibilityElement(true)
+        row.setAccessibilityRole(.staticText)
+        row.setAccessibilityLabel("Hive Agentic Workspace")
+        row.setAccessibilityIdentifier("shell-brand")
+        return row
+    }
+
     private static func contextBlock(_ context: Context) -> NSView {
         let name = NSTextField(labelWithString: context.projectName)
         name.font = Theme.Font.title
+        name.textColor = Theme.Chrome.text
         name.compressHorizontally(priority: 460, toolTip: context.projectName)
 
         let stack = NSStackView(views: [name])
@@ -99,7 +155,7 @@ final class ShellSidebarView: NSView {
         if let path = context.projectPath {
             let pathLabel = NSTextField(labelWithString: path)
             pathLabel.font = Theme.Font.monoCaption
-            pathLabel.textColor = .secondaryLabelColor
+            pathLabel.textColor = Theme.Chrome.muted
             pathLabel.lineBreakMode = .byTruncatingHead
             pathLabel.compressHorizontally(priority: 450, toolTip: path)
             stack.addArrangedSubview(pathLabel)
@@ -107,7 +163,7 @@ final class ShellSidebarView: NSView {
 
         let instance = NSTextField(labelWithString: context.instanceLabel)
         instance.font = Theme.Font.caption
-        instance.textColor = .tertiaryLabelColor
+        instance.textColor = Theme.Chrome.faint
         instance.compressHorizontally(priority: 450, toolTip: context.instanceLabel)
         stack.addArrangedSubview(instance)
         return stack
@@ -132,7 +188,7 @@ final class ShellSidebarView: NSView {
         button.alignment = .left
         button.imagePosition = .imageLeading
         button.font = Theme.Font.body
-        button.contentTintColor = .labelColor
+        button.contentTintColor = Theme.Chrome.muted
         button.heightAnchor.constraint(
             greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight).isActive = true
         button.setAccessibilityLabel("\(route.title), navigation")
@@ -158,6 +214,10 @@ final class ShellSidebarView: NSView {
     }
 }
 
+private final class SidebarClipView: NSClipView {
+    override var isFlipped: Bool { true }
+}
+
 private final class ShellNavButton: NSButton {
     var isRouteSelected = false {
         didSet { needsDisplay = true }
@@ -165,13 +225,13 @@ private final class ShellNavButton: NSButton {
 
     override func draw(_ dirtyRect: NSRect) {
         if isRouteSelected {
-            NSColor.controlAccentColor.withAlphaComponent(0.14).setFill()
+            Theme.Chrome.navActive.setFill()
             NSBezierPath(
                 roundedRect: bounds.insetBy(dx: 0, dy: 1),
                 xRadius: 7,
                 yRadius: 7
             ).fill()
-            NSColor.controlAccentColor.setFill()
+            Theme.Chrome.accent.setFill()
             NSBezierPath(
                 roundedRect: NSRect(
                     x: 0,

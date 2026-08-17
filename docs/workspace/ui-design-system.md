@@ -1,11 +1,11 @@
 # Workspace UI Design System
 
-Updated: 2026-07-14
+Updated: 2026-08-16
 Source: Hive source tree, 2026-07-14
 
 ## Summary
 
-One visual language for the Workspace app: system semantic colors, native controls, honest states. This article records the rules and the hard-won AppKit invariants — the token *values* live in `workspace/Sources/HiveWorkspace/DesignSystem/ThemeTokens.swift` and are deliberately not restated here, because a copy of them would only rot.
+One visual language for the Workspace app: the Split Horizon mockup, honest states, AppKit invariants. Token *values* live in `workspace/Sources/HiveWorkspace/DesignSystem/ThemeTokens.swift` and are deliberately not restated here, because a copy of them would only rot. The mockup at `docs/design/split-horizon-transition.html` is the look. Tokens exist to ship that look, not to replace it with system gray.
 
 ## Where the system lives, and what this doc owns
 
@@ -15,13 +15,13 @@ What this doc owns is everything the code cannot say: why a rule exists, and whi
 
 ## Principles
 
-1. **System semantic colors only.** `labelColor`, `controlAccentColor`, `separatorColor`, the `system*` family, or a dynamic derivative via `Theme.dynamic(_:light:dark:)`. **Never a hex pair.** This is what makes light/dark, the user's accent color, and Increase Contrast free rather than a project.
-2. **Native controls, native metrics.** `NSSwitch`, `NSPopUpButton`, system focus rings, ≥ 28 pt hit targets. The Workspace is a Mac app, not a web page in a window.
+1. **The mockup is the look.** `docs/design/split-horizon-transition.html` owns color, density, chrome, and layout. `Theme.Chrome` is that palette in AppKit. Do not replace it with `windowBackgroundColor` / `labelColor` and call the result finished. A Workspace screen that does not read as that mockup is a defect.
+2. **AppKit carries the mockup; it does not authorize ignoring it.** Native focus, hit targets ≥ 28 pt, VoiceOver labels, and Auto Layout stay required. Stock system gray, default bezels, and HIG-only chrome are not a visual waiver.
 3. **No fixed-pixel layouts.** Auto Layout with real hugging and compression priorities. Long identifiers truncate with a tail; the `toolTip` carries the full string. A wide layout must define what happens when it gets narrow.
 4. **States are never color alone.** Every colored state carries a symbol or words (`CapsuleBadge` enforces this). Opacity alone is not a state either — dimmed content gets a caption saying *why*.
 5. **Honest data display.** A missing reading renders as a visibly distinct unknown, never as a zero and never as an empty bar. There is no code path that draws a determinate bar for missing data. Keep it that way everywhere numbers appear.
 6. **Motion is subtle and optional.** Durations from `Theme.Motion`; check `Theme.reduceMotion` first. An instant change beats a janky tween.
-7. **Terminal pixels are vendor-owned; the chrome around them is the job.** The terminal surface plus the child TUI own every pixel inside a pane. Do not retheme a vendor's TUI from outside — its colors are its product. At most: outer pane chrome, and a non-interactive placeholder *before* first attach.
+7. **Agent UI owns terminal pixels; Workspace owns the chrome.** Hive Agent UI paints the selected Ghostty surface. Do not retheme that interior from outside. The sidebar, hierarchy, control strip, inspector, and title facts must still match the mockup around it.
 
 ## The AppKit invariants
 
