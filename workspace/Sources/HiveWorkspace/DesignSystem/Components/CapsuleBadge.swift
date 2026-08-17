@@ -7,25 +7,28 @@ final class CapsuleBadge: NSView {
         /// Calm information (Paid overflow off, Provisional).
         case neutral
         case info
+        case positive
         /// Needs attention (Near limit, Stale reading, provider off).
         case warning
         case critical
 
         var fill: NSColor {
             switch self {
-            case .neutral: return Theme.Chrome.panel2
-            case .info: return Theme.Chrome.mockup(0x13231C)
-            case .warning: return Theme.Chrome.mockup(0x211D16)
-            case .critical: return Theme.Chrome.mockup(0x261615)
+            case .neutral: return Theme.neutralBadgeFill
+            case .info: return Theme.infoBadgeFill
+            case .positive: return Theme.positiveBadgeFill
+            case .warning: return Theme.warningBadgeFill
+            case .critical: return Theme.criticalBadgeFill
             }
         }
 
         var tint: NSColor {
             switch self {
-            case .neutral: return Theme.Chrome.muted
-            case .info: return Theme.Chrome.accent
-            case .warning: return Theme.Chrome.yellow
-            case .critical: return Theme.Chrome.red
+            case .neutral: return Theme.secondaryText
+            case .info: return Theme.accent
+            case .positive: return Theme.positive
+            case .warning: return Theme.warning
+            case .critical: return Theme.critical
             }
         }
     }
@@ -76,6 +79,7 @@ final class CapsuleBadge: NSView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
+        setAccessibilityIdentifier("hds-capsule-badge")
         setAccessibilityLabel(text)
     }
 

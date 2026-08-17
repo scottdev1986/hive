@@ -7,7 +7,7 @@ final class UsageMeterView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let valueLabel = NSTextField(labelWithString: "")
     private let captionLabel = NSTextField(labelWithString: "")
-    private let track = MeterTrackView()
+    private let track = MeterBarView()
     private var badge: NSView?
     private let topRow = NSStackView()
     private let stack = NSStackView()
@@ -164,7 +164,7 @@ final class UsageMeterView: NSView {
 }
 
 /// The meter's track. Three drawing modes and no fourth: a colored fill over the track, or a dotted "cannot tell" rule with no track at all. `fraction == 0` still draws the track (measured empty); `.indeterminate` draws no track (unknown) — visibly different things.
-final class MeterTrackView: NSView {
+final class MeterBarView: NSView {
 
     enum State: Equatable {
         case fill(fraction: Double, color: NSColor)
@@ -180,6 +180,9 @@ final class MeterTrackView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         heightAnchor.constraint(equalToConstant: Theme.Metric.meterTrackHeight).isActive = true
         setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.valueIndicator)
+        setAccessibilityIdentifier("hds-meter-bar")
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }

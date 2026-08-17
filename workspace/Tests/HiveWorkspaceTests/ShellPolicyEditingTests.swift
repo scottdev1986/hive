@@ -552,9 +552,9 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertEqual(fraction, 0.63, accuracy: 0.001)
     }
 
-    private func track(in view: NSView) throws -> MeterTrackView {
-        func find(_ view: NSView) -> MeterTrackView? {
-            if let track = view as? MeterTrackView { return track }
+    private func track(in view: NSView) throws -> MeterBarView {
+        func find(_ view: NSView) -> MeterBarView? {
+            if let track = view as? MeterBarView { return track }
             for subview in view.subviews {
                 if let track = find(subview) { return track }
             }

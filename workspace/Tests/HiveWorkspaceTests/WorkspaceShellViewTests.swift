@@ -266,12 +266,16 @@ final class WorkspaceShellViewTests: XCTestCase {
         let scrollView = try XCTUnwrap(findView(
             in: content, identifier: "shell-screen-scroll") as? NSScrollView)
         let documentView = try XCTUnwrap(scrollView.documentView)
-        let mainRow = try XCTUnwrap(scrollView.superview as? NSStackView)
+        let mainRow = try XCTUnwrap(findView(
+            in: content, identifier: "shell-main-row") as? NSStackView)
         XCTAssertEqual(mainRow.frame.width, content.bounds.width, accuracy: 1)
-        XCTAssertEqual(scrollView.frame.height, content.bounds.height, accuracy: 1)
+        XCTAssertEqual(
+            scrollView.frame.height,
+            content.bounds.height - Theme.Metric.topBarHeight,
+            accuracy: 1)
         XCTAssertEqual(
             scrollView.frame.width,
-            content.bounds.width - 225,
+            content.bounds.width - Theme.Metric.sidebarWidth - 1,
             accuracy: 1)
         XCTAssertTrue(documentView.isFlipped)
         XCTAssertEqual(
@@ -317,7 +321,8 @@ final class WorkspaceShellViewTests: XCTestCase {
         router.performClick(nil)
         let scrollView = try XCTUnwrap(findView(
             in: content, identifier: "shell-screen-scroll") as? NSScrollView)
-        let mainRow = try XCTUnwrap(scrollView.superview as? NSStackView)
+        let mainRow = try XCTUnwrap(findView(
+            in: content, identifier: "shell-main-row") as? NSStackView)
         let documentView = try XCTUnwrap(scrollView.documentView)
 
         // The window opens at 1100 points wide. A screen that keeps that width
@@ -332,7 +337,9 @@ final class WorkspaceShellViewTests: XCTestCase {
                 mainRow.frame.width, width, accuracy: 1,
                 "the sidebar row must span the window at \(width)")
             XCTAssertEqual(
-                scrollView.frame.width, width - 225, accuracy: 1,
+                scrollView.frame.width,
+                width - Theme.Metric.sidebarWidth - 1,
+                accuracy: 1,
                 "the screen must take every point the sidebar leaves at \(width)")
             XCTAssertEqual(
                 documentView.bounds.width,

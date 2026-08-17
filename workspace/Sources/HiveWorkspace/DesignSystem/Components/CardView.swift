@@ -12,6 +12,7 @@ class CardView: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
+        setAccessibilityIdentifier("hds-card")
 
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.orientation = .vertical
