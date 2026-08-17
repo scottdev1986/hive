@@ -41,6 +41,12 @@
 # run still exits non-zero and lists every red.
 set -u
 
+# Workspace cannot create terminal surfaces while the display sleeps. Re-enter
+# under caffeinate once so every tour mode holds the display awake until it exits.
+if [ "${TOUR_DISPLAY_AWAKE:-}" != 1 ]; then
+  exec env TOUR_DISPLAY_AWAKE=1 caffeinate -dimsu "$0" "$@"
+fi
+
 # Ambient HIVE_SHELL_PROOF_MUTATE would turn a live proof into a real CAS write
 # (WorkspaceShellLaunch reads it; proveOneWrite mutates routing). Strip it for
 # every launch so the tour stays read-only even if an user's shell exports it.
