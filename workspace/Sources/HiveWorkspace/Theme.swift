@@ -39,6 +39,30 @@ enum Theme {
     static var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
+
+    static func paint(_ view: NSView, _ color: NSColor) {
+        view.wantsLayer = true
+        view.layer?.backgroundColor = color.cgColor
+    }
+
+    static func styleMockupButton(_ button: NSButton, primary: Bool = false) {
+        button.bezelStyle = .flexiblePush
+        button.isBordered = false
+        button.wantsLayer = true
+        button.layer?.cornerRadius = Metric.buttonCornerRadius
+        button.layer?.masksToBounds = true
+        button.font = Font.chromeControl
+        if primary {
+            button.contentTintColor = accentInk
+            button.layer?.backgroundColor = accent.cgColor
+            button.layer?.borderWidth = 0
+        } else {
+            button.contentTintColor = primaryText
+            button.layer?.backgroundColor = buttonFill.cgColor
+            button.layer?.borderWidth = 1
+            button.layer?.borderColor = buttonBorder.cgColor
+        }
+    }
 }
 
 extension NSTextField {

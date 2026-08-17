@@ -210,14 +210,41 @@ private final class ShellNavButton: NSButton {
         didSet { needsDisplay = true }
     }
 
+    private var tracking: NSTrackingArea?
+    private var hovering = false
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let tracking = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil)
+        addTrackingArea(tracking)
+        self.tracking = tracking
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
-        if isRouteSelected {
-            Theme.accentFill.setFill()
+        if isRouteSelected || hovering {
+            (isRouteSelected ? Theme.accentFill : Theme.sidebarHoverFill).setFill()
             NSBezierPath(
                 roundedRect: bounds.insetBy(dx: 0, dy: 1),
                 xRadius: Theme.Metric.buttonCornerRadius,
                 yRadius: Theme.Metric.buttonCornerRadius
             ).fill()
+        }
+        if isRouteSelected {
             Theme.accent.setFill()
             NSBezierPath(
                 roundedRect: NSRect(x: 0, y: 5, width: 2, height: bounds.height - 10),

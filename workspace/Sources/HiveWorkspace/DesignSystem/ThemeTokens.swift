@@ -169,6 +169,10 @@ extension Theme {
         "hdsAccentFill",
         light: { rgb(213, 241, 245) },
         dark: { Chrome.navActive })
+    static let sidebarHoverFill = dynamic(
+        "hdsSidebarHoverFill",
+        light: { rgb(224, 235, 239) },
+        dark: { Chrome.navHover })
     static let accentInk = dynamic(
         "hdsAccentInk",
         light: { rgb(247, 253, 254) },
@@ -214,6 +218,10 @@ extension Theme {
         "hdsCriticalButtonBorder",
         light: { rgb(180, 83, 78) },
         dark: { Chrome.color(0x71403E) })
+    static let criticalButtonFill = dynamic(
+        "hdsCriticalButtonFill",
+        light: { rgb(252, 231, 231) },
+        dark: { Chrome.color(0x261615) })
     static let positiveBannerBorder = dynamic(
         "hdsPositiveBannerBorder",
         light: { rgb(76, 154, 111) },

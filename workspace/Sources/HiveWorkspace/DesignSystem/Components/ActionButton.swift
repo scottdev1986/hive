@@ -57,6 +57,7 @@ final class ActionButton: NSButton {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override func updateTrackingAreas() {
+        super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
         let tracking = NSTrackingArea(
             rect: bounds,
@@ -65,7 +66,6 @@ final class ActionButton: NSButton {
             userInfo: nil)
         addTrackingArea(tracking)
         self.tracking = tracking
-        super.updateTrackingAreas()
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -101,17 +101,17 @@ final class ActionButton: NSButton {
     }
 
     private var backgroundColor: NSColor {
-        if hovering { return Theme.buttonHoverFill }
+        if hovering, style == .neutral { return Theme.buttonHoverFill }
         switch style {
         case .neutral: return Theme.buttonFill
         case .primary: return Theme.accent
         case .warning: return Theme.warningSurface
-        case .destructive: return Theme.criticalSurface
+        case .destructive: return Theme.criticalButtonFill
         }
     }
 
     private var borderColor: NSColor {
-        if hovering { return Theme.buttonHoverBorder }
+        if hovering, style == .neutral { return Theme.buttonHoverBorder }
         switch style {
         case .neutral: return Theme.buttonBorder
         case .primary: return .clear

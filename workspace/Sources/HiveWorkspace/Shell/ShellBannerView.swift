@@ -22,9 +22,15 @@ final class ShellBannerView: NSView {
         self.presentation = presentation
         switch banner.severity {
         case .info:
-            fill = Theme.positiveSurface
-            stroke = Theme.positive
-            border = Theme.positiveBannerBorder
+            if presentation == .global {
+                fill = Theme.warningSurface
+                stroke = Theme.warning
+                border = Theme.warningButtonBorder
+            } else {
+                fill = Theme.positiveSurface
+                stroke = Theme.positive
+                border = Theme.positiveBannerBorder
+            }
         case .warning:
             fill = Theme.warningSurface
             stroke = Theme.warning
