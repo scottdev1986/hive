@@ -18,7 +18,7 @@
 # app traffic).
 #
 # Mutation env hooks (self-check re-enters fixture with each one set):
-#   TOUR_FORCE_BAD_TITLE=<title>   — nil-click: click a title no button has
+#   TOUR_FORCE_BAD_SLUG=<slug>     — nil-click: click an undeclared route
 #   TOUR_FORCE_TINY_CAPTURE=1      — non-blank: replace each capture with a tiny blob
 #   TOUR_FORCE_PERTURB_SETTLE=1    — settledness: corrupt the second capture
 #   TOUR_FORCE_CLONE_PREV=1        — inter-route differ: copy prev route over this one
@@ -135,7 +135,7 @@ zoom_window_to_active_screen() {
 # [nil performClick:] is a silent no-op, so the CALLER must refuse a zero
 # pointer or a missed click turns into a full tour of one screen.
 click_route() {
-  lldb_value "NSMutableArray *q = [NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSButton *hit = (NSButton*)0; while ([q count] > 0) { NSView *v = (NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSButton class]] && [((NSString*)[(NSButton*)v accessibilityLabel]) isEqualToString:@\"$1, navigation\"]) { hit = (NSButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [hit performSelector:@selector(performClick:) withObject:(id)0 afterDelay:1.0]; (long)hit"
+  lldb_value "NSMutableArray *q = [NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSButton *hit = (NSButton*)0; while ([q count] > 0) { NSView *v = (NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSButton class]] && [((NSString*)[v accessibilityIdentifier]) isEqualToString:@\"shell-nav-$1\"]) { hit = (NSButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [hit performSelector:@selector(performClick:) withObject:(id)0 afterDelay:1.0]; (long)hit"
 }
 
 # Queue an exact main-menu family on the app's run loop. Calling the popup
@@ -373,7 +373,7 @@ probe_fixture_guard() {
   local code
   mkdir -p "$dir"
   # Clear every mutation hook, then apply only the ones this probe passes in.
-  env -u TOUR_FORCE_BAD_TITLE -u TOUR_FORCE_TINY_CAPTURE \
+  env -u TOUR_FORCE_BAD_SLUG -u TOUR_FORCE_TINY_CAPTURE \
     -u TOUR_FORCE_PERTURB_SETTLE -u TOUR_FORCE_CLONE_PREV \
     -u TOUR_FORCE_BAD_MENU -u TOUR_FORCE_INTERACTION_TINY \
     -u TOUR_FORCE_INTERACTION_CLONE -u TOUR_FORCE_FOCUS_FLICKER \
@@ -404,7 +404,7 @@ probe_interaction_guards() {
   dir="$root/interactions"
   out="$dir/out.txt"
   mkdir -p "$dir"
-  env -u TOUR_FORCE_BAD_TITLE -u TOUR_FORCE_TINY_CAPTURE \
+  env -u TOUR_FORCE_BAD_SLUG -u TOUR_FORCE_TINY_CAPTURE \
     -u TOUR_FORCE_PERTURB_SETTLE -u TOUR_FORCE_CLONE_PREV \
     -u TOUR_FORCE_BAD_MENU -u TOUR_FORCE_INTERACTION_TINY \
     -u TOUR_FORCE_INTERACTION_CLONE -u TOUR_FORCE_FOCUS_FLICKER \
@@ -521,10 +521,10 @@ run_self_check() {
   local slow_port slow_pid slow_out slow_rc
   check_dir=$(mktemp -d -t tour-self-check)
 
-  # --- nil-click: click a title no sidebar button has ---
-  probe_fixture_guard nil-click 'sidebar button .* not found' \
+  # --- nil-click: click a route no sidebar button has ---
+  probe_fixture_guard nil-click 'sidebar route .* not found' \
     "$corpus" "$check_dir" \
-    TOUR_FORCE_BAD_TITLE='__no_such_sidebar_button__'
+    TOUR_FORCE_BAD_SLUG='__no_such_sidebar_route__'
 
   # --- non-blank: capture() downsamples to a sub-floor blob ---
   probe_fixture_guard non-blank 'blank or near-blank capture' \
@@ -908,7 +908,7 @@ run_interactions() {
   local menu_titles=(Hive Edit View Agent Run Memory Queen Window)
   local menu_slugs=(hive edit view agent run memory queen window)
 
-  hit=$(click_route "Live Run")
+  hit=$(click_route run)
   interaction_guard interactions nil-control \
     'Live Run button not found before interaction walk' "$hit" || true
   sleep 3
@@ -981,7 +981,7 @@ run_interactions() {
 
   # Return to the route baseline before the reference-paired drawer and dialog
   # captures.
-  hit=$(click_route "Live Run")
+  hit=$(click_route run)
   interaction_guard run-attention nil-control \
     'Live Run button not found before drawer capture' "$hit" || true
   sleep 2
@@ -1048,7 +1048,7 @@ run_interactions() {
       'dialog evidence has reds; reference=run-modal.png'
   fi
 
-  hit=$(click_route "Task Router")
+  hit=$(click_route router)
   interaction_guard router-category-popup nil-control \
     'Task Router button not found before popup capture' "$hit" || true
   sleep 3
@@ -1122,7 +1122,7 @@ run_interactions() {
     'selected value read back; reference=none (mockup coverage gap)' \
     'selection evidence has reds; reference=none (mockup coverage gap)'
 
-  hit=$(click_route "Recall Lab")
+  hit=$(click_route memory-recall)
   interaction_guard memory-recall-text nil-control \
     'Recall Lab button not found before text entry' "$hit" || true
   sleep 3
@@ -1143,16 +1143,15 @@ run_interactions() {
 
 prev=""
 for i in "${!TITLES[@]}"; do
-  title="${TITLES[$i]}"
   slug="${SLUGS[$i]}"
   png="$ARTIFACTS/$MODE-$slug.png"
 
-  # TOUR_FORCE_BAD_TITLE is the deliberate nil-click probe.
-  click_title="${TOUR_FORCE_BAD_TITLE:-$title}"
+  # TOUR_FORCE_BAD_SLUG is the deliberate nil-click probe.
+  click_slug="${TOUR_FORCE_BAD_SLUG:-$slug}"
   reds_before=${#REDS[@]}
-  hit=$(click_route "$click_title")
+  hit=$(click_route "$click_slug")
   if [ -z "$hit" ] || [ "$hit" = "0" ]; then
-    route_red "$slug" nil-click "sidebar button \"$click_title\" not found — nothing was clicked"
+    route_red "$slug" nil-click "sidebar route \"$click_slug\" not found — nothing was clicked"
     route_status "$slug" blocked "nothing was clicked; nothing about this screen was assessable"
     continue
   fi
