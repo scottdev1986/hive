@@ -114,23 +114,21 @@ function migrateCheckpointSpec(db: DatabaseHost): void {
     const previousDigest = document.digest;
     const unsigned = { ...document };
     delete unsigned.digest;
-    document.digest = digestCheckpointContent(unsigned);
+    const digest = digestCheckpointContent(unsigned);
+    document.digest = digest;
     db.database
       .query(
         `UPDATE run_checkpoints SET document = ?
          WHERE instanceId = ? AND revision = ?`,
       )
       .run(JSON.stringify(document), row.instanceId, row.revision);
-    if (
-      typeof previousDigest === "string" &&
-      previousDigest !== document.digest
-    ) {
+    if (typeof previousDigest === "string" && previousDigest !== digest) {
       retargetSuccessionDigests(
         db,
         row.instanceId,
         row.revision,
         previousDigest,
-        document.digest,
+        digest,
       );
     }
   }
