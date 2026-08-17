@@ -130,12 +130,12 @@ zoom_window_to_active_screen() {
   lldb_value "extern void objc_msgSend(void); typedef struct { double x; double y; double width; double height; } TourRect; NSWindow *tourWindow = (NSWindow*)[[$NSAPP windows] objectAtIndex:0]; NSScreen *tourScreen = (NSScreen*)[tourWindow screen]; TourRect tourTarget = ((TourRect(*)(id,SEL))(void*)&objc_msgSend)(tourScreen,@selector(visibleFrame)); ((void(*)(id,SEL,TourRect,BOOL,BOOL))(void*)&objc_msgSend)(tourWindow,@selector(setFrame:display:animate:),tourTarget,YES,NO); [[tourWindow contentView] layoutSubtreeIfNeeded]; (long)tourWindow"
 }
 
-# BFS the window's view tree for the button with this exact title and schedule
-# a click on the app's own run loop, after detach. Echoes the button pointer:
+# BFS the window's view tree for the button with this exact accessibility label
+# and schedule a click on the app's own run loop, after detach. Echoes the button pointer:
 # [nil performClick:] is a silent no-op, so the CALLER must refuse a zero
 # pointer or a missed click turns into a full tour of one screen.
 click_route() {
-  lldb_value "NSMutableArray *q = [NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSButton *hit = (NSButton*)0; while ([q count] > 0) { NSView *v = (NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSButton class]] && [[(NSButton*)v title] isEqualToString:@\"  $1\"]) { hit = (NSButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [hit performSelector:@selector(performClick:) withObject:(id)0 afterDelay:1.0]; (long)hit"
+  lldb_value "NSMutableArray *q = [NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSButton *hit = (NSButton*)0; while ([q count] > 0) { NSView *v = (NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSButton class]] && [((NSString*)[(NSButton*)v accessibilityLabel]) isEqualToString:@\"$1, navigation\"]) { hit = (NSButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [hit performSelector:@selector(performClick:) withObject:(id)0 afterDelay:1.0]; (long)hit"
 }
 
 # Queue an exact main-menu family on the app's run loop. Calling the popup
