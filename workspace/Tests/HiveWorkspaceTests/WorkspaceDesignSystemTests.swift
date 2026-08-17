@@ -46,7 +46,6 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         XCTAssertEqual(topBar.frame.height, Theme.Metric.topBarHeight, accuracy: 1)
         XCTAssertEqual(sidebar.frame.width, Theme.Metric.sidebarWidth, accuracy: 1)
         for identifier in [
-            "shell-sandbox-status",
             "shell-queen-status",
             "shell-attention-status",
             "shell-settings",

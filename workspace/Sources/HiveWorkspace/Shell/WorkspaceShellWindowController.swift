@@ -522,15 +522,6 @@ private final class ShellTopBarView: NSView {
         setAccessibilityIdentifier("shell-top-bar")
 
         let brand = ShellBrandView()
-        let sandboxed = ProcessInfo.processInfo.environment["APP_SANDBOX_CONTAINER_ID"] != nil
-        let sandboxStatus = ShellStatusButton(
-            title: sandboxed ? "SANDBOXED" : "UNSANDBOXED")
-        sandboxStatus.tone = sandboxed ? .positive : .neutral
-        sandboxStatus.setAccessibilityRole(.staticText)
-        sandboxStatus.setAccessibilityIdentifier("shell-sandbox-status")
-        sandboxStatus.setAccessibilityLabel(
-            sandboxed ? "Application sandboxed" : "Application not sandboxed")
-
         queenStatus.setAccessibilityRole(.staticText)
         queenStatus.setAccessibilityIdentifier("shell-queen-status")
 
@@ -548,8 +539,7 @@ private final class ShellTopBarView: NSView {
         settings.toolTip = "Settings"
         settings.widthAnchor.constraint(equalToConstant: 32).isActive = true
 
-        let statusRow = NSStackView(
-            views: [sandboxStatus, queenStatus, attentionStatus, settings])
+        let statusRow = NSStackView(views: [queenStatus, attentionStatus, settings])
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         statusRow.orientation = .horizontal
         statusRow.alignment = .centerY
