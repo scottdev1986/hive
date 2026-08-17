@@ -24,7 +24,7 @@ final class PageHeaderView: NSView {
         copy.spacing = Theme.Space.xs
         if let subtitle, !subtitle.isEmpty {
             let subtitleLabel = NSTextField(wrappingLabelWithString: subtitle)
-            subtitleLabel.font = Theme.Font.callout
+            subtitleLabel.font = Theme.Font.screenSubtitle
             subtitleLabel.textColor = Theme.secondaryText
             subtitleLabel.maximumNumberOfLines = 2
             subtitleLabel.compressHorizontally(priority: 430, toolTip: subtitle)

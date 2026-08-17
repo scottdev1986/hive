@@ -58,7 +58,7 @@ final class CapsuleBadge: NSView {
         if let symbol, let image = NSImage(
             systemSymbolName: symbol, accessibilityDescription: nil) {
             icon.image = image.withSymbolConfiguration(
-                .init(pointSize: 9.5, weight: .semibold))
+                .init(pointSize: 7, weight: .semibold))
             icon.contentTintColor = style.tint
             views.append(icon)
         }
@@ -71,8 +71,8 @@ final class CapsuleBadge: NSView {
         stack.alignment = .centerY
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
         ])

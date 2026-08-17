@@ -28,6 +28,48 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         XCTAssertEqual(meter.accessibilityIdentifier(), "hds-meter-bar")
     }
 
+    func testSplitHorizonTokensUseTheExactChromePaletteAndNativeScale() throws {
+        assertRGB(Theme.Chrome.bg, hex: 0x091117)
+        assertRGB(Theme.Chrome.top, hex: 0x111A20)
+        assertRGB(Theme.Chrome.sidebar, hex: 0x0E171C)
+        assertRGB(Theme.Chrome.panel, hex: 0x101B22)
+        assertRGB(Theme.Chrome.panel2, hex: 0x172630)
+        assertRGB(Theme.Chrome.line, hex: 0x263A45)
+        assertRGB(Theme.Chrome.text, hex: 0xEDF4F7)
+        assertRGB(Theme.Chrome.muted, hex: 0x8599A4)
+        assertRGB(Theme.Chrome.faint, hex: 0x536873)
+        assertRGB(Theme.Chrome.accent, hex: 0x73D8E8)
+        assertRGB(Theme.Chrome.green, hex: 0x69D49F)
+        assertRGB(Theme.Chrome.yellow, hex: 0xEFB161)
+        assertRGB(Theme.Chrome.red, hex: 0xEC7770)
+        assertRGB(Theme.Chrome.violet, hex: 0xC1A0DD)
+
+        XCTAssertEqual(Theme.Metric.sidebarWidth, 188)
+        XCTAssertEqual(Theme.Metric.topBarHeight, 59)
+        XCTAssertEqual(Theme.Metric.controlMinHeight, 28)
+        XCTAssertEqual(Theme.Font.chromeNav.pointSize, 8)
+        XCTAssertEqual(Theme.Font.chromeGroup.pointSize, 6)
+        XCTAssertEqual(Theme.Font.screenSubtitle.pointSize, 8)
+        XCTAssertEqual(Theme.Font.sectionTitle.pointSize, 12)
+        XCTAssertEqual(Theme.Font.badge.pointSize, 7)
+    }
+
+    func testActionButtonAndBannerExposeTheTwoChromeLevels() throws {
+        let button = ActionButton(title: "Refresh")
+        XCTAssertEqual(button.accessibilityIdentifier(), "hds-action-button")
+        XCTAssertTrue(button.constraints.contains {
+            $0.firstAttribute == .height
+                && $0.relation == .greaterThanOrEqual
+                && $0.constant == Theme.Metric.controlMinHeight
+        })
+
+        let banner = ShellBanner(severity: .warning, text: "Projection is stale.")
+        let global = ShellBannerView(banner: banner, presentation: .global)
+        let inline = ShellBannerView(banner: banner, presentation: .inline)
+        XCTAssertEqual(global.accessibilityIdentifier(), "shell-banner-global")
+        XCTAssertEqual(inline.accessibilityIdentifier(), "shell-banner-inline")
+    }
+
     func testShellChromeUsesCompactSidebarAndNamedTopBarControls() throws {
         _ = NSApplication.shared
         let controller = WorkspaceShellWindowController(
@@ -59,11 +101,53 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         XCTAssertTrue(controller.currentState.attentionDrawerVisible)
     }
 
+    func testGlobalBannerSpansTheShellBelowTheTopBar() throws {
+        _ = NSApplication.shared
+        let state = ShellState(lastOutcome: .surfaceUnavailable(
+            .showLiveRun,
+            reason: "Projection is stale."))
+        let controller = WorkspaceShellWindowController(
+            context: ShellSidebarView.Context(
+                projectName: "hive",
+                projectPath: "/Users/test/Projects/hive",
+                instanceLabel: "instance · fixture"),
+            state: state)
+        let window = try XCTUnwrap(controller.window)
+        window.setContentSize(NSSize(width: 1_100, height: 720))
+        window.contentView?.layoutSubtreeIfNeeded()
+        let content = try XCTUnwrap(window.contentView)
+        let topBar = try XCTUnwrap(findView(in: content, identifier: "shell-top-bar"))
+        let banner = try XCTUnwrap(findView(in: content, identifier: "shell-banner-global"))
+        let topBarFrame = topBar.convert(topBar.bounds, to: content)
+        let bannerFrame = banner.convert(banner.bounds, to: content)
+
+        XCTAssertEqual(bannerFrame.width, content.bounds.width, accuracy: 1)
+        XCTAssertEqual(bannerFrame.minX, content.bounds.minX, accuracy: 1)
+        XCTAssertEqual(bannerFrame.maxY, topBarFrame.minY, accuracy: 1)
+    }
+
     private func findView(in view: NSView, identifier: String) -> NSView? {
         if view.accessibilityIdentifier() == identifier { return view }
         for child in view.subviews {
             if let found = findView(in: child, identifier: identifier) { return found }
         }
         return nil
+    }
+
+    private func assertRGB(
+        _ color: NSColor,
+        hex: Int,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let rgb = color.usingColorSpace(.sRGB) else {
+            return XCTFail("Color does not resolve in sRGB", file: file, line: line)
+        }
+        XCTAssertEqual(Int((rgb.redComponent * 255).rounded()), (hex >> 16) & 0xFF,
+                       file: file, line: line)
+        XCTAssertEqual(Int((rgb.greenComponent * 255).rounded()), (hex >> 8) & 0xFF,
+                       file: file, line: line)
+        XCTAssertEqual(Int((rgb.blueComponent * 255).rounded()), hex & 0xFF,
+                       file: file, line: line)
     }
 }

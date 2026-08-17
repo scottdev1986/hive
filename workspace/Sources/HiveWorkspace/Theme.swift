@@ -10,10 +10,10 @@ enum Theme {
         case .green: systemColor = positive
         case .yellow: systemColor = warning
         case .orange: systemColor = warning
-        case .blue: systemColor = .systemBlue
-        case .purple: systemColor = .systemPurple
+        case .blue: systemColor = accent
+        case .purple: systemColor = violet
         case .red: systemColor = critical
-        case .gray: systemColor = .systemGray
+        case .gray: systemColor = secondaryText
         case .teal: systemColor = accent
         }
         return subdued ? systemColor.withAlphaComponent(0.35) : systemColor

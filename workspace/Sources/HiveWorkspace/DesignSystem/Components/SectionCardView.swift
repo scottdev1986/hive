@@ -11,7 +11,7 @@ final class SectionCardView: CardView {
         super.init()
 
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = Theme.Font.title
+        titleLabel.font = Theme.Font.sectionTitle
         titleLabel.textColor = Theme.primaryText
         titleLabel.compressHorizontally(priority: 460, toolTip: title)
 
@@ -21,7 +21,7 @@ final class SectionCardView: CardView {
         copy.spacing = 2
         if let subtitle, !subtitle.isEmpty {
             let subtitleLabel = NSTextField(labelWithString: subtitle)
-            subtitleLabel.font = Theme.Font.caption
+            subtitleLabel.font = Theme.Font.sectionMetadata
             subtitleLabel.textColor = Theme.tertiaryText
             subtitleLabel.compressHorizontally(priority: 440, toolTip: subtitle)
             copy.addArrangedSubview(subtitleLabel)

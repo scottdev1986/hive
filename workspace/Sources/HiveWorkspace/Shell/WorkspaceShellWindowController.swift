@@ -11,7 +11,6 @@ final class WorkspaceShellWindowController: NSWindowController {
     private let bannerStack = NSStackView()
     private var emptyBannerHeightConstraint: NSLayoutConstraint?
     private let mainRow = NSStackView()
-    private let contentColumn = NSStackView()
     private let screenScrollView = NSScrollView()
     private let screenHost = ShellScreenDocumentView()
     private var liveRunHeightCeiling: NSLayoutConstraint?
@@ -121,11 +120,8 @@ final class WorkspaceShellWindowController: NSWindowController {
         guard let contentView = window?.contentView else { return }
 
         bannerStack.orientation = .vertical
-        bannerStack.spacing = Theme.Space.s
+        bannerStack.spacing = 0
         bannerStack.translatesAutoresizingMaskIntoConstraints = false
-        bannerStack.edgeInsets = NSEdgeInsets(
-            top: Theme.Space.m, left: Theme.Space.l,
-            bottom: 0, right: Theme.Space.l)
         bannerStack.setAccessibilityIdentifier("shell-banners")
 
         mainRow.orientation = .horizontal
@@ -152,23 +148,14 @@ final class WorkspaceShellWindowController: NSWindowController {
         screenHost.translatesAutoresizingMaskIntoConstraints = false
         screenHost.setAccessibilityIdentifier("shell-screen-host")
 
-        contentColumn.orientation = .vertical
-        contentColumn.alignment = .leading
-        contentColumn.distribution = .fill
-        contentColumn.spacing = 0
-        contentColumn.translatesAutoresizingMaskIntoConstraints = false
-        contentColumn.addArrangedSubview(bannerStack)
-        contentColumn.addArrangedSubview(screenScrollView)
-        bannerStack.widthAnchor.constraint(equalTo: contentColumn.widthAnchor).isActive = true
-        screenScrollView.widthAnchor.constraint(equalTo: contentColumn.widthAnchor).isActive = true
-
         mainRow.addArrangedSubview(sidebar)
         mainRow.addArrangedSubview(separator)
-        mainRow.addArrangedSubview(contentColumn)
+        mainRow.addArrangedSubview(screenScrollView)
 
         let root = ShellFillView(color: Theme.workspaceBackground)
         root.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(topBar)
+        root.addSubview(bannerStack)
         root.addSubview(mainRow)
         contentView.addSubview(root)
         let emptyBannerHeightConstraint = bannerStack.heightAnchor.constraint(
@@ -184,16 +171,19 @@ final class WorkspaceShellWindowController: NSWindowController {
             topBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             topBar.topAnchor.constraint(equalTo: root.topAnchor),
             topBar.heightAnchor.constraint(equalToConstant: Theme.Metric.topBarHeight),
+            bannerStack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bannerStack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bannerStack.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             mainRow.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             mainRow.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            mainRow.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            mainRow.topAnchor.constraint(equalTo: bannerStack.bottomAnchor),
             mainRow.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             sidebar.heightAnchor.constraint(equalTo: mainRow.heightAnchor),
-            contentColumn.heightAnchor.constraint(equalTo: mainRow.heightAnchor),
             screenHost.widthAnchor.constraint(
                 equalTo: screenScrollView.contentView.widthAnchor),
             screenHost.heightAnchor.constraint(
                 greaterThanOrEqualTo: screenScrollView.contentView.heightAnchor),
+            screenScrollView.heightAnchor.constraint(equalTo: mainRow.heightAnchor),
         ])
         liveRunHeightCeiling = screenHost.heightAnchor
             .constraint(lessThanOrEqualTo: screenScrollView.contentView.heightAnchor)
@@ -302,18 +292,13 @@ final class WorkspaceShellWindowController: NSWindowController {
             banners.append(memoryActionBanner)
         }
         for banner in banners {
-            let view = ShellBannerView(banner: banner)
+            let view = ShellBannerView(banner: banner, presentation: .global)
             bannerStack.addArrangedSubview(view)
             view.widthAnchor.constraint(
-                equalTo: bannerStack.widthAnchor, constant: -Theme.Space.l * 2
+                equalTo: bannerStack.widthAnchor
             ).isActive = true
         }
         emptyBannerHeightConstraint?.isActive = banners.isEmpty
-        bannerStack.edgeInsets = banners.isEmpty
-            ? NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-            : NSEdgeInsets(
-                top: Theme.Space.m, left: Theme.Space.l,
-                bottom: 0, right: Theme.Space.l)
         bannerStack.isHidden = banners.isEmpty
     }
 
@@ -512,8 +497,8 @@ private final class ShellTopBarView: NSView {
     var onAttention: () -> Void = {}
     var onSettings: () -> Void = {}
 
-    private let queenStatus = ShellStatusButton(title: "Queen · Unknown")
-    private let attentionStatus = ShellStatusButton(title: "Attention 0")
+    private let queenStatus = ActionButton(title: "Queen · Unknown")
+    private let attentionStatus = ActionButton(title: "Attention 0")
 
     init() {
         super.init(frame: .zero)
@@ -525,19 +510,19 @@ private final class ShellTopBarView: NSView {
         queenStatus.setAccessibilityRole(.staticText)
         queenStatus.setAccessibilityIdentifier("shell-queen-status")
 
-        attentionStatus.tone = .warning
+        attentionStatus.style = .warning
         attentionStatus.target = self
         attentionStatus.action = #selector(attentionPressed(_:))
         attentionStatus.setAccessibilityIdentifier("shell-attention-status")
         attentionStatus.toolTip = "Show Attention queue (⌥⌘A)"
 
-        let settings = ShellStatusButton(title: "", symbol: "gearshape")
+        let settings = ActionButton(title: "", symbol: "gearshape")
         settings.target = self
         settings.action = #selector(settingsPressed(_:))
         settings.setAccessibilityIdentifier("shell-settings")
         settings.setAccessibilityLabel("Settings")
         settings.toolTip = "Settings"
-        settings.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        settings.widthAnchor.constraint(equalToConstant: 30).isActive = true
 
         let statusRow = NSStackView(views: [queenStatus, attentionStatus, settings])
         statusRow.translatesAutoresizingMaskIntoConstraints = false
@@ -575,8 +560,17 @@ private final class ShellTopBarView: NSView {
 
     override func updateLayer() {
         layer?.backgroundColor = Theme.shellChromeFill.cgColor
-        layer?.borderColor = Theme.cardStroke.cgColor
-        layer?.borderWidth = 1
+        layer?.borderWidth = 0
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        Theme.cardStroke.setStroke()
+        let border = NSBezierPath()
+        border.move(to: NSPoint(x: bounds.minX, y: bounds.minY + 0.5))
+        border.line(to: NSPoint(x: bounds.maxX, y: bounds.minY + 0.5))
+        border.lineWidth = 1
+        border.stroke()
     }
 
     func apply(queenProvider: ProviderID?, attentionCount: Int) {
@@ -593,7 +587,7 @@ private final class ShellTopBarView: NSView {
         queenStatus.title = "Queen · \(provider)"
         queenStatus.setAccessibilityLabel("Queen provider: \(provider)")
         attentionStatus.title = "Attention \(attentionCount)"
-        attentionStatus.tone = attentionCount > 0 ? .warning : .neutral
+        attentionStatus.style = attentionCount > 0 ? .warning : .neutral
         attentionStatus.setAccessibilityLabel("Attention: \(attentionCount) items")
     }
 
@@ -612,10 +606,10 @@ private final class ShellBrandView: NSView {
         icon.imageScaling = .scaleProportionallyUpOrDown
 
         let name = NSTextField(labelWithString: "Hive")
-        name.font = Theme.Font.title
+        name.font = Theme.Font.chromeBrand
         name.textColor = Theme.primaryText
         let detail = NSTextField(labelWithString: "AGENTIC WORKSPACE")
-        detail.font = Theme.Font.micro
+        detail.font = Theme.Font.chromeSubtitle
         detail.textColor = Theme.secondaryText
         let copy = NSStackView(views: [name, detail])
         copy.translatesAutoresizingMaskIntoConstraints = false
@@ -628,8 +622,8 @@ private final class ShellBrandView: NSView {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 30),
-            icon.heightAnchor.constraint(equalToConstant: 30),
+            icon.widthAnchor.constraint(equalToConstant: 31),
+            icon.heightAnchor.constraint(equalToConstant: 31),
             copy.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 9),
             copy.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
             copy.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -642,70 +636,6 @@ private final class ShellBrandView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-}
-
-private final class ShellStatusButton: NSButton {
-
-    enum Tone {
-        case neutral
-        case positive
-        case warning
-    }
-
-    var tone: Tone = .neutral {
-        didSet {
-            contentTintColor = foregroundColor
-            needsDisplay = true
-        }
-    }
-
-    init(title: String, symbol: String? = nil) {
-        super.init(frame: .zero)
-        self.title = title
-        translatesAutoresizingMaskIntoConstraints = false
-        isBordered = false
-        bezelStyle = .inline
-        font = Theme.Font.badge
-        contentTintColor = foregroundColor
-        heightAnchor.constraint(equalToConstant: 26).isActive = true
-        if let symbol {
-            image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
-            imagePosition = .imageOnly
-        }
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(
-            roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5),
-            xRadius: 7,
-            yRadius: 7)
-        backgroundColor.setFill()
-        path.fill()
-        foregroundColor.withAlphaComponent(0.45).setStroke()
-        path.lineWidth = 1
-        path.stroke()
-        super.draw(dirtyRect)
-    }
-
-    private var backgroundColor: NSColor {
-        switch tone {
-        case .neutral: return Theme.cardFill
-        case .positive: return Theme.positiveBadgeFill
-        case .warning: return Theme.warningBadgeFill
-        }
-    }
-
-    private var foregroundColor: NSColor {
-        switch tone {
-        case .neutral: return Theme.primaryText
-        case .positive: return Theme.positive
-        case .warning: return Theme.warning
-        }
-    }
 }
 
 private final class ShellFillView: NSView {

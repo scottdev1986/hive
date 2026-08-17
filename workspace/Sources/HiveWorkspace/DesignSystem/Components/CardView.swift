@@ -20,10 +20,14 @@ class CardView: NSView {
         contentStack.spacing = Theme.Space.m
         addSubview(contentStack)
         NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Space.l),
-            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Space.l),
-            contentStack.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.l),
-            contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.l),
+            contentStack.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: Theme.Metric.cardInset),
+            contentStack.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -Theme.Metric.cardInset),
+            contentStack.topAnchor.constraint(
+                equalTo: topAnchor, constant: Theme.Metric.cardInset),
+            contentStack.bottomAnchor.constraint(
+                equalTo: bottomAnchor, constant: -Theme.Metric.cardInset),
         ])
     }
 
@@ -33,15 +37,15 @@ class CardView: NSView {
         let radius = Theme.Metric.cardCornerRadius
         let inset = bounds.insetBy(dx: 0.5, dy: 0.5)
         let path = NSBezierPath(roundedRect: inset, xRadius: radius, yRadius: radius)
-        Theme.Chrome.panel2.setFill()
+        Theme.cardFill.setFill()
         path.fill()
         if dashed {
             path.setLineDash([4, 3], count: 2, phase: 0)
             path.lineWidth = 1
-            Theme.Chrome.faint.setStroke()
+            Theme.tertiaryText.setStroke()
         } else {
             path.lineWidth = 1
-            Theme.Chrome.line.setStroke()
+            Theme.cardStroke.setStroke()
         }
         path.stroke()
     }

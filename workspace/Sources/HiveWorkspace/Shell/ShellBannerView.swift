@@ -8,45 +8,62 @@ import WorkspaceCore
 
 final class ShellBannerView: NSView {
 
+    enum Presentation {
+        case global
+        case inline
+    }
+
+    private let presentation: Presentation
     private let fill: NSColor
     private let stroke: NSColor
+    private let border: NSColor
 
-    init(banner: ShellBanner) {
+    init(banner: ShellBanner, presentation: Presentation = .inline) {
+        self.presentation = presentation
         switch banner.severity {
         case .info:
-            fill = Theme.infoBadgeFill
-            stroke = Theme.accent
+            fill = Theme.positiveSurface
+            stroke = Theme.positive
+            border = Theme.positiveBannerBorder
         case .warning:
-            fill = Theme.warningBadgeFill
+            fill = Theme.warningSurface
             stroke = Theme.warning
+            border = Theme.warningButtonBorder
         case .critical:
-            fill = Theme.criticalBadgeFill
+            fill = Theme.criticalSurface
             stroke = Theme.critical
+            border = Theme.criticalBannerBorder
         }
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = Theme.Metric.insetCornerRadius
+        layer?.cornerRadius = presentation == .inline ? Theme.Metric.insetCornerRadius : 0
         layer?.cornerCurve = .continuous
-        layer?.borderWidth = 1
+        layer?.borderWidth = presentation == .inline ? 1 : 0
 
         let label = NSTextField(wrappingLabelWithString: banner.text)
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = Theme.Font.callout
+        label.font = presentation == .global
+            ? Theme.Font.chromeMetadata
+            : Theme.Font.screenSubtitle
         label.textColor = stroke
-        label.maximumNumberOfLines = 3
+        label.alignment = presentation == .global ? .center : .natural
+        label.maximumNumberOfLines = presentation == .global ? 2 : 3
         label.compressHorizontally(priority: 450, toolTip: banner.text)
         addSubview(label)
+        let horizontalInset: CGFloat = presentation == .global ? 9 : 11
+        let verticalInset: CGFloat = presentation == .global ? 5 : 9
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Space.m),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Space.m),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalInset),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalInset),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: verticalInset),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -verticalInset),
         ])
 
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityIdentifier("shell-banner")
+        setAccessibilityIdentifier(
+            presentation == .global ? "shell-banner-global" : "shell-banner-inline")
         setAccessibilityLabel(banner.text)
     }
 
@@ -55,6 +72,17 @@ final class ShellBannerView: NSView {
 
     override func updateLayer() {
         layer?.backgroundColor = fill.cgColor
-        layer?.borderColor = stroke.withAlphaComponent(0.55).cgColor
+        layer?.borderColor = border.cgColor
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard presentation == .global else { return }
+        border.setStroke()
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: bounds.minX, y: bounds.minY + 0.5))
+        path.line(to: NSPoint(x: bounds.maxX, y: bounds.minY + 0.5))
+        path.lineWidth = 1
+        path.stroke()
     }
 }
