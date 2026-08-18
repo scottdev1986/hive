@@ -184,8 +184,17 @@ async function postDaemonJson(
   body: unknown,
   fetcher?: McpFetcher,
 ): Promise<unknown> {
-  const fetchFn = fetcher ?? userFetch;
-  const response = await fetchFn(`http://127.0.0.1:${port}${path}`, {
+  const { UserDaemonClient } = await import("./user-daemon-client");
+  const authorizedFetch =
+    fetcher === undefined
+      ? undefined
+      : (input: string | URL | Request, init?: RequestInit) =>
+          fetcher(input instanceof Request ? input.url : input, init);
+  const response = await new UserDaemonClient({
+    port: fetcher === undefined ? port : 1,
+    fetch: authorizedFetch,
+    ...(fetcher === undefined ? {} : { verifyIdentity: false }),
+  }).request(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),

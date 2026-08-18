@@ -215,6 +215,6 @@ describe("compiled queen knowledge drift", () => {
     expect(board).toContain("non-optional scrum discipline");
     expect(board).toContain("let spawn mark it in progress");
     expect(board).toContain("The task owner writes the board");
-    expect(board).toContain("they do not write task records themselves");
+    expect(board).toContain("Agents land their own work");
   });
 });

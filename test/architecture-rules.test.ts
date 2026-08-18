@@ -67,6 +67,19 @@ function importsOf(sources: Sources, file: string): string[] {
     );
     if (target !== undefined && target !== file) found.push(target);
   }
+  for (const match of text.matchAll(/import\("(\.[^"]+)"\)/g)) {
+    const directory = file.split("/").slice(0, -1);
+    for (const segment of (match[1] as string).split("/")) {
+      if (segment === ".") continue;
+      if (segment === "..") directory.pop();
+      else directory.push(segment);
+    }
+    const base = directory.join("/");
+    const target = [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`].find(
+      (candidate) => sources.has(candidate),
+    );
+    if (target !== undefined && target !== file) found.push(target);
+  }
   return found;
 }
 
@@ -384,10 +397,8 @@ const KNOWN_FORBIDDEN_EDGES: readonly string[] = [
   "src/memory-service/query.ts -> src/daemon/status-service/status-service.ts",
   // Recall names the user subject to exclude it from agent recall.
   "src/memory-service/recall.ts -> src/daemon/authorization/credentials.ts",
-  // The memory MCP tools register through the daemon's policy registrar and
-  // read status freshness from its status service.
+  // The memory MCP tools register through the daemon's policy registrar.
   "src/memory-service/memory-tools.ts -> src/daemon/authorization/mcp-tool-policy.ts",
-  "src/memory-service/memory-tools.ts -> src/daemon/status-service/status-service.ts",
   // The protocol facts report talks to the daemon through the pane's client.
   "src/usage-service/protocol-facts-report.ts -> src/cli/agent-ui/pane-daemon-client.ts",
   // The quota ledger is keyed by daemon instance and checks its liveness.
@@ -495,8 +506,8 @@ describe("R3 — the layer DAG", () => {
     // Asserted separately from the comparison above. Without this, a
     // nineteenth violation could be legalised by appending one line to the
     // list, and the suite would stay green with nobody the wiser.
-    expect(KNOWN_FORBIDDEN_EDGES).toHaveLength(18);
-    expect(new Set(KNOWN_FORBIDDEN_EDGES).size).toBe(18);
+    expect(KNOWN_FORBIDDEN_EDGES).toHaveLength(17);
+    expect(new Set(KNOWN_FORBIDDEN_EDGES).size).toBe(17);
   });
 
   test("the layer rule refuses an edge that is not on the list", () => {
