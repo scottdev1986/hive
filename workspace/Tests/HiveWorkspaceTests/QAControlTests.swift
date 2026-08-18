@@ -28,6 +28,28 @@ final class QAControlTests: XCTestCase {
         XCTAssertEqual(response.controls.first?.actionable, true)
     }
 
+    func testAHiddenAncestorDefeatsFunctionalPresence() {
+        let button = NSButton(title: "Models & Quota", target: nil, action: nil)
+        button.identifier = NSUserInterfaceItemIdentifier("shell-nav-models")
+        button.frame = NSRect(x: 10, y: 10, width: 120, height: 30)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        container.addSubview(button)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: .titled, backing: .buffered, defer: false)
+        window.contentView?.addSubview(container)
+
+        func present() -> Bool? {
+            QAControl.process(
+                verb: "enumerate", identifier: nil, input: nil,
+                window: window, route: "models", requestId: "request"
+            ).controls.first { $0.identifier == "shell-nav-models" }?.functionallyPresent
+        }
+
+        XCTAssertEqual(present(), true)
+        container.isHidden = true
+        XCTAssertEqual(present(), false)
+    }
+
     func testUnknownIdentifierIsAMeasuredFailure() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
                               styleMask: .titled, backing: .buffered, defer: false)

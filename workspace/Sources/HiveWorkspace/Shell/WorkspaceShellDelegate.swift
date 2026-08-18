@@ -53,8 +53,8 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                     ?? "development launch — no instance")
             let controller = WorkspaceShellWindowController(context: context, state: state)
             let workbench = LiveRunWorkbenchView(config: config)
-             controller.installLiveRunWorkbench(workbench)
-             qaControl = QAControl(home: config.instanceHome, surface: controller)
+            controller.installLiveRunWorkbench(workbench)
+            qaControl = QAControl(home: config.instanceHome, surface: controller)
             if launch.isLive {
                 do {
                     liveRunControlGateway = LiveRunControlGateway(
