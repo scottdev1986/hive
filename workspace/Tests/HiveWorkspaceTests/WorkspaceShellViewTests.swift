@@ -375,6 +375,43 @@ final class WorkspaceShellViewTests: XCTestCase {
                     "\(route) content must not spill past the viewport at \(width)")
             }
         }
+
+        // Dense current installs TaskRouterScreenView and QueenProviderScreenView.
+        // The availability panel is a different constraint graph and is what
+        // the screen-content-fills-width probe mutates; unknown queen is the
+        // measured way that panel is on screen.
+        let fallback = try makeController(scenario: .unknown)
+        defer { fallback.window?.close() }
+        guard let fallbackWindow = fallback.window,
+              let fallbackContent = fallbackWindow.contentView else {
+            return XCTFail("no fallback window")
+        }
+        let fallbackQueen = try XCTUnwrap(findView(
+            in: fallbackContent, identifier: "shell-nav-queen") as? NSButton)
+        fallbackQueen.performClick(nil)
+        let fallbackScroll = try XCTUnwrap(findView(
+            in: fallbackContent, identifier: "shell-screen-scroll") as? NSScrollView)
+        let fallbackDocument = try XCTUnwrap(fallbackScroll.documentView)
+        for width in [940.0, 1100.0, 1728.0, 2560.0] {
+            fallbackWindow.setContentSize(NSSize(width: width, height: 560))
+            fallbackWindow.layoutIfNeeded()
+            let panel = try XCTUnwrap(fallbackDocument.subviews.first)
+            XCTAssertTrue(
+                panel is ShellAvailabilityPanel,
+                "unknown queen must be the availability panel at \(width)")
+            XCTAssertEqual(
+                panel.frame.width, fallbackDocument.bounds.width, accuracy: 1,
+                "availability panel must fill the viewport at \(width)")
+            let rightEdge = contentRightEdge(of: panel, in: panel)
+            XCTAssertGreaterThan(
+                rightEdge,
+                fallbackDocument.bounds.width - Theme.Space.page * 2,
+                "availability panel content must reach the right edge at \(width)")
+            XCTAssertLessThanOrEqual(
+                rightEdge,
+                fallbackDocument.bounds.width,
+                "availability panel content must not spill past the viewport at \(width)")
+        }
     }
 
     func testSparseScreenFillsItsViewportWithoutManufacturingScroll() throws {
