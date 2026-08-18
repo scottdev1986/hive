@@ -22,14 +22,14 @@ final class UsageMeterView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.font = Theme.Font.caption
-        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.textColor = Theme.secondaryText
         titleLabel.lineBreakMode = .byTruncatingTail
         valueLabel.font = Theme.Font.monoDigits
-        valueLabel.textColor = .labelColor
+        valueLabel.textColor = Theme.primaryText
         valueLabel.alignment = .right
         valueLabel.lineBreakMode = .byTruncatingTail
         captionLabel.font = Theme.Font.caption
-        captionLabel.textColor = .tertiaryLabelColor
+        captionLabel.textColor = Theme.tertiaryText
         captionLabel.lineBreakMode = .byWordWrapping
         captionLabel.maximumNumberOfLines = 3
 
@@ -81,7 +81,7 @@ final class UsageMeterView: NSView {
                 fraction: usedPercent / 100,
                 color: fillColor(usedPercent: usedPercent))
             valueLabel.stringValue = MCCCopy.meterUsedPct(percent)
-            valueLabel.textColor = .labelColor
+            valueLabel.textColor = Theme.primaryText
             captionLabel.stringValue = resetsAt.map {
                 MCCCopy.meterResetsIn(Self.relative(from: now, to: $0))
             } ?? ""
@@ -104,7 +104,7 @@ final class UsageMeterView: NSView {
                 fraction: usedPercent / 100,
                 color: Theme.meterUnknownHatch)
             valueLabel.stringValue = MCCCopy.meterUsedPct(percent)
-            valueLabel.textColor = .secondaryLabelColor
+            valueLabel.textColor = Theme.secondaryText
             let age = observedAt.map { Self.relative(from: $0, to: now) } ?? "unknown time"
             captionLabel.stringValue = MCCCopy.meterStaleAge(age)
             captionLabel.isHidden = false
@@ -119,7 +119,7 @@ final class UsageMeterView: NSView {
             track.isHidden = false
             track.state = .indeterminate
             valueLabel.stringValue = MCCCopy.badgeUsageUnknown
-            valueLabel.textColor = .secondaryLabelColor
+            valueLabel.textColor = Theme.secondaryText
             captionLabel.stringValue = reason.isEmpty ? MCCCopy.meterUnknownBody : reason
             captionLabel.isHidden = false
             setAccessibilityLabel(MCCCopy.a11yMeterUnknown(window.label))
@@ -127,7 +127,7 @@ final class UsageMeterView: NSView {
         case .notMetered:
             track.isHidden = true
             valueLabel.stringValue = MCCCopy.badgeNotMetered
-            valueLabel.textColor = .secondaryLabelColor
+            valueLabel.textColor = Theme.secondaryText
             captionLabel.stringValue = MCCCopy.meterNotMeteredBody(window.label)
             captionLabel.isHidden = false
             setAccessibilityLabel("\(window.label), not metered on this plan")

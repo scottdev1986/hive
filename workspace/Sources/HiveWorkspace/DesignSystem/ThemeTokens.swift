@@ -77,8 +77,9 @@ extension Theme {
         static let buttonHoverFill = color(0x223741)
         static let buttonHoverBorder = color(0x58727F)
         static let text = color(0xEDF4F7)
-        static let muted = color(0x8599A4)
-        static let faint = color(0x536873)
+        static let muted = color(0x99B0BC)
+        static let faint = color(0x7593A2)
+        static let dashedStroke = color(0x566C77)
         static let accent = color(0x73D8E8)
         static let accentInk = color(0x071216)
         static let green = color(0x69D49F)
@@ -154,16 +155,28 @@ extension Theme {
         dark: { Chrome.text })
     static let secondaryText = dynamic(
         "hdsSecondaryText",
-        light: { rgb(72, 94, 103) },
+        light: { rgb(67, 87, 96) },
         dark: { Chrome.muted })
     static let tertiaryText = dynamic(
         "hdsTertiaryText",
-        light: { rgb(101, 123, 132) },
+        light: { rgb(91, 110, 119) },
         dark: { Chrome.faint })
+    /// The de-emphasis stroke — a dashed card edge, never text. Boundaries
+    /// answer to the 3:1 non-text threshold, so this stays dimmer than
+    /// `tertiaryText`; sharing one token would drag an "unavailable" card's
+    /// border up to text brightness and make absent things look emphasized.
+    static let subtleStroke = dynamic(
+        "hdsSubtleStroke",
+        light: { rgb(101, 123, 132) },
+        dark: { Chrome.dashedStroke })
 
+    /// Also the primary button's fill, so it carries `accentInk` as a label.
+    /// The light-mode value is darker than the mock's to keep that pairing at
+    /// AA; the dark-mode fill is light enough that its near-black ink already
+    /// clears it.
     static let accent = dynamic(
         "hdsAccent",
-        light: { rgb(18, 139, 158) },
+        light: { rgb(16, 124, 141) },
         dark: { Chrome.accent })
     static let accentFill = dynamic(
         "hdsAccentFill",

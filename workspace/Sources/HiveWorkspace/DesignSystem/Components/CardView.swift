@@ -42,7 +42,7 @@ class CardView: NSView {
         if dashed {
             path.setLineDash([4, 3], count: 2, phase: 0)
             path.lineWidth = 1
-            Theme.tertiaryText.setStroke()
+            Theme.subtleStroke.setStroke()
         } else {
             path.lineWidth = 1
             Theme.cardStroke.setStroke()
