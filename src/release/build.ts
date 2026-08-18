@@ -192,7 +192,7 @@ async function makeWorkspaceSelfContained(
   }
 }
 
-/** The one definition of a Hive build hash. Exported so `hive-deployd` stamps a locally staged candidate the same way the release pipeline stamps a published one — a second derivation would be a second answer to the question the daemon handshake asks.
+/** The one definition of a Hive build hash. Shared by the release pipeline and its tests so a second derivation cannot become a second answer to the question the daemon handshake asks.
  *
  * This is a content address, so it must cover everything that changes the content and nothing that does not. `variant` is therefore an input for the CLI, whose bytes carry the variant as a compiled-in define, and null for sessiond, whose Zig bytes are identical whichever variant is being built — a hash that moved for an artifact that did not would be as wrong as one that stayed for an artifact that did. The version prefix is `v2` because adding that field changed every value this function returns. */
 export function buildHashFor(
