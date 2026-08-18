@@ -38,22 +38,14 @@ final class RendererReplySuppressionTests: XCTestCase {
     ) throws -> [Data] {
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting(terminalReplies: policy)
         defer { surface.free() }
-        var observed: [Data] = []
-        let lock = NSLock()
-        surface.callbackContext.onWrite = { data in
-            lock.lock()
-            observed.append(data)
-            lock.unlock()
-        }
+        let observed = WriteTranscript(recording: surface.callbackContext)
         XCTAssertEqual(
             surface.processOutput(bytes: query.bytes, streamSeq: 0),
             .success,
             "\(query.name) must parse cleanly under \(policy)"
         )
         pump()
-        lock.lock()
-        defer { lock.unlock() }
-        return observed
+        return observed.chunks
     }
 
     func testEveryQueryIsIndividuallySuppressedAndNonVacuous() throws {

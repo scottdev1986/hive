@@ -622,8 +622,7 @@ final class InputEncodingTests: XCTestCase {
             frame: NSRect(x: 0, y: 0, width: 400, height: 300),
             engine: surface
         )
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         let cases = [
             (preedits: ["日", "日本"], commit: "日本語"),
             (preedits: ["´"], commit: "é"),
@@ -641,13 +640,13 @@ final class InputEncodingTests: XCTestCase {
             }
             if input.commit == "日本語" {
                 RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-                XCTAssertTrue(writes.isEmpty, "multi-stage CJK preedit must emit no PTY bytes before commit")
+                XCTAssertTrue(writes.chunks.isEmpty, "multi-stage CJK preedit must emit no PTY bytes before commit")
             }
             terminal.keyDown(with: makeKeyEvent(characters: input.commit, keyCode: 0))
         }
 
         drainMainRunLoop(until: { writes.count == cases.count })
-        XCTAssertEqual(writes, cases.map { Data($0.commit.utf8) })
+        XCTAssertEqual(writes.chunks, cases.map { Data($0.commit.utf8) })
     }
 
     // MARK: 6. Scroll
@@ -854,8 +853,7 @@ final class InputEncodingTests: XCTestCase {
         )
         let enable = Data("\u{1B}[?1003h\u{1B}[?1006h".utf8)
         XCTAssertEqual(surface.processOutput(bytes: enable, streamSeq: 0), .success)
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         let down = makeMouseEvent(type: .leftMouseDown, location: NSPoint(x: 25, y: 40))
         let up = makeMouseEvent(type: .leftMouseUp, location: NSPoint(x: 25, y: 40))
 
@@ -866,7 +864,7 @@ final class InputEncodingTests: XCTestCase {
         // the current position before the button, so SGR 1006 emits the
         // no-button motion code (3 + 32) before the press and release.
         drainMainRunLoop(until: { writes.count >= 3 })
-        XCTAssertEqual(writes, [
+        XCTAssertEqual(writes.chunks, [
             Data("\u{1B}[<35;2;14M".utf8),
             Data("\u{1B}[<0;2;14M".utf8),
             Data("\u{1B}[<0;2;14m".utf8),
@@ -882,18 +880,17 @@ final class InputEncodingTests: XCTestCase {
         )
         let enable = Data("\u{1B}[?1003h\u{1B}[?1006h".utf8)
         XCTAssertEqual(surface.processOutput(bytes: enable, streamSeq: 0), .success)
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         terminal.mouseDown(with: makeMouseEvent(type: .leftMouseDown, location: NSPoint(x: 25, y: 40)))
         drainMainRunLoop(until: { writes.count >= 2 })
-        XCTAssertEqual(writes, [
+        XCTAssertEqual(writes.chunks, [
             Data("\u{1B}[<35;2;14M".utf8),
             Data("\u{1B}[<0;2;14M".utf8),
         ])
         // The CG scroll event carries deltas, not a view position. Clear the
         // setup motion/press only after proving mouseDown established the
         // point that the following wheel reports must reuse.
-        writes.removeAll()
+        writes.reset()
         guard let cgEvent = CGEvent(
             scrollWheelEvent2Source: nil,
             units: .line,
@@ -909,7 +906,7 @@ final class InputEncodingTests: XCTestCase {
 
         drainMainRunLoop(until: { writes.count == 9 })
         XCTAssertEqual(
-            writes,
+            writes.chunks,
             Array(repeating: Data("\u{1B}[<65;2;14M".utf8), count: 9)
         )
     }

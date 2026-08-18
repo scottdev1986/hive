@@ -48,8 +48,7 @@ final class B23MouseModeMatrixTests: XCTestCase {
                 "row \(row.id): mode prologue was not accepted by the real parser"
             )
         }
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         row.gesture(terminal)
         if row.expectedWriteCount > 0 {
@@ -62,7 +61,7 @@ final class B23MouseModeMatrixTests: XCTestCase {
         // measured, not assumed.
         drainMainRunLoop(until: { false }, timeout: 0.25)
 
-        return Outcome(id: row.id, writes: writes.map { String(decoding: $0, as: UTF8.self) })
+        return Outcome(id: row.id, writes: writes.chunks.map { String(decoding: $0, as: UTF8.self) })
     }
 
     // MARK: - Rows

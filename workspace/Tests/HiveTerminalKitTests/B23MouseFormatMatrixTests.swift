@@ -43,15 +43,14 @@ final class B23MouseFormatMatrixTests: XCTestCase {
             "mode prologue \(mode.debugDescription) was rejected by the real parser"
         )
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         terminal.mouseDown(with: Self.mouseEvent(.leftMouseDown, at: point))
 
-        drainUntil { !writes.isEmpty }
+        drainUntil { writes.count > 0 }
         // Settle past the first report so a row asserting one encoding cannot
         // pass while a second, contradictory write is still in flight.
         drainIdle(0.25)
-        return writes.reduce(into: Data(), { $0.append($1) })
+        return writes.bytes
     }
 
     // At this click the terminal reports column 125, row 14. Each format

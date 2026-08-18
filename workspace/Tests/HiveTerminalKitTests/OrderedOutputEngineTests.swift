@@ -105,8 +105,7 @@ final class OrderedOutputEngineTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let first = Data("\u{1B}[".utf8)
         let second = Data("c".utf8)
@@ -117,7 +116,7 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(surface.processOutput(bytes: second, streamSeq: UInt64(first.count)), .success)
         pumpMainQueue()
         XCTAssertEqual(writes.count, 1, "the reply must fire once the sequence completes, split or not")
-        XCTAssertEqual(writes.first, Data("\u{1B}[?62;22c".utf8))
+        XCTAssertEqual(writes.chunks.first, Data("\u{1B}[?62;22c".utf8))
     }
 
     /// Reads the full screen text via `ghostty_surface_read_text`, matching
@@ -258,8 +257,7 @@ final class OrderedOutputEngineTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         // DECRQSS for SGR: ESC P $ q m ST  (split after the DCS introducer).
         let first = Data("\u{1B}P".utf8)
@@ -272,8 +270,8 @@ final class OrderedOutputEngineTests: XCTestCase {
         pumpMainQueue()
         XCTAssertEqual(writes.count, 1, "completed DCS DECRQSS must reply exactly once")
         // Reply is DCS-framed; non-empty is the live proof the parser re-entered.
-        XCTAssertFalse(writes[0].isEmpty)
-        XCTAssertEqual(writes[0].first, 0x1B)
+        XCTAssertFalse(writes.chunks[0].isEmpty)
+        XCTAssertEqual(writes.chunks[0].first, 0x1B)
     }
 
     /// APC (Kitty graphics) split across chunks completes EXACTLY as the
@@ -291,8 +289,7 @@ final class OrderedOutputEngineTests: XCTestCase {
         func run(split: Bool) throws -> (through: UInt64, writes: [Data], screen: String) {
             let surface = try makeSurface()
             defer { surface.free() }
-            var writes: [Data] = []
-            surface.callbackContext.onWrite = { writes.append($0) }
+            let writes = WriteTranscript(recording: surface.callbackContext)
             if split {
                 let mid = apc.count / 2
                 let first = full.subdata(in: 0..<mid)
@@ -307,7 +304,7 @@ final class OrderedOutputEngineTests: XCTestCase {
             }
             pumpMainQueue()
             let screen = readScreenText(surface).trimmingCharacters(in: .whitespacesAndNewlines)
-            return (surface.throughSeq, writes, screen)
+            return (surface.throughSeq, writes.chunks, screen)
         }
 
         let unsplit = try run(split: false)

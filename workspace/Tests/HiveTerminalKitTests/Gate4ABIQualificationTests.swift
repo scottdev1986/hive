@@ -13,11 +13,10 @@ final class Gate4ABIQualificationTests: XCTestCase {
     func testEnabledPolicyCreatesLiveSurfaceAndReplies() throws {
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting(terminalReplies: .enabled)
         defer { surface.free() }
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: 0), .success)
         pumpMainQueue()
-        XCTAssertEqual(writes, [Data("\u{1B}[?62;22c".utf8)])
+        XCTAssertEqual(writes.chunks, [Data("\u{1B}[?62;22c".utf8)])
     }
 
     func testBridgeValuesLayoutAndCSignaturesAtRuntime() {

@@ -229,8 +229,7 @@ final class Gate9ActionPolicyTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         var actionsSeen: [UInt32] = []
         HiveGhosttyActionPolicy.setObserver { tag, _ in actionsSeen.append(tag.rawValue) }
         defer { HiveGhosttyActionPolicy.setObserver(nil) }
@@ -241,7 +240,7 @@ final class Gate9ActionPolicyTests: XCTestCase {
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: UInt64(osc9.count)), .success)
         HiveGhosttyActionPolicy.setObserver(nil)
         pumpMainQueue()
-        XCTAssertEqual(writes, [Data("\u{1B}[?62;22c".utf8)],
+        XCTAssertEqual(writes.chunks, [Data("\u{1B}[?62;22c".utf8)],
                        "OSC 9 must produce no reply and must not poison the following query")
 
         for raw in actionsSeen {

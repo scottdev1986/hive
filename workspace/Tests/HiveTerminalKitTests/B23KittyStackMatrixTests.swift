@@ -43,8 +43,7 @@ final class B23KittyStackMatrixTests: XCTestCase {
             seq += UInt64(bytes.count)
         }
 
-        let log = WriteLog()
-        surface.callbackContext.onWrite = { log.append($0) }
+        let log = WriteTranscript(recording: surface.callbackContext)
         terminal.keyDown(with: Self.makeShiftEnterEvent())
 
         let writes = drain(log, until: 1)
@@ -52,8 +51,8 @@ final class B23KittyStackMatrixTests: XCTestCase {
         // cannot pass while a second, contradictory write is still in flight.
         drainIdle(0.25)
         XCTAssertEqual(
-            log.snapshot().count, 1,
-            "shift+Enter must produce exactly one write, got \(log.snapshot())"
+            log.chunks.count, 1,
+            "shift+Enter must produce exactly one write, got \(log.chunks)"
         )
         return writes.first
     }
@@ -147,14 +146,13 @@ final class B23KittyStackMatrixTests: XCTestCase {
             seq += UInt64(bytes.count)
         }
 
-        let log = WriteLog()
-        surface.callbackContext.onWrite = { log.append($0) }
+        let log = WriteTranscript(recording: surface.callbackContext)
         let query = Data("\u{1B}[?u".utf8)
         XCTAssertEqual(surface.processOutput(bytes: query, streamSeq: seq), .success)
 
         _ = drain(log, until: 1)
         drainIdle(0.25)
-        let joined = log.snapshot().reduce(into: Data(), { $0.append($1) })
+        let joined = log.chunks.reduce(into: Data(), { $0.append($1) })
         return String(decoding: joined, as: UTF8.self)
     }
 
@@ -175,24 +173,12 @@ final class B23KittyStackMatrixTests: XCTestCase {
         )!
     }
 
-    private final class WriteLog {
-        private let lock = NSLock()
-        private var writes: [Data] = []
-        func append(_ data: Data) {
-            lock.lock(); writes.append(data); lock.unlock()
-        }
-        func snapshot() -> [Data] {
-            lock.lock(); defer { lock.unlock() }
-            return writes
-        }
-    }
-
-    private func drain(_ log: WriteLog, until count: Int, timeout: TimeInterval = 2) -> [Data] {
+    private func drain(_ log: WriteTranscript, until count: Int, timeout: TimeInterval = 2) -> [Data] {
         let deadline = Date().addingTimeInterval(timeout)
-        while log.snapshot().count < count && Date() < deadline {
+        while log.chunks.count < count && Date() < deadline {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
         }
-        return log.snapshot()
+        return log.chunks
     }
 
     private func drainIdle(_ interval: TimeInterval) {

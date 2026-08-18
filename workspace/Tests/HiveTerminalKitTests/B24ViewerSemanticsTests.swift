@@ -311,8 +311,7 @@ final class B24ViewerSemanticsTests: XCTestCase {
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting(widthPx: 640, heightPx: 360)
         defer { surface.free() }
         let terminal = makeTerminal(surface)
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         XCTAssertEqual(
             surface.processOutput(bytes: Data("local selection text\r\n".utf8), streamSeq: 0),
             .success
@@ -322,29 +321,27 @@ final class B24ViewerSemanticsTests: XCTestCase {
         drainMain(until: { surface.semanticSnapshot()?.selection != nil })
 
         XCTAssertFalse(surface.semanticSnapshot()?.selection?.text.isEmpty ?? true)
-        XCTAssertTrue(writes.isEmpty, "viewer-local selection must not write provider bytes")
+        XCTAssertTrue(writes.chunks.isEmpty, "viewer-local selection must not write provider bytes")
     }
 
     func testCapturedDragRoutesToApplicationButShiftOverrideSelectsLocally() throws {
         let captured = try GhosttyBridgeFactory.makeManualSurfaceForTesting(widthPx: 640, heightPx: 360)
         defer { captured.free() }
         let capturedTerminal = makeTerminal(captured)
-        var capturedWrites: [Data] = []
-        captured.callbackContext.onWrite = { capturedWrites.append($0) }
+        let capturedWrites = WriteTranscript(recording: captured.callbackContext)
         let capturedInput = Data("captured text\r\n\u{1B}[?1000h\u{1B}[?1006h".utf8)
         XCTAssertEqual(captured.processOutput(bytes: capturedInput, streamSeq: 0), .success)
         XCTAssertTrue(captured.mouseCaptured(), "positive control: application mouse mode must be active")
 
         drag(capturedTerminal)
-        drainMain(until: { !capturedWrites.isEmpty })
-        XCTAssertFalse(capturedWrites.isEmpty, "captured mouse gestures must reach the application")
+        drainMain(until: { !capturedWrites.chunks.isEmpty })
+        XCTAssertFalse(capturedWrites.chunks.isEmpty, "captured mouse gestures must reach the application")
         XCTAssertNil(captured.semanticSnapshot()?.selection)
 
         let overridden = try GhosttyBridgeFactory.makeManualSurfaceForTesting(widthPx: 640, heightPx: 360)
         defer { overridden.free() }
         let overriddenTerminal = makeTerminal(overridden)
-        var overriddenWrites: [Data] = []
-        overridden.callbackContext.onWrite = { overriddenWrites.append($0) }
+        let overriddenWrites = WriteTranscript(recording: overridden.callbackContext)
         let overrideInput = Data("shift override text\r\n\u{1B}[?1000h\u{1B}[?1006h".utf8)
         XCTAssertEqual(overridden.processOutput(bytes: overrideInput, streamSeq: 0), .success)
         XCTAssertTrue(overridden.mouseCaptured(), "positive control: Shift must override a genuinely captured mode")
@@ -352,7 +349,7 @@ final class B24ViewerSemanticsTests: XCTestCase {
         drag(overriddenTerminal, modifiers: .shift)
         drainMain(until: { overridden.semanticSnapshot()?.selection != nil })
         XCTAssertFalse(overridden.semanticSnapshot()?.selection?.text.isEmpty ?? true)
-        XCTAssertTrue(overriddenWrites.isEmpty, "Shift override must remain viewer-local")
+        XCTAssertTrue(overriddenWrites.chunks.isEmpty, "Shift override must remain viewer-local")
     }
 
     func testWheelMovesRetainedViewportLocallyButCapturedWheelDoesNot() throws {
@@ -370,8 +367,7 @@ final class B24ViewerSemanticsTests: XCTestCase {
         guard let bottom = local.semanticSnapshot() else { return XCTFail("bottom snapshot") }
         XCTAssertTrue(bottom.viewport.followsBottom)
         XCTAssertGreaterThan(bottom.viewport.total, bottom.viewport.length)
-        var localWrites: [Data] = []
-        local.callbackContext.onWrite = { localWrites.append($0) }
+        let localWrites = WriteTranscript(recording: local.callbackContext)
 
         localTerminal.scrollWheel(with: try scrollEvent(deltaY: 5))
         drainMain(until: {
@@ -379,7 +375,7 @@ final class B24ViewerSemanticsTests: XCTestCase {
                 && localTerminal.scrollState.followsBottom == false
         })
         XCTAssertFalse(local.semanticSnapshot()?.viewport.followsBottom ?? true)
-        XCTAssertTrue(localWrites.isEmpty)
+        XCTAssertTrue(localWrites.chunks.isEmpty)
         let anchoredOffset = local.semanticSnapshot()?.viewport.offset
 
         let unseen = Data("new-output-while-scrolled\r\n".utf8)
@@ -408,18 +404,17 @@ final class B24ViewerSemanticsTests: XCTestCase {
         XCTAssertEqual(captured.processOutput(bytes: output, streamSeq: 0), .success)
         let enable = Data("\u{1B}[?1000h\u{1B}[?1006h".utf8)
         XCTAssertEqual(captured.processOutput(bytes: enable, streamSeq: UInt64(output.count)), .success)
-        var capturedWrites: [Data] = []
-        captured.callbackContext.onWrite = { capturedWrites.append($0) }
+        let capturedWrites = WriteTranscript(recording: captured.callbackContext)
 
         capturedTerminal.mouseDown(with: mouseEvent(.leftMouseDown, x: 14, y: 342))
         capturedTerminal.mouseUp(with: mouseEvent(.leftMouseUp, x: 14, y: 342))
         drainMain(until: { capturedWrites.count >= 2 })
-        XCTAssertFalse(capturedWrites.isEmpty, "positive control: enabled mouse mode must capture at the established point")
-        capturedWrites.removeAll()
+        XCTAssertFalse(capturedWrites.chunks.isEmpty, "positive control: enabled mouse mode must capture at the established point")
+        capturedWrites.reset()
 
         capturedTerminal.scrollWheel(with: try scrollEvent(deltaY: 5))
-        drainMain(until: { !capturedWrites.isEmpty })
-        XCTAssertFalse(capturedWrites.isEmpty, "captured wheel must reach the application")
+        drainMain(until: { !capturedWrites.chunks.isEmpty })
+        XCTAssertFalse(capturedWrites.chunks.isEmpty, "captured wheel must reach the application")
         XCTAssertTrue(captured.semanticSnapshot()?.viewport.followsBottom ?? false)
     }
 

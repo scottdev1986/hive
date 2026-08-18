@@ -42,15 +42,14 @@ final class TerminalReplyCorpusTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let result = surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: 0)
         XCTAssertEqual(result, .success)
         pumpMainQueue()
 
         XCTAssertEqual(writes.count, 1, "DA1 reply must reach the write callback exactly once")
-        XCTAssertEqual(writes.first, Data("\u{1B}[?62;22c".utf8))
+        XCTAssertEqual(writes.chunks.first, Data("\u{1B}[?62;22c".utf8))
     }
 
     /// DA2 (CSI > c): xterm ctlseqs "Send Device Attributes (Secondary DA)".
@@ -62,15 +61,14 @@ final class TerminalReplyCorpusTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let result = surface.processOutput(bytes: Data("\u{1B}[>c".utf8), streamSeq: 0)
         XCTAssertEqual(result, .success)
         pumpMainQueue()
 
         XCTAssertEqual(writes.count, 1, "DA2 reply must reach the write callback exactly once")
-        XCTAssertEqual(writes.first, Data("\u{1B}[>1;10;0c".utf8))
+        XCTAssertEqual(writes.chunks.first, Data("\u{1B}[>1;10;0c".utf8))
     }
 
     /// XTVERSION query (CSI > q): xterm ctlseqs. Response is a DCS string
@@ -81,15 +79,14 @@ final class TerminalReplyCorpusTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let result = surface.processOutput(bytes: Data("\u{1B}[>q".utf8), streamSeq: 0)
         XCTAssertEqual(result, .success)
         pumpMainQueue()
 
         XCTAssertEqual(writes.count, 1, "XTVERSION reply must reach the write callback exactly once")
-        guard let reply = writes.first, let text = String(data: reply, encoding: .utf8) else {
+        guard let reply = writes.chunks.first, let text = String(data: reply, encoding: .utf8) else {
             return XCTFail("XTVERSION reply must be valid UTF-8")
         }
         XCTAssertTrue(text.hasPrefix("\u{1B}P>|ghostty "), "must identify as ghostty, not the generic fallback")
@@ -106,15 +103,14 @@ final class TerminalReplyCorpusTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let result = surface.processOutput(bytes: Data("\u{1B}[18t".utf8), streamSeq: 0)
         XCTAssertEqual(result, .success)
         pumpMainQueue()
 
         XCTAssertEqual(writes.count, 1, "size report must reach the write callback exactly once")
-        guard let reply = writes.first, let text = String(data: reply, encoding: .utf8) else {
+        guard let reply = writes.chunks.first, let text = String(data: reply, encoding: .utf8) else {
             return XCTFail("size report must be valid UTF-8")
         }
         let pattern = #"^\x1b\[8;\d+;\d+t$"#
@@ -131,13 +127,12 @@ final class TerminalReplyCorpusTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let result = surface.processOutput(bytes: Data([0x05]), streamSeq: 0)
         XCTAssertEqual(result, .success)
         pumpMainQueue()
-        XCTAssertTrue(writes.isEmpty, "matches Ghostty's own empty enquiry-response default")
+        XCTAssertTrue(writes.chunks.isEmpty, "matches Ghostty's own empty enquiry-response default")
     }
 
     /// OSC 52 clipboard READ policy (story:14 requires it stated
@@ -154,11 +149,7 @@ final class TerminalReplyCorpusTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        let writesLock = NSLock()
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { data in
-            writesLock.lock(); writes.append(data); writesLock.unlock()
-        }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         // OSC 52, clipboard 'c', '?' = read request, BEL-terminated; then
         // ST-terminated variant for completeness.
@@ -173,9 +164,7 @@ final class TerminalReplyCorpusTests: XCTestCase {
             Thread.sleep(forTimeInterval: 0.01)
         }
 
-        writesLock.lock()
-        let observed = writes
-        writesLock.unlock()
+        let observed = writes.chunks
         XCTAssertTrue(observed.isEmpty,
                       "an OSC 52 read must never produce a reply — host clipboard bytes would be " +
                       "exfiltrated into the agent's input stream; got \(observed)")
@@ -185,9 +174,7 @@ final class TerminalReplyCorpusTests: XCTestCase {
         // emptiness above is a real denial, not a broken write path.
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: 9 + UInt64(second.count)), .success)
         pumpMainQueue()
-        writesLock.lock()
-        let after = writes
-        writesLock.unlock()
+        let after = writes.chunks
         XCTAssertEqual(after, [Data("\u{1B}[?62;22c".utf8)],
                        "DA1 must still answer — proving the write channel was live while OSC 52 stayed silent")
     }
@@ -199,8 +186,7 @@ final class TerminalReplyCorpusTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let burst = Data("\u{1B}[c".utf8) + Data("\u{1B}[>q".utf8) + Data("\u{1B}[>c".utf8)
         let result = surface.processOutput(bytes: burst, streamSeq: 0)
@@ -208,10 +194,10 @@ final class TerminalReplyCorpusTests: XCTestCase {
         pumpMainQueue()
 
         XCTAssertEqual(writes.count, 3, "each response-producing control must reply exactly once")
-        XCTAssertEqual(writes[0], Data("\u{1B}[?62;22c".utf8), "DA1 must be first, matching stream order")
-        XCTAssertTrue(String(data: writes[1], encoding: .utf8)?.hasPrefix("\u{1B}P>|ghostty ") ?? false,
+        XCTAssertEqual(writes.chunks[0], Data("\u{1B}[?62;22c".utf8), "DA1 must be first, matching stream order")
+        XCTAssertTrue(String(data: writes.chunks[1], encoding: .utf8)?.hasPrefix("\u{1B}P>|ghostty ") ?? false,
                       "XTVERSION must be second, matching stream order")
-        XCTAssertEqual(writes[2], Data("\u{1B}[>1;10;0c".utf8), "DA2 must be third, matching stream order")
+        XCTAssertEqual(writes.chunks[2], Data("\u{1B}[>1;10;0c".utf8), "DA2 must be third, matching stream order")
     }
 
     /// DCS queries use the same stream parser as CSI/OSC. The pre-gate
@@ -221,8 +207,7 @@ final class TerminalReplyCorpusTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let decrqss = Data("\u{1B}P$qm\u{1B}\\".utf8)
         let xtgettcap = Data("\u{1B}P+q544E\u{1B}\\".utf8) // TN
@@ -232,7 +217,7 @@ final class TerminalReplyCorpusTests: XCTestCase {
         )
         pumpMainQueue()
 
-        XCTAssertEqual(writes, [
+        XCTAssertEqual(writes.chunks, [
             Data("\u{1B}P1$r0m\u{1B}\\".utf8),
             Data("\u{1B}P1+r544E=787465726D2D67686F73747479\u{1B}\\".utf8),
         ], "DECRQSS then XTGETTCAP must each reply once in parser order")
@@ -241,10 +226,9 @@ final class TerminalReplyCorpusTests: XCTestCase {
     func testDisabledPolicySuppressesProtocolReplies() throws {
         let surface = try makeSurface(.disabled)
         defer { surface.free() }
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: 0), .success)
         pumpMainQueue()
-        XCTAssertTrue(writes.isEmpty, "disabled reply policy must suppress engine-generated bytes")
+        XCTAssertTrue(writes.chunks.isEmpty, "disabled reply policy must suppress engine-generated bytes")
     }
 }

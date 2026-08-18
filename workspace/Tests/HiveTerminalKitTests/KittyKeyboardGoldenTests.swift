@@ -31,29 +31,17 @@ final class KittyKeyboardGoldenTests: XCTestCase {
     }
 
     /// Thread-safe collector also safe to reuse below the Swift callback seam.
-    private final class WriteLog {
-        private let lock = NSLock()
-        private var writes: [Data] = []
-        func append(_ data: Data) {
-            lock.lock(); writes.append(data); lock.unlock()
-        }
-        func snapshot() -> [Data] {
-            lock.lock(); defer { lock.unlock() }
-            return writes
-        }
-    }
-
     /// Pumps the main run loop and yields until `count` writes arrived or
     /// the timeout elapsed. Key-encoder bytes arrive asynchronously on the
     /// surface io thread — a synchronous snapshot can falsely report zero
     /// writes.
-    private func drain(_ log: WriteLog, until count: Int, timeout: TimeInterval = 2) -> [Data] {
+    private func drain(_ log: WriteTranscript, until count: Int, timeout: TimeInterval = 2) -> [Data] {
         let deadline = Date().addingTimeInterval(timeout)
-        while log.snapshot().count < count && Date() < deadline {
+        while log.chunks.count < count && Date() < deadline {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
             Thread.sleep(forTimeInterval: 0.005)
         }
-        return log.snapshot()
+        return log.chunks
     }
 
     private func makeShiftEnterEvent(
@@ -130,8 +118,7 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         defer { surface.free() }
         let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
 
-        let log = WriteLog()
-        surface.callbackContext.onWrite = { log.append($0) }
+        let log = WriteTranscript(recording: surface.callbackContext)
 
         terminal.keyDown(with: makeShiftEnterEvent())
 
@@ -156,8 +143,7 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         let enable = Data("\u{1B}[>1u".utf8)
         XCTAssertEqual(surface.processOutput(bytes: enable, streamSeq: 0), .success)
 
-        let log = WriteLog()
-        surface.callbackContext.onWrite = { log.append($0) }
+        let log = WriteTranscript(recording: surface.callbackContext)
 
         terminal.keyDown(with: makeShiftEnterEvent())
 
@@ -176,8 +162,7 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         XCTAssertTrue(surface.mouseCaptured())
         XCTAssertFalse(terminal.canCopySelection)
 
-        let log = WriteLog()
-        surface.callbackContext.onWrite = { log.append($0) }
+        let log = WriteTranscript(recording: surface.callbackContext)
 
         XCTAssertTrue(terminal.performKeyEquivalent(with: makeCommandCEvent()))
 
@@ -193,8 +178,7 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[>11u".utf8), streamSeq: 0), .success)
 
-        let log = WriteLog()
-        surface.callbackContext.onWrite = { log.append($0) }
+        let log = WriteTranscript(recording: surface.callbackContext)
         terminal.keyDown(with: makeShiftEnterEvent())
         terminal.keyDown(with: makeShiftEnterEvent(isARepeat: true))
         terminal.keyUp(with: makeShiftEnterEvent(type: .keyUp))
@@ -215,8 +199,7 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[>11u".utf8), streamSeq: 0), .success)
 
-        let log = WriteLog()
-        surface.callbackContext.onWrite = { log.append($0) }
+        let log = WriteTranscript(recording: surface.callbackContext)
         terminal.flagsChanged(with: makeFlagsChangedEvent(keyCode: 0x38, modifierFlags: [.shift]))
         let rightFlags = NSEvent.ModifierFlags(
             rawValue: NSEvent.ModifierFlags.shift.rawValue | UInt(NX_DEVICERSHIFTKEYMASK)
@@ -240,8 +223,7 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[>15u".utf8), streamSeq: 0), .success)
 
-        let log = WriteLog()
-        surface.callbackContext.onWrite = { log.append($0) }
+        let log = WriteTranscript(recording: surface.callbackContext)
         terminal.keyDown(with: makeShiftAEvent())
 
         XCTAssertEqual(drain(log, until: 1), [Data("\u{1B}[97:65;2u".utf8)])

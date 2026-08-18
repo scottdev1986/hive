@@ -44,18 +44,15 @@ final class B23PasteBoundaryMatrixTests: XCTestCase {
             )
         }
 
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         terminal.paste(nil)
 
-        drainMainRunLoop(until: {
-            writes.reduce(into: Data(), { $0.append($1) }).count >= body.utf8.count
-        })
+        drainMainRunLoop(until: { writes.bytes.count >= body.utf8.count })
         // The closing ESC[201~ trails the body, so a reader that stopped as
         // soon as the body arrived could report "no end marker" for a build
         // that does emit one. Settle before reading the transcript.
         drainMainRunLoop(until: { false }, timeout: 0.25)
-        return String(decoding: writes.reduce(into: Data(), { $0.append($1) }), as: UTF8.self)
+        return writes.text
     }
 
     /// SET: exactly one pair, wrapping only the body.

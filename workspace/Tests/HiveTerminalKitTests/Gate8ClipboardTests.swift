@@ -51,8 +51,7 @@ final class Gate8ClipboardTests: XCTestCase {
         )
         defer { surface.free() }
         let terminal = makeTerminal(surface)
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         let enableBracketedPaste = Data("\u{1B}[?2004h".utf8)
         let deviceAttributesQuery = Data("\u{1B}[c".utf8)
@@ -62,7 +61,7 @@ final class Gate8ClipboardTests: XCTestCase {
             .success
         )
         drainMain(for: 0.1)
-        XCTAssertTrue(writes.isEmpty, "terminal replies must stay disabled on the renderer-copy role")
+        XCTAssertTrue(writes.chunks.isEmpty, "terminal replies must stay disabled on the renderer-copy role")
 
         terminal.encodeKey(makeKeyEvent("x"))
         terminal.insertText("文", replacementRange: NSRange(location: NSNotFound, length: 0))
@@ -72,9 +71,9 @@ final class Gate8ClipboardTests: XCTestCase {
             "x\u{1B}[200~文\u{1B}[201~\u{1B}[200~clip\nboard\u{1B}[201~".utf8
         )
         drainMain(until: {
-            writes.reduce(into: Data(), { $0.append($1) }).count >= expected.count
+            writes.bytes.count >= expected.count
         })
-        let actual = writes.reduce(into: Data(), { $0.append($1) })
+        let actual = writes.bytes
         XCTAssertEqual(
             actual,
             expected,
@@ -95,8 +94,7 @@ final class Gate8ClipboardTests: XCTestCase {
         )
         defer { surface.free() }
         let terminal = makeTerminal(surface)
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         let readBefore = HiveGhosttyRuntimeCallbackProbes.count(.readClipboard)
         let confirmBefore = HiveGhosttyRuntimeCallbackProbes.count(.confirmReadClipboard)
 
@@ -108,7 +106,7 @@ final class Gate8ClipboardTests: XCTestCase {
         XCTAssertEqual(confirmations.first?.1, GHOSTTY_CLIPBOARD_REQUEST_PASTE)
         XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.readClipboard), readBefore + 1)
         XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.confirmReadClipboard), confirmBefore + 1)
-        XCTAssertTrue(writes.isEmpty, "unsafe content must never reach the PTY without an affirmative UI")
+        XCTAssertTrue(writes.chunks.isEmpty, "unsafe content must never reach the PTY without an affirmative UI")
     }
 
     func testConfirmedClipboardWriteIsDroppedWithoutHostAuthorizationUI() {
@@ -185,9 +183,8 @@ final class Gate8ClipboardTests: XCTestCase {
             clipboardContext: clipboard
         )
         defer { surface.free() }
-        var writes: [Data] = []
         var events: [BridgeEvent] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
         surface.callbackContext.onEvent = { events.append($0) }
         let readBefore = HiveGhosttyRuntimeCallbackProbes.count(.readClipboard)
         let confirmBefore = HiveGhosttyRuntimeCallbackProbes.count(.confirmReadClipboard)
@@ -202,7 +199,7 @@ final class Gate8ClipboardTests: XCTestCase {
         XCTAssertTrue(events.contains { $0.type == .clipboardDenied })
         XCTAssertEqual(readCount, 0)
         XCTAssertTrue(copied.isEmpty)
-        XCTAssertTrue(writes.isEmpty)
+        XCTAssertTrue(writes.chunks.isEmpty)
         XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.readClipboard), readBefore)
         XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.confirmReadClipboard), confirmBefore)
         XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.writeClipboard), writeBefore)
@@ -218,14 +215,13 @@ final class Gate8ClipboardTests: XCTestCase {
             clipboardContext: clipboard
         )
         let terminal = makeTerminal(surface)
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         terminal.paste(nil)
         surface.free()
         drainMain(for: 0.1)
 
-        XCTAssertTrue(writes.isEmpty)
+        XCTAssertTrue(writes.chunks.isEmpty)
     }
 
     func testPendingClipboardRequestCompletesEmptyBeforeTeardown() {

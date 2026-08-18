@@ -185,7 +185,7 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
     ) throws {
         var prefixScreen = ""
         var finalScreen = ""
-        var referenceWrites: [Data] = []
+        let referenceWrites = WriteTranscript()
         var referenceEvents: [BridgeEvent] = []
         var remainder = bytes.subdata(in: split..<bytes.count)
         remainder.append(subsequent)
@@ -194,7 +194,7 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         do {
             let reference = try makeSurface()
             defer { reference.free() }
-            reference.callbackContext.onWrite = { referenceWrites.append($0) }
+            referenceWrites.record(from: reference.callbackContext)
             reference.callbackContext.onEvent = { referenceEvents.append($0) }
 
             if split > 0 {
@@ -212,7 +212,7 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
             // prefix callbacks do not leak into the suffix comparison.
             pumpMainQueue()
             prefixScreen = readScreenText(reference)
-            referenceWrites.removeAll()
+            referenceWrites.reset()
             referenceEvents.removeAll()
             XCTAssertEqual(
                 reference.processOutput(bytes: remainder, streamSeq: UInt64(split)),
@@ -228,7 +228,7 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         // the restored-vs-reference write comparison below non-vacuous rather
         // than empty == empty.
         XCTAssertFalse(
-            referenceWrites.isEmpty,
+            referenceWrites.chunks.isEmpty,
             "case \(caseIndex) split \(split): reference suffix must produce real reply bytes"
         )
 
@@ -240,9 +240,8 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         )
         let restored = try makeSurface()
         defer { restored.free() }
-        var restoredWrites: [Data] = []
+        let restoredWrites = WriteTranscript(recording: restored.callbackContext)
         var restoredEvents: [BridgeEvent] = []
-        restored.callbackContext.onWrite = { restoredWrites.append($0) }
         restored.callbackContext.onEvent = { restoredEvents.append($0) }
         let restoreResult = restored.restoreCheckpoint(
             payload: payload,
@@ -260,7 +259,7 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
 
         XCTAssertEqual(restored.throughSeq, UInt64(split))
         XCTAssertTrue(
-            restoredWrites.isEmpty,
+            restoredWrites.chunks.isEmpty,
             "case \(caseIndex) split \(split): restore emitted host bytes"
         )
         XCTAssertEqual(
@@ -273,7 +272,7 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
             prefixScreen,
             "case \(caseIndex) split \(split): first restored frame"
         )
-        restoredWrites.removeAll()
+        restoredWrites.reset()
         restoredEvents.removeAll()
 
         XCTAssertEqual(
@@ -287,12 +286,12 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         // this equality asserts the restored surface reproduced the SAME real
         // reply bytes, not empty == empty.
         XCTAssertFalse(
-            restoredWrites.isEmpty,
+            restoredWrites.chunks.isEmpty,
             "case \(caseIndex) split \(split): restored suffix must produce real reply bytes"
         )
         XCTAssertEqual(
-            restoredWrites,
-            referenceWrites,
+            restoredWrites.chunks,
+            referenceWrites.chunks,
             "case \(caseIndex) split \(split): terminal replies"
         )
         XCTAssertEqual(

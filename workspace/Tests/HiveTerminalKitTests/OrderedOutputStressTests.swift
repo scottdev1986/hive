@@ -96,8 +96,7 @@ final class OrderedOutputStressTests: XCTestCase {
 
         let da1 = Data("\u{1B}[?62;22c".utf8)
         let da2 = Data("\u{1B}[>1;10;0c".utf8)
-        var writes: [Data] = []
-        surface.callbackContext.onWrite = { writes.append($0) }
+        let writes = WriteTranscript(recording: surface.callbackContext)
 
         // Geometry from the live surface. Use cols-1 so a full row does not
         // auto-wrap before the explicit CR/LF (filling all cols wraps).
@@ -191,13 +190,13 @@ final class OrderedOutputStressTests: XCTestCase {
 
         pumpMainQueue()
         XCTAssertEqual(writes.count, expectedReplies.count, "each query must reply exactly once")
-        XCTAssertEqual(writes, expectedReplies,
+        XCTAssertEqual(writes.chunks, expectedReplies,
                        "the reply sequence must match the alternating DA1/DA2 query order byte-for-byte")
 
-        writes.removeAll()
+        writes.reset()
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: seq), .success)
         pumpMainQueue()
-        XCTAssertEqual(writes, [da1], "post-stress DA1 must still answer byte-exactly")
+        XCTAssertEqual(writes.chunks, [da1], "post-stress DA1 must still answer byte-exactly")
     }
 
     /// Negative control for the volume sink: a single mutated volume byte
