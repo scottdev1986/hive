@@ -16,7 +16,7 @@ final class EffortControlView: NSView {
 
         popup.translatesAutoresizingMaskIntoConstraints = false
         popup.controlSize = .small
-        popup.font = NSFont.systemFont(ofSize: 11)
+        popup.font = Theme.Font.chromeControl
         caption.translatesAutoresizingMaskIntoConstraints = false
         caption.font = Theme.Font.caption
         caption.textColor = .secondaryLabelColor

@@ -127,7 +127,7 @@ class SettingsPageController: NSViewController {
         case .failed(let reason):
             let panel = InsetPanelView()
             let title = NSTextField(labelWithString: "Hive could not be read")
-            title.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            title.font = Theme.Font.headline
             title.compressHorizontally()
             let body = NSTextField(wrappingLabelWithString: reason)
             body.font = Theme.Font.caption

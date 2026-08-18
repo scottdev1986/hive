@@ -108,7 +108,10 @@ final class ShellSidebarView: NSView {
         let image = NSImage(
             systemSymbolName: symbol(for: route),
             accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+            // Sized off the button's own label token so the glyph and the
+            // nav label stay in proportion when the ramp moves.
+            .withSymbolConfiguration(
+                .init(pointSize: Theme.Font.chromeNav.pointSize, weight: .medium))
         let button = ShellNavButton(
             title: route.title,
             image: image ?? NSImage(),

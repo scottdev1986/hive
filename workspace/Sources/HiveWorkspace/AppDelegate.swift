@@ -376,7 +376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.center()
 
         let title = NSTextField(labelWithString: "Hive Workspace")
-        title.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        title.font = Theme.Font.title
         title.alignment = .center
         title.compressHorizontally()
 

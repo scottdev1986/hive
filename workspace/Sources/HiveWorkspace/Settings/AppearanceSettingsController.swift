@@ -58,7 +58,7 @@ final class AppearanceSettingsController: SettingsPageController {
 
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
-        popup.font = NSFont.systemFont(ofSize: 11)
+        popup.font = Theme.Font.chromeControl
         titles.forEach { popup.addItem(withTitle: $0) }
         if let selectedIndex { popup.selectItem(at: selectedIndex) }
         popup.target = self

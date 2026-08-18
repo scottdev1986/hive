@@ -62,7 +62,7 @@ final class RouteSectionView: NSView {
             subtitleText = MCCCopy.globalRouteSubtitle
         }
         let title = NSTextField(labelWithString: titleText)
-        title.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        title.font = Theme.Font.sectionTitle
         title.compressHorizontally()
         stack.addArrangedSubview(title)
         if let subtitleText {
@@ -162,7 +162,7 @@ final class RouteSectionView: NSView {
 
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
-        popup.font = NSFont.systemFont(ofSize: 11)
+        popup.font = Theme.Font.chromeControl
         let modes = dataSource.routingModes.compactMap { presentation in
             RouterMode(rawValue: presentation.id).map { (presentation, $0) }
         }
@@ -202,7 +202,7 @@ final class RouteSectionView: NSView {
     private func makeAddButton() -> NSView {
         let popup = NSPopUpButton(frame: .zero, pullsDown: true)
         popup.controlSize = .small
-        popup.font = NSFont.systemFont(ofSize: 11)
+        popup.font = Theme.Font.chromeControl
         popup.addItem(withTitle: "Add model…")
         popup.setAccessibilityLabel("Add a model and effort to this route")
 
@@ -392,7 +392,7 @@ final class RouteCandidateRowView: NSView {
         guard let weightRange else { return NSView() }
         weightField.translatesAutoresizingMaskIntoConstraints = false
         weightField.controlSize = .small
-        weightField.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        weightField.font = Theme.Font.monoDigits
         weightField.alignment = .right
         weightField.stringValue = String(weight)
         weightField.target = self
@@ -435,7 +435,10 @@ final class RouteCandidateRowView: NSView {
             image: NSImage(
                 systemSymbolName: "minus.circle",
                 accessibilityDescription: "Remove from route")!
-                .withSymbolConfiguration(.init(pointSize: 10, weight: .semibold))!,
+                // Sized off the row's own label token so the glyph and the
+                // model name stay in proportion when the ramp moves.
+                .withSymbolConfiguration(
+                    .init(pointSize: Theme.Font.body.pointSize, weight: .semibold))!,
             target: self, action: #selector(removeTapped))
         button.bezelStyle = .accessoryBarAction
         button.isBordered = false

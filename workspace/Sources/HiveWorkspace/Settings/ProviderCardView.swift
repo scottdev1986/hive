@@ -280,7 +280,10 @@ final class ProviderCardView: CardView {
         disclosureButton?.image = NSImage(
             systemSymbolName: expanded ? "chevron.down" : "chevron.right",
             accessibilityDescription: expanded ? "Collapse" : "Expand")?
-            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+            // Sized off the disclosure button's own label token so the
+            // chevron and the count stay in proportion when the ramp moves.
+            .withSymbolConfiguration(
+                .init(pointSize: Theme.Font.callout.pointSize, weight: .semibold))
         disclosureButton?.setAccessibilityLabel(
             "\(expanded ? "Collapse" : "Expand") \(ProviderBranding.title(for: provider)) models")
     }
@@ -295,11 +298,14 @@ final class UnmeteredPanelView: InsetPanelView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.image = NSImage(
             systemSymbolName: "info.circle", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium))
+            // Sized off the title beside it so the glyph and the words stay
+            // in proportion when the ramp moves.
+            .withSymbolConfiguration(
+                .init(pointSize: Theme.Font.headline.pointSize, weight: .medium))
         icon.contentTintColor = .systemBlue
 
         let title = NSTextField(labelWithString: MCCCopy.unmeteredTitle)
-        title.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        title.font = Theme.Font.headline
         title.lineBreakMode = .byWordWrapping
         title.maximumNumberOfLines = 2
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

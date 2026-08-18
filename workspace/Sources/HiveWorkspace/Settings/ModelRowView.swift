@@ -106,7 +106,10 @@ final class ModelRowView: NSView {
             let icon = NSImageView()
             icon.image = NSImage(
                 systemSymbolName: "dollarsign.circle", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+                // Sized off the caveat label beside it so the glyph and the
+                // words stay in proportion when the ramp moves.
+                .withSymbolConfiguration(
+                    .init(pointSize: Theme.Font.caption.pointSize, weight: .medium))
             icon.contentTintColor = .systemOrange
             let text = rowState == .enabled
                 ? MCCCopy.maySpendEnabled(spendCaveat)

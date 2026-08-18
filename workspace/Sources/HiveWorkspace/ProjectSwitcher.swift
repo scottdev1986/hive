@@ -61,7 +61,7 @@ final class ProjectSwitcherController: NSObject {
             let card = provider()
 
             let name = NSTextField(labelWithString: card.displayName)
-            name.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+            name.font = Theme.headerFont
             name.lineBreakMode = .byTruncatingTail
             name.toolTip = card.displayName
             name.setContentCompressionResistancePriority(.init(490), for: .horizontal)
