@@ -201,4 +201,59 @@ final class TaskRouterEditorTests: XCTestCase {
             $0.provider == "claude" && $0.model == "claude-opus-4-8" && $0.isMember
         })
     }
+
+    func testSummaryFactsCountThePolicyDocumentNotModelControlRowState() throws {
+        let initial = try policy()
+        let editor = TaskRouterEditor(snapshot: TaskRouterSnapshot(policy: initial))
+        let categories = [
+            TaskCategory(rawValue: "light_research", label: "Light research"),
+            TaskCategory(rawValue: "heavy_research", label: "Heavy research"),
+            TaskCategory(rawValue: "simple_coding", label: "Simple coding"),
+            TaskCategory(rawValue: "standard_coding", label: "Standard coding"),
+            TaskCategory(rawValue: "complex_coding", label: "Complex coding"),
+            TaskCategory(rawValue: "code_review", label: "Code review"),
+            TaskCategory(rawValue: "planning", label: "Planning"),
+            TaskCategory(rawValue: "debugging", label: "Debugging"),
+            TaskCategory(rawValue: "summarization", label: "Summarization"),
+            TaskCategory(rawValue: "default", label: "Everything else"),
+        ]
+        let facts = editor.summaryFacts(categories: categories)
+        XCTAssertEqual(facts.configuredRoutes, 10)
+        XCTAssertEqual(facts.totalRoutes, 10)
+        XCTAssertEqual(facts.enabledProviders, 2)
+        XCTAssertEqual(facts.listedProviders, 3)
+        XCTAssertTrue(facts.providersKnown)
+        XCTAssertEqual(facts.routeMembers, 5)
+        XCTAssertEqual(facts.enabledPolicyModels, 3)
+    }
+
+    func testMatrixProvidersKeepEveryKnownVendorAndMembersStaySparse() throws {
+        let initial = try policy()
+        let editor = TaskRouterEditor(snapshot: TaskRouterSnapshot(policy: initial))
+        let data = try Data(contentsOf: Bundle.module.url(
+            forResource: "model-control-corpus", withExtension: "json",
+            subdirectory: "Fixtures")!)
+        let rows = try JSONDecoder().decode(
+            [ClientProjection<WorkspaceModelControlView>].self, from: data)
+        let routing = try XCTUnwrap(
+            rows.first { $0.availability == .current }?.value?.routing)
+        XCTAssertEqual(
+            editor.matrixProviders(routing: routing),
+            ["claude", "codex", "grok", "kimi", "opencode"])
+        let claude = editor.matrixMembers(
+            for: .complexCoding, provider: "claude", catalog: [])
+        XCTAssertEqual(claude.map(\.model), ["claude-opus-4-8"])
+        let empty = editor.matrixMembers(
+            for: .complexCoding, provider: "kimi", catalog: [])
+        XCTAssertTrue(empty.isEmpty)
+        let catalog = [
+            WorkspaceRoutingCatalogEntry(
+                provider: "grok", model: "grok-composer-2.5-fast",
+                effortOptions: [], addEffortOptions: [], startingEffort: .hiveDecides),
+        ]
+        let grok = editor.editorRows(
+            for: .complexCoding, provider: "grok", catalog: catalog)
+        XCTAssertEqual(grok.map(\.model), ["grok-composer-2.5-fast"])
+        XCTAssertFalse(grok[0].isMember)
+    }
 }

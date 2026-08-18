@@ -104,6 +104,7 @@ final class TaskRouterScreenViewTests: XCTestCase {
         XCTAssertNotNil(find(view, "task-router-apply") as? ActionButton)
         XCTAssertNotNil(find(view, "task-router-category") as? NSPopUpButton)
         XCTAssertNotNil(find(view, "task-router-mode") as? NSPopUpButton)
+        XCTAssertNotNil(find(view, "task-router-matrix"))
     }
 
     func testEveryCataloguedCategoryIsListedAndSelectable() throws {
@@ -125,13 +126,18 @@ final class TaskRouterScreenViewTests: XCTestCase {
         }
     }
 
-    func testV3ReviewIsNamedUnavailableAndSharesStayInspectionFacts() throws {
+    func testV3DocumentIsTheMatrixAndSharesStayInspectionFacts() throws {
         let view = try makeView()
         let text = allText(in: view)
-        XCTAssertNotNil(find(view, "task-router-v3-gap"))
-        XCTAssertTrue(text.contains("Policy V3 compare-and-set review is not in this projection"))
-        XCTAssertTrue(text.contains("V3 review unavailable"))
+        XCTAssertNil(find(view, "task-router-v3-gap"))
+        XCTAssertFalse(text.contains("Policy V3 compare-and-set review is not in this projection"))
+        XCTAssertFalse(text.contains("V3 review unavailable"))
         XCTAssertFalse(text.contains("Review V3 draft"))
+        XCTAssertTrue(text.contains("schema 3 revision"))
+        XCTAssertTrue(text.contains("5 route members"))
+        XCTAssertTrue(text.contains("2 / 3 providers enabled"))
+        XCTAssertTrue(text.contains("3 policy models with state enabled"))
+        XCTAssertFalse(text.contains("1 enabled models"))
         XCTAssertTrue(text.contains("weight 60 · configured 60% · live 80%"))
         XCTAssertTrue(text.contains("weight 25 · configured 25% · live 0%"))
         XCTAssertTrue(text.contains("weight 15 · configured 15% · live 20%"))
@@ -165,21 +171,36 @@ final class TaskRouterScreenViewTests: XCTestCase {
         XCTAssertTrue(allText(in: view).contains("Stale"))
     }
 
-    func testSelectedRouteEditorSitsAboveTheCategoryIndex() throws {
+    func testMatrixListsEveryCategoryAndVendorBeforeInspection() throws {
         let view = try makeView()
         let stack = try XCTUnwrap(view.subviews.first as? NSStackView)
         let identifiers = stack.arrangedSubviews.compactMap { $0.accessibilityIdentifier() }
-        let editor = try XCTUnwrap(
-            identifiers.firstIndex(of: "hds-section-card"),
-            "selected route card missing")
-        let others = try XCTUnwrap(
-            identifiers.firstIndex(of: "task-router-other-routes"),
-            "category cards missing")
-        XCTAssertLessThan(
-            editor, others,
-            "edit controls must be a first-class card, not stranded below the index")
+        let matrix = try XCTUnwrap(
+            identifiers.firstIndex(of: "task-router-matrix"),
+            "task/vendor matrix missing")
         XCTAssertNotNil(find(view, "task-router-category") as? NSPopUpButton)
         XCTAssertNotNil(find(view, "task-router-mode") as? NSPopUpButton)
+        let modelControl: ClientProjection<WorkspaceModelControlView> = try loadRow(
+            "model-control-corpus")
+        let routing = try XCTUnwrap(modelControl.value?.routing)
+        let policy: ClientProjection<RoutingPolicyDocument> = try loadRow(
+            "routing-policy-corpus")
+        let document = try XCTUnwrap(policy.value)
+        let editor = TaskRouterEditor(snapshot: TaskRouterSnapshot(policy: document))
+        let providers = editor.matrixProviders(routing: routing)
+        XCTAssertEqual(providers, ["claude", "codex", "grok", "kimi", "opencode"])
+        XCTAssertEqual(routing.categories.count, 10)
+        for item in routing.categories {
+            XCTAssertNotNil(
+                find(view, "task-router-matrix-row-\(item.rawValue)"),
+                "missing matrix row \(item.rawValue)")
+            for provider in providers {
+                XCTAssertNotNil(
+                    find(view, "task-router-cell-\(item.rawValue)-\(provider)"),
+                    "missing \(provider) cell on \(item.rawValue)")
+            }
+        }
+        XCTAssertGreaterThan(identifiers.count, matrix)
     }
 
     func testExistingMembershipControlsStillWriteTheDraft() throws {

@@ -115,6 +115,20 @@ public struct TaskRouterRow: Equatable, Sendable {
     }
 }
 
+/// Counts the Task Router summary may name. Each field is one fact from the
+/// draft policy document — never Model Control row-state, which answers a
+/// different question and is what made "1 enabled models" contradict a table
+/// of catalogued candidates.
+public struct TaskRouterSummaryFacts: Equatable, Sendable {
+    public let configuredRoutes: Int
+    public let totalRoutes: Int
+    public let enabledProviders: Int
+    public let listedProviders: Int
+    public let providersKnown: Bool
+    public let routeMembers: Int
+    public let enabledPolicyModels: Int
+}
+
 public struct TaskRouterEditor: Equatable, Sendable {
     public private(set) var observed: TaskRouterSnapshot
     public private(set) var draft: TaskRouterSnapshot
@@ -174,6 +188,70 @@ public struct TaskRouterEditor: Equatable, Sendable {
                 },
                 unresolvable: hasCatalog && !catalogSet.contains(id))
         }
+    }
+
+    /// Columns for the task/provider matrix. The presentation's provider map
+    /// supplies the five vendors even when a vendor has no members; policy,
+    /// catalog, and draft candidates can only add columns, never hide one.
+    public func matrixProviders(
+        routing: WorkspaceRoutingPresentation
+    ) -> [String] {
+        var ids = Set(routing.providers.keys)
+        ids.formUnion(draft.policy.providers.keys)
+        for entry in routing.catalog { ids.insert(entry.provider) }
+        for route in draft.policy.categories.values {
+            for candidate in route.candidates { ids.insert(candidate.provider) }
+        }
+        return ids.sorted { ProviderID($0) < ProviderID($1) }
+    }
+
+    /// Members already on this category for one vendor. Empty is a real empty
+    /// cell — the matrix does not invent a candidate to fill the design.
+    public func matrixMembers(
+        for category: TaskCategory,
+        provider: String,
+        catalog: [WorkspaceRoutingCatalogEntry]
+    ) -> [TaskRouterRow] {
+        rows(for: category, catalog: catalog).filter {
+            $0.provider == provider && $0.isMember
+        }
+    }
+
+    /// What the selected cell can edit: current members plus catalog models
+    /// that vendor can still join. Policy-only non-members stay off the cell
+    /// because they cannot be added.
+    public func editorRows(
+        for category: TaskCategory,
+        provider: String,
+        catalog: [WorkspaceRoutingCatalogEntry]
+    ) -> [TaskRouterRow] {
+        let catalogSet = Set(catalog.map { "\($0.provider)/\($0.model)" })
+        return rows(for: category, catalog: catalog).filter { row in
+            row.provider == provider
+                && (row.isMember || catalogSet.contains("\(row.provider)/\(row.model)"))
+        }
+    }
+
+    public func summaryFacts(categories: [TaskCategory]) -> TaskRouterSummaryFacts {
+        let configured = categories.filter {
+            draft.policy.categories[$0.rawValue] != nil
+        }.count
+        let providers = draft.policy.providers
+        var memberKeys = Set<String>()
+        for item in categories {
+            let candidates = draft.policy.categories[item.rawValue]?.candidates ?? []
+            for candidate in candidates {
+                memberKeys.insert("\(candidate.provider)/\(candidate.model)")
+            }
+        }
+        return TaskRouterSummaryFacts(
+            configuredRoutes: configured,
+            totalRoutes: categories.count,
+            enabledProviders: providers.values.filter { $0 == "enabled" }.count,
+            listedProviders: providers.count,
+            providersKnown: !providers.isEmpty,
+            routeMembers: memberKeys.count,
+            enabledPolicyModels: draft.policy.models.filter { $0.state == "enabled" }.count)
     }
 
     public mutating func fence() {

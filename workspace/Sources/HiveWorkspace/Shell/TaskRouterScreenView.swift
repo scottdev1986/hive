@@ -1,24 +1,26 @@
 // TaskRouterScreenView.swift
 //
-// The Task Router screen: the selected category's draft sits in a route
-// card with its edit controls, then the remaining catalogued categories
-// as a compact two-column grid. The draft is state this view renders,
-// never state it owns — a rejected apply rebuilds this view with the
-// same draft and the daemon's competing revision named on screen. A
-// category with no route offers no membership: choosing a mode is what
-// creates one, so the editor cannot invent a router mode the user never
-// picked.
+// The Task Router is a ten-task, five-provider matrix over the observed
+// policy document. Each row is one catalogued category with its V3 mode
+// and one compact cell per vendor; members, effort, stored weight and
+// inspection shares live in those cells. The selected row is the editor —
+// the window controller still binds Apply and set-route to one category,
+// so only that row's controls write. Catalog models that are not members
+// stay available to join on the selected row; they do not flood the
+// matrix as a candidate catalog.
 //
 // This view is only built when a typed routing projection exists. The
 // generic availability paragraph is not a second presentation of that
-// projection; the cards are. When availability is not current, a badge
+// projection; the matrix is. When availability is not current, a badge
 // keeps the observed time as a tooltip. When no typed projection
 // exists, the shell keeps ShellAvailabilityPanel as the sole screen.
 //
 // Visual language comes from the design-system tokens and primitives.
 // Expected share, refusal, and balance stay inspection facts when the
-// projection supplied them; they are never computed here. Policy V3
-// compare-and-set review is named as unavailable rather than mocked.
+// projection supplied them; they are never computed here. Apply route
+// is the compare-and-set write against the document revision. There is
+// no separate Review V3 draft projection, so this screen does not
+// invent that button.
 
 import AppKit
 import WorkspaceCore
@@ -26,12 +28,15 @@ import WorkspaceCore
 final class TaskRouterScreenView: NSView {
 
     private static let unconfiguredMode = "Unconfigured — no route"
+    private static let taskColumnWidth: CGFloat = 148
+    private static let modeColumnWidth: CGFloat = 136
 
     private let editor: TaskRouterEditor
     private let categories: [TaskCategory]
     private let category: TaskCategory
     private let routing: WorkspaceRoutingPresentation
     private let screen: ShellScreenProjection
+    private let providers: [String]
     private let rows: [TaskRouterRow]
     private let onSelectCategory: (TaskCategory) -> Void
     private let onEditRoute: (RoutingPolicyDocument.WireRoute?) -> Void
@@ -55,6 +60,7 @@ final class TaskRouterScreenView: NSView {
         self.category = category
         self.routing = routing
         self.screen = screen
+        providers = editor.matrixProviders(routing: routing)
         rows = editor.rows(for: category, catalog: routing.catalog)
         self.onSelectCategory = onSelectCategory
         self.onEditRoute = onEditRoute
@@ -71,7 +77,7 @@ final class TaskRouterScreenView: NSView {
         let apply = applyControl()
         let header = PageHeaderView(
             title: "Task Router",
-            subtitle: "Every catalogued task category. Edit the selected route. "
+            subtitle: "Every catalogued task category and every known vendor. "
                 + "Inspection shares appear only when the daemon supplied them.",
             actions: [apply])
         stack.addArrangedSubview(header)
@@ -82,16 +88,6 @@ final class TaskRouterScreenView: NSView {
             stack.addArrangedSubview(bannerView)
             bannerView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
-        let v3Gap = ShellBannerView(
-            banner: ShellBanner(
-                severity: .warning,
-                text: "Policy V3 compare-and-set review is not in this projection. "
-                    + "Apply route still sends the current set-route mutation. "
-                    + "Do not read this screen as a V3 review."),
-            presentation: .inline)
-        stack.addArrangedSubview(v3Gap)
-        v3Gap.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        v3Gap.setAccessibilityIdentifier("task-router-v3-gap")
 
         for status in statusLabels() { stack.addArrangedSubview(status) }
         weightRefusal.font = Theme.Font.callout
@@ -105,13 +101,9 @@ final class TaskRouterScreenView: NSView {
         stack.addArrangedSubview(summary)
         summary.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        let editorCard = selectedRouteCard()
-        stack.addArrangedSubview(editorCard)
-        editorCard.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-
-        let others = otherRoutesGrid()
-        stack.addArrangedSubview(others)
-        others.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let matrix = matrixCard()
+        stack.addArrangedSubview(matrix)
+        matrix.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         let observed = observedInspectionCard()
         stack.addArrangedSubview(observed)
@@ -123,8 +115,7 @@ final class TaskRouterScreenView: NSView {
             stack.trailingAnchor.constraint(
                 equalTo: trailingAnchor, constant: -Theme.Space.page),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.page),
-            stack.bottomAnchor.constraint(
-                lessThanOrEqualTo: bottomAnchor, constant: -Theme.Space.page),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.page),
         ])
     }
 
@@ -132,28 +123,21 @@ final class TaskRouterScreenView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     private func summaryRow() -> NSView {
-        let configured = categories.filter {
-            editor.draft.policy.categories[$0.rawValue] != nil
-        }.count
-        let enabledProviders = routing.providers.values.filter {
-            $0.state == "enabled"
-        }.count
-        let enabledModels = routing.models.filter { $0.rendered == .enabled }.count
+        let facts = editor.summaryFacts(categories: categories)
         let range = routing.weightRange
         let policy = editor.draft.policy
 
-        let providerFact = routing.providers.isEmpty
-            ? "providers unknown"
-            : "\(enabledProviders) / \(routing.providers.count) providers enabled"
-        let modelFact = routing.models.isEmpty
-            ? "enabled models unknown"
-            : "\(enabledModels) enabled models"
+        let providerFact = facts.providersKnown
+            ? "\(facts.enabledProviders) / \(facts.listedProviders) providers enabled"
+            : "providers unknown"
+        let memberFact = "\(facts.routeMembers) route members"
+        let policyModelFact = "\(facts.enabledPolicyModels) policy models with state enabled"
         var bits = [
-            modelFact,
+            memberFact,
+            policyModelFact,
             "weights \(range.minimum)–\(range.maximum)",
             "schema \(policy.schemaVersion) revision \(policy.revision)",
             "updated \(policy.updatedAt)",
-            "V3 review unavailable",
         ]
         if let global = policy.global {
             let mode = routing.mode(global.mode)?.label ?? global.mode
@@ -165,11 +149,12 @@ final class TaskRouterScreenView: NSView {
 
         var badgeViews: [NSView] = [
             CapsuleBadge(
-                text: "\(configured) / \(categories.count) routes",
-                style: configured == 0 ? .neutral : .positive),
+                text: "\(facts.configuredRoutes) / \(facts.totalRoutes) routes",
+                style: facts.configuredRoutes == 0 ? .neutral : .positive),
             CapsuleBadge(
                 text: providerFact,
-                style: routing.providers.isEmpty ? .neutral : .positive),
+                style: facts.providersKnown ? .positive : .neutral),
+            CapsuleBadge(text: memberFact, style: .info),
         ]
         if screen.availability != .current {
             let state = CapsuleBadge(
@@ -187,6 +172,12 @@ final class TaskRouterScreenView: NSView {
         badges.alignment = .centerY
         badges.spacing = Theme.Space.s
 
+        let category = labelled("Category", categoryControl())
+        let top = NSStackView(views: [badges, NSView.spacer(), category])
+        top.orientation = .horizontal
+        top.alignment = .centerY
+        top.spacing = Theme.Space.s
+
         let label = NSTextField(wrappingLabelWithString: line)
         label.font = Theme.Font.monoCaption
         label.textColor = Theme.secondaryText
@@ -194,56 +185,230 @@ final class TaskRouterScreenView: NSView {
         label.compressHorizontally(priority: 430, toolTip: line)
 
         let panel = InsetPanelView()
-        panel.contentStack.addArrangedSubview(badges)
+        panel.contentStack.addArrangedSubview(top)
         panel.contentStack.addArrangedSubview(label)
+        top.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
         label.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
         return panel
     }
 
-    private func selectedRouteCard() -> SectionCardView {
-        let memberCount = draftRoute?.candidates.count ?? 0
-        let selectedIndex = categories.firstIndex(of: category) ?? 0
-        let controls = NSStackView(views: [
-            categoryControl(),
-            modeControl(),
-            categorySelectButton(item: category, index: selectedIndex, selected: true),
-        ])
-        controls.orientation = .horizontal
-        controls.alignment = .centerY
-        controls.spacing = Theme.Space.l
+    private func matrixCard() -> SectionCardView {
         let card = SectionCardView(
-            title: category.label,
-            subtitle: "\(category.rawValue) · \(memberCount) current candidates",
-            trailingView: controls)
+            title: "Task routes",
+            subtitle: "One row per task, one cell per vendor. "
+                + "The selected row is the editor.")
+        card.setAccessibilityIdentifier("task-router-matrix")
 
-        let head = DataTableRowView(
-            columns: [
-                columnHead("Route"),
-                columnHead("Vendor"),
-                columnHead("Exact model"),
-                columnHead("Effort"),
-                columnHead("Stored weight"),
-                columnHead("Inspection"),
-            ],
-            spacing: Theme.Space.s)
-        card.contentStack.addArrangedSubview(head)
-        card.pinToContentWidth(head)
+        let header = matrixHeader()
+        card.contentStack.addArrangedSubview(header)
+        card.pinToContentWidth(header)
 
-        for (index, row) in rows.enumerated() {
-            let view = membershipRow(row, index: index)
-            card.contentStack.addArrangedSubview(view)
-            card.pinToContentWidth(view)
-        }
-        if rows.isEmpty {
-            let empty = NSTextField(
-                wrappingLabelWithString: "No catalog or policy models to offer on this route.")
-            empty.font = Theme.Font.callout
-            empty.textColor = Theme.secondaryText
-            empty.maximumNumberOfLines = 0
-            card.contentStack.addArrangedSubview(empty)
-            card.pinToContentWidth(empty)
+        for (index, item) in categories.enumerated() {
+            let row = matrixRow(item, index: index)
+            card.contentStack.addArrangedSubview(row)
+            card.pinToContentWidth(row)
         }
         return card
+    }
+
+    private func matrixHeader() -> MatrixRowView {
+        var columns: [NSView] = [
+            columnHead("Task category"),
+            columnHead("V3 mode"),
+        ]
+        columns += providers.map { columnHead(providerColumnTitle($0)) }
+        return MatrixRowView(
+            columns: columns,
+            nameWidth: Self.taskColumnWidth,
+            modeWidth: Self.modeColumnWidth,
+            selected: false)
+    }
+
+    private func matrixRow(
+        _ item: TaskCategory,
+        index: Int
+    ) -> MatrixRowView {
+        let selected = item == category
+        let name = taskNameColumn(item: item, index: index, selected: selected)
+        let mode: NSView = selected
+            ? modeControl()
+            : modeBadge(for: item, index: index)
+        let cells = providers.map { provider in
+            providerCell(item: item, provider: provider, selected: selected)
+        }
+        let row = MatrixRowView(
+            columns: [name, mode] + cells,
+            nameWidth: Self.taskColumnWidth,
+            modeWidth: Self.modeColumnWidth,
+            selected: selected)
+        row.setAccessibilityIdentifier("task-router-matrix-row-\(item.rawValue)")
+        return row
+    }
+
+    private func modeBadge(for item: TaskCategory, index: Int) -> NSView {
+        let route = editor.draft.policy.categories[item.rawValue]
+        let modeLabel = route.flatMap { routing.mode($0.mode)?.label }
+            ?? (route == nil ? Self.unconfiguredMode : route!.mode)
+        let button = NSButton(
+            title: modeLabel,
+            target: self,
+            action: #selector(categoryRowTapped(_:)))
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.font = Theme.Font.chromeControl
+        button.contentTintColor = route == nil ? Theme.secondaryText : Theme.positive
+        button.tag = index
+        button.setAccessibilityLabel("Select \(item.label)")
+        button.lineBreakMode = .byTruncatingTail
+        button.toolTip = modeLabel
+        button.setContentCompressionResistancePriority(.init(440), for: .horizontal)
+        return button
+    }
+
+    private func providerCell(
+        item: TaskCategory,
+        provider: String,
+        selected: Bool
+    ) -> NSView {
+        let cellRows = selected
+            ? editor.editorRows(for: item, provider: provider, catalog: routing.catalog)
+            : editor.matrixMembers(for: item, provider: provider, catalog: routing.catalog)
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.xs
+        stack.setAccessibilityIdentifier(
+            "task-router-cell-\(item.rawValue)-\(provider)")
+        if cellRows.isEmpty {
+            let empty = NSTextField(labelWithString: "no member")
+            empty.font = Theme.Font.caption
+            empty.textColor = Theme.secondaryText
+            empty.compressHorizontally(priority: 430, toolTip: "no member")
+            stack.addArrangedSubview(empty)
+        } else {
+            for row in cellRows {
+                stack.addArrangedSubview(selected ? editorChip(row) : memberChip(row))
+            }
+        }
+        return stack
+    }
+
+    private func memberChip(_ row: TaskRouterRow) -> NSView {
+        let model = NSTextField(labelWithString: row.model)
+        model.font = Theme.Font.headline
+        model.textColor = Theme.primaryText
+        model.compressHorizontally(priority: 430, toolTip: row.model)
+
+        let detail = NSTextField(labelWithString: compactDetail(row))
+        detail.font = Theme.Font.monoCaption
+        detail.textColor = Theme.accent
+        detail.compressHorizontally(priority: 420, toolTip: compactDetail(row))
+
+        let stack = NSStackView(views: [model, detail])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 1
+        if let bar = shareBar(for: row) {
+            stack.addArrangedSubview(bar)
+            bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        if row.unresolvable {
+            stack.addArrangedSubview(unresolvableBadge(row))
+        }
+        return stack
+    }
+
+    private func editorChip(_ row: TaskRouterRow) -> NSView {
+        guard let index = rows.firstIndex(where: {
+            $0.provider == row.provider && $0.model == row.model
+        }) else {
+            return memberChip(row)
+        }
+        let member = membershipCheckbox(row, index: index)
+        let model = NSTextField(labelWithString: row.model)
+        model.font = Theme.Font.headline
+        model.textColor = Theme.primaryText
+        model.compressHorizontally(priority: 430, toolTip: row.model)
+        let title = NSStackView(views: [member, model])
+        title.orientation = .horizontal
+        title.alignment = .centerY
+        title.spacing = Theme.Space.xs
+
+        let effort = effortControl(row, index: index)
+        let weight = weightControl(row, index: index)
+        let stack = NSStackView(views: [title, effort, weight])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.xs
+        if let bar = shareBar(for: row) {
+            stack.addArrangedSubview(bar)
+            bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        if let fact = inspectionFact(for: row) {
+            let value = NSTextField(wrappingLabelWithString: fact)
+            value.font = Theme.Font.monoCaption
+            value.textColor = Theme.primaryText
+            value.maximumNumberOfLines = 3
+            value.compressHorizontally(priority: 420, toolTip: fact)
+            stack.addArrangedSubview(value)
+        }
+        if row.unresolvable {
+            stack.addArrangedSubview(unresolvableBadge(row))
+        }
+        return stack
+    }
+
+    private func compactDetail(_ row: TaskRouterRow) -> String {
+        let effort = effortLabel(row)
+        guard let candidate = row.candidate else { return effort }
+        let weightEditable = draftRoute
+            .flatMap { routing.mode($0.mode) }?.weightEditable ?? false
+        if weightEditable {
+            return "\(effort) · weight \(candidate.weight)"
+        }
+        return effort
+    }
+
+    private func effortLabel(_ row: TaskRouterRow) -> String {
+        guard let effort = row.candidate?.effort else { return "not a member" }
+        let catalogEntry = routing.catalog.first {
+            $0.provider == row.provider && $0.model == row.model
+        }
+        if let match = catalogEntry?.effortOptions.first(where: { $0.effort == effort }) {
+            return match.label
+        }
+        return effort.asWireEffort.cliArgument
+    }
+
+    private func shareBar(for row: TaskRouterRow) -> NSView? {
+        guard let fact = inspectionFact(for: row),
+              let percent = configuredPercent(in: fact) else { return nil }
+        let bar = MeterBarView()
+        bar.state = .fill(fraction: Double(percent) / 100, color: Theme.accent)
+        bar.toolTip = fact
+        return bar
+    }
+
+    private func configuredPercent(in fact: String) -> Int? {
+        let marker = "configured "
+        guard let range = fact.range(of: marker) else { return nil }
+        let tail = fact[range.upperBound...]
+        var digits = ""
+        for character in tail {
+            if character.isNumber { digits.append(character) } else { break }
+        }
+        return Int(digits)
+    }
+
+    private func unresolvableBadge(_ row: TaskRouterRow) -> NSView {
+        let key = "\(row.provider)/\(row.model)"
+        // Policy names this model; the live catalog does not. Badge it so a retired or never-discovered row is not silently invisible either.
+        let badge = CapsuleBadge(
+            text: "not in live catalog",
+            symbol: "exclamationmark.triangle",
+            style: .warning)
+        badge.setAccessibilityIdentifier("task-router-unresolvable-\(key)")
+        return badge
     }
 
     private var availabilityStyle: CapsuleBadge.Style {
@@ -267,62 +432,27 @@ final class TaskRouterScreenView: NSView {
         }
     }
 
-    private func otherRoutesGrid() -> NSView {
-        let cards = categories.enumerated().compactMap { index, item -> NSView? in
-            item == category ? nil : compactRouteCard(item, index: index)
-        }
-        let rows: [[NSView]] = stride(from: 0, to: cards.count, by: 2).map { start in
-            let first = cards[start]
-            let second = start + 1 < cards.count ? cards[start + 1] : NSView()
-            return [first, second]
-        }
-        let grid = NSGridView(views: rows.isEmpty ? [[NSView(), NSView()]] : rows)
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        grid.rowSpacing = Theme.Space.s
-        grid.columnSpacing = Theme.Space.s
-        grid.xPlacement = .fill
-        grid.yPlacement = .fill
-        grid.setAccessibilityIdentifier("task-router-other-routes")
-        return grid
-    }
-
-    private func compactRouteCard(_ item: TaskCategory, index: Int) -> NSView {
-        let route = editor.draft.policy.categories[item.rawValue]
-        let modeLabel = route.flatMap { routing.mode($0.mode)?.label }
-            ?? (route == nil ? Self.unconfiguredMode : route!.mode)
-        let members = route?.candidates.count ?? 0
-
+    private func taskNameColumn(
+        item: TaskCategory, index: Int, selected: Bool
+    ) -> NSView {
         let name = NSTextField(labelWithString: item.label)
         name.font = Theme.Font.headline
-        name.textColor = Theme.primaryText
-        name.compressHorizontally(priority: 460, toolTip: item.label)
-        let slug = NSTextField(labelWithString: "\(item.rawValue) · \(members) candidates")
+        name.textColor = selected ? Theme.accent : Theme.primaryText
+        name.compressHorizontally(priority: 450, toolTip: item.label)
+        let slug = NSTextField(labelWithString: item.rawValue)
         slug.font = Theme.Font.monoCaption
-        slug.textColor = Theme.tertiaryText
-        slug.compressHorizontally(priority: 440, toolTip: item.rawValue)
-        let title = NSStackView(views: [name, slug])
-        title.orientation = .vertical
-        title.alignment = .leading
-        title.spacing = 1
-
-        let mode = CapsuleBadge(text: modeLabel, style: route == nil ? .neutral : .positive)
-        let select = categorySelectButton(item: item, index: index, selected: false)
-        let actions = NSStackView(views: [mode, select])
-        actions.orientation = .horizontal
-        actions.alignment = .centerY
-        actions.spacing = Theme.Space.s
-        actions.setContentHuggingPriority(.required, for: .horizontal)
-
-        let row = NSStackView(views: [title, NSView.spacer(), actions])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = Theme.Space.s
-
-        let card = CardView()
-        card.contentStack.spacing = Theme.Space.s
-        card.contentStack.addArrangedSubview(row)
-        card.pinToContentWidth(row)
-        return card
+        slug.textColor = Theme.secondaryText
+        slug.compressHorizontally(priority: 430, toolTip: item.rawValue)
+        let copy = NSStackView(views: [name, slug])
+        copy.orientation = .vertical
+        copy.alignment = .leading
+        copy.spacing = 1
+        let select = categorySelectButton(item: item, index: index, selected: selected)
+        let stack = NSStackView(views: [copy, select])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.xs
+        return stack
     }
 
     private func categorySelectButton(
@@ -339,16 +469,29 @@ final class TaskRouterScreenView: NSView {
         select.tag = index
         select.setAccessibilityIdentifier("task-router-category-row-\(item.rawValue)")
         select.setAccessibilityLabel("\(selected ? "Editing" : "Edit") \(item.label)")
-        select.setContentHuggingPriority(.required, for: .horizontal)
+        select.lineBreakMode = .byTruncatingTail
+        select.toolTip = item.label
+        select.setContentCompressionResistancePriority(.init(450), for: .horizontal)
         return select
     }
 
     private func columnHead(_ text: String) -> NSView {
         let label = NSTextField(labelWithString: text)
         label.font = Theme.Font.sectionLabel
-        label.textColor = Theme.tertiaryText
+        label.textColor = Theme.secondaryText
         label.compressHorizontally(priority: 450, toolTip: text)
         return label
+    }
+
+    private func providerColumnTitle(_ provider: String) -> String {
+        switch ProviderID(provider) {
+        case .claude: return "Claude"
+        case .codex: return "Codex"
+        case .grok: return "Grok"
+        case .kimi: return "Kimi"
+        case .opencode: return "OpenCode"
+        default: return ProviderBranding.title(for: ProviderID(provider))
+        }
     }
 
     private func observedInspectionCard() -> SectionCardView {
@@ -394,7 +537,7 @@ final class TaskRouterScreenView: NSView {
         popup.setAccessibilityLabel("Task category")
         popup.target = self
         popup.action = #selector(categoryChanged(_:))
-        return labelled("Category", popup)
+        return popup
     }
 
     private func modeControl() -> NSView {
@@ -411,13 +554,10 @@ final class TaskRouterScreenView: NSView {
         popup.setAccessibilityLabel("Router mode")
         popup.target = self
         popup.action = #selector(modeChanged(_:))
-        return labelled("Mode", popup)
+        return popup
     }
 
-    private func membershipRow(
-        _ row: TaskRouterRow,
-        index: Int
-    ) -> NSView {
+    private func membershipCheckbox(_ row: TaskRouterRow, index: Int) -> NSButton {
         let key = "\(row.provider)/\(row.model)"
         let member = NSButton(checkboxWithTitle: "", target: self,
                               action: #selector(memberToggled(_:)))
@@ -430,29 +570,17 @@ final class TaskRouterScreenView: NSView {
             && (row.isMember || isInCatalog)
         member.setAccessibilityIdentifier("task-router-member-\(key)")
         member.setAccessibilityLabel("Member \(key)")
+        return member
+    }
 
-        let mark = ProviderMarkView(
-            provider: ProviderID(row.provider),
-            size: Theme.Metric.chainMarkSize)
-        let vendor = NSTextField(labelWithString: ProviderBranding.title(for: ProviderID(row.provider)))
-        vendor.font = Theme.Font.headline
-        vendor.textColor = Theme.primaryText
-        vendor.compressHorizontally(priority: 450, toolTip: row.provider)
-        let vendorStack = NSStackView(views: [mark, vendor])
-        vendorStack.orientation = .horizontal
-        vendorStack.alignment = .centerY
-        vendorStack.spacing = Theme.Space.xs
-
-        let model = NSTextField(labelWithString: row.model)
-        model.font = Theme.Font.monoBody
-        model.textColor = Theme.primaryText
-        model.compressHorizontally(priority: 440, toolTip: row.model)
-
+    private func weightControl(_ row: TaskRouterRow, index: Int) -> NSTextField {
+        let key = "\(row.provider)/\(row.model)"
         let weightEditable = draftRoute
             .flatMap { routing.mode($0.mode) }?.weightEditable ?? false
         let weight = NSTextField(string: row.candidate.map { String($0.weight) } ?? "")
         weight.placeholderString = "weight"
         weight.font = Theme.Font.monoBody
+        weight.textColor = Theme.primaryText
         weight.alignment = .right
         weight.tag = index
         weight.isEnabled = editor.mutationsAllowed && row.isMember && weightEditable
@@ -462,7 +590,11 @@ final class TaskRouterScreenView: NSView {
         weight.setAccessibilityIdentifier("task-router-weight-\(key)")
         weight.setAccessibilityLabel("Weight for \(key)")
         weight.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        return weight
+    }
 
+    private func effortControl(_ row: TaskRouterRow, index: Int) -> NSPopUpButton {
+        let key = "\(row.provider)/\(row.model)"
         let effort = NSPopUpButton()
         let catalogEntry = routing.catalog.first {
             $0.provider == row.provider && $0.model == row.model
@@ -486,46 +618,7 @@ final class TaskRouterScreenView: NSView {
         effort.action = #selector(effortChanged(_:))
         effort.setAccessibilityIdentifier("task-router-effort-\(key)")
         effort.setAccessibilityLabel("Effort for \(key)")
-
-        let inspection = inspectionColumn(for: row, key: key)
-        let rowView = DataTableRowView(
-            columns: [member, vendorStack, model, effort, weight, inspection],
-            spacing: Theme.Space.s,
-            showsSeparator: true)
-        member.widthAnchor.constraint(equalToConstant: Theme.Metric.controlMinHeight).isActive = true
-        vendorStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
-        return rowView
-    }
-
-    private func inspectionColumn(for row: TaskRouterRow, key: String) -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = Theme.Space.xs
-        if let fact = inspectionFact(for: row) {
-            let value = NSTextField(wrappingLabelWithString: fact)
-            value.font = Theme.Font.monoCaption
-            value.textColor = Theme.secondaryText
-            value.maximumNumberOfLines = 3
-            value.compressHorizontally(priority: 430, toolTip: fact)
-            stack.addArrangedSubview(value)
-        } else {
-            let unknown = NSTextField(labelWithString: "share unknown")
-            unknown.font = Theme.Font.monoCaption
-            unknown.textColor = Theme.tertiaryText
-            unknown.compressHorizontally(priority: 430, toolTip: "share unknown")
-            stack.addArrangedSubview(unknown)
-        }
-        if row.unresolvable {
-            // Policy names this model; the live catalog does not. Badge it so a retired or never-discovered row is not silently invisible either.
-            let badge = CapsuleBadge(
-                text: "not in live catalog",
-                symbol: "exclamationmark.triangle",
-                style: .warning)
-            badge.setAccessibilityIdentifier("task-router-unresolvable-\(key)")
-            stack.addArrangedSubview(badge)
-        }
-        return stack
+        return effort
     }
 
     private func inspectionFact(for row: TaskRouterRow) -> String? {
@@ -690,4 +783,59 @@ final class TaskRouterScreenView: NSView {
         label.setAccessibilityIdentifier(identifier)
         return label
     }
+}
+
+/// One matrix row with a fixed task column, a fixed mode column, and equal
+/// vendor cells. Column widths are pinned so labels, mode, and provider
+/// chips stay on a grid as window width changes.
+private final class MatrixRowView: NSView {
+
+    let providerCells: [NSView]
+
+    init(
+        columns: [NSView],
+        nameWidth: CGFloat,
+        modeWidth: CGFloat,
+        selected: Bool
+    ) {
+        providerCells = Array(columns.dropFirst(2))
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        if selected {
+            layer?.backgroundColor = Theme.accentFill.cgColor
+            layer?.cornerRadius = Theme.Metric.insetCornerRadius
+            layer?.cornerCurve = .continuous
+        }
+
+        let stack = NSStackView(views: columns)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .horizontal
+        stack.alignment = .top
+        stack.spacing = Theme.Space.s
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: Theme.Space.s),
+            stack.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -Theme.Space.s),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.s),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.s),
+        ])
+
+        if columns.count >= 1 {
+            columns[0].widthAnchor.constraint(equalToConstant: nameWidth).isActive = true
+        }
+        if columns.count >= 2 {
+            columns[1].widthAnchor.constraint(equalToConstant: modeWidth).isActive = true
+        }
+        if let first = providerCells.first {
+            for cell in providerCells.dropFirst() {
+                cell.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
+            }
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 }
