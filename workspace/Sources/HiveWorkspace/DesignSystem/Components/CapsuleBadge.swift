@@ -41,7 +41,6 @@ final class CapsuleBadge: NSView {
         self.style = style
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = Theme.Metric.badgeCornerRadius
         layer?.cornerCurve = .continuous
 
         translatesAutoresizingMaskIntoConstraints = false
@@ -84,6 +83,17 @@ final class CapsuleBadge: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// The capsule token is a radius no badge is ever tall enough to use. Handed
+    /// to a continuous corner curve unclamped it describes no shape at all, and
+    /// Core Animation then draws neither the fill nor the words inside it — the
+    /// badge lays out at its right size and renders as a blank gap. Clamping to
+    /// half the height at layout keeps the token meaning "capsule" at whatever
+    /// height the badge ends up with.
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = min(Theme.Metric.badgeCornerRadius, bounds.height / 2)
+    }
 
     override func updateLayer() {
         layer?.backgroundColor = style.fill.cgColor

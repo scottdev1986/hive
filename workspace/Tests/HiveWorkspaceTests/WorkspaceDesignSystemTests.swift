@@ -95,6 +95,30 @@ final class WorkspaceDesignSystemTests: XCTestCase {
             in: drawer, identifier: "shell-attention-row") is CardView)
     }
 
+    /// The capsule token is far larger than any badge is tall. Left unclamped on
+    /// a continuous corner curve it describes no shape, and the badge then draws
+    /// neither its fill nor its words while still laying out at its full size —
+    /// an invisible state, which is exactly what a badge exists to prevent.
+    func testACapsuleBadgeKeepsARadiusItsOwnBoxCanDraw() throws {
+        let badge = CapsuleBadge(
+            text: "stale reading", symbol: "clock.fill", style: .warning)
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 60))
+        host.addSubview(badge)
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            badge.topAnchor.constraint(equalTo: host.topAnchor),
+        ])
+        host.layoutSubtreeIfNeeded()
+
+        let radius = try XCTUnwrap(badge.layer?.cornerRadius)
+        XCTAssertGreaterThan(badge.bounds.height, 0, "positive control: the badge has a box")
+        XCTAssertGreaterThan(radius, 0, "a squared-off badge is not a capsule")
+        XCTAssertLessThanOrEqual(
+            radius,
+            badge.bounds.height / 2,
+            "a radius past half the height degenerates and the badge disappears")
+    }
+
     func testShellChromeUsesCompactSidebarAndNamedTopBarControls() throws {
         _ = NSApplication.shared
         let controller = WorkspaceShellWindowController(
