@@ -401,9 +401,11 @@ final class LiveRunWorkbenchView: NSView {
         ])
 
         let liveRow = NSStackView(views: [liveChip, locatorLabel])
+        liveRow.translatesAutoresizingMaskIntoConstraints = false
         liveRow.orientation = .horizontal
         liveRow.alignment = .centerY
         liveRow.spacing = Theme.Space.s
+        locatorLabel.setContentHuggingPriority(.init(1), for: .horizontal)
 
         let container = NSStackView(views: [
             makeControlStrip(), header, liveRow, errorLabel, terminalHost,
