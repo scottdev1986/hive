@@ -43,7 +43,7 @@ public struct LiveRunSessionSummary: Equatable {
     public let id: String
     public let agentID: String?
     public let name: String
-    public let provider: ProviderID
+    public let provider: ProviderID?
     public let model: String?
     public let rawStatus: String
     public let activity: AgentActivity
@@ -60,7 +60,7 @@ public struct LiveRunSessionSummary: Equatable {
         id = agent.id ?? "name:\(agent.name)"
         agentID = agent.id
         name = agent.name
-        provider = ProviderID(agent.tool ?? "unknown")
+        provider = agent.tool.map { ProviderID($0) }
         model = agent.model
         rawStatus = agent.status
         activity = agent.presentation.renderedActivity
