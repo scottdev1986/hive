@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { formatWakePrompt } from "../../src/cli/agent-ui/wake-prompt";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { WakePayloadService } from "../../src/daemon/wake-payload-service";
 import { MailStore } from "../../src/mail-service/store";
 import { writeMemoryFact } from "../../src/memory-service/memory-store";
 import type { MemoryWriteInput } from "../../src/schemas/memory";
-import { formatWakePrompt } from "../../src/schemas/wake-payload";
 import { tempRoot } from "../temp-root";
 
 const T0 = new Date("2026-08-02T12:00:00.000Z");

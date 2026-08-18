@@ -36,8 +36,8 @@ export class WakePayloadService {
 
     // Build recent wiki slice (date-ranked, not a delta)
     const facts = await listMemoryFacts(this.deps.repoRoot());
-    // Sort by date descending, then id for stability
-    const sorted = facts.sort((a, b) => {
+    // Sort by date descending, then id for stability (copy to avoid mutating store array)
+    const sorted = [...facts].sort((a, b) => {
       const dateComp = b.date.localeCompare(a.date);
       return dateComp !== 0 ? dateComp : a.id.localeCompare(b.id);
     });
