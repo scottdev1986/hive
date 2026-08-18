@@ -297,7 +297,21 @@ public enum OuterHorizonTree {
         for (root, diagnostic) in roots {
             append(root, depth: 0, diagnostic: diagnostic)
         }
-        for node in nodes where !visited.contains(node.nodeId) {
+
+        // Reachability ignores expansion. A collapsed descendant is hidden by
+        // navigation, not disconnected from the hierarchy root.
+        var reachableFromRoot = Set<String>()
+        func markReachable(_ node: HierarchyNodeProjection) {
+            guard reachableFromRoot.insert(node.nodeId).inserted else { return }
+            for child in children[node.nodeId] ?? [] {
+                markReachable(child)
+            }
+        }
+        for (root, _) in roots {
+            markReachable(root)
+        }
+
+        for node in nodes where !reachableFromRoot.contains(node.nodeId) {
             append(node, depth: 0, diagnostic: "parent cycle or disconnected subtree")
         }
         return rows

@@ -5,10 +5,11 @@
 // transport loss, and renders the frozen dense and edge fixtures through AppKit.
 
 import AppKit
+import CryptoKit
 import Foundation
 import XCTest
 @testable import HiveWorkspace
-import WorkspaceCore
+@testable import WorkspaceCore
 @testable import WorkspaceQAKit
 
 private struct OuterHorizonScreenFixtureCorpus: Decodable {
@@ -64,6 +65,20 @@ final class OuterHorizonScreenTests: XCTestCase {
         return try Data(contentsOf: url)
     }
 
+    private func snapshotWithCurrentDigest(_ name: String) throws -> OuterHorizonSnapshot {
+        let data = try snapshotData(name)
+        let status = try JSONDecoder().decode(WorkspaceStatusSnapshot.self, from: data)
+        let canonical = try workspaceCanonicalJSON(status.entities)
+        let digest = SHA256.hash(data: Data(canonical.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object["contentSha256"] = digest
+        return try JSONDecoder().decode(
+            OuterHorizonSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: object))
+    }
+
     private func currentScreen(_ snapshot: OuterHorizonSnapshot) -> ShellScreenProjection {
         ShellScreenProjection(
             availability: .current,
@@ -114,9 +129,60 @@ final class OuterHorizonScreenTests: XCTestCase {
         return nil
     }
 
+    private func findView(_ root: NSView, accessibilityLabel: String) -> NSView? {
+        if root.accessibilityLabel() == accessibilityLabel { return root }
+        for child in root.subviews {
+            if let found = findView(child, accessibilityLabel: accessibilityLabel) {
+                return found
+            }
+        }
+        return nil
+    }
+
     private func allText(in root: NSView) -> [String] {
         let own = (root as? NSTextField).map { [$0.stringValue] } ?? []
         return own + root.subviews.flatMap(allText)
+    }
+
+    func testInstalledWorkbenchConsumesTheRealHierarchyAndWiresItsNavigation() throws {
+        let snapshot = try snapshotWithCurrentDigest("full-hive-dense-19")
+        var state = previousState(snapshot)
+        state.navigate(to: .liveRun)
+        let controller = WorkspaceShellWindowController(
+            context: .init(
+                projectName: "Hive",
+                projectPath: "/tmp/hive",
+                instanceLabel: "rig"),
+            state: state)
+        controller.installLiveRunWorkbench(LiveRunWorkbenchView(terminalFactory: nil))
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let parent = try XCTUnwrap(
+            OuterHorizonScreenState(snapshot: snapshot).visibleRows.first { $0.hasChildren })
+
+        let row = try XCTUnwrap(findView(
+            content, identifier: "live-run-hierarchy-\(parent.node.nodeId)") as? NSButton)
+        XCTAssertTrue(allText(in: content).contains {
+            $0.hasPrefix("0 live · 19 visible / 19 admitted · topology ")
+        })
+        XCTAssertTrue(allText(in: content).contains("Run hierarchy · full hive"))
+        XCTAssertTrue(allText(in: content).contains("NO SESSION"))
+
+        row.performClick(nil)
+        XCTAssertEqual(
+            controller.currentState.outerHorizon?.navigation.selectedNodeId,
+            parent.node.nodeId)
+
+        let refreshedRow = try XCTUnwrap(findView(
+            content, identifier: "live-run-hierarchy-\(parent.node.nodeId)"))
+        let disclosure = try XCTUnwrap(findView(
+            refreshedRow, accessibilityLabel: "Collapse hierarchy node") as? NSButton)
+        disclosure.performClick(nil)
+        XCTAssertFalse(
+            controller.currentState.outerHorizon?.navigation.expandedNodeIds
+                .contains(parent.node.nodeId) ?? true)
+        XCTAssertLessThan(
+            controller.currentState.outerHorizon?.visibleRows.count ?? Int.max,
+            snapshot.nodes.count)
     }
 
     func testRefusedAndInvalidWireResponsesWarnAndRetainThePriorHierarchy() async throws {

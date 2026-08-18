@@ -19,6 +19,30 @@ private struct OuterHorizonFixtureCorpus: Decodable {
 }
 
 final class OuterHorizonSnapshotTests: XCTestCase {
+    private func node(_ id: String, parent: String?) throws -> HierarchyNodeProjection {
+        let parentValue: Any = parent.map { $0 as Any } ?? NSNull()
+        let object: [String: Any] = [
+            "schemaVersion": HierarchyProjectionSchema.version,
+            "nodeId": id,
+            "runId": "run",
+            "entityRevision": "1",
+            "parentNodeId": ["availability": "present", "value": parentValue],
+            "ownerNodeId": ["availability": "present", "value": NSNull()],
+            "organizationalRole": ["availability": "present", "value": "worker"],
+            "assignmentKind": ["availability": "present", "value": "author"],
+            "taskScope": ["availability": "present", "value": []],
+            "lifecycle": ["availability": "present", "value": "active"],
+            "binding": [
+                "availability": "absent",
+                "reason": "source-absent",
+                "detail": "test node has no binding",
+            ],
+        ]
+        return try JSONDecoder().decode(
+            HierarchyNodeProjection.self,
+            from: JSONSerialization.data(withJSONObject: object))
+    }
+
     private func corpusData() throws -> Data {
         let url = try XCTUnwrap(
             Bundle.module.url(
@@ -183,5 +207,22 @@ final class OuterHorizonSnapshotTests: XCTestCase {
         XCTAssertFalse(
             screen.navigation.expandedNodeIds.contains(parentId),
             "a refresh must not silently reopen a hierarchy the user collapsed")
+    }
+
+    func testCollapsedDescendantsHideWhileOrphansAndCyclesStayDiagnosticRoots() throws {
+        let root = try node("root", parent: nil)
+        let child = try node("child", parent: "root")
+        let dangling = try node("dangling", parent: "missing")
+        let cycleA = try node("cycle-a", parent: "cycle-b")
+        let cycleB = try node("cycle-b", parent: "cycle-a")
+
+        let rows = OuterHorizonTree.visibleRows(
+            nodes: [root, child, dangling, cycleA, cycleB],
+            expandedNodeIds: [])
+
+        XCTAssertEqual(rows.map(\.node.nodeId), ["root", "dangling", "cycle-a", "cycle-b"])
+        XCTAssertEqual(rows[1].parentDiagnostic, "parent missing is not in this snapshot")
+        XCTAssertEqual(rows[2].parentDiagnostic, "parent cycle or disconnected subtree")
+        XCTAssertEqual(rows[3].parentDiagnostic, "parent cycle or disconnected subtree")
     }
 }
