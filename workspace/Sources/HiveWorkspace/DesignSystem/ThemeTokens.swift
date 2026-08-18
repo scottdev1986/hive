@@ -18,7 +18,8 @@ extension Theme {
     }
 
     enum Metric {
-        static let sidebarWidth: CGFloat = 248
+        static let sidebarWidth: CGFloat = 188
+        static let liveRunRailWidth: CGFloat = 280
         static let topBarHeight: CGFloat = 59
         static let cardCornerRadius: CGFloat = 10
         static let insetCornerRadius: CGFloat = 8

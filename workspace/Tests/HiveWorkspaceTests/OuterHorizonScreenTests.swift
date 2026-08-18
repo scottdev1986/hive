@@ -216,7 +216,7 @@ final class OuterHorizonScreenTests: XCTestCase {
             onToggleExpansion: { _ in })
         workbench.frame = NSRect(x: 0, y: 0, width: 1_200, height: 900)
         workbench.layoutSubtreeIfNeeded()
-        let railWidth = Theme.Metric.sidebarWidth + Theme.Space.l * 2
+        let railWidth = Theme.Metric.liveRunRailWidth
         XCTAssertEqual(railWidth, 280)
         XCTAssertEqual(
             1_200 - railWidth,

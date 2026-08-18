@@ -269,7 +269,7 @@ final class LiveRunWorkbenchView: NSView {
             layout.topAnchor.constraint(equalTo: topAnchor),
             layout.bottomAnchor.constraint(equalTo: bottomAnchor),
             rail.widthAnchor.constraint(
-                equalToConstant: Theme.Metric.sidebarWidth + Theme.Space.l * 2),
+                equalToConstant: Theme.Metric.liveRunRailWidth),
             inspector.widthAnchor.constraint(
                 equalToConstant: Theme.Metric.sidebarWidth + Theme.Space.xl * 5),
             center.widthAnchor.constraint(

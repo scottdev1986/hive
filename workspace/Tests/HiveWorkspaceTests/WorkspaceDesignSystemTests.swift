@@ -45,7 +45,8 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         assertRGB(Theme.Chrome.red, hex: 0xEC7770)
         assertRGB(Theme.Chrome.violet, hex: 0xC1A0DD)
 
-        XCTAssertEqual(Theme.Metric.sidebarWidth, 248)
+        XCTAssertEqual(Theme.Metric.sidebarWidth, 188)
+        XCTAssertEqual(Theme.Metric.liveRunRailWidth, 280)
         XCTAssertEqual(Theme.Metric.topBarHeight, 59)
         XCTAssertEqual(Theme.Metric.controlMinHeight, 28)
     }
