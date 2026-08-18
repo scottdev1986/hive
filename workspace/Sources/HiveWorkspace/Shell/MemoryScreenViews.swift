@@ -34,45 +34,46 @@ final class MemoryOverviewScreenView: NSView {
             content.append(MemoryScreenParts.grid([
                 MemoryScreenParts.storeCard(
                     name: "Curated wiki", identifier: "memory-store-wiki",
-                    caption: "canonical record · immutable observations and compiled entries",
+                    caption: "immutable observations and compiled entries",
                     state: overview.wiki.state,
                     readings: [
                         ("Articles", String(overview.wiki.articles)),
                         ("Pitfalls", String(overview.wiki.pitfalls)),
                         ("Unverified pitfalls", String(overview.wiki.unverifiedPitfalls)),
-                    ]),
+                    ],
+                    role: .canonical),
                 MemoryScreenParts.storeCard(
                     name: "Episodic store", identifier: "memory-store-episodic",
-                    caption: "canonical record · events, facts and digests",
+                    caption: "events, bi-temporal facts and digests",
                     state: overview.episodic.state,
                     readings: [
                         ("Events", String(overview.episodic.events)),
                         ("Facts", String(overview.episodic.facts)),
                         ("Digests", String(overview.episodic.digests)),
-                    ]),
-            ] + MemoryScreenParts.indexCards(overview.indexes), columns: 4))
-
-            content.append(MemoryScreenParts.scopesCard(overview.wiki.scopes))
+                    ],
+                    role: .canonical),
+                MemoryScreenParts.projectionCard(overview.indexes),
+            ], columns: 3))
 
             content.append(MemoryScreenParts.grid([
                 MemoryScreenParts.recallHealthCard(
                     indexes: overview.indexes, config: overview.config),
-                MemoryScreenParts.jobsCard(
-                    title: "Recent memory operations",
-                    subtitle: "the receipts the daemon kept",
-                    receipts: overview.lastJobs),
+                MemoryScreenParts.operationsCard(overview.lastJobs),
             ], columns: 2))
 
             content.append(MemoryScreenParts.grid([
                 MemoryScreenParts.configCard(overview.config),
                 MemoryScreenParts.gapsCard(overview.gaps),
             ], columns: 2))
+
+            content.append(MemoryScreenParts.scopesCard(overview.wiki.scopes))
         }
         MemoryPage.install(
             route: .memoryOverview,
             screen: screen,
             subtitle: "Health and counts from one daemon-owned overview projection. "
-                + "Canonical records and disposable indexes stay visibly different.",
+                + "Two canonical records and the one rebuildable projection over "
+                + "them stay visibly different.",
             actions: [],
             content: content,
             in: self)
@@ -93,25 +94,42 @@ final class MemoryLibraryScreenView: NSView {
         super.init(frame: .zero)
         setAccessibilityIdentifier("memory-library-screen")
         var content: [NSView] = []
+        var actions: [NSView] = []
         if let pager {
+            // Refresh re-asks the daemon for the page already on screen, so it
+            // reads the walk's own position rather than restarting it.
+            let refresh = ActionButton(title: "Refresh", symbol: "arrow.clockwise")
+            refresh.isEnabled = actionsEnabled
+            refresh.setAccessibilityIdentifier("memory-library-refresh")
+            ShellButtonTarget.shared.register(refresh) { onPage(pager.currentStep) }
+            refresh.target = ShellButtonTarget.shared
+            refresh.action = #selector(ShellButtonTarget.fire(_:))
+            actions.append(refresh)
+
             content.append(MemoryScreenParts.filterControls(
                 filter: pager.filter, enabled: actionsEnabled, onFilter: onFilter))
             let page = pager.page
+            let rows = page.items.map(MemoryScreenPresenter.libraryRow)
+            let selection = MemoryLibrarySelectionView(rows: rows)
             let table = MemoryScreenParts.sectionCard(
                 title: "Library rows",
                 subtitle: "ordered by row key, so a page walk cannot renumber "
-                    + "under a concurrent write",
+                    + "under a concurrent write · this wire offers no title "
+                    + "search and no sort",
                 identifier: "memory-library-rows")
             table.add(MemoryScreenParts.resultHeader(columns: Self.columns))
-            if page.items.isEmpty {
+            if rows.isEmpty {
                 table.add(MemoryScreenParts.note(
                     "This page carries no rows.",
                     identifier: "memory-library-no-rows",
                     style: .quiet))
             } else {
-                for item in page.items {
-                    let row = MemoryScreenPresenter.libraryRow(item)
-                    table.add(MemoryScreenParts.resultRow(
+                MemoryScreenParts.boundedRows(
+                    into: table, count: rows.count, bound: 8,
+                    noun: "rows on this page", identifier: "memory-library"
+                ) { [weak selection] index in
+                    let row = rows[index]
+                    let view = MemoryScreenParts.resultRow(
                         leading: MemoryScreenParts.lifecycleBadge(row.status),
                         title: row.title,
                         detail: row.detail,
@@ -121,13 +139,17 @@ final class MemoryLibraryScreenView: NSView {
                             MemoryScreenParts.Column(
                                 text: row.updated, width: Self.columns[2].width, mono: true),
                         ],
-                        identifier: "memory-library-row-\(row.id)"))
+                        identifier: "memory-library-row-\(row.id)")
+                    view.addGestureRecognizer(
+                        MemoryRowClick { selection?.select(index) })
+                    return view
                 }
             }
             table.add(MemoryScreenParts.pageControls(
                 pager: pager, enabled: actionsEnabled, onPage: onPage))
 
             let aside = MemoryScreenParts.column([
+                selection,
                 MemoryScreenParts.storeCard(
                     name: "Library page", identifier: "memory-store-library",
                     caption: "the daemon's own page of this filtered list",
@@ -138,12 +160,13 @@ final class MemoryLibraryScreenView: NSView {
                         ("Page", String(pager.pageNumber)),
                     ]),
                 MemoryScreenParts.gapCard(
-                    title: "Selected memory",
+                    title: "Edit and delete",
                     identifier: "memory-library-inspector-gap",
-                    detail: "This build has no typed edit or delete operation with a "
-                        + "reference guard and an expected revision, so a row cannot be "
-                        + "opened for change here. Rows are read exactly as the daemon "
-                        + "listed them."),
+                    detail: "The daemon has a guarded mutation wire — create, "
+                        + "update and delete, each fenced by the revision the "
+                        + "caller read — but this app has no client for it, so a "
+                        + "row cannot be opened for change here. Rows are read "
+                        + "exactly as the daemon listed them."),
             ])
             content.append(MemoryScreenParts.split(main: table, aside: aside))
         }
@@ -153,7 +176,7 @@ final class MemoryLibraryScreenView: NSView {
             subtitle: "Paginated daemon projection across curated articles, pitfalls, "
                 + "current facts, session digests, and raw evidence references. "
                 + "Scope and lifecycle are explicit.",
-            actions: [],
+            actions: actions,
             content: content,
             in: self)
     }
@@ -165,6 +188,112 @@ final class MemoryLibraryScreenView: NSView {
         MemoryScreenParts.Column(text: "Scope", width: 84),
         MemoryScreenParts.Column(text: "Updated", width: 132, mono: true),
     ]
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+}
+
+/// The selected row's own reading, drawn from the page already on screen. It
+/// shows every field the list projection carries for that row and names the two
+/// the design asks for that this wire does not send, because an empty body and
+/// an empty vector line would read as a record with nothing in it.
+private final class MemoryLibrarySelectionView: NSView {
+    private let rows: [MemoryScreenPresenter.LibraryRow]
+    private let host = NSView()
+    private var selected = 0
+
+    init(rows: [MemoryScreenPresenter.LibraryRow]) {
+        self.rows = rows
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        host.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(host)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: trailingAnchor),
+            host.topAnchor.constraint(equalTo: topAnchor),
+            host.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        render()
+    }
+
+    /// Takes the row the reader clicked. Selection is this view's own state: it
+    /// picks between rows the daemon already served rather than asking for a
+    /// reading the page does not contain.
+    func select(_ index: Int) {
+        guard rows.indices.contains(index), index != selected else { return }
+        selected = index
+        render()
+    }
+
+    private func render() {
+        for view in host.subviews { view.removeFromSuperview() }
+        let card = build()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            card.topAnchor.constraint(equalTo: host.topAnchor),
+            card.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+    }
+
+    private func build() -> CardView {
+        guard rows.indices.contains(selected) else {
+            let card = MemoryScreenParts.sectionCard(
+                title: "Selected memory",
+                subtitle: "nothing to select",
+                identifier: "memory-library-selected-none")
+            card.add(MemoryScreenParts.note(
+                "This page carries no rows, so no memory is selected.",
+                identifier: "memory-library-selected-none-detail",
+                style: .quiet))
+            return card
+        }
+        let row = rows[selected]
+        let card = MemoryScreenParts.sectionCard(
+            title: "Selected memory",
+            subtitle: "row \(selected + 1) of \(rows.count) on this page",
+            identifier: "memory-library-selected",
+            trailingView: MemoryScreenParts.lifecycleBadge(row.status))
+        let title = NSTextField(wrappingLabelWithString: row.title)
+        title.font = Theme.Font.title
+        title.textColor = Theme.primaryText
+        title.maximumNumberOfLines = 0
+        card.add(title)
+        card.add(MemoryScreenParts.factRow("Kind", row.kind))
+        card.add(MemoryScreenParts.factRow("Scope", row.scope))
+        card.add(MemoryScreenParts.factRow("Identifier", row.id))
+        for fact in row.facts {
+            card.add(MemoryScreenParts.factRow(fact.label, fact.value))
+        }
+        card.add(MemoryScreenParts.note(
+            "The list projection carries no body text and no per-row vector "
+                + "state, so neither is shown here.",
+            identifier: "memory-library-selected-absences",
+            style: .quiet))
+        return card
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+}
+
+/// A click on a table row, delivered to the closure the row was built with. The
+/// recognizer is its own target, so the handler lives exactly as long as the row
+/// that owns it.
+private final class MemoryRowClick: NSClickGestureRecognizer {
+    private let handler: () -> Void
+
+    init(_ handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(target: nil, action: nil)
+        target = self
+        action = #selector(fire)
+    }
+
+    @objc private func fire() { handler() }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -239,7 +368,8 @@ final class MemoryRecallScreenView: NSView {
 
             let ranked = MemoryScreenParts.sectionCard(
                 title: "Ranked results",
-                subtitle: "\(preview.rows.count) rows inside the budget",
+                subtitle: "\(preview.rows.count) rows inside the budget · "
+                    + "\(preview.omitted) omitted for size",
                 identifier: "memory-recall-rows")
             if preview.rows.isEmpty {
                 ranked.add(MemoryScreenParts.note(
@@ -247,9 +377,13 @@ final class MemoryRecallScreenView: NSView {
                     identifier: "memory-recall-no-rows",
                     style: .quiet))
             } else {
-                for row in preview.rows {
+                MemoryScreenParts.boundedRows(
+                    into: ranked, count: preview.rows.count, bound: 6,
+                    noun: "rows inside the budget", identifier: "memory-recall"
+                ) { index in
+                    let row = preview.rows[index]
                     let flag = row.flag.map { " · \($0)" } ?? ""
-                    ranked.add(MemoryScreenParts.resultRow(
+                    return MemoryScreenParts.resultRow(
                         leading: MemoryScreenParts.lifecycleBadge(row.status),
                         title: row.title,
                         detail: "\(row.snippet) · \(row.scope)/\(row.topic)/\(row.id)"
@@ -261,7 +395,7 @@ final class MemoryRecallScreenView: NSView {
                             text: "rank \(row.rank) · \(row.class.rawValue)",
                             symbol: "number",
                             style: .info),
-                        identifier: "memory-recall-row-\(row.id)"))
+                        identifier: "memory-recall-row-\(row.id)")
                 }
             }
             results.append(ranked)
@@ -322,9 +456,9 @@ final class MemoryMaintenanceScreenView: NSView {
 
         var content: [NSView] = []
         if let maintenance {
-            let indexes = MemoryScreenParts.indexCards(
-                maintenance.indexes, action: job(.reindex, style: .primary))
-            content.append(MemoryScreenParts.grid(indexes + [
+            content.append(MemoryScreenParts.grid([
+                MemoryScreenParts.projectionCard(
+                    maintenance.indexes, action: job(.reindex, style: .primary)),
                 MemoryScreenParts.storeCard(
                     name: "Consolidation", identifier: "memory-store-consolidation",
                     caption: "duplicate candidates the daemon scanned for",
@@ -333,13 +467,25 @@ final class MemoryMaintenanceScreenView: NSView {
                     actions: [job(.consolidationDryRun), job(.consolidationApply)]),
                 MemoryScreenParts.configCard(
                     maintenance.config, action: job(.retentionSweep)),
-            ], columns: 2))
+            ], columns: 3))
 
+            // The newest receipt is the job this screen is about; the ones
+            // behind it are history. They are the same rendering because they
+            // are the same fact — only the reading order differs.
+            let receipts = maintenance.jobs.recent
             content.append(MemoryScreenParts.jobsCard(
-                title: "Job receipts",
+                title: "Latest job",
                 subtitle: MemoryScreenPresenter.store(maintenance.jobs.state),
                 identifier: "memory-store-jobs-\(maintenance.jobs.state.rawValue)",
-                receipts: maintenance.jobs.recent))
+                receipts: Array(receipts.prefix(1))))
+            if receipts.count > 1 {
+                content.append(MemoryScreenParts.jobsCard(
+                    title: "Earlier receipts",
+                    subtitle: "newest first, behind the latest job",
+                    identifier: "memory-jobs-earlier",
+                    receipts: Array(receipts.dropFirst()),
+                    bound: 2))
+            }
         }
         MemoryPage.install(
             route: .memoryMaintenance,
@@ -413,9 +559,11 @@ enum MemoryScreenParts {
         caption: String,
         state: MemoryStoreState,
         readings: [(String, String)],
+        role: StoreRole? = nil,
         actions: [NSView] = []
     ) -> CardView {
-        let trailing = NSStackView(views: [stateBadge(state)] + actions)
+        let trailing = NSStackView(
+            views: (role.map { [roleBadge($0)] } ?? []) + [stateBadge(state)] + actions)
         trailing.orientation = .horizontal
         trailing.alignment = .centerY
         trailing.spacing = Theme.Space.s
@@ -438,29 +586,76 @@ enum MemoryScreenParts {
         return card
     }
 
-    static func indexCards(
+    /// The topology's third part: one disposable projection over the two
+    /// canonical stores. FTS and vectors are rebuilt from the records rather
+    /// than read as one, so they are one card and not two first-class stores —
+    /// but each still reports its own state in its own words, because a wired
+    /// full-text index beside an absent vector index is two readings and a
+    /// single badge over both would be a third one nobody measured.
+    static func projectionCard(
         _ indexes: MemoryIndexHealth,
         action: NSView? = nil
-    ) -> [NSView] {
-        [
-            storeCard(
-                name: "Full-text index", identifier: "memory-index-fts",
-                caption: "rebuildable projection · never a record",
-                state: indexes.fts.state,
-                readings: [("Articles", String(indexes.fts.articles))],
-                actions: action.map { [$0] } ?? []),
-            storeCard(
-                name: "Vector index", identifier: "memory-index-vectors",
-                caption: "rebuildable projection · embeddings over the records",
-                state: indexes.vectors.state,
-                readings: [
-                    ("Articles", String(indexes.vectors.articles)),
-                    ("Facts", String(indexes.vectors.facts)),
-                    ("Provider", indexes.vectors.provider.rawValue),
-                    ("Model", indexes.vectors.model),
-                    ("Runtime", indexes.vectors.runtime),
-                ]),
-        ]
+    ) -> CardView {
+        let trailing = NSStackView(
+            views: [roleBadge(.projection)] + (action.map { [$0] } ?? []))
+        trailing.orientation = .horizontal
+        trailing.alignment = .centerY
+        trailing.spacing = Theme.Space.s
+        let card = sectionCard(
+            title: "FTS + vectors",
+            subtitle: "rebuildable projection · never a record",
+            identifier: "memory-index-projection",
+            trailingView: trailing)
+        card.dashed = indexes.fts.state == .absent && indexes.vectors.state == .absent
+        card.add(indexReading(
+            "Full-text", indexes.fts.state,
+            counts: "\(indexes.fts.articles) articles",
+            identifier: "memory-index-fts-\(indexes.fts.state.rawValue)"))
+        card.add(indexReading(
+            "Semantic", indexes.vectors.state,
+            counts: "\(indexes.vectors.articles) articles · "
+                + "\(indexes.vectors.facts) facts",
+            identifier: "memory-index-vectors-\(indexes.vectors.state.rawValue)"))
+        card.add(factRow(
+            "Embeddings",
+            "\(indexes.vectors.provider.rawValue) · \(indexes.vectors.model) · "
+                + "runtime \(indexes.vectors.runtime)"))
+        return card
+    }
+
+    /// One index's line inside the projection card. An absent index draws its
+    /// reason and no counts: a number for an index that is not wired would be
+    /// this client's invention rather than the daemon's reading.
+    private static func indexReading(
+        _ name: String,
+        _ state: MemoryStoreState,
+        counts: String,
+        identifier: String
+    ) -> NSStackView {
+        factRow(
+            name,
+            state == .absent
+                ? MemoryScreenPresenter.store(state)
+                : "\(MemoryScreenPresenter.store(state)) · \(counts)",
+            identifier: identifier)
+    }
+
+    /// Which part of the topology a card is. The design draws the difference
+    /// between a record and a rebuildable projection as words on the card, so
+    /// it is drawn rather than left to be inferred from position.
+    enum StoreRole {
+        case canonical
+        case projection
+    }
+
+    static func roleBadge(_ role: StoreRole) -> CapsuleBadge {
+        switch role {
+        case .canonical:
+            return CapsuleBadge(text: "canonical", symbol: "lock.doc.fill", style: .positive)
+        case .projection:
+            return CapsuleBadge(
+                text: "projection", symbol: "arrow.triangle.2.circlepath", style: .neutral)
+        }
     }
 
     /// Every wiki scope with its own state, because one scope with rows and one
@@ -569,13 +764,48 @@ enum MemoryScreenParts {
                 style: .quiet))
             return card
         }
-        for gap in gaps {
-            card.add(resultRow(
+        boundedRows(
+            into: card, count: gaps.count, bound: 4, noun: "reported gaps",
+            identifier: "memory-gaps"
+        ) { index in
+            let gap = gaps[index]
+            return resultRow(
                 leading: CapsuleBadge(
                     text: "gap", symbol: "exclamationmark.triangle.fill", style: .warning),
                 title: gap.code,
                 detail: gap.detail,
-                identifier: "memory-gap-\(gap.code)"))
+                identifier: "memory-gap-\(gap.code)")
+        }
+        return card
+    }
+
+    /// The overview's reading of the receipts: one line each. The receipt with
+    /// its progress and its readback belongs to Maintenance, and a second full
+    /// rendering here would be a second place to fix — but a failure is never
+    /// summarised away, so an error is carried into the line.
+    static func operationsCard(_ receipts: [MemoryJobReceipt]) -> CardView {
+        let card = sectionCard(
+            title: "Recent memory operations",
+            subtitle: "the latest receipt per operation · readbacks on Maintenance",
+            identifier: "memory-operations")
+        guard !receipts.isEmpty else {
+            card.add(note(
+                "No memory job has been recorded for this store.",
+                identifier: "memory-operations-none",
+                style: .quiet))
+            return card
+        }
+        for receipt in receipts {
+            let total = receipt.progress.total.map(String.init) ?? "unknown"
+            let detail = "\(receipt.progress.step) · \(receipt.progress.done)/\(total)"
+                + (receipt.summary.isEmpty ? "" : " · \(receipt.summary)")
+                + (receipt.error.map { " · \($0)" } ?? "")
+            card.add(resultRow(
+                leading: jobBadge(receipt.state),
+                title: receipt.kind.title,
+                detail: detail,
+                columns: [Column(text: receipt.startedAt, width: 168, mono: true)],
+                identifier: "memory-operation-\(receipt.id)"))
         }
         return card
     }
@@ -587,7 +817,8 @@ enum MemoryScreenParts {
         title: String,
         subtitle: String,
         identifier: String? = nil,
-        receipts: [MemoryJobReceipt]
+        receipts: [MemoryJobReceipt],
+        bound: Int? = nil
     ) -> NSView {
         let card = sectionCard(
             title: title,
@@ -600,7 +831,11 @@ enum MemoryScreenParts {
                 style: .quiet))
             return card
         }
-        for receipt in receipts {
+        boundedRows(
+            into: card, count: receipts.count, bound: bound ?? receipts.count,
+            noun: "receipts", identifier: identifier ?? "memory-jobs"
+        ) { index in
+            let receipt = receipts[index]
             let total = receipt.progress.total.map(String.init) ?? "unknown"
             let entry = NSStackView()
             entry.orientation = .vertical
@@ -643,7 +878,7 @@ enum MemoryScreenParts {
             for view in entry.arrangedSubviews {
                 view.widthAnchor.constraint(equalTo: entry.widthAnchor).isActive = true
             }
-            card.add(entry)
+            return entry
         }
         return card
     }
@@ -911,6 +1146,24 @@ enum MemoryScreenParts {
         return label
     }
 
+    /// Adds a list to a card that draws only its first `bound` rows and always
+    /// says how many there are. Bounding is not hiding: the count line names the
+    /// true total and the control that lifts the bound names how many it will
+    /// draw, so a short view can never be read as the whole set. A list no
+    /// longer than its bound draws every row and no count line, because there is
+    /// nothing there to mistake for completeness.
+    static func boundedRows(
+        into card: CardView,
+        count: Int,
+        bound: Int,
+        noun: String,
+        identifier: String,
+        row: @escaping (Int) -> NSView
+    ) {
+        card.add(MemoryBoundedListView(
+            count: count, bound: bound, noun: noun, slug: identifier, row: row))
+    }
+
     /// A control the daemon does not offer yet, named as the absence it is.
     static func gapCard(title: String, identifier: String, detail: String) -> NSView {
         let card = sectionCard(
@@ -1084,6 +1337,87 @@ enum MemoryScreenParts {
         label.widthAnchor.constraint(equalToConstant: column.width).isActive = true
         return label
     }
+}
+
+/// A list that draws a bounded number of its rows and names the total either
+/// way. The bound is a reading aid, so lifting it is a click rather than a
+/// second screen, and the count line is part of the list rather than an
+/// ornament beside it.
+private final class MemoryBoundedListView: NSView {
+    private let stack = NSStackView()
+    private let count: Int
+    private let bound: Int
+    private let noun: String
+    private let slug: String
+    private let row: (Int) -> NSView
+    private var expanded = false
+
+    init(
+        count: Int,
+        bound: Int,
+        noun: String,
+        slug: String,
+        row: @escaping (Int) -> NSView
+    ) {
+        self.count = count
+        self.bound = bound
+        self.noun = noun
+        self.slug = slug
+        self.row = row
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.xs
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        render()
+    }
+
+    private func render() {
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        let shown = expanded ? count : min(count, bound)
+        for index in 0..<shown { append(row(index), fullWidth: true) }
+        guard count > bound else { return }
+        append(
+            MemoryScreenParts.note(
+                expanded
+                    ? "Showing all \(count) \(noun)."
+                    : "Showing \(shown) of \(count) \(noun).",
+                identifier: "\(slug)-count",
+                style: .quiet),
+            fullWidth: true)
+        let button = ActionButton(
+            title: expanded ? "Show \(bound)" : "Show all \(count)",
+            symbol: expanded ? "chevron.up" : "chevron.down")
+        button.setAccessibilityIdentifier("\(slug)-expand")
+        ShellButtonTarget.shared.register(button) { [weak self] in
+            guard let self else { return }
+            expanded.toggle()
+            render()
+        }
+        button.target = ShellButtonTarget.shared
+        button.action = #selector(ShellButtonTarget.fire(_:))
+        append(button, fullWidth: false)
+    }
+
+    private func append(_ view: NSView, fullWidth: Bool) {
+        stack.addArrangedSubview(view)
+        guard fullWidth else { return }
+        view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 }
 
 /// The empty last row that absorbs a stretched card's surplus height.

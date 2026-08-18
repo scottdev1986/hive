@@ -145,7 +145,7 @@ public struct ShellState: Equatable {
             observe(
                 libraryPage: library.page,
                 from: library.project,
-                step: library.trail.last ?? .first,
+                step: library.currentStep,
                 filter: library.filter)
         }
     }

@@ -122,10 +122,13 @@ public enum MemoryScreenPresenter {
         } ?? [])
     }
 
-    /// One library row resolved into the cells the table draws. Every kind fills
-    /// the same cells, and `detail` carries the provenance that is particular to
-    /// a kind — source and evidence for an article, the agent and session for a
-    /// digest — so no field the wire sent is dropped for layout.
+    /// One library row resolved into everything the screen draws for it. Every
+    /// kind fills the same cells, and `facts` carries the provenance that is
+    /// particular to a kind — source and evidence for an article, the agent and
+    /// session for a digest — so neither the table nor the selected-memory
+    /// preview drops a field the wire sent. One resolution serves both: a second
+    /// switch over the same rows would be a second place for a kind to go
+    /// missing.
     struct LibraryRow: Equatable {
         let id: String
         let title: String
@@ -134,9 +137,24 @@ public enum MemoryScreenPresenter {
         let scope: String
         let status: String
         let updated: String
+        let facts: [Fact]
+
+        struct Fact: Equatable {
+            let label: String
+            let value: String
+        }
     }
 
+    /// A nullable wire field the daemon did not send. It reads as unrecorded
+    /// rather than as a value, because an absent field is unknown and never a
+    /// measured "none".
+    private static let unrecorded = "not recorded"
+
     static func libraryRow(_ item: MemoryLibraryItem) -> LibraryRow {
+        typealias Fact = LibraryRow.Fact
+        func list(_ values: [String]) -> String {
+            values.isEmpty ? "none" : values.joined(separator: " · ")
+        }
         switch item {
         case .article(let row), .pitfall(let row):
             return LibraryRow(
@@ -144,27 +162,62 @@ public enum MemoryScreenPresenter {
                 detail: "\(row.topic) · source \(row.source.rawValue) "
                     + "· evidence \(row.evidence)",
                 kind: row.kind.rawValue, scope: row.scope.rawValue,
-                status: row.status.rawValue, updated: row.updated)
+                status: row.status.rawValue, updated: row.updated,
+                facts: [
+                    Fact(label: "Topic", value: row.topic),
+                    Fact(label: "Updated", value: row.updated),
+                    Fact(label: "Revision", value: row.revision),
+                    Fact(label: "Source", value: row.source.rawValue),
+                    Fact(label: "Verified", value: row.verified ?? unrecorded),
+                    Fact(label: "Evidence", value: row.evidence),
+                    Fact(label: "Raw references", value: list(row.rawRefs)),
+                    Fact(label: "Supersedes", value: list(row.supersedes)),
+                ])
         case .fact(let row):
             let confidence = row.confidence.map { String($0) } ?? "unknown"
             return LibraryRow(
                 id: row.id, title: row.title,
                 detail: "\(row.topic) · confidence \(confidence) · valid \(row.validAt)",
                 kind: row.kind, scope: row.scope.rawValue,
-                status: row.status.rawValue, updated: row.updated)
+                status: row.status.rawValue, updated: row.updated,
+                facts: [
+                    Fact(label: "Topic", value: row.topic),
+                    Fact(label: "Updated", value: row.updated),
+                    Fact(label: "Revision", value: row.revision),
+                    Fact(label: "Source", value: row.source),
+                    Fact(label: "Confidence", value: confidence),
+                    Fact(label: "Valid from", value: row.validAt),
+                    Fact(label: "Invalid at", value: row.invalidAt ?? unrecorded),
+                ])
         case .digest(let row):
             return LibraryRow(
                 id: row.id, title: row.title,
                 detail: "\(row.topic) · agent \(row.agent) "
                     + "· session \(row.sessionId ?? "unknown")",
                 kind: row.kind, scope: row.scope.rawValue,
-                status: row.status.rawValue, updated: row.updated)
+                status: row.status.rawValue, updated: row.updated,
+                facts: [
+                    Fact(label: "Topic", value: row.topic),
+                    Fact(label: "Updated", value: row.updated),
+                    Fact(label: "Revision", value: row.revision),
+                    Fact(label: "Source", value: row.source),
+                    Fact(label: "Agent", value: row.agent),
+                    Fact(label: "Session", value: row.sessionId ?? unrecorded),
+                ])
         case .rawReference(let row):
             return LibraryRow(
                 id: row.id, title: row.title,
                 detail: "\(row.topic) · \(row.path) · \(row.bytes) bytes",
                 kind: row.kind, scope: row.scope.rawValue,
-                status: row.status.rawValue, updated: row.updated)
+                status: row.status.rawValue, updated: row.updated,
+                facts: [
+                    Fact(label: "Topic", value: row.topic),
+                    Fact(label: "Updated", value: row.updated),
+                    Fact(label: "Revision", value: row.revision),
+                    Fact(label: "Source", value: row.source),
+                    Fact(label: "Path", value: row.path),
+                    Fact(label: "Bytes", value: String(row.bytes)),
+                ])
         }
     }
 

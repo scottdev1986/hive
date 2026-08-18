@@ -25,6 +25,17 @@ final class MemoryScreenViewTests: XCTestCase {
             .path
     }
 
+    /// The stress corpus: forty library rows, forty recall rows, twenty job
+    /// receipts and twelve gaps. Bounding is measured against it, because a
+    /// corpus that fits on the page cannot show whether a bound tells the truth.
+    private var denseFixtureDirectory: String {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("WorkspaceCoreTests/Fixtures-dense")
+            .path
+    }
+
     // MARK: Corpus access — the same frozen rows the wire tests decode
 
     private func row(_ corpus: String, _ availability: String) throws -> [String: Any] {
@@ -65,6 +76,15 @@ final class MemoryScreenViewTests: XCTestCase {
     private func labels(_ view: NSView) -> [String] {
         let own = (view as? NSTextField).map { [$0.stringValue] } ?? []
         return own + view.subviews.flatMap(labels)
+    }
+
+    /// Fires the click a row carries. The row is not a button, so the test
+    /// drives the recognizer the row was built with rather than a synthetic
+    /// event the app would never see.
+    private func click(_ view: NSView) throws {
+        let recognizer = try XCTUnwrap(view.gestureRecognizers.first)
+        let target = try XCTUnwrap(recognizer.target as? NSObject)
+        _ = target.perform(try XCTUnwrap(recognizer.action))
     }
 
     private func screen(_ availability: ProjectionAvailability) -> ShellScreenProjection {
@@ -493,6 +513,186 @@ final class MemoryScreenViewTests: XCTestCase {
                 labels(view).joined(separator: " | ").contains("Unknown"),
                 "an unobserved screen says so")
         }
+    }
+
+    // MARK: The topology — two records and one rebuildable projection
+
+    /// The disposable index is one card, not two first-class stores beside the
+    /// records. A projection that competes with a canonical store on the page
+    /// is a claim about the architecture, and it is the wrong one.
+    func testOverviewKeepsOneRebuildableProjectionBesideTwoCanonicalStores() throws {
+        let state = try ShellFixtureStore(directory: fixtureDirectory)
+            .loadState(scenario: .current)
+        let view = MemoryOverviewScreenView(
+            screen: screen(.current), overview: state.memory.overview)
+        view.layoutSubtreeIfNeeded()
+        let drawn = labels(view)
+
+        XCTAssertEqual(
+            drawn.filter { $0 == "canonical" }.count, 2,
+            "the curated wiki and the episodic store are the two records")
+        XCTAssertEqual(
+            drawn.filter { $0 == "projection" }.count, 1,
+            "FTS and vectors are one rebuildable projection, not two stores")
+        let projection = try XCTUnwrap(find(view, "memory-index-projection"))
+        // Merged into one card, each index still reports its own state: a badge
+        // spanning a wired index and an absent one would be a third reading.
+        XCTAssertNotNil(find(projection, "memory-index-fts-ok"))
+        XCTAssertNotNil(find(projection, "memory-index-vectors-ok"))
+    }
+
+    func testAnAbsentIndexKeepsItsOwnStateInsideTheMergedProjectionCard() throws {
+        var object = try value("memory-overview")
+        var indexes = object["indexes"] as! [String: Any]
+        var fts = indexes["fts"] as! [String: Any]
+        fts["state"] = "absent"
+        fts["articles"] = 0
+        indexes["fts"] = fts
+        object["indexes"] = indexes
+        let view = MemoryOverviewScreenView(
+            screen: screen(.current),
+            overview: try decode(object, as: MemoryOverviewProjection.self))
+        view.layoutSubtreeIfNeeded()
+        let projection = try XCTUnwrap(find(view, "memory-index-projection"))
+        let text = labels(projection).joined(separator: " | ")
+
+        XCTAssertNotNil(
+            find(projection, "memory-index-fts-absent"),
+            "an absent full-text index says so in its own identifier")
+        XCTAssertNotNil(find(projection, "memory-index-vectors-ok"))
+        XCTAssertTrue(text.contains("no store is wired"))
+        XCTAssertFalse(
+            text.contains("0 articles"),
+            "an absent index draws no count at all")
+    }
+
+    // MARK: Bounding is not hiding — every short list names its true total
+
+    func testTheDenseLibraryPageBoundsItsRowsAndStillNamesTheirCount() throws {
+        let state = try ShellFixtureStore(directory: denseFixtureDirectory)
+            .loadState(scenario: .current)
+        let pager = try XCTUnwrap(state.memory.library)
+        XCTAssertEqual(pager.page.items.count, 40, "the stress corpus is the fixture doing its job")
+        let view = MemoryLibraryScreenView(
+            screen: screen(.current), pager: pager,
+            actionsEnabled: true, onPage: { _ in }, onFilter: { _ in })
+        view.layoutSubtreeIfNeeded()
+
+        func drawnRows() -> Int {
+            identifiers(view).filter { $0.hasPrefix("memory-library-row-") }.count
+        }
+        XCTAssertEqual(drawnRows(), 8, "the page opens on a scan, not on forty rows")
+        let count = try XCTUnwrap(find(view, "memory-library-count") as? NSTextField)
+        XCTAssertEqual(
+            count.stringValue, "Showing 8 of 40 rows on this page.",
+            "a bounded list that did not say so would read as the whole set")
+        // The true total the daemon matched stays on the page beside the bound.
+        XCTAssertTrue(labels(view).contains("40"), "the matching-row count stays visible")
+
+        let expand = try XCTUnwrap(find(view, "memory-library-expand") as? NSButton)
+        expand.performClick(nil)
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(drawnRows(), 40, "lifting the bound draws every row it named")
+    }
+
+    func testTheDenseRecallPreviewAndGapsListBoundThemselvesWithTheirCounts() throws {
+        let state = try ShellFixtureStore(directory: denseFixtureDirectory)
+            .loadState(scenario: .current)
+        let recall = MemoryRecallScreenView(
+            screen: screen(.current), preview: state.memory.recall,
+            actionsEnabled: true, onInspect: { _ in })
+        recall.layoutSubtreeIfNeeded()
+        let recallCount = try XCTUnwrap(find(recall, "memory-recall-count") as? NSTextField)
+        XCTAssertEqual(
+            recallCount.stringValue, "Showing 6 of 40 rows inside the budget.")
+        XCTAssertEqual(
+            identifiers(recall).filter { $0.hasPrefix("memory-recall-row-") }.count, 6)
+
+        let overview = MemoryOverviewScreenView(
+            screen: screen(.current), overview: state.memory.overview)
+        overview.layoutSubtreeIfNeeded()
+        let gapCount = try XCTUnwrap(find(overview, "memory-gaps-count") as? NSTextField)
+        XCTAssertEqual(gapCount.stringValue, "Showing 4 of 12 reported gaps.")
+    }
+
+    // MARK: The selected memory is the row the reader picked
+
+    func testTheLibraryPreviewDrawsTheSelectedRowAndNamesWhatTheWireOmits() throws {
+        let state = try ShellFixtureStore(directory: fixtureDirectory)
+            .loadState(scenario: .current)
+        let pager = try XCTUnwrap(state.memory.library)
+        let rows = pager.page.items.map(MemoryScreenPresenter.libraryRow)
+        XCTAssertGreaterThan(rows.count, 1, "the corpus must offer a second row to select")
+        let view = MemoryLibraryScreenView(
+            screen: screen(.current), pager: pager,
+            actionsEnabled: true, onPage: { _ in }, onFilter: { _ in })
+        view.layoutSubtreeIfNeeded()
+
+        func preview() throws -> String {
+            labels(try XCTUnwrap(find(view, "memory-library-selected")))
+                .joined(separator: " | ")
+        }
+        // The pane opens populated: a "Selected memory" card showing only page
+        // metadata is the screen refusing to answer its own heading.
+        XCTAssertTrue(try preview().contains(rows[0].title))
+        for fact in rows[0].facts {
+            XCTAssertTrue(
+                try preview().contains(fact.value),
+                "the preview drops no field the wire sent: \(fact.label)")
+        }
+        XCTAssertTrue(
+            try preview().contains("no body text and no per-row vector state"),
+            "the two fields this wire does not send are named, not left blank")
+
+        let second = try XCTUnwrap(find(view, "memory-library-row-\(rows[1].id)"))
+        try click(second)
+        view.layoutSubtreeIfNeeded()
+        XCTAssertTrue(try preview().contains(rows[1].title), "a click moves the selection")
+    }
+
+    // MARK: The latest job reads apart from the receipts behind it
+
+    func testMaintenanceSeparatesTheLatestJobFromEarlierReceipts() throws {
+        let state = try ShellFixtureStore(directory: denseFixtureDirectory)
+            .loadState(scenario: .current)
+        let maintenance = try XCTUnwrap(state.memory.maintenance)
+        XCTAssertEqual(maintenance.jobs.recent.count, 20)
+        let view = MemoryMaintenanceScreenView(
+            screen: screen(.current), maintenance: maintenance,
+            actionsEnabled: true, onStart: { _ in })
+        view.layoutSubtreeIfNeeded()
+
+        let latest = try XCTUnwrap(find(view, "memory-store-jobs-ok"))
+        let latestText = labels(latest).joined(separator: " | ")
+        XCTAssertEqual(
+            identifiers(latest).filter { $0.hasPrefix("memory-job-receipt-") }.count, 1,
+            "the latest job is one receipt, not a list")
+        // The in-progress job's honest absence survives the split.
+        XCTAssertTrue(
+            latestText.contains("none was recorded, so this job's final state is unread"))
+
+        let earlier = try XCTUnwrap(find(view, "memory-jobs-earlier"))
+        XCTAssertEqual(
+            identifiers(earlier).filter { $0.hasPrefix("memory-job-receipt-") }.count, 2)
+        let count = try XCTUnwrap(find(earlier, "memory-jobs-earlier-count") as? NSTextField)
+        XCTAssertEqual(count.stringValue, "Showing 2 of 19 receipts.")
+    }
+
+    // MARK: Refresh re-reads the page on screen
+
+    func testRefreshReReadsThePageOnScreenRatherThanRestartingTheWalk() throws {
+        nonisolated(unsafe) var steps: [MemoryLibraryStep] = []
+        let state = try ShellFixtureStore(directory: fixtureDirectory)
+            .loadState(scenario: .current)
+        let pager = try XCTUnwrap(state.memory.library)
+        let view = MemoryLibraryScreenView(
+            screen: screen(.current), pager: pager,
+            actionsEnabled: true, onPage: { steps.append($0) }, onFilter: { _ in })
+        view.layoutSubtreeIfNeeded()
+
+        let refresh = try XCTUnwrap(find(view, "memory-library-refresh") as? NSButton)
+        refresh.performClick(nil)
+        XCTAssertEqual(steps, [pager.currentStep], "refresh re-asks for the page on screen")
     }
 
     // MARK: The AppKit layer reads the daemon and nothing else

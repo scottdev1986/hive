@@ -105,6 +105,11 @@ public struct MemoryLibraryPager: Equatable, Sendable {
         self.page = page
     }
 
+    /// The step that re-asks the daemon for the page on screen. Refresh walks
+    /// nowhere: it re-reads the position the trail already reached rather than
+    /// restarting a walk the user did not restart.
+    public var currentStep: MemoryLibraryStep { trail.last ?? .first }
+
     /// The step that re-asks for the page before this one, or nil on the first page.
     public var previousStep: MemoryLibraryStep? {
         trail.count > 1 ? trail[trail.count - 2] : nil
