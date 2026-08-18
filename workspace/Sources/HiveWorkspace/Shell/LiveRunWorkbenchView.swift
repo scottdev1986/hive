@@ -426,33 +426,22 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func makeControlStrip() -> NSView {
-        let cells = [
-            controlCell(caption: "Viewed scope", value: scopeValue),
-            controlCell(caption: "Keyboard focus", value: focusValue),
-            controlCell(caption: "Input owner", value: inputOwnerValue),
-            controlCell(caption: "Generation", value: generationValue),
-        ]
-        var stripViews: [NSView] = []
-        for (index, cell) in cells.enumerated() {
-            if index > 0 {
-                let divider = NSBox.hdsVerticalDivider()
-                stripViews.append(divider)
-            }
-            stripViews.append(cell)
+        for field in [scopeValue, focusValue, inputOwnerValue, generationValue] {
+            field.font = Theme.Font.headline
+            field.compressHorizontally(priority: 430, toolTip: field.stringValue)
         }
-        let strip = NSStackView(views: stripViews)
-        strip.orientation = .horizontal
-        strip.distribution = .fill
-        strip.spacing = 0
-        strip.alignment = .centerY
+        let strip = FactStripView(
+            pairs: [
+                FactStripView.pair(label: "Viewed scope", value: scopeValue),
+                FactStripView.pair(label: "Keyboard focus", value: focusValue),
+                FactStripView.pair(label: "Input owner", value: inputOwnerValue),
+                FactStripView.pair(label: "Generation", value: generationValue),
+            ],
+            identifier: "live-run-control-strip")
         Theme.paint(strip, Theme.sidebarContextFill)
         strip.heightAnchor.constraint(
             greaterThanOrEqualToConstant:
                 Theme.Metric.chromeControlHeight + Theme.Space.m).isActive = true
-        for cell in cells {
-            cell.widthAnchor.constraint(greaterThanOrEqualTo: strip.widthAnchor, multiplier: 0.22)
-                .isActive = true
-        }
         let separator = NSBox.hdsSeparator()
         let container = NSStackView(views: [strip, separator])
         container.orientation = .vertical
@@ -460,28 +449,7 @@ final class LiveRunWorkbenchView: NSView {
         container.alignment = .leading
         strip.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         separator.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
-        container.setAccessibilityIdentifier("live-run-control-strip")
         return container
-    }
-
-    private func controlCell(caption: String, value: NSTextField) -> NSView {
-        let label = NSTextField(labelWithString: caption)
-        label.font = Theme.Font.sectionLabel
-        label.textColor = Theme.secondaryText
-        value.font = Theme.Font.headline
-        value.textColor = Theme.primaryText
-        value.compressHorizontally(priority: 430, toolTip: value.stringValue)
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        value.alignment = .right
-        let stack = NSStackView(views: [label, spacer, value])
-        stack.orientation = .horizontal
-        stack.alignment = .firstBaseline
-        stack.spacing = Theme.Space.s
-        stack.edgeInsets = NSEdgeInsets(
-            top: Theme.Space.s, left: Theme.Space.m,
-            bottom: Theme.Space.s, right: Theme.Space.m)
-        return stack
     }
 
     private func makeInspector() -> NSView {

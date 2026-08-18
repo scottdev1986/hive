@@ -217,11 +217,11 @@ final class QueenProviderScreenViewTests: XCTestCase {
     func testFactStripBindsEachLabelToItsOwnValue() throws {
         let controller = try makeController()
         controller.window?.layoutIfNeeded()
-        let strip = try view(controller, "queen-provider-facts", as: NSStackView.self)
-        XCTAssertGreaterThanOrEqual(strip.arrangedSubviews.count, 2)
+        let strip = try view(controller, "queen-provider-facts", as: FactStripView.self)
+        XCTAssertGreaterThanOrEqual(strip.stack.arrangedSubviews.count, 2)
 
         var previousPair: NSView?
-        for pair in strip.arrangedSubviews {
+        for pair in strip.stack.arrangedSubviews {
             let stack = try XCTUnwrap(pair as? NSStackView)
             XCTAssertEqual(stack.spacing, Theme.Space.s)
             XCTAssertGreaterThanOrEqual(stack.arrangedSubviews.count, 2)

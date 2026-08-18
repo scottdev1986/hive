@@ -53,17 +53,14 @@ final class QueenProviderScreenView: NSView {
             trailingView: swapControl())
         let facts = observedFacts()
         if !facts.isEmpty {
-            // Pairs hug their own label+value. Leftover strip width goes
-            // between pairs so proximity binds each label to its reading,
-            // not to the next pair's label.
-            let pairs = facts.map { Self.factRow($0.label, $0.value) }
-            let factStrip = NSStackView(views: pairs)
-            factStrip.translatesAutoresizingMaskIntoConstraints = false
-            factStrip.orientation = .horizontal
-            factStrip.alignment = .firstBaseline
-            factStrip.spacing = Theme.Space.xl
-            factStrip.distribution = .equalSpacing
-            factStrip.setAccessibilityIdentifier("queen-provider-facts")
+            let pairs = facts.map { fact in
+                let slug = fact.label.lowercased().replacingOccurrences(of: " ", with: "-")
+                return FactStripView.pair(
+                    label: fact.label,
+                    value: fact.value,
+                    identifier: "queen-provider-fact-\(slug)")
+            }
+            let factStrip = FactStripView(pairs: pairs, identifier: "queen-provider-facts")
             confirmation.contentStack.addArrangedSubview(factStrip)
             confirmation.pinToContentWidth(factStrip)
         }
@@ -141,28 +138,6 @@ final class QueenProviderScreenView: NSView {
     private func observedFacts() -> [ShellScreenFact] {
         let vendorLabels = Set(editor.observed.vendorIDs.map { $0.rawValue })
         return editor.observed.facts.filter { !vendorLabels.contains($0.label) }
-    }
-
-    static func factRow(_ label: String, _ value: String) -> NSView {
-        let name = NSTextField(labelWithString: label)
-        name.font = Theme.Font.screenSubtitle
-        name.textColor = Theme.secondaryText
-        name.compressHorizontally(priority: 470, toolTip: label)
-        name.setContentHuggingPriority(.required, for: .horizontal)
-        let reading = NSTextField(wrappingLabelWithString: value)
-        reading.font = Theme.Font.monoCaption
-        reading.textColor = Theme.primaryText
-        reading.maximumNumberOfLines = 2
-        reading.compressHorizontally(priority: 460, toolTip: value)
-        reading.setContentHuggingPriority(.required, for: .horizontal)
-        let row = NSStackView(views: [name, reading])
-        row.orientation = .horizontal
-        row.alignment = .firstBaseline
-        row.spacing = Theme.Space.s
-        row.setContentHuggingPriority(.required, for: .horizontal)
-        let slug = label.lowercased().replacingOccurrences(of: " ", with: "-")
-        row.setAccessibilityIdentifier("queen-provider-fact-\(slug)")
-        return row
     }
 
     private func vendorCard(_ vendor: ProviderID) -> NSView {
