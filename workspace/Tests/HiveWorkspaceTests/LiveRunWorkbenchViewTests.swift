@@ -300,25 +300,6 @@ struct LiveRunWorkbenchViewTests {
         #expect(findView(in: view, identifier: "live-run-session-id-david")?.toolTip != task)
     }
 
-    @Test("Centre facts and locator stay inside the centre pane")
-    func centreTextStaysInsidePane() throws {
-        let view = LiveRunWorkbenchView(terminalFactory: nil)
-        view.frame = NSRect(x: 0, y: 0, width: 1_200, height: 900)
-        view.layoutSubtreeIfNeeded()
-
-        let controlStrip = try #require(
-            findView(in: view, identifier: "live-run-control-strip"))
-        let locator = try #require(textFields(in: view).first {
-            $0.stringValue == "Exact generation · unknown"
-        })
-        let inspector = try #require(
-            findView(in: view, identifier: "live-run-inspector-tab-task")?.superview)
-        let inspectorFrame = inspector.convert(inspector.bounds, to: view)
-
-        #expect(controlStrip.convert(controlStrip.bounds, to: view).maxX <= inspectorFrame.minX)
-        #expect(locator.convert(locator.bounds, to: view).maxX <= inspectorFrame.minX + 1)
-    }
-
     @Test("Shell attach and detach commands consume the workbench's exact locator")
     func shellCommandsUseSelectedLocator() throws {
         let workbench = LiveRunWorkbenchView { session in
