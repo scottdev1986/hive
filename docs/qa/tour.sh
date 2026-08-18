@@ -28,6 +28,7 @@
 #   TOUR_FORCE_FOCUS_FLICKER=1     — interaction settledness: damage View menu frame two
 #   TOUR_FORCE_BAD_POPUP=1         — interaction nil-control: miss the router category popup
 #   TOUR_FORCE_BAD_SELECTION=1     — interaction selected-value: reject category read-back
+#   TOUR_FORCE_BAD_EFFORT_REFUSAL=1 — interaction refusal: hide all three refusal facts
 #   TOUR_FORCE_CLOSED_INSPECTOR=1  — interaction post-state: suppress inspector open
 #   TOUR_FORCE_STUCK_INSPECTOR=1   — interaction post-state: suppress inspector close
 #   TOUR_FORCE_CLOSED_DRAWER=1     — interaction post-state: suppress the drawer open
@@ -166,13 +167,12 @@ open_menu() { control_value open-menu "$1"; }
 close_menu() { control_value close-menu "$1"; }
 invoke_menu_item() { control_value invoke-menu-item "$1" "$2"; }
 open_popup_exact() { control_value open-popup-exact "$1"; }
-open_popup_prefix() { control_value open-popup-prefix "$1"; }
 close_popup_exact() { control_value close-popup-exact "$1"; }
-close_popup_prefix() { control_value close-popup-prefix "$1"; }
 select_popup_exact() { control_value select-popup-exact "$1"; }
-select_popup_prefix() { control_value select-popup-prefix "$1"; }
 popup_selected_exact() { control_value popup-selected-exact "$1" "$2"; }
-popup_selected_prefix() { control_value popup-selected-prefix "$1" "$2"; }
+effort_refusal_disabled() { control_value effort-refusal-disabled; }
+effort_refusal_value() { control_value effort-refusal-value; }
+effort_refusal_reason() { control_value effort-refusal-reason; }
 view_identifier_exists() { control_value view-exists "$1"; }
 set_text_field() { control_value set-text "$1" "$2"; }
 attach_visible_dialog() { control_value attach-dialog; }
@@ -357,6 +357,7 @@ probe_fixture_guard() {
     -u TOUR_FORCE_BAD_MENU -u TOUR_FORCE_INTERACTION_TINY \
     -u TOUR_FORCE_INTERACTION_CLONE -u TOUR_FORCE_FOCUS_FLICKER \
     -u TOUR_FORCE_BAD_POPUP -u TOUR_FORCE_BAD_SELECTION \
+    -u TOUR_FORCE_BAD_EFFORT_REFUSAL \
     -u TOUR_FORCE_CLOSED_INSPECTOR -u TOUR_FORCE_STUCK_INSPECTOR \
     -u TOUR_FORCE_CLOSED_DRAWER \
     -u TOUR_FORCE_STUCK_DRAWER -u TOUR_FORCE_CLOSED_DIALOG \
@@ -388,6 +389,7 @@ probe_interaction_guards() {
     -u TOUR_FORCE_BAD_MENU -u TOUR_FORCE_INTERACTION_TINY \
     -u TOUR_FORCE_INTERACTION_CLONE -u TOUR_FORCE_FOCUS_FLICKER \
     -u TOUR_FORCE_BAD_POPUP -u TOUR_FORCE_BAD_SELECTION \
+    -u TOUR_FORCE_BAD_EFFORT_REFUSAL \
     -u TOUR_FORCE_CLOSED_INSPECTOR -u TOUR_FORCE_STUCK_INSPECTOR \
     -u TOUR_FORCE_CLOSED_DRAWER \
     -u TOUR_FORCE_STUCK_DRAWER -u TOUR_FORCE_CLOSED_DIALOG \
@@ -399,6 +401,7 @@ probe_interaction_guards() {
     TOUR_FORCE_FOCUS_FLICKER=1 \
     TOUR_FORCE_BAD_POPUP=1 \
     TOUR_FORCE_BAD_SELECTION=1 \
+    TOUR_FORCE_BAD_EFFORT_REFUSAL=1 \
     TOUR_FORCE_CLOSED_INSPECTOR=1 \
     TOUR_FORCE_STUCK_INSPECTOR=1 \
     TOUR_FORCE_CLOSED_DRAWER=1 \
@@ -419,6 +422,9 @@ probe_interaction_guards() {
     $'run-inspector\tpost-state\tInspector remained visible after close' \
     $'router-category-popup\tnil-control\t' \
     $'router-category-selected\tselected-value\t' \
+    $'router-effort-popup\trefusal-control\t' \
+    $'router-effort-selected\trefusal-value\t' \
+    $'router-effort-selected\trefusal-reason\t' \
     $'run-attention\tpost-state\tAttention action did not make the drawer visible' \
     $'run-attention\tpost-state\tAttention drawer remained visible after close' \
     $'run-modal\tpost-state\tAbout action did not open a visible dialog' \
@@ -429,7 +435,7 @@ probe_interaction_guards() {
       || die "interaction guard did not record $expected: $(cat "$dir/reds.tsv")"
     echo "self-check: interaction ${expected//$'\t'/ } goes red"
   done
-  [ "$(wc -l < "$dir/reds.tsv")" -eq 13 ] \
+  [ "$(wc -l < "$dir/reds.tsv")" -eq 16 ] \
     || die "interaction mutation walk recorded unexpected reds: $(cat "$dir/reds.tsv")"
 }
 
@@ -974,7 +980,7 @@ run_interactions() {
   local router_baseline="$ARTIFACTS/$MODE-router.png"
   local recall_baseline="$ARTIFACTS/$MODE-memory-recall.png"
   local menu title slug png hit close_hit before ref detail
-  local popup_id selected_plus selected_index selected selected_baseline
+  local popup_id selected_plus selected_index selected
   local action_hit state dialog_number
   local menu_titles=(Hive Edit View Agent Run Memory Queen Window)
   local menu_slugs=(hive edit view agent run memory queen window)
@@ -1161,37 +1167,37 @@ run_interactions() {
   finish_interaction router-category-selected "$before" \
     'selected value read back; reference=none (mockup coverage gap)' \
     'selection evidence has reds; reference=none (mockup coverage gap)'
-  selected_baseline="$ARTIFACTS/$MODE-router-category-selected.png"
-
   before=${#REDS[@]}
-  hit=$(open_popup_prefix task-router-effort-)
-  if ! interaction_guard router-effort-popup nil-control \
-    'no enabled Task Router effort popup found — no popup opened' "$hit"; then
-    interaction_status router-effort-popup blocked \
-      'popup control missing; reference=none (mockup coverage gap)'
+  state=$(effort_refusal_disabled)
+  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL:-}" ]; then state=0; fi
+  interaction_guard router-effort-popup refusal-control \
+    'catalog-less Task Router effort control is not visibly disabled' "$state" || true
+  if [ "${#REDS[@]}" -eq "$before" ]; then
+    interaction_status router-effort-popup ok \
+      'catalog-less effort control is visibly disabled; reference=router-category-selected.png'
+    echo "ok router-effort-popup -> sanctioned refusal asserted"
   else
-    sleep 1
-    interaction_capture router-effort-popup \
-      "$ARTIFACTS/$MODE-router-effort-popup.png" "$selected_baseline" || true
-    close_popup_prefix task-router-effort- >/dev/null
-    sleep 1
-    finish_interaction router-effort-popup "$before" \
-      'popup open and settled; reference=none (mockup coverage gap)' \
-      'popup evidence has reds; reference=none (mockup coverage gap)'
+    interaction_status router-effort-popup red \
+      'disabled effort control was not proved; reference=router-category-selected.png'
   fi
 
   before=${#REDS[@]}
-  selected_plus=$(select_popup_prefix task-router-effort-)
-  selected_index=$((selected_plus - 1))
-  sleep 1
-  selected=$(popup_selected_prefix task-router-effort- "$selected_index")
-  interaction_guard router-effort-selected selected-value \
-    'router effort selected value did not survive the product action' "$selected" || true
-  interaction_capture router-effort-selected \
-    "$ARTIFACTS/$MODE-router-effort-selected.png" "$selected_baseline" || true
-  finish_interaction router-effort-selected "$before" \
-    'selected value read back; reference=none (mockup coverage gap)' \
-    'selection evidence has reds; reference=none (mockup coverage gap)'
+  state=$(effort_refusal_value)
+  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL:-}" ]; then state=0; fi
+  interaction_guard router-effort-selected refusal-value \
+    'disabled Task Router effort control does not show its stored value' "$state" || true
+  state=$(effort_refusal_reason)
+  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL:-}" ]; then state=0; fi
+  interaction_guard router-effort-selected refusal-reason \
+    'disabled Task Router effort control does not state its live-catalog reason' "$state" || true
+  if [ "${#REDS[@]}" -eq "$before" ]; then
+    interaction_status router-effort-selected ok \
+      'stored effort remains readable and its refusal reason is visible; reference=router-category-selected.png'
+    echo "ok router-effort-selected -> stored value and refusal reason asserted"
+  else
+    interaction_status router-effort-selected red \
+      'effort refusal evidence has reds; reference=router-category-selected.png'
+  fi
 
   hit=$(click_route memory-recall)
   interaction_guard memory-recall-text nil-control \

@@ -91,23 +91,29 @@ public final class ShellTourDriver {
         case "invoke-menu-item":
             return values.count == 2 && invokeMenuItem(menu: values[0], item: values[1]) ? "1" : "0"
         case "open-popup-exact":
-            return values.count == 1 && openPopup(identifier: values[0], prefix: false, in: window) ? "1" : "0"
-        case "open-popup-prefix":
-            return values.count == 1 && openPopup(identifier: values[0], prefix: true, in: window) ? "1" : "0"
+            return values.count == 1 && openPopup(identifier: values[0], in: window) ? "1" : "0"
         case "close-popup-exact":
-            return values.count == 1 && closePopup(identifier: values[0], prefix: false, in: window) ? "1" : "0"
-        case "close-popup-prefix":
-            return values.count == 1 && closePopup(identifier: values[0], prefix: true, in: window) ? "1" : "0"
+            return values.count == 1 && closePopup(identifier: values[0], in: window) ? "1" : "0"
         case "select-popup-exact":
-            return values.count == 1 ? selectPopup(identifier: values[0], prefix: false, in: window) : "0"
-        case "select-popup-prefix":
-            return values.count == 1 ? selectPopup(identifier: values[0], prefix: true, in: window) : "0"
+            return values.count == 1 ? selectPopup(identifier: values[0], in: window) : "0"
         case "popup-selected-exact":
-            return popupSelection(values: values, prefix: false, window: window)
-        case "popup-selected-prefix":
-            return popupSelection(values: values, prefix: true, window: window)
+            return popupSelection(values: values, window: window)
+        case "effort-refusal-disabled":
+            return effortRefusal(in: window)?.popup.isEnabled == false ? "1" : "0"
+        case "effort-refusal-value":
+            guard let title = effortRefusal(in: window)?.popup.selectedItem?.title else {
+                return "0"
+            }
+            return title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "0" : "1"
+        case "effort-refusal-reason":
+            guard let reason = effortRefusal(in: window)?.reason else { return "0" }
+            let copy = reason.stringValue
+            return !reason.isHiddenOrHasHiddenAncestor
+                && !reason.visibleRect.isEmpty
+                && copy.contains("not in the live routing catalog")
+                && copy.contains("no legal choices were published") ? "1" : "0"
         case "view-exists":
-            return values.count == 1 && view(identifier: values[0], prefix: false, in: window) != nil ? "1" : "0"
+            return values.count == 1 && view(identifier: values[0], in: window) != nil ? "1" : "0"
         case "set-text":
             return values.count == 2 && setText(identifier: values[0], value: values[1], in: window) ? "1" : "0"
         case "attach-dialog":
@@ -130,13 +136,12 @@ public final class ShellTourDriver {
             && window.standardWindowButton(.zoomButton)?.isHidden == true
     }
 
-    private func view(identifier: String, prefix: Bool, in window: NSWindow) -> NSView? {
+    private func view(identifier: String, in window: NSWindow) -> NSView? {
         guard let root = window.contentView else { return nil }
         var queue = [root]
         while !queue.isEmpty {
             let candidate = queue.removeFirst()
-            let candidateID = candidate.accessibilityIdentifier()
-            if prefix ? candidateID.hasPrefix(identifier) : candidateID == identifier {
+            if candidate.accessibilityIdentifier() == identifier {
                 return candidate
             }
             queue.append(contentsOf: candidate.subviews)
@@ -173,26 +178,47 @@ public final class ShellTourDriver {
         return true
     }
 
-    private func popup(identifier: String, prefix: Bool, in window: NSWindow) -> NSPopUpButton? {
-        guard let popup = view(identifier: identifier, prefix: prefix, in: window) as? NSPopUpButton,
+    private func popup(identifier: String, in window: NSWindow) -> NSPopUpButton? {
+        guard let popup = view(identifier: identifier, in: window) as? NSPopUpButton,
               popup.isEnabled else { return nil }
         return popup
     }
 
-    private func openPopup(identifier: String, prefix: Bool, in window: NSWindow) -> Bool {
-        guard let popup = popup(identifier: identifier, prefix: prefix, in: window) else { return false }
+    private func effortRefusal(
+        in window: NSWindow
+    ) -> (popup: NSPopUpButton, reason: NSTextField)? {
+        guard let root = window.contentView else { return nil }
+        var queue = [root]
+        while !queue.isEmpty {
+            let candidate = queue.removeFirst()
+            let identifier = candidate.accessibilityIdentifier()
+            if let popup = candidate as? NSPopUpButton,
+               identifier.hasPrefix("task-router-effort-") {
+                let key = identifier.dropFirst("task-router-effort-".count)
+                let reasonID = "task-router-effort-refusal-\(key)"
+                if let reason = view(identifier: reasonID, in: window) as? NSTextField {
+                    return (popup, reason)
+                }
+            }
+            queue.append(contentsOf: candidate.subviews)
+        }
+        return nil
+    }
+
+    private func openPopup(identifier: String, in window: NSWindow) -> Bool {
+        guard let popup = popup(identifier: identifier, in: window) else { return false }
         DispatchQueue.main.async { popup.performClick(nil) }
         return true
     }
 
-    private func closePopup(identifier: String, prefix: Bool, in window: NSWindow) -> Bool {
-        guard let popup = popup(identifier: identifier, prefix: prefix, in: window) else { return false }
+    private func closePopup(identifier: String, in window: NSWindow) -> Bool {
+        guard let popup = popup(identifier: identifier, in: window) else { return false }
         popup.menu?.cancelTrackingWithoutAnimation()
         return true
     }
 
-    private func selectPopup(identifier: String, prefix: Bool, in window: NSWindow) -> String {
-        guard let popup = popup(identifier: identifier, prefix: prefix, in: window), popup.numberOfItems > 1 else {
+    private func selectPopup(identifier: String, in window: NSWindow) -> String {
+        guard let popup = popup(identifier: identifier, in: window), popup.numberOfItems > 1 else {
             return "0"
         }
         let index = (popup.indexOfSelectedItem + 1) % popup.numberOfItems
@@ -201,14 +227,14 @@ public final class ShellTourDriver {
         return "\(index + 1)"
     }
 
-    private func popupSelection(values: [String], prefix: Bool, window: NSWindow) -> String {
+    private func popupSelection(values: [String], window: NSWindow) -> String {
         guard values.count == 2, let index = Int(values[1]),
-              let popup = popup(identifier: values[0], prefix: prefix, in: window) else { return "0" }
+              let popup = popup(identifier: values[0], in: window) else { return "0" }
         return popup.indexOfSelectedItem == index ? "1" : "0"
     }
 
     private func setText(identifier: String, value: String, in window: NSWindow) -> Bool {
-        guard let field = view(identifier: identifier, prefix: false, in: window) as? NSTextField else {
+        guard let field = view(identifier: identifier, in: window) as? NSTextField else {
             return false
         }
         field.stringValue = value
