@@ -28,7 +28,9 @@
 #   TOUR_FORCE_FOCUS_FLICKER=1     — interaction settledness: damage View menu frame two
 #   TOUR_FORCE_BAD_POPUP=1         — interaction nil-control: miss the router category popup
 #   TOUR_FORCE_BAD_SELECTION=1     — interaction selected-value: reject category read-back
-#   TOUR_FORCE_BAD_EFFORT_REFUSAL=1 — interaction refusal: hide all three refusal facts
+#   TOUR_FORCE_BAD_EFFORT_REFUSAL_CONTROL=1 — interaction refusal: re-enable the effort control
+#   TOUR_FORCE_BAD_EFFORT_REFUSAL_VALUE=1 — interaction refusal: hide the stored effort value
+#   TOUR_FORCE_BAD_EFFORT_REFUSAL_REASON=1 — interaction refusal: hide the refusal reason
 #   TOUR_FORCE_CLOSED_INSPECTOR=1  — interaction post-state: suppress inspector open
 #   TOUR_FORCE_STUCK_INSPECTOR=1   — interaction post-state: suppress inspector close
 #   TOUR_FORCE_CLOSED_DRAWER=1     — interaction post-state: suppress the drawer open
@@ -357,7 +359,9 @@ probe_fixture_guard() {
     -u TOUR_FORCE_BAD_MENU -u TOUR_FORCE_INTERACTION_TINY \
     -u TOUR_FORCE_INTERACTION_CLONE -u TOUR_FORCE_FOCUS_FLICKER \
     -u TOUR_FORCE_BAD_POPUP -u TOUR_FORCE_BAD_SELECTION \
-    -u TOUR_FORCE_BAD_EFFORT_REFUSAL \
+    -u TOUR_FORCE_BAD_EFFORT_REFUSAL_CONTROL \
+    -u TOUR_FORCE_BAD_EFFORT_REFUSAL_VALUE \
+    -u TOUR_FORCE_BAD_EFFORT_REFUSAL_REASON \
     -u TOUR_FORCE_CLOSED_INSPECTOR -u TOUR_FORCE_STUCK_INSPECTOR \
     -u TOUR_FORCE_CLOSED_DRAWER \
     -u TOUR_FORCE_STUCK_DRAWER -u TOUR_FORCE_CLOSED_DIALOG \
@@ -389,7 +393,9 @@ probe_interaction_guards() {
     -u TOUR_FORCE_BAD_MENU -u TOUR_FORCE_INTERACTION_TINY \
     -u TOUR_FORCE_INTERACTION_CLONE -u TOUR_FORCE_FOCUS_FLICKER \
     -u TOUR_FORCE_BAD_POPUP -u TOUR_FORCE_BAD_SELECTION \
-    -u TOUR_FORCE_BAD_EFFORT_REFUSAL \
+    -u TOUR_FORCE_BAD_EFFORT_REFUSAL_CONTROL \
+    -u TOUR_FORCE_BAD_EFFORT_REFUSAL_VALUE \
+    -u TOUR_FORCE_BAD_EFFORT_REFUSAL_REASON \
     -u TOUR_FORCE_CLOSED_INSPECTOR -u TOUR_FORCE_STUCK_INSPECTOR \
     -u TOUR_FORCE_CLOSED_DRAWER \
     -u TOUR_FORCE_STUCK_DRAWER -u TOUR_FORCE_CLOSED_DIALOG \
@@ -401,7 +407,9 @@ probe_interaction_guards() {
     TOUR_FORCE_FOCUS_FLICKER=1 \
     TOUR_FORCE_BAD_POPUP=1 \
     TOUR_FORCE_BAD_SELECTION=1 \
-    TOUR_FORCE_BAD_EFFORT_REFUSAL=1 \
+    TOUR_FORCE_BAD_EFFORT_REFUSAL_CONTROL=1 \
+    TOUR_FORCE_BAD_EFFORT_REFUSAL_VALUE=1 \
+    TOUR_FORCE_BAD_EFFORT_REFUSAL_REASON=1 \
     TOUR_FORCE_CLOSED_INSPECTOR=1 \
     TOUR_FORCE_STUCK_INSPECTOR=1 \
     TOUR_FORCE_CLOSED_DRAWER=1 \
@@ -562,6 +570,19 @@ run_self_check() {
     TOUR_FORCE_CLONE_PREV=1
 
   probe_interaction_guards "$corpus" "$check_dir"
+
+  probe_fixture_guard effort-refusal-control \
+    'catalog-less Task Router effort control is not visibly disabled' \
+    "$corpus" "$check_dir" \
+    TOUR_FORCE_BAD_EFFORT_REFUSAL_CONTROL=1
+  probe_fixture_guard effort-refusal-value \
+    'disabled Task Router effort control does not show its stored value' \
+    "$corpus" "$check_dir" \
+    TOUR_FORCE_BAD_EFFORT_REFUSAL_VALUE=1
+  probe_fixture_guard effort-refusal-reason \
+    'disabled Task Router effort control does not state its live-catalog reason' \
+    "$corpus" "$check_dir" \
+    TOUR_FORCE_BAD_EFFORT_REFUSAL_REASON=1
 
   # --- live 404 false-disconnect pin (no app launch; pin function only) ---
   port=$(free_port)
@@ -1169,7 +1190,7 @@ run_interactions() {
     'selection evidence has reds; reference=none (mockup coverage gap)'
   before=${#REDS[@]}
   state=$(effort_refusal_disabled)
-  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL:-}" ]; then state=0; fi
+  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL_CONTROL:-}" ]; then state=0; fi
   interaction_guard router-effort-popup refusal-control \
     'catalog-less Task Router effort control is not visibly disabled' "$state" || true
   if [ "${#REDS[@]}" -eq "$before" ]; then
@@ -1183,11 +1204,11 @@ run_interactions() {
 
   before=${#REDS[@]}
   state=$(effort_refusal_value)
-  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL:-}" ]; then state=0; fi
+  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL_VALUE:-}" ]; then state=0; fi
   interaction_guard router-effort-selected refusal-value \
     'disabled Task Router effort control does not show its stored value' "$state" || true
   state=$(effort_refusal_reason)
-  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL:-}" ]; then state=0; fi
+  if [ -n "${TOUR_FORCE_BAD_EFFORT_REFUSAL_REASON:-}" ]; then state=0; fi
   interaction_guard router-effort-selected refusal-reason \
     'disabled Task Router effort control does not state its live-catalog reason' "$state" || true
   if [ "${#REDS[@]}" -eq "$before" ]; then
