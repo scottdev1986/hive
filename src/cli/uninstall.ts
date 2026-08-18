@@ -11,19 +11,16 @@ import {
 import { nativeSkillDirectory, type SkillTool } from "../adapters/skills";
 import { listHiveBranches, listWorktrees } from "../adapters/worktrees";
 import {
+  daemonInstanceLiveness,
   expectedDaemonHandshake,
   readDaemonHandshake,
+  readDaemonPort,
 } from "../daemon/lifecycle/daemon-lifecycle";
-import { resolveVariant, type VariantConfig } from "../hive-home/variant";
 import {
   type InstanceMutationBlocker,
   instanceMutationBlockers,
   listInstances,
 } from "../daemon/lifecycle/instances";
-import {
-  daemonInstanceLiveness,
-  readDaemonPort,
-} from "../daemon/lifecycle/daemon-lifecycle";
 import {
   acquireMachineMutationLease,
   type MachineMutationLease,
@@ -34,6 +31,8 @@ import {
   AGENT_STANDARDS_FILE,
   scaffoldAgentStandardsMd,
 } from "../daemon/spawn/agent-standards";
+import { resolveHiveHome, userHiveHome } from "../hive-home/home";
+import { resolveVariant, type VariantConfig } from "../hive-home/variant";
 import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 import { errorMessage } from "../shared/error-message";
 import { SHIPPED_SKILLS, shippedSkillAddresses } from "../skills/shipped";
@@ -447,7 +446,13 @@ export async function runUninstallMachine(
 ): Promise<number> {
   const method = detectInstallMethod(process.execPath);
   const resolved = resolveVariant();
-  if (resolved.variant !== "prod" && resolved.home === resolved.defaultHome) {
+  // A non-prod variant must never clear ~/.hive. Equality with defaultHome is
+  // not that test: `make qa` pins HIVE_HOME and HIVE_DEFAULT_HOME to the same
+  // isolated tree so uninstall cannot see the live fleet.
+  if (
+    resolved.variant !== "prod" &&
+    resolved.home === resolveHiveHome(userHiveHome())
+  ) {
     deps.log(
       `Refusing ${resolved.binName} uninstall: its home ${resolved.home} is the production home. Set HIVE_HOME to this variant's isolated home.`,
     );

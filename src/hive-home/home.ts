@@ -2,13 +2,18 @@
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
+/** The user's own Hive home on this machine, ignoring HIVE_HOME and HIVE_DEFAULT_HOME. Isolated runtimes pin those two knobs at a throwaway dir; this path is what they isolate from. */
+export function userHiveHome(): string {
+  return join(homedir(), ".hive");
+}
+
 export function getHiveHome(): string {
-  return process.env.HIVE_HOME ?? join(homedir(), ".hive");
+  return process.env.HIVE_HOME ?? userHiveHome();
 }
 
 export function defaultHiveHome(): string {
   const explicitHome = process.env.HIVE_DEFAULT_HOME;
-  if (explicitHome === undefined) return join(homedir(), ".hive");
+  if (explicitHome === undefined) return userHiveHome();
   if (explicitHome.length === 0 || !isAbsolute(explicitHome)) {
     throw new Error("HIVE_DEFAULT_HOME must be a non-empty absolute path");
   }

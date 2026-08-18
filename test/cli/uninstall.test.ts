@@ -8,12 +8,16 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   GRAPHIFY_IGNORE_MARKER,
   runCommand,
 } from "../../src/adapters/graphify";
+import {
+  HIVE_GITIGNORE_ENTRIES,
+  HIVE_GITIGNORE_HEADER,
+} from "../../src/cli/repo-gitignore";
 import {
   runUninstallMachine,
   runUninstallRepo,
@@ -26,10 +30,6 @@ import { getHiveHome } from "../../src/hive-home/home";
 import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import { type HiveVariant, resolveVariant } from "../../src/hive-home/variant";
 import { shippedSkillsFor } from "../../src/skills/shipped";
-import {
-  HIVE_GITIGNORE_ENTRIES,
-  HIVE_GITIGNORE_HEADER,
-} from "../../src/cli/repo-gitignore";
 import { required } from "../required";
 
 let hiveHome: string;
@@ -529,6 +529,48 @@ describe("hive uninstall", () => {
       else process.env.HIVE_DEFAULT_HOME = previousDefaultHome;
       if (previousVariant === undefined) delete process.env.HIVE_BUILD_VARIANT;
       else process.env.HIVE_BUILD_VARIANT = previousVariant;
+    }
+  });
+
+  test("a non-prod variant refuses ~/.hive even when HIVE_DEFAULT_HOME is isolated", async () => {
+    const previousHome = process.env.HIVE_HOME;
+    const previousDefaultHome = process.env.HIVE_DEFAULT_HOME;
+    const previousVariant = process.env.HIVE_BUILD_VARIANT;
+    process.env.HIVE_HOME = join(homedir(), ".hive");
+    process.env.HIVE_DEFAULT_HOME = "/tmp/hvqa-isolated-default";
+    process.env.HIVE_BUILD_VARIANT = "qa";
+    try {
+      const { deps, lines, stops } = probe(true);
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(lines.join("\n")).toContain("Refusing hive-qa uninstall");
+      expect(lines.join("\n")).toContain("production home");
+    } finally {
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+      if (previousDefaultHome === undefined)
+        delete process.env.HIVE_DEFAULT_HOME;
+      else process.env.HIVE_DEFAULT_HOME = previousDefaultHome;
+      if (previousVariant === undefined) delete process.env.HIVE_BUILD_VARIANT;
+      else process.env.HIVE_BUILD_VARIANT = previousVariant;
+    }
+  });
+
+  test("a non-prod variant uninstalls when HIVE_HOME and HIVE_DEFAULT_HOME are the same isolated path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-qa-pinned-"));
+    const home = join(root, "home");
+    const restore = scratchInstall(root, home, "qa");
+    process.env.HIVE_DEFAULT_HOME = home;
+    try {
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, "hive.db"), "");
+      const { deps, lines } = probe(true);
+      expect(await runUninstallMachine({ purge: true }, deps)).toBe(0);
+      expect(existsSync(join(home, "hive.db"))).toBe(false);
+      expect(lines.join("\n")).not.toContain("production home");
+    } finally {
+      restore();
+      await rm(root, { recursive: true, force: true });
     }
   });
 
