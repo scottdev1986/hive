@@ -1,15 +1,23 @@
 /** "Is there a newer Hive?" — answered honestly or not at all. The invariant that drives the shape below: `up-to-date` is a claim about evidence, never a fallback. A failed network call returns `unavailable` with the reason. A cached answer is still evidence — we observed that version exist — so an offline machine keeps telling the truth it last learned, and only a machine that has never successfully checked says "could not check". Checks are cached for a day, jittered nowhere because the CLI check happens on an explicit user command. A future daemon-owned background check can call this module unchanged and should jitter its timer to spread network load. */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { getHiveHome } from "../hive-home/home";
 import { parseReleaseTag } from "../release/plan";
+import { errorMessage } from "../shared/error-message";
 import {
   HIVE_UPDATE_REPO,
   HIVE_VERSION,
   IS_RELEASE_BUILD,
 } from "../shared/version";
-import { errorMessage } from "../shared/error-message";
+import { githubReleaseSource } from "./source";
 
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const NETWORK_TIMEOUT_MS = 2_500;
@@ -38,7 +46,13 @@ export function writeUpdateCache(
   path = updateCachePath(),
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(cache, null, 2)}\n`);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify(cache, null, 2)}\n`);
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
 
 export type UpdateCheck =
@@ -91,34 +105,17 @@ export async function fetchLatestFromGitHub(
   repo = HIVE_UPDATE_REPO,
   fetcher: typeof fetch = fetch,
 ): Promise<LatestRelease> {
-  const response = await fetcher(
-    `https://api.github.com/repos/${repo}/releases/latest`,
-    {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-      signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`GitHub returned ${response.status}`);
-  }
-  const body = z
-    .object({
-      tag_name: z.string(),
-      body: z.string().nullish(),
-    })
-    .parse(await response.json());
-  const patch = parseReleaseTag(body.tag_name);
-  if (patch === null) {
-    throw new Error(
-      `latest release tag ${body.tag_name} is not a Hive release`,
-    );
-  }
+  const bounded = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const budget = AbortSignal.timeout(NETWORK_TIMEOUT_MS);
+    const existing = init?.signal;
+    const signal =
+      existing == null ? budget : AbortSignal.any([existing, budget]);
+    return fetcher(input, { ...init, signal });
+  }) as typeof fetch;
+  const source = await githubReleaseSource("latest", repo, bounded);
   return {
-    version: `0.0.${patch}`,
-    securityCritical: /\bsecurity[- ]critical\b/i.test(body.body ?? ""),
+    version: source.manifest.version,
+    securityCritical: source.manifest.securityCritical,
   };
 }
 

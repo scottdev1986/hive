@@ -3,7 +3,7 @@
 import type { UpdateCache, UpdateCheck } from "./check";
 import { CHECK_INTERVAL_MS, isDismissed } from "./check";
 import type { InstallMethod } from "./paths";
-import { updateCommand } from "./paths";
+import { UPDATE_COMMAND } from "./paths";
 
 export interface NoticeContext {
   readonly check: UpdateCheck;
@@ -25,7 +25,7 @@ function availableLine(
   staged: string | null,
   liveAgents: number,
 ): string {
-  const command = updateCommand(method);
+  const command = UPDATE_COMMAND;
   if (securityCritical) {
     return `hive ${latest} available — security release, run ${command}`;
   }

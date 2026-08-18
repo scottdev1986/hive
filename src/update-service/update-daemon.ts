@@ -1,13 +1,11 @@
 /** What to do about the daemon that is already running when the binary changes. Replacing a file is easy. Replacing the control plane while agents are writing, approvals are pending, and landing authority is live is not. The handshake already *detects* the problem: a daemon started from the old binary presents the old content-addressed build hash, and `probeDaemonReuse` refuses to adopt it. Detection without a restart path is a dead end, though — the user is left with a new `hive` that will not talk to the daemon it just updated past. This module is that path. Three distinctions do all the work, and conflating any two of them is a bug: stale — same project, different build. Ours to restart. foreign — a different project's daemon on our port. Never ours to kill. busy — stale, but a team is live. Ours to leave alone until quiescence. `handshakeMismatch` reports only the first field that differs, in a fixed order that puts product version ahead of project identity. Trusting that reason string alone would let a version bump masquerade as permission to kill another project's daemon, so identity is compared here, first, explicitly. */
 import { readFileSync } from "node:fs";
 import {
+  cleanupLifecycleFiles,
   type DaemonHandshake,
+  getPidFilePath,
   handshakeMismatch,
   probeHandshake,
-} from "../daemon/lifecycle/daemon-lifecycle";
-import {
-  cleanupLifecycleFiles,
-  getPidFilePath,
   readDaemonPort,
 } from "../daemon/lifecycle/daemon-lifecycle";
 import { isDaemonPort } from "../shared/daemon-port";
@@ -18,6 +16,8 @@ export type DaemonUpdateState =
   | { state: "absent" }
   | { state: "current"; port: number }
   | { state: "stale"; port: number; pid: number | null; reason: string }
+  /** Port is occupied; nothing there answered as Hive. Do not kill, do not claim it is gone. */
+  | { state: "unknown"; port: number; reason: string }
   /** Ours, wrong build, team live. Stage only; never interrupt. */
   | {
       state: "busy";
@@ -64,18 +64,20 @@ export async function inspectDaemonForUpdate(
 
   const actual = await readHandshake(port, deps.fetcher ?? fetch);
   if (actual === null) {
-    // Port file points at nothing that speaks Hive. Treat as absent rather than kill a pid we cannot identify.
-    return { state: "absent" };
+    return { state: "unknown", port, reason: "no Hive handshake" };
   }
   const expected =
     typeof deps.expected === "function" ? await deps.expected() : deps.expected;
 
-  // Identity before everything. A daemon serving another project is never ours to stop, whatever else differs. Both keys are identity: `hiveUuid` names the project, `identityKey` names the directory that resolved to it.
+  // Identity before everything. A daemon serving another project or instance is never ours to stop.
   if (actual.hiveUuid !== expected.hiveUuid) {
     return { state: "foreign", port, reason: "project identity (HiveUUID)" };
   }
   if (actual.identityKey !== expected.identityKey) {
     return { state: "foreign", port, reason: "project identity key" };
+  }
+  if (actual.instanceId !== expected.instanceId) {
+    return { state: "foreign", port, reason: "instance identity" };
   }
 
   const reason = handshakeMismatch(expected, actual);
@@ -117,6 +119,12 @@ export async function restartStaleDaemon(
   if (state.state === "absent") return { stopped: true, pid: null };
   if (state.state === "current")
     return { stopped: false, reason: "daemon is already current" };
+  if (state.state === "unknown") {
+    return {
+      stopped: false,
+      reason: `port ${state.port} did not identify as a Hive daemon`,
+    };
+  }
   if (state.state === "foreign") {
     return {
       stopped: false,
@@ -133,7 +141,6 @@ export async function restartStaleDaemon(
   const kill = deps.kill ?? ((pid, signal) => process.kill(pid, signal));
   const cleanup = deps.cleanup ?? cleanupLifecycleFiles;
   if (state.pid === null) {
-    cleanup(0);
     return { stopped: false, reason: "no daemon pid was recorded" };
   }
 
@@ -177,6 +184,11 @@ export function explainRefusal(state: DaemonUpdateState): string | null {
       return (
         `port ${state.port} serves a different project (${state.reason})\n` +
         "Fix: stop that daemon, then update this project"
+      );
+    case "unknown":
+      return (
+        `port ${state.port} did not identify as a Hive daemon (${state.reason})\n` +
+        "Fix: stop whatever is bound to that port, then retry"
       );
     default:
       return null;

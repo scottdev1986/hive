@@ -46,6 +46,4 @@ export function detectInstallMethod(
   return "unmanaged";
 }
 
-export function updateCommand(_method: InstallMethod): string {
-  return "hive update";
-}
+export const UPDATE_COMMAND = "hive update";

@@ -182,6 +182,18 @@ describe("staging a release", () => {
     expect(isStaged("9.9.9", root)).toBe(false);
   });
 
+  test("does not treat a longer patch as the requested version", async () => {
+    const promise = stageRelease(
+      stageDeps("0.0.1", {
+        probeVersion: async () => "hive 0.0.10 (abc1234)",
+      }),
+    );
+    await expect(promise).rejects.toThrow(
+      /reported "hive 0\.0\.10 \(abc1234\)"/,
+    );
+    expect(isStaged("0.0.1", root)).toEqual(false);
+  });
+
   test("refuses a binary that will not say its own version", async () => {
     const promise = stageRelease(
       stageDeps("0.0.7", {

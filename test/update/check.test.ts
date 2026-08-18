@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MANIFEST_ASSET, SIGNATURE_ASSET } from "../../src/release/manifest";
 import {
   CHECK_INTERVAL_MS,
   checkForUpdate,
   checksDisabled,
+  fetchLatestFromGitHub,
   isNewer,
   type LatestRelease,
   readUpdateCache,
@@ -257,5 +259,67 @@ describe("checkForUpdate", () => {
       fetchLatest: latest("0.0.7"),
     });
     expect(check).toMatchObject({ state: "update-available" });
+  });
+});
+
+const MANIFEST = {
+  schema: 1,
+  version: "0.0.9",
+  tag: "v0.0.9",
+  channel: "stable",
+  commit: "abc1234",
+  publishedAt: "2026-07-11T00:00:00Z",
+  securityCritical: true,
+  wireProtocol: { min: 1, max: 1 },
+  schemaEpoch: 1,
+  artifacts: [
+    {
+      name: "hive-darwin-arm64",
+      kind: "cli",
+      platform: "darwin",
+      arch: "arm64",
+      size: 12,
+      sha256: "a".repeat(64),
+      buildHash: "deadbeef",
+    },
+  ],
+};
+
+describe("fetchLatestFromGitHub", () => {
+  test("reads version and securityCritical from the release manifest, not the GitHub notes", async () => {
+    const fetcher = ((url: string) => {
+      if (url.includes("api.github.com")) {
+        return Promise.resolve(
+          Response.json({
+            tag_name: "v0.0.9",
+            body: "plain release notes with no urgency words",
+            assets: [
+              {
+                name: MANIFEST_ASSET,
+                browser_download_url: "https://x/manifest",
+              },
+              {
+                name: SIGNATURE_ASSET,
+                browser_download_url: "https://x/signature",
+              },
+            ],
+          }),
+        );
+      }
+      if (url.endsWith("/manifest")) {
+        return Promise.resolve(new Response(JSON.stringify(MANIFEST)));
+      }
+      if (url.endsWith("/signature")) {
+        return Promise.resolve(new Response("sig\n"));
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    }) as unknown as typeof fetch;
+
+    await expect(fetchLatestFromGitHub("owner/repo", fetcher)).resolves.toEqual(
+      {
+        version: "0.0.9",
+        securityCritical: true,
+      },
+    );
   });
 });

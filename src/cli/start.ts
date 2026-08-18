@@ -86,7 +86,12 @@ export async function ensureDaemonForBuild(cwd = process.cwd()): Promise<void> {
     expected,
     liveAgents: liveAgentNames,
   });
-  if (state.state === "current" || state.state === "absent") return;
+  if (
+    state.state === "current" ||
+    state.state === "absent" ||
+    state.state === "unknown"
+  )
+    return;
 
   const refusal = explainRefusal(state);
   if (refusal !== null) throw new Error(refusal);

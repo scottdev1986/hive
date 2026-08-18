@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   detectInstallMethod,
-  updateCommand,
+  UPDATE_COMMAND,
 } from "../../src/update-service/paths";
 
 const ROOT = "/Users/scott/.local/share/hive";
@@ -34,6 +34,6 @@ describe("who owns this install", () => {
   });
 
   test("the native owner is told the native update command", () => {
-    expect(updateCommand("native")).toEqual("hive update");
+    expect(UPDATE_COMMAND).toEqual("hive update");
   });
 });

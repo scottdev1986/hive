@@ -181,6 +181,25 @@ describe("the daemon left behind by an update", () => {
     expect(explainRefusal(state)).toContain("different project");
   });
 
+  test("a daemon whose instance identity differs is foreign too", async () => {
+    const port = serve({ ...stalePeer, instanceId: "instance-b" });
+    writeLifecycleFiles(port, 4242);
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
+    expect(state).toEqual({
+      state: "foreign",
+      port,
+      reason: "instance identity",
+    });
+
+    let killed = false;
+    await restartStaleDaemon(state, { kill: () => (killed = true) });
+    expect(killed).toEqual(false);
+  });
+
   test("a daemon whose project identity key differs is foreign too", async () => {
     // `hiveUuid` names the project; `identityKey` names the directory that
     // resolved to it. Either differing means the daemon is not ours.
@@ -332,14 +351,54 @@ describe("the daemon left behind by an update", () => {
     });
   });
 
-  test("a port serving something that is not Hive is absent, not a kill target", async () => {
+  test("a port serving something that is not Hive is unknown, not a kill target", async () => {
     const port = serve(null);
     writeLifecycleFiles(port, 4242);
+    let cleaned = false;
     const state = await inspectDaemonForUpdate({
       expected,
       liveAgents: noAgents,
       port,
     });
-    expect(state).toEqual({ state: "absent" });
+    expect(state).toEqual({
+      state: "unknown",
+      port,
+      reason: "no Hive handshake",
+    });
+    expect(explainRefusal(state)).toContain("did not identify");
+    expect(
+      await restartStaleDaemon(state, {
+        kill: () => {
+          throw new Error("must not signal an unidentified listener");
+        },
+        cleanup: () => {
+          cleaned = true;
+        },
+      }),
+    ).toEqual({
+      stopped: false,
+      reason: `port ${port} did not identify as a Hive daemon`,
+    });
+    expect(cleaned).toBe(false);
+  });
+
+  test("a stale daemon with no recorded pid is refused, not cleaned as pid 0", async () => {
+    let cleaned: number | null = null;
+    const outcome = await restartStaleDaemon(
+      { state: "stale", port: 4317, pid: null, reason: "product version" },
+      {
+        kill: () => {
+          throw new Error("must not signal without a pid");
+        },
+        cleanup: (pid) => {
+          cleaned = pid;
+        },
+      },
+    );
+    expect(outcome).toEqual({
+      stopped: false,
+      reason: "no daemon pid was recorded",
+    });
+    expect(cleaned).toBe(null);
   });
 });
