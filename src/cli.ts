@@ -84,7 +84,6 @@ import { isDaemonPort } from "./shared/daemon-port";
 import { errorMessage } from "./shared/error-message";
 import { isRecord } from "./shared/is-record";
 import { versionLine } from "./shared/version";
-import { repairIdentityFromStagedVersionProbe } from "./update-service/bootstrap";
 
 export interface EventCliOptions {
   agent?: string;
@@ -1041,7 +1040,6 @@ export function createProgram(): Command {
 export async function main(argv = process.argv): Promise<number> {
   try {
     selectInstanceFromArgv(argv);
-    repairIdentityFromStagedVersionProbe(argv);
     // The passive update notice trails user-facing commands (npm/gh shape): the check runs alongside the command, the line prints after it, and a failed or slow check is silence, never an error or a stall.
     await withTrailingUpdateNotice(wantsUpdateNotice(argv), () =>
       createProgram().parseAsync(argv),

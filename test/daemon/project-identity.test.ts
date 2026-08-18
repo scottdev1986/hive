@@ -10,10 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import {
-  repairLegacyMountEvidence,
-  resolveHandshakeProject,
-} from "../../src/daemon/project-identity-core/project-identity-daemon";
+import { resolveHandshakeProject } from "../../src/daemon/project-identity-core/project-identity-daemon";
 
 import {
   evidenceMatches,
@@ -67,48 +64,6 @@ describe("durable project identity", () => {
     );
     expect(persisted.tombstones).toEqual([]);
     expect(persisted.records[0].evidence.dev).toBe(statSync(project).dev);
-  });
-
-  test("a staged fixed binary repairs evidence for a pre-fix updater", () => {
-    const registry = new ProjectRegistry();
-    const created = resolveOrCreate(
-      project,
-      {
-        registry,
-        ledger: new InMemoryManagedWorktreeLedger(),
-        ledgerCapability: LedgerCapability.issue("test"),
-      },
-      "legacy-seed",
-    );
-    if (created.status !== "RESOLVED")
-      throw new Error("project was not created");
-
-    const snapshot = registry.snapshot();
-    required(snapshot.records[0]).evidence.dev += 1;
-    writeFileSync(
-      join(hiveHome, "project-registry.json"),
-      JSON.stringify(snapshot),
-    );
-    const current = {
-      dev: statSync(project).dev,
-      ino: statSync(project).ino,
-      birthtimeMs: statSync(project).birthtimeMs,
-    };
-    const legacyMatches = (left: typeof current, right: typeof current) =>
-      left.dev === right.dev &&
-      left.ino === right.ino &&
-      left.birthtimeMs === right.birthtimeMs;
-    expect(legacyMatches(required(snapshot.records[0]).evidence, current)).toBe(
-      false,
-    );
-
-    expect(repairLegacyMountEvidence(project)).toBe(true);
-    const repaired = JSON.parse(
-      readFileSync(join(hiveHome, "project-registry.json"), "utf8"),
-    );
-    expect(legacyMatches(repaired.records[0].evidence, current)).toBe(true);
-    expect(repaired.records[0].hiveUuid).toBe(created.hiveUuid);
-    expect(repaired.tombstones).toEqual([]);
   });
 
   test("an atomic registry write preserves a dev-home symlink", () => {

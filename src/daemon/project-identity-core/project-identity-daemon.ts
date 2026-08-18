@@ -13,7 +13,6 @@ import {
   ProjectRegistry,
   type ProjectRegistrySnapshot,
   resolveOrCreate,
-  resolveProject,
 } from "./project-identity-service";
 
 const path = (hiveHome: string) => join(hiveHome, "project-registry.json");
@@ -88,24 +87,4 @@ function persistRegistry(registry: ProjectRegistry, hiveHome: string): void {
   const temp = `${registryPath}.${process.pid}.tmp`;
   writeFileSync(temp, JSON.stringify(registry.snapshot()));
   renameSync(temp, registryPath);
-}
-
-/** Bridge releases whose updater still compares the mount-local `dev` field. This never creates or rebinds a project: it only persists refreshed evidence after the new resolver has positively matched an existing inode + birth time. */
-export function repairLegacyMountEvidence(directory: string): boolean {
-  const hiveHome = getHiveHome();
-  const registry = loadRegistry(hiveHome);
-  const previousDevices = new Map(
-    registry.records().map((record) => [record.hiveUuid, record.evidence.dev]),
-  );
-  const result = resolveProject(directory, {
-    registry,
-    ledger: new InMemoryManagedWorktreeLedger(),
-    ledgerCapability: LedgerCapability.issue("update-bootstrap"),
-  });
-  if (result.status !== "RESOLVED") return false;
-  const previousDevice = previousDevices.get(result.hiveUuid);
-  if (previousDevice === undefined || previousDevice === result.evidence.dev)
-    return false;
-  persistRegistry(registry, hiveHome);
-  return true;
 }
