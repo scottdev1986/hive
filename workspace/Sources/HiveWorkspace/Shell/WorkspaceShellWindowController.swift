@@ -142,10 +142,7 @@ final class WorkspaceShellWindowController: NSWindowController {
         sidebar.widthAnchor.constraint(
             equalToConstant: Theme.Metric.sidebarWidth).isActive = true
 
-        let separator = NSBox.hdsSeparator()
-        // This is a vertical edge, so its 1-point intrinsic height must not compete with the window height it is meant to follow.
-        separator.setContentHuggingPriority(.defaultLow, for: .vertical)
-        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        let separator = NSBox.hdsVerticalDivider()
 
         screenScrollView.translatesAutoresizingMaskIntoConstraints = false
         screenScrollView.hasVerticalScroller = true
@@ -427,7 +424,6 @@ final class WorkspaceShellWindowController: NSWindowController {
             panel = ShellAvailabilityPanel(route: state.activeRoute, screen: screen)
         }
         screenHost.addSubview(panel)
-        releaseVerticalDividerHugging(panel)
         if panel is OuterHorizonScreenView {
             let constraint = screenHost.heightAnchor.constraint(
                 equalTo: screenScrollView.contentView.heightAnchor)
@@ -447,25 +443,6 @@ final class WorkspaceShellWindowController: NSWindowController {
         renderedRoute = state.activeRoute
     }
 
-    /// Vertical `hdsSeparator()` edges inherit required vertical hugging, which
-    /// is correct for a hairline in a vertical stack. The same hug in a
-    /// horizontal row unique-ifies the window height through the required
-    /// screen-to-row chain, so a 1-point-wide divider is released here.
-    private func releaseVerticalDividerHugging(_ view: NSView) {
-        if let box = view as? NSBox, box.boxType == .separator {
-            let pinnedWidth = box.constraints.contains { constraint in
-                constraint.firstAttribute == .width
-                    && constraint.secondAttribute == .notAnAttribute
-                    && constraint.relation == .equal
-                    && abs(constraint.constant - 1) < 0.5
-            }
-            if pinnedWidth {
-                box.setContentHuggingPriority(.defaultLow, for: .vertical)
-            }
-        }
-        view.subviews.forEach(releaseVerticalDividerHugging)
-    }
-
     private func renderInspector() {
         inspector?.removeFromSuperview()
         inspector = nil
@@ -482,10 +459,7 @@ final class WorkspaceShellWindowController: NSWindowController {
                 self?.perform(.toggleInspector)
             })
         panel.widthAnchor.constraint(equalToConstant: 320).isActive = true
-        let divider = NSBox.hdsSeparator()
-        // Vertical edge: its 1-point intrinsic height must not compete with the row.
-        divider.setContentHuggingPriority(.defaultLow, for: .vertical)
-        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        let divider = NSBox.hdsVerticalDivider()
         mainRow.addArrangedSubview(divider)
         mainRow.addArrangedSubview(panel)
         divider.heightAnchor.constraint(equalTo: mainRow.heightAnchor).isActive = true
@@ -503,10 +477,7 @@ final class WorkspaceShellWindowController: NSWindowController {
             self?.perform(.toggleAttention)
         }
         drawer.widthAnchor.constraint(equalToConstant: 300).isActive = true
-        let divider = NSBox.hdsSeparator()
-        // Vertical edge: its 1-point intrinsic height must not compete with the row.
-        divider.setContentHuggingPriority(.defaultLow, for: .vertical)
-        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        let divider = NSBox.hdsVerticalDivider()
         mainRow.addArrangedSubview(divider)
         mainRow.addArrangedSubview(drawer)
         divider.heightAnchor.constraint(equalTo: mainRow.heightAnchor).isActive = true
@@ -585,8 +556,7 @@ private final class ShellTopBarView: NSView {
         statusRow.alignment = .centerY
         statusRow.spacing = Theme.Space.s
 
-        let divider = NSBox.hdsSeparator()
-        divider.setContentHuggingPriority(.defaultLow, for: .vertical)
+        let divider = NSBox.hdsVerticalDivider()
         addSubview(brand)
         addSubview(divider)
         addSubview(statusRow)
@@ -598,7 +568,6 @@ private final class ShellTopBarView: NSView {
             divider.leadingAnchor.constraint(equalTo: brand.trailingAnchor),
             divider.topAnchor.constraint(equalTo: topAnchor),
             divider.bottomAnchor.constraint(equalTo: bottomAnchor),
-            divider.widthAnchor.constraint(equalToConstant: 1),
             statusRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             statusRow.centerYAnchor.constraint(equalTo: centerYAnchor),
             statusRow.leadingAnchor.constraint(

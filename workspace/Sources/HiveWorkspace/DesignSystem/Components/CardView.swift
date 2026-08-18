@@ -96,4 +96,16 @@ extension NSBox {
         box.setContentHuggingPriority(.required, for: .vertical)
         return box
     }
+
+    /// A 1-point vertical edge for a horizontal row. Vertical hugging stays
+    /// below windowSizeStayPut so the box's 1-point intrinsic height cannot
+    /// become the window's fitting height.
+    static func hdsVerticalDivider() -> NSBox {
+        let box = NSBox()
+        box.boxType = .separator
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.setContentHuggingPriority(.defaultLow, for: .vertical)
+        box.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        return box
+    }
 }

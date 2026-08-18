@@ -119,6 +119,24 @@ final class WorkspaceDesignSystemTests: XCTestCase {
             "a radius past half the height degenerates and the badge disappears")
     }
 
+    func testAVerticalDividerDoesNotHugItsHairlineHeight() {
+        let hairline = NSBox.hdsSeparator()
+        let divider = NSBox.hdsVerticalDivider()
+        XCTAssertEqual(
+            hairline.contentHuggingPriority(for: .vertical),
+            .required,
+            "a horizontal hairline must refuse extra height")
+        XCTAssertLessThan(
+            divider.contentHuggingPriority(for: .vertical).rawValue,
+            NSLayoutConstraint.Priority.windowSizeStayPut.rawValue,
+            "a vertical divider must not unique-ify the window height")
+        XCTAssertTrue(
+            divider.constraints.contains {
+                $0.firstAttribute == .width && $0.constant == 1
+            },
+            "a vertical divider is one point wide")
+    }
+
     func testShellChromeUsesCompactSidebarAndNamedTopBarControls() throws {
         _ = NSApplication.shared
         let controller = WorkspaceShellWindowController(

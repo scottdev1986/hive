@@ -35,8 +35,7 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
 
         let row: NSStackView
         if showsDetail {
-            let separator = NSBox.hdsSeparator()
-            separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+            let separator = NSBox.hdsVerticalDivider()
             let detail = makeDetailScroll(screen: screen)
             detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             row = NSStackView(views: [hierarchy, separator, detail])

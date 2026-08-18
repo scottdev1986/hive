@@ -254,10 +254,8 @@ final class LiveRunWorkbenchView: NSView {
         let rail = makeRail()
         let center = makeCenter()
         let inspector = makeInspector()
-        let leftSeparator = NSBox.hdsSeparator()
-        let rightSeparator = NSBox.hdsSeparator()
-        leftSeparator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        rightSeparator.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        let leftSeparator = NSBox.hdsVerticalDivider()
+        let rightSeparator = NSBox.hdsVerticalDivider()
         selectInspectorTab(.task)
 
         let layout = NSStackView(views: [rail, leftSeparator, center, rightSeparator, inspector])
@@ -437,8 +435,7 @@ final class LiveRunWorkbenchView: NSView {
         var stripViews: [NSView] = []
         for (index, cell) in cells.enumerated() {
             if index > 0 {
-                let divider = NSBox.hdsSeparator()
-                divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+                let divider = NSBox.hdsVerticalDivider()
                 stripViews.append(divider)
             }
             stripViews.append(cell)
