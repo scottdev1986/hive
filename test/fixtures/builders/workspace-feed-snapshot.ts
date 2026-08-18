@@ -111,7 +111,10 @@ export async function buildWorkspaceFeedSnapshotFixture(): Promise<
     },
     fetchAutonomy: async () => ({ kind: "current", value: "dangerous" }),
     fetchOrchestrator: async (): Promise<WorkspaceOrchestratorSnapshot> => ({
+      name: "queen",
       status: "working",
+      tool: "codex",
+      model: "gpt-5.6-sol",
       host: "sessiond",
       hostState: null,
       hostDiagnostic: null,

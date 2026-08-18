@@ -2775,7 +2775,7 @@ export class HiveDaemon {
     }
   }
 
-  /** `GET /orchestrator-status` — what the root is doing, for the Workspace dot. The root has no agents-table row, so derive this surface from its own turn-boundary events. Return `{"status": null}` whenever they cannot be trusted; an absent status is unknown, never a flattering guess. Gated on `status:read`, the same action `hive_status` needs: this is the root's status, not a new kind of authority, and the feed already holds it. */
+  /** `GET /orchestrator-status` — the root identity Workspace cannot read from an agents-table row. Turn state comes from root events, while provider and model come from its active ProviderRun; each stays null when its own source has no answer. Gated on `status:read`, the same action `hive_status` needs: this is root status, not a new kind of authority, and the feed already holds it. */
   private orchestratorStatusEndpoint(request: Request): Response {
     // A poll surface (the feed asks every second): don't audit allows.
     const authorized = this.authorizeRoute(
@@ -2786,10 +2786,14 @@ export class HiveDaemon {
     );
     if (!authorized.ok) return authorized.response;
     const host = this.orchestratorSessiond?.snapshot() ?? null;
+    const providerRun = this.rootProviderRun();
     const body: OrchestratorHostStatus = {
+      name: ORCHESTRATOR_NAME,
       status: this.status.orchestratorStatus(
         this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
       ),
+      tool: providerRun?.provider ?? null,
+      model: providerRun?.model ?? null,
       host: "sessiond",
       hostState: host?.state ?? null,
       hostDiagnostic: host?.diagnostic ?? null,

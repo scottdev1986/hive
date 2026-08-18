@@ -1,4 +1,4 @@
-/** `hive workspace-feed --port <n>` — the Workspace app's status wire. A long-lived child of the app that turns the daemon's `hive_status` into NDJSON on stdout, one JSON object per line and nothing else: {"v":1,"agents":[...],"autonomyState":{"kind":"current","value":"sandboxed"},"orchestrator":{"status":"working"}} the full AgentRecord array, the daemon's typed autonomy observation, and what the root is doing (omitted when the daemon cannot honestly say — the root has no AgentRecord, so it travels beside the array, not inside it) — on the first snapshot, on any change, and at least every 5 s (heartbeat), so a silent wire is distinguishable from an unchanged one. {"v":1,"error":"..."} the daemon is unreachable — emitted once per distinct failure, not per retry, so a dead daemon does not scroll the app's log. {"v":1,"stale":true, the feed is giving up and exiting, so whatever the "reason":"..."} reader is still showing is now unproven. NO READER DECODES THIS YET: the app infers staleness from the stream ending, which cannot distinguish a feed that quit from one that never started. Emitting it regardless keeps the wire self-reporting and is what a reader needs in order to stop rendering a dead roster confidently. Polling lives here, not in Swift, because this process already holds the user credential (0600 file) and the MCP client; the app just decodes lines. The feed retries a dead daemon with backoff and exits non-zero only after 30 s of continuous refusal — a daemon restart mid-session must look like a hiccup, not a teardown. Only a refusal counts toward that deadline. A daemon that answers late is not a dead one: the status timeout climbs toward `FEED_STATUS_TIMEOUT_MAX_MS` while replies keep arriving too slowly, and those waits are charged to no deadline, because a feed that quits on a healthy-but-slow daemon leaves the app showing a roster that is wrong and looks right. */
+/** `hive workspace-feed --port <n>` — the Workspace app's status wire. A long-lived child of the app that turns the daemon's `hive_status` into NDJSON on stdout, one JSON object per line and nothing else: {"v":1,"agents":[...],"autonomyState":{"kind":"current","value":"sandboxed"},"orchestrator":{"name":"queen","status":"working","tool":"codex","model":"gpt-5.6-sol"}} the full AgentRecord array, the daemon's typed autonomy observation, and what the root is doing (omitted when the daemon cannot honestly say — the root has no AgentRecord, so it travels beside the array, not inside it) — on the first snapshot, on any change, and at least every 5 s (heartbeat), so a silent wire is distinguishable from an unchanged one. {"v":1,"error":"..."} the daemon is unreachable — emitted once per distinct failure, not per retry, so a dead daemon does not scroll the app's log. {"v":1,"stale":true, the feed is giving up and exiting, so whatever the "reason":"..."} reader is still showing is now unproven. NO READER DECODES THIS YET: the app infers staleness from the stream ending, which cannot distinguish a feed that quit from one that never started. Emitting it regardless keeps the wire self-reporting and is what a reader needs in order to stop rendering a dead roster confidently. Polling lives here, not in Swift, because this process already holds the user credential (0600 file) and the MCP client; the app just decodes lines. The feed retries a dead daemon with backoff and exits non-zero only after 30 s of continuous refusal — a daemon restart mid-session must look like a hiccup, not a teardown. Only a refusal counts toward that deadline. A daemon that answers late is not a dead one: the status timeout climbs toward `FEED_STATUS_TIMEOUT_MAX_MS` while replies keep arriving too slowly, and those waits are charged to no deadline, because a feed that quits on a healthy-but-slow daemon leaves the app showing a roster that is wrong and looks right. */
 
 import type { Autonomy } from "../config/autonomy";
 import {
@@ -58,7 +58,7 @@ export interface WorkspaceFeedDeps {
   readonly fetchStatus?: (port: number) => Promise<AgentRecord[]>;
   /** Reads the daemon's live autonomy dial without letting its faults take down the agent list. */
   readonly fetchAutonomy?: (port: number) => Promise<WorkspaceAutonomyState>;
-  /** Reads the root's independent turn status and terminal lifecycle. Errors degrade to null; an unknowable turn can still carry a sessiond locator. */
+  /** Reads the root's independently measured identity, turn status, and terminal lifecycle. Errors degrade to null. */
   readonly fetchOrchestrator?: (
     port: number,
   ) => Promise<WorkspaceOrchestratorSnapshot | null>;
@@ -323,7 +323,7 @@ async function getAutonomy(
   );
 }
 
-/** `GET /orchestrator-status` with the user credential: independently measured root turn state and terminal lifecycle. A null turn status stays null; a sessiond locator is present only after its host is ready. */
+/** `GET /orchestrator-status` with the user credential: independently measured root identity, turn state, and terminal lifecycle. */
 async function getOrchestratorStatus(
   daemon: UserDaemonClient,
 ): Promise<WorkspaceOrchestratorSnapshot | null> {
@@ -335,14 +335,17 @@ async function getOrchestratorStatus(
   return parseWorkspaceOrchestratorSnapshot(body);
 }
 
-/** The root's turn status and terminal lifecycle are independent. Preserve a ready locator even before the first turn boundary, and report nothing when neither is known — the app renders an absent snapshot as honest gray. */
+/** Root provider identity, turn status, and terminal lifecycle are independent. Preserve whichever measurements exist and report nothing when all three are absent. */
 export function parseWorkspaceOrchestratorSnapshot(
   value: unknown,
 ): WorkspaceOrchestratorSnapshot | null {
   const parsed = OrchestratorHostStatusSchema.safeParse(value);
   if (!parsed.success) return null;
   const snapshot = parsed.data;
-  return snapshot.status === null && snapshot.sessionLocator === null
+  return snapshot.status === null &&
+    snapshot.tool == null &&
+    snapshot.model == null &&
+    snapshot.sessionLocator === null
     ? null
     : snapshot;
 }

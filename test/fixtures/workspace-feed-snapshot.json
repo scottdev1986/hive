@@ -116,7 +116,10 @@
     "value": "dangerous"
   },
   "orchestrator": {
+    "name": "queen",
     "status": "working",
+    "tool": "codex",
+    "model": "gpt-5.6-sol",
     "host": "sessiond",
     "hostState": null,
     "hostDiagnostic": null,

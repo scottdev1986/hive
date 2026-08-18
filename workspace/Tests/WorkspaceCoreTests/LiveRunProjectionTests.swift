@@ -48,7 +48,7 @@ struct LiveRunProjectionTests {
                "subject":{"kind":"agent","agentId":"id-a"},"generation":2,
                "sessionId":"ses_018f1e90-7b5a-7cc0-8000-000000000002",
                "hostKind":"sessiond","engineBuildId":"engine"}}],
-             "orchestrator":{"status":"working","host":"sessiond","hostState":"running",
+             "orchestrator":{"name":"queen","status":"working","host":"sessiond","hostState":"running",
                "sessionLocator":{"schemaVersion":1,"instanceId":"rig",
                  "subject":{"kind":"root"},"generation":6,
                  "sessionId":"ses_018f1e90-7b5a-7cc0-8000-000000000001",
@@ -68,6 +68,44 @@ struct LiveRunProjectionTests {
         #expect(queen.locator?.subject.kind == "root")
         #expect(queen.locator?.generation == 6)
         #expect(projection.sessions[1].name == "david")
+    }
+
+    @Test("Queen provider and model preserve orchestrator wire presence and absence")
+    func queenProviderAndModelPreserveWirePresenceAndAbsence() throws {
+        let absentLine = try #require(FeedLine.parse(
+            #"{"v":1,"agents":[],"orchestrator":{"name":"queen","status":"working","host":"sessiond","hostState":"running","hostDiagnostic":null,"sessionLocator":null}}"#))
+        let absent = try #require(
+            LiveRunProjection(feedLine: absentLine).sessions.first)
+
+        #expect(absent.provider == nil)
+        #expect(absent.model == nil)
+        #expect(absent.task == nil)
+        #expect(absent.activity == .unknown)
+
+        let presentLine = try #require(FeedLine.parse(
+            #"{"v":1,"agents":[],"orchestrator":{"name":"wire-queen","status":"working","tool":"codex","model":"gpt-5.6-sol","host":"sessiond","hostState":"running","hostDiagnostic":null,"sessionLocator":null}}"#))
+        let present = try #require(
+            LiveRunProjection(feedLine: presentLine).sessions.first)
+
+        #expect(present.name == "wire-queen")
+        #expect(present.provider == ProviderID("codex"))
+        #expect(present.model == "gpt-5.6-sol")
+        #expect(present.task == nil)
+    }
+
+    @Test("An agent without a reported provider preserves absence")
+    func agentWithoutProviderPreservesAbsence() throws {
+        let line = try #require(FeedLine.parse(
+            #"{"v":1,"agents":[{"id":"id-a","name":"a","status":"idle"}]}"#))
+        let session = try #require(
+            LiveRunProjection(feedLine: line).sessions.first)
+
+        #expect(session.provider == nil)
+    }
+
+    @Test("Agent construction never invents a working status")
+    func agentConstructionNeverInventsWorkingStatus() {
+        #expect(AgentSnapshot(name: "a").status == "unknown")
     }
 
     @Test("An incomplete locator stays visible as unknown and never attachable")

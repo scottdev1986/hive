@@ -86,6 +86,7 @@ final class AgentActivityTests: XCTestCase {
         let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
         state.apply(feed: [AgentSnapshot(
             name: "alfie",
+            status: "working",
             presentation: presentation(activity: "working"))])
         state.markFeedLost()
         let pane = try XCTUnwrap(
@@ -107,6 +108,7 @@ final class AgentActivityTests: XCTestCase {
         state.apply(
             feed: [],
             orchestrator: OrchestratorSnapshot(
+                name: "queen",
                 status: "vendor-future-state",
                 presentation: presentation(activity: "working")))
         pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])

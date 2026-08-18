@@ -31,7 +31,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
 
         let first = locator(generation: 1)
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
-            status: nil, host: "sessiond", hostState: "awaiting-visibility",
+            name: "queen", status: nil, host: "sessiond", hostState: "awaiting-visibility",
             sessionLocator: first))
         let provisionalView = try XCTUnwrap(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID))
@@ -40,7 +40,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             "an exact locator always starts the shared terminal lifecycle")
 
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
-            status: nil, host: "sessiond", hostState: "awaiting-visibility",
+            name: "queen", status: nil, host: "sessiond", hostState: "awaiting-visibility",
             sessionLocator: first))
         XCTAssertTrue(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID) === provisionalView)
@@ -48,7 +48,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             pane: ProjectState.orchestratorPaneID))
 
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
-            status: "idle", host: "sessiond", hostState: "running",
+            name: "queen", status: "idle", host: "sessiond", hostState: "running",
             sessionLocator: first))
         let firstView = try XCTUnwrap(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID))
@@ -57,7 +57,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             pane: ProjectState.orchestratorPaneID))
 
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
-            status: "idle", host: "sessiond", hostState: "running",
+            name: "queen", status: "idle", host: "sessiond", hostState: "running",
             sessionLocator: locator(generation: 2)))
         let secondView = try XCTUnwrap(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID))

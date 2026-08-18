@@ -178,7 +178,7 @@ public struct AgentSnapshot: Equatable, Decodable {
     public let sessionLocator: AgentSessionLocator?
 
     public init(id: String? = nil, name: String, tool: String? = nil, model: String? = nil,
-                status: String = "working", taskDescription: String? = nil,
+                status: String = "unknown", taskDescription: String? = nil,
                 contextPct: Double? = nil,
                 closedAt: String? = nil, sessionLocator: AgentSessionLocator? = nil,
                 statusDimensions: WorkspaceStatusDimensions? = nil,
@@ -254,20 +254,27 @@ public struct WorkspaceVisibilityInventory: Equatable, Encodable {
     }
 }
 
-/// What the orchestrator is doing, as measured by the daemon from the root's own turn-boundary events. The root is not a spawned agent and has no AgentRecord, so it travels beside the `agents` array rather than inside it. A nil `status` is meaningful and must stay meaningful: no turn events, or a contradictory record, is unknown rather than a fabricated idle word. The object may still carry an independently measured sessiond host locator.
+/// What the orchestrator is doing, as measured by the daemon from the root's own turn-boundary events and active ProviderRun. The root is not a spawned agent and has no AgentRecord, so it travels beside the `agents` array rather than inside it. Nil fields stay nil rather than becoming plausible substitutes.
 public struct OrchestratorSnapshot: Equatable, Decodable {
+    public let name: String
     public let status: String?
+    public let tool: String?
+    public let model: String?
     public let host: String?
     public let hostState: String?
     public let hostDiagnostic: String?
     public let sessionLocator: AgentSessionLocator?
     public let presentation: AgentFeedPresentation
 
-    public init(status: String?, host: String? = nil, hostState: String? = nil,
+    public init(name: String, status: String?, tool: String? = nil, model: String? = nil,
+                host: String? = nil, hostState: String? = nil,
                 hostDiagnostic: String? = nil,
                 sessionLocator: AgentSessionLocator? = nil,
                 presentation: AgentFeedPresentation = .unknown) {
+        self.name = name
         self.status = status
+        self.tool = tool
+        self.model = model
         self.host = host
         self.hostState = hostState
         self.hostDiagnostic = hostDiagnostic
@@ -276,12 +283,15 @@ public struct OrchestratorSnapshot: Equatable, Decodable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case status, host, hostState, hostDiagnostic, sessionLocator, presentation
+        case name, status, tool, model, host, hostState, hostDiagnostic, sessionLocator, presentation
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
         status = try container.decodeIfPresent(String.self, forKey: .status)
+        tool = try container.decodeIfPresent(String.self, forKey: .tool)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
         host = try container.decodeIfPresent(String.self, forKey: .host)
         hostState = try container.decodeIfPresent(String.self, forKey: .hostState)
         hostDiagnostic = try container.decodeIfPresent(

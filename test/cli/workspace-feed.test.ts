@@ -135,6 +135,7 @@ const orchestrator = (
   status: WorkspaceOrchestratorSnapshot["status"],
   overrides: Partial<WorkspaceOrchestratorSnapshot> = {},
 ): WorkspaceOrchestratorSnapshot => ({
+  name: "queen",
   status,
   host: "sessiond",
   hostState: null,
@@ -515,6 +516,7 @@ describe("runWorkspaceFeed", () => {
     for (const status of ["spawning", "working", "idle", "exited"] as const) {
       expect(
         parseWorkspaceOrchestratorSnapshot({
+          name: "queen",
           status,
           host: "sessiond",
           hostState: null,
@@ -525,6 +527,7 @@ describe("runWorkspaceFeed", () => {
     }
     expect(
       parseWorkspaceOrchestratorSnapshot({
+        name: "queen",
         status: "running",
         host: "sessiond",
         hostState: null,
@@ -537,6 +540,7 @@ describe("runWorkspaceFeed", () => {
   test("preserves a pending root locator before any turn status exists", () => {
     expect(
       parseWorkspaceOrchestratorSnapshot({
+        name: "queen",
         status: null,
         host: "sessiond",
         hostState: "awaiting-visibility",
@@ -552,6 +556,7 @@ describe("runWorkspaceFeed", () => {
     );
     expect(
       parseWorkspaceOrchestratorSnapshot({
+        name: "queen",
         status: null,
         host: "sessiond",
         hostState: null,
@@ -559,6 +564,36 @@ describe("runWorkspaceFeed", () => {
         sessionLocator: null,
       }),
     ).toBeNull();
+  });
+
+  test("preserves exact root provider identity and honest absence", () => {
+    expect(
+      parseWorkspaceOrchestratorSnapshot({
+        name: "queen",
+        status: null,
+        tool: "codex",
+        model: "gpt-5.6-sol",
+        host: "sessiond",
+        hostState: null,
+        hostDiagnostic: null,
+        sessionLocator: null,
+      }),
+    ).toEqual(
+      orchestrator(null, {
+        tool: "codex",
+        model: "gpt-5.6-sol",
+      }),
+    );
+    expect(
+      parseWorkspaceOrchestratorSnapshot({
+        name: "queen",
+        status: "working",
+        host: "sessiond",
+        hostState: null,
+        hostDiagnostic: null,
+        sessionLocator: null,
+      }),
+    ).toEqual(orchestrator("working"));
   });
 
   test("emits the shared wire snapshot, stays silent while unchanged, heartbeats at 5s", async () => {
@@ -572,7 +607,11 @@ describe("runWorkspaceFeed", () => {
         last(snapshot(workspaceFeedAgentFixture)), // t=5s: heartbeat
       ],
       async () => currentAutonomy("dangerous"),
-      async () => orchestrator("working"),
+      async () =>
+        orchestrator("working", {
+          tool: "codex",
+          model: "gpt-5.6-sol",
+        }),
     );
     const fixture = await Bun.file(WORKSPACE_FEED_SNAPSHOT_FIXTURE).json();
     expect(run.exitCode).toEqual(0);

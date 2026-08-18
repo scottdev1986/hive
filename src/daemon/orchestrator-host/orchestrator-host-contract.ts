@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { ORCHESTRATOR_NAME } from "../../schemas/agent";
+import { CapabilityProviderSchema } from "../../schemas/capability";
 import { domainUuidV7Schema } from "../../schemas/session-protocol";
 import { OrchestratorStatusSchema } from "../../schemas/status-envelope";
 import {
@@ -33,13 +35,14 @@ export const OrchestratorSessiondStateSchema = z.enum([
 /**
  * `GET /orchestrator-status`, in full.
  *
- * The root's turn status and its terminal lifecycle are independent
- * measurements: a host can be running before the first turn boundary exists,
- * and a turn status can outlive the host that produced it. Both are nullable
- * because neither is ever guessed.
+ * The root's turn status, provider identity, and terminal lifecycle are
+ * independent measurements. Each stays nullable because none is guessed.
  */
 export const OrchestratorHostStatusSchema = z.strictObject({
+  name: z.literal(ORCHESTRATOR_NAME),
   status: OrchestratorStatusSchema.nullable(),
+  tool: CapabilityProviderSchema.nullable().optional(),
+  model: z.string().min(1).nullable().optional(),
   host: OrchestratorHostKindSchema,
   hostState: OrchestratorSessiondStateSchema.nullable(),
   hostDiagnostic: z.string().nullable(),

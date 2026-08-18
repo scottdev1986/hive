@@ -409,6 +409,7 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(state.apply(
             feed: [],
             orchestrator: OrchestratorSnapshot(
+                name: "queen",
                 status: nil,
                 host: "sessiond",
                 hostState: "awaiting-visibility",
@@ -425,14 +426,14 @@ final class ProjectStateTests: XCTestCase {
                 state: .pending)]))
 
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(
-            status: "idle", host: "sessiond", hostState: "running",
+            name: "queen", status: "idle", host: "sessiond", hostState: "running",
             sessionLocator: first,
             presentation: rootPresentation(activity: "idle", terminalState: "live")))
         XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .live)
 
         let second = locator(generation: 2)
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(
-            status: "idle", host: "sessiond", hostState: "running",
+            name: "queen", status: "idle", host: "sessiond", hostState: "running",
             sessionLocator: second,
             presentation: rootPresentation(activity: "idle", terminalState: "live")))
         XCTAssertEqual(
@@ -456,6 +457,7 @@ final class ProjectStateTests: XCTestCase {
             engineBuildId: "engine")
 
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(
+            name: "queen",
             status: nil,
             host: "sessiond",
             hostState: "failed",
@@ -560,7 +562,7 @@ final class ProjectStateTests: XCTestCase {
         let line = #"{"v":1,"agents":[{"name":"good","status":"working"}],"autonomyState":17,"orchestrator":{"status":17}}"#
 
         let decoded = try XCTUnwrap(FeedLine.parse(line))
-        XCTAssertEqual(decoded.agents, [AgentSnapshot(name: "good")])
+        XCTAssertEqual(decoded.agents, [AgentSnapshot(name: "good", status: "working")])
         guard case .malformed = decoded.autonomy else {
             return XCTFail("a malformed autonomy sibling must stay distinguishable")
         }
@@ -568,7 +570,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testFeedLineDecodesRootLocatorWithNullTurnStatus() throws {
-        let line = #"{"v":1,"agents":[],"orchestrator":{"status":null,"host":"sessiond","hostState":"awaiting-visibility","sessionLocator":{"schemaVersion":1,"instanceId":"instance","subject":{"kind":"root"},"generation":1,"sessionId":"ses_0198a8f0-0000-7000-8000-000000000001","hostKind":"sessiond","engineBuildId":"engine"}}}"#
+        let line = #"{"v":1,"agents":[],"orchestrator":{"name":"queen","status":null,"host":"sessiond","hostState":"awaiting-visibility","sessionLocator":{"schemaVersion":1,"instanceId":"instance","subject":{"kind":"root"},"generation":1,"sessionId":"ses_0198a8f0-0000-7000-8000-000000000001","hostKind":"sessiond","engineBuildId":"engine"}}}"#
 
         let snapshot = try XCTUnwrap(FeedLine.parse(line)?.orchestrator)
         XCTAssertNil(snapshot.status)

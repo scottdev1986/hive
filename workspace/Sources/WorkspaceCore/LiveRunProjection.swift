@@ -38,7 +38,6 @@ public enum LiveRunContractFact: Equatable, Sendable {
 public struct LiveRunSessionSummary: Equatable {
     /// Workspace visibility id for the root. The queen has no AgentRecord, so the feed carries her beside `agents`.
     public static let queenID = "root"
-    public static let queenName = "queen"
 
     public let id: String
     public let agentID: String?
@@ -88,20 +87,12 @@ public struct LiveRunSessionSummary: Equatable {
     public init(orchestrator: OrchestratorSnapshot) {
         id = Self.queenID
         agentID = Self.queenID
-        name = Self.queenName
-        provider = ProviderID("unknown")
-        model = nil
+        name = orchestrator.name
+        provider = orchestrator.tool.map { ProviderID($0) }
+        model = orchestrator.model
         rawStatus = orchestrator.status ?? "unknown"
-        let presented = orchestrator.presentation.renderedActivity
-        activity = presented == .unknown
-            ? AgentFeedPresentation(
-                panePresence: "visible",
-                terminalState: "live",
-                headerDetail: rawStatus,
-                paneStatus: FeedPanePresentation(kind: "running"),
-                activity: rawStatus).renderedActivity
-            : presented
-        task = "Own the run, escalation, and current-owner policy"
+        activity = orchestrator.presentation.renderedActivity
+        task = nil
         if let candidate = orchestrator.sessionLocator,
            Self.isAttachable(candidate, agentID: Self.queenID) {
             locator = candidate
