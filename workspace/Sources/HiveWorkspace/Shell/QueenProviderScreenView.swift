@@ -53,12 +53,19 @@ final class QueenProviderScreenView: NSView {
             trailingView: swapControl())
         let facts = observedFacts()
         if !facts.isEmpty {
-            let factGrid = NSGridView(views: [facts.map { Self.factRow($0.label, $0.value) }])
-            factGrid.translatesAutoresizingMaskIntoConstraints = false
-            factGrid.columnSpacing = Theme.Space.l
-            factGrid.xPlacement = .fill
-            confirmation.contentStack.addArrangedSubview(factGrid)
-            confirmation.pinToContentWidth(factGrid)
+            // Pairs hug their own label+value. Leftover strip width goes
+            // between pairs so proximity binds each label to its reading,
+            // not to the next pair's label.
+            let pairs = facts.map { Self.factRow($0.label, $0.value) }
+            let factStrip = NSStackView(views: pairs)
+            factStrip.translatesAutoresizingMaskIntoConstraints = false
+            factStrip.orientation = .horizontal
+            factStrip.alignment = .firstBaseline
+            factStrip.spacing = Theme.Space.xl
+            factStrip.distribution = .equalSpacing
+            factStrip.setAccessibilityIdentifier("queen-provider-facts")
+            confirmation.contentStack.addArrangedSubview(factStrip)
+            confirmation.pinToContentWidth(factStrip)
         }
         if let status = mutationStatus() {
             confirmation.contentStack.addArrangedSubview(status)
@@ -141,16 +148,20 @@ final class QueenProviderScreenView: NSView {
         name.font = Theme.Font.screenSubtitle
         name.textColor = Theme.secondaryText
         name.compressHorizontally(priority: 470, toolTip: label)
-        name.widthAnchor.constraint(greaterThanOrEqualToConstant: 132).isActive = true
+        name.setContentHuggingPriority(.required, for: .horizontal)
         let reading = NSTextField(wrappingLabelWithString: value)
         reading.font = Theme.Font.monoCaption
         reading.textColor = Theme.primaryText
         reading.maximumNumberOfLines = 2
         reading.compressHorizontally(priority: 460, toolTip: value)
+        reading.setContentHuggingPriority(.required, for: .horizontal)
         let row = NSStackView(views: [name, reading])
         row.orientation = .horizontal
         row.alignment = .firstBaseline
         row.spacing = Theme.Space.s
+        row.setContentHuggingPriority(.required, for: .horizontal)
+        let slug = label.lowercased().replacingOccurrences(of: " ", with: "-")
+        row.setAccessibilityIdentifier("queen-provider-fact-\(slug)")
         return row
     }
 

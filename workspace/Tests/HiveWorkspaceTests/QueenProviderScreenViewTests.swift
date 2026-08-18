@@ -208,4 +208,71 @@ final class QueenProviderScreenViewTests: XCTestCase {
         XCTAssertTrue(notice.stringValue.contains("handing-over"))
         XCTAssertNil(find(try content(controller), "queen-provider-pending"))
     }
+
+    // MARK: Fact-strip grouping
+
+    /// Proximity must bind each label to its own value. The defect this
+    /// guards stretched leftover width *inside* each pair, so `claude` sat
+    /// closer to `Health` than to `Live provider`.
+    func testFactStripBindsEachLabelToItsOwnValue() throws {
+        let controller = try makeController()
+        controller.window?.layoutIfNeeded()
+        let strip = try view(controller, "queen-provider-facts", as: NSStackView.self)
+        XCTAssertGreaterThanOrEqual(strip.arrangedSubviews.count, 2)
+
+        var previousPair: NSView?
+        for pair in strip.arrangedSubviews {
+            let stack = try XCTUnwrap(pair as? NSStackView)
+            XCTAssertEqual(stack.spacing, Theme.Space.s)
+            XCTAssertGreaterThanOrEqual(stack.arrangedSubviews.count, 2)
+            let childrenWidth = stack.arrangedSubviews.reduce(CGFloat(0)) {
+                $0 + $1.alignmentRect(forFrame: $1.frame).width
+            }
+            XCTAssertEqual(
+                stack.frame.width, childrenWidth + stack.spacing, accuracy: 2,
+                "fact pair must hug its label and value; leftover width inside the pair is the mis-grouping")
+
+            if let previous = previousPair {
+                let previousFrame = previous.convert(previous.bounds, to: strip)
+                let pairFrame = pair.convert(pair.bounds, to: strip)
+                let between = pairFrame.minX - previousFrame.maxX
+                XCTAssertGreaterThan(
+                    between,
+                    stack.spacing + 1,
+                    "between-pair gap \(between) must exceed within-pair spacing \(stack.spacing)")
+                XCTAssertGreaterThanOrEqual(between, Theme.Space.xl - 1)
+            }
+            previousPair = pair
+        }
+    }
+
+    // MARK: Models & Quota status pills
+
+    /// Same provider state must paint the same compact pill. Stretching the
+    /// tinted badge to the card width made `enabled` Claude a green band and
+    /// `enabled` Codex a small pill.
+    func testStatusPillsStayCompactAndEqualForTheSameState() throws {
+        let controller = try makeController()
+        try view(controller, "shell-nav-models", as: NSButton.self).performClick(nil)
+        controller.window?.layoutIfNeeded()
+
+        var widthByState: [String: [Int]] = [:]
+        for id in ["claude", "codex", "grok", "kimi", "opencode"] {
+            let card = try view(controller, "models-quota-card-\(id)")
+            let badge = try view(controller, "models-quota-status-\(id)")
+            XCTAssertEqual(
+                badge.frame.width, badge.fittingSize.width, accuracy: 2,
+                "\(id) status pill is not sized to its content")
+            XCTAssertLessThan(
+                badge.frame.width, card.frame.width * 0.5,
+                "\(id) status pill stretched into a card-width band")
+            let state = try XCTUnwrap(badge.accessibilityLabel())
+            widthByState[state, default: []].append(Int(badge.frame.width.rounded()))
+        }
+        for (state, widths) in widthByState {
+            XCTAssertEqual(
+                Set(widths).count, 1,
+                "state \(state) painted distinct pill widths \(widths)")
+        }
+    }
 }

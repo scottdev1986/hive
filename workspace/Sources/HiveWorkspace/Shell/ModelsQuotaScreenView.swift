@@ -130,13 +130,22 @@ final class ModelsQuotaScreenView: NSView {
                 title: ProviderBranding.title(for: provider),
                 subtitle: Self.providerSubtitle(presentation),
                 trailingView: toggle)
+            card.setAccessibilityIdentifier("models-quota-card-\(provider.rawValue)")
 
+            // The spacer, not the badge, takes leftover card width. Without it
+            // the tinted pill stretches into a full-width band on whichever
+            // card Auto Layout happens to resolve first — same states then
+            // render as different objects.
+            let badge = CapsuleBadge(
+                text: state ?? "policy unavailable",
+                symbol: enabled ? "checkmark.circle.fill" : "circle.slash",
+                style: state == nil ? .neutral : enabled ? .positive : .warning)
+            badge.setContentHuggingPriority(.required, for: .horizontal)
+            badge.setAccessibilityIdentifier("models-quota-status-\(provider.rawValue)")
             let identity = NSStackView(views: [
                 ProviderMarkView(provider: provider),
-                CapsuleBadge(
-                    text: state ?? "policy unavailable",
-                    symbol: enabled ? "checkmark.circle.fill" : "circle.slash",
-                    style: state == nil ? .neutral : enabled ? .positive : .warning),
+                badge,
+                NSView.spacer(),
             ])
             identity.orientation = .horizontal
             identity.alignment = .centerY
