@@ -659,7 +659,7 @@ describe("HiveTerminalHostAdapter", () => {
     });
   });
 
-  test("projects the sessiond process census and input owner for Live Run controls", async () => {
+  test("projects the sessiond process census for Live Run controls", async () => {
     const bindings = new MemoryBindings();
     bindings.bindTerminalHostSession({ locator, visibility });
     bindings.completeTerminalHostSession(locator, {
@@ -671,12 +671,6 @@ describe("HiveTerminalHostAdapter", () => {
     });
     const observed = {
       ...inspection,
-      inputOwner: {
-        token: "input-token",
-        writer: "workspace-fixture",
-        kind: "user" as const,
-        leaseExpiresAt: "2026-07-18T01:00:15.000Z",
-      },
       descendants: [
         { processId: 4_100, startToken: "4100:123400" },
         { processId: 4_200, startToken: "4200:123400" },
@@ -727,10 +721,6 @@ describe("HiveTerminalHostAdapter", () => {
           { pid: 4_100, startToken: "4100:123400" },
           { pid: 4_200, startToken: "4200:123400" },
         ],
-      },
-      inputOwner: {
-        writer: "workspace-fixture",
-        kind: "user",
       },
       foregroundProcessGroupId: 4_000,
     });

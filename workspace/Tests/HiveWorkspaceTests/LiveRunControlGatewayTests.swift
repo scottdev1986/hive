@@ -71,7 +71,6 @@ final class LiveRunControlGatewayTests: XCTestCase {
            "processGroupId":4100,"observedAt":"2026-08-15T20:00:00.000Z"}},
          "shell":{"state":"retained","root":{"pid":4000,"startToken":"4000:1",
            "processGroupId":4000},"foreground":"provider"},
-         "inputOwner":{"state":"free"},
          "processCensus":{"state":"complete","source":"sessiond-process-tree",
            "members":[{"pid":4000,"startToken":"4000:1"},{"pid":4100,"startToken":"4100:1"}],
            "observedAt":"2026-08-15T20:00:00.000Z"},

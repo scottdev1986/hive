@@ -203,18 +203,6 @@ async function project(
     };
   }
 
-  const inputOwner: LiveRunControlProjection["inputOwner"] = terminated
-    ? { state: "unknown", reason: "the terminal is terminated" }
-    : inspected.inputOwner !== null
-      ? { state: "owned", ...inspected.inputOwner }
-      : inspected.processCensus.completeness === "complete"
-        ? { state: "free" }
-        : {
-            state: "unknown",
-            reason:
-              "sessiond did not return a complete input-owner observation",
-          };
-
   const processCensus: LiveRunControlProjection["processCensus"] = terminated
     ? { state: "terminated" }
     : inspected.processCensus.completeness === "complete"
@@ -285,7 +273,6 @@ async function project(
     locator,
     providerRun,
     shell,
-    inputOwner,
     processCensus,
     termination,
     controls: {

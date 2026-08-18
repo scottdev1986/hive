@@ -157,11 +157,6 @@ export interface ProviderRunStore {
 
 export type TerminalControlInspection = Readonly<{
   terminal: SessionInspection;
-  inputOwner: Readonly<{
-    writer: string;
-    kind: "user" | "automation";
-    leaseExpiresAt: string;
-  }> | null;
   foregroundProcessGroupId: number | null;
   processCensus: Readonly<{
     completeness: NeutralSessionInspection["completeness"];
@@ -582,7 +577,6 @@ export class HiveTerminalHostAdapter {
       const terminal = this.projectAbsentInspection(binding);
       return {
         terminal,
-        inputOwner: null,
         foregroundProcessGroupId: null,
         processCensus: {
           completeness: "unavailable",
@@ -609,14 +603,6 @@ export class HiveTerminalHostAdapter {
     }
     return {
       terminal: this.projectInspection(binding, inspection),
-      inputOwner:
-        inspection.inputOwner === null
-          ? null
-          : {
-              writer: inspection.inputOwner.writer,
-              kind: inspection.inputOwner.kind,
-              leaseExpiresAt: inspection.inputOwner.leaseExpiresAt,
-            },
       foregroundProcessGroupId:
         inspection.jobControl?.foregroundProcessGroupId ?? null,
       processCensus: {
@@ -785,7 +771,6 @@ export class HiveTerminalHostAdapter {
     }
 
     const inputFree =
-      inspection.inputOwner === null &&
       inspection.lifecycle === "running" &&
       inspection.completeness === "complete" &&
       inspection.diagnostics.length === 0;

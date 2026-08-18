@@ -35,17 +35,6 @@ const LiveRunShellSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("unknown"), reason: z.string().min(1) }),
 ]);
 
-const LiveRunInputOwnerSchema = z.discriminatedUnion("state", [
-  z.strictObject({ state: z.literal("free") }),
-  z.strictObject({
-    state: z.literal("owned"),
-    writer: z.string().min(1),
-    kind: z.enum(["user", "automation"]),
-    leaseExpiresAt: Rfc3339UtcMillisecondsSchema,
-  }),
-  z.strictObject({ state: z.literal("unknown"), reason: z.string().min(1) }),
-]);
-
 const LiveRunProcessCensusSchema = z.discriminatedUnion("state", [
   z.strictObject({
     state: z.literal("complete"),
@@ -94,7 +83,6 @@ export const LiveRunControlProjectionSchema = z.strictObject({
   locator: SessionLocatorSchema,
   providerRun: LiveRunProviderRunSchema,
   shell: LiveRunShellSchema,
-  inputOwner: LiveRunInputOwnerSchema,
   processCensus: LiveRunProcessCensusSchema,
   termination: LiveRunTerminationSchema,
   controls: z.strictObject({

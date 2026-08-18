@@ -124,8 +124,6 @@ struct LiveRunProjectionTests {
            "processGroupId":4100,"observedAt":"2026-08-15T20:00:00.000Z"}},
          "shell":{"state":"retained","root":{"pid":4000,"startToken":"4000:1",
            "processGroupId":4000},"foreground":"provider"},
-         "inputOwner":{"state":"owned","writer":"workspace-a","kind":"user",
-           "leaseExpiresAt":"2026-08-15T20:05:00.000Z"},
          "processCensus":{"state":"complete","source":"sessiond-process-tree",
            "members":[{"pid":4000,"startToken":"4000:1"},{"pid":4100,"startToken":"4100:1"}],
            "observedAt":"2026-08-15T20:00:00.000Z"},
@@ -142,7 +140,6 @@ struct LiveRunProjectionTests {
         #expect(projection.providerRun.process?.pid == 4100)
         #expect(projection.shell.root?.pid == 4000)
         #expect(projection.shell.foreground == .provider)
-        #expect(projection.inputOwner.writer == "workspace-a")
         #expect(projection.processCensus.members.count == 2)
         #expect(projection.termination.state == .notRequested)
         #expect(projection.controls.stopProvider.enabled)

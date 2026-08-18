@@ -129,11 +129,6 @@ function liveInspection(
       evidenceAt: AT,
       diagnosticIds: [],
     },
-    inputOwner: {
-      writer: "workspace-fixture",
-      kind: "user",
-      leaseExpiresAt: "2026-08-15T20:05:00.000Z",
-    },
     foregroundProcessGroupId,
     processCensus: {
       completeness: "complete",
@@ -162,7 +157,6 @@ function terminatedInspection(): TerminalControlInspection {
       foreground: { state: "unknown", runId: null },
       diagnosticIds: ["SESSIOND_HOST_ALREADY_ABSENT"],
     },
-    inputOwner: null,
     foregroundProcessGroupId: null,
     processCensus: {
       completeness: "unavailable",
@@ -328,7 +322,7 @@ describe("Live Run process controls", () => {
     db.close();
   });
 
-  test("GET projects exact provider, shell, input, and independent process facts", async () => {
+  test("GET projects exact provider, shell, and independent process facts", async () => {
     const { deps, actions } = harness();
     const response = await liveRunControlEndpoint(deps, request());
     expect(response.status).toBe(200);
@@ -346,12 +340,6 @@ describe("Live Run process controls", () => {
           state: "retained",
           root: shellRoot,
           foreground: "provider",
-        },
-        inputOwner: {
-          state: "owned",
-          writer: "workspace-fixture",
-          kind: "user",
-          leaseExpiresAt: "2026-08-15T20:05:00.000Z",
         },
         processCensus: {
           state: "complete",

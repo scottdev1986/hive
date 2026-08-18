@@ -55,7 +55,6 @@ final class LiveRunWorkbenchView: NSView {
     private let locatorLabel = NSTextField(labelWithString: "Exact generation · unknown")
     private let scopeValue = NSTextField(labelWithString: "Live Run")
     private let focusValue = NSTextField(labelWithString: "none")
-    private let inputOwnerValue = NSTextField(labelWithString: "unknown")
     private let generationValue = NSTextField(labelWithString: "unknown")
     private let activityBadgeHost = NSView()
     private let attachmentBadgeHost = NSView()
@@ -70,7 +69,6 @@ final class LiveRunWorkbenchView: NSView {
     private let statusValue = NSTextField(labelWithString: "unknown")
     private let shellValue = NSTextField(wrappingLabelWithString: "unknown")
     private let providerRunValue = NSTextField(wrappingLabelWithString: "absent")
-    private let inputValue = NSTextField(wrappingLabelWithString: "unknown")
     private let censusValue = NSTextField(wrappingLabelWithString: "absent")
     private let terminationValue = NSTextField(wrappingLabelWithString: "unknown")
     private let stopButton = ActionButton(title: "Stop Provider", style: .warning)
@@ -426,7 +424,7 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func makeControlStrip() -> NSView {
-        for field in [scopeValue, focusValue, inputOwnerValue, generationValue] {
+        for field in [scopeValue, focusValue, generationValue] {
             field.font = Theme.Font.headline
             field.compressHorizontally(priority: 430, toolTip: field.stringValue)
         }
@@ -434,7 +432,6 @@ final class LiveRunWorkbenchView: NSView {
             pairs: [
                 FactStripView.pair(label: "Viewed scope", value: scopeValue, delimiter: "·"),
                 FactStripView.pair(label: "Keyboard focus", value: focusValue, delimiter: "·"),
-                FactStripView.pair(label: "Input owner", value: inputOwnerValue, delimiter: "·"),
                 FactStripView.pair(label: "Generation", value: generationValue, delimiter: "·"),
             ],
             identifier: "live-run-control-strip")
@@ -512,7 +509,6 @@ final class LiveRunWorkbenchView: NSView {
             ("Agent status", statusValue),
             ("Shell root", shellValue),
             ("ProviderRun", providerRunValue),
-            ("Input owner", inputValue),
             ("Cwd census", censusValue),
             ("Termination proof", terminationValue),
         ] {
@@ -798,7 +794,7 @@ final class LiveRunWorkbenchView: NSView {
             eventsBody.stringValue =
                 "Typed SessionHost events were not projected. "
                 + "Events are never scraped from the terminal."
-            for value in [statusValue, shellValue, providerRunValue, inputValue,
+            for value in [statusValue, shellValue, providerRunValue,
                           censusValue, terminationValue] {
                 value.stringValue = "unknown"
                 value.toolTip = "No strict feed snapshot is selected."
@@ -840,7 +836,6 @@ final class LiveRunWorkbenchView: NSView {
         }
         set(shellValue, fact: session.shellRoot)
         set(providerRunValue, fact: session.providerRun)
-        set(inputValue, fact: session.inputOwner)
         set(censusValue, fact: session.processCensus)
         set(terminationValue, fact: session.termination)
         stopButton.toolTip = session.providerRun.reason
@@ -850,7 +845,7 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func renderControlProjection(_ projection: LiveRunControlProjection) {
-        for value in [shellValue, providerRunValue, inputValue, censusValue, terminationValue] {
+        for value in [shellValue, providerRunValue, censusValue, terminationValue] {
             value.textColor = Theme.primaryText
             value.toolTip = nil
         }
@@ -873,15 +868,6 @@ final class LiveRunWorkbenchView: NSView {
         case .unknown:
             providerRunValue.stringValue = "unknown · \(projection.providerRun.reason!)"
             providerRunValue.textColor = Theme.warning
-        }
-        switch projection.inputOwner.state {
-        case .free:
-            inputValue.stringValue = "free"
-        case .owned:
-            inputValue.stringValue = "\(projection.inputOwner.kind!.rawValue) · \(projection.inputOwner.writer!)"
-        case .unknown:
-            inputValue.stringValue = "unknown · \(projection.inputOwner.reason!)"
-            inputValue.textColor = Theme.warning
         }
         switch projection.processCensus.state {
         case .complete:
@@ -1095,24 +1081,6 @@ final class LiveRunWorkbenchView: NSView {
         scopeValue.textColor = Theme.primaryText
         focusValue.stringValue = session?.name ?? "none"
         focusValue.textColor = session == nil ? Theme.secondaryText : Theme.accent
-        if let projection = controlProjection, let session,
-           projection.agentID == session.id {
-            switch projection.inputOwner.state {
-            case .free:
-                inputOwnerValue.stringValue = "free"
-                inputOwnerValue.textColor = Theme.positive
-            case .owned:
-                inputOwnerValue.stringValue =
-                    "\(projection.inputOwner.kind!.rawValue) · claimed"
-                inputOwnerValue.textColor = Theme.warning
-            case .unknown:
-                inputOwnerValue.stringValue = "unknown"
-                inputOwnerValue.textColor = Theme.secondaryText
-            }
-        } else {
-            inputOwnerValue.stringValue = session.map { _ in "unknown" } ?? "unknown"
-            inputOwnerValue.textColor = Theme.secondaryText
-        }
         if let generation = session?.locator?.generation {
             generationValue.stringValue = "\(generation) · exact"
             generationValue.textColor = Theme.positive

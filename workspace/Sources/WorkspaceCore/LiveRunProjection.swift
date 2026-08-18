@@ -51,7 +51,6 @@ public struct LiveRunSessionSummary: Equatable {
     public let locator: AgentSessionLocator?
     public let locatorFact: LiveRunContractFact?
     public let providerRun: LiveRunContractFact
-    public let inputOwner: LiveRunContractFact
     public let shellRoot: LiveRunContractFact
     public let processCensus: LiveRunContractFact
     public let termination: LiveRunContractFact
@@ -78,8 +77,6 @@ public struct LiveRunSessionSummary: Equatable {
 
         providerRun = .absent(
             reason: "workspace-feed does not project exact ProviderRun identity")
-        inputOwner = .unknown(
-            reason: "workspace-feed does not project the terminal input owner")
         shellRoot = .unknown(
             reason: "workspace-feed does not project retained-shell ancestry")
         processCensus = .absent(
@@ -115,8 +112,6 @@ public struct LiveRunSessionSummary: Equatable {
         }
         providerRun = .absent(
             reason: "workspace-feed does not project exact ProviderRun identity")
-        inputOwner = .unknown(
-            reason: "workspace-feed does not project the terminal input owner")
         shellRoot = .unknown(
             reason: "workspace-feed does not project retained-shell ancestry")
         processCensus = .absent(
@@ -334,53 +329,6 @@ public struct LiveRunShellFact: Codable, Equatable, Sendable {
     }
 }
 
-public struct LiveRunInputOwnerFact: Codable, Equatable, Sendable {
-    public enum State: String, Codable, Sendable {
-        case free
-        case owned
-        case unknown
-    }
-
-    public enum Kind: String, Codable, Sendable {
-        case user
-        case automation
-    }
-
-    public let state: State
-    public let writer: String?
-    public let kind: Kind?
-    public let leaseExpiresAt: String?
-    public let reason: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case state, writer, kind, leaseExpiresAt, reason
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        state = try container.decode(State.self, forKey: .state)
-        writer = try container.decodeIfPresent(String.self, forKey: .writer)
-        kind = try container.decodeIfPresent(Kind.self, forKey: .kind)
-        leaseExpiresAt = try container.decodeIfPresent(String.self, forKey: .leaseExpiresAt)
-        reason = try container.decodeIfPresent(String.self, forKey: .reason)
-        let valid = switch state {
-        case .free:
-            writer == nil && kind == nil && leaseExpiresAt == nil && reason == nil
-        case .owned:
-            writer?.isEmpty == false && kind != nil
-                && leaseExpiresAt?.isEmpty == false && reason == nil
-        case .unknown:
-            writer == nil && kind == nil && leaseExpiresAt == nil
-                && reason?.isEmpty == false
-        }
-        guard valid else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .state, in: container,
-                debugDescription: "invalid input-owner fact for state \(state.rawValue)")
-        }
-    }
-}
-
 public struct LiveRunProcessCensusFact: Codable, Equatable, Sendable {
     public enum State: String, Codable, Sendable {
         case complete
@@ -506,7 +454,6 @@ public struct LiveRunControlProjection: Codable, Equatable, Sendable {
     public let locator: AgentSessionLocator
     public let providerRun: LiveRunProviderRunFact
     public let shell: LiveRunShellFact
-    public let inputOwner: LiveRunInputOwnerFact
     public let processCensus: LiveRunProcessCensusFact
     public let termination: LiveRunTerminationFact
     public let controls: LiveRunControlSet
@@ -514,7 +461,7 @@ public struct LiveRunControlProjection: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, observedAt
         case agentID = "agentId"
-        case agentName, provider, locator, providerRun, shell, inputOwner
+        case agentName, provider, locator, providerRun, shell
         case processCensus, termination, controls
     }
 
@@ -528,7 +475,6 @@ public struct LiveRunControlProjection: Codable, Equatable, Sendable {
         locator = try container.decode(AgentSessionLocator.self, forKey: .locator)
         providerRun = try container.decode(LiveRunProviderRunFact.self, forKey: .providerRun)
         shell = try container.decode(LiveRunShellFact.self, forKey: .shell)
-        inputOwner = try container.decode(LiveRunInputOwnerFact.self, forKey: .inputOwner)
         processCensus = try container.decode(
             LiveRunProcessCensusFact.self, forKey: .processCensus)
         termination = try container.decode(LiveRunTerminationFact.self, forKey: .termination)
