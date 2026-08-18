@@ -1,4 +1,7 @@
-// ShellAttentionDrawerView.swift The right-side Attention drawer. It renders the shell's AttentionQueue in its own order — severity, then age — and it is honest when empty: an acknowledged queue is a visible state, not a vanished panel. Focusing an item never acknowledges it; acknowledgement is only the typed command.
+// ShellAttentionDrawerView.swift
+//
+// Renders the shell's AttentionQueue in severity-then-age order. Empty is a
+// visible state, and focusing an item never acknowledges it.
 
 import AppKit
 import WorkspaceCore
@@ -13,15 +16,16 @@ final class ShellAttentionDrawerView: NSView {
         self.onClose = onClose
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        Theme.paint(self, Theme.cardFill)
 
         let root = NSStackView()
         root.translatesAutoresizingMaskIntoConstraints = false
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = Theme.Space.m
+        root.spacing = Theme.Space.s
         root.edgeInsets = NSEdgeInsets(
-            top: Theme.Space.l, left: Theme.Space.l,
-            bottom: Theme.Space.l, right: Theme.Space.l)
+            top: Theme.Metric.cardInset, left: Theme.Metric.cardInset,
+            bottom: Theme.Metric.cardInset, right: Theme.Metric.cardInset)
         addSubview(root)
         NSLayoutConstraint.activate([
             root.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -36,17 +40,14 @@ final class ShellAttentionDrawerView: NSView {
         heading.spacing = 2
         let micro = NSTextField(labelWithString: "SEVERITY, THEN AGE")
         micro.font = Theme.Font.sectionLabel
-        micro.textColor = .tertiaryLabelColor
+        micro.textColor = Theme.tertiaryText
         let title = NSTextField(labelWithString: "Attention")
         title.font = Theme.Font.title
+        title.textColor = Theme.primaryText
         heading.addArrangedSubview(micro)
         heading.addArrangedSubview(title)
 
-        let close = NSButton(title: "×", target: nil, action: nil)
-        close.bezelStyle = .rounded
-        close.showsBorderOnlyWhileMouseInside = true
-        close.isBordered = false
-        close.font = Theme.Font.title
+        let close = ActionButton(title: "", symbol: "xmark", style: .neutral)
         close.setAccessibilityLabel("Close attention drawer")
         close.setAccessibilityIdentifier("shell-attention-close")
         close.setAccessibilityRole(.button)
@@ -62,7 +63,7 @@ final class ShellAttentionDrawerView: NSView {
         root.addArrangedSubview(header)
         close.trailingAnchor.constraint(equalTo: header.trailingAnchor).isActive = true
         header.widthAnchor.constraint(
-            equalTo: root.widthAnchor, constant: -Theme.Space.l * 2
+            equalTo: root.widthAnchor, constant: -Theme.Metric.cardInset * 2
         ).isActive = true
 
         root.addArrangedSubview(NSBox.hdsSeparator())
@@ -80,14 +81,30 @@ final class ShellAttentionDrawerView: NSView {
                 "No attention items. The queue stays visible after every item "
                 + "is explicitly cleared — empty is a real state, not a hidden one.")
             empty.font = Theme.Font.callout
-            empty.textColor = .secondaryLabelColor
+            empty.textColor = Theme.secondaryText
             empty.setAccessibilityIdentifier("shell-attention-empty")
-            itemsStack.addArrangedSubview(empty)
+            let panel = InsetPanelView()
+            panel.contentStack.addArrangedSubview(empty)
+            panel.contentStack.alignment = .leading
+            panel.contentStack.spacing = Theme.Space.s
+            itemsStack.addArrangedSubview(panel)
+            panel.widthAnchor.constraint(equalTo: itemsStack.widthAnchor).isActive = true
         } else {
             for item in ordered {
-                itemsStack.addArrangedSubview(Self.row(for: item))
+                let row = Self.row(for: item)
+                itemsStack.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: itemsStack.widthAnchor).isActive = true
             }
         }
+
+        let note = NSTextField(wrappingLabelWithString:
+            "Focusing never acknowledges. Items leave Attention only after their typed resolution.")
+        note.font = Theme.Font.callout
+        note.textColor = Theme.secondaryText
+        let notePanel = InsetPanelView()
+        notePanel.contentStack.addArrangedSubview(note)
+        itemsStack.addArrangedSubview(notePanel)
+        notePanel.widthAnchor.constraint(equalTo: itemsStack.widthAnchor).isActive = true
 
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
@@ -104,15 +121,21 @@ final class ShellAttentionDrawerView: NSView {
         symbol.image = NSImage(
             systemSymbolName: Theme.severitySymbol(for: item.severity),
             accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
+            .withSymbolConfiguration(.init(
+                pointSize: Theme.Metric.chainMarkSize, weight: .semibold))
         symbol.contentTintColor = Theme.severityColor(for: item.severity)
+        symbol.widthAnchor.constraint(
+            equalToConstant: Theme.Metric.chainMarkSize).isActive = true
+        symbol.heightAnchor.constraint(
+            equalToConstant: Theme.Metric.chainMarkSize).isActive = true
 
         let title = NSTextField(labelWithString: item.title)
         title.font = Theme.Font.headline
+        title.textColor = Theme.primaryText
         title.compressHorizontally(priority: 470, toolTip: item.title)
         let detail = NSTextField(wrappingLabelWithString: item.detail)
         detail.font = Theme.Font.callout
-        detail.textColor = .secondaryLabelColor
+        detail.textColor = Theme.secondaryText
         let text = NSStackView(views: [title, detail])
         text.orientation = .vertical
         text.alignment = .leading
@@ -122,10 +145,13 @@ final class ShellAttentionDrawerView: NSView {
         row.orientation = .horizontal
         row.alignment = .top
         row.spacing = Theme.Space.s
-        row.setAccessibilityElement(true)
-        row.setAccessibilityRole(.group)
-        row.setAccessibilityIdentifier("shell-attention-row")
-        row.setAccessibilityLabel("\(item.title). \(item.detail)")
-        return row
+        let card = CardView()
+        card.contentStack.addArrangedSubview(row)
+        card.pinToContentWidth(row)
+        card.setAccessibilityElement(true)
+        card.setAccessibilityRole(.group)
+        card.setAccessibilityIdentifier("shell-attention-row")
+        card.setAccessibilityLabel("\(item.title). \(item.detail)")
+        return card
     }
 }

@@ -44,8 +44,9 @@ final class LiveRunWorkbenchView: NSView {
     private let confirmControl: ConfirmControl
     private let railHost = NSView()
     private let railStack = NSStackView()
+    private let hierarchyHeading = NSTextField(labelWithString: "Run hierarchy")
     private let hierarchyCountLabel = NSTextField(labelWithString: "typed status · one live viewer")
-    private let budgetLabel = NSTextField(labelWithString: "Run budget · waiting for sessions")
+    private let budgetLabel = NSTextField(labelWithString: "Run budget · not projected")
     private let terminalHost = NSView()
     private let terminalPlaceholder = NSTextField(wrappingLabelWithString: "")
     private let errorLabel = NSTextField(wrappingLabelWithString: "")
@@ -56,9 +57,8 @@ final class LiveRunWorkbenchView: NSView {
     private let focusValue = NSTextField(labelWithString: "none")
     private let inputOwnerValue = NSTextField(labelWithString: "unknown")
     private let generationValue = NSTextField(labelWithString: "unknown")
-    private let snapshotButton = NSButton(title: "Snapshot", target: nil, action: nil)
-    private let releaseInputButton = NSButton(title: "Release Input", target: nil, action: nil)
-    private let attachButton = NSButton(title: "Attached live", target: nil, action: nil)
+    private let activityBadgeHost = NSView()
+    private let attachmentBadgeHost = NSView()
     private let liveChip = CapsuleBadge(
         text: "AGENT UI", symbol: "text.bubble", style: .info)
     private let providerHost = NSView()
@@ -73,8 +73,8 @@ final class LiveRunWorkbenchView: NSView {
     private let inputValue = NSTextField(wrappingLabelWithString: "unknown")
     private let censusValue = NSTextField(wrappingLabelWithString: "absent")
     private let terminationValue = NSTextField(wrappingLabelWithString: "unknown")
-    private let stopButton = NSButton(title: "Stop Provider", target: nil, action: nil)
-    private let terminateButton = NSButton(title: "Terminate Terminal", target: nil, action: nil)
+    private let stopButton = ActionButton(title: "Stop Provider", style: .warning)
+    private let terminateButton = ActionButton(title: "Terminate Terminal", style: .destructive)
     private let taskPane = NSView()
     private let eventsPane = NSView()
     private let sessionPane = NSView()
@@ -137,9 +137,13 @@ final class LiveRunWorkbenchView: NSView {
         errorLabel.isHidden = true
         sessions = projection.sessions
         if !sessions.contains(where: { $0.id == selectedID }) {
-            selectedID = sessions.first(where: { $0.isQueen && $0.locator != nil })?.id
-                ?? sessions.first(where: { $0.locator != nil })?.id
-                ?? sessions.first?.id
+            if let selectedNode = horizon?.selectedNode {
+                selectedID = matchingSession(for: selectedNode)?.id
+            } else {
+                selectedID = sessions.first(where: { $0.isQueen && $0.locator != nil })?.id
+                    ?? sessions.first(where: { $0.locator != nil })?.id
+                    ?? sessions.first?.id
+            }
         }
         if sessions != priorSessions || selectedID != priorSelection {
             rebuildRail()
@@ -189,6 +193,7 @@ final class LiveRunWorkbenchView: NSView {
         terminalPlaceholder.isHidden = false
         controlProjection = nil
         updateControlStrip(nil)
+        updateCenterBadges(nil)
         updateInspector(nil)
     }
 
@@ -208,9 +213,11 @@ final class LiveRunWorkbenchView: NSView {
     func showControlUnavailable(_ reason: String) {
         controlProjection = nil
         guard let session = sessions.first(where: { $0.id == selectedID }) else {
+            updateControlStrip(nil)
             updateInspector(nil)
             return
         }
+        updateControlStrip(session)
         updateInspector(session)
         stopButton.toolTip = reason
         terminateButton.toolTip = reason
@@ -229,6 +236,7 @@ final class LiveRunWorkbenchView: NSView {
         } else {
             detachTerminal()
             publishVisibleSessionIfChanged(nil)
+            updateCenterBadges(sessions.first(where: { $0.id == selectedID }))
         }
     }
 
@@ -241,7 +249,7 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func buildLayout() {
-        Theme.paint(self, Theme.Chrome.bg)
+        Theme.paint(self, Theme.workspaceBackground)
 
         let rail = makeRail()
         let center = makeCenter()
@@ -264,9 +272,13 @@ final class LiveRunWorkbenchView: NSView {
             layout.trailingAnchor.constraint(equalTo: trailingAnchor),
             layout.topAnchor.constraint(equalTo: topAnchor),
             layout.bottomAnchor.constraint(equalTo: bottomAnchor),
-            rail.widthAnchor.constraint(equalToConstant: 248),
-            inspector.widthAnchor.constraint(equalToConstant: 268),
-            center.widthAnchor.constraint(greaterThanOrEqualToConstant: 360),
+            rail.widthAnchor.constraint(
+                equalToConstant: Theme.Metric.sidebarWidth + Theme.Space.l * 2),
+            inspector.widthAnchor.constraint(
+                equalToConstant: Theme.Metric.sidebarWidth + Theme.Space.xl * 5),
+            center.widthAnchor.constraint(
+                greaterThanOrEqualToConstant:
+                    Theme.Metric.minContentWidth + Theme.Space.xl),
             rail.heightAnchor.constraint(equalTo: layout.heightAnchor),
             center.heightAnchor.constraint(equalTo: layout.heightAnchor),
             inspector.heightAnchor.constraint(equalTo: layout.heightAnchor),
@@ -276,14 +288,14 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func makeRail() -> NSView {
-        let heading = sectionLabel("Run hierarchy")
-        heading.textColor = Theme.Chrome.muted
+        hierarchyHeading.font = Theme.Font.sectionLabel
+        hierarchyHeading.textColor = Theme.secondaryText
         hierarchyCountLabel.font = Theme.Font.caption
-        hierarchyCountLabel.textColor = Theme.Chrome.faint
+        hierarchyCountLabel.textColor = Theme.tertiaryText
         hierarchyCountLabel.compressHorizontally(
             priority: 430, toolTip: hierarchyCountLabel.stringValue)
         budgetLabel.font = Theme.Font.monoCaption
-        budgetLabel.textColor = Theme.Chrome.muted
+        budgetLabel.textColor = Theme.secondaryText
         budgetLabel.maximumNumberOfLines = 2
         budgetLabel.lineBreakMode = .byWordWrapping
         budgetLabel.compressHorizontally(priority: 430, toolTip: budgetLabel.stringValue)
@@ -309,7 +321,7 @@ final class LiveRunWorkbenchView: NSView {
             scroll.bottomAnchor.constraint(equalTo: railHost.bottomAnchor),
         ])
 
-        let header = NSStackView(views: [heading, hierarchyCountLabel])
+        let header = NSStackView(views: [hierarchyHeading, hierarchyCountLabel])
         header.orientation = .vertical
         header.alignment = .leading
         header.spacing = 2
@@ -325,7 +337,7 @@ final class LiveRunWorkbenchView: NSView {
         container.edgeInsets = NSEdgeInsets(
             top: Theme.Space.l, left: Theme.Space.m,
             bottom: Theme.Space.l, right: Theme.Space.m)
-        Theme.paint(container, Theme.Chrome.panel)
+        Theme.paint(container, Theme.sidebarFill)
         railHost.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         header.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         budget.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
@@ -336,55 +348,48 @@ final class LiveRunWorkbenchView: NSView {
 
     private func makeCenter() -> NSView {
         titleLabel.font = Theme.Font.title
-        titleLabel.textColor = Theme.Chrome.text
+        titleLabel.textColor = Theme.primaryText
         titleLabel.compressHorizontally(toolTip: titleLabel.stringValue)
         subtitleLabel.font = Theme.Font.caption
-        subtitleLabel.textColor = Theme.Chrome.muted
+        subtitleLabel.textColor = Theme.secondaryText
         subtitleLabel.compressHorizontally()
-        let identity = NSStackView(views: [titleLabel, subtitleLabel])
+        activityBadgeHost.translatesAutoresizingMaskIntoConstraints = false
+        let titleRow = NSStackView(views: [titleLabel, activityBadgeHost])
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = Theme.Space.s
+        let identity = NSStackView(views: [titleRow, subtitleLabel])
         identity.orientation = .vertical
         identity.alignment = .leading
         identity.spacing = 2
 
-        configureAction(snapshotButton, identifier: "live-run-snapshot")
-        snapshotButton.toolTip = "Bounded semantic snapshot is not offered on this surface yet."
-        snapshotButton.isEnabled = false
-        configureAction(releaseInputButton, identifier: "live-run-release-input")
-        releaseInputButton.toolTip = "workspace-feed does not project the terminal input owner"
-        releaseInputButton.isEnabled = false
-        configureAction(attachButton, identifier: "live-run-attach", primary: true)
-        let actions = NSStackView(views: [snapshotButton, releaseInputButton, attachButton])
-        actions.orientation = .horizontal
-        actions.spacing = Theme.Space.s
-        actions.alignment = .centerY
+        attachmentBadgeHost.translatesAutoresizingMaskIntoConstraints = false
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let header = NSStackView(views: [identity, spacer, actions])
+        let header = NSStackView(views: [identity, spacer, attachmentBadgeHost])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = Theme.Space.s
 
         locatorLabel.font = Theme.Font.monoCaption
-        locatorLabel.textColor = Theme.Chrome.muted
+        locatorLabel.textColor = Theme.secondaryText
         locatorLabel.compressHorizontally(priority: 450)
 
         errorLabel.font = Theme.Font.caption
-        errorLabel.textColor = .systemOrange
+        errorLabel.textColor = Theme.warning
         errorLabel.maximumNumberOfLines = 0
 
         terminalHost.translatesAutoresizingMaskIntoConstraints = false
         terminalHost.wantsLayer = true
-        terminalHost.layer?.backgroundColor = NSColor.black.cgColor
-        terminalHost.layer?.cornerRadius = Theme.Metric.insetCornerRadius
-        terminalHost.layer?.masksToBounds = true
+        terminalHost.layer?.backgroundColor = Theme.workspaceBackground.cgColor
         terminalHost.setContentHuggingPriority(.init(1), for: .vertical)
         terminalHost.setContentCompressionResistancePriority(.init(1), for: .vertical)
         terminalHost.setAccessibilityIdentifier("live-run-terminal-host")
 
         terminalPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         terminalPlaceholder.font = Theme.Font.monoBody
-        terminalPlaceholder.textColor = .secondaryLabelColor
+        terminalPlaceholder.textColor = Theme.secondaryText
         terminalPlaceholder.alignment = .center
         terminalPlaceholder.maximumNumberOfLines = 0
         terminalPlaceholder.setAccessibilityIdentifier("live-run-terminal-placeholder")
@@ -414,6 +419,7 @@ final class LiveRunWorkbenchView: NSView {
         container.edgeInsets = NSEdgeInsets(
             top: Theme.Space.m, left: Theme.Space.m,
             bottom: Theme.Space.m, right: Theme.Space.m)
+        Theme.paint(container, Theme.workspaceBackground)
         container.setContentHuggingPriority(.init(1), for: .vertical)
         for view in container.arrangedSubviews {
             view.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
@@ -442,30 +448,39 @@ final class LiveRunWorkbenchView: NSView {
         strip.distribution = .fill
         strip.spacing = 0
         strip.alignment = .centerY
-        strip.wantsLayer = true
-        strip.layer?.backgroundColor = Theme.Chrome.panel2.cgColor
-        strip.layer?.borderColor = Theme.Chrome.line.cgColor
-        strip.layer?.borderWidth = 1
-        strip.layer?.cornerRadius = Theme.Metric.insetCornerRadius
-        strip.setAccessibilityIdentifier("live-run-control-strip")
+        Theme.paint(strip, Theme.sidebarContextFill)
+        strip.heightAnchor.constraint(
+            greaterThanOrEqualToConstant:
+                Theme.Metric.chromeControlHeight + Theme.Space.m).isActive = true
         for cell in cells {
             cell.widthAnchor.constraint(greaterThanOrEqualTo: strip.widthAnchor, multiplier: 0.22)
                 .isActive = true
         }
-        return strip
+        let separator = NSBox.hdsSeparator()
+        let container = NSStackView(views: [strip, separator])
+        container.orientation = .vertical
+        container.spacing = 0
+        container.alignment = .leading
+        strip.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        separator.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        container.setAccessibilityIdentifier("live-run-control-strip")
+        return container
     }
 
     private func controlCell(caption: String, value: NSTextField) -> NSView {
         let label = NSTextField(labelWithString: caption)
         label.font = Theme.Font.sectionLabel
-        label.textColor = Theme.Chrome.faint
+        label.textColor = Theme.secondaryText
         value.font = Theme.Font.headline
-        value.textColor = Theme.Chrome.text
+        value.textColor = Theme.primaryText
         value.compressHorizontally(priority: 430, toolTip: value.stringValue)
-        let stack = NSStackView(views: [label, value])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        value.alignment = .right
+        let stack = NSStackView(views: [label, spacer, value])
+        stack.orientation = .horizontal
+        stack.alignment = .firstBaseline
+        stack.spacing = Theme.Space.s
         stack.edgeInsets = NSEdgeInsets(
             top: Theme.Space.s, left: Theme.Space.m,
             bottom: Theme.Space.s, right: Theme.Space.m)
@@ -477,10 +492,10 @@ final class LiveRunWorkbenchView: NSView {
         providerHost.heightAnchor.constraint(equalToConstant: Theme.Metric.markSize).isActive = true
         providerHost.widthAnchor.constraint(equalToConstant: Theme.Metric.markSize).isActive = true
         inspectorName.font = Theme.Font.title
-        inspectorName.textColor = Theme.Chrome.text
+        inspectorName.textColor = Theme.primaryText
         inspectorName.compressHorizontally()
         inspectorModel.font = Theme.Font.monoCaption
-        inspectorModel.textColor = Theme.Chrome.muted
+        inspectorModel.textColor = Theme.secondaryText
         inspectorModel.compressHorizontally()
         let identity = NSStackView(views: [providerHost, inspectorName])
         identity.orientation = .horizontal
@@ -493,13 +508,15 @@ final class LiveRunWorkbenchView: NSView {
         tabs.distribution = .fillEqually
         for tab in ShellInspectorTab.allCases {
             let button = NSButton(title: tab.title, target: nil, action: nil)
-            Theme.styleMockupButton(button, primary: tab == inspectorTab)
+            configureInspectorTab(button, selected: tab == inspectorTab)
             button.setButtonType(.momentaryPushIn)
             button.setAccessibilityIdentifier("live-run-inspector-tab-\(tab.rawValue)")
             button.setAccessibilityLabel("\(tab.title) inspector tab")
             button.setAccessibilityRole(.button)
             button.target = self
             button.action = #selector(inspectorTabClicked(_:))
+            button.heightAnchor.constraint(
+                greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight).isActive = true
             inspectorTabButtons[tab] = button
             tabs.addArrangedSubview(button)
         }
@@ -509,20 +526,20 @@ final class LiveRunWorkbenchView: NSView {
             views: [
                 microLabel("TaskDetail"),
                 styled(taskTitle, font: Theme.Font.headline),
-                styled(taskBody, font: Theme.Font.callout, color: .secondaryLabelColor),
+                styled(taskBody, font: Theme.Font.callout, color: Theme.secondaryText),
             ])
         fillPane(
             eventsPane,
             views: [
                 microLabel("Typed history"),
-                styled(eventsBody, font: Theme.Font.callout, color: .secondaryLabelColor),
+                styled(eventsBody, font: Theme.Font.callout, color: Theme.secondaryText),
             ])
 
         let sessionStack = NSStackView()
         sessionStack.translatesAutoresizingMaskIntoConstraints = false
         sessionStack.orientation = .vertical
         sessionStack.alignment = .leading
-        sessionStack.spacing = Theme.Space.m
+        sessionStack.spacing = Theme.Space.s
         sessionStack.addArrangedSubview(identity)
         sessionStack.addArrangedSubview(inspectorModel)
         sessionStack.addArrangedSubview(NSBox.hdsSeparator())
@@ -537,13 +554,11 @@ final class LiveRunWorkbenchView: NSView {
             sessionStack.addArrangedSubview(fact(label, value: value))
         }
         sessionStack.addArrangedSubview(NSBox.hdsSeparator())
-        Theme.styleMockupButton(stopButton)
         stopButton.target = self
         stopButton.action = #selector(stopProvider)
         stopButton.isEnabled = false
         stopButton.isHidden = true
         stopButton.setAccessibilityIdentifier("live-run-stop-provider")
-        Theme.styleMockupButton(terminateButton, primary: false)
         terminateButton.target = self
         terminateButton.action = #selector(terminateTerminal)
         terminateButton.isEnabled = false
@@ -565,11 +580,10 @@ final class LiveRunWorkbenchView: NSView {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Space.m
-        Theme.paint(stack, Theme.Chrome.panel)
+        Theme.paint(stack, Theme.cardFill)
         stack.edgeInsets = NSEdgeInsets(
             top: Theme.Space.l, left: Theme.Space.m,
             bottom: Theme.Space.l, right: Theme.Space.m)
-        Theme.paint(stack, Theme.Chrome.panel)
         inspectorBodyStack.orientation = .vertical
         inspectorBodyStack.alignment = .leading
         inspectorBodyStack.spacing = Theme.Space.m
@@ -595,17 +609,33 @@ final class LiveRunWorkbenchView: NSView {
         }
 
         if let horizon {
-            hierarchyCountLabel.stringValue =
-                "\(sessions.count) live · \(horizon.visibleRows.count) visible / \(horizon.snapshot.nodes.count) admitted"
+            if let run = horizon.snapshot.runs.first {
+                if case .present(let shape) = run.topologyShape {
+                    hierarchyHeading.stringValue = "Run hierarchy · "
+                        + shape.rawValue.replacingOccurrences(of: "-", with: " ")
+                } else {
+                    hierarchyHeading.stringValue = "Run hierarchy"
+                }
+                let topologyRevision = UInt64(run.entityRevision) == nil
+                    ? run.entityRevision
+                    : "r\(run.entityRevision)"
+                hierarchyCountLabel.stringValue =
+                    "\(sessions.count) live · \(horizon.visibleRows.count) visible / "
+                    + "\(horizon.snapshot.nodes.count) admitted · topology \(topologyRevision)"
+            } else {
+                hierarchyHeading.stringValue = "Run hierarchy"
+                hierarchyCountLabel.stringValue =
+                    "\(sessions.count) live · \(horizon.visibleRows.count) visible / "
+                    + "\(horizon.snapshot.nodes.count) admitted"
+            }
             budgetLabel.stringValue = Self.budgetSummary(horizon)
         } else {
+            hierarchyHeading.stringValue = "Run hierarchy"
             hierarchyCountLabel.stringValue =
                 sessions.isEmpty
                 ? "typed status · one live viewer"
-                : "\(sessions.count) visible / \(sessions.count) admitted"
-            budgetLabel.stringValue = sessions.isEmpty
-                ? "Run budget · waiting for sessions"
-                : "Run budget · \(sessions.count) / \(sessions.count) sessions"
+                : "\(sessions.count) live · hierarchy not projected"
+            budgetLabel.stringValue = "Run budget · not projected"
         }
 
         let scroll = NSScrollView()
@@ -623,21 +653,67 @@ final class LiveRunWorkbenchView: NSView {
             scroll.bottomAnchor.constraint(equalTo: railHost.bottomAnchor),
         ])
 
-        guard !sessions.isEmpty else {
-            let empty = NSTextField(wrappingLabelWithString: "No live agents were projected.")
+        guard !sessions.isEmpty || horizon?.visibleRows.isEmpty == false else {
+            let empty = NSTextField(wrappingLabelWithString:
+                horizon == nil
+                    ? "No live agents or run hierarchy were projected."
+                    : "The run hierarchy has no visible rows.")
             empty.font = Theme.Font.caption
-            empty.textColor = .secondaryLabelColor
+            empty.textColor = Theme.secondaryText
             railStack.addArrangedSubview(empty)
             empty.widthAnchor.constraint(equalTo: railStack.widthAnchor).isActive = true
             return
         }
-        for session in sessions {
+
+        var renderedSessionIDs = Set<String>()
+        if let queen = sessions.first(where: \.isQueen) {
+            let button = LiveRunSessionButton(
+                session: queen,
+                hierarchyRow: nil,
+                selected: queen.id == selectedID,
+                depth: 0,
+                role: roleLine(for: queen),
+                onSelect: { [weak self] in self?.selectSession(id: queen.id) },
+                onToggle: nil)
+            railStack.addArrangedSubview(button)
+            button.widthAnchor.constraint(equalTo: railStack.widthAnchor).isActive = true
+            renderedSessionIDs.insert(queen.id)
+        }
+        if let horizon {
+            for node in horizon.snapshot.nodes {
+                if let session = matchingSession(for: node) {
+                    renderedSessionIDs.insert(session.id)
+                }
+            }
+            for row in horizon.visibleRows {
+                let session = matchingSession(for: row.node)
+                let button = LiveRunSessionButton(
+                    session: session,
+                    hierarchyRow: row,
+                    selected: session.map { $0.id == selectedID }
+                        ?? (horizon.navigation.selectedNodeId == row.node.nodeId),
+                    depth: row.depth,
+                    role: session.map { roleLine(for: $0) },
+                    expanded: horizon.navigation.expandedNodeIds.contains(row.node.nodeId),
+                    onSelect: { [weak self] in
+                        self?.selectHierarchyNode(row.node.nodeId)
+                    },
+                    onToggle: row.hasChildren ? { [weak self] in
+                        self?.onHorizonToggle?(row.node.nodeId)
+                    } : nil)
+                railStack.addArrangedSubview(button)
+                button.widthAnchor.constraint(equalTo: railStack.widthAnchor).isActive = true
+            }
+        }
+        for session in sessions where !renderedSessionIDs.contains(session.id) {
             let button = LiveRunSessionButton(
                 session: session,
+                hierarchyRow: nil,
                 selected: session.id == selectedID,
-                depth: matchingRow(for: session)?.depth ?? (session.isQueen ? 0 : 1),
+                depth: session.isQueen ? 0 : 1,
                 role: roleLine(for: session),
-                onSelect: { [weak self] in self?.selectSession(id: session.id) })
+                onSelect: { [weak self] in self?.selectSession(id: session.id) },
+                onToggle: nil)
             railStack.addArrangedSubview(button)
             button.widthAnchor.constraint(equalTo: railStack.widthAnchor).isActive = true
         }
@@ -653,6 +729,7 @@ final class LiveRunWorkbenchView: NSView {
             terminalPlaceholder.stringValue = "Select an agent with an exact session locator."
             terminalPlaceholder.isHidden = false
             updateControlStrip(nil)
+            updateCenterBadges(nil)
             updateInspector(nil)
             publishVisibleSessionIfChanged(nil)
             return
@@ -665,9 +742,13 @@ final class LiveRunWorkbenchView: NSView {
         }
 
         titleLabel.stringValue = session.isQueen ? "queen" : session.name
+        let selectionDetail = session.isQueen
+            ? session.rawStatus
+            : (session.task ?? session.rawStatus)
         subtitleLabel.stringValue =
-            "\(agentUiLine(for: session)) · \(session.task ?? session.rawStatus)"
+            "\(agentUiLine(for: session)) · \(selectionDetail)"
         updateControlStrip(session)
+        updateCenterBadges(session)
         updateInspector(session)
         guard routeVisible else { return }
         guard let locator = session.locator else {
@@ -677,11 +758,13 @@ final class LiveRunWorkbenchView: NSView {
                 ?? "No exact terminal locator was projected."
             terminalPlaceholder.isHidden = false
             publishVisibleSessionIfChanged(nil)
+            updateCenterBadges(session)
             return
         }
         locatorLabel.stringValue = "\(locator.sessionId) · generation \(locator.generation) exact"
         if terminal?.locator == locator {
             publishVisibleSessionIfChanged(session)
+            updateCenterBadges(session)
             return
         }
 
@@ -690,6 +773,7 @@ final class LiveRunWorkbenchView: NSView {
             terminalPlaceholder.stringValue = "Terminal transport is absent in this launch."
             terminalPlaceholder.isHidden = false
             publishVisibleSessionIfChanged(nil)
+            updateCenterBadges(session)
             return
         }
         let fresh = terminalFactory(session)
@@ -708,6 +792,7 @@ final class LiveRunWorkbenchView: NSView {
             terminalPlaceholder.isHidden = true
             fresh.start()
             publishVisibleSessionIfChanged(session)
+            updateCenterBadges(session)
         } catch {
             fresh.detach()
             let message = "Terminal renderer unavailable: \(error.localizedDescription). The terminal is waiting and will appear automatically."
@@ -715,6 +800,7 @@ final class LiveRunWorkbenchView: NSView {
             terminalPlaceholder.stringValue = message
             terminalPlaceholder.isHidden = false
             publishVisibleSessionIfChanged(nil)
+            updateCenterBadges(session)
         }
     }
 
@@ -756,7 +842,8 @@ final class LiveRunWorkbenchView: NSView {
             terminateButton.toolTip = "Terminal termination contract absent."
             return
         }
-        let mark = ProviderMarkView(provider: session.provider)
+        let provider = session.isQueen ? (queenProvider ?? session.provider) : session.provider
+        let mark = ProviderMarkView(provider: provider)
         providerHost.addSubview(mark)
         NSLayoutConstraint.activate([
             mark.centerXAnchor.constraint(equalTo: providerHost.centerXAnchor),
@@ -765,7 +852,7 @@ final class LiveRunWorkbenchView: NSView {
         inspectorName.stringValue = session.name
         inspectorModel.stringValue = session.model ?? "model unknown"
         statusValue.stringValue = session.rawStatus
-        if let task = session.task, !task.isEmpty {
+        if !session.isQueen, let task = session.task, !task.isEmpty {
             taskTitle.stringValue = task
             taskBody.stringValue =
                 "Acceptance is workflow state, never inferred from terminal output. "
@@ -798,6 +885,10 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func renderControlProjection(_ projection: LiveRunControlProjection) {
+        for value in [shellValue, providerRunValue, inputValue, censusValue, terminationValue] {
+            value.textColor = Theme.primaryText
+            value.toolTip = nil
+        }
         switch projection.shell.state {
         case .retained:
             let root = projection.shell.root!
@@ -806,6 +897,7 @@ final class LiveRunWorkbenchView: NSView {
             shellValue.stringValue = "terminated"
         case .unknown:
             shellValue.stringValue = "unknown · \(projection.shell.reason!)"
+            shellValue.textColor = Theme.warning
         }
         switch projection.providerRun.state {
         case .running:
@@ -815,6 +907,7 @@ final class LiveRunWorkbenchView: NSView {
             providerRunValue.stringValue = "absent"
         case .unknown:
             providerRunValue.stringValue = "unknown · \(projection.providerRun.reason!)"
+            providerRunValue.textColor = Theme.warning
         }
         switch projection.inputOwner.state {
         case .free:
@@ -823,6 +916,7 @@ final class LiveRunWorkbenchView: NSView {
             inputValue.stringValue = "\(projection.inputOwner.kind!.rawValue) · \(projection.inputOwner.writer!)"
         case .unknown:
             inputValue.stringValue = "unknown · \(projection.inputOwner.reason!)"
+            inputValue.textColor = Theme.warning
         }
         switch projection.processCensus.state {
         case .complete:
@@ -831,6 +925,7 @@ final class LiveRunWorkbenchView: NSView {
             censusValue.stringValue = "terminated · no survivors"
         case .unknown:
             censusValue.stringValue = "unknown · \(projection.processCensus.reason!)"
+            censusValue.textColor = Theme.warning
         }
         switch projection.termination.state {
         case .notRequested:
@@ -839,8 +934,10 @@ final class LiveRunWorkbenchView: NSView {
             terminationValue.stringValue = "terminated · \(projection.termination.completedAt!)"
         case .survivors:
             terminationValue.stringValue = "\(projection.termination.survivors.count) verified survivors"
+            terminationValue.textColor = Theme.warning
         case .unknown:
             terminationValue.stringValue = "unknown · \(projection.termination.reason!)"
+            terminationValue.textColor = Theme.warning
         }
         apply(
             projection.controls.stopProvider,
@@ -926,43 +1023,37 @@ final class LiveRunWorkbenchView: NSView {
     private func set(_ label: NSTextField, fact: LiveRunContractFact) {
         label.stringValue = "\(fact.label) · \(fact.reason)"
         label.toolTip = fact.reason
-        label.textColor = fact.label == "unknown" ? .systemOrange : .secondaryLabelColor
+        label.textColor = fact.label == "unknown" ? Theme.warning : Theme.secondaryText
     }
 
     private func fact(_ title: String, value: NSTextField) -> NSView {
         let label = NSTextField(labelWithString: title)
         label.font = Theme.Font.caption
-        label.textColor = Theme.Chrome.muted
+        label.textColor = Theme.secondaryText
         value.font = Theme.Font.monoCaption
-        value.textColor = Theme.Chrome.text
+        value.textColor = Theme.primaryText
         value.maximumNumberOfLines = 0
         value.compressHorizontally(priority: 450)
         let stack = NSStackView(views: [label, value])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
+        stack.orientation = .horizontal
+        stack.alignment = .firstBaseline
+        stack.spacing = Theme.Space.s
+        label.widthAnchor.constraint(equalToConstant: Theme.Space.page * 3).isActive = true
+        value.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return stack
-    }
-
-    private func sectionLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = Theme.Font.sectionLabel
-        label.textColor = Theme.Chrome.faint
-        label.alphaValue = 0.9
-        return label
     }
 
     private func microLabel(_ text: String) -> NSTextField {
         let field = NSTextField(labelWithString: text.uppercased())
         field.font = Theme.Font.sectionLabel
-        field.textColor = Theme.Chrome.faint
+        field.textColor = Theme.tertiaryText
         return field
     }
 
     private func styled(
         _ field: NSTextField,
         font: NSFont,
-        color: NSColor = Theme.Chrome.text
+        color: NSColor = Theme.primaryText
     ) -> NSTextField {
         field.font = font
         field.textColor = color
@@ -987,25 +1078,26 @@ final class LiveRunWorkbenchView: NSView {
         ])
     }
 
-    private func configureAction(
-        _ button: NSButton,
-        identifier: String,
-        primary: Bool = false
-    ) {
-        Theme.styleMockupButton(button, primary: primary)
-        button.setAccessibilityIdentifier(identifier)
-        button.setAccessibilityRole(.button)
+    private func configureInspectorTab(_ button: NSButton, selected: Bool) {
+        button.isBordered = false
+        button.font = Theme.Font.chromeControl
+        button.contentTintColor = selected ? Theme.primaryText : Theme.secondaryText
+        button.wantsLayer = true
+        button.layer?.cornerRadius = Theme.Metric.buttonCornerRadius
+        button.layer?.backgroundColor = selected ? Theme.insetFill.cgColor : NSColor.clear.cgColor
     }
 
     private func selectHierarchyNode(_ nodeId: String) {
         onHorizonSelect?(nodeId)
-        guard let node = horizon?.snapshot.nodes.first(where: { $0.nodeId == nodeId }),
-              case .present(let binding) = node.binding
-        else { return }
-        if let session = sessions.first(where: {
-            $0.agentID == binding.agentId || $0.id == binding.agentId
-        }) {
+        guard let node = horizon?.snapshot.nodes.first(where: { $0.nodeId == nodeId }) else {
+            return
+        }
+        if let session = matchingSession(for: node) {
             selectSession(id: session.id)
+        } else if selectedID != nil {
+            selectedID = nil
+            rebuildRail()
+            renderSelection()
         }
     }
 
@@ -1028,42 +1120,95 @@ final class LiveRunWorkbenchView: NSView {
                 shown ? .mustHold : .notVisible, for: pane)
         }
         for (candidate, button) in inspectorTabButtons {
-            Theme.styleMockupButton(button, primary: candidate == tab)
+            configureInspectorTab(button, selected: candidate == tab)
             button.setAccessibilityValue(candidate == tab ? "selected" : "unselected")
         }
     }
 
     private func updateControlStrip(_ session: LiveRunSessionSummary?) {
         scopeValue.stringValue = viewedScope(for: session)
+        scopeValue.textColor = Theme.primaryText
         focusValue.stringValue = session?.name ?? "none"
+        focusValue.textColor = session == nil ? Theme.secondaryText : Theme.accent
         if let projection = controlProjection, let session,
            projection.agentID == session.id {
             switch projection.inputOwner.state {
             case .free:
                 inputOwnerValue.stringValue = "free"
+                inputOwnerValue.textColor = Theme.positive
             case .owned:
                 inputOwnerValue.stringValue =
                     "\(projection.inputOwner.kind!.rawValue) · claimed"
+                inputOwnerValue.textColor = Theme.warning
             case .unknown:
                 inputOwnerValue.stringValue = "unknown"
+                inputOwnerValue.textColor = Theme.secondaryText
             }
         } else {
             inputOwnerValue.stringValue = session.map { _ in "unknown" } ?? "unknown"
+            inputOwnerValue.textColor = Theme.secondaryText
         }
         if let generation = session?.locator?.generation {
             generationValue.stringValue = "\(generation) · exact"
-            attachButton.title = "Attached live · g\(generation)"
-            attachButton.isEnabled = true
-            attachButton.toolTip = "Viewer is attached to exact generation \(generation)."
+            generationValue.textColor = Theme.positive
         } else {
             generationValue.stringValue = "unknown"
-            attachButton.title = "Attached live"
-            attachButton.isEnabled = false
-            attachButton.toolTip = "No exact terminal locator is selected."
+            generationValue.textColor = Theme.secondaryText
         }
-        releaseInputButton.isEnabled = false
-        releaseInputButton.toolTip = session?.inputOwner.reason
-            ?? "workspace-feed does not project the terminal input owner"
+    }
+
+    private func updateCenterBadges(_ session: LiveRunSessionSummary?) {
+        if let session {
+            installBadge(
+                in: activityBadgeHost,
+                text: session.activity.displayLabel.uppercased(),
+                symbol: session.activity.appearance.symbol,
+                style: liveRunBadgeStyle(for: session.activity.appearance.color),
+                identifier: "live-run-activity-status")
+        } else {
+            installBadge(
+                in: activityBadgeHost,
+                text: "NO SELECTION",
+                symbol: "questionmark.circle",
+                style: .neutral,
+                identifier: "live-run-activity-status")
+        }
+
+        guard let session, let locator = session.locator else {
+            installBadge(
+                in: attachmentBadgeHost,
+                text: "NO EXACT LOCATOR",
+                symbol: "rectangle.slash",
+                style: .neutral,
+                identifier: "live-run-attachment-status")
+            return
+        }
+        let attached = terminal?.locator == locator && terminal?.installedView != nil
+        installBadge(
+            in: attachmentBadgeHost,
+            text: attached ? "ATTACHED LIVE · G\(locator.generation)" : "READY · G\(locator.generation)",
+            symbol: attached ? "dot.radiowaves.left.and.right" : "rectangle.connected.to.line.below",
+            style: attached ? .positive : .info,
+            identifier: "live-run-attachment-status")
+    }
+
+    private func installBadge(
+        in host: NSView,
+        text: String,
+        symbol: String,
+        style: CapsuleBadge.Style,
+        identifier: String
+    ) {
+        for view in host.subviews { view.removeFromSuperview() }
+        let badge = CapsuleBadge(text: text, symbol: symbol, style: style)
+        badge.setAccessibilityIdentifier(identifier)
+        host.addSubview(badge)
+        NSLayoutConstraint.activate([
+            badge.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            badge.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            badge.topAnchor.constraint(equalTo: host.topAnchor),
+            badge.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
     }
 
     private func viewedScope(for session: LiveRunSessionSummary?) -> String {
@@ -1085,6 +1230,18 @@ final class LiveRunWorkbenchView: NSView {
         in horizon: OuterHorizonScreenState
     ) -> HierarchyNodeProjection? {
         matchingRow(for: session, in: horizon)?.node
+    }
+
+    private func matchingSession(
+        for node: HierarchyNodeProjection
+    ) -> LiveRunSessionSummary? {
+        guard case .present(let binding) = node.binding else { return nil }
+        return sessions.first {
+            !$0.isQueen
+                && ($0.agentID == binding.agentId
+                    || $0.id == binding.agentId
+                    || $0.name == binding.agentId)
+        }
     }
 
     private func matchingRow(
@@ -1139,7 +1296,7 @@ final class LiveRunWorkbenchView: NSView {
 
     private static func budgetSummary(_ horizon: OuterHorizonScreenState) -> String {
         guard let budget = horizon.snapshot.budgets.first else {
-            return "Run budget · \(horizon.snapshot.nodes.count) admitted · 19 target"
+            return "Run budget · not projected"
         }
         switch budget.limits {
         case .absent(let reason, let detail):
@@ -1156,15 +1313,20 @@ private final class LiveRunRailClipView: NSClipView {
 
 private final class LiveRunSessionButton: NSButton {
     private let onSelect: () -> Void
+    private let onToggle: (() -> Void)?
 
     init(
-        session: LiveRunSessionSummary,
+        session: LiveRunSessionSummary?,
+        hierarchyRow: OuterHorizonTreeRow?,
         selected: Bool,
         depth: Int = 0,
         role: String? = nil,
-        onSelect: @escaping () -> Void
+        expanded: Bool = false,
+        onSelect: @escaping () -> Void,
+        onToggle: (() -> Void)?
     ) {
         self.onSelect = onSelect
+        self.onToggle = onToggle
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         isBordered = false
@@ -1172,24 +1334,38 @@ private final class LiveRunSessionButton: NSButton {
         target = self
         action = #selector(selectRow)
         wantsLayer = true
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = Theme.Metric.buttonCornerRadius
         layer?.backgroundColor = selected
-            ? Theme.Chrome.navActive.cgColor
+            ? Theme.accentFill.cgColor
             : nil
-        if selected {
-            layer?.borderWidth = 0
-        }
+        layer?.borderWidth = 0
 
-        let titleText = session.isQueen ? "queen · root" : session.name
+        let titleText: String
+        if let session {
+            titleText = session.isQueen ? "queen · root" : session.name
+        } else if let node = hierarchyRow?.node,
+                  case .present(let binding) = node.binding {
+            titleText = binding.agentId
+        } else {
+            titleText = hierarchyRow?.node.nodeId ?? "unknown hierarchy node"
+        }
         let name = NSTextField(labelWithString: titleText)
         name.font = Theme.Font.headline
-        name.textColor = Theme.Chrome.text
+        name.textColor = Theme.primaryText
         name.lineBreakMode = .byTruncatingTail
         name.compressHorizontally(priority: 300, toolTip: titleText)
-        let detail = NSTextField(labelWithString:
-            "\(role ?? "Agent UI") · \(session.task ?? session.model ?? session.rawStatus)")
+        let roleText = role ?? Self.roleLine(hierarchyRow?.node)
+        let sessionDetail: String
+        if let session {
+            sessionDetail = session.isQueen
+                ? session.rawStatus
+                : (session.task ?? session.model ?? session.rawStatus)
+        } else {
+            sessionDetail = Self.lifecycleLine(hierarchyRow?.node) + " · session unknown"
+        }
+        let detail = NSTextField(labelWithString: "\(roleText) · \(sessionDetail)")
         detail.font = Theme.Font.caption
-        detail.textColor = Theme.Chrome.muted
+        detail.textColor = Theme.tertiaryText
         detail.lineBreakMode = .byTruncatingTail
         detail.compressHorizontally(priority: 250, toolTip: detail.stringValue)
         let copy = NSStackView(views: [name, detail])
@@ -1198,36 +1374,85 @@ private final class LiveRunSessionButton: NSButton {
         copy.spacing = 1
 
         let symbol = NSImageView()
+        let activity = session?.activity
         symbol.image = NSImage(
-            systemSymbolName: session.activity.appearance.symbol,
-            accessibilityDescription: session.activity.displayLabel)
-        symbol.contentTintColor = Theme.statusColor(for: session.activity.appearance.color)
+            systemSymbolName: activity?.appearance.symbol ?? "questionmark.circle",
+            accessibilityDescription: activity?.displayLabel ?? "session unknown")
+        symbol.contentTintColor = activity.map {
+            Theme.statusColor(for: $0.appearance.color)
+        } ?? Theme.tertiaryText
         symbol.translatesAutoresizingMaskIntoConstraints = false
-        symbol.widthAnchor.constraint(equalToConstant: 14).isActive = true
-        symbol.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        symbol.widthAnchor.constraint(
+            equalToConstant: Theme.Metric.chainMarkSize).isActive = true
+        symbol.heightAnchor.constraint(
+            equalToConstant: Theme.Metric.chainMarkSize).isActive = true
 
-        let chip = ActivityChip(activity: session.activity)
-        let row = NSStackView(views: [symbol, copy, chip])
+        let disclosure: NSView
+        if onToggle != nil {
+            let button = NSButton(
+                image: NSImage(
+                    systemSymbolName: expanded ? "chevron.down" : "chevron.right",
+                    accessibilityDescription: expanded ? "Collapse" : "Expand") ?? NSImage(),
+                target: nil,
+                action: nil)
+            button.isBordered = false
+            button.contentTintColor = Theme.secondaryText
+            button.target = self
+            button.action = #selector(toggleRow)
+            button.setAccessibilityLabel(expanded ? "Collapse hierarchy node" : "Expand hierarchy node")
+            disclosure = button
+        } else {
+            disclosure = NSView()
+        }
+        disclosure.translatesAutoresizingMaskIntoConstraints = false
+        disclosure.widthAnchor.constraint(
+            equalToConstant: Theme.Metric.chainMarkSize).isActive = true
+
+        let chip = CapsuleBadge(
+            text: activity?.displayLabel.uppercased() ?? "NO SESSION",
+            symbol: activity?.appearance.symbol ?? "questionmark.circle",
+            style: activity.map { liveRunBadgeStyle(for: $0.appearance.color) } ?? .neutral)
+        let row = NSStackView(views: [disclosure, symbol, copy, chip])
         row.translatesAutoresizingMaskIntoConstraints = false
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = Theme.Space.s
         addSubview(row)
-        let indent = Theme.Space.s + CGFloat(max(0, depth)) * Theme.Space.l
+        let indent = Theme.Space.s + CGFloat(max(0, depth)) * Theme.Space.m
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: indent),
             row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Space.s),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.s),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.s),
         ])
         copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
         chip.setContentHuggingPriority(.required, for: .horizontal)
 
-        toolTip = session.task ?? session.model
-        setAccessibilityIdentifier("live-run-session-\(session.id)")
-        setAccessibilityLabel(
-            "\(session.name), \(ProviderBranding.title(for: session.provider)), \(session.activity.displayLabel)")
-        heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+        if selected {
+            let bar = NSView()
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            Theme.paint(bar, Theme.accent)
+            addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.leadingAnchor.constraint(equalTo: leadingAnchor),
+                bar.topAnchor.constraint(equalTo: topAnchor),
+                bar.bottomAnchor.constraint(equalTo: bottomAnchor),
+                bar.widthAnchor.constraint(equalToConstant: Theme.Space.xs / 2),
+            ])
+        }
+
+        toolTip = session.flatMap { $0.isQueen ? $0.rawStatus : ($0.task ?? $0.model) }
+            ?? hierarchyRow?.parentDiagnostic
+        if let session {
+            setAccessibilityIdentifier("live-run-session-\(session.id)")
+            setAccessibilityLabel(
+                "\(session.name), \(ProviderBranding.title(for: session.provider)), \(session.activity.displayLabel)")
+        } else if let node = hierarchyRow?.node {
+            setAccessibilityIdentifier("live-run-hierarchy-\(node.nodeId)")
+            setAccessibilityLabel("\(titleText), session status unknown")
+        }
+        heightAnchor.constraint(
+            greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight + Theme.Space.s).isActive = true
     }
 
     @available(*, unavailable)
@@ -1236,33 +1461,41 @@ private final class LiveRunSessionButton: NSButton {
     @objc private func selectRow() {
         onSelect()
     }
-}
 
-private final class ActivityChip: NSView {
-    init(activity: AgentActivity) {
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        layer?.cornerRadius = Theme.Metric.badgeCornerRadius
-        let color = Theme.statusColor(for: activity.appearance.color)
-        layer?.backgroundColor = color.withAlphaComponent(0.16).cgColor
-
-        let label = NSTextField(labelWithString: activity.displayLabel.uppercased())
-        label.font = Theme.Font.badge
-        label.textColor = color
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-        ])
-        setAccessibilityElement(true)
-        setAccessibilityRole(.staticText)
-        setAccessibilityLabel(activity.displayLabel)
+    @objc private func toggleRow() {
+        onToggle?()
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    private static func roleLine(_ node: HierarchyNodeProjection?) -> String {
+        guard let node else { return "hierarchy role unknown" }
+        let role: String? = if case .present(let value) = node.organizationalRole {
+            value.rawValue
+        } else {
+            nil
+        }
+        let assignment: String? = if case .present(let value) = node.assignmentKind {
+            value.rawValue
+        } else {
+            nil
+        }
+        let rendered = [role, assignment].compactMap { $0 }.joined(separator: " · ")
+        return rendered.isEmpty ? "hierarchy role unknown" : rendered
+    }
+
+    private static func lifecycleLine(_ node: HierarchyNodeProjection?) -> String {
+        guard let node, case .present(let lifecycle) = node.lifecycle else {
+            return "lifecycle unknown"
+        }
+        return "lifecycle \(lifecycle.rawValue)"
+    }
+}
+
+private func liveRunBadgeStyle(for color: StatusColor) -> CapsuleBadge.Style {
+    switch color {
+    case .green: return .positive
+    case .yellow, .orange: return .warning
+    case .blue, .teal: return .info
+    case .red: return .critical
+    case .purple, .gray: return .neutral
+    }
 }

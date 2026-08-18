@@ -1,3 +1,7 @@
+// ShellInspectorView.swift
+//
+// Renders the daemon-owned Task, Events, and Session projection beside Live Run.
+// Missing values stay explicit; this view never derives workflow state from terminal text.
 
 import AppKit
 import WorkspaceCore
@@ -19,15 +23,16 @@ final class ShellInspectorView: NSView {
         self.onSelectTab = onSelectTab
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        Theme.paint(self, Theme.cardFill)
 
         let root = NSStackView()
         root.translatesAutoresizingMaskIntoConstraints = false
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = Theme.Space.m
+        root.spacing = Theme.Space.s
         root.edgeInsets = NSEdgeInsets(
-            top: Theme.Space.l, left: Theme.Space.l,
-            bottom: Theme.Space.l, right: Theme.Space.l)
+            top: Theme.Metric.cardInset, left: Theme.Metric.cardInset,
+            bottom: Theme.Metric.cardInset, right: Theme.Metric.cardInset)
         addSubview(root)
         NSLayoutConstraint.activate([
             root.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -42,17 +47,14 @@ final class ShellInspectorView: NSView {
         heading.spacing = 2
         let micro = NSTextField(labelWithString: "RUN INSPECTOR")
         micro.font = Theme.Font.sectionLabel
-        micro.textColor = .tertiaryLabelColor
+        micro.textColor = Theme.tertiaryText
         let title = NSTextField(labelWithString: "Inspector")
         title.font = Theme.Font.title
+        title.textColor = Theme.primaryText
         heading.addArrangedSubview(micro)
         heading.addArrangedSubview(title)
 
-        let close = NSButton(title: "×", target: nil, action: nil)
-        close.bezelStyle = .rounded
-        close.showsBorderOnlyWhileMouseInside = true
-        close.isBordered = false
-        close.font = Theme.Font.title
+        let close = ActionButton(title: "", symbol: "xmark", style: .neutral)
         close.setAccessibilityLabel("Close inspector")
         close.setAccessibilityIdentifier("shell-inspector-close")
         close.setAccessibilityRole(.button)
@@ -68,7 +70,7 @@ final class ShellInspectorView: NSView {
         root.addArrangedSubview(header)
         close.trailingAnchor.constraint(equalTo: header.trailingAnchor).isActive = true
         header.widthAnchor.constraint(
-            equalTo: root.widthAnchor, constant: -Theme.Space.l * 2
+            equalTo: root.widthAnchor, constant: -Theme.Metric.cardInset * 2
         ).isActive = true
 
         root.addArrangedSubview(tabStrip(selected: tab))
@@ -118,12 +120,15 @@ final class ShellInspectorView: NSView {
         strip.distribution = .fillEqually
         for tab in ShellInspectorTab.allCases {
             let button = NSButton(title: tab.title, target: nil, action: nil)
-            button.bezelStyle = .rounded
             button.setButtonType(.momentaryPushIn)
-            button.isBordered = true
-            if tab == selected {
-                button.contentTintColor = .controlAccentColor
-            }
+            button.isBordered = false
+            button.font = Theme.Font.chromeControl
+            button.contentTintColor = tab == selected
+                ? Theme.primaryText : Theme.secondaryText
+            button.wantsLayer = true
+            button.layer?.cornerRadius = Theme.Metric.buttonCornerRadius
+            button.layer?.backgroundColor = tab == selected
+                ? Theme.insetFill.cgColor : NSColor.clear.cgColor
             button.setAccessibilityIdentifier("shell-inspector-tab-\(tab.rawValue)")
             button.setAccessibilityLabel("\(tab.title) inspector tab")
             button.setAccessibilityRole(.button)
@@ -133,6 +138,8 @@ final class ShellInspectorView: NSView {
             }
             button.target = ShellButtonTarget.shared
             button.action = #selector(ShellButtonTarget.fire(_:))
+            button.heightAnchor.constraint(
+                greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight).isActive = true
             strip.addArrangedSubview(button)
         }
         return strip
@@ -161,6 +168,7 @@ final class ShellInspectorView: NSView {
         bodyStack.addArrangedSubview(microLabel(head.microLabel))
         let title = NSTextField(wrappingLabelWithString: head.title)
         title.font = Theme.Font.headline
+        title.textColor = Theme.primaryText
         title.setAccessibilityIdentifier("shell-inspector-title")
         bodyStack.addArrangedSubview(title)
         bodyStack.addArrangedSubview(paragraph(head.explanation, identifier: "shell-inspector-explanation"))
@@ -200,8 +208,10 @@ final class ShellInspectorView: NSView {
     private func renderFacts(_ facts: [InspectorFact]) {
         guard !facts.isEmpty else { return }
         let card = CardView()
-        for fact in facts {
-            card.contentStack.addArrangedSubview(factRow(fact))
+        card.contentStack.spacing = 0
+        for (index, fact) in facts.enumerated() {
+            card.contentStack.addArrangedSubview(factRow(
+                fact, showsSeparator: index < facts.count - 1))
         }
         bodyStack.addArrangedSubview(card)
         card.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
@@ -229,6 +239,7 @@ final class ShellInspectorView: NSView {
                 let row = NSTextField(wrappingLabelWithString:
                     "\(mark) \(item.summary) · \(item.id)")
                 row.font = Theme.Font.callout
+                row.textColor = Theme.primaryText
                 row.setAccessibilityIdentifier("shell-inspector-criterion")
                 card.contentStack.addArrangedSubview(row)
             }
@@ -252,13 +263,14 @@ final class ShellInspectorView: NSView {
                 let title = NSTextField(wrappingLabelWithString:
                     "\(contract.contractId) · r\(contract.revision)")
                 title.font = Theme.Font.headline
+                title.textColor = Theme.primaryText
                 let participants = NSTextField(wrappingLabelWithString:
                     "acceptedBy (declared): "
                         + (contract.acceptedBy.isEmpty
                             ? "empty list"
                             : contract.acceptedBy.joined(separator: ", ")))
                 participants.font = Theme.Font.callout
-                participants.textColor = .secondaryLabelColor
+                participants.textColor = Theme.secondaryText
                 participants.setAccessibilityIdentifier("shell-inspector-accepted-by")
                 card.contentStack.addArrangedSubview(title)
                 card.contentStack.addArrangedSubview(participants)
@@ -299,6 +311,7 @@ final class ShellInspectorView: NSView {
                 let label = NSTextField(wrappingLabelWithString:
                     "\(row.occurredAt)  \(row.kind)  ·  \(row.summary)")
                 label.font = Theme.Font.monoCaption
+                label.textColor = Theme.primaryText
                 label.setAccessibilityIdentifier("shell-inspector-event")
                 card.contentStack.addArrangedSubview(label)
             }
@@ -307,21 +320,25 @@ final class ShellInspectorView: NSView {
         }
     }
 
-    private func factRow(_ fact: InspectorFact) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.spacing = Theme.Space.s
-        row.alignment = .firstBaseline
+    private func factRow(
+        _ fact: InspectorFact,
+        showsSeparator: Bool
+    ) -> NSView {
         let label = NSTextField(labelWithString: fact.label)
         label.font = Theme.Font.callout
-        label.textColor = .secondaryLabelColor
+        label.textColor = Theme.secondaryText
         label.compressHorizontally(priority: 470, toolTip: fact.label)
+        label.widthAnchor.constraint(equalToConstant: Theme.Space.page * 3).isActive = true
         let value = NSTextField(wrappingLabelWithString: fact.value)
         value.font = Theme.Font.monoBody
+        value.textColor = Theme.primaryText
         value.compressHorizontally(priority: 460, toolTip: fact.value)
         value.setAccessibilityIdentifier("shell-inspector-fact")
-        row.addArrangedSubview(label)
-        row.addArrangedSubview(value)
+        let row = DataTableRowView(
+            columns: [label, value],
+            spacing: Theme.Space.s,
+            showsSeparator: showsSeparator)
+        value.setContentHuggingPriority(.defaultLow, for: .horizontal)
         row.setAccessibilityElement(true)
         row.setAccessibilityRole(.group)
         row.setAccessibilityLabel("\(fact.label): \(fact.value)")
@@ -331,14 +348,14 @@ final class ShellInspectorView: NSView {
     private func microLabel(_ text: String) -> NSTextField {
         let field = NSTextField(labelWithString: text.uppercased())
         field.font = Theme.Font.sectionLabel
-        field.textColor = .tertiaryLabelColor
+        field.textColor = Theme.tertiaryText
         return field
     }
 
     private func paragraph(_ text: String, identifier: String) -> NSTextField {
         let field = NSTextField(wrappingLabelWithString: text)
         field.font = Theme.Font.callout
-        field.textColor = .secondaryLabelColor
+        field.textColor = Theme.secondaryText
         field.setAccessibilityIdentifier(identifier)
         return field
     }

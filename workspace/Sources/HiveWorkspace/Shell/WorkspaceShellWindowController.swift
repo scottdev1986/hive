@@ -305,6 +305,15 @@ final class WorkspaceShellWindowController: NSWindowController {
     private func renderScreen() {
         let routeChanged = renderedRoute != state.activeRoute
         let liveRunVisible = state.activeRoute == .liveRun && liveRunWorkbench != nil
+        liveRunWorkbench?.applyHierarchy(
+            state.outerHorizon,
+            screen: state.screens[.liveRun],
+            onSelect: { [weak self] nodeId in
+                self?.apply { $0.editOuterHorizon { $0.select(nodeId: nodeId) } }
+            },
+            onToggleExpansion: { [weak self] nodeId in
+                self?.apply { $0.editOuterHorizon { $0.toggleExpansion(nodeId: nodeId) } }
+            })
         liveRunHeightCeiling?.isActive = liveRunVisible
         liveRunWorkbench?.setRouteVisible(liveRunVisible)
         outerHorizonViewportConstraint?.isActive = false

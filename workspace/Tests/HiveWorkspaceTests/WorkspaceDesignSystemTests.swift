@@ -70,6 +70,31 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         XCTAssertEqual(inline.accessibilityIdentifier(), "shell-banner-inline")
     }
 
+    func testLiveRunSupportSurfacesUseSharedControlsAndCards() throws {
+        let inspector = ShellInspectorView(
+            projection: nil,
+            tab: .task,
+            onSelectTab: { _ in },
+            onClose: {})
+        XCTAssertTrue(findView(
+            in: inspector, identifier: "shell-inspector-close") is ActionButton)
+
+        var queue = AttentionQueue()
+        queue.raise(AttentionItem(
+            id: "attention-1",
+            projectID: "project",
+            paneID: "pane",
+            severity: .waiting,
+            title: "Input needed",
+            detail: "Typed decision required",
+            raisedAt: 1))
+        let drawer = ShellAttentionDrawerView(queue: queue, onClose: {})
+        XCTAssertTrue(findView(
+            in: drawer, identifier: "shell-attention-close") is ActionButton)
+        XCTAssertTrue(findView(
+            in: drawer, identifier: "shell-attention-row") is CardView)
+    }
+
     func testShellChromeUsesCompactSidebarAndNamedTopBarControls() throws {
         _ = NSApplication.shared
         let controller = WorkspaceShellWindowController(

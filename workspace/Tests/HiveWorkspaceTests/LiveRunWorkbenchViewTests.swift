@@ -115,6 +115,8 @@ struct LiveRunWorkbenchViewTests {
             findView(in: view, identifier: "live-run-stop-provider") as? NSButton)
         let terminateButton = try #require(
             findView(in: view, identifier: "live-run-terminate-terminal") as? NSButton)
+        #expect(stopButton is ActionButton)
+        #expect(terminateButton is ActionButton)
         stopButton.performClick(nil)
         view.applyControlProjection(control)
         terminateButton.performClick(nil)
@@ -250,7 +252,7 @@ struct LiveRunWorkbenchViewTests {
         #expect(labels.filter { $0 == "Run hierarchy" }.count == 1)
     }
 
-    @Test("Live Run chrome matches the workspace mockup")
+    @Test("Live Run chrome matches Split Horizon without unbacked controls")
     func mockupChrome() throws {
         let view = LiveRunWorkbenchView { session in
             FakeSurface(locator: session.locator!)
@@ -266,17 +268,18 @@ struct LiveRunWorkbenchViewTests {
         #expect(labels.contains("Generation"))
         #expect(labels.contains("3 · exact"))
         #expect(labels.contains { $0.contains("Agent UI") })
+        #expect(labels.contains("ATTACHED LIVE · G3"))
+        #expect(labels.contains("Run budget · not projected"))
+        #expect(!labels.contains { $0.contains("19 target") })
         #expect(!labels.contains { $0.contains("TUI") })
         #expect(findView(in: view, identifier: "live-run-control-strip") != nil)
-        #expect(findView(in: view, identifier: "live-run-snapshot") != nil)
-        #expect(findView(in: view, identifier: "live-run-release-input") != nil)
-        #expect(findView(in: view, identifier: "live-run-attach") != nil)
+        #expect(findView(in: view, identifier: "live-run-snapshot") == nil)
+        #expect(findView(in: view, identifier: "live-run-release-input") == nil)
+        #expect(findView(in: view, identifier: "live-run-attach") == nil)
+        #expect(findView(in: view, identifier: "live-run-attachment-status") is CapsuleBadge)
         #expect(findView(in: view, identifier: "live-run-inspector-tab-task") != nil)
         #expect(findView(in: view, identifier: "live-run-inspector-tab-events") != nil)
         #expect(findView(in: view, identifier: "live-run-inspector-tab-session") != nil)
-        let attach = try #require(
-            findView(in: view, identifier: "live-run-attach") as? NSButton)
-        #expect(attach.title == "Attached live · g3")
     }
 
     @Test("Shell attach and detach commands consume the workbench's exact locator")
