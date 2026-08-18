@@ -4,23 +4,23 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
-import { databaseIdentityPath } from "../../src/hive-home/instance-identity";
-import type { Approval } from "../../src/schemas/approval";
 import {
   type HiveTerminalBinding,
   TerminalHostBindingConflictError,
 } from "../../src/daemon/session-host/terminal-host-binding";
+import { databaseIdentityPath } from "../../src/hive-home/home";
+import type { AgentRecord } from "../../src/schemas/agent";
+import type { Approval } from "../../src/schemas/approval";
+import type { HookEvent } from "../../src/schemas/event";
+import type { HandoffBundle } from "../../src/schemas/handoff-schema";
+import type { ProviderRun } from "../../src/schemas/provider-run";
+import { required } from "../required";
 import {
   deleteAgentRow,
   deleteApprovalRow,
   deleteEventRows,
   listAgentsNamed,
 } from "../support/daemon-test-support";
-import type { AgentRecord } from "../../src/schemas/agent";
-import type { HandoffBundle } from "../../src/schemas/handoff-schema";
-import type { HookEvent } from "../../src/schemas/event";
-import type { ProviderRun } from "../../src/schemas/provider-run";
-import { required } from "../required";
 import { tempRoot } from "../temp-root";
 
 const home = tempRoot("hive-db-test-");

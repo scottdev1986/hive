@@ -4,8 +4,7 @@ import {
   markBranchPreserved,
   observedWorktreeFiles,
 } from "../../adapters/worktrees";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
-import { computeMemoryMetric } from "../incident-ledger/metric";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 import {
   type AgentRecord,
   isLiveAgent,
@@ -34,11 +33,12 @@ import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
 import type { HiveDatabase } from "../database/hive-database";
 import type { GraphifyService } from "../graphify-service/graphify-service";
 import { HierarchyStore } from "../hierarchy-store";
+import { computeMemoryMetric } from "../incident-ledger/metric";
 import type { GraphifyCallCursor } from "../observability/tool-telemetry";
 import {
-  compactActiveTeam,
   type ActiveAgentRun,
   type ActiveAgentSummary,
+  compactActiveTeam,
 } from "../orchestrator-host/orchestrator-projections";
 import {
   type HiveTerminalHostAdapter,

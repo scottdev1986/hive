@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { runGit } from "../../adapters/git";
 import { probeProcessLiveness } from "../../adapters/process-liveness";
 import { provisionedSkillLinks } from "../../adapters/skills";
 import {
@@ -11,8 +12,7 @@ import {
   listWorktrees,
   readRefOid,
 } from "../../adapters/worktrees";
-import { runGit } from "../../adapters/git";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 import type { AgentRecord } from "../../schemas/agent";
 import type { SettlementCase } from "./settlement-case-store";
 

@@ -7,8 +7,8 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
   reconcileOrphanedWorktrees as reconcileWorktrees,
-  StrandedWork,
   SettlementBranch,
+  StrandedWork,
   WorktreeReconciliationOutcome,
   WorktreeReconciliationReport,
 } from "../../adapters/worktrees";
@@ -22,14 +22,14 @@ import {
   listStewardshipRefs,
   markBranchPreserved,
   readRefOid,
-  type StewardshipRef,
   type SettlementMutationIssuer,
+  type StewardshipRef,
   settlementBranchTarget,
   stewardshipBundleRefs,
-  type WorktreeSettlementMutator,
   unavailableAgentNames,
+  type WorktreeSettlementMutator,
 } from "../../adapters/worktrees";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 import type { SystemMailPublish } from "../../mail-service/service";
 import {
   type AgentRecord,
@@ -39,14 +39,30 @@ import {
 import type { WorkManifest } from "../../schemas/work-manifest";
 import type { Clock } from "../../shared/clock";
 import { errorMessage } from "../../shared/error-message";
-import { logAlertDeliveryFailure } from "../observability/daemon-log";
 import type { HiveDatabase } from "../database/hive-database";
 import {
   DetachedCheckoutError,
   type NothingToLandEvidence,
   resolveLandingTargetBranch,
 } from "../landing/landing-service";
+import { logAlertDeliveryFailure } from "../observability/daemon-log";
 import { NAME_POOL } from "../spawn/agent-name-selection";
+import {
+  type SettlementCase,
+  SettlementCaseStore,
+  type StoredSettlementCase,
+} from "./settlement-case-store";
+import {
+  escalationTier,
+  projectSettlementDebt,
+  renderSettlementDebt,
+  type SettlementDebtAggregate,
+  settlementDebtNeedsNotice,
+} from "./settlement-debt";
+import {
+  type SettlementDecision,
+  SettlementDecisionStore,
+} from "./settlement-decision-store";
 import {
   measureAutomaticRelease,
   renderUnaccountedCommitReason,
@@ -54,22 +70,6 @@ import {
   type SettlementProofResult,
   type SettlementSnapshot,
 } from "./settlement-proof";
-import {
-  SettlementCaseStore,
-  type SettlementCase,
-  type StoredSettlementCase,
-} from "./settlement-case-store";
-import {
-  SettlementDecisionStore,
-  type SettlementDecision,
-} from "./settlement-decision-store";
-import {
-  escalationTier,
-  projectSettlementDebt,
-  renderSettlementDebt,
-  settlementDebtNeedsNotice,
-  type SettlementDebtAggregate,
-} from "./settlement-debt";
 
 /**
  * How long a preserved/salvage ref may sit before the sweep mails a decision

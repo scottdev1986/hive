@@ -1,9 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command, CommanderError } from "commander";
-import { errorMessage } from "./shared/error-message";
 import { runAgentUi } from "./cli/agent-ui/run";
-import { isRecord } from "./shared/is-record";
 import {
   attachGrantCli,
   autonomyCli,
@@ -22,24 +20,19 @@ import {
 } from "./cli/control";
 import { runCredentialHelper } from "./cli/credential";
 import { runDaemon } from "./cli/daemon";
-import { resolveVariant } from "./hive-home/variant";
-import { homeHoldsOwnedState } from "./hive-home/migration";
-import { daemonInstanceLiveness } from "./daemon/lifecycle/daemon-lifecycle";
-import { hiveInstanceSuffix } from "./hive-home/instance-identity";
 import {
   type HookEventOptions,
   readHookStdin,
   runHiveEvent,
 } from "./cli/event-command";
 import { runGraphifyStatus } from "./cli/graphify-command";
-import { printErrors } from "./cli/observability-command";
 import { runInitCli } from "./cli/init";
 import { memoryConsolidateCli } from "./cli/memory-consolidate";
 import { printModelControlSnapshot } from "./cli/model-control";
+import { printErrors } from "./cli/observability-command";
 import { runWorkspaceOrchestrator } from "./cli/orchestrator-supervisor";
-import { isDaemonPort } from "./shared/daemon-port";
-import { projectRootOrCwd } from "./daemon/project-identity-core/project-root";
 import { promoteDefaultModelControl } from "./cli/promote-default";
+import { runQAControl } from "./cli/qa-control";
 import { printRouting } from "./cli/routing";
 import {
   exportRoutingPolicy,
@@ -62,7 +55,6 @@ import {
   withTrailingUpdateNotice,
 } from "./cli/update-notice";
 import { runWorkspace } from "./cli/workspace";
-import { runQAControl } from "./cli/qa-control";
 import { runWorkspaceFeedCli } from "./cli/workspace-feed";
 import {
   verifyDaemonInstance,
@@ -72,6 +64,11 @@ import {
   printInstances,
   selectInstanceFromArgv,
 } from "./daemon/lifecycle/instances";
+import { projectRootOrCwd } from "./daemon/project-identity-core/project-root";
+import {
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "./schemas/capability";
 import {
   type MemoryScope,
   type MemorySource,
@@ -83,12 +80,11 @@ import {
   SessionLocatorSchema,
   TerminalGeometrySchema,
 } from "./schemas/session-protocol";
-import {
-  type CapabilityProvider,
-  CapabilityProviderSchema,
-} from "./schemas/capability";
-import { repairIdentityFromStagedVersionProbe } from "./update-service/bootstrap";
+import { isDaemonPort } from "./shared/daemon-port";
+import { errorMessage } from "./shared/error-message";
+import { isRecord } from "./shared/is-record";
 import { versionLine } from "./shared/version";
+import { repairIdentityFromStagedVersionProbe } from "./update-service/bootstrap";
 
 export interface EventCliOptions {
   agent?: string;
@@ -250,26 +246,6 @@ export function createProgram(): Command {
   program.action(async () => {
     process.exitCode = await runWorkspace();
   });
-
-  program
-    .command("migrate-home", { hidden: true })
-    .description("Migrate this install's prior home before activation")
-    .action(async () => {
-      const config = resolveVariant();
-      const prior = config.priorHomes.find(homeHoldsOwnedState);
-      if (prior === undefined) return;
-      for (const home of [prior, config.home]) {
-        const state = await daemonInstanceLiveness(
-          home,
-          hiveInstanceSuffix(home),
-        );
-        if (state !== "dead") {
-          throw new Error(
-            `Hive cannot migrate the prior home ${prior} to ${config.home} while the daemon at ${home} is ${state}. Stop it and run the installer again.`,
-          );
-        }
-      }
-    });
 
   program
     .command("instances")

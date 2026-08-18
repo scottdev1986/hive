@@ -15,7 +15,7 @@ import {
   neutralDirectory,
   neutralSocketPath,
 } from "../src/daemon/session-host/host-operations";
-import { sessiondRuntimeRoot } from "../src/hive-home/instance-identity";
+import { sessiondRuntimeRoot } from "../src/hive-home/home";
 
 test("the ordinary suite runs inside its hard byte ceiling", () => {
   const root = process.env.HIVE_TEST_ROOT;

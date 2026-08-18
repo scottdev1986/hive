@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import {
   type QuotaConfig,
   QuotaConfigSchema,
@@ -12,14 +12,14 @@ import {
   type QuotaObservation,
   QuotaObservationSchema,
 } from "../../src/schemas/quota";
-import { QuotaService } from "../../src/usage-service/usage-quota";
-import { mergeObservationWindows } from "../../src/usage-service/quota-observation-merge";
 import {
   migrateDefaultQuotaLedger,
   QuotaDatabase,
 } from "../../src/usage-service/quota-ledger";
 import { QuotaLedgerUnknownError } from "../../src/usage-service/quota-ledger-records";
+import { mergeObservationWindows } from "../../src/usage-service/quota-observation-merge";
 import { calendarWeekBounds } from "../../src/usage-service/quota-windows";
+import { QuotaService } from "../../src/usage-service/usage-quota";
 import { required } from "../required";
 import {
   authorizeForQuotaTest,

@@ -2,15 +2,13 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { getDatabasePath } from "../../hive-home/home";
 import {
   ensureMailSchema,
   type LegacyMailMigration,
   migrateLegacyMessagesToMail,
 } from "../../mail-service/store";
 import type { DatabaseHost } from "../../shared/database-host";
-import { getDatabasePath } from "../../hive-home/home";
-import { resolveVariant, type VariantConfig } from "../../hive-home/variant";
-import { migratePriorHomeState } from "../../hive-home/migration";
 import { AccessStore } from "./access-store";
 import { AgentStore } from "./agent-store";
 import { EventStore } from "./event-store";
@@ -115,24 +113,10 @@ export class HiveDatabase implements DatabaseHost {
     path = getDatabasePath(),
     options: {
       readonly?: boolean;
-      /** The install record this open belongs to, standing in for the resolved one. A prior home is spelled under `/tmp`, which the test sandbox denies writes to, so the cases covering a moved home stage one here instead of on the path the record names. */
-      variant?: VariantConfig;
     } = {},
   ) {
     this.path = path;
     const persistent = path === getDatabasePath();
-    if (persistent && options.readonly !== true) {
-      const migration = migratePriorHomeState(
-        options.variant ?? resolveVariant(),
-      );
-      if (migration.kind === "conflict") {
-        throw new HiveDatabaseIdentityError(
-          `Hive found a database in more than one home for this install: ${migration.databases.join(", ")}. ` +
-            "Refusing to start rather than merge them or pick one, because either would discard a board " +
-            "nobody can get back. Move or delete the database you do not want and start again.",
-        );
-      }
-    }
     const expectedIdentity = persistent ? readDatabaseIdentityMarker() : null;
     if (expectedIdentity !== null && !existsSync(path)) {
       throw new HiveDatabaseIdentityError(

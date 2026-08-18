@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 import { type AgentRecord, isLiveAgent } from "../../schemas/agent";
 
 /** Names an agent can be given. First names, because the user's interface is conversation: "tell maya to reuse the middleware" works, "message agent-3" makes the user keep a numbering table the tool should keep for them. Curated so that names are easy to type and hard to confuse: no name is a prefix of another, and no two names are within one edit of each other (no mark/marc, no ana/anna). A test enforces both invariants — add names only if they still hold. Numeric suffixes are never appended to make a name unique; see selectAgentName. */

@@ -1,4 +1,3 @@
-import { hiveInstanceSuffix } from "../hive-home/instance-identity";
 import {
   type RootSessiondLocator,
   rootSessionIdForLaunchRequest,
@@ -9,13 +8,14 @@ import {
   OrchestratorSessiondSnapshotSchema,
 } from "../daemon/orchestrator-host/sessiond-controller";
 import { sameSessionLocator } from "../daemon/session-host/locators";
+import { hiveInstanceSuffix } from "../hive-home/home";
+import { errorMessage } from "../shared/error-message";
 import { isTestRunnerEnv } from "./invoker";
 import {
   daemonErrorDetail,
   decodeJson,
   UserDaemonClient,
 } from "./user-daemon-client";
-import { errorMessage } from "../shared/error-message";
 
 export interface OrchestratorSessiondControl {
   start(

@@ -17,8 +17,8 @@ import { provisionSkills } from "../../src/adapters/skills";
 import {
   assessStrandedWork,
   createWorktree,
-  listStaleOwnerRefs,
   listSettlementBranches,
+  listStaleOwnerRefs,
   listWorktrees,
   markBranchPreserved,
   observedWorktreeFiles,
@@ -26,11 +26,11 @@ import {
   slugify,
   WORKTREE_SETTLING_INTERVAL_MS,
 } from "../../src/adapters/worktrees";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import type { AgentRecord } from "../../src/schemas/agent";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import { CAPABILITY_PROVIDERS } from "../../src/schemas/capability";
-import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 import { errorMessage } from "../../src/shared/error-message";
+import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 import { releaseTestWorktree as removeWorktree } from "../support/worktree-cleanup";
 
 let tempRoot = "";

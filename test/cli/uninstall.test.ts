@@ -26,8 +26,7 @@ import {
 import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
 import { projectStateDir } from "../../src/daemon/project-identity-core/state";
 import { scaffoldAgentStandardsMd } from "../../src/daemon/spawn/agent-standards";
-import { getHiveHome } from "../../src/hive-home/home";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { getHiveHome, hiveInstanceSuffix } from "../../src/hive-home/home";
 import { type HiveVariant, resolveVariant } from "../../src/hive-home/variant";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 import { required } from "../required";

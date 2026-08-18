@@ -1,7 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { getHiveHome } from "../hive-home/home";
-import { HOME_MIGRATION_ANNOUNCEMENT } from "../hive-home/migration";
+import { resolve } from "node:path";
 import { buildGraphBrief } from "../adapters/graphify";
 import { resolveWorkingClaudeExecutable } from "../adapters/providers/claude-cli";
 import { resolveWorkingCodexExecutable } from "../adapters/providers/codex-cli";
@@ -10,42 +7,42 @@ import { resolveWorkingKimiExecutable } from "../adapters/providers/kimi-cli";
 import { resolveWorkingOpencodeExecutable } from "../adapters/providers/opencode-cli";
 import { persistAutonomy } from "../config/autonomy";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
-import { createCapabilitySnapshotAuthority } from "../daemon/provider-capabilities/snapshot-authority";
 import { HiveDatabase } from "../daemon/database/hive-database";
 import { GraphifyService } from "../daemon/graphify-service/graphify-service";
-import { currentBuildHash } from "../daemon/lifecycle/daemon-lifecycle";
-import { hiveInstanceSuffix } from "../hive-home/instance-identity";
-import { machineModelControlDatabase } from "../daemon/routing-service/instance-settings";
 import {
   acquireDaemonLock,
   cleanupLifecycleFiles,
+  currentBuildHash,
   macProcessIdentity,
   readConfiguredPort,
   releaseDaemonLock,
 } from "../daemon/lifecycle/daemon-lifecycle";
-import { readModelInventory } from "../daemon/provider-capabilities/model-inventory";
+import { formatDaemonStartupAnnouncement } from "../daemon/lifecycle/startup-announcement";
 import { projectRootOrCwd } from "../daemon/project-identity-core/project-root";
+import { readModelInventory } from "../daemon/provider-capabilities/model-inventory";
+import { createCapabilitySnapshotAuthority } from "../daemon/provider-capabilities/snapshot-authority";
+import { stopSessiondAgentSession } from "../daemon/resource-management/teardown";
 import {
   policyModelEnablement,
   RoutingPolicyStore,
   retireLegacyRoutingToml,
 } from "../daemon/routing-policy-store";
+import { machineModelControlDatabase } from "../daemon/routing-service/instance-settings";
 import { HiveDaemon } from "../daemon/server";
 import {
   type HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
 } from "../daemon/session-host/hive-terminal-host";
+import { resolveSessiondBinary } from "../daemon/session-host/sessiond-broker";
 import { SessiondHost } from "../daemon/session-host/sessiond-host";
 import { observeSessiondOutput } from "../daemon/session-host/sessiond-output-observer";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
-import { resolveSessiondBinary } from "../daemon/session-host/sessiond-broker";
 import { HiveSpawner } from "../daemon/spawn/spawn-service";
-import { formatDaemonStartupAnnouncement } from "../daemon/lifecycle/startup-announcement";
 import {
   agentRecordStatusIncarnationGenerationSource,
   StatusService,
 } from "../daemon/status-service/status-service";
-import { stopSessiondAgentSession } from "../daemon/resource-management/teardown";
+import { getHiveHome, hiveInstanceSuffix } from "../hive-home/home";
 import { EpisodicStore } from "../memory-service/episodic";
 import type { AgentRecord } from "../schemas/agent";
 import {
@@ -57,7 +54,9 @@ import type {
   SessionLocator,
   TerminalGeometry,
 } from "../schemas/session-protocol";
-import { QuotaService } from "../usage-service/usage-quota";
+import { systemClock } from "../shared/clock";
+import { errorMessage } from "../shared/error-message";
+import { HIVE_SOURCE_HASH } from "../shared/version";
 import {
   migrateDefaultQuotaLedger,
   QuotaDatabase,
@@ -77,10 +76,8 @@ import {
   readBillingWithMemory,
   readRememberedBilling,
 } from "../usage-service/usage-credits/usage-credit-memory";
-import { HIVE_SOURCE_HASH } from "../shared/version";
+import { QuotaService } from "../usage-service/usage-quota";
 import { composeModelControlSnapshot } from "./model-control";
-import { errorMessage } from "../shared/error-message";
-import { systemClock } from "../shared/clock";
 
 export async function startBrokerAndDiscoverEngineBuildId(
   dependencies: Readonly<{
@@ -531,27 +528,6 @@ export async function runDaemon(): Promise<void> {
       sourceHash: HIVE_SOURCE_HASH ?? (await currentBuildHash()),
     }),
   );
-  const migrationAnnouncement = join(
-    getHiveHome(),
-    HOME_MIGRATION_ANNOUNCEMENT,
-  );
-  try {
-    const migration = JSON.parse(
-      readFileSync(migrationAnnouncement, "utf8"),
-    ) as {
-      from?: unknown;
-      to?: unknown;
-    };
-    if (
-      typeof migration.from === "string" &&
-      typeof migration.to === "string"
-    ) {
-      console.log(
-        `Hive migrated its home from ${migration.from} to ${migration.to}.`,
-      );
-      rmSync(migrationAnnouncement, { force: true });
-    }
-  } catch {}
 
   let stopping = false;
   const stop = async (): Promise<void> => {

@@ -13,7 +13,7 @@ import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import { HiveDaemon } from "../../src/daemon/server";
 import { SpawnAdmission } from "../../src/daemon/spawn/admission";
 import { hierarchyStatusContext } from "../../src/daemon/status-service/status-tools";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import { ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import type {
   AgentBinding,

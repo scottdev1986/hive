@@ -10,12 +10,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promoteDefaultModelControl } from "../../src/cli/promote-default";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
-import { machineModelControlDatabase } from "../../src/daemon/routing-service/instance-settings";
 import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
 } from "../../src/daemon/routing-policy-store";
+import { machineModelControlDatabase } from "../../src/daemon/routing-service/instance-settings";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import type { RoutingPolicy } from "../../src/schemas/routing-policy";
 
 const NOW = new Date("2026-07-22T12:00:00.000Z");

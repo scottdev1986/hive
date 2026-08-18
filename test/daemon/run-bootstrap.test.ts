@@ -19,7 +19,7 @@ import type {
   Spawner,
   SpawnRequest,
 } from "../../src/daemon/spawn/spawn-service";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import type { AgentBindingRef } from "../../src/schemas/hierarchy-node";
 import {

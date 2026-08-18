@@ -12,9 +12,9 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { shellQuote } from "../../shared/shell-quote";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 import { isRecord } from "../../shared/is-record";
+import { shellQuote } from "../../shared/shell-quote";
 import { withFileLock } from "../file-lock";
 import { sanitizedGitEnv } from "../git-env";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";

@@ -3,20 +3,20 @@
 // never-break-the-daemon contract (an unwritable log dir is a no-op), plus
 // the daemon-level wiring that lands embedding state transitions in the file.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
   DaemonLog,
   daemonLogPath,
 } from "../../src/daemon/observability/daemon-log";
-import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import type {
   Spawner,
   SpawnRequest,
 } from "../../src/daemon/spawn/spawn-service";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import { EpisodicStore } from "../../src/memory-service/episodic";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { required } from "../required";

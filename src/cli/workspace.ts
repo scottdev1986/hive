@@ -5,8 +5,7 @@ import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { resolveProjectRoot } from "../daemon/project-identity-core/project-root";
 import { projectKey } from "../daemon/project-identity-core/state";
-import { getHiveHome } from "../hive-home/home";
-import { hiveInstanceSuffix } from "../hive-home/instance-identity";
+import { getHiveHome, hiveInstanceSuffix } from "../hive-home/home";
 import { errorMessage } from "../shared/error-message";
 import { IS_RELEASE_BUILD } from "../shared/version";
 import {

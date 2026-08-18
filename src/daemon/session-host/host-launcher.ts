@@ -4,12 +4,15 @@ import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import type { z } from "zod";
 import {
+  machineHiveHome,
+  sessiondRuntimeRoot,
+  sessiondStateRoot,
+} from "../../hive-home/home";
+import {
   FRAME_FLAGS,
   HostRegisterPayloadSchema,
 } from "../../schemas/session-protocol";
 import { errorMessage } from "../../shared/error-message";
-import { sessiondRuntimeRoot } from "../../hive-home/instance-identity";
-import { resolveVariant } from "../../hive-home/variant";
 import { hostDirectory, hostSocketPath, neutralRoot } from "./host-operations";
 import type { CreateResult } from "./session-host-contract";
 import {
@@ -208,9 +211,8 @@ export async function launchHost(
 
   // Every root is created before any host runs. A host creates whichever of these it finds missing, so two hosts booting at the same instant race each other and one loses with FileNotFound — measured as two lost terminals in a thirty-one wide burst. Creating them here means no host ever has to.
   const socketRoot = sessiondRuntimeRoot(request.hiveHome);
-  const { machineHome, sessiondStateRoot: stateRoot } = resolveVariant(
-    request.hiveHome,
-  );
+  const machineHome = machineHiveHome(request.hiveHome);
+  const stateRoot = sessiondStateRoot(request.hiveHome);
   // The socket root lives under the machine home, so its length is the operator's rather than
   // Hive's, and a home long enough pushes every bind past macOS's `sun_path` ceiling. The host
   // preflights this too, but by then the only thing it can say is NameTooLong, which names neither

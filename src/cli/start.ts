@@ -3,12 +3,15 @@
 import { cp, mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { installGraphify } from "../adapters/graphify";
-import { getHiveHome } from "../hive-home/home";
-import { expectedDaemonHandshake } from "../daemon/lifecycle/daemon-lifecycle";
-import { isDefaultHiveHome } from "../hive-home/instance-identity";
+import {
+  ensureStarted,
+  expectedDaemonHandshake,
+  isRunning,
+} from "../daemon/lifecycle/daemon-lifecycle";
 import { selectFreshInstance } from "../daemon/lifecycle/instances";
-import { ensureStarted, isRunning } from "../daemon/lifecycle/daemon-lifecycle";
 import { projectStateDir } from "../daemon/project-identity-core/state";
+import { getHiveHome, isDefaultHiveHome } from "../hive-home/home";
+import { errorMessage } from "../shared/error-message";
 import type { UpdateCheck } from "../update-service/check";
 import {
   checkForUpdate,
@@ -16,17 +19,16 @@ import {
   isDismissed,
   readUpdateCache,
 } from "../update-service/check";
+import { isStaged, readInstallState } from "../update-service/install";
+import { renderStartNotice } from "../update-service/notice";
+import { detectInstallMethod, installRoot } from "../update-service/paths";
 import {
   explainRefusal,
   inspectDaemonForUpdate,
   restartStaleDaemon,
 } from "../update-service/update-daemon";
-import { isStaged, readInstallState } from "../update-service/install";
-import { renderStartNotice } from "../update-service/notice";
-import { detectInstallMethod, installRoot } from "../update-service/paths";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { liveAgentNames } from "./update";
-import { errorMessage } from "../shared/error-message";
 
 export interface StartDeps {
   readonly checkUpdate?: () => Promise<UpdateCheck>;

@@ -10,27 +10,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DaemonHandshake } from "../../src/daemon/lifecycle/daemon-lifecycle";
 import {
-  expectedDaemonHandshake,
-  handshakeMismatch,
-} from "../../src/daemon/lifecycle/daemon-lifecycle";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
-import { IS_RELEASE_BUILD } from "../../src/shared/version";
-import {
   acquireDaemonLock,
   cleanupLifecycleFiles,
   daemonInstanceLiveness,
   daemonSpawnArgv,
+  ensureStarted,
+  expectedDaemonHandshake,
   getDaemonLockPath,
   getPidFilePath,
   getPortFilePath,
+  handshakeMismatch,
   hiveCliSpawnArgv,
   isRunning,
-  ensureStarted,
   probeDaemonReuse,
   readConfiguredPort,
   releaseDaemonLock,
   writeLifecycleFiles,
 } from "../../src/daemon/lifecycle/daemon-lifecycle";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
+import { IS_RELEASE_BUILD } from "../../src/shared/version";
 
 const fixtureProcessIdentity = (pid: number) => ({
   startToken: `${pid}:0`,

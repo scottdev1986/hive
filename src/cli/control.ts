@@ -9,14 +9,13 @@ import {
   macProcessIdentity,
   readDaemonPort,
 } from "../daemon/lifecycle/daemon-lifecycle";
-import { isDaemonPort } from "../shared/daemon-port";
-import { getHiveHome } from "../hive-home/home";
-import { hiveInstanceSuffix } from "../hive-home/instance-identity";
+import { getHiveHome, hiveInstanceSuffix } from "../hive-home/home";
 import { factVerificationFlag } from "../memory-service/memory-store";
 import { AutonomyEnvelopeSchema } from "../schemas/config-schema";
 import type { MemoryScope, MemoryWriteInput } from "../schemas/memory";
 import type { QuotaObservationInput } from "../schemas/quota";
 import type { SessionLocator } from "../schemas/session-protocol";
+import { isDaemonPort } from "../shared/daemon-port";
 import {
   captureInvokerIdentity,
   formatInvokerOrigin,
@@ -33,13 +32,13 @@ import {
   searchMemory,
   writeMemory,
 } from "./mcp";
+import { type ConfirmFn, confirmOnTty } from "./prompt";
+import { formatQuotaStatus, formatStatusTable } from "./status";
 import {
   daemonErrorDetail,
   decodeJson,
   UserDaemonClient,
 } from "./user-daemon-client";
-import { type ConfirmFn, confirmOnTty } from "./prompt";
-import { formatQuotaStatus, formatStatusTable } from "./status";
 export function requireDaemonPort(explicitPort?: number): number {
   const port = explicitPort ?? readDaemonPort();
   if (port === null || !isDaemonPort(port)) {

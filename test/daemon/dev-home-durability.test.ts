@@ -31,15 +31,13 @@ import {
   neutralSocketPath,
 } from "../../src/daemon/session-host/host-operations";
 import {
+  databaseIdentityPath,
   defaultHiveHome,
   getDatabasePath,
   getHiveHome,
-} from "../../src/hive-home/home";
-import {
-  databaseIdentityPath,
   hiveInstanceSuffix,
   sessiondRuntimeRoot,
-} from "../../src/hive-home/instance-identity";
+} from "../../src/hive-home/home";
 import { resolveVariant } from "../../src/hive-home/variant";
 import { tempRoot } from "../temp-root";
 

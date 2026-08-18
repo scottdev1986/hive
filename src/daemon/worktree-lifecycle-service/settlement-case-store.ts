@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { runGit } from "../../adapters/git";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 
 const GitOidSchema = z.string().regex(/^[0-9a-f]{40,64}$/);
 const IsoDateSchema = z.iso.datetime();

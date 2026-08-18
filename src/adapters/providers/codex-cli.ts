@@ -3,9 +3,9 @@ import { chmod, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 import { safeJsonParse } from "../../shared/json";
 import { shellToken } from "../../shared/shell-quote";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
 import {
   type GraphifyHookKind,

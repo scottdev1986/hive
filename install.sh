@@ -168,11 +168,6 @@ intended_dir="$(cd "$VERSION_DIR" 2>/dev/null && pwd -P || true)"
 [ -n "$intended_dir" ] || die "staged version $VERSION_DIR does not resolve"
 [ "$active_dir" = "$intended_dir" ] ||
   die "current resolved to '${active_dir:-nothing}', expected '$intended_dir'"
-if [ "$VARIANT" != prod ]; then
-  HIVE_BUILD_VARIANT="$VARIANT" \
-  HIVE_HOME="${HIVE_HOME:-}" \
-  "$VERSION_DIR/hive" migrate-home || die "home migration failed"
-fi
 replace_symlink "$ROOT/current/hive" "$BIN_LINK"
 
 printf '{\n  "active": "%s",\n  "previous": %s\n}\n' "$RESOLVED" \

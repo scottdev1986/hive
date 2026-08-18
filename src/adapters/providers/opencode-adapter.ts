@@ -41,4 +41,5 @@ export const opencodeAgentAdapter: AgentAdapter = {
     return { argv: [] };
   },
 };
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+
+import { hiveInstanceSuffix } from "../../hive-home/home";

@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
-import { databaseIdentityPath } from "../../hive-home/instance-identity";
+import { databaseIdentityPath } from "../../hive-home/home";
 
 const DATABASE_IDENTITY_META_KEY = "databaseIdentity";
 

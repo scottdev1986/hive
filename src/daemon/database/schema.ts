@@ -1,8 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { getHiveHome, hiveInstanceSuffix } from "../../hive-home/home";
 import type { DatabaseHost } from "../../shared/database-host";
-import { getHiveHome } from "../../hive-home/home";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
 import { mintSessionLocator } from "../session-host/locators";
 
 function agentsTableDdl(table: string, ifNotExists = false): string {

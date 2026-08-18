@@ -26,7 +26,7 @@ import {
   writeClaudeAgentConfig,
 } from "../../../src/adapters/providers/claude-cli";
 import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/providers/shared/graphify-hook";
-import { hiveInstanceSuffix } from "../../../src/hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../../src/hive-home/home";
 import { tempRootAsync as tempDir } from "../../temp-root";
 
 let tempRoot = "";

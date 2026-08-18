@@ -4,7 +4,7 @@
 // total cannot arise by accident, the absent-root case reading as zero rather
 // than failing, and the wiring that lands the number in the daemon log.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../../src/daemon/database/hive-database";
@@ -15,7 +15,7 @@ import type {
   Spawner,
   SpawnRequest,
 } from "../../../src/daemon/spawn/spawn-service";
-import { sessiondRuntimeRoot } from "../../../src/hive-home/instance-identity";
+import { sessiondRuntimeRoot } from "../../../src/hive-home/home";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import { join } from "node:path";
 import { z } from "zod";
+import { resolveHiveHome } from "../../hive-home/home";
 import {
   AppliedPayloadSchema,
   AttachRequestPayloadSchema,
@@ -22,18 +23,7 @@ import {
   TerminatePayloadSchema,
   type WireErrorCode,
 } from "../../schemas/session-protocol";
-import { resolveHiveHome } from "../../hive-home/instance-identity";
 import { systemClock } from "../../shared/clock";
-import { resolveSessiondBinary } from "./sessiond-broker";
-import type {
-  AttachGrant,
-  AttachRequest,
-  CaptureRequest,
-  CaptureResult,
-  CreateResult,
-  SessionHost,
-  SessionSpec,
-} from "./session-host-contract";
 import {
   adoptHost,
   captureHostTerminal,
@@ -48,6 +38,16 @@ import {
   readControlSecret,
 } from "./host-operations";
 import { sameSessionLocator } from "./locators";
+import type {
+  AttachGrant,
+  AttachRequest,
+  CaptureRequest,
+  CaptureResult,
+  CreateResult,
+  SessionHost,
+  SessionSpec,
+} from "./session-host-contract";
+import { resolveSessiondBinary } from "./sessiond-broker";
 
 import {
   HiveTerminalBindingSchema,

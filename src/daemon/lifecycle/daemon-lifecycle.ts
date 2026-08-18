@@ -8,18 +8,17 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
-import { IS_RELEASE_BUILD } from "../../shared/version";
 import { probeProcessLiveness } from "../../adapters/process-liveness";
+import { getHiveHome, hiveInstanceSuffix } from "../../hive-home/home";
+import { isDaemonPort } from "../../shared/daemon-port";
+import { IS_RELEASE_BUILD } from "../../shared/version";
 import { daemonLogPath } from "../observability/daemon-log";
-import { getHiveHome } from "../../hive-home/home";
 import {
   type DaemonHandshake,
   expectedDaemonHandshake,
   handshakeMismatch,
   probeHandshake,
 } from "./handshake";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
-import { isDaemonPort } from "../../shared/daemon-port";
 
 export * from "./handshake";
 

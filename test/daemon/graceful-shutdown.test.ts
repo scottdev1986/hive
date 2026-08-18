@@ -14,7 +14,7 @@ import {
 } from "../../src/daemon/resource-management/resources";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawn/spawn-service";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { RunCheckpointSchema } from "../../src/schemas/run-checkpoint";
 import type { SessionLocator } from "../../src/schemas/session-protocol";

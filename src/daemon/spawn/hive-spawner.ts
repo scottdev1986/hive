@@ -22,8 +22,7 @@ import {
   unavailableAgentNames,
   WorktreeNameCollisionError,
 } from "../../adapters/worktrees";
-import { getHiveHome } from "../../hive-home/home";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { getHiveHome, hiveInstanceSuffix } from "../../hive-home/home";
 import {
   VERIFICATION_ARTICLE_ID,
   verificationCommandFromTitle,

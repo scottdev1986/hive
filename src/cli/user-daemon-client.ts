@@ -1,6 +1,7 @@
 // The user CLI's HTTP boundary to the local daemon. Authentication stays in credential.ts; this module owns connection validation, request URLs, guarded JSON decoding, and the daemon's error-body vocabulary. The agent-ui pane has a separate client. It must not import this module: sharing this request path would make the user credential reachable from a process that speaks only for one agent.
-import { hiveInstanceSuffix } from "../hive-home/instance-identity";
+
 import { verifyDaemonInstance } from "../daemon/lifecycle/daemon-lifecycle";
+import { hiveInstanceSuffix } from "../hive-home/home";
 import { isDaemonPort } from "../shared/daemon-port";
 import { userFetch } from "./credential";
 import { daemonErrorDetail, decodeJson } from "./daemon-response";

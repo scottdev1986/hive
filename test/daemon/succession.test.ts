@@ -22,7 +22,7 @@ import {
   SUCCESSION_REQUIRED_READS,
   successionRequiredReadInstruction,
 } from "../../src/daemon/queen-provider-service/succession-recovery";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import { MailStore } from "../../src/mail-service/store";
 import type { AgentRecord } from "../../src/schemas/agent";
 import type { GrantAction } from "../../src/schemas/hierarchy-node";

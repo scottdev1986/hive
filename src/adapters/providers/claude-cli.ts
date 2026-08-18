@@ -9,9 +9,9 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { shellToken } from "../../shared/shell-quote";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 import { isRecord } from "../../shared/is-record";
+import { shellToken } from "../../shared/shell-quote";
 import { withFileLock } from "../file-lock";
 import {
   GRAPHIFY_HOOK_SCRIPT,

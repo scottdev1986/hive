@@ -369,8 +369,8 @@ run:
 	fi
 
 # Isolated qa install + run, mirroring `run`. Does not share memory with
-# ~/.hive (qa's sharedWithDefaultHome is empty) and never calls
-# dev-memory-setup. Records the user's Hive isolation state before init so
+# ~/.hive because it never calls dev-memory-setup. Records the user's Hive
+# isolation state before init so
 # qa-clean can check that the isolated QA lifecycle did not reach it.
 qa:
 	@set -e; \

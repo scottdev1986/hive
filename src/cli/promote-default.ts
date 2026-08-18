@@ -1,14 +1,16 @@
 import { join, resolve } from "node:path";
 
 import { HiveDatabase } from "../daemon/database/hive-database";
-import { getHiveHome } from "../hive-home/home";
-import { hiveInstanceSuffix } from "../hive-home/instance-identity";
-import { defaultHiveHome } from "../hive-home/home";
 import { daemonInstanceLiveness } from "../daemon/lifecycle/daemon-lifecycle";
 import {
   RoutingPolicyStore,
   readRoutingPolicyDatabase,
 } from "../daemon/routing-policy-store";
+import {
+  defaultHiveHome,
+  getHiveHome,
+  hiveInstanceSuffix,
+} from "../hive-home/home";
 import type { RoutingPolicy } from "../schemas/routing-policy";
 
 const PROMOTE_ACTOR = "hive-cli-promote-default";

@@ -6,7 +6,7 @@
 // not an accident of construction order.
 
 import { z } from "zod";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../hive-home/home";
 import type { MailStore } from "../../mail-service/store";
 import { isOrchestratorName, ORCHESTRATOR_NAME } from "../../schemas/agent";
 import {

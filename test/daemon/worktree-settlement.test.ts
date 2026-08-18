@@ -2,24 +2,24 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  assessStrandedWork,
-  createWorktree,
-  listStewardshipRefs,
-  listSettlementBranches,
-  reconcileOrphanedWorktrees,
-  WORKTREE_SETTLING_INTERVAL_MS,
-} from "../../src/adapters/worktrees";
 import { writeGrokAgentConfig } from "../../src/adapters/providers/grok-cli";
 import {
   graphifyHookPath,
   writeGraphifyHook,
 } from "../../src/adapters/providers/shared/graphify-hook";
+import {
+  assessStrandedWork,
+  createWorktree,
+  listSettlementBranches,
+  listStewardshipRefs,
+  reconcileOrphanedWorktrees,
+  WORKTREE_SETTLING_INTERVAL_MS,
+} from "../../src/adapters/worktrees";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { SettlementCaseStore } from "../../src/daemon/worktree-lifecycle-service/settlement-case-store";
 import { measureAutomaticRelease } from "../../src/daemon/worktree-lifecycle-service/settlement-proof";
 import { WorktreeLifecycleService } from "../../src/daemon/worktree-lifecycle-service/worktree-lifecycle-service";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 import { deleteAgentRow } from "../support/daemon-test-support";

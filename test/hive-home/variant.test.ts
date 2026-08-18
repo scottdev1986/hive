@@ -1,16 +1,17 @@
-// The variant record replaced five hand-written copies of one derivation, so the thing worth proving is that it derives exactly what the copies did. The prod cases below spell out the pre-collapse formulas literally — sha256 of the resolved home cut to ten hex characters, `/tmp/hvs-<suffix>`, `<machineHome>/db-identity/<suffix>`, `~/.local/{share,bin}/hive` — and assert the record against them, so a change to the record that moves a path fails here rather than in someone's home directory. The dev and qa cases cover what has no predecessor to compare against.
+// The home module owns filesystem identity; the variant record adds build-specific install and
+// retention policy. These tests prove both views stay aligned without duplicating the derivation.
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { machineHiveHome } from "../../src/hive-home/home";
 import {
   databaseIdentityPath,
   hiveInstanceSuffix,
+  machineHiveHome,
   sessiondRuntimeRoot,
-} from "../../src/hive-home/instance-identity";
+  sessiondStateRoot,
+} from "../../src/hive-home/home";
 import {
-  HOME_OWNED_STATE,
   type HiveVariant,
   parseVariant,
   resolveVariant,
@@ -18,12 +19,11 @@ import {
 
 const MACHINE_HOME = "/tmp/hive-variant-test-machine";
 
-/** Homes that exercise every branch the derivation has: the user's own home, a named dev instance under it, the dev home's pre-move spelling, and a path that only resolves to something sane. */
+/** Homes that exercise every branch the derivation has: the user's own home, named dev and QA instances under it, and a path that only resolves to something sane. */
 const HOMES = [
   MACHINE_HOME,
   `${MACHINE_HOME}/instances/dev-a27e3d322a`,
   `${MACHINE_HOME}/instances/qa-a27e3d322a`,
-  "/tmp/hv-a27e3d322a",
   "/tmp/hive-variant-test/nested/../home",
 ];
 
@@ -72,7 +72,7 @@ describe("the variant record derives what its copies derived", () => {
       const config = resolveVariant(home);
       const suffix = historicalSuffix(home);
       expect(config.home).toBe(resolve(home));
-      expect(config.instanceSuffix).toBe(suffix);
+      expect(hiveInstanceSuffix(home)).toBe(suffix);
       expect(config.socketRoot).toBe(
         join(machineHiveHome(home), "run", suffix),
       );
@@ -100,7 +100,7 @@ describe("the variant record derives what its copies derived", () => {
       // Not under runtime/, which four unrelated callers already compose into by hand.
       expect(config.sessiondStateRoot).not.toInclude("/runtime/");
       // The home is already per-instance, so nothing under it re-derives the suffix.
-      expect(config.sessiondStateRoot).not.toInclude(config.instanceSuffix);
+      expect(config.sessiondStateRoot).not.toInclude(hiveInstanceSuffix(home));
     }
   });
 
@@ -108,8 +108,8 @@ describe("the variant record derives what its copies derived", () => {
     isolate();
     for (const home of HOMES) {
       const config = resolveVariant(home);
-      expect(hiveInstanceSuffix(home)).toBe(config.instanceSuffix);
       expect(sessiondRuntimeRoot(home)).toBe(config.socketRoot);
+      expect(sessiondStateRoot(home)).toBe(config.sessiondStateRoot);
       expect(databaseIdentityPath(home)).toBe(config.databaseIdentityPath);
     }
   });
@@ -177,67 +177,29 @@ describe("what each variant is", () => {
   test("dev retains its own state on top of the artifact store every variant keeps", () => {
     isolate("dev");
     const dev = resolveVariant(`${MACHINE_HOME}/instances/dev-a27e3d322a`);
-    // Positive control for the emptiness assertions below: this reader can see a non-empty list.
-    expect(dev.retention).toContain("hive.db");
-    expect(dev.sharedWithDefaultHome).toEqual([
+    expect(dev.retention).toEqual([
+      "hive.db",
+      "hive.db-wal",
+      "hive.db-shm",
+      "quota.db",
+      "quota.db-wal",
+      "quota.db-shm",
+      "config.toml",
+      "quota.toml",
+      "billing-*.json",
+      "artifacts",
       "memory",
       "projects",
       "project-registry.json",
       "models",
     ]);
-    // A database kept without its write-ahead sidecars comes back missing its most recent writes.
-    for (const member of ["hive.db-wal", "hive.db-shm"]) {
-      expect(dev.retention).toContain(member);
-    }
     // Provider tokens are regenerable and must not survive an uninstall.
     expect(dev.retention).not.toContain("credentials");
-    // The artifact store is the one thing every variant retains: artifacts are the evidence the
-    // board cites, and an uninstall removes the install, not the evidence.
-    expect(dev.retention).toContain("artifacts");
 
     for (const variant of ["prod", "qa"] as const) {
       isolate(variant);
-      const config = resolveVariant(MACHINE_HOME);
-      expect(config.retention).toEqual(["artifacts"]);
-      expect(config.sharedWithDefaultHome).toEqual([]);
+      expect(resolveVariant(MACHINE_HOME).retention).toEqual(["artifacts"]);
     }
-  });
-
-  test("retention names only home-owned state and the shared links, never a private copy", () => {
-    // Retention is a named subset of the one enumeration of what a home owns. An entry that is
-    // neither in HOME_OWNED_STATE nor a shared link is the drift the enumeration exists to
-    // prevent — this is the assertion that turns a deleted enumeration entry red.
-    for (const variant of ["prod", "dev", "qa"] as const) {
-      isolate(variant);
-      const config = resolveVariant(
-        variant === "prod"
-          ? MACHINE_HOME
-          : `${MACHINE_HOME}/instances/${variant}-a27e3d322a`,
-      );
-      const retainable = new Set([
-        ...HOME_OWNED_STATE,
-        ...config.sharedWithDefaultHome,
-      ]);
-      for (const pattern of config.retention) {
-        expect(retainable.has(pattern)).toBe(true);
-      }
-    }
-  });
-
-  test("only a named dev instance names the home it moved off", () => {
-    isolate("dev");
-    expect(
-      resolveVariant(`${MACHINE_HOME}/instances/dev-a27e3d322a`).priorHomes,
-    ).toEqual(["/tmp/hv-a27e3d322a"]);
-    // A home that is not a named dev instance has no earlier spelling to migrate from.
-    expect(resolveVariant(MACHINE_HOME).priorHomes).toEqual([]);
-    expect(
-      resolveVariant(`${MACHINE_HOME}/instances/qa-a27e3d322a`).priorHomes,
-    ).toEqual([]);
-    isolate("prod");
-    expect(
-      resolveVariant(`${MACHINE_HOME}/instances/dev-a27e3d322a`).priorHomes,
-    ).toEqual([]);
   });
 
   test("only a published prod binary refuses a local embeddings source", () => {
@@ -258,11 +220,5 @@ describe("what each variant is", () => {
         resolveVariant(MACHINE_HOME, release).allowsLocalEmbeddingsSource,
       ).toBe(allows);
     }
-  });
-
-  test("the record survives a JSON round trip, which is how shell will read it", () => {
-    isolate("dev");
-    const config = resolveVariant(`${MACHINE_HOME}/instances/dev-a27e3d322a`);
-    expect(JSON.parse(JSON.stringify(config))).toEqual({ ...config });
   });
 });

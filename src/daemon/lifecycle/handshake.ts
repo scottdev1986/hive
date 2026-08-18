@@ -1,10 +1,9 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { getHiveHome } from "../../hive-home/home";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
-import { HIVE_BUILD_HASH, HIVE_VERSION } from "../../shared/version";
+import { getHiveHome, hiveInstanceSuffix } from "../../hive-home/home";
 import { systemNow } from "../../shared/clock";
+import { HIVE_BUILD_HASH, HIVE_VERSION } from "../../shared/version";
 import { resolveHandshakeProject } from "../project-identity-core/project-identity-daemon";
 
 /** This is intentionally separate from product version. A wire change must not silently attach a newer launcher to an older daemon with the same release label. */

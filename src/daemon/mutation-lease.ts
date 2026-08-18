@@ -3,11 +3,11 @@ import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { probeProcessLiveness } from "../adapters/process-liveness";
-import { machineHiveHome } from "../hive-home/home";
 import {
   hiveInstanceSuffix,
+  machineHiveHome,
   resolveHiveHome,
-} from "../hive-home/instance-identity";
+} from "../hive-home/home";
 import {
   type DaemonInstanceLiveness,
   daemonInstanceLiveness,

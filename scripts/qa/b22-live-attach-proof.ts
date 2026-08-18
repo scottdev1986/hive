@@ -98,9 +98,7 @@ if (sessiondDigest(stagedSessiond) !== expectedSessiondDigest) {
   process.exit(2);
 }
 process.env.HIVE_SESSIOND_BIN = stagedSessiond;
-const { sessiondRuntimeRoot } = await import(
-  "../../src/hive-home/instance-identity"
-);
+const { sessiondRuntimeRoot } = await import("../../src/hive-home/home");
 const sessiondRoot = sessiondRuntimeRoot(home);
 mkdirSync(sessiondRoot, { recursive: true, mode: 0o700 });
 const canonicalSessiondRoot = realpathSync(sessiondRoot);
@@ -131,9 +129,7 @@ const log = (line: string) => {
 const { HiveDatabase } = await import(
   "../../src/daemon/database/hive-database"
 );
-const { hiveInstanceSuffix } = await import(
-  "../../src/hive-home/instance-identity"
-);
+const { hiveInstanceSuffix } = await import("../../src/hive-home/home");
 const { HiveTerminalHostAdapter } = await import(
   "../../src/daemon/session-host/hive-terminal-host"
 );

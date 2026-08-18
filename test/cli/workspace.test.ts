@@ -17,8 +17,7 @@ import {
   workspaceOpenArguments,
   workspaceOrchestratorArguments,
 } from "../../src/cli/workspace";
-import { getHiveHome } from "../../src/hive-home/home";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
+import { getHiveHome, hiveInstanceSuffix } from "../../src/hive-home/home";
 
 let root: string;
 const testProjectIdentity = () => ({ id: "project-uuid", name: "root" });

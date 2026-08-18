@@ -4,10 +4,10 @@ import {
   providerRuntimeReporter,
 } from "../../src/cli/agent-ui/runtime-report";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import { macProcessIdentity } from "../../src/daemon/lifecycle/daemon-lifecycle";
 import { HiveDaemon } from "../../src/daemon/server";
-import { ORCHESTRATOR_NAME, type AgentRecord } from "../../src/schemas/agent";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
+import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import type { ProviderRun } from "../../src/schemas/provider-run";
 import { required } from "../required";
 import { spawnTestChild } from "../support/spawn-test-child";

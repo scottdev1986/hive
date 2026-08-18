@@ -15,7 +15,11 @@ import {
   runUninstallMachine,
   type UninstallDeps,
 } from "../../src/cli/uninstall";
-import { type HiveVariant, resolveVariant } from "../../src/hive-home/variant";
+import {
+  DEV_SHARED_WITH_DEFAULT_HOME,
+  type HiveVariant,
+  resolveVariant,
+} from "../../src/hive-home/variant";
 import { tempRootAsync } from "../temp-root";
 
 const VARIANT_ENV = [
@@ -101,7 +105,7 @@ describe("hive uninstall --purge", () => {
       // The shared names are links into the user's real home. Each target holds a file that a
       // traversal would destroy, so "the target is intact" is a measurement, not a hope.
       const shared: Record<string, string> = {};
-      for (const name of config.sharedWithDefaultHome) {
+      for (const name of DEV_SHARED_WITH_DEFAULT_HOME) {
         const target = join(root, `shared-${name}`);
         if (name.endsWith(".json")) {
           await writeFile(target, `{"shared":"${name}"}\n`);
@@ -143,7 +147,7 @@ describe("hive uninstall --purge", () => {
       expect(existsSync(config.sessiondStateRoot)).toBe(false);
 
       // The links went with the home; what they pointed at did not.
-      for (const name of config.sharedWithDefaultHome) {
+      for (const name of DEV_SHARED_WITH_DEFAULT_HOME) {
         const target = shared[name] as string;
         if (name.endsWith(".json")) {
           expect(await readFile(target, "utf8")).toBe(`{"shared":"${name}"}\n`);

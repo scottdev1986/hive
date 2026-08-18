@@ -1,5 +1,5 @@
-import type { DatabaseHost } from "../../shared/database-host";
-import { getHiveHome } from "../../hive-home/home";
+import { z } from "zod";
+import { getHiveHome, hiveInstanceSuffix } from "../../hive-home/home";
 import {
   type AgentRecord,
   AgentRecordObjectSchema,
@@ -7,8 +7,7 @@ import {
   ExecutionIdentitySchema,
   isTerminalAgentStatus,
 } from "../../schemas/agent";
-import { z } from "zod";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
+import type { DatabaseHost } from "../../shared/database-host";
 import { mintSessionLocator } from "../session-host/locators";
 import type { RuntimeStore } from "./runtime-store";
 

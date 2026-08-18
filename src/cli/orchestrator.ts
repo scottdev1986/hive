@@ -37,9 +37,12 @@ import {
   provisionQueenSkills,
   queenSkillDelivery,
 } from "../adapters/queen-skills";
-import { discoverRuntimeCapabilities } from "../daemon/provider-capabilities/snapshot-authority";
 import { writeCredential } from "../daemon/authorization/credentials";
+import { hiveCliSpawnArgv } from "../daemon/lifecycle/daemon-lifecycle";
+import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-host/sessiond-controller";
+import { discoverRuntimeCapabilities } from "../daemon/provider-capabilities/snapshot-authority";
 import { queenBootCapsules } from "../daemon/queen-provider-service/queen-boot-capsule-service";
+import { mintSessionRequestId } from "../daemon/session-host/locators";
 import {
   codexInstructionProfileName,
   launchPromptPath,
@@ -47,28 +50,24 @@ import {
   writeCodexInstructionProfile,
   writeLaunchPrompt,
 } from "../daemon/spawn/launch-prompt";
-import { hiveCliSpawnArgv } from "../daemon/lifecycle/daemon-lifecycle";
-import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-host/sessiond-controller";
-import { mintSessionRequestId } from "../daemon/session-host/locators";
-import { shellJoin } from "../shared/shell-quote";
 import {
   agentUiLaunchArgv,
   protocolProviderArgv,
 } from "../daemon/spawn/spawn-service";
-import { getHiveHome } from "../hive-home/home";
-import { orchestratorSessionKey } from "../hive-home/instance-identity";
+import { getHiveHome, orchestratorSessionKey } from "../hive-home/home";
 import { buildMemoryIndex } from "../memory-service/memory-store";
 import { ORCHESTRATOR_NAME } from "../schemas/agent";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
+import { shellJoin } from "../shared/shell-quote";
 import { IS_RELEASE_BUILD } from "../shared/version";
 import { isTestRunnerEnv } from "./invoker";
-import { UserDaemonClient } from "./user-daemon-client";
-import { QUEEN_POLICY } from "./queen-policy";
 import {
   daemonOrchestratorSessiondControl,
   type OrchestratorSessiondControl,
   runOrchestratorSessiondLaunch,
 } from "./orchestrator-sessiond";
+import { QUEEN_POLICY } from "./queen-policy";
+import { UserDaemonClient } from "./user-daemon-client";
 
 export type OrchestratorTool = CapabilityProvider;
 

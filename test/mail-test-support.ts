@@ -1,5 +1,5 @@
 import type { HiveDatabase } from "../src/daemon/database/hive-database";
-import { hiveInstanceSuffix } from "../src/hive-home/instance-identity";
+import { hiveInstanceSuffix } from "../src/hive-home/home";
 import type { MailStore } from "../src/mail-service/store";
 import { MAIL_MAX_ATTEMPTS, type MailItem } from "../src/schemas/mail";
 

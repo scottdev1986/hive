@@ -2,14 +2,17 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { defaultHiveHome, instancesRoot } from "../../hive-home/home";
-import { hiveInstanceSuffix } from "../../hive-home/instance-identity";
-import { probeHandshake } from "./handshake";
+import {
+  defaultHiveHome,
+  hiveInstanceSuffix,
+  instancesRoot,
+} from "../../hive-home/home";
+import { isDaemonPort } from "../../shared/daemon-port";
 import {
   type DaemonInstanceLiveness,
   daemonInstanceLiveness,
 } from "./daemon-lifecycle";
-import { isDaemonPort } from "../../shared/daemon-port";
+import { probeHandshake } from "./handshake";
 
 const INSTANCE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 

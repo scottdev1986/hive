@@ -6,12 +6,11 @@ import {
   type DaemonInstanceLiveness,
   daemonInstanceLiveness,
 } from "../daemon/lifecycle/daemon-lifecycle";
-import { defaultHiveHome } from "../hive-home/home";
 import {
+  defaultHiveHome,
   hiveInstanceSuffix,
   resolveHiveHome,
-} from "../hive-home/instance-identity";
-import type { DatabaseHost } from "../shared/database-host";
+} from "../hive-home/home";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
@@ -24,6 +23,7 @@ import {
   type QuotaScope,
 } from "../schemas/quota";
 import type { ModelVendorVerdict } from "../schemas/routing-derivation";
+import type { DatabaseHost } from "../shared/database-host";
 import {
   AlertStateSchema,
   DiscoveredPoolSchema,

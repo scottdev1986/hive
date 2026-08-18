@@ -21,11 +21,11 @@ import {
   type WorktreeReconciliationReport,
 } from "../adapters/worktrees";
 import type { AutonomyControl } from "../config/autonomy";
-import { getHiveHome } from "../hive-home/home";
 import {
+  getHiveHome,
   hiveInstanceSuffix,
   sessiondRuntimeRoot,
-} from "../hive-home/instance-identity";
+} from "../hive-home/home";
 import { type MailRecipientState, MailService } from "../mail-service/service";
 import { MailStore } from "../mail-service/store";
 import { MailWakeAclError, MailWakeLedger } from "../mail-service/wake-ledger";

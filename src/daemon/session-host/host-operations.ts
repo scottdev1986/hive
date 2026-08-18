@@ -3,8 +3,7 @@ import { type Dirent, readdirSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
-import { sessiondRuntimeRoot } from "../../hive-home/instance-identity";
-import { resolveVariant } from "../../hive-home/variant";
+import { sessiondRuntimeRoot, sessiondStateRoot } from "../../hive-home/home";
 
 /** Speaks the neutral host operation protocol directly to a terminal's own socket, with no broker in between. Hive opens `host.sock` per request instead of routing frequent INSPECT polls through a shared accept loop. This keeps one slow host from delaying other terminals. NHOP is a private per-request protocol: connect, write one request, read one response, close. There is no session, so a slow host delays only its own caller. */
 
@@ -45,7 +44,7 @@ export class HostOperationRefused extends Error {
 
 /** A host's own state directory: its adoption capability, recovery record, journal and checkpoints. Under `sessiondStateRoot`, which is where everything that must outlive the socket lives; only the socket itself stays in the short root that `sun_path` constrains. */
 export function hostDirectory(hiveHome: string, sessionId: string): string {
-  return join(resolveVariant(hiveHome).sessiondStateRoot, "hosts", sessionId);
+  return join(sessiondStateRoot(hiveHome), "hosts", sessionId);
 }
 
 function lengthPrefix(value: number): Buffer {
@@ -74,7 +73,7 @@ export function hostSocketPath(hiveHome: string, sessionId: string): string {
 
 /** The directory every host publishes its neutral endpoint's record and capability under. A sibling of the host subtree, not a child, because the two are keyed differently: a host directory is named by the Hive session id, a neutral one by a digest of the session reference. That is also why `adopt.cap` lives under `hosts/` and `control.cap` here — two secrets with two jobs, one authenticating the launch handshake and one authorising every operation after it. Tidying them into one directory would collapse a security boundary, not a layout. */
 export function neutralRoot(hiveHome: string): string {
-  return join(resolveVariant(hiveHome).sessiondStateRoot, "neutral");
+  return join(sessiondStateRoot(hiveHome), "neutral");
 }
 
 function neutralDigest(session: HostSessionRef): Buffer {

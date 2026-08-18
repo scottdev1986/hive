@@ -19,11 +19,6 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import {
-  boardStoryInstruction,
-  buildAgentPrompt,
-} from "../../src/daemon/spawn/agent-prompt";
-import { loadAgentStandards } from "../../src/daemon/spawn/agent-standards";
 import { ROLE_GRANTS } from "../../src/daemon/authorization/authorization-service";
 import {
   HIVE_TOOL_POLICIES,
@@ -32,16 +27,21 @@ import {
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import { HiveDaemon } from "../../src/daemon/server";
-import { HiveSpawner } from "../../src/daemon/spawn/spawner-impl";
+import {
+  boardStoryInstruction,
+  buildAgentPrompt,
+} from "../../src/daemon/spawn/agent-prompt";
+import { loadAgentStandards } from "../../src/daemon/spawn/agent-standards";
 import { SpawnRequestSchema } from "../../src/daemon/spawn/spawn-service";
+import { HiveSpawner } from "../../src/daemon/spawn/spawner-impl";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
+import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import type { CapabilityRecord } from "../../src/schemas/capability";
 import { known, unknown } from "../../src/schemas/capability";
 import type { RoutingPolicy } from "../../src/schemas/routing-policy";
-import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import type { TaskDetail } from "../../src/schemas/task-detail";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
-import { required } from "../required";
 import { HIVE_MCP_VERSION_NEGOTIATION } from "../../src/shared/mcp-protocol";
+import { required } from "../required";
 
 const AT = "2026-08-10T15:00:00.000Z";
 const TASK_ID = "task_019fec14-1007-7000-8000-000000000107";

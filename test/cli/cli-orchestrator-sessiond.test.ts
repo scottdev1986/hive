@@ -6,7 +6,6 @@ import {
   type OrchestratorSessiondWaitResult,
   runOrchestratorSessiondLaunch,
 } from "../../src/cli/orchestrator-sessiond";
-import { hiveInstanceSuffix } from "../../src/hive-home/instance-identity";
 import {
   type RootSessiondLocator,
   rootSessionIdForLaunchRequest,
@@ -16,6 +15,7 @@ import type {
   OrchestratorSessiondSnapshot,
 } from "../../src/daemon/orchestrator-host/sessiond-controller";
 import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
+import { hiveInstanceSuffix } from "../../src/hive-home/home";
 
 const launch: OrchestratorSessiondLaunch = {
   requestId: mintSessionRequestId(1_750_000_000_000),

@@ -2,12 +2,9 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { removeGrokAgentConfig } from "../adapters/providers/grok-cli";
 import { daemonMcpUrl } from "../adapters/providers/shared/mcp-scope";
-import { listInstances } from "../daemon/lifecycle/instances";
 import { readDaemonPort } from "../daemon/lifecycle/daemon-lifecycle";
-import {
-  hiveInstanceSuffix,
-  isDefaultHiveHome,
-} from "../hive-home/instance-identity";
+import { listInstances } from "../daemon/lifecycle/instances";
+import { hiveInstanceSuffix, isDefaultHiveHome } from "../hive-home/home";
 import { isRecord } from "../shared/is-record";
 import { safeJsonParse } from "../shared/json";
 

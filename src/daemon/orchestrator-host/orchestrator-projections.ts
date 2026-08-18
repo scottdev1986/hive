@@ -2,7 +2,7 @@ import type { AgentRecord } from "../../schemas/agent";
 import type { ApprovalKind } from "../../schemas/approval";
 import type { ActivitySnapshot } from "../../schemas/provider-communication";
 
-export { orchestratorSessionKey } from "../../hive-home/instance-identity";
+export { orchestratorSessionKey } from "../../hive-home/home";
 
 const MAX_TASK_CODE_POINTS = 160;
 

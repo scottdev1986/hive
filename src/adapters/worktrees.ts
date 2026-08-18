@@ -12,21 +12,13 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import {
-  hiveInstanceSuffix,
-  isDefaultHiveHome,
-} from "../hive-home/instance-identity";
+import { hiveInstanceSuffix, isDefaultHiveHome } from "../hive-home/home";
 import { type AgentRecord, isLiveAgent } from "../schemas/agent";
 import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 import { SHIPPED_SKILLS } from "../skills/shipped";
 import { withFileLock } from "./file-lock";
 import { type GitResult, runGit as runGitCommand } from "./git";
 import { type ProcessLiveness, probeProcessLiveness } from "./process-liveness";
-import {
-  agentRowOwnershipLiveness,
-  type OwnershipLiveness,
-  probeWorktreeOwnerProcessLiveness,
-} from "./worktree-owner-liveness";
 import { ownsGrokHook } from "./providers/grok-cli";
 import {
   OPENCODE_GRAPHIFY_PLUGIN_PATH,
@@ -37,6 +29,11 @@ import {
   provisionedSkillLinks,
   SKILL_LINK_MANIFEST,
 } from "./skills";
+import {
+  agentRowOwnershipLiveness,
+  type OwnershipLiveness,
+  probeWorktreeOwnerProcessLiveness,
+} from "./worktree-owner-liveness";
 
 // Worktree maintenance has always killed a deadline-hung git with SIGKILL; the
 // canonical runner's SIGTERM default exists for the landing path, where git's

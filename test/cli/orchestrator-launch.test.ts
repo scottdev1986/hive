@@ -19,8 +19,8 @@ import {
   CLAUDE_QUEEN_MODEL,
   CODEX_ROOT_TOKEN_SUBJECT,
   launchOrchestrator,
-  orchestratorLaunchEnvironment,
   orchestratorJournalPath,
+  orchestratorLaunchEnvironment,
   prepareOrchestratorConfig,
   provisionCodexRootToken,
   provisionQueenRootToken,
@@ -31,12 +31,12 @@ import {
   USER_SUBJECT,
   writeCredential,
 } from "../../src/daemon/authorization/credentials";
+import { rootSessionIdForLaunchRequest } from "../../src/daemon/orchestrator-host/orchestrator-host-contract";
 import { launchPromptPath } from "../../src/daemon/spawn/launch-prompt";
 import {
   hiveInstanceSuffix,
   orchestratorSessionKey,
-} from "../../src/hive-home/instance-identity";
-import { rootSessionIdForLaunchRequest } from "../../src/daemon/orchestrator-host/orchestrator-host-contract";
+} from "../../src/hive-home/home";
 import { required } from "../required";
 
 let hiveHome: string;
