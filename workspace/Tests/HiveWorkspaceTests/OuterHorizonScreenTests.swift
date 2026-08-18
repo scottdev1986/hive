@@ -185,7 +185,9 @@ final class OuterHorizonScreenTests: XCTestCase {
             $0.hasPrefix("0 live · 19 visible / 19 admitted · topology ")
         })
         XCTAssertTrue(allText(in: content).contains("Run hierarchy · full hive"))
-        XCTAssertTrue(allText(in: content).contains("NO SESSION"))
+        XCTAssertFalse(
+            allText(in: content).contains("NO SESSION"),
+            "a uniform absence state must not take width from hierarchy identity")
 
         row.performClick(nil)
         XCTAssertEqual(

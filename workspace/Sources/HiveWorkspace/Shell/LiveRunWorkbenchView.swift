@@ -1330,11 +1330,13 @@ private final class LiveRunSessionButton: NSButton {
         disclosure.widthAnchor.constraint(
             equalToConstant: Theme.Metric.chainMarkSize).isActive = true
 
-        let chip = CapsuleBadge(
-            text: activity?.displayLabel.uppercased() ?? "NO SESSION",
-            symbol: activity?.appearance.symbol ?? "questionmark.circle",
-            style: activity.map { liveRunBadgeStyle(for: $0.appearance.color) } ?? .neutral)
-        let row = NSStackView(views: [disclosure, copy, chip])
+        let chip = activity.map {
+            CapsuleBadge(
+                text: $0.displayLabel.uppercased(),
+                symbol: $0.appearance.symbol,
+                style: liveRunBadgeStyle(for: $0.appearance.color))
+        }
+        let row = NSStackView(views: [disclosure, copy] + (chip.map { [$0] } ?? []))
         row.translatesAutoresizingMaskIntoConstraints = false
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -1348,9 +1350,9 @@ private final class LiveRunSessionButton: NSButton {
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.s),
         ])
         copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        copy.setContentCompressionResistancePriority(.required, for: .horizontal)
-        chip.setContentHuggingPriority(.required, for: .horizontal)
-        chip.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+        copy.setContentCompressionResistancePriority(.init(800), for: .horizontal)
+        chip?.setContentHuggingPriority(.required, for: .horizontal)
+        chip?.setContentCompressionResistancePriority(.init(200), for: .horizontal)
 
         if selected {
             let bar = NSView()
