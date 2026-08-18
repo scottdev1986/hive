@@ -255,6 +255,67 @@ final class OuterHorizonScreenTests: XCTestCase {
             "the characters that fit before truncation must identify every crew row: \(visibleNames)")
     }
 
+    func testStatusCapsuleRendersItsFullWordAtTheRealRailWidth() throws {
+        let snapshot = try snapshotWithCurrentDigest("full-hive-dense-19")
+        let horizon = OuterHorizonScreenState(snapshot: snapshot)
+        // The row from the defect report: a live session for zoe, whose
+        // compound role line outbids the capsule for the rail's fixed width.
+        let feed = """
+            {"v":1,"agents":[{"id":"zoe","name":"zoe","tool":"codex","model":"gpt-5.4",
+             "status":"working",
+             "sessionLocator":{"schemaVersion":1,"instanceId":"rig",
+               "subject":{"kind":"agent","agentId":"zoe"},"generation":1,
+               "sessionId":"ses_018f4f5e-0000-7000-8000-000000000104",
+               "hostKind":"sessiond","engineBuildId":"engine"},
+             "presentation":{"panePresence":"visible","terminalState":"live",
+               "headerDetail":"working","paneStatus":{"kind":"running"},
+               "activity":"working"}}]}
+            """
+        let projection = try LiveRunProjection(feedLine: XCTUnwrap(FeedLine.parse(feed)))
+        let workbench = LiveRunWorkbenchView(terminalFactory: nil)
+        workbench.apply(projection)
+        workbench.applyHierarchy(
+            horizon,
+            screen: currentScreen(snapshot),
+            onSelect: { _ in },
+            onToggleExpansion: { _ in })
+        workbench.frame = NSRect(x: 0, y: 0, width: 1_200, height: 900)
+        workbench.layoutSubtreeIfNeeded()
+
+        let row = try XCTUnwrap(findView(workbench, identifier: "live-run-session-zoe"))
+        XCTAssertTrue(
+            allText(in: row).contains("lead-worker · lead-coordination"),
+            "positive control: the fixture row carries the compound role line")
+        let badge = try XCTUnwrap(firstCapsuleBadge(in: row))
+        let label = try XCTUnwrap(allTextFields(in: badge).first)
+        XCTAssertEqual(
+            label.stringValue, "WORKING",
+            "positive control: the capsule carries the session's real status")
+
+        let fullWidth = (label.stringValue as NSString).size(
+            withAttributes: [.font: try XCTUnwrap(label.font)]).width
+        XCTAssertGreaterThanOrEqual(
+            label.frame.width,
+            fullWidth,
+            "the status word is bounded and known in advance; the capsule must own "
+                + "enough of the row to draw all of it")
+        XCTAssertEqual(
+            prefixCharacterCount(
+                fitting: label.frame.width,
+                from: label.stringValue,
+                font: try XCTUnwrap(label.font)),
+            label.stringValue.count,
+            "the characters that fit before truncation must be the whole status word")
+    }
+
+    private func firstCapsuleBadge(in root: NSView) -> CapsuleBadge? {
+        if let match = root as? CapsuleBadge { return match }
+        for child in root.subviews {
+            if let found = firstCapsuleBadge(in: child) { return found }
+        }
+        return nil
+    }
+
     func testRefusedAndInvalidWireResponsesWarnAndRetainThePriorHierarchy() async throws {
         let snapshot = try snapshot("full-hive-dense-19")
         let previous = previousState(snapshot)

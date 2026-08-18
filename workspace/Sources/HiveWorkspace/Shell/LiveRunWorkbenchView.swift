@@ -1284,10 +1284,9 @@ private final class LiveRunSessionButton: NSButton {
         name.textColor = Theme.primaryText
         name.lineBreakMode = .byTruncatingTail
         // Ten sibling crew rows differ only in the tail of their names, so the
-        // rail's fixed width has to be spent on identity first. These sit above
-        // the capsule label's own 460: the status pill carries the same value on
-        // every row, and a row that truncates away what distinguishes it from
-        // its siblings is not a row anyone can choose from.
+        // rail's fixed width has to be spent on identity first: a row that
+        // truncates away what distinguishes it from its siblings is not a row
+        // anyone can choose from.
         name.compressHorizontally(priority: 620, toolTip: titleText)
         let roleText = role ?? Self.roleLine(hierarchyRow?.node)
         let providerText: String
@@ -1303,10 +1302,6 @@ private final class LiveRunSessionButton: NSButton {
         let roleLabel = rowDetail(roleText)
         let providerLabel = rowDetail(providerText)
         let modelLabel = rowDetail(modelText)
-        let copy = NSStackView(views: [name, roleLabel, providerLabel, modelLabel])
-        copy.orientation = .vertical
-        copy.alignment = .leading
-        copy.spacing = 1
 
         let activity = session?.activity
         let disclosure: NSView
@@ -1336,7 +1331,23 @@ private final class LiveRunSessionButton: NSButton {
                 symbol: $0.appearance.symbol,
                 style: liveRunBadgeStyle(for: $0.appearance.color))
         }
-        let row = NSStackView(views: [disclosure, copy] + (chip.map { [$0] } ?? []))
+        // The capsule takes its own line under the identity copy instead of a
+        // share of its horizontal band. The status vocabulary is short, closed
+        // and known in advance, while the role line is open-ended and already
+        // compound; sharing one band made a pair of compression-resistance
+        // constants decide which one truncated, and the bounded status word
+        // lost to the compound role. On its own line nothing competes with the
+        // capsule, so it always draws its whole word; the identity lines above
+        // it truncate with their tooltips instead.
+        let copy = NSStackView(
+            views: [name, roleLabel, providerLabel, modelLabel] + (chip.map { [$0] } ?? []))
+        copy.orientation = .vertical
+        copy.alignment = .leading
+        copy.spacing = 1
+        if chip != nil {
+            copy.setCustomSpacing(Theme.Space.xs, after: modelLabel)
+        }
+        let row = NSStackView(views: [disclosure, copy])
         row.translatesAutoresizingMaskIntoConstraints = false
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -1349,10 +1360,6 @@ private final class LiveRunSessionButton: NSButton {
             row.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.s),
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.s),
         ])
-        copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        copy.setContentCompressionResistancePriority(.init(800), for: .horizontal)
-        chip?.setContentHuggingPriority(.required, for: .horizontal)
-        chip?.setContentCompressionResistancePriority(.init(200), for: .horizontal)
 
         if selected {
             let bar = NSView()
