@@ -5,7 +5,7 @@ import {
   CapabilityProviderSchema,
 } from "../../schemas/capability";
 import type { ProviderRun } from "../../schemas/provider-run";
-import { domainUuidV7Schema } from "../../schemas/session-protocol";
+import { domainUuidV7Schema } from "../../schemas/primitives";
 import {
   mintRootSessiondLocator,
   OrchestratorSessiondStateSchema,

@@ -1,5 +1,19 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "./provider";
+
+export {
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "./provider";
+
+export const RoleSchema = z.enum(["user", "orchestrator", "writer", "reader"]);
+export type Role = z.infer<typeof RoleSchema>;
 
 /** Unknown constraints are rejected; absence never grants terminal observation. */
 export const Hv1CapabilityConstraintsSchema = z.strictObject({
@@ -13,7 +27,7 @@ export type Hv1CapabilityConstraints = z.infer<
 const Hv1CapabilityCommonShape = {
   id: z.string().uuid(),
   subject: z.string().min(1),
-  role: z.enum(["user", "orchestrator", "writer", "reader"]),
+  role: RoleSchema,
   epoch: z.number().int().nonnegative(),
   issuedAt: z.iso.datetime({ offset: true }),
   expiresAt: z.iso.datetime({ offset: true }),
@@ -37,21 +51,11 @@ export const Hv1CapabilityRecordSchema = z.union([
   }),
 ]);
 export type Hv1CapabilityRecord = z.infer<typeof Hv1CapabilityRecordSchema>;
+export type Capability = Hv1CapabilityRecord;
 
 export const HV1_CAPABILITY_WIRE_SCHEMAS = {
   hv1CapabilityRecord: Hv1CapabilityRecordSchema,
 } as const;
-
-export const CapabilityProviderSchema = z.enum([
-  "claude",
-  "codex",
-  "grok",
-  "kimi",
-  "opencode",
-]);
-export type CapabilityProvider = z.infer<typeof CapabilityProviderSchema>;
-
-export const CAPABILITY_PROVIDERS = CapabilityProviderSchema.options;
 
 export function unknownVendor(vendor: never, site: string): never {
   throw new Error(
@@ -61,15 +65,17 @@ export function unknownVendor(vendor: never, site: string): never {
   );
 }
 
-/** Enumerate every known provider plus sorted snapshot extras; never erase either. */
-export function providersOf<T>(
-  record: Partial<Record<CapabilityProvider, T>>,
-): CapabilityProvider[] {
+/** Returns every known provider followed by any additional keys in the record. */
+export function providersOf<T extends object>(
+  record: T,
+): Array<CapabilityProvider | Extract<keyof T, string>> {
   const union = new Set<string>(CAPABILITY_PROVIDERS);
   const extras = Object.keys(record)
     .filter((key) => !union.has(key))
     .sort();
-  return [...CAPABILITY_PROVIDERS, ...(extras as CapabilityProvider[])];
+  return [...CAPABILITY_PROVIDERS, ...extras] as Array<
+    CapabilityProvider | Extract<keyof T, string>
+  >;
 }
 
 export const ProviderTransportSchema = z.enum([

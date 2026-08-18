@@ -664,7 +664,10 @@ export function hiveMailComplete(
     handlerId: input.handlerId,
     disposition: input.disposition,
     reason: input.reason,
-    retryAt: plusSeconds(now, input.retryAfterSeconds),
+    retryAt:
+      input.disposition === "deferred"
+        ? plusSeconds(now, input.retryAfterSeconds)
+        : null,
     now: now.toISOString(),
     maxAttempts: MAIL_MAX_ATTEMPTS,
   });

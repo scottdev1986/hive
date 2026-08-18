@@ -12,6 +12,7 @@ import {
   emptyRoutingPolicy,
   RoutingPolicySchema,
 } from "../../src/schemas/routing-policy";
+import { ApprovalSchema } from "../../src/schemas/approval";
 import { HandoffSchema } from "../../src/schemas/handoff-schema";
 import { HiveConfigSchema } from "../../src/schemas/config-schema";
 import { type HookEvent, HookEventSchema } from "../../src/schemas/event";
@@ -105,13 +106,35 @@ describe("AgentRecordSchema", () => {
   });
 
   test("rejects retired external-viewer state", () => {
-    const retiredViewerState = ["terminal", "Handle"].join("");
-    expect(() =>
-      AgentRecordSchema.parse({
-        ...agent,
-        [retiredViewerState]: { app: "external", sessionId: "session-uuid" },
-      }),
-    ).toThrow();
+    const result = AgentRecordSchema.safeParse({
+      ...agent,
+      terminalHandle: { app: "external", sessionId: "session-uuid" },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("ApprovalSchema", () => {
+  const approval = {
+    id: "approval-1",
+    agentName: "agent-3",
+    description: "Run a network install",
+    status: "pending",
+    createdAt: timestamp,
+    resolvedAt: null,
+  };
+
+  test("defaults only a missing legacy kind", () => {
+    expect(ApprovalSchema.parse(approval).kind).toBe("tool-permission");
+    expect(
+      ApprovalSchema.safeParse({ ...approval, kind: "future-kind" }).success,
+    ).toBe(false);
+  });
+
+  test("rejects unknown fields", () => {
+    expect(ApprovalSchema.safeParse({ ...approval, typo: true }).success).toBe(
+      false,
+    );
   });
 });
 

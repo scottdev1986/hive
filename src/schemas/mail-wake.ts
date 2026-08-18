@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { MailLaneSchema } from "./mail";
-import { Rfc3339UtcMillisecondsSchema } from "./session-protocol";
+import { Rfc3339UtcMillisecondsSchema } from "./primitives";
 
 /** The wake contract between the daemon's mailbox and a recipient's frontend. Nothing here carries a message body. The mailbox stays the only channel that can move one, so a frontend that learns "you have mail" still has to poll through the recipient's own capability to read it. That is what keeps the existing ACL intact: the notification says a count and an id, never content. */
 

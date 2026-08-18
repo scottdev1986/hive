@@ -1,10 +1,17 @@
 import { z } from "zod";
-import { ExactContentRefSchema } from "./context-projection";
 import { MemoryScopeSchema } from "./memory";
+import { Sha256HexSchema } from "./primitives";
 import { RunOutcomeSchema } from "./run-outcome";
 import { SessionLocatorSchema } from "./session-protocol";
 
-const Sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
+export const ExactContentRefSchema = z
+  .strictObject({
+    kind: z.literal("message"),
+    id: z.string().min(1),
+    content: z.string(),
+    digest: Sha256HexSchema,
+  })
+  .readonly();
 
 export const HandoffSummarySchema = z
   .strictObject({
@@ -32,7 +39,7 @@ export const HandoffBundleSchema = z
         kind: z.literal("agent-task"),
         agentId: z.string().min(1),
         content: z.string(),
-        digest: Sha256Schema,
+        digest: Sha256HexSchema,
       })
       .readonly(),
     requirementRefs: z.array(ExactContentRefSchema),
@@ -64,7 +71,7 @@ export const HandoffBundleSchema = z
         .strictObject({
           scope: MemoryScopeSchema,
           id: z.string().min(1),
-          digest: Sha256Schema,
+          digest: Sha256HexSchema,
           retrieval: z
             .strictObject({
               tool: z.literal("memory_read"),
@@ -87,7 +94,7 @@ export const HandoffBundleSchema = z
             .strictObject({
               terminal: SessionLocatorSchema,
               through: z.string().min(1),
-              digest: Sha256Schema,
+              digest: Sha256HexSchema,
               bytes: z.number().int().nonnegative(),
               completeness: z.enum(["complete", "gap"]),
             })

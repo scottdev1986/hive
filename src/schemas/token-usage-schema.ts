@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { opaqueString } from "./wire-schema";
+import { formatlessString } from "./wire-schema";
 
 export const TokenCountsSchema = z.strictObject({
   inputTokens: z.number().int().nonnegative(),
@@ -23,7 +23,7 @@ export type TokenUsageEventIngest = z.infer<typeof TokenUsageEventIngestSchema>;
 /** Facts measured on a connected protocol session. Omit a field when unknown. Null on model, window, or percent means proven absence and must not be written as zero. */
 export const ProtocolSessionFactsReportSchema = z.strictObject({
   agent: z.string().min(1),
-  observedAt: opaqueString(z.iso.datetime({ offset: true })).optional(),
+  observedAt: formatlessString(z.iso.datetime({ offset: true })).optional(),
   model: z.string().min(1).nullable().optional(),
   effort: z
     .string()

@@ -120,7 +120,7 @@ describe("memory MCP tools", () => {
     }
   });
 
-  test("memory_write rejects writes missing load-bearing wiki fields", async () => {
+  test("memory_write requires structural fields without policing prose", async () => {
     await makeHome();
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
     tempRoots.push(repoRoot);
@@ -147,8 +147,8 @@ describe("memory MCP tools", () => {
           body: "Two claims exist.",
         }),
       });
-      expect(unannotatedConflict.isError).toBe(true);
-      expect(await discoverMemoryFiles(repoRoot)).toEqual([]);
+      expect(unannotatedConflict.isError).toBeUndefined();
+      expect((await discoverMemoryFiles(repoRoot)).length).toBeGreaterThan(0);
     } finally {
       await client.close().catch(() => undefined);
       await daemon.stop();

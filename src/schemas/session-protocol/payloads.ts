@@ -4,7 +4,6 @@ import { TERMINAL_LIMITS } from "./limits";
 import {
   DecimalUint64Schema,
   Rfc3339UtcMillisecondsSchema,
-  SafeUintSchema,
   Secret256HexSchema,
   TaggedSha256Schema,
 } from "./primitives";

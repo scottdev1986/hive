@@ -4,7 +4,7 @@ import {
   CapabilityProviderSchema,
 } from "./capability";
 import type { RoutingCategory } from "./routing-policy";
-import { opaqueString } from "./wire-schema";
+import { formatlessString } from "./wire-schema";
 
 export const QuotaConfidenceSchema = z.enum([
   "authoritative",
@@ -115,21 +115,21 @@ export const QuotaObservationSchema = z.strictObject({
   pool: z.string().min(1),
   fiveHourUsed: z.number().nonnegative(),
   weeklyUsed: z.number().nonnegative(),
-  observedAt: opaqueString(z.iso.datetime({ offset: true })),
-  fiveHourResetAt: opaqueString(z.iso.datetime({ offset: true }))
+  observedAt: formatlessString(z.iso.datetime({ offset: true })),
+  fiveHourResetAt: formatlessString(z.iso.datetime({ offset: true }))
     .nullable()
     .default(null),
-  weeklyResetAt: opaqueString(z.iso.datetime({ offset: true }))
+  weeklyResetAt: formatlessString(z.iso.datetime({ offset: true }))
     .nullable()
     .default(null),
   source: ObservedSourceSchema,
   confidence: ObservedConfidenceSchema,
-  fiveHourObservedAt: opaqueString(z.iso.datetime({ offset: true }))
+  fiveHourObservedAt: formatlessString(z.iso.datetime({ offset: true }))
     .nullable()
     .default(null),
   fiveHourSource: ObservedSourceSchema.nullable().default(null),
   fiveHourConfidence: ObservedConfidenceSchema.nullable().default(null),
-  weeklyObservedAt: opaqueString(z.iso.datetime({ offset: true }))
+  weeklyObservedAt: formatlessString(z.iso.datetime({ offset: true }))
     .nullable()
     .default(null),
   weeklySource: ObservedSourceSchema.nullable().default(null),

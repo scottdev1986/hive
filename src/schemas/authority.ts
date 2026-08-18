@@ -1,7 +1,6 @@
-// The vocabulary of Hive's authorization boundary: who a caller is, what it may ask for, and the credential that says so. Only the names live here. Minting, verification, and the role-to-action allowlists are the daemon's job — this file is the leaf that mail, memory, and usage may name when they declare which action a tool needs, without importing the authorization engine to do it.
-import type { Hv1CapabilityConstraints } from "./capability";
-
-export type Role = "user" | "orchestrator" | "writer" | "reader";
+// Shared authorization vocabulary. Minting, verification, and role grants stay
+// in the daemon; schemas and services import these names without that engine.
+export type { Capability, Role } from "./capability";
 
 export type Action =
   | "status:read"
@@ -48,15 +47,3 @@ export type Action =
   | "run-control:write"
   | "succession:write"
   | "workspace-visibility:write";
-
-export interface Capability {
-  readonly id: string;
-  readonly subject: string;
-  readonly role: Role;
-  readonly epoch: number;
-  readonly constraints?: Hv1CapabilityConstraints | undefined;
-  readonly subjects?: readonly string[] | undefined;
-  readonly issuedAt: string;
-  readonly expiresAt: string;
-  readonly revokedAt: string | null;
-}

@@ -12,7 +12,7 @@ import {
   MailPublishRequestSchema,
   MailStatusRequestSchema,
 } from "../../schemas/mail";
-import { opaqueString } from "../../schemas/wire-schema";
+import { formatlessString } from "../../schemas/wire-schema";
 import { toolResult } from "../../shared/mcp-tool-result";
 import type {
   Action,
@@ -35,7 +35,7 @@ export const EscalationRequestSchema = z.object({
 
 export const PickupHandoffRequestSchema = z.object({
   agent: z.string().min(1),
-  handoffId: opaqueString(z.string().uuid()),
+  handoffId: formatlessString(z.string().uuid()),
 });
 
 /** The agent-to-agent messaging tool surface, with its dependencies named. Third tool-group extraction out of `createMcpServer` (audit §11). `memoryPressure` crosses as a **getter**, not a value: this surface reads it to refuse sends while the machine is under pressure, and the resource sweep writes it on its own schedule — a boolean copied at registration time would pin the answer to whatever was true when the MCP server was built. */

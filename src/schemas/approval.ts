@@ -4,10 +4,10 @@ export const ApprovalKindSchema = z.enum(["tool-permission", "land-rearm"]);
 
 export type ApprovalKind = z.infer<typeof ApprovalKindSchema>;
 
-export const ApprovalSchema = z.object({
+export const ApprovalSchema = z.strictObject({
   id: z.string().min(1),
   agentName: z.string().min(1),
-  kind: ApprovalKindSchema.catch("tool-permission").default("tool-permission"),
+  kind: ApprovalKindSchema.default("tool-permission"),
   description: z.string(),
   status: z.enum(["pending", "approved", "denied", "stale"]),
   createdAt: z.iso.datetime({ offset: true }),

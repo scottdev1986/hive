@@ -1,7 +1,9 @@
-// run-checkpoint.ts The RunCheckpoint and QueenSuccession records: how a replacement queen root learns what the prior root knew, and how the exchange is proven. A RunCheckpoint is written at semantic events (a task completes, run control acts, a promotion boundary passes), never on a timer or a percentage. It records state by revision and digest — exact pointers into the records the hierarchy already keeps — plus one short written layer. It never carries transcripts, raw tool output, message bodies, or file copies: a checkpoint that reproduced its sources would go stale the moment it was written, while a (revision, digest) ref can always be re-read and re-checked. A QueenSuccession records one root replacement: both generations, the checkpoint (or an explicit proof that none existed), the measured snapshot and replies the exchange was built from, every discrepancy found along the way, and the fresh root's attestation. Discrepancies are recorded, never resolved silently — a contradiction that disappears from the record is a contradiction nobody fixed. Both records are daemon-internal. Nothing here crosses the client control surface: the queen-provider projection speaks only idle|pending|failed, and these records never appear in it.
+// Durable checkpoints and succession evidence for replacing the queen root.
+// Records point to revisioned sources instead of copying transcripts or files.
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { canonicalJson } from "../shared/canonical-json";
 import { CapabilityProviderSchema } from "./capability";
 import {
   ArtifactRefIdSchema,
@@ -17,7 +19,7 @@ import {
 } from "./hierarchy-ids";
 import { RunPhaseSchema } from "./hierarchy-run";
 import { IntegrationStageIdSchema } from "./integration-stage";
-import { Rfc3339UtcMillisecondsSchema } from "./session-protocol";
+import { Rfc3339UtcMillisecondsSchema } from "./primitives";
 
 export const CHECKPOINT_EVENTS = [
   "task-completion",
@@ -156,21 +158,8 @@ export const RunCheckpointInputSchema = RunCheckpointSchema.omit({
 });
 export type RunCheckpointInput = z.infer<typeof RunCheckpointInputSchema>;
 
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => canonical(item)).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`);
-    return `{${entries.join(",")}}`;
-  }
-  return JSON.stringify(value) as string;
-}
-
 export function digestCheckpointContent(value: unknown): Digest {
-  const hex = createHash("sha256").update(canonical(value), "utf8");
+  const hex = createHash("sha256").update(canonicalJson(value), "utf8");
   return DigestSchema.parse(`sha256:${hex.digest("hex")}`);
 }
 
@@ -229,7 +218,7 @@ export const QueenSuccessionSchema = z.strictObject({
 });
 export type QueenSuccession = z.infer<typeof QueenSuccessionSchema>;
 
-/** What the supervisor may supply when it declares a backup. The declaration precedes the recovery requests, so no replies exist yet — they are recorded separately as they are measured. The record's identity, revision, reason, proof, discrepancies, and attestation are the daemon's to assign, not the caller's: the reason in particular is derived from what the daemon itself knows (a pending provider change), never from the caller's claim. */
+/** Starts launch preparation; the daemon adds identity, proof, and attestation. */
 export const PrepareQueenLaunchRequestSchema = z.strictObject({
   requestId: domainUuidV7Schema("req"),
   provider: CapabilityProviderSchema,

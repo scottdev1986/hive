@@ -10,7 +10,7 @@ import {
   type MemoryQueryClass,
   type MemoryQueryEnvelopeSchema,
 } from "../schemas/memory-projections";
-import { opaqueString } from "../schemas/wire-schema";
+import { formatlessString } from "../schemas/wire-schema";
 import { estimateTokensForValue } from "../usage-service/token-estimate";
 import type { TokenUsageStore } from "../usage-service/token-usage";
 import type { EpisodicStore } from "./episodic";
@@ -22,7 +22,7 @@ export const MemoryQueryInputSchema = z.object({
   /** Agent NAME for agent-now/agent-history/token-spend. Ignored by my-history, which always scopes to the caller's own identity. There is deliberately no project parameter: the query runs against the daemon's own project store and nothing else. */
   agent: z.string().min(1).optional(),
   query: z.string().min(1).optional(),
-  since: opaqueString(z.iso.datetime({ offset: true })).optional(),
+  since: formatlessString(z.iso.datetime({ offset: true })).optional(),
   /** May only lower the class's server-enforced ceiling; larger values are clamped to the default. */
   budget: z
     .number()

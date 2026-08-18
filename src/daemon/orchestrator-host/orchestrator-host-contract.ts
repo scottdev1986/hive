@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ORCHESTRATOR_NAME } from "../../schemas/agent";
 import { CapabilityProviderSchema } from "../../schemas/capability";
-import { domainUuidV7Schema } from "../../schemas/session-protocol";
+import { domainUuidV7Schema } from "../../schemas/primitives";
 import { OrchestratorStatusSchema } from "../../schemas/status-envelope";
 import {
   type HiveTerminalBinding,

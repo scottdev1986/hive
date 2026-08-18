@@ -1,6 +1,6 @@
 import type { HiveToolRegistrar } from "../daemon/authorization/mcp-tool-policy";
 import { z } from "zod";
-import { opaqueString } from "../schemas/wire-schema";
+import { formatlessString } from "../schemas/wire-schema";
 import { QuotaObservationSchema } from "../schemas/quota";
 import type { Action, Capability } from "../schemas/authority";
 import type { ModelInventory } from "../daemon/provider-capabilities/model-inventory";
@@ -11,7 +11,7 @@ import { toolResult } from "../shared/mcp-tool-result";
 export const QuotaObservationRequestSchema = QuotaObservationSchema.omit({
   observedAt: true,
 }).extend({
-  observedAt: opaqueString(z.iso.datetime({ offset: true })).optional(),
+  observedAt: formatlessString(z.iso.datetime({ offset: true })).optional(),
 });
 
 export interface QuotaToolDeps {

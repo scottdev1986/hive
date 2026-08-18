@@ -1,7 +1,9 @@
-// work-manifest.ts The WorkManifest: the final known state of one agent's work, captured by the daemon before teardown destroys anything. Killing an agent is immediate — nobody is asked whether the work mattered — so the capture that makes the work recoverable must happen while it can still be measured, not after the worktree and branch are gone. The daemon appends each capture to its manifest journal as a revisioned, digest-bound entry. The (revision, digest) pair is how recovery names an exact manifest: a spawn brief or ownership transfer can point at the precise captured state rather than a floating "whatever the worktree looks like now". The daemon is the only writer. Clients never read the journal file or table directly; they see manifests through the stranded-attention projection.
+// Captures an agent's measured work state before teardown and binds it to a
+// revision and digest so recovery never depends on a moving worktree.
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { canonicalJson } from "../shared/canonical-json";
 import {
   CreatedAtSchema,
   DigestSchema,
@@ -55,20 +57,7 @@ export function workManifestRef(
   return { revision: entry.revision, digest: entry.digest };
 }
 
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => canonical(item)).join(",")}]`;
-  }
-  if (typeof value === "object" && value !== null) {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`);
-    return `{${entries.join(",")}}`;
-  }
-  return JSON.stringify(value) as string;
-}
-
 export function digestWorkManifest(manifest: WorkManifest) {
-  const hex = createHash("sha256").update(canonical(manifest), "utf8");
+  const hex = createHash("sha256").update(canonicalJson(manifest), "utf8");
   return DigestSchema.parse(`sha256:${hex.digest("hex")}`);
 }

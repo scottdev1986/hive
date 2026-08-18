@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AgentRecord, ExecutionIdentity } from "../../schemas/agent";
 import { CapabilityProviderSchema } from "../../schemas/capability";
 import { TaskIdSchema } from "../../schemas/hierarchy-ids";
-import { opaqueString } from "../../schemas/wire-schema";
+import { formatlessString } from "../../schemas/wire-schema";
 import { RoutingCategorySchema } from "../../schemas/routing-policy";
 import type { AssignmentKind } from "../../schemas/hierarchy-node";
 import type { AuthorizedLaunch } from "../routing-service/authorized-launch";
@@ -25,7 +25,7 @@ const FlatSpawnRequestSchema = z.strictObject({
     .regex(/^[a-z0-9-]+$/)
     .optional(),
   readOnly: z.boolean().optional(),
-  handoffId: opaqueString(z.string().uuid()).optional(),
+  handoffId: formatlessString(z.string().uuid()).optional(),
   /** Quota pools proven drained for this request: a handoff replacement must not land back on the pool that just drained its source. */
   excludedPoolIds: z.array(z.string().min(1)).optional(),
   /**

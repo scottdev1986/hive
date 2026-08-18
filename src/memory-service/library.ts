@@ -1,10 +1,10 @@
-// The Memory Library: one unified, paginated list across every kind of thing Hive remembers, and the fenced mutation path that edits it. Why a new list rather than memory_search/memory_read: search ranks by relevance to a query and read fetches one known id. Neither can walk the whole corpus once, in a stable order, without repeating or skipping a row when something is written mid-walk — which is exactly what a paginated screen does. And neither returns facts, digests, or raw evidence at all. STABILITY IS THE POINT. Rows are ordered by `key` — kind, then scope, then id, with numeric ids zero-padded so they sort numerically — and a page is "the next N keys after the cursor". That order is a property of each row's own identity, so a row written mid-walk lands at its own key and never renumbers a key the client is already holding. Ordering by date or by relevance would shift rows under the cursor on every write, showing one row twice and skipping another.
+// Stable, paginated memory listing plus fenced create, update, and delete.
+// Rows sort by their identity key so concurrent writes never renumber a cursor.
 
-import {
-  type MemoryFact,
-  type MemoryScope,
-  type MemoryWriteInput,
-  MemoryWriteInputSchema,
+import type {
+  MemoryFact,
+  MemoryScope,
+  MemoryWriteInput,
 } from "../schemas/memory";
 import {
   type MemoryListItem,
@@ -15,6 +15,8 @@ import {
   type MemoryMutationRequest,
   type MemoryMutationResult,
   MemoryMutationResultSchema,
+  MemoryMutationRequestSchema,
+  type ParsedMemoryMutationRequest,
 } from "../schemas/memory-projections";
 import type { EpisodicStore } from "./episodic";
 import {
@@ -197,10 +199,10 @@ async function applied(
 /** Everything below runs inside the caller's memory critical section: the fence read, the guard, the write, and the readback. */
 async function mutateLocked(
   deps: MemoryMutationDeps,
-  request: MemoryMutationRequest,
+  request: ParsedMemoryMutationRequest,
 ): Promise<MemoryMutationResult> {
   if (request.action === "create") {
-    const input = MemoryWriteInputSchema.parse(request.input);
+    const input = request.input;
     // Create carries no revision, so it must never land on an article that already exists — that is a blind overwrite THROUGH the door the update path's fence is guarding. The underlying write treats a known id plus a self-supersede as a legitimate update, which is exactly the shape that slips past. Refuse on the id, and hand back the revision an update would need.
     if (input.id !== undefined) {
       const existing = await readMemoryFact(
@@ -232,12 +234,11 @@ async function mutateLocked(
       request.expectedRevision,
     );
     if (!checked.ok) return checked.result;
-    // The id and scope come from the fenced request, not from the payload, so an edit cannot fence one article and rewrite another.
-    const input = MemoryWriteInputSchema.parse({
+    const input: MemoryWriteInput = {
       ...request.input,
       scope: request.scope,
       id: request.id,
-    });
+    };
     const written = await deps.writeMemoryFact(input);
     return applied(deps.repoRoot, written.scope, written.id);
   }
@@ -274,5 +275,6 @@ export async function applyMemoryMutation(
   deps: MemoryMutationDeps,
   request: MemoryMutationRequest,
 ): Promise<MemoryMutationResult> {
-  return await deps.serialize(() => mutateLocked(deps, request));
+  const parsed = MemoryMutationRequestSchema.parse(request);
+  return await deps.serialize(() => mutateLocked(deps, parsed));
 }

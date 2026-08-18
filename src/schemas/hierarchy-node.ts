@@ -12,10 +12,10 @@ import {
   TaskIdSchema,
 } from "./hierarchy-ids";
 import {
-  PositiveGenerationSchema,
   SessionLocatorSchema,
   SessionProtocolProviderSchema,
 } from "./session-protocol";
+import { PositiveGenerationSchema } from "./primitives";
 
 export const NodeIdSchema = domainUuidV7Schema("node");
 

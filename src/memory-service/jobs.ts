@@ -121,7 +121,7 @@ export function startMemoryJob(
   store.put(receipt);
 
   const done = (async (): Promise<MemoryJobReceipt> => {
-    let latest = receipt;
+    let latest: MemoryJobReceipt = receipt;
     const report: Report = (progress) => {
       latest = { ...latest, progress };
       store.put(latest);

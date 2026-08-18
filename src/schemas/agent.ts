@@ -63,8 +63,6 @@ export function isTerminalAgentStatus(
   return (TERMINAL_AGENT_STATUSES as readonly string[]).includes(status);
 }
 
-const RETIRED_VIEWER_FIELD = ["terminal", "Handle"].join("");
-
 const AgentRecordShape = {
   // The AgentUUID: distinct per holder of a name, for the lifetime of the Hive. Two agents that share a name across time never share an id, so history can always tell them apart.
   id: z.string().min(1),
@@ -124,16 +122,7 @@ const AgentRecordShape = {
 
 export const AgentRecordObjectSchema = z.object(AgentRecordShape);
 
-export const AgentRecordSchema = z.preprocess((value) => {
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    RETIRED_VIEWER_FIELD in value
-  ) {
-    throw new Error("retired external-viewer state is not accepted");
-  }
-  return value;
-}, z.strictObject(AgentRecordShape));
+export const AgentRecordSchema = z.strictObject(AgentRecordShape);
 
 export type AgentRecord = z.infer<typeof AgentRecordSchema>;
 

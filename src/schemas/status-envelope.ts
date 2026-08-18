@@ -6,7 +6,7 @@ import {
   PositiveGenerationSchema,
   Rfc3339UtcMillisecondsSchema,
   Sha256HexSchema,
-} from "./session-protocol";
+} from "./primitives";
 
 export const WORKSPACE_EVENT_SOURCE_KINDS = [
   "sessiond",

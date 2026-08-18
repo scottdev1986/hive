@@ -31,10 +31,7 @@ import {
   ReviewVerdictSchema,
 } from "./integration-stage";
 import { OwnerLossReasonSchema, TransferIdSchema } from "./ownership-transfer";
-import {
-  DecimalUint64Schema,
-  PositiveGenerationSchema,
-} from "./session-protocol";
+import { DecimalUint64Schema, PositiveGenerationSchema } from "./primitives";
 import { TaskStateSchema } from "./task-detail";
 
 export const HIERARCHY_PROJECTION_SCHEMA_VERSION = 3;
@@ -188,14 +185,6 @@ export const HierarchyReviewProjectionSchema = z.strictObject({
 export type HierarchyReviewProjection = z.infer<
   typeof HierarchyReviewProjectionSchema
 >;
-
-export const HIERARCHY_INCIDENT_KINDS = [
-  "run-decision",
-  "recovery",
-  "breaker",
-  "contract-conflict",
-] as const;
-export const HierarchyIncidentKindSchema = z.enum(HIERARCHY_INCIDENT_KINDS);
 
 export const AbsentOnlyFieldSchema = z.strictObject({
   availability: z.literal("absent"),

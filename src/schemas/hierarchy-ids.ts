@@ -5,7 +5,7 @@ import {
   Rfc3339UtcMillisecondsSchema,
   SafeUintSchema,
   TaggedSha256Schema,
-} from "./session-protocol";
+} from "./primitives";
 
 export { domainUuidV7Schema, SafeUintSchema };
 

@@ -43,8 +43,6 @@ export type FreezeCase =
   | "U";
 
 const AT = "2026-07-17T12:00:00.000Z";
-const FAR_FUTURE = "2099-01-01T00:00:00.000Z";
-
 export const fixtureLimits: HostLimits = {
   maxInputTransactionBytes: 1024 * 1024,
   maxInputQueueBytes: 4 * 1024 * 1024,

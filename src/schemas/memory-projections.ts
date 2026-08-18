@@ -1,9 +1,13 @@
-// The wire contracts a memory client reads. Every one of them is produced by the daemon and consumed whole: a client never opens `.hive/memory`, never opens `episodic.db`, and never reconstructs a number by combining a file count with a log line. If a value is not on one of these envelopes, the client does not have it. The one discriminator every store carries is `absent | empty | ok`. Those three are not interchangeable and collapsing any two of them is the failure this whole file exists to prevent: absent — the store was never built here (no directory, no database, no index wired). Nothing can be concluded about its contents. empty — the store exists and holds nothing. That is a fact about the world, not a gap in the reader. ok — the store exists and holds rows. A reader that cannot tell absent from empty reports a healthy-and-empty daemon and a daemon with no memory at all identically, and a user acting on that reading believes a fresh install is a wiped one.
+// Memory client wire contracts. Clients consume these envelopes instead of
+// reading stores directly. Every store distinguishes not built (`absent`),
+// built with no rows (`empty`), and populated (`ok`).
 import { z } from "zod";
 import {
   MemoryScopeSchema,
   MemorySourceSchema,
+  MemoryUpdateRequestFieldsSchema,
   MemoryVerificationStatusSchema,
+  MemoryWriteRequestFieldsSchema,
 } from "./memory";
 
 export const MemoryStoreStateSchema = z.enum(["absent", "empty", "ok"]);
@@ -38,33 +42,68 @@ export const MemoryJobKindSchema = z.enum([
 ]);
 export type MemoryJobKind = z.infer<typeof MemoryJobKindSchema>;
 
-export const MemoryJobStateSchema = z.enum(["running", "succeeded", "failed"]);
-export type MemoryJobState = z.infer<typeof MemoryJobStateSchema>;
-
 /** Bounded progress: one short step label and a done/total pair. `total` is null while the job does not yet know how much work there is — null is never rendered as zero, because "unknown" and "none" are different answers. */
-export const MemoryJobProgressSchema = z.strictObject({
-  step: z.string().max(120),
-  done: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative().nullable(),
-});
+export const MemoryJobProgressSchema = z
+  .strictObject({
+    step: z.string().max(120),
+    done: z.number().int().nonnegative(),
+    total: z.number().int().nonnegative().nullable(),
+  })
+  .refine(
+    ({ done, total }) => total === null || done <= total,
+    "done cannot exceed total",
+  );
 export type MemoryJobProgress = z.infer<typeof MemoryJobProgressSchema>;
 
 /** Job results and readbacks are scalar maps so a receipt cannot grow into an unbounded payload the client has to page through. */
 const JobFactsSchema = z.record(z.string(), z.union([z.number(), z.string()]));
 
-export const MemoryJobReceiptSchema = z.strictObject({
+const MemoryJobReceiptIdentityShape = {
   id: z.string().min(1),
   kind: MemoryJobKindSchema,
-  state: MemoryJobStateSchema,
+} as const;
+
+const MemoryJobReceiptExecutionShape = {
   requestedBy: z.string().min(1),
   startedAt: z.iso.datetime({ offset: true }),
-  finishedAt: z.iso.datetime({ offset: true }).nullable(),
+} as const;
+
+const MemoryJobReceiptProgressShape = {
   progress: MemoryJobProgressSchema,
   summary: z.string().max(400),
-  error: z.string().max(2000).nullable(),
-  /** State read back from the stores AFTER the job finished — not what the job believed it did. A job that reports "rebuilt 42 articles" from its own loop counter has reported an act; the readback is the state. */
-  readback: JobFactsSchema.nullable(),
-});
+} as const;
+
+// Cross-language fixtures serialize schema order, so preserve the established field order.
+export const MemoryJobReceiptSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    ...MemoryJobReceiptIdentityShape,
+    state: z.literal("running"),
+    ...MemoryJobReceiptExecutionShape,
+    finishedAt: z.null(),
+    ...MemoryJobReceiptProgressShape,
+    error: z.null(),
+    readback: z.null(),
+  }),
+  z.strictObject({
+    ...MemoryJobReceiptIdentityShape,
+    state: z.literal("succeeded"),
+    ...MemoryJobReceiptExecutionShape,
+    finishedAt: z.iso.datetime({ offset: true }),
+    ...MemoryJobReceiptProgressShape,
+    error: z.null(),
+    readback: JobFactsSchema,
+  }),
+  z.strictObject({
+    ...MemoryJobReceiptIdentityShape,
+    state: z.literal("failed"),
+    ...MemoryJobReceiptExecutionShape,
+    finishedAt: z.iso.datetime({ offset: true }),
+    ...MemoryJobReceiptProgressShape,
+    error: z.string().min(1).max(2000),
+    // A failed job still reports whatever state can be read back safely.
+    readback: JobFactsSchema.nullable(),
+  }),
+]);
 export type MemoryJobReceipt = z.infer<typeof MemoryJobReceiptSchema>;
 
 export const MemoryConfigProjectionSchema = z.strictObject({
@@ -247,18 +286,18 @@ export const MemoryListPageSchema = z.strictObject({
 });
 export type MemoryListPage = z.infer<typeof MemoryListPageSchema>;
 
-// Mutations reuse the existing write and delete behaviour. The only thing added here is the fence: a mutation names the revision it read, and the daemon refuses when the article on disk has moved on. Create and update are separate actions rather than one write with an optional revision. An optional fence is not a fence: the caller that omits it — by choice, by a serialization bug, or by copying an example — gets a blind overwrite, and nothing in the type or the wire says so. Splitting them makes "I am replacing a specific revision" the only way to express an edit.
+// Update and delete require the revision the caller read; create has no fence.
 export const MemoryMutationRequestSchema = z.discriminatedUnion("action", [
   z.strictObject({
     action: z.literal("create"),
-    input: z.record(z.string(), z.unknown()),
+    input: MemoryWriteRequestFieldsSchema,
   }),
   z.strictObject({
     action: z.literal("update"),
     scope: MemoryScopeSchema,
     id: z.string().min(1),
     expectedRevision: z.string().min(1),
-    input: z.record(z.string(), z.unknown()),
+    input: MemoryUpdateRequestFieldsSchema,
   }),
   z.strictObject({
     action: z.literal("delete"),
@@ -267,7 +306,10 @@ export const MemoryMutationRequestSchema = z.discriminatedUnion("action", [
     expectedRevision: z.string().min(1),
   }),
 ]);
-export type MemoryMutationRequest = z.infer<typeof MemoryMutationRequestSchema>;
+export type MemoryMutationRequest = z.input<typeof MemoryMutationRequestSchema>;
+export type ParsedMemoryMutationRequest = z.output<
+  typeof MemoryMutationRequestSchema
+>;
 
 export const MemoryMutationResultSchema = z.discriminatedUnion("state", [
   z.strictObject({
@@ -320,25 +362,6 @@ export const MemoryRecallSemanticSchema = z.union([
   z.literal("disabled"),
   z.templateLiteral([z.literal("degraded:"), z.string()]),
 ]);
-
-export const MemoryRecallEnvelopeSchema = z.strictObject({
-  state: MemoryStoreStateSchema,
-  semantic: MemoryRecallSemanticSchema,
-  /** The degraded-leg warning, present exactly when semantic degraded. It is envelope-level — never a row — so budget clamping cannot cut it. */
-  warning: z.string().optional(),
-  detail: z.string().nullable(),
-  note: z.string(),
-  /** The ceiling actually enforced (after clamping any caller budget). */
-  budget: z.number(),
-  tokens: z.number(),
-  truncated: z.boolean(),
-  omitted: z.number(),
-  omittedPitfalls: z.number(),
-  omittedArticles: z.number(),
-  pitfalls: z.array(MemoryRecallRowSchema),
-  articles: z.array(MemoryRecallRowSchema),
-});
-export type MemoryRecallEnvelope = z.infer<typeof MemoryRecallEnvelopeSchema>;
 
 export const MEMORY_QUERY_CLASSES = [
   "agent-now",

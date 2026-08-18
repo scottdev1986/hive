@@ -131,7 +131,7 @@ export type MailSettleInput = Readonly<{
   handlerId: string;
   disposition: MailDisposition;
   reason: string | null;
-  retryAt: string;
+  retryAt: string | null;
   now: string;
   maxAttempts: number;
 }>;

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Rfc3339UtcMillisecondsSchema } from "./primitives";
 
 /** The largest envelope body the broker will accept. */
 export const MAIL_BODY_MAX_BYTES = 256 * 1_024;
@@ -40,7 +41,7 @@ export const MailEventKindSchema = z.enum([
 ]);
 export type MailEventKind = z.infer<typeof MailEventKindSchema>;
 
-const isoTimestamp = z.string().min(20);
+const isoTimestamp = Rfc3339UtcMillisecondsSchema;
 
 export const MailItemSchema = z.strictObject({
   itemId: z.string(),
@@ -154,11 +155,10 @@ export const MailClaimRequestSchema = z.strictObject({
   handlerId: z.string().min(1).max(MAIL_HANDLER_ID_MAX_LENGTH),
 });
 
-export const MailCompleteRequestSchema = z.strictObject({
+const MailCompleteRequestShape = {
   recipient: z.string().min(1),
   itemId: z.string().min(1),
   handlerId: z.string().min(1).max(MAIL_HANDLER_ID_MAX_LENGTH),
-  disposition: MailDispositionSchema,
   reason: z
     .string()
     .min(1)
@@ -167,13 +167,28 @@ export const MailCompleteRequestSchema = z.strictObject({
     .transform((value) =>
       value === null ? null : value.slice(0, MAIL_REASON_MAX_LENGTH),
     ),
-  retryAfterSeconds: z
-    .number()
-    .int()
-    .min(1)
-    .max(MAIL_RETRY_AFTER_MAX_SECONDS)
-    .default(MAIL_DEFERRAL_SECONDS),
-});
+} as const;
+
+export const MailCompleteRequestSchema = z.discriminatedUnion("disposition", [
+  z.strictObject({
+    ...MailCompleteRequestShape,
+    disposition: z.literal("completed"),
+  }),
+  z.strictObject({
+    ...MailCompleteRequestShape,
+    disposition: z.literal("rejected"),
+  }),
+  z.strictObject({
+    ...MailCompleteRequestShape,
+    disposition: z.literal("deferred"),
+    retryAfterSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAIL_RETRY_AFTER_MAX_SECONDS)
+      .default(MAIL_DEFERRAL_SECONDS),
+  }),
+]);
 
 export const MailStatusRequestSchema = z.strictObject({
   recipient: z.string().min(1),

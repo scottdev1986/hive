@@ -161,7 +161,7 @@ export function compactSpawnResult(agent: AgentRecord): SpawnResultSummary {
   };
 }
 
-/** hive_approvals is polled repeatedly while a request sits pending, so a long description is re-sent unchanged on every poll. Trimming it is worth real context — but only where the description carries no decision content. IT IS TRIMMED BY KIND, NEVER BY LENGTH. A `tool-permission` description IS the thing being approved (the shell command Codex wants to run, the tool call and its input preview): cutting its tail would let an approver approve a command whose tail they never saw, which is a security failure wearing a cosmetic justification. Those come back whole, however long they are. The boilerplate `land-rearm` kind is truncated around its id, and an unclassified row defaults to `tool-permission` and is left whole (see `ApprovalKind`). */
+/** Tool-permission descriptions are decision input and must remain complete. Only the boilerplate land-rearm description is shortened. Legacy rows without a kind migrate to tool-permission. */
 export function compactApprovalDescription<
   T extends { description: string; kind: ApprovalKind },
 >(approval: T): T & { truncated: boolean } {

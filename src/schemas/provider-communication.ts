@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CapabilityProviderSchema } from "./capability";
+import { Sha256HexSchema } from "./primitives";
 import { TURN_STATES } from "./status-envelope";
 
 export const ProviderEventSchema = z
@@ -23,10 +24,7 @@ export const ProviderEventSchema = z
     ]),
     occurredAt: z.iso.datetime({ offset: true }),
     toolName: z.string().min(1).nullable(),
-    inputDigest: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .nullable(),
+    inputDigest: Sha256HexSchema.nullable(),
   })
   .readonly();
 

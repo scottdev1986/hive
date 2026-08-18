@@ -330,7 +330,7 @@ export class CapabilityStore {
         issued.getTime() + (options.ttlMs ?? DEFAULT_TTL_MS),
       ).toISOString(),
       revokedAt: null,
-    }) as Capability;
+    });
     this.db.insertCapability(capability, hashSecret(secret));
     return { token: `${TOKEN_PREFIX}.${id}.${secret}`, capability };
   }
@@ -531,9 +531,6 @@ export function permitsTerminalObservation(
   }
   // The orchestrator reads any agent in her own fleet, metadata or text. She already spawns, kills and recovers these agents unnamed, so looking at one takes no new authority; observation takes no input, no focus, and no claim. This does not widen what an AGENT may see — a peer still cannot read a peer, and self-reads still require the content constraint.
   if (capability.role === "orchestrator") return true;
-  return (
-    capability.role === "user" &&
-    capability.constraints?.scope === "user" &&
-    capability.subjects?.includes(targetAgentId) === true
-  );
+  if (capability.role !== "user" || !("subjects" in capability)) return false;
+  return capability.subjects.includes(targetAgentId);
 }

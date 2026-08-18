@@ -184,17 +184,22 @@ describe("raw observations and compiled articles", () => {
         verified: undefined,
       }),
     ).rejects.toThrow("verified date is required");
-    await expect(
-      writeMemoryFact(
-        root,
-        input({
-          status: "conflicted",
-          verified: undefined,
-          body: "Two claims exist.",
-        }),
-      ),
-    ).rejects.toThrow("must annotate the disagreement");
     expect(await discoverMemoryFacts(root, "repo")).toEqual([]);
+  });
+
+  test("conflict status does not depend on keywords in the body", async () => {
+    const root = await makeRoot();
+    await writeMemoryFact(
+      root,
+      input({
+        status: "conflicted",
+        verified: undefined,
+        body: "Two claims exist.",
+      }),
+    );
+    expect((await discoverMemoryFacts(root, "repo"))[0]?.status).toBe(
+      "conflicted",
+    );
   });
 
   test("rejects an unresolved supersedes relationship", async () => {

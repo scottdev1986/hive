@@ -19,7 +19,7 @@ import {
   SpecRevisionSchema,
   TopologyDecisionSchema,
 } from "./hierarchy-run";
-import { DecimalUint64Schema } from "./session-protocol";
+import { DecimalUint64Schema } from "./primitives";
 import { TaskDetailSchema } from "./task-detail";
 
 /** The run epoch as it travels on the wire. The Run record holds it as a number; the Swift envelope models every concurrency token as a string, so it crosses as a decimal string and is compared as one. */

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, expectTypeOf, test } from "bun:test";
 import { join } from "node:path";
 import { Glob } from "bun";
 import {
@@ -16,7 +16,8 @@ describe("providersOf — the one legal record enumerator", () => {
 
   test("keys the union does not know are appended, never dropped", () => {
     const record = { claude: 1, zeta: 2, acme: 3 } as Record<string, number>;
-    expect(providersOf(record) as string[]).toEqual([
+    expectTypeOf(providersOf(record)).toEqualTypeOf<string[]>();
+    expect(providersOf(record)).toEqual([
       ...CAPABILITY_PROVIDERS,
       "acme",
       "zeta",
@@ -24,23 +25,15 @@ describe("providersOf — the one legal record enumerator", () => {
   });
 });
 
-/**
- * The tripwire behind the Grok-erasure fix: the ONLY place allowed to spell
- * out the vendor list is the union itself (`CapabilityProviderSchema` in
- * capability.ts). Every other enumeration must derive from it
- * (CAPABILITY_PROVIDERS / forEachProvider / providersOf), because a hand-typed
- * pair is exactly how a vendor stops existing: it is not rejected, not marked
- * unavailable — it silently never appears. This scan fails the build on any
- * ad-hoc array of two or more provider names in non-test source.
- */
+/** Prevents hand-written provider arrays from silently omitting a new vendor. */
 describe("provider enumeration goes through the union", () => {
-  test("no ad-hoc provider list survives outside capability.ts", async () => {
+  test("no ad-hoc provider list survives outside provider.ts", async () => {
     const adHocList =
       /\[\s*"(?:claude|codex|grok)"\s*,\s*"(?:claude|codex|grok)"/;
     const offenders: string[] = [];
     for await (const path of new Glob("**/*.ts").scan(SRC_ROOT)) {
       if (path.endsWith(".test.ts")) continue;
-      if (path === join("schemas", "capability.ts")) continue;
+      if (path === join("schemas", "provider.ts")) continue;
       const lines = (await Bun.file(join(SRC_ROOT, path)).text()).split("\n");
       lines.forEach((line, index) => {
         if (adHocList.test(line))

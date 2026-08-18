@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { opaqueString } from "./wire-schema";
+import { formatlessString } from "./wire-schema";
 
 export function normalizeNulText(value: string): string {
   return value.replaceAll("\0", "\uFFFD");
@@ -45,7 +45,7 @@ export type MemoryVerificationStatus = z.infer<
 export const MemoryKindSchema = z.enum(["article", "pitfall"]);
 export type MemoryKind = z.infer<typeof MemoryKindSchema>;
 
-const IsoDateSchema = opaqueString(z.iso.date());
+const IsoDateSchema = formatlessString(z.iso.date());
 
 /** Who wrote an article: the actor identity the daemon binds to the call, never a name the caller supplies. It is what makes "verified by someone else" checkable — `source` records a ROLE (agent, orchestrator, user) and cannot tell two agents apart. Optional because articles written before it existed carry no author, and an absent author reads as unknown rather than as "anyone may verify this". */
 export const MemoryAuthorSchema = z
@@ -71,11 +71,10 @@ const verificationDateError = (input: {
 };
 
 /** The rules an article obeys whether it arrives as a write or is read back off disk. Shared so the two cannot drift apart, and so a schema derived from the write input's fields can restate them. */
-const refineMemoryArticle = (
+const refineMemoryVerification = (
   input: {
     status: MemoryVerificationStatus;
     verified?: string | undefined;
-    body: string;
   },
   context: z.RefinementCtx,
 ): void => {
@@ -85,16 +84,6 @@ const refineMemoryArticle = (
       code: "custom",
       path: ["verified"],
       message: verificationError,
-    });
-  }
-  if (
-    input.status === "conflicted" &&
-    !/conflict|disagree|contradict/i.test(input.body)
-  ) {
-    context.addIssue({
-      code: "custom",
-      path: ["body"],
-      message: "conflicted articles must annotate the disagreement",
     });
   }
 };
@@ -124,7 +113,7 @@ export const MemoryFactSchema = z
     verified: IsoDateSchema.optional(),
     author: MemoryAuthorSchema.optional(),
   })
-  .superRefine(refineMemoryArticle);
+  .superRefine(refineMemoryVerification);
 export type MemoryFact = z.infer<typeof MemoryFactSchema>;
 
 const MemoryWriteInputFields = z.strictObject({
@@ -144,14 +133,22 @@ const MemoryWriteInputFields = z.strictObject({
   author: MemoryAuthorSchema.optional(),
 });
 
-export const MemoryWriteInputSchema =
-  MemoryWriteInputFields.superRefine(refineMemoryArticle);
+export const MemoryWriteInputSchema = MemoryWriteInputFields.superRefine(
+  refineMemoryVerification,
+);
 export type MemoryWriteInput = z.input<typeof MemoryWriteInputSchema>;
 
 /** The write input as a CALLER may express it: every field except `author`. The daemon fills the author from the identity bound to the call, so a caller is never asked who it is and cannot answer with someone else's name. Derived from the same fields as the write input so the two cannot drift. */
 export const MemoryWriteRequestFieldsSchema = MemoryWriteInputFields.omit({
   author: true,
-}).superRefine(refineMemoryArticle);
+}).superRefine(refineMemoryVerification);
+
+/** Update identity comes from the outer compare-and-set fence. */
+export const MemoryUpdateRequestFieldsSchema = MemoryWriteInputFields.omit({
+  author: true,
+  id: true,
+  scope: true,
+}).superRefine(refineMemoryVerification);
 
 export const MemorySimilarCandidateSchema = z.strictObject({
   scope: MemoryScopeSchema,

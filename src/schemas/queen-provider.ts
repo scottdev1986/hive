@@ -5,7 +5,7 @@ import {
   DecimalUint64Schema,
   domainUuidV7Schema,
   Rfc3339UtcMillisecondsSchema,
-} from "./session-protocol";
+} from "./primitives";
 import { OrchestratorStatusSchema } from "./status-envelope";
 
 /** The Queen Provider control surface: which vendor runs the live Queen. This is the WHOLE client vocabulary, on purpose. Replacing the live Queen is a multi-step operation inside the daemon (terminate the running root, relaunch on the requested vendor, observe the result), and none of those steps exist here: a client sees one revisioned projection, one compare-and-set command, and one opaque change state. Adding a field that names an internal step (a generation, a checkpoint, a handoff, an attestation) would freeze that internal mechanism into the wire — the mechanism is expected to be replaced, the wire is not. The projection reports OBSERVATION, never intention. `liveProvider` is the provider of the root terminal's running foreground process as the daemon last observed it — not the value someone asked to launch. A queen that was requested but never came up reads as `liveProvider: null` with the change still `pending`, because that is what is true. */

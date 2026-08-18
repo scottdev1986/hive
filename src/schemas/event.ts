@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Sha256HexSchema } from "./primitives";
 
 const HookEventBaseSchema = z.strictObject({
   agentName: z.string().min(1),
@@ -34,18 +35,12 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   HookEventBaseSchema.extend({
     kind: z.literal("tool-start"),
     toolName: z.string().min(1).optional(),
-    inputDigest: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .optional(),
+    inputDigest: Sha256HexSchema.optional(),
   }),
   HookEventBaseSchema.extend({
     kind: z.literal("tool-boundary"),
     toolName: z.string().min(1).optional(),
-    inputDigest: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .optional(),
+    inputDigest: Sha256HexSchema.optional(),
   }),
   HookEventBaseSchema.extend({ kind: z.literal("compacted") }),
   HookEventBaseSchema.extend({
