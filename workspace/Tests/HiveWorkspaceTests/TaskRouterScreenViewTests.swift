@@ -30,6 +30,7 @@ final class TaskRouterScreenViewTests: XCTestCase {
 
     private func makeView(
         category: TaskCategory? = nil,
+        availability: ProjectionAvailability = .current,
         onSelectCategory: @escaping (TaskCategory) -> Void = { _ in },
         onEditRoute: @escaping (RoutingPolicyDocument.WireRoute?) -> Void = { _ in },
         onApply: @escaping () -> Void = {}
@@ -59,8 +60,17 @@ final class TaskRouterScreenViewTests: XCTestCase {
             }
             return rows
         } ?? []
+        let frozen = inspection.frozenScreen(facts: facts)
+        let screen = ShellScreenProjection(
+            availability: availability,
+            freshness: frozen.freshness,
+            source: frozen.source,
+            observedAt: "2026-07-29T20:00:00.000Z",
+            evidence: frozen.evidence,
+            contract: frozen.contract,
+            facts: frozen.facts)
         return TaskRouterScreenView(
-            screen: inspection.frozenScreen(facts: facts),
+            screen: screen,
             editor: TaskRouterEditor(snapshot: TaskRouterSnapshot(policy: document)),
             categories: routing.categories,
             category: selected,
@@ -127,6 +137,49 @@ final class TaskRouterScreenViewTests: XCTestCase {
         XCTAssertTrue(text.contains("weight 15 · configured 15% · live 20%"))
         XCTAssertTrue(text.contains("pool-excluded"))
         XCTAssertTrue(text.contains("user-weighted"))
+    }
+
+    func testProjectionBackedCompositionOmitsTheRawAvailabilityPanel() throws {
+        let view = try makeView()
+        let text = allText(in: view)
+        XCTAssertFalse(
+            text.contains("The daemon projection for this screen is current"),
+            "the generic availability paragraph is a second presentation")
+        XCTAssertFalse(
+            text.contains("full screen content ships with its own phase"),
+            "the generic availability paragraph is a second presentation")
+        XCTAssertFalse(
+            text.contains("Observed at "),
+            "projection timestamp does not keep a raw provenance row")
+        XCTAssertTrue(text.contains("schema 3 revision"))
+        XCTAssertTrue(text.contains("updated "))
+        XCTAssertNil(find(view, "task-router-availability"))
+        XCTAssertNotNil(find(view, "hds-capsule-badge"))
+    }
+
+    func testNonCurrentAvailabilityKeepsObservedTimeOnTheBadgeTooltip() throws {
+        let view = try makeView(availability: .stale)
+        XCTAssertFalse(allText(in: view).contains("Observed at "))
+        let badge = try XCTUnwrap(find(view, "task-router-availability"))
+        XCTAssertEqual(badge.toolTip, "Observed at 2026-07-29T20:00:00.000Z")
+        XCTAssertTrue(allText(in: view).contains("Stale"))
+    }
+
+    func testSelectedRouteEditorSitsAboveTheCategoryIndex() throws {
+        let view = try makeView()
+        let stack = try XCTUnwrap(view.subviews.first as? NSStackView)
+        let identifiers = stack.arrangedSubviews.compactMap { $0.accessibilityIdentifier() }
+        let editor = try XCTUnwrap(
+            identifiers.firstIndex(of: "hds-section-card"),
+            "selected route card missing")
+        let others = try XCTUnwrap(
+            identifiers.firstIndex(of: "task-router-other-routes"),
+            "category cards missing")
+        XCTAssertLessThan(
+            editor, others,
+            "edit controls must be a first-class card, not stranded below the index")
+        XCTAssertNotNil(find(view, "task-router-category") as? NSPopUpButton)
+        XCTAssertNotNil(find(view, "task-router-mode") as? NSPopUpButton)
     }
 
     func testExistingMembershipControlsStillWriteTheDraft() throws {

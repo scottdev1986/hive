@@ -330,9 +330,14 @@ final class ShellPolicyEditingTests: XCTestCase {
             "3")
         XCTAssertEqual(
             controller.currentState.activeScreen?.observedAt, "2026-07-29T20:00:00.000Z")
-        XCTAssertTrue(
+        // The dated read is on the availability badge tooltip, not a second
+        // provenance row. Visible copy would re-introduce the raw panel.
+        XCTAssertFalse(
             allText(in: try content(controller))
                 .contains("Observed at 2026-07-29T20:00:00.000Z"))
+        XCTAssertEqual(
+            find(try content(controller), "task-router-availability")?.toolTip,
+            "Observed at 2026-07-29T20:00:00.000Z")
     }
 
     /// What the user sees after a write whose outcome could not be read back:
