@@ -130,7 +130,7 @@ final class MemoryLibraryScreenView: NSView {
                     + "under a concurrent write · this wire offers no title "
                     + "search and no sort",
                 identifier: "memory-library-rows")
-            table.add(MemoryScreenParts.resultHeader(columns: Self.columns))
+            table.add(MemoryScreenParts.resultHeader(columns: Self.columns, title: "Title / topic"))
             if rows.isEmpty {
                 table.add(MemoryScreenParts.note(
                     "This page carries no rows.",
@@ -196,10 +196,12 @@ final class MemoryLibraryScreenView: NSView {
 
     /// The table's own schema: kind, scope, and the update stamp sit in fixed
     /// columns while the title and its provenance take the space that is left.
+    /// The stamp column is wide enough for the wire's full ISO form — a
+    /// truncated timestamp is an unreadable one.
     private static let columns: [MemoryScreenParts.Column] = [
         MemoryScreenParts.Column(text: "Kind", width: 92),
         MemoryScreenParts.Column(text: "Scope", width: 84),
-        MemoryScreenParts.Column(text: "Updated", width: 132, mono: true),
+        MemoryScreenParts.Column(text: "Updated", width: 160, mono: true),
     ]
 
     @available(*, unavailable)
@@ -371,22 +373,6 @@ final class MemoryRecallScreenView: NSView {
         form.add(inspect)
         if let preview {
             form.add(MemoryScreenParts.outcomePanel(preview))
-            for (label, value) in [
-                ("Purpose", preview.purpose.rawValue),
-                ("Store", MemoryScreenPresenter.store(preview.state)),
-                ("Search provenance", preview.semantic),
-                ("Budget", "\(preview.tokens) of \(preview.budget) tokens"
-                    + (preview.truncated
-                        ? " · truncated to fit"
-                        : " · nothing was dropped for size")),
-                ("Omitted", "\(preview.omitted) rows · \(preview.omittedPitfalls) pitfalls · "
-                    + "\(preview.omittedArticles) articles"),
-                ("Mutation", "\(preview.mutation.rawValue) · the wake high-water "
-                    + (preview.highWaterAdvanced ? "advanced" : "did not advance")),
-                ("Note", preview.note),
-            ] {
-                form.add(MemoryScreenParts.factRow(label, value))
-            }
         }
 
         var content: [NSView] = []
@@ -430,14 +416,41 @@ final class MemoryRecallScreenView: NSView {
                         columns: [
                             MemoryScreenParts.Column(text: row.date, width: 132, mono: true),
                         ],
-                        trailing: CapsuleBadge(
+                        trailing: MemoryScreenParts.pinWidth(
+                            CapsuleBadge(
+                                text: "rank \(row.rank) · \(row.class.rawValue)",
+                                symbol: "number",
+                                style: .info),
                             text: "rank \(row.rank) · \(row.class.rawValue)",
-                            symbol: "number",
-                            style: .info),
+                            symbol: "number"),
                         identifier: "memory-recall-row-\(row.id)")
                 }
             }
             results.append(ranked)
+
+            // The preview's full reading sits in the wide column beside its
+            // results: squeezed under the form, every value wraps or clips.
+            let reading = MemoryScreenParts.sectionCard(
+                title: "Preview reading",
+                subtitle: "the daemon's full account of this preview",
+                identifier: "memory-recall-reading")
+            for (label, value) in [
+                ("Purpose", preview.purpose.rawValue),
+                ("Store", MemoryScreenPresenter.store(preview.state)),
+                ("Search provenance", preview.semantic),
+                ("Budget", "\(preview.tokens) of \(preview.budget) tokens"
+                    + (preview.truncated
+                        ? " · truncated to fit"
+                        : " · nothing was dropped for size")),
+                ("Omitted", "\(preview.omitted) rows · \(preview.omittedPitfalls) pitfalls · "
+                    + "\(preview.omittedArticles) articles"),
+                ("Mutation", "\(preview.mutation.rawValue) · the wake high-water "
+                    + (preview.highWaterAdvanced ? "advanced" : "did not advance")),
+                ("Note", preview.note),
+            ] {
+                reading.add(MemoryScreenParts.factRow(label, value))
+            }
+            results.append(reading)
 
             let partitions = MemoryScreenParts.sectionCard(
                 title: "Budget partitions",
@@ -511,9 +524,31 @@ final class MemoryMaintenanceScreenView: NSView {
 
         var content: [NSView] = []
         if let maintenance {
+            // The design's maintenance topology is two cards per row. The
+            // second slot in its top row is a Verification / Self-test block
+            // this wire cannot supply — no self-test field, no self-test job
+            // kind — so the slot names the refusal instead of hiding it, the
+            // same way Library names its missing search and sort.
+            // Every job action draws the same way: the design draws no job
+            // action as primary, so none of these is one.
+            let indexCard = MemoryScreenParts.projectionCard(
+                maintenance.indexes, action: job(.reindex))
+            indexCard.add(MemoryScreenParts.note(
+                "The design's embedding-runtime Diagnose action is not offered: "
+                    + "this projection carries no diagnostics field, and no job "
+                    + "kind invokes one.",
+                identifier: "memory-index-diagnose-absent",
+                style: .quiet))
             content.append(MemoryScreenParts.grid([
-                MemoryScreenParts.projectionCard(
-                    maintenance.indexes, action: job(.reindex, style: .primary)),
+                indexCard,
+                MemoryScreenParts.gapCard(
+                    title: "Self-test",
+                    identifier: "memory-maintenance-self-test-gap",
+                    detail: "The design's Verification block reports a self-test "
+                        + "result and offers a live run. This projection carries no "
+                        + "self-test field and the job wire has no self-test kind, "
+                        + "so there is no result to show and no job to start — the "
+                        + "absence is the contract, not an oversight."),
                 MemoryScreenParts.storeCard(
                     name: "Consolidation", identifier: "memory-store-consolidation",
                     caption: "duplicate candidates the daemon scanned for",
@@ -522,7 +557,7 @@ final class MemoryMaintenanceScreenView: NSView {
                     actions: [job(.consolidationDryRun), job(.consolidationApply)]),
                 MemoryScreenParts.configCard(
                     maintenance.config, action: job(.retentionSweep)),
-            ], columns: 3))
+            ], columns: 2))
 
             // The newest receipt is the job this screen is about; the ones
             // behind it are history. They are the same rendering because they
@@ -618,7 +653,7 @@ enum MemoryScreenParts {
         actions: [NSView] = []
     ) -> CardView {
         let trailing = NSStackView(
-            views: (role.map { [roleBadge($0)] } ?? []) + [stateBadge(state)] + actions)
+            views: (role.map { [roleBadge($0)] } ?? []) + [stateBadge(state)])
         trailing.orientation = .horizontal
         trailing.alignment = .centerY
         trailing.spacing = Theme.Space.s
@@ -635,8 +670,15 @@ enum MemoryScreenParts {
         reading.maximumNumberOfLines = 0
         card.add(reading)
         guard state != .absent else { return card }
-        for (label, value) in readings {
-            card.add(factRow(label, value))
+        for (index, fact) in readings.enumerated() {
+            let row: NSView = factRow(fact.0, fact.1)
+            // The store's actions belong to the reading they operate on, at
+            // the row's trailing edge — the design's maintenance row.
+            if index == readings.count - 1, !actions.isEmpty {
+                card.add(actionRow(row, actions: actions))
+            } else {
+                card.add(row)
+            }
         }
         return card
     }
@@ -651,8 +693,7 @@ enum MemoryScreenParts {
         _ indexes: MemoryIndexHealth,
         action: NSView? = nil
     ) -> CardView {
-        let trailing = NSStackView(
-            views: [roleBadge(.projection)] + (action.map { [$0] } ?? []))
+        let trailing = NSStackView(views: [roleBadge(.projection)])
         trailing.orientation = .horizontal
         trailing.alignment = .centerY
         trailing.spacing = Theme.Space.s
@@ -665,7 +706,8 @@ enum MemoryScreenParts {
         card.add(indexReading(
             "Full-text", indexes.fts.state,
             counts: "\(indexes.fts.articles) articles",
-            identifier: "memory-index-fts-\(indexes.fts.state.rawValue)"))
+            identifier: "memory-index-fts-\(indexes.fts.state.rawValue)",
+            action: action))
         card.add(indexReading(
             "Semantic", indexes.vectors.state,
             counts: "\(indexes.vectors.articles) articles · "
@@ -685,14 +727,27 @@ enum MemoryScreenParts {
         _ name: String,
         _ state: MemoryStoreState,
         counts: String,
-        identifier: String
-    ) -> NSStackView {
-        factRow(
+        identifier: String,
+        action: NSView? = nil
+    ) -> NSView {
+        let reading = factRow(
             name,
             state == .absent
                 ? MemoryScreenPresenter.store(state)
                 : "\(MemoryScreenPresenter.store(state)) · \(counts)",
             identifier: identifier)
+        guard let action else { return reading }
+        return actionRow(reading, actions: [action])
+    }
+
+    /// One reading with what can be done about it: the design's maintenance row
+    /// spans its card, the reading on the left and the action on the right.
+    private static func actionRow(_ reading: NSView, actions: [NSView]) -> NSView {
+        let row = NSStackView(views: [reading, NSView.spacer()] + actions)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = Theme.Space.s
+        return row
     }
 
     /// Which part of the topology a card is. The design draws the difference
@@ -790,8 +845,7 @@ enum MemoryScreenParts {
         let card = sectionCard(
             title: "Lifecycle policy",
             subtitle: "retention and sweep as the daemon holds them",
-            identifier: "memory-config",
-            trailingView: action)
+            identifier: "memory-config")
         for (label, value) in [
             ("Configuration revision", config.revision),
             ("Hot event retention", "\(config.eventsHotDays) days"),
@@ -801,6 +855,11 @@ enum MemoryScreenParts {
             ("Embeddings", "\(config.embeddingProvider.rawValue) · \(config.embeddingModel)"),
         ] {
             card.add(factRow(label, value))
+        }
+        // The sweep action follows the policy it acts on, the way the design
+        // draws it, rather than sitting in the card's header.
+        if let action {
+            card.add(actionRow(action, actions: []))
         }
         return card
     }
@@ -825,8 +884,10 @@ enum MemoryScreenParts {
         ) { index in
             let gap = gaps[index]
             return resultRow(
-                leading: CapsuleBadge(
-                    text: "gap", symbol: "exclamationmark.triangle.fill", style: .warning),
+                leading: pinWidth(
+                    CapsuleBadge(
+                        text: "gap", symbol: "exclamationmark.triangle.fill", style: .warning),
+                    text: "gap", symbol: "exclamationmark.triangle.fill"),
                 title: gap.code,
                 detail: gap.detail,
                 identifier: "memory-gap-\(gap.code)")
@@ -866,7 +927,9 @@ enum MemoryScreenParts {
     }
 
     /// One receipt: what ran, how far it got, why it failed, and the readback it
-    /// finished with. A failure is never summarised away, and a job with no
+    /// finished with. The receipt's id is part of the row's name, because two
+    /// stuck jobs of one kind are otherwise pixel-identical and read as one job
+    /// drawn twice. A failure is never summarised away, and a job with no
     /// readback says the readback is missing rather than showing nothing.
     static func jobsCard(
         title: String,
@@ -899,9 +962,10 @@ enum MemoryScreenParts {
             entry.setAccessibilityIdentifier("memory-job-receipt-\(receipt.id)")
             entry.addArrangedSubview(resultRow(
                 leading: jobBadge(receipt.state),
-                title: receipt.kind.title,
+                title: "\(receipt.kind.title) · \(receipt.id)",
                 detail: "\(receipt.progress.step) · \(receipt.progress.done)/\(total) · "
-                    + "requested by \(receipt.requestedBy) · \(receipt.summary)",
+                    + "requested by \(receipt.requestedBy)"
+                    + (receipt.summary.isEmpty ? "" : " · \(receipt.summary)"),
                 columns: [
                     Column(text: receipt.startedAt, width: 168, mono: true),
                     Column(text: receipt.finishedAt ?? "not yet", width: 168, mono: true),
@@ -1097,8 +1161,9 @@ enum MemoryScreenParts {
 
     /// The column captions above a table, in the same widths as its rows: the
     /// same leading state slot and the same flexible name column, so a caption
-    /// sits over the cells it names.
-    static func resultHeader(columns: [Column], hasTrailingState: Bool = false) -> NSView {
+    /// sits over the cells it names. The name column's own caption is the
+    /// table's to give — the design names it where the rows name their rows.
+    static func resultHeader(columns: [Column], title: String? = nil, hasTrailingState: Bool = false) -> NSView {
         let cells = columns.map { column -> NSView in
             let label = NSTextField(labelWithString: column.text.uppercased())
             label.font = Theme.Font.sectionLabel
@@ -1107,9 +1172,19 @@ enum MemoryScreenParts {
             label.widthAnchor.constraint(equalToConstant: column.width).isActive = true
             return label
         }
-        let flexible = NSView()
-        flexible.translatesAutoresizingMaskIntoConstraints = false
-        flexible.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        let flexible: NSView
+        if let title {
+            let label = NSTextField(labelWithString: title.uppercased())
+            label.font = Theme.Font.sectionLabel
+            label.textColor = Theme.tertiaryText
+            label.lineBreakMode = .byTruncatingTail
+            flexible = label
+        } else {
+            let spacer = NSView()
+            spacer.translatesAutoresizingMaskIntoConstraints = false
+            spacer.heightAnchor.constraint(equalToConstant: 1).isActive = true
+            flexible = spacer
+        }
         var views: [NSView] = [slot(nil, width: Self.stateSlotWidth), flexible]
         views += cells
         if hasTrailingState { views.append(slot(nil, width: Self.stateSlotWidth)) }
@@ -1246,16 +1321,43 @@ enum MemoryScreenParts {
         return card
     }
 
+    /// A badge pinned to the width its own words need. A capsule has no
+    /// intrinsic width, so an unpinned one takes whatever a row's solver
+    /// leaves after the fixed columns; its label then lands within a hair of
+    /// the text's measure, the label's insets eat the hair, and the tail
+    /// truncates. The label is pinned to what its words need and the capsule
+    /// around it, one notch below required so an over-long status still loses
+    /// to the slot that houses it.
+    static func pinWidth(_ badge: CapsuleBadge, text: String, symbol: String?) -> CapsuleBadge {
+        let textWidth = ceil((text as NSString).size(
+            withAttributes: [.font: Theme.Font.badge]).width)
+        if let stack = badge.subviews.first as? NSStackView,
+           let label = stack.arrangedSubviews.compactMap({ $0 as? NSTextField }).first {
+            let labelPin = label.widthAnchor.constraint(equalToConstant: textWidth + 5)
+            labelPin.priority = .init(999)
+            labelPin.isActive = true
+        }
+        let iconAllowance: CGFloat = symbol == nil ? 0 : 14
+        let pin = badge.widthAnchor.constraint(
+            equalToConstant: textWidth + iconAllowance + 20)
+        pin.priority = .init(999)
+        pin.isActive = true
+        return badge
+    }
+
     static func stateBadge(_ state: MemoryStoreState) -> CapsuleBadge {
         switch state {
         case .absent:
-            return CapsuleBadge(
-                text: "absent", symbol: "questionmark.circle.fill", style: .neutral)
+            return pinWidth(CapsuleBadge(
+                text: "absent", symbol: "questionmark.circle.fill", style: .neutral),
+                text: "absent", symbol: "questionmark.circle.fill")
         case .empty:
-            return CapsuleBadge(text: "empty", symbol: "tray", style: .info)
+            return pinWidth(CapsuleBadge(text: "empty", symbol: "tray", style: .info),
+                text: "empty", symbol: "tray")
         case .ok:
-            return CapsuleBadge(
-                text: "available", symbol: "checkmark.circle.fill", style: .positive)
+            return pinWidth(CapsuleBadge(
+                text: "available", symbol: "checkmark.circle.fill", style: .positive),
+                text: "available", symbol: "checkmark.circle.fill")
         }
     }
 
@@ -1263,28 +1365,37 @@ enum MemoryScreenParts {
     static func lifecycleBadge(_ status: String) -> CapsuleBadge {
         switch status {
         case "verified", "current":
-            return CapsuleBadge(
-                text: status, symbol: "checkmark.seal.fill", style: .positive)
+            return pinWidth(CapsuleBadge(
+                text: status, symbol: "checkmark.seal.fill", style: .positive),
+                text: status, symbol: "checkmark.seal.fill")
         case "unverified", "stale":
-            return CapsuleBadge(
-                text: status, symbol: "exclamationmark.triangle.fill", style: .warning)
+            return pinWidth(CapsuleBadge(
+                text: status, symbol: "exclamationmark.triangle.fill", style: .warning),
+                text: status, symbol: "exclamationmark.triangle.fill")
         case "conflicted":
-            return CapsuleBadge(text: status, symbol: "arrow.triangle.branch", style: .critical)
+            return pinWidth(CapsuleBadge(
+                text: status, symbol: "arrow.triangle.branch", style: .critical),
+                text: status, symbol: "arrow.triangle.branch")
         default:
-            return CapsuleBadge(text: status, symbol: "circle.fill", style: .neutral)
+            return pinWidth(CapsuleBadge(text: status, symbol: "circle.fill", style: .neutral),
+                text: status, symbol: "circle.fill")
         }
     }
 
     static func jobBadge(_ state: MemoryJobState) -> CapsuleBadge {
         switch state {
         case .running:
-            return CapsuleBadge(text: state.rawValue, symbol: "clock.fill", style: .info)
+            return pinWidth(CapsuleBadge(
+                text: state.rawValue, symbol: "clock.fill", style: .info),
+                text: state.rawValue, symbol: "clock.fill")
         case .succeeded:
-            return CapsuleBadge(
-                text: state.rawValue, symbol: "checkmark.circle.fill", style: .positive)
+            return pinWidth(CapsuleBadge(
+                text: state.rawValue, symbol: "checkmark.circle.fill", style: .positive),
+                text: state.rawValue, symbol: "checkmark.circle.fill")
         case .failed:
-            return CapsuleBadge(
-                text: state.rawValue, symbol: "xmark.octagon.fill", style: .critical)
+            return pinWidth(CapsuleBadge(
+                text: state.rawValue, symbol: "xmark.octagon.fill", style: .critical),
+                text: state.rawValue, symbol: "xmark.octagon.fill")
         }
     }
 
