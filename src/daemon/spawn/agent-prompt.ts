@@ -96,6 +96,13 @@ const CONCISE_CATEGORIES: readonly RoutingCategory[] = [
   "light_research",
 ];
 
+/** Categories that receive minimal standards (core rules only, no exhaustive detail). Simple mechanical tasks don't need full deletion/consolidation/measurement sections. */
+const MINIMAL_CATEGORIES: readonly RoutingCategory[] = [
+  "light_research",
+  "summarization", 
+  "simple_coding",
+];
+
 /** Queen leads; the agent is a developer on the team. Status is not an instruction — putting it on control made one lead into a ticket desk. */
 function teamRoleContract(): string {
   return (
@@ -108,8 +115,8 @@ function teamRoleContract(): string {
   );
 }
 
-/** Reporting a landing is not finishing. Continue while authorized work remains — the mirror image of the escalate-don't-grind tripwire (grind → escalate; idle-with-work → continue). A live session is also the cheapest place to do the next piece: a respawn re-reads everything from zero. */
-const CONTINUOUS_EXECUTION = `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from ${ORCHESTRATOR_NAME}.`;
+/** Reporting a landing is not finishing. Continue while authorized work remains — the mirror image of the escalate-don't-grind tripwire (grind → escalate; idle-with-work → continue). A live session is also the cheapest place to do the next piece: a respawn re-reads everything from zero. Mail check ensures peer coordination actually happens. */
+const CONTINUOUS_EXECUTION = `After reporting a landing or milestone, call hive_mail_poll and settle any control messages before continuing with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from ${ORCHESTRATOR_NAME}.`;
 
 export interface AgentPromptOptions {
   tool?: CapabilityProvider;
@@ -281,7 +288,20 @@ export function buildAgentPrompt(
           `Before writing, call hive_pickup_handoff with agent=${JSON.stringify(name)} and handoffId=${JSON.stringify(options.handoffId)}. Verify its branch and evidence; pickup resumes the exact task and does not mark it complete.`,
         ]),
     // Standards travel in the prompt, not in a skill. Skills are progressively disclosed — an agent reads a name and a description and chooses whether to open the body — so a rule delivered as a skill reaches only the agents that elect to receive it, and nothing fails when one declines. These go to every agent before its first turn, on every vendor, in every category: the trimmed prompt drops narration, never a rule, and a small model is the one that can least afford to infer them. standardsFor emits each delivered section as `## heading` plus body so the section name is always citable; the digest below still stamps the full loaded set (including sections this role did not receive), which is a different contract.
-    ...standardsFor(standards, { readOnly, category: options.category }),
+    ...standardsFor(standards, { readOnly, category: options.category }).filter(
+      (section) => {
+        // Minimal categories get core rules only: skip deletion/consolidation and measurement/baselines sections
+        const isMinimal =
+          options.category !== undefined &&
+          MINIMAL_CATEGORIES.includes(options.category);
+        if (!isMinimal) return true;
+        const heading = section.match(/^## (.+)$/m)?.[1];
+        return (
+          heading !== "Deletion and consolidation" &&
+          heading !== "Measurement and baselines"
+        );
+      },
+    ),
     `Standards digest sha256:${standardsDigest(standards)} — covers the standards ` +
       `this spawn loaded (the parsed sections, not the file's bytes), including any ` +
       `section your role did not receive. If it disagrees with a digest recomputed ` +
