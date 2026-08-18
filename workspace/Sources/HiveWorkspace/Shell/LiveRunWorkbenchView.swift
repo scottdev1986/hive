@@ -432,10 +432,10 @@ final class LiveRunWorkbenchView: NSView {
         }
         let strip = FactStripView(
             pairs: [
-                FactStripView.pair(label: "Viewed scope", value: scopeValue),
-                FactStripView.pair(label: "Keyboard focus", value: focusValue),
-                FactStripView.pair(label: "Input owner", value: inputOwnerValue),
-                FactStripView.pair(label: "Generation", value: generationValue),
+                FactStripView.pair(label: "Viewed scope", value: scopeValue, delimiter: "·"),
+                FactStripView.pair(label: "Keyboard focus", value: focusValue, delimiter: "·"),
+                FactStripView.pair(label: "Input owner", value: inputOwnerValue, delimiter: "·"),
+                FactStripView.pair(label: "Generation", value: generationValue, delimiter: "·"),
             ],
             identifier: "live-run-control-strip")
         Theme.paint(strip, Theme.sidebarContextFill)

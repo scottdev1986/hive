@@ -228,8 +228,9 @@ final class QueenProviderScreenViewTests: XCTestCase {
             let childrenWidth = stack.arrangedSubviews.reduce(CGFloat(0)) {
                 $0 + $1.alignmentRect(forFrame: $1.frame).width
             }
+            let internalSpacing = stack.spacing * CGFloat(max(stack.arrangedSubviews.count - 1, 0))
             XCTAssertEqual(
-                stack.frame.width, childrenWidth + stack.spacing, accuracy: 2,
+                stack.frame.width, childrenWidth + internalSpacing, accuracy: 2,
                 "fact pair must hug its label and value; leftover width inside the pair is the mis-grouping")
 
             if let previous = previousPair {

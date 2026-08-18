@@ -39,8 +39,9 @@ final class FactStripViewTests: XCTestCase {
             let childrenWidth = stack.arrangedSubviews.reduce(CGFloat(0)) {
                 $0 + $1.alignmentRect(forFrame: $1.frame).width
             }
+            let internalSpacing = stack.spacing * CGFloat(max(stack.arrangedSubviews.count - 1, 0))
             XCTAssertEqual(
-                stack.frame.width, childrenWidth + stack.spacing, accuracy: 2,
+                stack.frame.width, childrenWidth + internalSpacing, accuracy: 2,
                 "fact pair must hug its label and value")
             if let previous = previousPair {
                 let previousFrame = previous.convert(previous.bounds, to: strip)
@@ -51,5 +52,32 @@ final class FactStripViewTests: XCTestCase {
             }
             previousPair = pair
         }
+    }
+
+    func testADelimiterStaysInsideThePair() throws {
+        let strip = FactStripView(
+            pairs: [
+                FactStripView.pair(label: "Viewed scope", value: "Live Run", delimiter: "·"),
+                FactStripView.pair(label: "Generation", value: "3 · exact", delimiter: "·"),
+            ],
+            identifier: "fact-strip-delimited")
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: 40))
+        host.addSubview(strip)
+        NSLayoutConstraint.activate([
+            strip.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            strip.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            host.widthAnchor.constraint(equalToConstant: 1100),
+        ])
+        host.layoutSubtreeIfNeeded()
+
+        let first = try XCTUnwrap(strip.stack.arrangedSubviews.first as? NSStackView)
+        XCTAssertEqual(first.arrangedSubviews.count, 3)
+        let fields = first.arrangedSubviews.compactMap { $0 as? NSTextField }.map(\.stringValue)
+        XCTAssertEqual(fields, ["Viewed scope", "·", "Live Run"])
+        let childrenWidth = first.arrangedSubviews.reduce(CGFloat(0)) {
+            $0 + $1.alignmentRect(forFrame: $1.frame).width
+        }
+        XCTAssertEqual(
+            first.frame.width, childrenWidth + first.spacing * 2, accuracy: 2)
     }
 }
