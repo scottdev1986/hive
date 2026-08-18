@@ -1165,7 +1165,7 @@ private enum MemoryPage {
     /// revision it came from, and how fresh that read is. An unknown field says
     /// so rather than reading as a value.
     private static func provenance(_ screen: ShellScreenProjection) -> NSView {
-        let text = "Observed \(screen.observedAt ?? "never") · "
+        let text = "Observed at \(screen.observedAt ?? "never") · "
             + "revision \(screen.source.revision ?? "unknown") · "
             + "\(screen.freshness.rawValue)"
         let label = NSTextField(labelWithString: text)

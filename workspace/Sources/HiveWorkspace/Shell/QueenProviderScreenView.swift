@@ -25,7 +25,9 @@ final class QueenProviderScreenView: NSView {
             PageHeaderView(
                 title: "Queen Provider",
                 subtitle: "Choose which vendor Hive uses for the live Queen. This setting is separate from worker routing."),
+            Self.provenance(screen),
             currentQueenCard(),
+            observedCard(),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -102,6 +104,56 @@ final class QueenProviderScreenView: NSView {
         return card
     }
 
+    /// When was this read, from which revision, and how fresh. The screen used
+    /// to inherit these from the availability panel; they are the projection's
+    /// own provenance, so they stay on the page after the panel left it.
+    static func provenance(_ screen: ShellScreenProjection) -> NSView {
+        let text = "Observed at \(screen.observedAt ?? "never") · "
+            + "revision \(screen.source.revision ?? "unknown") · \(screen.freshness.rawValue)"
+        let label = NSTextField(labelWithString: text)
+        label.font = Theme.Font.chromeMetadata
+        label.textColor = Theme.tertiaryText
+        label.lineBreakMode = .byTruncatingTail
+        label.compressHorizontally(priority: 440, toolTip: text)
+        return label
+    }
+
+    /// The projection's own reading of the root, in its own words: which
+    /// provider is live, what the record says about its health, and the change
+    /// revision a compare-and-set is fenced on. The vendor facts are drawn on
+    /// the vendor cards instead of repeated here.
+    private func observedCard() -> NSView {
+        let vendorLabels = Set(editor.observed.vendorIDs.map { $0.rawValue })
+        let card = SectionCardView(
+            title: "Observed root",
+            subtitle: "read from the daemon, never inferred here")
+        card.setAccessibilityIdentifier("queen-provider-observed")
+        for fact in editor.observed.facts where !vendorLabels.contains(fact.label) {
+            let row = Self.factRow(fact.label, fact.value)
+            card.contentStack.addArrangedSubview(row)
+            card.pinToContentWidth(row)
+        }
+        return card
+    }
+
+    static func factRow(_ label: String, _ value: String) -> NSView {
+        let name = NSTextField(labelWithString: label)
+        name.font = Theme.Font.screenSubtitle
+        name.textColor = Theme.secondaryText
+        name.compressHorizontally(priority: 470, toolTip: label)
+        name.widthAnchor.constraint(greaterThanOrEqualToConstant: 132).isActive = true
+        let reading = NSTextField(wrappingLabelWithString: value)
+        reading.font = Theme.Font.monoCaption
+        reading.textColor = Theme.primaryText
+        reading.maximumNumberOfLines = 2
+        reading.compressHorizontally(priority: 460, toolTip: value)
+        let row = NSStackView(views: [name, reading])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = Theme.Space.s
+        return row
+    }
+
     private func vendorCard(_ vendor: ProviderID) -> NSView {
         let available = editor.observed.vendors[vendor.rawValue]?.available == true
         let isSelected = selected == vendor
@@ -126,11 +178,22 @@ final class QueenProviderScreenView: NSView {
             text: available ? (isSelected ? "selected" : "available") : "unavailable",
             symbol: available ? "checkmark.circle.fill" : "xmark.circle.fill",
             style: available ? .positive : .warning)
+        // The projection's own words for what this vendor can do here. A badge
+        // alone would say "unavailable" without saying why, and why is the part
+        // a reader can act on.
+        let reason = NSTextField(wrappingLabelWithString:
+            editor.observed.facts.first { $0.label == vendor.rawValue }?.value ?? "")
+        reason.font = Theme.Font.caption
+        reason.textColor = Theme.secondaryText
+        reason.maximumNumberOfLines = 2
+        reason.compressHorizontally(priority: 440)
         card.contentStack.addArrangedSubview(button)
         card.contentStack.addArrangedSubview(mark)
         card.contentStack.addArrangedSubview(title)
         card.contentStack.addArrangedSubview(vendorName)
         card.contentStack.addArrangedSubview(badge)
+        card.contentStack.addArrangedSubview(reason)
+        card.pinToContentWidth(reason)
         card.alphaValue = button.isEnabled || isSelected ? 1 : Theme.disabledContentAlpha
         return card
     }
