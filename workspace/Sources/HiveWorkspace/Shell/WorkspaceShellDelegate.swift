@@ -33,7 +33,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     state = try await ShellLiveStore(config: config).loadState()
                 }
-                await finishLaunch(state: state)
+                try await finishLaunch(state: state)
             } catch {
                 failLaunch(error)
             }
@@ -41,7 +41,10 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    private func finishLaunch(state: ShellState) async {
+    private func finishLaunch(state: ShellState) async throws {
+            let fixtureLiveRun = launch.isLive
+                ? nil
+                : try Self.fixtureLiveRunProjection()
             let context = ShellSidebarView.Context(
                 projectName: config.projectName ?? "No project",
                 projectPath: config.projectDirectory,
@@ -276,6 +279,8 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                         }
                     }
                 }
+            } else if let fixtureLiveRun {
+                workbench.apply(fixtureLiveRun)
             } else {
                 workbench.showUnavailable(
                     "Fixture launch has no workspace-feed snapshot; Live Run is unavailable.")
@@ -283,7 +288,10 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             self.controller = controller
             NSApp.mainMenu = ShellMenuBuilder.build(target: controller)
             if launch.proofMode {
-                await runProof(controller: controller, state: state)
+                await runProof(
+                    controller: controller,
+                    state: state,
+                    liveRunProjection: fixtureLiveRun)
             }
             controller.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -303,6 +311,15 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                 window.setFrame(screen.visibleFrame, display: true)
             }
             shellTour?(controller)
+    }
+
+    private static func fixtureLiveRunProjection() throws -> LiveRunProjection? {
+        let environment = ProcessInfo.processInfo.environment
+        guard let path = environment["HIVE_QA_WORKSPACE_FEED_SNAPSHOT"],
+              !path.isEmpty else { return nil }
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        return try LiveRunProjection(
+            feedLine: JSONDecoder().decode(FeedLine.self, from: data))
     }
 
     @MainActor
@@ -611,7 +628,8 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func runProof(
         controller: WorkspaceShellWindowController,
-        state: ShellState
+        state: ShellState,
+        liveRunProjection: LiveRunProjection?
     ) async -> Never {
         controller.window?.layoutIfNeeded()
         // Only a declared screen whose projection is frozen counts. Counting any
@@ -639,6 +657,29 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
         for route in ShellRoute.allCases {
             let availability = state.screens[route]?.availability.rawValue ?? "missing"
             line += " availability-\(route.rawValue)=\(availability)"
+        }
+        if !launch.isLive {
+            line += " live-run-feed="
+                + (liveRunProjection == nil ? "absent" : "snapshot")
+        }
+        if let liveRunProjection {
+            let sessions = liveRunProjection.sessions
+            let providerModel = sessions.filter {
+                $0.provider != nil && $0.model?.isEmpty == false
+            }.count
+            let activities = sessions.filter { $0.activity != .unknown }.count
+            let tasks = sessions.filter { $0.task?.isEmpty == false }.count
+            let queenTask: String
+            if let queen = sessions.first(where: \.isQueen) {
+                queenTask = queen.task?.isEmpty == false ? "present" : "absent"
+            } else {
+                queenTask = "missing"
+            }
+            line += " live-run-sessions=\(sessions.count)"
+                + " live-run-provider-model=\(providerModel)"
+                + " live-run-activities=\(activities)"
+                + " live-run-tasks=\(tasks)"
+                + " live-run-queen-task=\(queenTask)"
         }
         if launch.isLive,
            let policy = state.screens[.taskRouter]?.facts.first(where: {

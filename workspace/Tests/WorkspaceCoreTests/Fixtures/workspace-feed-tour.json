@@ -1,0 +1,106 @@
+{
+  "v": 1,
+  "agents": [
+    {
+      "category": "standard_coding",
+      "worktreePath": "/tmp/hive/fixture",
+      "branch": "hive/fixture",
+      "contextPct": 41.5,
+      "createdAt": "2026-08-18T12:00:00.000Z",
+      "lastEventAt": "2026-08-18T12:00:00.000Z",
+      "capabilityEpoch": 0,
+      "readOnly": false,
+      "writeRevoked": false,
+      "id": "zoe",
+      "name": "zoe",
+      "tool": "codex",
+      "model": "gpt-5.4",
+      "status": "working",
+      "taskDescription": "Index the repository",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "instance-fixture",
+        "subject": {
+          "kind": "agent",
+          "agentId": "zoe"
+        },
+        "generation": 1,
+        "sessionId": "ses_0198a8f0-0000-7000-8000-000000000001",
+        "hostKind": "sessiond",
+        "engineBuildId": "engine-fixture"
+      },
+      "presentation": {
+        "panePresence": "visible",
+        "terminalState": "live",
+        "headerDetail": "working",
+        "paneStatus": {
+          "kind": "running"
+        },
+        "activity": "working",
+        "attention": null
+      }
+    },
+    {
+      "category": "standard_coding",
+      "worktreePath": "/tmp/hive/fixture",
+      "branch": "hive/fixture",
+      "contextPct": null,
+      "createdAt": "2026-08-18T12:00:00.000Z",
+      "lastEventAt": "2026-08-18T12:00:00.000Z",
+      "capabilityEpoch": 0,
+      "readOnly": false,
+      "writeRevoked": false,
+      "id": "david",
+      "name": "david",
+      "tool": "claude",
+      "model": "claude-sonnet-4-5",
+      "status": "idle",
+      "taskDescription": "Review the index results",
+      "sessionLocator": {
+        "schemaVersion": 1,
+        "instanceId": "instance-fixture",
+        "subject": {
+          "kind": "agent",
+          "agentId": "david"
+        },
+        "generation": 1,
+        "sessionId": "ses_0198a8f0-0000-7000-8000-000000000002",
+        "hostKind": "sessiond",
+        "engineBuildId": "engine-fixture"
+      },
+      "presentation": {
+        "panePresence": "visible",
+        "terminalState": "live",
+        "headerDetail": "idle",
+        "paneStatus": {
+          "kind": "running"
+        },
+        "activity": "idle",
+        "attention": null
+      }
+    }
+  ],
+  "autonomyState": {
+    "kind": "current",
+    "value": "sandboxed"
+  },
+  "orchestrator": {
+    "name": "queen",
+    "status": "working",
+    "tool": "codex",
+    "model": "gpt-5.6-sol",
+    "host": "sessiond",
+    "hostState": null,
+    "hostDiagnostic": null,
+    "sessionLocator": null,
+    "presentation": {
+      "panePresence": "visible",
+      "terminalState": "pending",
+      "headerDetail": "working",
+      "paneStatus": {
+        "kind": "running"
+      },
+      "activity": "working"
+    }
+  }
+}

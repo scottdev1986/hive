@@ -69,6 +69,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(qa_repo_root "$SCRIPT_DIR")/workspace}"
 BINARY="$WORKSPACE_ROOT/.build/debug/HiveWorkspaceQA"
 ARTIFACTS="${ARTIFACTS:-$(mktemp -d -t workspace-tour)}"
+LAUNCH_ENV=()
 
 # Worktrees have separate roots, so the lock must live in Git's shared common
 # directory. A worktree-local lock would let two agents tour the same desktop.
@@ -652,6 +653,10 @@ case "$MODE" in
 fixture)
   CORPUS="${2:-}"
   [ -d "$CORPUS" ] || usage
+  FEED_SNAPSHOT="$CORPUS/workspace-feed-tour.json"
+  [ -f "$FEED_SNAPSHOT" ] \
+    || die "fixture corpus has no workspace-feed snapshot at $FEED_SNAPSHOT"
+  LAUNCH_ENV=("HIVE_QA_WORKSPACE_FEED_SNAPSHOT=$FEED_SNAPSHOT")
   LAUNCH_ARGS=(--workspace-shell "$CORPUS" --workspace-shell-fullscreen)
   ;;
 live)
@@ -755,7 +760,7 @@ echo "tour: mode=$MODE artifacts=$ARTIFACTS"
 # live mode the policy revision and library store), and it must agree with the
 # window we are about to capture.
 # env -u strips ambient mutation even if something re-exported it after unset.
-proof=$(env -u HIVE_SHELL_PROOF_MUTATE HIVE_SHELL_PROOF=1 \
+proof=$(env -u HIVE_SHELL_PROOF_MUTATE "${LAUNCH_ENV[@]}" HIVE_SHELL_PROOF=1 \
   "$BINARY" "${LAUNCH_ARGS[@]}" 2>&1)
 code=$?
 printf '%s\n' "$proof" > "$ARTIFACTS/proof.txt"
@@ -780,6 +785,19 @@ for slug in "${SLUGS[@]}"; do
     || die "proof missing availability-${slug}= field: $proof"
 done
 
+if [ "$MODE" = fixture ]; then
+  printf '%s\n' "$proof" | grep -Eq ' live-run-feed=snapshot( |$)' \
+    || die "fixture launch did not apply its workspace-feed snapshot: $proof"
+  for field in live-run-sessions live-run-provider-model live-run-activities live-run-tasks; do
+    value=$(printf '%s\n' "$proof" \
+      | sed -n "s/^SHELL-PROOF .* ${field}=\([0-9][0-9]*\) .*$/\1/p" | tail -1)
+    [ -n "$value" ] && [ "$value" -gt 0 ] \
+      || die "fixture Live Run proof has no measured $field: $proof"
+  done
+  printf '%s\n' "$proof" | grep -Eq ' live-run-queen-task=absent( |$)' \
+    || die "fixture Live Run proof did not preserve the queen task absence: $proof"
+fi
+
 if [ "$MODE" = live ]; then
   # Bound to a variable first: a die() inside $( ) would end only the subshell
   # and hand the pin an empty credential, which reads as 401 on every probe and
@@ -794,6 +812,7 @@ QA_CONTROL="$ARTIFACTS/qa-control"
 CONTROL_SEQUENCE=0
 mkdir -p "$QA_CONTROL" || die "could not create the QA control directory"
 env -u HIVE_SHELL_PROOF_MUTATE \
+  "${LAUNCH_ENV[@]}" \
   "$BINARY" "${LAUNCH_ARGS[@]}" --workspace-shell-qa-control "$QA_CONTROL" \
   > "$ARTIFACTS/app.log" 2>&1 &
 APP_PID=$!
@@ -1293,29 +1312,40 @@ for i in "${!TITLES[@]}"; do
   fi
   pixels=$(png_pixel_size "$png") \
     || { route_red "$slug" pixel-size "could not read captured PNG dimensions"; route_status "$slug" blocked "capture dimensions are not assessable"; continue; }
-  sleep 1
-  # The in-process command writes an ordinary artifact, so the scratch capture
-  # gets a visible name and is removed after the comparison.
+  # Keep the byte-for-byte verdict, but retry a moving pair. WindowServer can
+  # repaint a few whole-frame values once; only two consecutive identical
+  # captures count as settled evidence.
   second="$ARTIFACTS/settle-$slug.png"
-  capture "$second"
-  if [ "$CAPTURE_DESKTOP_LOCKED" = 1 ]; then
-    detail=$(desktop_lock_detail)
-    route_red "$slug" desktop-locked "$detail"
-    route_status "$slug" blocked "$detail"
-    rm -f "$second"
-    continue
-  fi
-  perturb_capture "$second"
-  if ! detail=$(png_defect "$second"); then
-    route_red "$slug" non-blank "$detail"
-    route_status "$slug" blocked "second capture unusable; settledness not assessable"
-    rm -f "$second"
-    continue
-  fi
-  if ! cmp -s "$png" "$second"; then
+  settled=""
+  settle_blocked=""
+  for _ in 1 2 3; do
+    sleep 1
+    capture "$second"
+    if [ "$CAPTURE_DESKTOP_LOCKED" = 1 ]; then
+      detail=$(desktop_lock_detail)
+      route_red "$slug" desktop-locked "$detail"
+      route_status "$slug" blocked "$detail"
+      settle_blocked=1
+      break
+    fi
+    perturb_capture "$second"
+    if ! detail=$(png_defect "$second"); then
+      route_red "$slug" non-blank "$detail"
+      route_status "$slug" blocked "second capture unusable; settledness not assessable"
+      settle_blocked=1
+      break
+    fi
+    if cmp -s "$png" "$second"; then
+      settled=1
+      break
+    fi
+    mv "$second" "$png"
+  done
+  rm -f "$second"
+  [ -n "$settle_blocked" ] && continue
+  if [ -z "$settled" ]; then
     route_red "$slug" settledness "did not settle: consecutive captures differ"
   fi
-  rm -f "$second"
 
   # TOUR_FORCE_CLONE_PREV runs after settle so only the inter-route differ
   # guard sees identical pixels across routes.
