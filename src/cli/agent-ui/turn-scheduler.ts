@@ -10,6 +10,7 @@ export interface AnnouncedWake {
   readonly lane: MailLane;
   readonly oldestItemId: string;
   readonly brokerSeq: number;
+  readonly backlogCount: number;
 }
 
 export interface WakeItem extends AnnouncedWake {
@@ -37,13 +38,16 @@ interface WakeSpend {
   readonly dispatches: number;
 }
 
-/** Folds an arriving announcement into the one already waiting under its id. The waiting entry is the one that survives, because it is the entry that has been sitting through turns and its held flag is the record of that. Held is therefore the OR of both and never just the survivor's: an announcement that arrives mid-turn has waited even if the entry it merges into had not, and dropping that would let the prompt name an item the turn may have settled. */
+/** Folds an arriving announcement into the one already waiting under its id. The waiting entry is the one that survives, because it is the entry that has been sitting through turns and its held flag is the record of that. Held is therefore the OR of both and never just the survivor's: an announcement that arrives mid-turn has waited even if the entry it merges into had not, and dropping that would let the prompt name an item the turn may have settled. Keep the real count from the later notice. */
 function merged(waiting: WakeItem, arriving: WakeItem): WakeItem {
   return {
     ...waiting,
     brokerSeq: isNewerPublish(arriving.brokerSeq, waiting.brokerSeq)
       ? arriving.brokerSeq
       : waiting.brokerSeq,
+    backlogCount: isNewerPublish(arriving.brokerSeq, waiting.brokerSeq)
+      ? arriving.backlogCount
+      : waiting.backlogCount,
     heldAcrossTurn: waiting.heldAcrossTurn || arriving.heldAcrossTurn,
   };
 }
@@ -109,6 +113,7 @@ export function enqueueWake(
     lane: wake.lane,
     oldestItemId: wake.oldestItemId,
     brokerSeq: wake.brokerSeq,
+    backlogCount: wake.backlogCount,
     // Sticky: a wake requeued after a refusal has already waited out its turn, and re-reading an idle scheduler here would hand its stale id back.
     heldAcrossTurn:
       ("heldAcrossTurn" in wake && wake.heldAcrossTurn) || turnInFlight(state),

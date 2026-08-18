@@ -29,9 +29,16 @@ import type {
   ObservabilitySeverity,
   ObservabilitySource,
 } from "../../schemas/observability";
+import {
+  WakePayloadRequestSchema,
+  WakePayloadSchema,
+} from "../../schemas/wake-payload";
 import { systemNowIso } from "../../shared/clock";
 import { errorMessage } from "../../shared/error-message";
 import { reportProtocolSessionFacts } from "../../usage-service/protocol-facts-report";
+import { decodeJson } from "../daemon-response";
+import { PaneDaemonClient } from "./pane-daemon-client";
+import { formatWakePrompt } from "./wake-prompt";
 import type { OutboundJournal, OutboundRow } from "./outbound-journal";
 import {
   bannerContent,
@@ -137,6 +144,7 @@ export interface AgentUiConstructorOptions {
   readonly journal: OutboundJournal;
   readonly vendorSessionId: string;
   readonly daemonPort?: number;
+  readonly paneClient?: Pick<PaneDaemonClient, "request">;
   readonly reportReceipt?: (receipt: SubmissionReceipt) => Promise<void>;
   readonly now?: () => string;
   readonly writeLocalClipboard?: (text: string) => boolean;
@@ -155,14 +163,16 @@ export interface UiDiagnosticReport {
   readonly reason: string;
 }
 
-/** A wake points the agent to its mailbox; it never copies mail into a prompt. Naming the item id taught models to hive_mail_claim before hive_mail_poll, which the ledger refused as an unpresented body. The mailbox is the authority on what is waiting, and the instruction to go read it is true whether or not a particular item survived. */
+/** Fail-soft wake prompt when daemon is unavailable or /wake-payload fails. Uses lane + backlogCount from the notice. No oldestItemId. No memory section. A wake points the agent to its mailbox; it never copies mail into a prompt. Naming the item id taught models to hive_mail_claim before hive_mail_poll, which the ledger refused as an unpresented body. */
 export function wakePrompt(wake: WakeItem): string {
-  const instruction =
-    "Poll your mailbox, claim at most one control item, and settle it before " +
-    "any other work. This is internal operations, not a user message. Do not " +
-    "call SendUserMessage or narrate the mailbox work; finish silently unless " +
-    "the mail itself requires a direct user decision.";
-  return `Hive mail: the ${wake.lane} lane signalled mail for you. ${instruction}`;
+  const parts: string[] = [];
+  parts.push(
+    `Hive mail wake (${wake.lane} lane): you have unread mail.`,
+    `${wake.lane === "control" ? "Control" : "Work"}: ${wake.backlogCount} available`,
+    "",
+    "Poll your mailbox with hive_mail_poll, claim at most one control item, and settle it before any other work. This is internal operations, not a user message. Do not call SendUserMessage or narrate the mailbox work; finish silently unless the mail itself requires a direct user decision.",
+  );
+  return parts.join("\n");
 }
 
 function exitsAgentUi(text: string): boolean {
@@ -332,6 +342,7 @@ export class AgentUi {
   private readonly journal: OutboundJournal;
   private readonly vendorSessionId: string;
   private readonly daemonPort: number | undefined;
+  private readonly paneClient: Pick<PaneDaemonClient, "request"> | undefined;
   private readonly reportReceipt:
     | ((receipt: SubmissionReceipt) => Promise<void>)
     | undefined;
@@ -352,6 +363,14 @@ export class AgentUi {
     this.journal = options.journal;
     this.vendorSessionId = options.vendorSessionId;
     this.daemonPort = options.daemonPort;
+    this.paneClient =
+      options.paneClient ??
+      (options.daemonPort === undefined
+        ? undefined
+        : new PaneDaemonClient({
+            port: options.daemonPort,
+            subject: options.identity.agentName,
+          }));
     this.reportReceipt = options.reportReceipt;
     this.now = options.now ?? systemNowIso;
     this.writeLocalClipboard =
@@ -1767,6 +1786,7 @@ export class AgentUi {
         lane: notice.lane,
         oldestItemId: notice.oldestItemId,
         brokerSeq: notice.brokerSeq,
+        backlogCount: notice.backlogCount,
       });
       if (this.queuedWake(notice.wakeId)) queued.push(notice);
       this.view = applyMailPhase(
@@ -1973,13 +1993,17 @@ export class AgentUi {
   ): Promise<void> {
     this.scheduler = commitDispatch(this.scheduler, item);
     const clientInputId = randomUUID();
+    
+    // Fetch wake payload (mail counts + memory delta) from daemon
+    const wakeText = await this.buildWakePrompt(item.wake);
+    
     const receipt = await this.session.submit({
       session: {
         vendorSessionId: this.vendorSessionId,
         replayedHistory: false,
       },
       clientInputId,
-      text: wakePrompt(item.wake),
+      text: wakeText,
     });
     if (receipt.outcome === "accepted") {
       this.scheduler = onSubmissionAccepted(this.scheduler, receipt.turnId);
@@ -2025,6 +2049,46 @@ export class AgentUi {
       );
     }
     this.refresh();
+  }
+
+  /** Build wake prompt with mail counts and memory delta from daemon. Falls back to fail-soft prompt (lane + backlogCount, no memory) if daemon is unavailable or fetch fails. */
+  private async buildWakePrompt(wake: WakeItem): Promise<string> {
+    // If no pane client, use fail-soft prompt (still has lane + backlogCount)
+    if (this.paneClient === undefined) {
+      return wakePrompt(wake);
+    }
+
+    try {
+      const request = WakePayloadRequestSchema.parse({
+        recipient: this.identity.agentName,
+        wakeId: wake.wakeId,
+        oldestItemId: wake.oldestItemId,
+        lane: wake.lane,
+      });
+
+      const response = await this.paneClient.request("/wake-payload", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+      });
+
+      if (!response.ok) {
+        console.error(
+          `wake-payload fetch failed: ${response.status} — using fail-soft prompt`,
+        );
+        return wakePrompt(wake);
+      }
+
+      const payload = WakePayloadSchema.parse(await decodeJson(response));
+      return formatWakePrompt(payload);
+    } catch (error) {
+      console.error(
+        `wake-payload build failed: ${errorMessage(error)} — using fail-soft prompt`,
+      );
+      return wakePrompt(wake);
+    }
   }
 
   private reportTurnObserved(

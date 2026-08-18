@@ -148,6 +148,7 @@ import {
   sweepArtifacts,
 } from "./artifact-store/artifact-store";
 import { registerArtifactTools } from "./artifact-store/artifact-store-tool";
+import { WakePayloadService } from "./wake-payload-service";
 import type { MainHealthMonitorHandle } from "./landing/main-health-monitor";
 import {
   type ProjectGate,
@@ -520,6 +521,7 @@ export class HiveDaemon {
   private readonly resources: ResourceLimits | null;
   private readonly wakeBudgetTokens: number | null;
   private readonly embeddingService: MemoryEmbeddingService | null;
+  private readonly wakePayloadService: WakePayloadService;
   readonly embeddingIndex: MemoryEmbeddingIndex | null;
   private readonly writeDaemonLog: (line: string) => void;
   private readonly psSample: CommandOutput;
@@ -760,6 +762,11 @@ export class HiveDaemon {
     this.land = options.landBranch ?? landBranch;
     this.resources = options.resources ?? null;
     this.wakeBudgetTokens = options.wakeBudgetTokens ?? null;
+    this.wakePayloadService = new WakePayloadService({
+      mailStore: this.mail,
+      repoRoot: () => this.repoRoot,
+      wakeBudgetTokens: this.wakeBudgetTokens ?? 300,
+    });
     this.psSample = options.resourceRunners?.ps ?? runPs;
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
     this.killProcess =
@@ -2263,6 +2270,9 @@ export class HiveDaemon {
     if (url.pathname === "/mail-wake/report" && request.method === "POST") {
       return this.mailWakeReportEndpoint(request);
     }
+    if (url.pathname === "/wake-payload" && request.method === "POST") {
+      return this.wakePayloadEndpoint(request);
+    }
     if (
       url.pathname === "/provider-capabilities" &&
       request.method === "POST"
@@ -3385,6 +3395,46 @@ export class HiveDaemon {
       });
     } catch (error) {
       return mailWakeError(error);
+    }
+  }
+
+  private async wakePayloadEndpoint(request: Request): Promise<Response> {
+    const route = "/wake-payload";
+    const authorized = this.authorizeRoute(request, route, "inbox:read", {
+      withSubject: true,
+      auditAllow: false,
+    });
+    if (!authorized.ok) return authorized.response;
+    const subject = authorized.capability.subject;
+    const { WakePayloadRequestSchema } = await import(
+      "../schemas/wake-payload"
+    );
+    const parsed = WakePayloadRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      return json(
+        { error: parsed.error.issues[0]?.message ?? "bad wake payload request" },
+        { status: 400 },
+      );
+    }
+    if (
+      canonicalOrchestratorName(subject) !==
+      canonicalOrchestratorName(parsed.data.recipient)
+    ) {
+      return json(
+        { error: `${subject} may not fetch wake payload for ${parsed.data.recipient}` },
+        { status: 403 },
+      );
+    }
+    try {
+      const payload = await this.wakePayloadService.build(parsed.data);
+      return json(payload);
+    } catch (error) {
+      return json(
+        { error: errorMessage(error) },
+        { status: 500 },
+      );
     }
   }
 

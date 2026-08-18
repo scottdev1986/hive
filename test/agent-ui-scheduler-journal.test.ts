@@ -40,13 +40,14 @@ test("mail wakes are explicitly silent internal operations", () => {
     lane: "control",
     oldestItemId: "mail-1",
     brokerSeq: 1,
+    backlogCount: 1,
     heldAcrossTurn: false,
   });
 
   expect(prompt).toContain("internal operations, not a user message");
   expect(prompt).toContain("Do not call SendUserMessage");
   expect(prompt).toContain("finish silently");
-  expect(prompt).toContain("the control lane signalled mail for you");
+  expect(prompt).toContain("Hive mail wake (control lane)");
   expect(prompt).not.toContain("mail-1");
 });
 
@@ -143,6 +144,7 @@ describe("the turn scheduler", () => {
       lane: "control",
       oldestItemId: "m1",
       brokerSeq: 1,
+      backlogCount: 1,
     });
 
     expect(canSubmitUser(state)).toBe(false);
@@ -172,12 +174,14 @@ describe("the turn scheduler", () => {
       lane: "work",
       oldestItemId: "m2",
       brokerSeq: 1,
+      backlogCount: 1,
     });
     state = enqueueWake(state, {
       wakeId: "w-control",
       lane: "control",
       oldestItemId: "m1",
       brokerSeq: 2,
+      backlogCount: 1,
     });
 
     const first = nextItem(state);
@@ -194,6 +198,7 @@ describe("the turn scheduler", () => {
       lane: "control" as const,
       oldestItemId: "m1",
       brokerSeq: 1,
+      backlogCount: 1,
     };
     let state = enqueueWake(EMPTY_SCHEDULER, wake);
     state = enqueueWake(state, wake);
@@ -208,12 +213,14 @@ describe("the turn scheduler", () => {
       lane: "work",
       oldestItemId: "m1",
       brokerSeq: 1,
+      backlogCount: 1,
     });
     state = enqueueWake(state, {
       wakeId: "w2",
       lane: "work",
       oldestItemId: "m2",
       brokerSeq: 2,
+      backlogCount: 2,
     });
 
     expect(state.workWake?.wakeId).toBe("w2");
@@ -226,12 +233,14 @@ describe("the turn scheduler", () => {
       lane: "control",
       oldestItemId: "m1",
       brokerSeq: 1,
+      backlogCount: 1,
     });
     state = enqueueWake(state, {
       wakeId: "w2",
       lane: "control",
       oldestItemId: "m2",
       brokerSeq: 2,
+      backlogCount: 1,
     });
 
     expect(state.controlWakes).toHaveLength(2);
@@ -243,6 +252,7 @@ describe("the turn scheduler", () => {
       lane: "control" as const,
       oldestItemId: "m1",
       brokerSeq: 1,
+      backlogCount: 1,
     };
     let state = EMPTY_SCHEDULER;
     for (let attempt = 0; attempt < MAIL_WAKE_MAX_ATTEMPTS; attempt += 1) {
@@ -270,6 +280,7 @@ describe("the turn scheduler", () => {
       lane: "control" as const,
       oldestItemId: "m1",
       brokerSeq: 1,
+      backlogCount: 1,
     };
     let state = EMPTY_SCHEDULER;
     for (let attempt = 0; attempt < MAIL_WAKE_MAX_ATTEMPTS; attempt += 1) {
@@ -307,6 +318,7 @@ describe("the turn scheduler", () => {
       lane: "control";
       oldestItemId: string;
       brokerSeq: number;
+      backlogCount: number;
     };
     let state = EMPTY_SCHEDULER;
     let dispatches = 0;
@@ -337,6 +349,7 @@ describe("the turn scheduler", () => {
           lane,
           oldestItemId: "m1",
           brokerSeq,
+          backlogCount: 1,
         });
         const item = nextItem(state);
         if (item === null) continue;
@@ -358,6 +371,7 @@ describe("the turn scheduler", () => {
       wakeId: "w1",
       lane: "control" as const,
       oldestItemId: "m1",
+      backlogCount: 1,
     };
     let state = EMPTY_SCHEDULER;
     for (let attempt = 0; attempt < MAIL_WAKE_MAX_ATTEMPTS; attempt += 1) {
@@ -385,6 +399,7 @@ describe("the turn scheduler", () => {
         lane,
         oldestItemId: "m1",
         brokerSeq: 1,
+        backlogCount: 1,
       });
       state = onTurnStarted(state, "t1");
       state = enqueueWake(state, {
@@ -392,6 +407,7 @@ describe("the turn scheduler", () => {
         lane,
         oldestItemId: "m1",
         brokerSeq: 2,
+        backlogCount: 1,
       });
       state = onTurnBoundary(state, "t1");
 
@@ -409,6 +425,7 @@ describe("the turn scheduler", () => {
       lane: "control",
       oldestItemId: "m1",
       brokerSeq: 1,
+      backlogCount: 1,
     });
 
     expect(nextItem(state)).toBeNull();
