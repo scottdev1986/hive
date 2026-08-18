@@ -1311,20 +1311,7 @@ private final class LiveRunSessionButton: NSButton {
         copy.alignment = .leading
         copy.spacing = 1
 
-        let symbol = NSImageView()
         let activity = session?.activity
-        symbol.image = NSImage(
-            systemSymbolName: activity?.appearance.symbol ?? "questionmark.circle",
-            accessibilityDescription: activity?.displayLabel ?? "session unknown")
-        symbol.contentTintColor = activity.map {
-            Theme.statusColor(for: $0.appearance.color)
-        } ?? Theme.tertiaryText
-        symbol.translatesAutoresizingMaskIntoConstraints = false
-        symbol.widthAnchor.constraint(
-            equalToConstant: Theme.Metric.chainMarkSize).isActive = true
-        symbol.heightAnchor.constraint(
-            equalToConstant: Theme.Metric.chainMarkSize).isActive = true
-
         let disclosure: NSView
         if onToggle != nil {
             let button = NSButton(
@@ -1350,7 +1337,7 @@ private final class LiveRunSessionButton: NSButton {
             text: activity?.displayLabel.uppercased() ?? "NO SESSION",
             symbol: activity?.appearance.symbol ?? "questionmark.circle",
             style: activity.map { liveRunBadgeStyle(for: $0.appearance.color) } ?? .neutral)
-        let row = NSStackView(views: [disclosure, symbol, copy, chip])
+        let row = NSStackView(views: [disclosure, copy, chip])
         row.translatesAutoresizingMaskIntoConstraints = false
         row.orientation = .horizontal
         row.alignment = .centerY

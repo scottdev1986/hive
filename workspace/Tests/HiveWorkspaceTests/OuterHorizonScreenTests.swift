@@ -144,6 +144,26 @@ final class OuterHorizonScreenTests: XCTestCase {
         return own + root.subviews.flatMap(allText)
     }
 
+    private func allTextFields(in root: NSView) -> [NSTextField] {
+        let own = (root as? NSTextField).map { [$0] } ?? []
+        return own + root.subviews.flatMap(allTextFields)
+    }
+
+    private func prefixCharacterCount(
+        fitting width: CGFloat,
+        from text: String,
+        font: NSFont
+    ) -> Int {
+        var fittingCount = 0
+        for count in 1 ... text.count {
+            let prefix = String(text.prefix(count))
+            let measuredWidth = (prefix as NSString).size(withAttributes: [.font: font]).width
+            if measuredWidth > width { break }
+            fittingCount = count
+        }
+        return fittingCount
+    }
+
     func testInstalledWorkbenchConsumesTheRealHierarchyAndWiresItsNavigation() throws {
         let snapshot = try snapshotWithCurrentDigest("full-hive-dense-19")
         var state = previousState(snapshot)
@@ -183,6 +203,44 @@ final class OuterHorizonScreenTests: XCTestCase {
         XCTAssertLessThan(
             controller.currentState.outerHorizon?.visibleRows.count ?? Int.max,
             snapshot.nodes.count)
+    }
+
+    func testDenseCrewNamesRemainDistinctAtTheRealRailWidth() throws {
+        let snapshot = try snapshotWithCurrentDigest("full-hive-dense-19")
+        let horizon = OuterHorizonScreenState(snapshot: snapshot)
+        let workbench = LiveRunWorkbenchView(terminalFactory: nil)
+        workbench.applyHierarchy(
+            horizon,
+            screen: currentScreen(snapshot),
+            onSelect: { _ in },
+            onToggleExpansion: { _ in })
+        workbench.frame = NSRect(x: 0, y: 0, width: 1_200, height: 900)
+        workbench.layoutSubtreeIfNeeded()
+
+        let crew = horizon.visibleRows.filter { row in
+            guard case .present(let binding) = row.node.binding else { return false }
+            return binding.agentId.hasPrefix("dense-crew-")
+        }
+        XCTAssertEqual(crew.count, 10, "positive control: fixture has ten dense crew siblings")
+
+        let visibleNames = try crew.map { row -> String in
+            let button = try XCTUnwrap(findView(
+                workbench,
+                identifier: "live-run-hierarchy-\(row.node.nodeId)"))
+            let name = try XCTUnwrap(allTextFields(in: button)
+                .first { $0.stringValue.hasPrefix("dense-crew-") })
+            let characterCount = prefixCharacterCount(
+                fitting: name.frame.width,
+                from: name.stringValue,
+                font: try XCTUnwrap(name.font))
+            XCTAssertGreaterThan(characterCount, 0)
+            return String(name.stringValue.prefix(characterCount))
+        }
+
+        XCTAssertEqual(
+            Set(visibleNames).count,
+            crew.count,
+            "the characters that fit before truncation must identify every crew row: \(visibleNames)")
     }
 
     func testRefusedAndInvalidWireResponsesWarnAndRetainThePriorHierarchy() async throws {
