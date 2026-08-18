@@ -32,8 +32,14 @@ final class QAControl {
     private weak var surface: WorkspaceShellWindowController?
     private var timer: Timer?
 
-    init?(home: String?, surface: WorkspaceShellWindowController) {
-        guard ProcessInfo.processInfo.environment["HIVE_QA"] == "1", let home else {
+    // The mailbox belongs to the install, not to one run: this process's own
+    // HIVE_HOME is its per-run instance directory, while the shell that sends
+    // requests resolves the home that holds `instances/`. Both sides must name
+    // that same directory or the request is never seen.
+    init?(surface: WorkspaceShellWindowController) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["HIVE_QA"] == "1",
+              let home = environment["HIVE_DEFAULT_HOME"] else {
             return nil
         }
         directory = URL(fileURLWithPath: home).appendingPathComponent("qa-control")

@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { getHiveHome } from "../hive-home/home";
+import { defaultHiveHome } from "../hive-home/home";
 
 export type QAControlRequest =
   | { requestId: string; verb: "enumerate" }
@@ -28,7 +28,7 @@ export async function runQAControl(
     return 2;
   }
 
-  const directory = join(getHiveHome(), "qa-control");
+  const directory = join(defaultHiveHome(), "qa-control");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
   const requestId = crypto.randomUUID();

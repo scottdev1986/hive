@@ -54,7 +54,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             let controller = WorkspaceShellWindowController(context: context, state: state)
             let workbench = LiveRunWorkbenchView(config: config)
             controller.installLiveRunWorkbench(workbench)
-            qaControl = QAControl(home: config.instanceHome, surface: controller)
+            qaControl = QAControl(surface: controller)
             if launch.isLive {
                 do {
                     liveRunControlGateway = LiveRunControlGateway(
