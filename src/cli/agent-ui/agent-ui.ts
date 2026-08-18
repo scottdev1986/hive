@@ -161,14 +161,16 @@ export interface UiDiagnosticReport {
   readonly reason: string;
 }
 
-/** Legacy wake prompt for when daemon fetch fails. */
-export function wakePrompt(wake: WakeItem): string {
-  const instruction =
-    "Poll your mailbox, claim at most one control item, and settle it before " +
-    "any other work. This is internal operations, not a user message. Do not " +
-    "call SendUserMessage or narrate the mailbox work; finish silently unless " +
-    "the mail itself requires a direct user decision.";
-  return `Hive mail: the ${wake.lane} lane signalled mail for you. ${instruction}`;
+/** Fail-soft wake prompt when daemon is unavailable or /wake-payload fails. Uses lane + backlogCount from the notice. No oldestItemId. No memory section. A wake points the agent to its mailbox; it never copies mail into a prompt. Naming the item id taught models to hive_mail_claim before hive_mail_poll, which the ledger refused as an unpresented body. */
+function failSoftWakePrompt(wake: WakeItem): string {
+  const parts: string[] = [];
+  parts.push(
+    `Hive mail wake (${wake.lane} lane): you have unread mail.`,
+    `${wake.lane === "control" ? "Control" : "Work"}: ${wake.backlogCount} available`,
+    "",
+    "Poll your mailbox with hive_mail_poll, claim at most one control item, and settle it before any other work. This is internal operations, not a user message. Do not call SendUserMessage or narrate the mailbox work; finish silently unless the mail itself requires a direct user decision.",
+  );
+  return parts.join("\n");
 }
 
 function exitsAgentUi(text: string): boolean {
@@ -1773,6 +1775,7 @@ export class AgentUi {
         lane: notice.lane,
         oldestItemId: notice.oldestItemId,
         brokerSeq: notice.brokerSeq,
+        backlogCount: notice.backlogCount,
       });
       if (this.queuedWake(notice.wakeId)) queued.push(notice);
       this.view = applyMailPhase(
@@ -2037,11 +2040,11 @@ export class AgentUi {
     this.refresh();
   }
 
-  /** Build wake prompt with mail counts and memory delta from daemon. Falls back to legacy prompt if daemon is unavailable or fetch fails. */
+  /** Build wake prompt with mail counts and memory delta from daemon. Falls back to fail-soft prompt (lane + backlogCount, no memory) if daemon is unavailable or fetch fails. */
   private async buildWakePrompt(wake: WakeItem): Promise<string> {
-    // If no daemon port, fall back to legacy prompt
+    // If no daemon port, use fail-soft prompt (still has lane + backlogCount)
     if (this.daemonPort === undefined) {
-      return wakePrompt(wake);
+      return failSoftWakePrompt(wake);
     }
 
     try {
@@ -2066,18 +2069,18 @@ export class AgentUi {
 
       if (!response.ok) {
         console.error(
-          `wake-payload fetch failed: ${response.status} — falling back to legacy prompt`,
+          `wake-payload fetch failed: ${response.status} — using fail-soft prompt`,
         );
-        return wakePrompt(wake);
+        return failSoftWakePrompt(wake);
       }
 
       const payload = WakePayloadSchema.parse(await decodeJson(response));
       return formatWakePrompt(payload);
     } catch (error) {
       console.error(
-        `wake-payload build failed: ${errorMessage(error)} — falling back to legacy prompt`,
+        `wake-payload build failed: ${errorMessage(error)} — using fail-soft prompt`,
       );
-      return wakePrompt(wake);
+      return failSoftWakePrompt(wake);
     }
   }
 

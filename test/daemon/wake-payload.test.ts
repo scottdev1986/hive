@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { WakePayloadService } from "../../src/daemon/wake-payload-service";
 import { MailStore } from "../../src/mail-service/store";
-import { MemoryIndex } from "../../src/memory-service/fts-index";
 import { writeMemoryFact } from "../../src/memory-service/memory-store";
 import type { MemoryWriteInput } from "../../src/schemas/memory";
+import { formatWakePrompt } from "../../src/schemas/wake-payload";
+import { tempRoot } from "../temp-root";
 
 const T0 = new Date("2026-08-02T12:00:00.000Z");
 const at = (secondsFromStart: number): string =>
@@ -12,9 +13,9 @@ const at = (secondsFromStart: number): string =>
 
 describe("WakePayloadService", () => {
   test("builds payload with mail counts by lane", async () => {
+    const root = tempRoot("hive-wake-");
     const db = new HiveDatabase(":memory:");
     const mailStore = new MailStore(db);
-    const memory = new MemoryIndex(":memory:");
 
     // Publish some mail items
     mailStore.publish({
@@ -59,8 +60,7 @@ describe("WakePayloadService", () => {
 
     const service = new WakePayloadService({
       mailStore,
-      repoRoot: () => "/test/repo",
-      memory,
+      repoRoot: () => root,
       wakeBudgetTokens: 300,
     });
 
@@ -78,13 +78,91 @@ describe("WakePayloadService", () => {
     expect(payload.mailCounts.workAvailable).toBe(2);
   });
 
-  test("clamps memory delta to wake_budget_tokens", async () => {
+  test("builds date-ranked recent wiki slice, not recipient search", async () => {
+    const root = tempRoot("hive-wake-");
     const db = new HiveDatabase(":memory:");
     const mailStore = new MailStore(db);
-    const repoRoot = "/tmp/test-repo-wake";
-    const memory = new MemoryIndex(":memory:");
 
-    // Write many memory articles to exceed the budget
+    // Write articles with different dates
+    const articles: Array<MemoryWriteInput> = [
+      {
+        scope: "repo",
+        topic: "test",
+        id: "old-article",
+        title: "Old article",
+        body: "This is an old article.",
+        source: "test",
+        evidence: "test",
+        status: "verified",
+        kind: "article",
+        date: "2026-07-01",
+        tags: [],
+        supersedes: [],
+      },
+      {
+        scope: "repo",
+        topic: "test",
+        id: "recent-article",
+        title: "Recent article",
+        body: "This is a recent article.",
+        source: "test",
+        evidence: "test",
+        status: "verified",
+        kind: "article",
+        date: "2026-08-01",
+        tags: [],
+        supersedes: [],
+      },
+      {
+        scope: "repo",
+        topic: "test",
+        id: "newest-article",
+        title: "Newest article",
+        body: "This is the newest article.",
+        source: "test",
+        evidence: "test",
+        status: "verified",
+        kind: "article",
+        date: "2026-08-02",
+        tags: [],
+        supersedes: [],
+      },
+    ];
+
+    for (const article of articles) {
+      await writeMemoryFact(root, article);
+    }
+
+    const service = new WakePayloadService({
+      mailStore,
+      repoRoot: () => root,
+      wakeBudgetTokens: 300,
+    });
+
+    const payload = await service.build({
+      recipient: "test",
+      wakeId: "wake456",
+      oldestItemId: "item2",
+      lane: "work",
+    });
+
+    expect(payload.memoryDelta.state).toBe("ok");
+    // Should be sorted by date descending
+    const allRows = [
+      ...payload.memoryDelta.pitfalls,
+      ...payload.memoryDelta.articles,
+    ];
+    expect(allRows[0]?.id).toBe("newest-article");
+    expect(allRows[1]?.id).toBe("recent-article");
+    expect(allRows[2]?.id).toBe("old-article");
+  });
+
+  test("clamps memory to wake_budget_tokens and reports omitted counts", async () => {
+    const root = tempRoot("hive-wake-");
+    const db = new HiveDatabase(":memory:");
+    const mailStore = new MailStore(db);
+
+    // Write many articles to exceed the budget
     const articles: Array<MemoryWriteInput> = [];
     for (let i = 0; i < 20; i++) {
       articles.push({
@@ -99,36 +177,26 @@ describe("WakePayloadService", () => {
         evidence: "test",
         status: "verified",
         kind: "article",
-        date: "2026-08-02",
+        date: `2026-08-${String(i + 1).padStart(2, "0")}`,
         tags: [],
         supersedes: [],
       });
     }
 
-    // Write articles and index them
     for (const article of articles) {
-      await writeMemoryFact(repoRoot, article);
-      memory.upsert({
-        scope: article.scope,
-        topic: article.topic,
-        id: article.id,
-        title: article.title,
-        body: article.body,
-        date: article.date,
-      });
+      await writeMemoryFact(root, article);
     }
 
     const service = new WakePayloadService({
       mailStore,
-      repoRoot: () => repoRoot,
-      memory,
+      repoRoot: () => root,
       wakeBudgetTokens: 150, // Small budget to force truncation
     });
 
     const payload = await service.build({
       recipient: "test",
-      wakeId: "wake456",
-      oldestItemId: "item2",
+      wakeId: "wake789",
+      oldestItemId: "item3",
       lane: "work",
     });
 
@@ -138,39 +206,14 @@ describe("WakePayloadService", () => {
     expect(payload.memoryDelta.omitted).toBeGreaterThan(0);
   });
 
-  test("reports memory delta state correctly", async () => {
-    const db = new HiveDatabase(":memory:");
-    const mailStore = new MailStore(db);
-    const memory = new MemoryIndex(":memory:");
-
-    const service = new WakePayloadService({
-      mailStore,
-      repoRoot: () => "/test/repo",
-      memory,
-      wakeBudgetTokens: 300,
-    });
-
-    const payload = await service.build({
-      recipient: "test",
-      wakeId: "wake789",
-      oldestItemId: "item3",
-      lane: "control",
-    });
-
-    // No memory articles, so should be empty
-    expect(payload.memoryDelta.state).toBe("empty");
-    expect(payload.memoryDelta.pitfalls).toHaveLength(0);
-    expect(payload.memoryDelta.articles).toHaveLength(0);
-  });
-
-  test("memory absent when no index wired", async () => {
+  test("reports empty state when wiki has no rows", async () => {
+    const root = tempRoot("hive-wake-");
     const db = new HiveDatabase(":memory:");
     const mailStore = new MailStore(db);
 
     const service = new WakePayloadService({
       mailStore,
-      repoRoot: () => "/test/repo",
-      memory: null, // No memory index
+      repoRoot: () => root,
       wakeBudgetTokens: 300,
     });
 
@@ -178,9 +221,165 @@ describe("WakePayloadService", () => {
       recipient: "test",
       wakeId: "wake000",
       oldestItemId: "item4",
-      lane: "work",
+      lane: "control",
     });
 
-    expect(payload.memoryDelta.state).toBe("absent");
+    expect(payload.memoryDelta.state).toBe("empty");
+    expect(payload.memoryDelta.pitfalls).toHaveLength(0);
+    expect(payload.memoryDelta.articles).toHaveLength(0);
+  });
+});
+
+describe("formatWakePrompt", () => {
+  test("rendered text contains no mail body", () => {
+    const payload = {
+      wakeId: "wake123",
+      oldestItemId: "item1",
+      lane: "control" as const,
+      mailCounts: {
+        controlAvailable: 2,
+        workAvailable: 3,
+      },
+      memoryDelta: {
+        state: "empty" as const,
+        semantic: "disabled" as const,
+        pitfalls: [],
+        articles: [],
+        tokens: 0,
+        budget: 300,
+        truncated: false,
+        omitted: 0,
+        omittedPitfalls: 0,
+        omittedArticles: 0,
+      },
+    };
+
+    const text = formatWakePrompt(payload);
+
+    // Should not contain mail bodies
+    expect(text).not.toContain("control message");
+    expect(text).not.toContain("work message 1");
+    expect(text).not.toContain("work message 2");
+  });
+
+  test("rendered text does not contain oldestItemId or wakeId", () => {
+    const payload = {
+      wakeId: "wake-xyz-123",
+      oldestItemId: "item-abc-456",
+      lane: "work" as const,
+      mailCounts: {
+        controlAvailable: 1,
+        workAvailable: 2,
+      },
+      memoryDelta: {
+        state: "empty" as const,
+        semantic: "disabled" as const,
+        pitfalls: [],
+        articles: [],
+        tokens: 0,
+        budget: 300,
+        truncated: false,
+        omitted: 0,
+        omittedPitfalls: 0,
+        omittedArticles: 0,
+      },
+    };
+
+    const text = formatWakePrompt(payload);
+
+    expect(text).not.toContain("wake-xyz-123");
+    expect(text).not.toContain("item-abc-456");
+    expect(text).not.toContain("oldestItemId");
+    expect(text).not.toContain("wakeId");
+  });
+
+  test("truncated memory shows omitted counts", () => {
+    const payload = {
+      wakeId: "wake123",
+      oldestItemId: "item1",
+      lane: "control" as const,
+      mailCounts: {
+        controlAvailable: 1,
+        workAvailable: 0,
+      },
+      memoryDelta: {
+        state: "ok" as const,
+        semantic: "disabled" as const,
+        pitfalls: [
+          {
+            scope: "repo",
+            topic: "test",
+            id: "pitfall-1",
+            date: "2026-08-01",
+            title: "Test pitfall",
+            snippet: "A test pitfall",
+            status: "verified",
+            flag: null,
+            pitfall: true,
+          },
+        ],
+        articles: [
+          {
+            scope: "repo",
+            topic: "test",
+            id: "article-1",
+            date: "2026-08-01",
+            title: "Test article",
+            snippet: "A test article",
+            status: "verified",
+            flag: null,
+            pitfall: false,
+          },
+        ],
+        tokens: 120,
+        budget: 150,
+        truncated: true,
+        omitted: 5,
+        omittedPitfalls: 2,
+        omittedArticles: 3,
+      },
+    };
+
+    const text = formatWakePrompt(payload);
+
+    expect(text).toContain("5 omitted");
+    expect(text).toContain("2 pitfalls");
+    expect(text).toContain("3 articles");
+  });
+
+  test("empty state uses honest wording without since-last-wake language", () => {
+    const payload = {
+      wakeId: "wake123",
+      oldestItemId: "item1",
+      lane: "control" as const,
+      mailCounts: {
+        controlAvailable: 1,
+        workAvailable: 0,
+      },
+      memoryDelta: {
+        state: "empty" as const,
+        semantic: "disabled" as const,
+        pitfalls: [],
+        articles: [],
+        tokens: 0,
+        budget: 300,
+        truncated: false,
+        omitted: 0,
+        omittedPitfalls: 0,
+        omittedArticles: 0,
+      },
+    };
+
+    const text = formatWakePrompt(payload);
+
+    // Should not claim to be a delta or "since last wake"
+    expect(text).not.toContain("since your last wake");
+    expect(text).not.toContain("memory delta");
+    expect(text).not.toContain("changes since");
+    expect(text).not.toContain("nothing new");
+    
+    // Should use honest empty language
+    expect(text).toContain("No matching memory for this wake");
+    expect(text).toContain("This is not a since-last-wake check");
   });
 });

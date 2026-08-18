@@ -765,15 +765,6 @@ export class HiveDaemon {
     this.wakePayloadService = new WakePayloadService({
       mailStore: this.mail,
       repoRoot: () => this.repoRoot,
-      memory: this.memory,
-      semantic:
-        this.embeddingIndex === null
-          ? undefined
-          : (query, limit) => this.embeddingIndex.search(query, limit),
-      semanticStatus:
-        this.embeddingService === null
-          ? undefined
-          : () => this.embeddingService.status().state,
       wakeBudgetTokens: this.wakeBudgetTokens ?? 300,
     });
     this.psSample = options.resourceRunners?.ps ?? runPs;
