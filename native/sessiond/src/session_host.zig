@@ -596,7 +596,6 @@ fn serveHostConnectionWithTerminal(
 fn viewerFailureCode(err: anyerror) protocol.WireError {
     return switch (err) {
         error.GenerationMismatch => .generation_mismatch,
-        error.InvalidClaimAcquire,
         error.InvalidInputSubmit,
         error.InvalidResize,
         error.InvalidResizeReplay,
@@ -1316,7 +1315,6 @@ const NeutralLiveEvidenceSource = struct {
         return .{
             .foregroundProcessGroupId = foreground_process_group_id,
             .newestCheckpoint = newest_checkpoint,
-            .inputOwner = null,
             .diagnostics = try diagnostics.toOwnedSlice(allocator),
         };
     }

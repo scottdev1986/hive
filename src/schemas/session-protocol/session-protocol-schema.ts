@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { InputArbiterStateSchema, INPUT_RECEIPT_STATES } from "./input-arbiter";
+import { INPUT_RECEIPT_STATES } from "./input-arbiter";
 import { TERMINAL_LIMITS } from "./limits";
 import {
   DecimalUint64Schema,
@@ -149,12 +149,6 @@ export const SessionInspectionSchema = z
     outputSeq: DecimalUint64Schema,
     checkpointSeq: DecimalUint64Schema,
     checkpointAvailable: z.boolean(),
-    input: z.strictObject({
-      // UNKNOWN is an observation-only value for hosts that cannot inspect an arbiter. It is not an arbiter state and the state machine never emits it.
-      state: z.union([InputArbiterStateSchema, z.literal("UNKNOWN")]),
-      ownerViewerId: z.string().min(1).nullable(),
-      claimId: z.string().min(1).nullable(),
-    }),
     viewerCount: z
       .number()
       .int()

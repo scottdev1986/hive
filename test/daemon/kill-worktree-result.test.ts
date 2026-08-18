@@ -74,7 +74,6 @@ const emptyTerminalHost = {
   waitForHostExit: async () => ({ kind: "inherited" as const }),
   create: hostNotReached,
   capture: hostNotReached,
-  claimInput: hostNotReached,
   submitInput: hostNotReached,
   resize: hostNotReached,
   inspect: hostNotReached,

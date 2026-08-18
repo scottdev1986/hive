@@ -199,7 +199,7 @@ extension HiveTerminalView {
         handleKeyDown(event) { self.interpretKeyEvents([$0]) }
     }
 
-    /// Hive clears every provider keybind, so the root pane needs explicit, viewer-local history navigation. Modifier-only chords preserve ordinary Home/End/Page keys for the provider and never acquire an input claim.
+    /// Hive clears every provider keybind, so the root pane needs explicit, viewer-local history navigation. Modifier-only chords preserve ordinary Home/End/Page keys for the provider.
     func handleViewerScrollKey(_ event: NSEvent) -> Bool {
         let authoringModifiers: NSEvent.ModifierFlags = [
             .shift, .control, .option, .command,

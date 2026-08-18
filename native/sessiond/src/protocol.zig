@@ -91,8 +91,6 @@ fn knownType(type_code: u16) bool {
         generated.frame_type.terminated,
         generated.frame_type.visibility_renew,
         generated.frame_type.renewed,
-        generated.frame_type.input_orphan_discard,
-        generated.frame_type.orphan_discarded,
         generated.frame_type.attach_request,
         generated.frame_type.attach_grant,
         generated.frame_type.host_attach,
@@ -104,10 +102,7 @@ fn knownType(type_code: u16) bool {
         generated.frame_type.detach,
         generated.frame_type.event,
         generated.frame_type.attach_ready,
-        generated.frame_type.claim_acquire,
-        generated.frame_type.claim_result,
         generated.frame_type.user_input,
-        generated.frame_type.claim_release,
         generated.frame_type.gesture_input,
         generated.frame_type.input_submit,
         generated.frame_type.automation_begin,
@@ -846,17 +841,6 @@ test "fixed header round trip and strict semantics" {
     );
     try std.testing.expectEqual(WireError.frame_too_large, validateHeader(&bad).failure.code);
     try std.testing.expectEqual(@as(u64, 42), validateHeader(&bad).failure.request_id);
-}
-
-test "orphan discard request and response headers are supported" {
-    for ([_]u16{
-        generated.frame_type.input_orphan_discard,
-        generated.frame_type.orphan_discarded,
-    }) |type_code| {
-        const header = headerFor(type_code, 0, 42, 0);
-        const bytes = encodeHeader(header) orelse return error.TestUnexpectedResult;
-        try std.testing.expectEqualDeep(header, validateHeader(&bytes).header);
-    }
 }
 
 test "generated header corpus matches valid ignored and invalid outcomes" {

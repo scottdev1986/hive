@@ -80,24 +80,6 @@ async function createRunning(
   return created.session;
 }
 
-async function claim(
-  host: NeutralTerminalHostFixture,
-  session: SessionRef,
-  writer = "user-console",
-  kind: "user" | "automation" = "user",
-): Promise<string> {
-  const result = await host.claimInput({
-    session,
-    writer,
-    kind,
-    leaseMilliseconds: 30_000,
-    idempotencyKey: `claim-${writer}`,
-  });
-  expect(result.state).toBe("granted");
-  if (result.state !== "granted") throw new Error("claim not granted");
-  return result.claim.token;
-}
-
 async function assertA(host: NeutralTerminalHostFixture): Promise<void> {
   const spec = request("freeze-a");
   const first = await host.create(spec);
@@ -191,10 +173,8 @@ async function assertC(host: NeutralTerminalHostFixture): Promise<void> {
 
 async function assertD(host: NeutralTerminalHostFixture): Promise<void> {
   const session = await createRunning(host, request("freeze-d"));
-  const claimToken = await claim(host, session);
   const firstInput = await host.submitInput({
     session,
-    claimToken,
     transactionId: "d-input-1",
     idempotencyKey: "d-input-1",
     operation: { kind: "bytes", bytes: encoder.encode("before-resize") },
@@ -220,7 +200,6 @@ async function assertD(host: NeutralTerminalHostFixture): Promise<void> {
     priorOrder = Number(resized.orderedAt);
     const input = await host.submitInput({
       session,
-      claimToken,
       transactionId: `d-input-${revision + 1}`,
       idempotencyKey: `d-input-${revision + 1}`,
       operation: { kind: "bytes", bytes: Uint8Array.of(revision) },
@@ -385,18 +364,8 @@ async function assertH(host: NeutralTerminalHostFixture): Promise<void> {
 
 async function assertI(host: NeutralTerminalHostFixture): Promise<void> {
   const session = await createRunning(host, request("freeze-i"));
-  const userToken = await claim(host, session, "user", "user");
-  const automation = await host.claimInput({
-    session,
-    writer: "automation",
-    kind: "automation",
-    leaseMilliseconds: 30_000,
-    idempotencyKey: "claim-automation",
-  });
-  expect(automation.state).toBe("denied");
   const input = {
     session,
-    claimToken: userToken,
     transactionId: "i-transaction",
     idempotencyKey: "i-idempotency",
     operation: {
@@ -690,10 +659,8 @@ async function assertK(host: NeutralTerminalHostFixture): Promise<void> {
     host,
     request("freeze-k-canonical", {}, "canonical"),
   );
-  const canonicalClaim = await claim(host, canonical, "canonical-user");
   await host.submitInput({
     session: canonical,
-    claimToken: canonicalClaim,
     transactionId: "k-canonical-eof",
     idempotencyKey: "k-canonical-eof",
     operation: { kind: "canonical-end-of-file" },
@@ -702,17 +669,14 @@ async function assertK(host: NeutralTerminalHostFixture): Promise<void> {
     host,
     request("freeze-k-literal", {}, "literal"),
   );
-  const literalClaim = await claim(host, literal, "literal-user");
   await host.submitInput({
     session: literal,
-    claimToken: literalClaim,
     transactionId: "k-literal-byte",
     idempotencyKey: "k-literal-byte",
     operation: { kind: "bytes", bytes: Uint8Array.of(4) },
   });
   await host.submitInput({
     session: literal,
-    claimToken: literalClaim,
     transactionId: "k-hangup",
     idempotencyKey: "k-hangup",
     operation: { kind: "hangup" },

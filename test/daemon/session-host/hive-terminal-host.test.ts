@@ -113,7 +113,6 @@ const createResult: CreateResult = {
     outputSeq: "0",
     checkpointSeq: "0",
     checkpointAvailable: false,
-    input: { state: "FREE", ownerViewerId: null, claimId: null },
     viewerCount: 0,
     geometry,
     resources: {},
@@ -164,7 +163,6 @@ const inspection: SessionInspection = {
       opaqueBytes: new Uint8Array([1, 2, 3]),
     },
   },
-  inputOwner: null,
   exit: null,
   reap: {
     authority: "unavailable",
@@ -329,10 +327,6 @@ describe("HiveTerminalHostAdapter", () => {
         expect(spec).toEqual(sessionSpec);
         return createResult;
       },
-      claimInput: async (request: unknown) => {
-        directRequests.push(request);
-        return { state: "unknown" as const, diagnostic: "fixture" };
-      },
       submitInput: async (request: unknown) => {
         directRequests.push(request);
         return {
@@ -405,7 +399,6 @@ describe("HiveTerminalHostAdapter", () => {
       outputSeq: "19",
       checkpointSeq: "2",
       checkpointAvailable: true,
-      input: { state: "FREE" as const, ownerViewerId: null, claimId: null },
       viewerCount: 0,
       geometry: { ...geometry, widthPx: 810, heightPx: 500 },
       resources: {},
@@ -425,12 +418,6 @@ describe("HiveTerminalHostAdapter", () => {
     await expect(adapter.inspect(locator)).resolves.toEqual(
       projectedInspection,
     );
-    await adapter.claimInput(locator, {
-      writer: "writer-fixture",
-      kind: "automation",
-      leaseMilliseconds: 1_000,
-      idempotencyKey: "claim-idempotency",
-    });
     await adapter.submitInput(locator, {
       provenance: "automation",
       action: "keys",
@@ -444,13 +431,6 @@ describe("HiveTerminalHostAdapter", () => {
       idempotencyKey: "resize-idempotency",
     });
     expect(directRequests).toEqual([
-      {
-        session,
-        writer: "writer-fixture",
-        kind: "automation",
-        leaseMilliseconds: 1_000,
-        idempotencyKey: "claim-idempotency",
-      },
       {
         session,
         provenance: "automation",
@@ -520,10 +500,6 @@ describe("HiveTerminalHostAdapter", () => {
         throw new Error("issueAttach not under test");
       },
       create: async () => createResult,
-      claimInput: async () => ({
-        state: "unknown" as const,
-        diagnostic: "fixture",
-      }),
       submitInput: async () => ({
         transactionId: "transaction-fixture",
         stage: "unknown" as const,
@@ -617,10 +593,6 @@ describe("HiveTerminalHostAdapter", () => {
           throw new Error("issueAttach not under test");
         },
         create: async () => createResult,
-        claimInput: async () => ({
-          state: "unknown" as const,
-          diagnostic: "fixture",
-        }),
         submitInput: async () => ({
           transactionId: "transaction-fixture",
           stage: "unknown" as const,
@@ -683,10 +655,6 @@ describe("HiveTerminalHostAdapter", () => {
           throw new Error("issueAttach not under test");
         },
         create: async () => createResult,
-        claimInput: async () => ({
-          state: "unknown" as const,
-          diagnostic: "fixture",
-        }),
         submitInput: async () => ({
           transactionId: "transaction-fixture",
           stage: "unknown" as const,
@@ -754,10 +722,6 @@ describe("HiveTerminalHostAdapter", () => {
         throw new Error("issueAttach not under test");
       },
       create: async () => createResult,
-      claimInput: async () => ({
-        state: "unknown" as const,
-        diagnostic: "fixture",
-      }),
       submitInput: async () => ({
         transactionId: "transaction-fixture",
         stage: "unknown" as const,
@@ -847,10 +811,6 @@ describe("HiveTerminalHostAdapter", () => {
         throw new Error("issueAttach not under test");
       },
       create: async () => createResult,
-      claimInput: async () => ({
-        state: "unknown" as const,
-        diagnostic: "fixture",
-      }),
       submitInput: async () => ({
         transactionId: "transaction-fixture",
         stage: "unknown" as const,
@@ -963,10 +923,6 @@ describe("HiveTerminalHostAdapter", () => {
         throw new Error("issueAttach not under test");
       },
       create: async () => createResult,
-      claimInput: async () => ({
-        state: "unknown" as const,
-        diagnostic: "fixture",
-      }),
       submitInput: async () => ({
         transactionId: "transaction-fixture",
         stage: "unknown" as const,
@@ -1099,10 +1055,6 @@ describe("HiveTerminalHostAdapter", () => {
           throw new Error("issueAttach not under test");
         },
         create: async () => createResult,
-        claimInput: async () => ({
-          state: "unknown" as const,
-          diagnostic: "fixture",
-        }),
         submitInput: async () => ({
           transactionId: "transaction-fixture",
           stage: "unknown" as const,
@@ -1213,10 +1165,6 @@ describe("HiveTerminalHostAdapter", () => {
             throw new Error("issueAttach not under test");
           },
           create: async () => createResult,
-          claimInput: async () => ({
-            state: "unknown" as const,
-            diagnostic: "fixture",
-          }),
           submitInput: async () => ({
             transactionId: "transaction-fixture",
             stage: "unknown" as const,
@@ -1287,10 +1235,6 @@ describe("HiveTerminalHostAdapter", () => {
           ...locator,
           sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000199",
         },
-      }),
-      claimInput: async () => ({
-        state: "unknown" as const,
-        diagnostic: "fixture",
       }),
       submitInput: async () => ({
         transactionId: "transaction-fixture",
@@ -1378,9 +1322,6 @@ describe("closing a session whose host is already gone", () => {
           throw new Error("issueAttach not under test");
         },
         create: async () => createResult,
-        claimInput: async () => {
-          throw new Error("claimInput not under test");
-        },
         submitInput: async () => {
           throw new Error("submitInput not under test");
         },
@@ -1570,9 +1511,6 @@ describe("a teardown the platform cannot positively prove still ends the run", (
           throw new Error("issueAttach not under test");
         },
         create: async () => createResult,
-        claimInput: async () => {
-          throw new Error("claimInput not under test");
-        },
         submitInput: async () => {
           throw new Error("submitInput not under test");
         },
@@ -1719,9 +1657,6 @@ function rootRunHarness(
       throw new Error("issueAttach not under test");
     },
     create: async () => createResult,
-    claimInput: async () => {
-      throw new Error("claimInput not under test");
-    },
     submitInput: async () => {
       throw new Error("submitInput not under test");
     },

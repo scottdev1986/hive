@@ -6,7 +6,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var surfaceState: TerminalSurfaceState = .starting
     public private(set) var binding: SurfaceBinding?
     public private(set) var sessionLocator: SessionLocator?
-    public private(set) var claimPresentation: InputClaimPresentation = .free
     public private(set) var inputSubmissionState: InputSubmissionState = .idle
     public private(set) var highWater: UInt64 = 0
     public private(set) var lastTitle: String = ""
@@ -302,7 +301,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     ) throws {
         dispatchPrecondition(condition: .onQueue(.main))
         highWater = client.highWater
-        claimPresentation = client.claimPresentation
         switch outcome {
         case .firstCorrectFrame(let hw, _):
             try prepareFirstCorrectFrame(
@@ -339,7 +337,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         let priorHighWater = highWater
         highWater = snapshot.highWater
         if highWater > priorHighWater { noteOutputApplied() }
-        claimPresentation = snapshot.claimPresentation
         inputSubmissionState = snapshot.inputSubmissionState
         switch outcome {
         case .firstCorrectFrame(let hw, _):

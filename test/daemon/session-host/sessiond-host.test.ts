@@ -21,7 +21,6 @@ import {
 } from "../../../src/daemon/session-host/sessiond-host";
 import type { TerminalHostBindingStore } from "../../../src/daemon/session-host/terminal-host-binding";
 import type {
-  ClaimResult,
   CreateRequest,
   CreateResult,
   InputReceipt,
@@ -192,7 +191,6 @@ const createdPayload = {
     outputSeq: "0",
     checkpointSeq: "0",
     checkpointAvailable: false,
-    input: { state: "FREE", ownerViewerId: null, claimId: null },
     viewerCount: 0,
     geometry: brokerGeometry,
     resources: {},
@@ -282,16 +280,6 @@ function directInspect(
   };
 }
 
-const claim: ClaimResult = {
-  state: "granted",
-  claim: {
-    token: "claim-token-1",
-    writer: "writer-1",
-    kind: "user",
-    leaseExpiresAt: "2026-07-18T01:00:00.000Z",
-  },
-};
-
 const receipt: InputReceipt = {
   transactionId: "transaction-1",
   stage: "written-to-terminal",
@@ -347,7 +335,6 @@ const inspection: SessionInspection = {
       opaqueBytes: checkpointBytes,
     },
   },
-  inputOwner: claim.state === "granted" ? claim.claim : null,
   exit: null,
   reap: {
     authority: "direct-parent",
@@ -716,7 +703,6 @@ describe("sessiond wire framing", () => {
         outputSeq: "19",
         checkpointSeq: "2",
         checkpointAvailable: true,
-        input: { state: "FREE", ownerViewerId: null, claimId: null },
         viewerCount: 0,
         geometry: {
           columns: 111,
@@ -815,8 +801,6 @@ describe("sessiond wire framing", () => {
   test("projects provenance-tagged input and resize onto an attached neutral host", async () => {
     const respond = (request: SessiondControlRequest<unknown>) => {
       switch (request.requestType) {
-        case "CLAIM_ACQUIRE":
-          return { schemaVersion: 1, result: claim };
         case "INPUT_SUBMIT":
           return { schemaVersion: 1, resultKind: "input", receipt };
         case "RESIZE":
@@ -834,13 +818,6 @@ describe("sessiond wire framing", () => {
         return direct;
       },
     });
-    const claimRequest = {
-      session,
-      writer: "writer-1",
-      kind: "user" as const,
-      leaseMilliseconds: 10_000,
-      idempotencyKey: "claim-idempotency-1",
-    };
     const inputRequest = {
       session,
       provenance: "automation" as const,
@@ -862,21 +839,19 @@ describe("sessiond wire framing", () => {
       idempotencyKey: "resize-idempotency-1",
     };
 
-    await expect(host.claimInput(claimRequest)).resolves.toEqual(claim);
     await expect(host.submitInput(inputRequest)).resolves.toEqual(receipt);
     await expect(host.submitInput(inputRequest)).resolves.toEqual(receipt);
     await expect(host.resize(resizeRequest)).resolves.toEqual(resize);
 
     const requests = directClients.flatMap((client) => client.requests);
     expect(requests.map((request) => request.requestType)).toEqual([
-      "CLAIM_ACQUIRE",
       "INPUT_SUBMIT",
       "INPUT_SUBMIT",
       "RESIZE",
     ]);
-    expect(requests[1]?.flags).toBe(FRAME_FLAGS.contentSensitive);
-    expect(requests[1]?.payload).toEqual(requests[2]?.payload);
-    expect(requests[1]?.payload).toMatchObject({
+    expect(requests[0]?.flags).toBe(FRAME_FLAGS.contentSensitive);
+    expect(requests[0]?.payload).toEqual(requests[1]?.payload);
+    expect(requests[0]?.payload).toMatchObject({
       schemaVersion: 1,
       session,
       provenance: "automation",
@@ -889,7 +864,7 @@ describe("sessiond wire framing", () => {
         bytes: Buffer.from("wire-input\n").toString("base64"),
       },
     });
-    expect(directClients).toHaveLength(4);
+    expect(directClients).toHaveLength(3);
     expect(directClients.every((client) => client.closed)).toBe(true);
   });
 
@@ -922,12 +897,13 @@ describe("sessiond wire framing", () => {
   test("fails direct operations at the frozen wire-3 boundary by default", async () => {
     const host = new SessiondHost({});
     await expect(
-      host.claimInput({
+      host.submitInput({
         session,
-        writer: "writer-1",
-        kind: "user",
-        leaseMilliseconds: 10_000,
-        idempotencyKey: "claim-idempotency-1",
+        provenance: "automation",
+        action: "deliver",
+        transactionId: receipt.transactionId,
+        idempotencyKey: "input-idempotency-1",
+        operation: { kind: "canonical-end-of-file" },
       }),
     ).rejects.toEqual(new SessiondWireNotReadyError("direct host operations"));
   });

@@ -451,8 +451,6 @@
             "NOT_FOUND",
             "NOT_READY",
             "ALREADY_EXISTS",
-            "USER_OWNED",
-            "USER_ORPHANED",
             "INPUT_BUSY",
             "REBASE_REQUIRED",
             "SNAPSHOT_REQUIRED",
@@ -2155,44 +2153,6 @@
                 ],
                 "additionalProperties": false
               },
-              "inputOwner": {
-                "anyOf": [
-                  {
-                    "readOnly": true,
-                    "type": "object",
-                    "properties": {
-                      "token": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "writer": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "kind": {
-                        "type": "string",
-                        "enum": [
-                          "user",
-                          "automation"
-                        ]
-                      },
-                      "leaseExpiresAt": {
-                        "type": "string"
-                      }
-                    },
-                    "required": [
-                      "token",
-                      "writer",
-                      "kind",
-                      "leaseExpiresAt"
-                    ],
-                    "additionalProperties": false
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
               "exit": {
                 "anyOf": [
                   {
@@ -2401,7 +2361,6 @@
               "window",
               "output",
               "checkpoints",
-              "inputOwner",
               "exit",
               "reap",
               "descendants",
@@ -2784,44 +2743,6 @@
           ],
           "additionalProperties": false
         },
-        "inputOwner": {
-          "anyOf": [
-            {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "token": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "writer": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "kind": {
-                  "type": "string",
-                  "enum": [
-                    "user",
-                    "automation"
-                  ]
-                },
-                "leaseExpiresAt": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "token",
-                "writer",
-                "kind",
-                "leaseExpiresAt"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "exit": {
           "anyOf": [
             {
@@ -3031,7 +2952,6 @@
         "window",
         "output",
         "checkpoints",
-        "inputOwner",
         "exit",
         "reap",
         "descendants",
@@ -3535,254 +3455,6 @@
       ],
       "additionalProperties": false
     },
-    "orphanDiscardPayload": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "readOnly": true,
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
-        "locator": {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "instanceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "subject": {
-              "readOnly": true,
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "root"
-                    }
-                  },
-                  "required": [
-                    "kind"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "agent"
-                    },
-                    "agentId": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "agentId"
-                  ],
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "sessionId": {
-              "type": "string",
-              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            },
-            "hostKind": {
-              "type": "string",
-              "const": "sessiond"
-            },
-            "engineBuildId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "instanceId",
-            "subject",
-            "generation",
-            "sessionId",
-            "hostKind",
-            "engineBuildId"
-          ],
-          "additionalProperties": false
-        },
-        "mode": {
-          "type": "string",
-          "enum": [
-            "orphaned",
-            "held"
-          ]
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "locator",
-        "mode"
-      ],
-      "additionalProperties": false
-    },
-    "orphanDiscardedPayload": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "readOnly": true,
-      "oneOf": [
-        {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "state": {
-              "type": "string",
-              "const": "discarded"
-            },
-            "priorOwnerViewerId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "priorClaimId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "orphanAgeMilliseconds": {
-              "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-              "description": "unsigned 64-bit integer encoded as a decimal string",
-              "format": "hive-uint64-decimal"
-            },
-            "diagnostic": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "state",
-            "priorOwnerViewerId",
-            "priorClaimId",
-            "orphanAgeMilliseconds",
-            "diagnostic"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "state": {
-              "type": "string",
-              "const": "preempted"
-            },
-            "priorOwnerViewerId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "priorClaimId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "orphanAgeMilliseconds": {
-              "type": "null"
-            },
-            "diagnostic": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "state",
-            "priorOwnerViewerId",
-            "priorClaimId",
-            "orphanAgeMilliseconds",
-            "diagnostic"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "state": {
-              "type": "string",
-              "const": "refused"
-            },
-            "priorOwnerViewerId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "priorClaimId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "orphanAgeMilliseconds": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-                  "description": "unsigned 64-bit integer encoded as a decimal string",
-                  "format": "hive-uint64-decimal"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "diagnostic": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "state",
-            "priorOwnerViewerId",
-            "priorClaimId",
-            "orphanAgeMilliseconds",
-            "diagnostic"
-          ],
-          "additionalProperties": false
-        }
-      ]
-    },
     "attachRequestPayload": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,
@@ -4225,208 +3897,6 @@
         "token",
         "geometry",
         "afterSeq"
-      ],
-      "additionalProperties": false
-    },
-    "claimAcquirePayload": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "readOnly": true,
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
-        "session": {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "key": {
-              "type": "string",
-              "minLength": 1
-            },
-            "incarnation": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "key",
-            "incarnation"
-          ],
-          "additionalProperties": false
-        },
-        "writer": {
-          "type": "string",
-          "minLength": 1
-        },
-        "kind": {
-          "type": "string",
-          "enum": [
-            "user",
-            "automation"
-          ]
-        },
-        "leaseMilliseconds": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "idempotencyKey": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "session",
-        "writer",
-        "kind",
-        "leaseMilliseconds",
-        "idempotencyKey"
-      ],
-      "additionalProperties": false
-    },
-    "claimResultPayload": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "readOnly": true,
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
-        "result": {
-          "oneOf": [
-            {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "state": {
-                  "type": "string",
-                  "const": "granted"
-                },
-                "claim": {
-                  "readOnly": true,
-                  "type": "object",
-                  "properties": {
-                    "token": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "writer": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "kind": {
-                      "type": "string",
-                      "enum": [
-                        "user",
-                        "automation"
-                      ]
-                    },
-                    "leaseExpiresAt": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "token",
-                    "writer",
-                    "kind",
-                    "leaseExpiresAt"
-                  ],
-                  "additionalProperties": false
-                }
-              },
-              "required": [
-                "state",
-                "claim"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "state": {
-                  "type": "string",
-                  "const": "denied"
-                },
-                "owner": {
-                  "anyOf": [
-                    {
-                      "readOnly": true,
-                      "type": "object",
-                      "properties": {
-                        "token": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "writer": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "kind": {
-                          "type": "string",
-                          "enum": [
-                            "user",
-                            "automation"
-                          ]
-                        },
-                        "leaseExpiresAt": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "token",
-                        "writer",
-                        "kind",
-                        "leaseExpiresAt"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "diagnostic": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "state",
-                "owner",
-                "diagnostic"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "state": {
-                  "type": "string",
-                  "const": "unknown"
-                },
-                "diagnostic": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "state",
-                "diagnostic"
-              ],
-              "additionalProperties": false
-            }
-          ]
-        }
-      },
-      "required": [
-        "schemaVersion",
-        "result"
       ],
       "additionalProperties": false
     },
@@ -5909,44 +5379,6 @@
           ],
           "additionalProperties": false
         },
-        "inputOwner": {
-          "anyOf": [
-            {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "token": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "writer": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "kind": {
-                  "type": "string",
-                  "enum": [
-                    "user",
-                    "automation"
-                  ]
-                },
-                "leaseExpiresAt": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "token",
-                "writer",
-                "kind",
-                "leaseExpiresAt"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "exit": {
           "anyOf": [
             {
@@ -6155,7 +5587,6 @@
         "window",
         "output",
         "checkpoints",
-        "inputOwner",
         "exit",
         "reap",
         "descendants",
@@ -7916,103 +7347,6 @@
           "properties": {
             "fact": {
               "type": "string",
-              "const": "input-ownership"
-            },
-            "session": {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "incarnation": {
-                  "type": "string",
-                  "minLength": 1
-                }
-              },
-              "required": [
-                "key",
-                "incarnation"
-              ],
-              "additionalProperties": false
-            },
-            "at": {
-              "readOnly": true,
-              "type": "object",
-              "properties": {
-                "eventSequence": {
-                  "type": "string",
-                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-                  "description": "unsigned 64-bit integer encoded as a decimal string",
-                  "format": "hive-uint64-decimal"
-                },
-                "outputOffset": {
-                  "type": "string",
-                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-                  "description": "unsigned 64-bit integer encoded as a decimal string",
-                  "format": "hive-uint64-decimal"
-                }
-              },
-              "required": [
-                "eventSequence",
-                "outputOffset"
-              ],
-              "additionalProperties": false
-            },
-            "owner": {
-              "anyOf": [
-                {
-                  "readOnly": true,
-                  "type": "object",
-                  "properties": {
-                    "token": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "writer": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "kind": {
-                      "type": "string",
-                      "enum": [
-                        "user",
-                        "automation"
-                      ]
-                    },
-                    "leaseExpiresAt": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "token",
-                    "writer",
-                    "kind",
-                    "leaseExpiresAt"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "fact",
-            "session",
-            "at",
-            "owner"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "fact": {
-              "type": "string",
               "const": "retention-gap"
             },
             "session": {
@@ -9388,60 +8722,6 @@
         "checkpointAvailable": {
           "type": "boolean"
         },
-        "input": {
-          "type": "object",
-          "properties": {
-            "state": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "FREE",
-                    "USER_GESTURE",
-                    "USER_OWNED",
-                    "USER_ORPHANED",
-                    "AUTOMATION_BUFFERING",
-                    "AUTOMATION_COMMITTED",
-                    "TERMINATING",
-                    "CLOSED"
-                  ]
-                },
-                {
-                  "type": "string",
-                  "const": "UNKNOWN"
-                }
-              ]
-            },
-            "ownerViewerId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "claimId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "state",
-            "ownerViewerId",
-            "claimId"
-          ],
-          "additionalProperties": false
-        },
         "viewerCount": {
           "type": "integer",
           "minimum": 0,
@@ -9634,7 +8914,6 @@
         "outputSeq",
         "checkpointSeq",
         "checkpointAvailable",
-        "input",
         "viewerCount",
         "geometry",
         "resources",
@@ -10014,60 +9293,6 @@
             "checkpointAvailable": {
               "type": "boolean"
             },
-            "input": {
-              "type": "object",
-              "properties": {
-                "state": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "enum": [
-                        "FREE",
-                        "USER_GESTURE",
-                        "USER_OWNED",
-                        "USER_ORPHANED",
-                        "AUTOMATION_BUFFERING",
-                        "AUTOMATION_COMMITTED",
-                        "TERMINATING",
-                        "CLOSED"
-                      ]
-                    },
-                    {
-                      "type": "string",
-                      "const": "UNKNOWN"
-                    }
-                  ]
-                },
-                "ownerViewerId": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "claimId": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "state",
-                "ownerViewerId",
-                "claimId"
-              ],
-              "additionalProperties": false
-            },
             "viewerCount": {
               "type": "integer",
               "minimum": 0,
@@ -10260,7 +9485,6 @@
             "outputSeq",
             "checkpointSeq",
             "checkpointAvailable",
-            "input",
             "viewerCount",
             "geometry",
             "resources",
@@ -12563,8 +11787,6 @@
         "TERMINATED": 277,
         "VISIBILITY_RENEW": 278,
         "RENEWED": 279,
-        "INPUT_ORPHAN_DISCARD": 280,
-        "ORPHAN_DISCARDED": 281,
         "ATTACH_REQUEST": 512,
         "ATTACH_GRANT": 513,
         "HOST_ATTACH": 514,
@@ -12576,10 +11798,7 @@
         "DETACH": 520,
         "EVENT": 521,
         "ATTACH_READY": 522,
-        "CLAIM_ACQUIRE": 768,
-        "CLAIM_RESULT": 769,
         "USER_INPUT": 770,
-        "CLAIM_RELEASE": 771,
         "GESTURE_INPUT": 772,
         "INPUT_SUBMIT": 773,
         "AUTOMATION_BEGIN": 784,
@@ -12645,14 +11864,6 @@
         },
         {
           "names": [
-            "INPUT_ORPHAN_DISCARD",
-            "ORPHAN_DISCARDED"
-          ],
-          "direction": "daemon-broker-host-bidirectional",
-          "purpose": "user-orphaned-claim-discard"
-        },
-        {
-          "names": [
             "ATTACH_REQUEST",
             "ATTACH_GRANT",
             "HOST_ATTACH",
@@ -12688,16 +11899,7 @@
         },
         {
           "names": [
-            "CLAIM_ACQUIRE",
-            "CLAIM_RESULT"
-          ],
-          "direction": "viewer-host-bidirectional",
-          "purpose": "authoring-claim"
-        },
-        {
-          "names": [
             "USER_INPUT",
-            "CLAIM_RELEASE",
             "GESTURE_INPUT",
             "INPUT_SUBMIT"
           ],
@@ -12744,8 +11946,6 @@
         "NOT_FOUND",
         "NOT_READY",
         "ALREADY_EXISTS",
-        "USER_OWNED",
-        "USER_ORPHANED",
         "INPUT_BUSY",
         "REBASE_REQUIRED",
         "SNAPSHOT_REQUIRED",
@@ -12763,8 +11963,6 @@
       "inputArbiterStates": [
         "FREE",
         "USER_GESTURE",
-        "USER_OWNED",
-        "USER_ORPHANED",
         "AUTOMATION_BUFFERING",
         "AUTOMATION_COMMITTED",
         "TERMINATING",
@@ -12773,9 +11971,9 @@
       "inputArbiterTransitions": [
         {
           "from": "FREE",
-          "event": "CLAIM_ACQUIRE",
+          "event": "USER_INPUT",
           "through": [],
-          "to": "USER_OWNED"
+          "to": "FREE"
         },
         {
           "from": "FREE",
@@ -12790,36 +11988,6 @@
           "event": "AUTOMATION_BEGIN",
           "through": [],
           "to": "AUTOMATION_BUFFERING"
-        },
-        {
-          "from": "USER_OWNED",
-          "event": "USER_INPUT",
-          "through": [],
-          "to": "USER_OWNED"
-        },
-        {
-          "from": "USER_OWNED",
-          "event": "CLAIM_RELEASE",
-          "through": [],
-          "to": "FREE"
-        },
-        {
-          "from": "USER_OWNED",
-          "event": "VIEWER_DISCONNECT",
-          "through": [],
-          "to": "USER_ORPHANED"
-        },
-        {
-          "from": "USER_ORPHANED",
-          "event": "USER_RESUME",
-          "through": [],
-          "to": "USER_OWNED"
-        },
-        {
-          "from": "USER_ORPHANED",
-          "event": "USER_DISCARD",
-          "through": [],
-          "to": "FREE"
         },
         {
           "from": "AUTOMATION_BUFFERING",

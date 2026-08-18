@@ -191,7 +191,6 @@ final class SessiondPaneInputFocusTests: XCTestCase {
         let input = try XCTUnwrap(transport.sent.last { $0.type == .userInput })
         XCTAssertEqual(input.payload, Data("x".utf8))
         XCTAssertEqual(input.requestId, 0)
-        XCTAssertFalse(transport.sent.contains { $0.type == .claimAcquire })
         XCTAssertFalse(transport.sent.contains { $0.type == .inputSubmit })
 
         let beforeOutput = terminal.highWater

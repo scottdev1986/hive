@@ -383,7 +383,6 @@ export function createResultFromRecord(
       outputSeq: record.outputSeq,
       checkpointSeq: record.checkpointSeq,
       checkpointAvailable: record.checkpointSeq !== "0",
-      input: { state: "FREE", ownerViewerId: null, claimId: null },
       viewerCount: 0,
       geometry: record.geometry,
       resources: {},

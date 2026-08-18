@@ -161,7 +161,6 @@ describe("ActivitySnapshot", () => {
           outputSeq: "9",
           checkpointSeq: "1",
           checkpointAvailable: true,
-          input: { state: "FREE", ownerViewerId: null, claimId: null },
           viewerCount: 0,
           geometry: {
             columns: 80,

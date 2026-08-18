@@ -40,7 +40,7 @@
         "input": {
           "kind": "observed",
           "field": {
-            "value": "free",
+            "value": "empty",
             "source": {
               "kind": "sessiond",
               "id": "input-fixture"
@@ -102,7 +102,7 @@
       "presentation": {
         "panePresence": "visible",
         "terminalState": "live",
-        "headerDetail": "runtime=ready · turn=working · input=free · mail=none · health=healthy · attention=none",
+        "headerDetail": "runtime=ready · turn=working · input=empty · mail=none · health=healthy · attention=none",
         "paneStatus": {
           "kind": "running"
         },

@@ -223,7 +223,7 @@ describe("workspace feed presentation", () => {
     expect(dimensional.panePresence).toBe("visible");
     expect(dimensional.terminalState).toBe("live");
     expect(dimensional.headerDetail).toBe(
-      "runtime=ready · turn=working · input=free · mail=none · " +
+      "runtime=ready · turn=working · input=empty · mail=none · " +
         "health=healthy · attention=none",
     );
     expect(dimensional.attention).toBeNull();

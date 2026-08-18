@@ -26,7 +26,6 @@ import {
   type TerminalHostBindingStore,
 } from "./terminal-host-binding";
 import type {
-  ClaimResult,
   InputReceipt,
   SessionInspection as NeutralSessionInspection,
   TerminationResult as NeutralTerminationResult,
@@ -119,7 +118,7 @@ export function requireSessiondRootLocator(
 
 type TerminalLifecycleHost = Pick<
   TerminalHost,
-  "claimInput" | "submitInput" | "resize" | "inspect" | "list" | "terminate"
+  "submitInput" | "resize" | "inspect" | "list" | "terminate"
 > &
   Pick<SessionHost, "create" | "issueAttach"> &
   HostExitWaiter;
@@ -192,7 +191,6 @@ export class TerminalHostBindingIncompleteError extends Error {
 const TERMINATION_DEADLINE_MS = 10_000;
 const VIEWER_COUNT_DIAGNOSTIC = "SESSIOND_VIEWER_COUNT_UNAVAILABLE";
 const RESOURCES_DIAGNOSTIC = "SESSIOND_RESOURCES_UNAVAILABLE";
-const INPUT_STATE_DIAGNOSTIC = "SESSIOND_INPUT_STATE_UNAVAILABLE";
 const CONTROL_READBACK_ATTEMPTS = 40;
 const CONTROL_READBACK_INTERVAL_MS = 25;
 
@@ -512,14 +510,6 @@ export class HiveTerminalHostAdapter {
     return inspections;
   }
 
-  async claimInput(
-    locator: HiveTerminalBinding["locator"],
-    request: Omit<Parameters<TerminalHost["claimInput"]>[0], "session">,
-  ): Promise<ClaimResult> {
-    const { session } = await this.requireTransportBinding(locator);
-    return this.host.claimInput({ ...request, session });
-  }
-
   async submitInput(
     locator: HiveTerminalBinding["locator"],
     request: Omit<Parameters<TerminalHost["submitInput"]>[0], "session">,
@@ -706,7 +696,6 @@ export class HiveTerminalHostAdapter {
       outputSeq: "0",
       checkpointSeq: "0",
       checkpointAvailable: false,
-      input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
       viewerCount: 0,
       geometry: created.geometry,
       resources: {},
@@ -723,7 +712,6 @@ export class HiveTerminalHostAdapter {
         "SESSIOND_HOST_ALREADY_ABSENT",
         VIEWER_COUNT_DIAGNOSTIC,
         RESOURCES_DIAGNOSTIC,
-        INPUT_STATE_DIAGNOSTIC,
       ],
     };
   }
@@ -770,12 +758,6 @@ export class HiveTerminalHostAdapter {
       diagnostics.add("SESSIOND_CHECKPOINT_CURSOR_UNAVAILABLE");
     }
 
-    const inputFree =
-      inspection.lifecycle === "running" &&
-      inspection.completeness === "complete" &&
-      inspection.diagnostics.length === 0;
-    if (!inputFree) diagnostics.add(INPUT_STATE_DIAGNOSTIC);
-
     const pixelsDerived =
       inspection.window.value.widthPixels === 0 ||
       inspection.window.value.heightPixels === 0;
@@ -804,11 +786,6 @@ export class HiveTerminalHostAdapter {
       outputSeq: inspection.output.retained.endExclusive,
       checkpointSeq: checkpoint?.throughEventSequence ?? "0",
       checkpointAvailable: checkpoint !== null,
-      input: {
-        state: inputFree ? "FREE" : "UNKNOWN",
-        ownerViewerId: null,
-        claimId: null,
-      },
       viewerCount: 0,
       geometry: {
         columns: inspection.window.value.columns,

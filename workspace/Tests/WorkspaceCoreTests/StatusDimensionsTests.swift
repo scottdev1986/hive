@@ -12,7 +12,7 @@ final class StatusDimensionsTests: XCTestCase {
         schemaVersion: Int = 1,
         runtime: String = "ready",
         turn: String = "working",
-        input: String = "free",
+        input: String = "empty",
         mail: String = "none",
         health: String = "healthy",
         attention: String = "none"
@@ -23,7 +23,7 @@ final class StatusDimensionsTests: XCTestCase {
     private func agent(
         flatStatus: String = "working",
         dimensions: String,
-        presentation: String = #"{"panePresence":"visible","terminalState":"live","headerDetail":"runtime=ready · turn=working · input=free · mail=none · health=healthy · attention=none","paneStatus":{"kind":"running"},"activity":"working","attention":null}"#
+        presentation: String = #"{"panePresence":"visible","terminalState":"live","headerDetail":"runtime=ready · turn=working · input=empty · mail=none · health=healthy · attention=none","paneStatus":{"kind":"running"},"activity":"working","attention":null}"#
     ) throws -> AgentSnapshot {
         let line = #"{"v":1,"agents":[{"name":"worker","status":"\#(flatStatus)","statusDimensions":\#(dimensions),"presentation":\#(presentation)}]}"#
         return try XCTUnwrap(try XCTUnwrap(FeedLine.parse(line)).agents?.first)
@@ -42,7 +42,7 @@ final class StatusDimensionsTests: XCTestCase {
         }
         XCTAssertEqual(runtime.value, .ready)
         XCTAssertEqual(turn.value, .working)
-        XCTAssertEqual(input.value, .free)
+        XCTAssertEqual(input.value, .empty)
         XCTAssertEqual(mail.value, .none)
         XCTAssertEqual(health.value, .healthy)
         XCTAssertEqual(attention.value, .none)
@@ -98,7 +98,7 @@ final class StatusDimensionsTests: XCTestCase {
             flatStatus: "stuck",
             dimensions: dimensions(health: "disconnected"),
             presentation:
-                #"{"panePresence":"visible","terminalState":"reconnecting","headerDetail":"runtime=ready · turn=working · input=free · mail=none · health=disconnected · attention=none","paneStatus":{"kind":"disconnected","reason":"health reported disconnected","lastConfirmed":"turn=working"},"activity":"disconnected","attention":null}"#)
+                #"{"panePresence":"visible","terminalState":"reconnecting","headerDetail":"runtime=ready · turn=working · input=empty · mail=none · health=disconnected · attention=none","paneStatus":{"kind":"disconnected","reason":"health reported disconnected","lastConfirmed":"turn=working"},"activity":"disconnected","attention":null}"#)
         state.apply(feed: [disconnected])
 
         let pane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "worker")])
@@ -114,7 +114,7 @@ final class StatusDimensionsTests: XCTestCase {
         }
         XCTAssertEqual(
             pane.headerDescription,
-            "runtime=ready · turn=working · input=free · mail=none · "
+            "runtime=ready · turn=working · input=empty · mail=none · "
                 + "health=disconnected · attention=none")
     }
 

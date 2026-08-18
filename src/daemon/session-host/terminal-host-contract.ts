@@ -2,7 +2,6 @@ export const TERMINAL_HOST_CONTRACT_VERSION = "1.0.0" as const;
 
 import type {
   Checkpoint,
-  ClaimResult,
   ExitStatus,
   HostLimits,
   InputReceipt,
@@ -18,13 +17,11 @@ import type {
 
 export type {
   Checkpoint,
-  ClaimResult,
   Command,
   Completeness,
   EnvironmentEntry,
   ExitStatus,
   HostLimits,
-  InputClaim,
   InputReceipt,
   JobControlEvidence,
   LaunchFailureLayer,
@@ -184,22 +181,6 @@ export type EventAcknowledgement = Readonly<{
 
 export interface TerminalHost {
   create(request: CreateRequest): Promise<CreateResult>;
-  claimInput(
-    request: Readonly<{
-      session: SessionRef;
-      writer: string;
-      kind: "user" | "automation";
-      leaseMilliseconds: number;
-      idempotencyKey: string;
-    }>,
-  ): Promise<ClaimResult>;
-  releaseInput(
-    request: Readonly<{
-      session: SessionRef;
-      claimToken: string;
-      idempotencyKey: string;
-    }>,
-  ): Promise<void>;
   submitInput(
     request: Readonly<{
       session: SessionRef;

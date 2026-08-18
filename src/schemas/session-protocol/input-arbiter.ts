@@ -3,8 +3,6 @@ import { z } from "zod";
 export const INPUT_ARBITER_STATES = [
   "FREE",
   "USER_GESTURE",
-  "USER_OWNED",
-  "USER_ORPHANED",
   "AUTOMATION_BUFFERING",
   "AUTOMATION_COMMITTED",
   "TERMINATING",
@@ -14,7 +12,7 @@ export const INPUT_ARBITER_STATES = [
 export const InputArbiterStateSchema = z.enum(INPUT_ARBITER_STATES);
 
 export const INPUT_ARBITER_TRANSITIONS = [
-  { from: "FREE", event: "CLAIM_ACQUIRE", through: [], to: "USER_OWNED" },
+  { from: "FREE", event: "USER_INPUT", through: [], to: "FREE" },
   {
     from: "FREE",
     event: "GESTURE_INPUT",
@@ -26,26 +24,6 @@ export const INPUT_ARBITER_TRANSITIONS = [
     event: "AUTOMATION_BEGIN",
     through: [],
     to: "AUTOMATION_BUFFERING",
-  },
-  { from: "USER_OWNED", event: "USER_INPUT", through: [], to: "USER_OWNED" },
-  { from: "USER_OWNED", event: "CLAIM_RELEASE", through: [], to: "FREE" },
-  {
-    from: "USER_OWNED",
-    event: "VIEWER_DISCONNECT",
-    through: [],
-    to: "USER_ORPHANED",
-  },
-  {
-    from: "USER_ORPHANED",
-    event: "USER_RESUME",
-    through: [],
-    to: "USER_OWNED",
-  },
-  {
-    from: "USER_ORPHANED",
-    event: "USER_DISCARD",
-    through: [],
-    to: "FREE",
   },
   {
     from: "AUTOMATION_BUFFERING",

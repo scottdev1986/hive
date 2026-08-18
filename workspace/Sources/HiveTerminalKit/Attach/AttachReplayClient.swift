@@ -16,7 +16,6 @@ public final class AttachReplayClient {
     public private(set) var state: TerminalSurfaceState = .starting
     public private(set) var binding: SurfaceBinding?
     public private(set) var highWater: UInt64 = 0
-    public private(set) var claimPresentation: InputClaimPresentation = .free
     public private(set) var inputSubmissionState: InputSubmissionState = .idle
     public private(set) var firstCorrectFramePresented = false
     public var onInputSubmissionStateChange: ((InputSubmissionState) -> Void)?
@@ -47,7 +46,6 @@ public final class AttachReplayClient {
     struct UISnapshot {
         let state: TerminalSurfaceState
         let highWater: UInt64
-        let claimPresentation: InputClaimPresentation
         let inputSubmissionState: InputSubmissionState
     }
 
@@ -56,7 +54,6 @@ public final class AttachReplayClient {
             UISnapshot(
                 state: state,
                 highWater: highWater,
-                claimPresentation: claimPresentation,
                 inputSubmissionState: inputSubmissionState
             )
         }
@@ -458,7 +455,6 @@ public final class AttachReplayClient {
 
     private func resetInputState() {
         pendingResizeRequests.removeAll()
-        claimPresentation = .free
         setInputSubmissionState(.idle)
         lastResizeResult = nil
     }

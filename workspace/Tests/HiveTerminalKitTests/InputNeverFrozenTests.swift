@@ -30,7 +30,6 @@ final class InputNeverFrozenTests: XCTestCase {
             Data("\u{1B}[27;2;13~".utf8),
             "the raw frame must contain Ghostty's exact encoded bytes"
         )
-        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimAcquire })
         XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .inputSubmit })
     }
 
@@ -70,19 +69,6 @@ final class InputNeverFrozenTests: XCTestCase {
                     "kind": "USER_ORPHANED",
                     "claimId": "retired-claim",
                 ])
-            )
-        }
-
-        XCTAssertEqual(frames.map(\.payload), [Data("first\n".utf8), Data("second\n".utf8)])
-    }
-
-    func testMalformedLegacyClaimResultCannotFenceHumanInput() throws {
-        let frames = try inputAroundLegacyHostFrame(connectionId: "never-frozen-control") {
-            WireFrame(
-                type: .claimResult,
-                flags: [.response, .final],
-                requestId: 998,
-                payload: try FrameCodec.jsonPayload(["schemaVersion": 1, "result": [:]])
             )
         }
 

@@ -6,8 +6,6 @@ import { z } from "zod";
 import {
   AppliedPayloadSchema,
   AttachRequestPayloadSchema,
-  ClaimAcquirePayloadSchema,
-  ClaimResultPayloadSchema,
   CreateBeginPayloadSchema,
   FRAME_FLAGS,
   FRAME_HEADER,
@@ -56,7 +54,6 @@ import {
   type TerminalHostBindingStore,
 } from "./terminal-host-binding";
 import type {
-  ClaimResult,
   InputReceipt,
   ResizeResult,
   SessionInspection,
@@ -67,7 +64,7 @@ import type {
 
 export type LandedTerminalHost = Pick<
   TerminalHost,
-  "claimInput" | "submitInput" | "resize" | "inspect" | "list" | "terminate"
+  "submitInput" | "resize" | "inspect" | "list" | "terminate"
 > &
   Pick<SessionHost, "create" | "capture" | "issueAttach"> &
   HostExitWaiter;
@@ -492,27 +489,6 @@ export class SessiondHost implements LandedTerminalHost {
       outputSeq: inspection?.output.retained.endExclusive ?? "0",
       now: systemClock,
     });
-  }
-
-  async claimInput(
-    request: Parameters<TerminalHost["claimInput"]>[0],
-  ): Promise<ClaimResult> {
-    const payload = ClaimAcquirePayloadSchema.parse({
-      schemaVersion: 1,
-      ...request,
-    });
-    const host = await this.connectDirect(request.session);
-    try {
-      const response = await host.request({
-        requestType: "CLAIM_ACQUIRE",
-        responseType: "CLAIM_RESULT",
-        payload,
-        responseSchema: ClaimResultPayloadSchema,
-      });
-      return response.result;
-    } finally {
-      host.close();
-    }
   }
 
   async submitInput(

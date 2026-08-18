@@ -29,13 +29,6 @@ pub const WireCheckpoint = struct {
     opaqueBytes: []const u8,
 };
 
-pub const WireInputClaim = struct {
-    token: []const u8,
-    writer: []const u8,
-    kind: enum { user, automation },
-    leaseExpiresAt: []const u8,
-};
-
 pub const WireSurvivor = struct {
     process: WireProcessIdentity,
     reason: []const u8,
@@ -54,7 +47,6 @@ pub const WireInspection = struct {
         retained: struct { start: []const u8, endExclusive: []const u8 },
     },
     checkpoints: struct { retained: u32, newest: ?WireCheckpoint },
-    inputOwner: ?WireInputClaim,
     exit: ?WireExitStatus,
     reap: WireReapEvidence,
     descendants: []const WireProcessIdentity,
@@ -74,7 +66,6 @@ pub const WireInspectionPayload = struct {
     window: @FieldType(WireInspection, "window"),
     output: @FieldType(WireInspection, "output"),
     checkpoints: @FieldType(WireInspection, "checkpoints"),
-    inputOwner: ?WireInputClaim,
     exit: ?WireExitStatus,
     reap: WireReapEvidence,
     descendants: []const WireProcessIdentity,
@@ -197,7 +188,6 @@ pub const CheckpointSnapshot = struct {
 pub const LiveEvidence = struct {
     foregroundProcessGroupId: ?i32 = null,
     newestCheckpoint: ?CheckpointSnapshot = null,
-    inputOwner: ?WireInputClaim = null,
     diagnostics: []const []const u8 = &.{},
 };
 
@@ -529,7 +519,6 @@ pub fn buildInspection(
             },
         },
         .checkpoints = .{ .retained = record.checkpoints.retained, .newest = newest },
-        .inputOwner = if (live) |value| value.inputOwner else null,
         .exit = if (record.exit) |value| wireExit(value) else null,
         .reap = reap,
         .descendants = try descendants.toOwnedSlice(allocator),
@@ -550,7 +539,6 @@ pub fn inspectionPayload(inspection: WireInspection) WireInspectionPayload {
         .window = inspection.window,
         .output = inspection.output,
         .checkpoints = inspection.checkpoints,
-        .inputOwner = inspection.inputOwner,
         .exit = inspection.exit,
         .reap = inspection.reap,
         .descendants = inspection.descendants,

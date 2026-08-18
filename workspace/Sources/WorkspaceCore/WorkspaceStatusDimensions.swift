@@ -57,13 +57,11 @@ public enum WorkspaceTurnState: WorkspaceStatusWireValue {
 }
 
 public enum WorkspaceInputState: WorkspaceStatusWireValue {
-    case free, userOwned, userOrphaned, automation, empty
-    case editing, composing, queued, deliveryUnknown
+    case empty, editing, composing, queued, deliveryUnknown
     case unknown(String)
 
     public static let knownWireValues: [String: Self] = [
-        "free": .free, "user_owned": .userOwned, "user_orphaned": .userOrphaned,
-        "automation": .automation, "empty": .empty, "editing": .editing,
+        "empty": .empty, "editing": .editing,
         "composing": .composing, "queued": .queued, "delivery_unknown": .deliveryUnknown,
     ]
     public static func makeUnknown(_ value: String) -> Self { .unknown(value) }

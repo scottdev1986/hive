@@ -57,10 +57,6 @@ export const TURN_STATES = [
   "failed",
 ] as const;
 export const INPUT_STATES = [
-  "free",
-  "user_owned",
-  "user_orphaned",
-  "automation",
   "empty",
   "editing",
   "composing",

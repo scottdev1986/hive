@@ -21,7 +21,6 @@ import {
 } from "./session-protocol-schema";
 import {
   BASE64_BYTES_PATTERN,
-  TerminalHostClaimResultSchema,
   TerminalHostInputReceiptSchema,
   TerminalHostResizeResultSchema,
   TerminalHostSessionInspectionSchema,
@@ -40,23 +39,6 @@ const EncodedInputBytesSchema = z
   .string()
   .max(Math.ceil(TERMINAL_LIMITS.inputTransactionBytes / 3) * 4)
   .regex(new RegExp(BASE64_BYTES_PATTERN));
-
-export const ClaimAcquirePayloadSchema = z
-  .strictObject({
-    schemaVersion: z.literal(1),
-    session: TerminalHostSessionRefSchema,
-    writer: z.string().min(1),
-    kind: z.enum(["user", "automation"]),
-    leaseMilliseconds: SafeUintSchema.min(1),
-    idempotencyKey: z.string().min(1),
-  })
-  .readonly();
-export const ClaimResultPayloadSchema = z
-  .strictObject({
-    schemaVersion: z.literal(1),
-    result: TerminalHostClaimResultSchema,
-  })
-  .readonly();
 
 const ForegroundProcessIdentitySchema = z.strictObject({
   pid: z.number().int().positive(),
@@ -398,49 +380,6 @@ export const RenewedPayloadSchema = z
     schemaVersion: z.literal(1),
     ...VisibilityLeaseSchema.unwrap().shape,
   })
-  .readonly();
-/** `held` is authorized preemption; `orphaned` destroys only an abandoned draft. */
-export const OrphanDiscardPayloadSchema = z
-  .strictObject({
-    schemaVersion: z.literal(1),
-    locator: SessionLocatorSchema,
-    mode: z.enum(["orphaned", "held"]),
-  })
-  .readonly();
-/** Distinguishes destructive preemption from ordinary orphan discard. */
-export const OrphanDiscardedPayloadSchema = z
-  .discriminatedUnion("state", [
-    z
-      .strictObject({
-        schemaVersion: z.literal(1),
-        state: z.literal("discarded"),
-        priorOwnerViewerId: z.string().min(1),
-        priorClaimId: z.string().min(1),
-        orphanAgeMilliseconds: DecimalUint64Schema,
-        diagnostic: z.string().min(1),
-      })
-      .readonly(),
-    z
-      .strictObject({
-        schemaVersion: z.literal(1),
-        state: z.literal("preempted"),
-        priorOwnerViewerId: z.string().min(1),
-        priorClaimId: z.string().min(1),
-        orphanAgeMilliseconds: z.null(),
-        diagnostic: z.string().min(1),
-      })
-      .readonly(),
-    z
-      .strictObject({
-        schemaVersion: z.literal(1),
-        state: z.literal("refused"),
-        priorOwnerViewerId: z.string().min(1).nullable(),
-        priorClaimId: z.string().min(1).nullable(),
-        orphanAgeMilliseconds: DecimalUint64Schema.nullable(),
-        diagnostic: z.string().min(1),
-      })
-      .readonly(),
-  ])
   .readonly();
 export const AttachRequestPayloadSchema = z
   .strictObject({

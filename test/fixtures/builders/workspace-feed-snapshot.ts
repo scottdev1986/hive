@@ -47,7 +47,7 @@ export const workspaceFeedAgentFixture: AgentRecord = {
     input: {
       kind: "observed",
       field: {
-        value: "free",
+        value: "empty",
         source: { kind: "sessiond", id: "input-fixture" },
         observedAt: OBSERVED_AT,
         freshness: "fresh",

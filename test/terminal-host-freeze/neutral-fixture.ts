@@ -1,13 +1,11 @@
 import type {
   AttachResult,
   Checkpoint,
-  ClaimResult,
   CreateRequest,
   CreateResult,
   EventAcknowledgement,
   ExitStatus,
   HostLimits,
-  InputClaim,
   InputReceipt,
   JobControlEvidence,
   LaunchFailureLayer,
@@ -112,7 +110,6 @@ type RecordState = {
   flowTransitions: number;
   outputPaused: boolean;
   maxBufferedBytes: number;
-  inputOwner: InputClaim | null;
   inputReceipts: Map<string, InputReceipt>;
   inputEffects: string[];
   inputQueueBytes: number;
@@ -185,50 +182,9 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     return result;
   }
 
-  async claimInput(
-    request: Readonly<{
-      session: SessionRef;
-      writer: string;
-      kind: "user" | "automation";
-      leaseMilliseconds: number;
-      idempotencyKey: string;
-    }>,
-  ): Promise<ClaimResult> {
-    const record = this.record(request.session);
-    if (record.inputOwner && this.fault !== "I") {
-      return {
-        state: "denied",
-        owner: record.inputOwner,
-        diagnostic: "input already claimed",
-      };
-    }
-    const claim: InputClaim = {
-      token: `claim-${request.writer}-${request.idempotencyKey}`,
-      writer: request.writer,
-      kind: request.kind,
-      leaseExpiresAt: FAR_FUTURE,
-    };
-    record.inputOwner = claim;
-    return { state: "granted", claim };
-  }
-
-  async releaseInput(
-    request: Readonly<{
-      session: SessionRef;
-      claimToken: string;
-      idempotencyKey: string;
-    }>,
-  ): Promise<void> {
-    const record = this.record(request.session);
-    if (record.inputOwner?.token !== request.claimToken)
-      throw new Error("claim fenced");
-    record.inputOwner = null;
-  }
-
   async submitInput(
     request: Readonly<{
       session: SessionRef;
-      claimToken: string;
       transactionId: string;
       idempotencyKey: string;
       operation:
@@ -240,20 +196,7 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     const record = this.record(request.session);
     const idempotency = `${request.transactionId}\0${request.idempotencyKey}`;
     const prior = record.inputReceipts.get(idempotency);
-    if (prior) return prior;
-    if (record.inputOwner?.token !== request.claimToken && this.fault !== "I") {
-      return {
-        transactionId: request.transactionId,
-        stage: "rejected",
-        byteRange: null,
-        orderedAt: null,
-        availableCreditBytes:
-          this.limits.maxInputQueueBytes - record.inputQueueBytes,
-        consumedByProcess: "not-claimed",
-        completeness: "complete",
-        diagnostic: "claim fenced",
-      };
-    }
+    if (prior && this.fault !== "I") return prior;
 
     const bytes =
       request.operation.kind === "bytes"
@@ -913,7 +856,6 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       flowTransitions: 0,
       outputPaused: false,
       maxBufferedBytes: 0,
-      inputOwner: null,
       inputReceipts: new Map(),
       inputEffects: [],
       inputQueueBytes: 0,
@@ -959,7 +901,6 @@ export class NeutralTerminalHostFixture implements TerminalHost {
         },
       },
       checkpoints: { retained: 1, newest: record.checkpoint },
-      inputOwner: record.inputOwner,
       exit: record.exit,
       reap: record.reap,
       descendants: record.descendants,

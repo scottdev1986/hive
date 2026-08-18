@@ -17,10 +17,7 @@ public enum FrameType: UInt16, CaseIterable, Sendable {
     case detach = 0x0208
     case event = 0x0209
     case attachReady = 0x020a
-    case claimAcquire = 0x0300
-    case claimResult = 0x0301
     case userInput = 0x0302
-    case claimRelease = 0x0303
     case gestureInput = 0x0304
     case inputSubmit = 0x0305
 }

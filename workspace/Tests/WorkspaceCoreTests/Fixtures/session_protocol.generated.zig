@@ -31,8 +31,6 @@ pub const frame_type = struct {
     pub const terminated: u16 = 0x0115;
     pub const visibility_renew: u16 = 0x0116;
     pub const renewed: u16 = 0x0117;
-    pub const input_orphan_discard: u16 = 0x0118;
-    pub const orphan_discarded: u16 = 0x0119;
     pub const attach_request: u16 = 0x0200;
     pub const attach_grant: u16 = 0x0201;
     pub const host_attach: u16 = 0x0202;
@@ -44,10 +42,7 @@ pub const frame_type = struct {
     pub const detach: u16 = 0x0208;
     pub const event: u16 = 0x0209;
     pub const attach_ready: u16 = 0x020a;
-    pub const claim_acquire: u16 = 0x0300;
-    pub const claim_result: u16 = 0x0301;
     pub const user_input: u16 = 0x0302;
-    pub const claim_release: u16 = 0x0303;
     pub const gesture_input: u16 = 0x0304;
     pub const input_submit: u16 = 0x0305;
     pub const automation_begin: u16 = 0x0310;
@@ -80,13 +75,9 @@ pub const wire_schema = struct {
     pub const terminated_payload = "terminatedPayload";
     pub const visibility_renew_payload = "visibilityRenewPayload";
     pub const renewed_payload = "renewedPayload";
-    pub const orphan_discard_payload = "orphanDiscardPayload";
-    pub const orphan_discarded_payload = "orphanDiscardedPayload";
     pub const attach_request_payload = "attachRequestPayload";
     pub const attach_grant_payload = "attachGrantPayload";
     pub const host_attach_payload = "hostAttachPayload";
-    pub const claim_acquire_payload = "claimAcquirePayload";
-    pub const claim_result_payload = "claimResultPayload";
     pub const input_submit_payload = "inputSubmitPayload";
     pub const resize_payload = "resizePayload";
     pub const applied_payload = "appliedPayload";
@@ -138,8 +129,6 @@ pub const wire_error = enum {
     not_found,
     not_ready,
     already_exists,
-    user_owned,
-    user_orphaned,
     input_busy,
     rebase_required,
     snapshot_required,
@@ -158,8 +147,6 @@ pub const wire_error = enum {
 pub const input_state = enum {
     free,
     user_gesture,
-    user_owned,
-    user_orphaned,
     automation_buffering,
     automation_committed,
     terminating,

@@ -29,7 +29,7 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
         XCTAssertEqual(agent.contextPct, 41.5)
         let dimensions = try XCTUnwrap(agent.statusDimensions)
         XCTAssertEqual(dimensions.revision, "6")
-        XCTAssertEqual(agent.presentation.headerDetail, "runtime=ready · turn=working · input=free · mail=none · health=healthy · attention=none")
+        XCTAssertEqual(agent.presentation.headerDetail, "runtime=ready · turn=working · input=empty · mail=none · health=healthy · attention=none")
         XCTAssertNil(agent.closedAt)
         XCTAssertEqual(agent.presentation.paneStatus.paneStatus(), .running)
         XCTAssertEqual(agent.presentation.renderedActivity, .working)

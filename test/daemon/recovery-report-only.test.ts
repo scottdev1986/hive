@@ -69,7 +69,6 @@ function exitedInspection(): SessionInspection {
     outputSeq: "0",
     checkpointSeq: "0",
     checkpointAvailable: false,
-    input: { state: "CLOSED", ownerViewerId: null, claimId: null },
     viewerCount: 0,
     geometry: {
       columns: 80,

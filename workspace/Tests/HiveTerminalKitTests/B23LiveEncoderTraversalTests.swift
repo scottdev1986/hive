@@ -22,14 +22,10 @@ import XCTest
 ///
 /// Constraints:
 ///
-/// 1. ONE CLAIM, MANY ROWS. A user input claim is never stolen — when a viewer
-///    drops it the arbiter orphans it, and `AttachReplayClient` has no release
-///    call (`claimRelease` exists but nothing sends it). A second attach in the
-///    same session is denied; every row shares ONE attach and ONE claim, and
-///    each iteration needs a FRESH session.
+/// 1. ONE ATTACH, MANY ROWS. A second attach in the same session is denied;
+///    every row shares ONE attach, and each iteration needs a FRESH session.
 ///
-/// 2. THE CLAIM LEASE IS SHORT. Long per-row waits outlive it and fail as
-///    "input claim expired" rather than as a missing byte. Waits are kept tight.
+/// 2. WAITS STAY TIGHT. Long per-row waits hide a missing byte behind timeout.
 ///
 /// 3. THE HOST JOURNAL IS NOT A USABLE READBACK: `journal.bin` is a small
 ///    rolling window and the proof session runs a continuous ticker, so writes

@@ -219,37 +219,6 @@ export const TerminalHostCreateResultSchema = z
 export type TerminalHostCreateResult = z.infer<
   typeof TerminalHostCreateResultSchema
 >;
-export const TerminalHostInputClaimSchema = z
-  .strictObject({
-    token: z.string().min(1),
-    writer: z.string().min(1),
-    kind: z.enum(["user", "automation"]),
-    leaseExpiresAt: Rfc3339UtcMillisecondsSchema,
-  })
-  .readonly();
-export type InputClaim = z.infer<typeof TerminalHostInputClaimSchema>;
-export const TerminalHostClaimResultSchema = z.discriminatedUnion("state", [
-  z
-    .strictObject({
-      state: z.literal("granted"),
-      claim: TerminalHostInputClaimSchema,
-    })
-    .readonly(),
-  z
-    .strictObject({
-      state: z.literal("denied"),
-      owner: TerminalHostInputClaimSchema.nullable(),
-      diagnostic: z.string().min(1),
-    })
-    .readonly(),
-  z
-    .strictObject({
-      state: z.literal("unknown"),
-      diagnostic: z.string().min(1),
-    })
-    .readonly(),
-]);
-export type ClaimResult = z.infer<typeof TerminalHostClaimResultSchema>;
 export const TerminalHostInputReceiptSchema = z
   .strictObject({
     transactionId: z.string().min(1),
@@ -365,7 +334,6 @@ export const TerminalHostSessionInspectionSchema = z
         newest: TerminalHostCheckpointSchema.nullable(),
       })
       .readonly(),
-    inputOwner: TerminalHostInputClaimSchema.nullable(),
     exit: TerminalHostExitStatusSchema.nullable(),
     reap: TerminalHostReapEvidenceSchema,
     descendants: z.array(TerminalHostProcessIdentitySchema).readonly(),
@@ -615,14 +583,6 @@ export const TerminalHostSubscriptionEventSchema = z.discriminatedUnion(
         at: TerminalHostSubscriptionCursorSchema,
         revision: DecimalUint64Schema,
         window: TerminalHostWindowSizeSchema,
-      })
-      .readonly(),
-    z
-      .strictObject({
-        fact: z.literal("input-ownership"),
-        session: TerminalHostSessionRefSchema,
-        at: TerminalHostSubscriptionCursorSchema,
-        owner: TerminalHostInputClaimSchema.nullable(),
       })
       .readonly(),
     z

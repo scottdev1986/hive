@@ -107,7 +107,6 @@ function liveInspection(
       outputSeq: "20",
       checkpointSeq: "20",
       checkpointAvailable: true,
-      input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
       viewerCount: 0,
       geometry: {
         columns: 80,

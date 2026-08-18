@@ -68,7 +68,6 @@ function neutralInspection(
       retained: { start: "0", endExclusive: "0" },
     },
     checkpoints: { retained: 0, newest: null },
-    inputOwner: null,
     exit: null,
     reap: {
       authority: "direct-parent",
@@ -179,9 +178,6 @@ describe("C0 provider-run identity", () => {
           throw new Error("not used");
         },
         issueAttach: async () => {
-          throw new Error("not used");
-        },
-        claimInput: async () => {
           throw new Error("not used");
         },
         submitInput: async () => {

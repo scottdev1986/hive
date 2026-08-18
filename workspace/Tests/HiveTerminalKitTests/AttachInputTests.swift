@@ -20,7 +20,6 @@ final class AttachInputTests: XCTestCase {
         drainMainQueue()
         try host.harvestViewerFrames()
 
-        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimAcquire })
         XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .inputSubmit })
         let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .userInput })
         XCTAssertEqual(input.flags, [.contentSensitive])

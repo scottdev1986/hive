@@ -400,7 +400,7 @@ final class LiveHostAttachTests: XCTestCase {
     }
 
     /// B2.3 opt-in headless proof through the production Swift attach socket:
-    /// a Gate 8 NSTextInputClient commit is held for CLAIM_RESULT, submitted as
+    /// a Gate 8 NSTextInputClient commit is submitted as
     /// USER_INPUT, interpreted by the live shell, and returned as ordered OUTPUT.
     func testLiveGate8InputRoundTrip() throws {
         let (proof, _) = try loadProof()

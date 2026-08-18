@@ -48,9 +48,9 @@ Input transactions and queues, output frames, retained output, and unacknowledge
 
 Attach negotiates protocol and checkpoint capabilities. A cursor names both event and output positions and may bind an opaque checkpoint identity. Resume is exactly-once at byte boundaries even when disconnect occurs inside a terminal escape or multibyte text encoding. A cursor outside retention returns a gap and a full checkpoint requirement.
 
-### 8. Input ownership
+### 8. Input
 
-Every input transaction is fenced by a host-issued claim/lease and the session incarnation. User and automation are generic writer kinds. Claim acquisition completes synchronously before user bytes are accepted. Transactions are ordered and idempotent; concurrent writers cannot interleave one transaction with another. Key-event encoding belongs above the host.
+Input is an ordered, idempotent write. The host does not track who owns the keyboard, does not issue claims or leases, and does not block one writer because another is typing. Key-event encoding belongs above the host.
 
 ### 9. Termination and terminal input
 
@@ -60,7 +60,7 @@ Byte input, canonical end-of-file input, and terminal hangup are distinct operat
 
 ### 10. Honest inspection
 
-Inspection reports lifecycle, host and child identities, session/process-group/foreground-group and terminal evidence, geometry plus revision, retained output and checkpoint ranges, current input owner, exit/reap authority, descendants, survivors, evidence time, diagnostics, and completeness. Transport failure maps to `unknown`, never absent or exited. Listing returns the same inspection shape without product-specific filtering.
+Inspection reports lifecycle, host and child identities, session/process-group/foreground-group and terminal evidence, geometry plus revision, retained output and checkpoint ranges, exit/reap authority, descendants, survivors, evidence time, diagnostics, and completeness. Transport failure maps to `unknown`, never absent or exited. Listing returns the same inspection shape without product-specific filtering.
 
 ### 11. Ordered event subscription
 
@@ -68,12 +68,12 @@ Subscription carries the session's ordered facts; attachment carries its bytes. 
 
 A subscription is a resumable cursor, not a boolean. It negotiates capabilities, begins at a caller-supplied event position or at the current end, and delivers every retained event from there in host order exactly once; resume after disconnect happens at an event boundary, never inside one. Retained events are bounded by negotiated limits and released by acknowledgement on the same terms as output. A cursor outside retention returns an explicit gap with the missing event range and a fresh-inspection requirement; silent loss is forbidden. Subscribers are independent: one slow or disconnected subscriber never reorders, drops, or delays another's events, and never stalls the session.
 
-Events carry the facts inspection reports, ordered rather than sampled: lifecycle transitions, launch evidence, applied resize revisions, input-ownership changes, retention gaps, output closure, exit, and reap. Output closure, exit, and reap remain separately ordered here exactly as in section 4. A subscription ends on caller cancellation, on the end of its incarnation after that incarnation's final facts are delivered, or on a typed failure; no ending fabricates an event, and a broken subscription is never evidence that the session itself changed.
+Events carry the facts inspection reports, ordered rather than sampled: lifecycle transitions, launch evidence, applied resize revisions, retention gaps, output closure, exit, and reap. Output closure, exit, and reap remain separately ordered here exactly as in section 4. A subscription ends on caller cancellation, on the end of its incarnation after that incarnation's final facts are delivered, or on a typed failure; no ending fabricates an event, and a broken subscription is never evidence that the session itself changed.
 
 ## Minimal operation set
 
 - `create(key, idempotency, command, terminalProfile, initialWindow)` returns an incarnation, launch evidence, and limits.
-- `claimInput`, `releaseInput`, and `submitInput` provide fenced, leased, transactional input.
+- `submitInput` provides ordered, idempotent input. The host does not claim, lease, or report an input owner.
 - `resize` provides an ordered revision and applied readback.
 - `attach` and `acknowledgeOutput` provide negotiated cursor replay and backpressure.
 - `inspect` and `list` provide honest snapshots; `subscribe` provides the resumable, acknowledged cursor over ordered facts.
@@ -95,7 +95,7 @@ Row letters are unique across the contract family rather than per document: A–
 | F | Normal and signaled exit retain all tail bytes and separately order output closure, exit, and authoritative reap. | Neutral green; real tail/reap discriminator green (THV1-REAL-F) |
 | G | Broker restart reattaches to a durable parent; parent loss reports unavailable authority rather than fabricated exit. | Neutral green; real candidate baseline green |
 | H | Disconnect inside an escape and multibyte encoding resumes once from checkpoint/cursor without byte duplication or loss. | Neutral green; real candidate baseline green |
-| I | Concurrent user and automation writes obey claim fencing, transaction idempotency, and non-interleaving. | Neutral green; real candidate baseline green |
+| I | Repeated submitInput with the same transaction and idempotency key is one write. The host does not fence writers behind an input claim. | Neutral green; real candidate baseline green |
 | J | Immediate process-tree termination removes an escaped descendant, reports it as a survivor, or reports `unknown` with possible escapees explicitly unaccounted. | Neutral green; real candidate baseline green |
 | K | Canonical end-of-file, the same byte in literal mode, and terminal hangup have distinct results. | Neutral green; real candidate baseline green |
 | U | A subscription resumes from a caller-supplied event position or the current end, delivers every retained event in host order exactly once, keeps subscribers independent, bounds retained events by negotiated limits released by acknowledgement, reports a position outside retention as an explicit gap carrying the missing event range and a fresh-inspection requirement, and delivers the incarnation's closing facts separately ordered with the authoritative reap last. | Neutral green |

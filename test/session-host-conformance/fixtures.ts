@@ -71,7 +71,6 @@ export const fixtureInspection = {
   outputSeq: "4096",
   checkpointSeq: "2048",
   checkpointAvailable: true,
-  input: { state: "FREE", ownerViewerId: null, claimId: null },
   viewerCount: 1,
   geometry: fixtureGeometry,
   resources: { rssBytes: 16_777_216 },
@@ -304,12 +303,6 @@ const fixtureTerminalHostCreateResult = {
     outputRetentionBytes: TERMINAL_LIMITS.replayJournalBytesPerGeneration,
   },
 };
-const fixtureTerminalHostClaim = {
-  token: "claim-fixture-token",
-  writer: "viewer-fixture",
-  kind: "user",
-  leaseExpiresAt: "2026-07-16T12:00:15.000Z",
-};
 const fixtureTerminalHostReceipt = {
   transactionId: "terminal-input-fixture",
   stage: "written-to-terminal",
@@ -352,7 +345,6 @@ const fixtureTerminalHostInspection = {
     retained: { start: "2048", endExclusive: "4096" },
   },
   checkpoints: { retained: 1, newest: fixtureTerminalHostCheckpoint },
-  inputOwner: fixtureTerminalHostClaim,
   exit: null,
   reap: {
     authority: "direct-parent",
@@ -459,7 +451,6 @@ const fixtureTerminalHostSubscriptionEvents = [
     revision: fixtureTerminalHostResizeReceipt.revision,
     window: fixtureTerminalHostResizeReceipt.window,
   },
-  { fact: "input-ownership", owner: fixtureTerminalHostClaim },
   {
     fact: "retention-gap",
     missing: { start: "12", endExclusive: "37" },
@@ -866,40 +857,6 @@ const validCases: readonly WireCorpusCase[] = [
     value: { schemaVersion: 1, ...fixtureVisibilityLease },
   },
   {
-    name: "INPUT_ORPHAN_DISCARD resolves an orphaned exact generation",
-    schema: "orphanDiscardPayload",
-    value: { schemaVersion: 1, locator: fixtureLocator, mode: "orphaned" },
-  },
-  {
-    name: "INPUT_ORPHAN_DISCARD authorizes a held-claim preemption",
-    schema: "orphanDiscardPayload",
-    value: { schemaVersion: 1, locator: fixtureLocator, mode: "held" },
-  },
-  {
-    name: "ORPHAN_DISCARDED names the prior orphan owner and host age",
-    schema: "orphanDiscardedPayload",
-    value: {
-      schemaVersion: 1,
-      state: "discarded",
-      priorOwnerViewerId: "viewer-a",
-      priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-000000000001",
-      orphanAgeMilliseconds: "120000",
-      diagnostic: "orphaned user claim discarded",
-    },
-  },
-  {
-    name: "ORPHAN_DISCARDED types a held user preemption",
-    schema: "orphanDiscardedPayload",
-    value: {
-      schemaVersion: 1,
-      state: "preempted",
-      priorOwnerViewerId: "viewer-a",
-      priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-000000000001",
-      orphanAgeMilliseconds: null,
-      diagnostic: "held user claim preempted for delivery",
-    },
-  },
-  {
     name: "ATTACH_REQUEST exact generation",
     schema: "attachRequestPayload",
     value: {
@@ -1090,16 +1047,6 @@ const validCases: readonly WireCorpusCase[] = [
     value: event,
   })),
   {
-    name: "frozen neutral subscription event may report released input ownership",
-    schema: "terminalHostSubscriptionEvent",
-    value: {
-      fact: "input-ownership",
-      session: fixtureTerminalHostSession,
-      at: fixtureTerminalHostEventCursor,
-      owner: null,
-    },
-  },
-  {
     name: "frozen neutral event acknowledgement names the subscription it releases",
     schema: "terminalHostEventAcknowledgementRequest",
     value: fixtureTerminalHostEventAcknowledgementRequest,
@@ -1149,26 +1096,6 @@ const validCases: readonly WireCorpusCase[] = [
     value: fixtureTerminalHostTerminationResult,
   },
   {
-    name: "CLAIM_ACQUIRE frozen request",
-    schema: "claimAcquirePayload",
-    value: {
-      schemaVersion: 1,
-      session: fixtureTerminalHostSession,
-      writer: fixtureTerminalHostClaim.writer,
-      kind: fixtureTerminalHostClaim.kind,
-      leaseMilliseconds: 15_000,
-      idempotencyKey: "claim-fixture-key",
-    },
-  },
-  {
-    name: "CLAIM_RESULT frozen grant",
-    schema: "claimResultPayload",
-    value: {
-      schemaVersion: 1,
-      result: { state: "granted", claim: fixtureTerminalHostClaim },
-    },
-  },
-  {
     name: "INPUT_SUBMIT frozen byte operation",
     schema: "inputSubmitPayload",
     value: {
@@ -1215,14 +1142,6 @@ const validCases: readonly WireCorpusCase[] = [
     schema: "appliedPayload",
     value: { schemaVersion: 1, resultKind: "output", throughSeq: "262144" },
   },
-  {
-    name: "session inspection preserves unknown input observation",
-    schema: "sessionInspection",
-    value: {
-      ...fixtureInspection,
-      input: { ...fixtureInspection.input, state: "UNKNOWN" },
-    },
-  },
 ];
 
 const invalidCases: readonly WireCorpusCase[] = [
@@ -1250,14 +1169,6 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "inspection rejects invented presence",
     schema: "sessionInspection",
     value: { ...fixtureInspection, presence: "absent" },
-  },
-  {
-    name: "inspection rejects invented input state",
-    schema: "sessionInspection",
-    value: {
-      ...fixtureInspection,
-      input: { ...fixtureInspection.input, state: "AUTOMATION_WRITING" },
-    },
   },
   {
     name: "create rejects false success",
@@ -1514,27 +1425,6 @@ const invalidCases: readonly WireCorpusCase[] = [
       state: "active",
       expiresAt: fixtureVisibilityLease.expiresAt,
       openTerminalRevision: "7",
-    },
-  },
-  {
-    name: "INPUT_ORPHAN_DISCARD rejects missing locator",
-    schema: "orphanDiscardPayload",
-    value: { schemaVersion: 1 },
-  },
-  {
-    name: "INPUT_ORPHAN_DISCARD rejects an untyped resolution mode",
-    schema: "orphanDiscardPayload",
-    value: { schemaVersion: 1, locator: fixtureLocator, mode: "live" },
-  },
-  {
-    name: "ORPHAN_DISCARDED rejects a missing typed state",
-    schema: "orphanDiscardedPayload",
-    value: {
-      schemaVersion: 1,
-      priorOwnerViewerId: null,
-      priorClaimId: null,
-      orphanAgeMilliseconds: null,
-      diagnostic: "missing state",
     },
   },
   {
@@ -1798,25 +1688,6 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "frozen termination result requires completeness",
     schema: "terminalHostTerminationResult",
     value: { ...fixtureTerminalHostTerminationResult, completeness: undefined },
-  },
-  {
-    name: "CLAIM_ACQUIRE rejects absent session fencing",
-    schema: "claimAcquirePayload",
-    value: {
-      schemaVersion: 1,
-      writer: "viewer",
-      kind: "user",
-      leaseMilliseconds: 1,
-      idempotencyKey: "claim",
-    },
-  },
-  {
-    name: "CLAIM_RESULT rejects invented ownership",
-    schema: "claimResultPayload",
-    value: {
-      schemaVersion: 1,
-      result: { state: "denied", owner: null, diagnostic: "" },
-    },
   },
   {
     name: "INPUT_SUBMIT rejects malformed base64",

@@ -109,11 +109,6 @@
         "outputSeq": "4096",
         "checkpointSeq": "2048",
         "checkpointAvailable": true,
-        "input": {
-          "state": "FREE",
-          "ownerViewerId": null,
-          "claimId": null
-        },
         "viewerCount": 1,
         "geometry": {
           "columns": 120,
@@ -189,11 +184,6 @@
           "outputSeq": "4096",
           "checkpointSeq": "2048",
           "checkpointAvailable": true,
-          "input": {
-            "state": "FREE",
-            "ownerViewerId": null,
-            "claimId": null
-          },
           "viewerCount": 1,
           "geometry": {
             "columns": 120,
@@ -873,12 +863,6 @@
                 "opaqueBytes": "dGVybWluYWwtc3RhdGU="
               }
             },
-            "inputOwner": {
-              "token": "claim-fixture-token",
-              "writer": "viewer-fixture",
-              "kind": "user",
-              "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
-            },
             "exit": null,
             "reap": {
               "authority": "direct-parent",
@@ -968,12 +952,6 @@
             "throughOutputOffset": "2048",
             "opaqueBytes": "dGVybWluYWwtc3RhdGU="
           }
-        },
-        "inputOwner": {
-          "token": "claim-fixture-token",
-          "writer": "viewer-fixture",
-          "kind": "user",
-          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
         },
         "exit": null,
         "reap": {
@@ -1077,70 +1055,6 @@
         "state": "active",
         "expiresAt": "2026-07-16T12:00:15.000Z",
         "openTerminalRevision": "7"
-      }
-    },
-    {
-      "name": "INPUT_ORPHAN_DISCARD resolves an orphaned exact generation",
-      "schema": "orphanDiscardPayload",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "mode": "orphaned"
-      }
-    },
-    {
-      "name": "INPUT_ORPHAN_DISCARD authorizes a held-claim preemption",
-      "schema": "orphanDiscardPayload",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "mode": "held"
-      }
-    },
-    {
-      "name": "ORPHAN_DISCARDED names the prior orphan owner and host age",
-      "schema": "orphanDiscardedPayload",
-      "value": {
-        "schemaVersion": 1,
-        "state": "discarded",
-        "priorOwnerViewerId": "viewer-a",
-        "priorClaimId": "clm_018f1e90-7b5a-7cc0-8000-000000000001",
-        "orphanAgeMilliseconds": "120000",
-        "diagnostic": "orphaned user claim discarded"
-      }
-    },
-    {
-      "name": "ORPHAN_DISCARDED types a held user preemption",
-      "schema": "orphanDiscardedPayload",
-      "value": {
-        "schemaVersion": 1,
-        "state": "preempted",
-        "priorOwnerViewerId": "viewer-a",
-        "priorClaimId": "clm_018f1e90-7b5a-7cc0-8000-000000000001",
-        "orphanAgeMilliseconds": null,
-        "diagnostic": "held user claim preempted for delivery"
       }
     },
     {
@@ -1596,12 +1510,6 @@
             "opaqueBytes": "dGVybWluYWwtc3RhdGU="
           }
         },
-        "inputOwner": {
-          "token": "claim-fixture-token",
-          "writer": "viewer-fixture",
-          "kind": "user",
-          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
-        },
         "exit": null,
         "reap": {
           "authority": "direct-parent",
@@ -1948,27 +1856,6 @@
       }
     },
     {
-      "name": "frozen neutral subscription event carries the input-ownership fact",
-      "schema": "terminalHostSubscriptionEvent",
-      "value": {
-        "fact": "input-ownership",
-        "owner": {
-          "token": "claim-fixture-token",
-          "writer": "viewer-fixture",
-          "kind": "user",
-          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
-        },
-        "session": {
-          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "incarnation": "3"
-        },
-        "at": {
-          "eventSequence": "13",
-          "outputOffset": "4096"
-        }
-      }
-    },
-    {
       "name": "frozen neutral subscription event carries the retention-gap fact",
       "schema": "terminalHostSubscriptionEvent",
       "value": {
@@ -2043,22 +1930,6 @@
           "eventSequence": "13",
           "outputOffset": "4096"
         }
-      }
-    },
-    {
-      "name": "frozen neutral subscription event may report released input ownership",
-      "schema": "terminalHostSubscriptionEvent",
-      "value": {
-        "fact": "input-ownership",
-        "session": {
-          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "incarnation": "3"
-        },
-        "at": {
-          "eventSequence": "13",
-          "outputOffset": "4096"
-        },
-        "owner": null
       }
     },
     {
@@ -2192,37 +2063,6 @@
       }
     },
     {
-      "name": "CLAIM_ACQUIRE frozen request",
-      "schema": "claimAcquirePayload",
-      "value": {
-        "schemaVersion": 1,
-        "session": {
-          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "incarnation": "3"
-        },
-        "writer": "viewer-fixture",
-        "kind": "user",
-        "leaseMilliseconds": 15000,
-        "idempotencyKey": "claim-fixture-key"
-      }
-    },
-    {
-      "name": "CLAIM_RESULT frozen grant",
-      "schema": "claimResultPayload",
-      "value": {
-        "schemaVersion": 1,
-        "result": {
-          "state": "granted",
-          "claim": {
-            "token": "claim-fixture-token",
-            "writer": "viewer-fixture",
-            "kind": "user",
-            "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
-          }
-        }
-      }
-    },
-    {
       "name": "INPUT_SUBMIT frozen byte operation",
       "schema": "inputSubmitPayload",
       "value": {
@@ -2309,73 +2149,6 @@
         "schemaVersion": 1,
         "resultKind": "output",
         "throughSeq": "262144"
-      }
-    },
-    {
-      "name": "session inspection preserves unknown input observation",
-      "schema": "sessionInspection",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "presence": "present",
-        "complete": true,
-        "hostPid": 4100,
-        "hostStartToken": "4100:123456",
-        "shellRoot": {
-          "pid": 4101,
-          "startToken": "4101:123457",
-          "processGroupId": 4101
-        },
-        "foreground": {
-          "state": "managed",
-          "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
-          "pid": 4102,
-          "startToken": "4102:123458",
-          "foregroundProcessGroupId": 4102
-        },
-        "expectedExecutable": "/bin/zsh",
-        "executableVerified": true,
-        "outputSeq": "4096",
-        "checkpointSeq": "2048",
-        "checkpointAvailable": true,
-        "input": {
-          "state": "UNKNOWN",
-          "ownerViewerId": null,
-          "claimId": null
-        },
-        "viewerCount": 1,
-        "geometry": {
-          "columns": 120,
-          "rows": 40,
-          "widthPx": 1200,
-          "heightPx": 800,
-          "cellWidthPx": 10,
-          "cellHeightPx": 20
-        },
-        "resources": {
-          "rssBytes": 16777216
-        },
-        "visibility": {
-          "state": "visible",
-          "workspaceSessionId": "workspace-fixture",
-          "openTerminalRevision": "7",
-          "expiresAt": "2026-07-16T12:00:15.000Z"
-        },
-        "exit": null,
-        "survivors": [],
-        "evidenceAt": "2026-07-16T12:00:00.000Z",
-        "diagnosticIds": []
       }
     }
   ],
@@ -2471,78 +2244,6 @@
         "outputSeq": "4096",
         "checkpointSeq": "2048",
         "checkpointAvailable": true,
-        "input": {
-          "state": "FREE",
-          "ownerViewerId": null,
-          "claimId": null
-        },
-        "viewerCount": 1,
-        "geometry": {
-          "columns": 120,
-          "rows": 40,
-          "widthPx": 1200,
-          "heightPx": 800,
-          "cellWidthPx": 10,
-          "cellHeightPx": 20
-        },
-        "resources": {
-          "rssBytes": 16777216
-        },
-        "visibility": {
-          "state": "visible",
-          "workspaceSessionId": "workspace-fixture",
-          "openTerminalRevision": "7",
-          "expiresAt": "2026-07-16T12:00:15.000Z"
-        },
-        "exit": null,
-        "survivors": [],
-        "evidenceAt": "2026-07-16T12:00:00.000Z",
-        "diagnosticIds": []
-      }
-    },
-    {
-      "name": "inspection rejects invented input state",
-      "schema": "sessionInspection",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "presence": "present",
-        "complete": true,
-        "hostPid": 4100,
-        "hostStartToken": "4100:123456",
-        "shellRoot": {
-          "pid": 4101,
-          "startToken": "4101:123457",
-          "processGroupId": 4101
-        },
-        "foreground": {
-          "state": "managed",
-          "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
-          "pid": 4102,
-          "startToken": "4102:123458",
-          "foregroundProcessGroupId": 4102
-        },
-        "expectedExecutable": "/bin/zsh",
-        "executableVerified": true,
-        "outputSeq": "4096",
-        "checkpointSeq": "2048",
-        "checkpointAvailable": true,
-        "input": {
-          "state": "AUTOMATION_WRITING",
-          "ownerViewerId": null,
-          "claimId": null
-        },
         "viewerCount": 1,
         "geometry": {
           "columns": 120,
@@ -2618,11 +2319,6 @@
           "outputSeq": "4096",
           "checkpointSeq": "2048",
           "checkpointAvailable": true,
-          "input": {
-            "state": "FREE",
-            "ownerViewerId": null,
-            "claimId": null
-          },
           "viewerCount": 1,
           "geometry": {
             "columns": 120,
@@ -3401,12 +3097,6 @@
             "opaqueBytes": "dGVybWluYWwtc3RhdGU="
           }
         },
-        "inputOwner": {
-          "token": "claim-fixture-token",
-          "writer": "viewer-fixture",
-          "kind": "user",
-          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
-        },
         "exit": null,
         "reap": {
           "authority": "direct-parent",
@@ -3475,44 +3165,6 @@
         "state": "active",
         "expiresAt": "2026-07-16T12:00:15.000Z",
         "openTerminalRevision": "7"
-      }
-    },
-    {
-      "name": "INPUT_ORPHAN_DISCARD rejects missing locator",
-      "schema": "orphanDiscardPayload",
-      "value": {
-        "schemaVersion": 1
-      }
-    },
-    {
-      "name": "INPUT_ORPHAN_DISCARD rejects an untyped resolution mode",
-      "schema": "orphanDiscardPayload",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "mode": "live"
-      }
-    },
-    {
-      "name": "ORPHAN_DISCARDED rejects a missing typed state",
-      "schema": "orphanDiscardedPayload",
-      "value": {
-        "schemaVersion": 1,
-        "priorOwnerViewerId": null,
-        "priorClaimId": null,
-        "orphanAgeMilliseconds": null,
-        "diagnostic": "missing state"
       }
     },
     {
@@ -3942,12 +3594,6 @@
             "opaqueBytes": "dGVybWluYWwtc3RhdGU="
           }
         },
-        "inputOwner": {
-          "token": "claim-fixture-token",
-          "writer": "viewer-fixture",
-          "kind": "user",
-          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
-        },
         "exit": null,
         "descendants": [
           {
@@ -4356,29 +4002,6 @@
         },
         "survivors": [],
         "diagnostics": []
-      }
-    },
-    {
-      "name": "CLAIM_ACQUIRE rejects absent session fencing",
-      "schema": "claimAcquirePayload",
-      "value": {
-        "schemaVersion": 1,
-        "writer": "viewer",
-        "kind": "user",
-        "leaseMilliseconds": 1,
-        "idempotencyKey": "claim"
-      }
-    },
-    {
-      "name": "CLAIM_RESULT rejects invented ownership",
-      "schema": "claimResultPayload",
-      "value": {
-        "schemaVersion": 1,
-        "result": {
-          "state": "denied",
-          "owner": null,
-          "diagnostic": ""
-        }
       }
     },
     {

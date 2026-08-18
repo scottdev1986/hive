@@ -216,13 +216,8 @@ public enum TerminalSurfaceState: Equatable, Sendable {
     }
 }
 
-public enum InputClaimPresentation: Equatable, Sendable {
-    case free
-}
-
 public enum InputSubmissionState: Equatable, Sendable {
     case idle
-    case waitingForClaim
     case pending(transactionId: String)
     case applied(transactionId: String, stage: String)
 }
