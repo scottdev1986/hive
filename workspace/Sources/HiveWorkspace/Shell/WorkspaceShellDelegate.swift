@@ -1,4 +1,4 @@
-// WorkspaceShellDelegate.swift The application delegate for the new shell launch. It resolves the shell state — the daemon for a live launch, a QA build's injected corpus loader otherwise — builds the one window controller and the menu bar, and — under HIVE_SHELL_PROOF=1 — prints the measured launch line the workspace-shell prototype greps instead of showing a window. Detach is the ordinary close: quitting this app never stops the daemon.
+// WorkspaceShellDelegate.swift The application delegate for the new shell launch. It resolves the shell state — the daemon for a live launch, a QA build's injected corpus loader otherwise — builds the one window controller and the menu bar, and prints the measured launch line for a gated fixture proof instead of showing a window. Detach is the ordinary close: quitting this app never stops the daemon.
 
 import AppKit
 import WorkspaceCore
@@ -11,6 +11,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     private var controller: WorkspaceShellWindowController?
     private var liveRunFeed: FeedClient?
     private var liveRunControlGateway: LiveRunControlGateway?
+    private var qaControl: QAControl?
     private let liveRunWorkspaceSessionID = "workspace-shell-\(UUID().uuidString)"
     private var liveRunInventoryRevision = 0
 
@@ -52,7 +53,8 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                     ?? "development launch — no instance")
             let controller = WorkspaceShellWindowController(context: context, state: state)
             let workbench = LiveRunWorkbenchView(config: config)
-            controller.installLiveRunWorkbench(workbench)
+             controller.installLiveRunWorkbench(workbench)
+             qaControl = QAControl(home: config.instanceHome, surface: controller)
             if launch.isLive {
                 do {
                     liveRunControlGateway = LiveRunControlGateway(

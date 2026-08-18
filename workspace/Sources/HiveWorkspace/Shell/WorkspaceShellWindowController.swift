@@ -80,6 +80,7 @@ final class WorkspaceShellWindowController: NSWindowController {
     var navButtonCount: Int { sidebar.navButtonsInOrder.count }
 
     var currentState: ShellState { state }
+    var qaCurrentRoute: String { state.activeRoute.rawValue }
     var selectedLiveRunLocator: AgentSessionLocator? { liveRunWorkbench?.selectedLocator }
     var installedLiveRunTerminalCount: Int {
         liveRunWorkbench?.installedTerminalCount ?? 0

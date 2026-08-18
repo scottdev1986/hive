@@ -86,4 +86,16 @@ final class WorkspaceShellLaunchTests: XCTestCase {
         XCTAssertTrue(launch.isLive)
         XCTAssertTrue(launch.fullscreen)
     }
+
+    func testHeadlessProofSelectorRequiresTheQAGate() {
+        setenv("HIVE_SHELL_PROOF", "1", 1)
+        unsetenv("HIVE_QA")
+        XCTAssertFalse(WorkspaceShellLaunch(arguments: [], fixtureState: fixtureLoader()).proofMode)
+        setenv("HIVE_QA", "1", 1)
+        defer {
+            unsetenv("HIVE_QA")
+            unsetenv("HIVE_SHELL_PROOF")
+        }
+        XCTAssertTrue(WorkspaceShellLaunch(arguments: [], fixtureState: fixtureLoader()).proofMode)
+    }
 }

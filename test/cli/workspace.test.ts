@@ -50,6 +50,7 @@ describe("hive opens the installed release Workspace", () => {
         ["--orchestrator", "codex"],
         "/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
         "/var/folders/user/T/",
+        "1",
       ),
     ).toEqual([
       "-n",
@@ -59,6 +60,8 @@ describe("hive opens the installed release Workspace", () => {
       "PATH=/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
       "--env",
       "TMPDIR=/var/folders/user/T/",
+      "--env",
+      "HIVE_QA=1",
       "--args",
       "--orchestrator",
       "codex",

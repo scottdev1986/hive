@@ -1,0 +1,161 @@
+import AppKit
+
+struct QAControlResponse: Codable {
+    struct Control: Codable {
+        let identifier: String
+        let role: String
+        let enabled: Bool
+        let actionable: Bool
+        let functionallyPresent: Bool
+    }
+
+    let requestId: String
+    let status: String
+    let root: String
+    let route: String
+    let controls: [Control]
+    let count: Int
+    let terminator: String
+    let reason: String?
+}
+
+@MainActor
+final class QAControl {
+    private struct Request: Decodable {
+        let requestId: String
+        let verb: String
+        let identifier: String?
+        let input: String?
+    }
+
+    private let directory: URL
+    private weak var surface: WorkspaceShellWindowController?
+    private var timer: Timer?
+
+    init?(home: String?, surface: WorkspaceShellWindowController) {
+        guard ProcessInfo.processInfo.environment["HIVE_QA"] == "1", let home else {
+            return nil
+        }
+        directory = URL(fileURLWithPath: home).appendingPathComponent("qa-control")
+        self.surface = surface
+        try? FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) {
+            [weak self] _ in Task { @MainActor in self?.serve() }
+        }
+    }
+
+    deinit { timer?.invalidate() }
+
+    private func serve() {
+        let requestURL = directory.appendingPathComponent("request.json")
+        guard let data = try? Data(contentsOf: requestURL),
+              let request = try? JSONDecoder().decode(Request.self, from: data) else { return }
+        try? FileManager.default.removeItem(at: requestURL)
+        guard let surface else { return }
+        guard let window = surface.window else { return }
+        write(Self.process(
+            verb: request.verb,
+            identifier: request.identifier,
+            input: request.input,
+            window: window,
+            route: surface.qaCurrentRoute,
+            requestId: request.requestId))
+    }
+
+    private func write(_ response: QAControlResponse) {
+        guard let data = try? JSONEncoder().encode(response) else { return }
+        let target = directory.appendingPathComponent("response.\(response.requestId).json")
+        let temporary = directory.appendingPathComponent("response.\(response.requestId).tmp")
+        do {
+            try data.write(to: temporary, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: temporary.path)
+            try FileManager.default.moveItem(at: temporary, to: target)
+        } catch {}
+    }
+
+    private func enumerate(window: NSWindow?) -> [QAControlResponse.Control] {
+        liveControls(window: window).compactMap { control -> QAControlResponse.Control? in
+            guard let identifier = control.identifier?.rawValue else { return nil }
+            let present = functionallyPresent(control, in: window)
+            return QAControlResponse.Control(
+                identifier: identifier,
+                role: control.accessibilityRole()?.rawValue ?? "control",
+                enabled: control.isEnabled,
+                actionable: control.action != nil,
+                functionallyPresent: present)
+        }
+    }
+
+    private func liveControls(window: NSWindow?) -> [NSControl] {
+        guard let root = window?.contentView else { return [] }
+        root.layoutSubtreeIfNeeded()
+        var controls: [NSControl] = []
+        func visit(_ view: NSView) {
+            if let control = view as? NSControl { controls.append(control) }
+            view.subviews.forEach(visit)
+        }
+        visit(root)
+        return controls
+    }
+
+    private func functionallyPresent(_ control: NSControl, in window: NSWindow?) -> Bool {
+        guard control.window === window else { return false }
+        var view: NSView? = control
+        var visible = control.bounds
+        while let current = view, let superview = current.superview {
+            if current.isHidden { return false }
+            visible = current.convert(visible, to: superview)
+            if current is NSClipView || superview is NSClipView {
+                visible = visible.intersection(superview.bounds)
+            }
+            view = current.superview
+        }
+        return !visible.isEmpty
+    }
+
+    static func process(
+        verb: String,
+        identifier: String?,
+        input: String?,
+        window: NSWindow,
+        route: String,
+        requestId: String
+    ) -> QAControlResponse {
+        let harness = QAControl(testingWindow: window)
+        let controls = harness.enumerate(window: window)
+        var status = "ok"
+        var reason: String?
+        if verb == "invoke" {
+            guard let identifier,
+                  let control = harness.liveControls(window: window).first(where: {
+                      $0.identifier?.rawValue == identifier
+                  }) else {
+                return QAControlResponse(
+                    requestId: requestId, status: "fail", root: "hive-workspace-qa-root",
+                    route: route, controls: controls, count: controls.count,
+                    terminator: "qa-control-end:\(requestId):\(controls.count)",
+                    reason: "control not found")
+            }
+            if let input, let field = control as? NSTextField { field.stringValue = input }
+            if !control.isEnabled || control.action == nil
+                || !NSApp.sendAction(control.action!, to: control.target, from: control) {
+                status = "fail"
+                reason = "control is not actionable"
+            }
+        }
+        let after = harness.enumerate(window: window)
+        return QAControlResponse(
+            requestId: requestId, status: status, root: "hive-workspace-qa-root",
+            route: route, controls: after, count: after.count,
+            terminator: "qa-control-end:\(requestId):\(after.count)", reason: reason)
+    }
+
+    private init(testingWindow: NSWindow) {
+        directory = URL(fileURLWithPath: NSTemporaryDirectory())
+        surface = nil
+    }
+}

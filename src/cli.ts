@@ -62,6 +62,7 @@ import {
   withTrailingUpdateNotice,
 } from "./cli/update-notice";
 import { runWorkspace } from "./cli/workspace";
+import { runQAControl } from "./cli/qa-control";
 import { runWorkspaceFeedCli } from "./cli/workspace-feed";
 import {
   verifyDaemonInstance,
@@ -996,6 +997,26 @@ export function createProgram(): Command {
     );
 
   // The Workspace app's status wire: NDJSON agent snapshots on stdout plus the daemon-side viewer lease. Hidden because only the app spawns it.
+  program
+    .command("qa-control", { hidden: true })
+    .argument("<verb>", "enumerate or invoke")
+    .argument("[identifier]", "live control identifier")
+    .option("--input <value>", "native control input")
+    .action(
+      async (
+        verb: string,
+        identifier: string | undefined,
+        options: { input?: string },
+      ) => {
+        if (verb !== "enumerate" && verb !== "invoke") {
+          process.stderr.write("NO MEASUREMENT: unknown qa-control verb\n");
+          process.exitCode = 2;
+          return;
+        }
+        process.exitCode = await runQAControl(verb, identifier, options.input);
+      },
+    );
+
   program
     .command("workspace-feed", { hidden: true })
     .requiredOption("--port <number>", "daemon port")

@@ -37,7 +37,10 @@ struct WorkspaceShellLaunch {
         let environment = ProcessInfo.processInfo.environment
         scenario = environment["HIVE_SHELL_SCENARIO"]
             .flatMap(ProjectionAvailability.init(rawValue:)) ?? .current
-        proofMode = environment["HIVE_SHELL_PROOF"] == "1"
+        // HIVE_QA permits QA behavior; this selector only chooses the existing
+        // headless fixture proof beneath that gate. It cannot expose QA alone.
+        proofMode = environment["HIVE_QA"] == "1"
+            && environment["HIVE_SHELL_PROOF"] == "1"
         proofMutation = environment["HIVE_SHELL_PROOF_MUTATE"]
     }
 }

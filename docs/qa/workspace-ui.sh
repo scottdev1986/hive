@@ -111,12 +111,12 @@ proof_run() {
   local code=0
   if [ -n "$profile" ]; then
     env -u HIVE_SHELL_PROOF_MUTATE HIVE_HOME="$proofs/$label-home" \
-      HIVE_SHELL_PROOF=1 HIVE_SHELL_SCENARIO="$scenario" \
+      HIVE_QA=1 HIVE_SHELL_PROOF=1 HIVE_SHELL_SCENARIO="$scenario" \
       /usr/bin/sandbox-exec -f "$profile" "$BINARY" "$@" \
       >"$proofs/$label.line" 2>"$proofs/$label.err" || code=$?
   else
     env -u HIVE_SHELL_PROOF_MUTATE HIVE_HOME="$proofs/$label-home" \
-      HIVE_SHELL_PROOF=1 HIVE_SHELL_SCENARIO="$scenario" \
+      HIVE_QA=1 HIVE_SHELL_PROOF=1 HIVE_SHELL_SCENARIO="$scenario" \
       "$BINARY" "$@" \
       >"$proofs/$label.line" 2>"$proofs/$label.err" || code=$?
   fi
