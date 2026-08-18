@@ -287,13 +287,14 @@ final class TaskRouterScreenView: NSView {
             stack.addArrangedSubview(empty)
         } else {
             for row in cellRows {
-                stack.addArrangedSubview(selected ? editorChip(row) : memberChip(row))
+                stack.addArrangedSubview(
+                    selected ? editorChip(row, category: item) : memberChip(row, category: item))
             }
         }
         return stack
     }
 
-    private func memberChip(_ row: TaskRouterRow) -> NSView {
+    private func memberChip(_ row: TaskRouterRow, category: TaskCategory) -> NSView {
         let model = NSTextField(labelWithString: row.model)
         model.font = Theme.Font.headline
         model.textColor = Theme.primaryText
@@ -308,7 +309,7 @@ final class TaskRouterScreenView: NSView {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 1
-        if let bar = shareBar(for: row) {
+        if let bar = shareBar(for: row, category: category) {
             stack.addArrangedSubview(bar)
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
@@ -318,11 +319,11 @@ final class TaskRouterScreenView: NSView {
         return stack
     }
 
-    private func editorChip(_ row: TaskRouterRow) -> NSView {
+    private func editorChip(_ row: TaskRouterRow, category: TaskCategory) -> NSView {
         guard let index = rows.firstIndex(where: {
             $0.provider == row.provider && $0.model == row.model
         }) else {
-            return memberChip(row)
+            return memberChip(row, category: category)
         }
         let member = membershipCheckbox(row, index: index)
         let model = NSTextField(labelWithString: row.model)
@@ -340,11 +341,11 @@ final class TaskRouterScreenView: NSView {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Space.xs
-        if let bar = shareBar(for: row) {
+        if let bar = shareBar(for: row, category: category) {
             stack.addArrangedSubview(bar)
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
-        if let fact = inspectionFact(for: row) {
+        if row.isMember, let fact = inspectionFact(for: row, category: category) {
             let value = NSTextField(wrappingLabelWithString: fact)
             value.font = Theme.Font.monoCaption
             value.textColor = Theme.primaryText
@@ -380,8 +381,9 @@ final class TaskRouterScreenView: NSView {
         return effort.asWireEffort.cliArgument
     }
 
-    private func shareBar(for row: TaskRouterRow) -> NSView? {
-        guard let fact = inspectionFact(for: row),
+    private func shareBar(for row: TaskRouterRow, category: TaskCategory) -> NSView? {
+        guard row.isMember,
+              let fact = inspectionFact(for: row, category: category),
               let percent = configuredPercent(in: fact) else { return nil }
         let bar = MeterBarView()
         bar.state = .fill(fraction: Double(percent) / 100, color: Theme.accent)
@@ -621,7 +623,15 @@ final class TaskRouterScreenView: NSView {
         return effort
     }
 
-    private func inspectionFact(for row: TaskRouterRow) -> String? {
+    private func inspectionFact(
+        for row: TaskRouterRow, category: TaskCategory
+    ) -> String? {
+        // Fixture inspection is one category. A candidate fact from another
+        // route must not paint this cell — that would be someone else's share.
+        let scoped = screen.facts.contains {
+            $0.label == "Category" && $0.value == category.rawValue
+        }
+        guard scoped else { return nil }
         let prefix = "\(row.provider)/\(row.model)"
         return screen.facts.first {
             $0.label == "Candidate" && $0.value.hasPrefix(prefix)
