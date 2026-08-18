@@ -1286,7 +1286,12 @@ private final class LiveRunSessionButton: NSButton {
         name.font = Theme.Font.headline
         name.textColor = Theme.primaryText
         name.lineBreakMode = .byTruncatingTail
-        name.compressHorizontally(priority: 300, toolTip: titleText)
+        // Ten sibling crew rows differ only in the tail of their names, so the
+        // rail's fixed width has to be spent on identity first. These sit above
+        // the capsule label's own 460: the status pill carries the same value on
+        // every row, and a row that truncates away what distinguishes it from
+        // its siblings is not a row anyone can choose from.
+        name.compressHorizontally(priority: 620, toolTip: titleText)
         let roleText = role ?? Self.roleLine(hierarchyRow?.node)
         let sessionDetail: String
         if let session {
@@ -1300,7 +1305,7 @@ private final class LiveRunSessionButton: NSButton {
         detail.font = Theme.Font.caption
         detail.textColor = Theme.tertiaryText
         detail.lineBreakMode = .byTruncatingTail
-        detail.compressHorizontally(priority: 250, toolTip: detail.stringValue)
+        detail.compressHorizontally(priority: 560, toolTip: detail.stringValue)
         let copy = NSStackView(views: [name, detail])
         copy.orientation = .vertical
         copy.alignment = .leading
@@ -1360,6 +1365,7 @@ private final class LiveRunSessionButton: NSButton {
         ])
         copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
         chip.setContentHuggingPriority(.required, for: .horizontal)
+        chip.setContentCompressionResistancePriority(.init(200), for: .horizontal)
 
         if selected {
             let bar = NSView()
