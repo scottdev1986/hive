@@ -51,6 +51,8 @@ export type QuotaProbeResult =
       status: "ok";
       pools: DiscoveredPoolReading[];
       catalog: ModelCatalogEntry[];
+      /** Raw vendor payload so billing flags can be parsed from the same read. */
+      wire?: unknown;
     }
   | { status: "unavailable"; reason: string };
 
@@ -95,15 +97,12 @@ export function orderRateLimitWindows(snapshot: CodexRateLimitSnapshot): {
     }))
     .sort((left, right) => left.windowMinutes - right.windowMinutes);
   if (windows.length === 0) return { fiveHour: null, weekly: null };
-  const first = windows[0];
-  if (first === undefined) return { fiveHour: null, weekly: null };
-  if (windows.length === 1) {
-    const only = first;
-    return only.windowMinutes <= 24 * 60
-      ? { fiveHour: only, weekly: null }
-      : { fiveHour: null, weekly: only };
-  }
-  return { fiveHour: first, weekly: windows.at(-1) ?? first };
+  const fiveHour =
+    windows.find((window) => window.windowMinutes <= 24 * 60) ?? null;
+  const weekly =
+    [...windows].reverse().find((window) => window.windowMinutes > 24 * 60) ??
+    null;
+  return { fiveHour, weekly };
 }
 
 /** Translate one `account/rateLimits/read` response into discovered pools. The top-level `rateLimits` snapshot is the account's routable bucket: every model spends from it, so it carries `["*"]`. Entries in `rateLimitsByLimitId` describe metered sub-limits — a specific model's own cap, like `codex_bengalfox` for GPT-5.3-Codex-Spark. The `limitId` itself is an opaque codename that maps to no model, but `limitName` is the model's display name, and the app-server's `model/list` publishes those display names against concrete ids. The binding is therefore resolved against the catalog rather than from this payload alone, so it is left empty here. */
@@ -212,7 +211,12 @@ export class CodexQuotaProbe implements QuotaProbe {
             "codex app-server returned no usable rate-limit windows; the account may not be signed in",
         };
       }
-      return { status: "ok", pools, catalog: payload.catalog };
+      return {
+        status: "ok",
+        pools,
+        catalog: payload.catalog,
+        wire: payload.limits,
+      };
     } catch (error) {
       return {
         status: "unavailable",
@@ -262,12 +266,9 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
       });
       send({ jsonrpc: "2.0", id: 3, method: "model/list", params: {} });
       const result = await responses.await("2");
-      if (
-        typeof result !== "object" ||
-        result === null ||
-        !("rateLimits" in result)
-      ) {
-        throw new Error("codex app-server returned no rateLimits field");
+      const limits = CodexRateLimitsResponseSchema.safeParse(result);
+      if (!limits.success) {
+        throw new Error("codex app-server returned no usable rateLimits field");
       }
       // A catalog we cannot read costs us the sub-pool bindings, not the limits: the pools still report, they just stay unbound and say so.
       const catalog = await responses
@@ -275,7 +276,7 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
         .then(catalogFromCodexModelList)
         .catch(() => [] as ModelCatalogEntry[]);
       return {
-        limits: result as unknown as CodexRateLimitsResponse,
+        limits: limits.data,
         catalog,
       };
     } finally {
@@ -328,7 +329,12 @@ function responseCollector(
           continue;
         }
         if (typeof parsed !== "object" || parsed === null) continue;
-        const correlated = extract(parsed as Record<string, unknown>);
+        let correlated: Correlated;
+        try {
+          correlated = extract(parsed as Record<string, unknown>);
+        } catch {
+          continue;
+        }
         if (correlated === null) continue;
         const pending = waiting.get(correlated.id);
         waiting.delete(correlated.id);
@@ -428,13 +434,15 @@ const CodexRateLimitWindowSchema = z.object({
 });
 export type CodexRateLimitWindow = z.infer<typeof CodexRateLimitWindowSchema>;
 
-const CodexRateLimitSnapshotSchema = z.object({
-  limitId: z.string().nullable().optional(),
-  limitName: z.string().nullable().optional(),
-  planType: z.string().nullable().optional(),
-  primary: CodexRateLimitWindowSchema.nullable(),
-  secondary: CodexRateLimitWindowSchema.nullable(),
-});
+const CodexRateLimitSnapshotSchema = z
+  .object({
+    limitId: z.string().nullable().optional(),
+    limitName: z.string().nullable().optional(),
+    planType: z.string().nullable().optional(),
+    primary: CodexRateLimitWindowSchema.nullable(),
+    secondary: CodexRateLimitWindowSchema.nullable(),
+  })
+  .passthrough();
 export type CodexRateLimitSnapshot = z.infer<
   typeof CodexRateLimitSnapshotSchema
 >;
@@ -492,7 +500,7 @@ const ClaudeUsageResponseSchema = z.object({
         .nullable()
         .optional(),
     })
-
+    .passthrough()
     .nullable(),
 });
 
@@ -653,7 +661,12 @@ export class ClaudeQuotaProbe implements QuotaProbe {
           reason: "claude reported no usable rate-limit windows",
         };
       }
-      return { status: "ok", pools, catalog: payload.catalog };
+      return {
+        status: "ok",
+        pools,
+        catalog: payload.catalog,
+        wire: payload.usage,
+      };
     } catch (error) {
       return {
         status: "unavailable",
@@ -709,10 +722,11 @@ export class ClaudeStdioProbeTransport implements ClaudeProbeTransport {
         request: { subtype: "get_usage" },
       });
       const result = await responses.await("hive-usage");
-      if (typeof result !== "object" || result === null) {
-        throw new Error("claude returned no get_usage payload");
+      const usage = ClaudeUsageResponseSchema.safeParse(result);
+      if (!usage.success) {
+        throw new Error("claude returned no usable get_usage payload");
       }
-      return { usage: result as unknown as ClaudeUsageResponse, catalog };
+      return { usage: usage.data, catalog };
     } finally {
       clearTimeout(timer);
       child.kill();
@@ -857,7 +871,9 @@ export function readingsFromGrokBilling(
       fiveHour: null,
       weekly,
       fiveHourMeterState: "not-metered",
-      // Missing percent with a recognized surface is unknown, never not-metered: the vendor does meter the weekly pool; we just did not get the number. Keyed on the gauge, not on the window: a boundary-only window is still an unread meter.
+      // Omitted percent is 0 (xAI encodes a fresh window that way). A present
+      // but unreadable percent stays unknown. Never not-metered: the vendor
+      // meters this pool.
       weeklyMeterState: weekly?.usedPct == null ? "unknown" : "metered",
       observedAt,
       source: "provider",
@@ -923,7 +939,12 @@ export class GrokQuotaProbe implements QuotaProbe {
         };
       }
       // A pool whose weekly number is missing is still a successful probe of the surface (five-hour not-metered, weekly unknown). Callers must not treat that as "provider down".
-      return { status: "ok", pools, catalog: payload.catalog };
+      return {
+        status: "ok",
+        pools,
+        catalog: payload.catalog,
+        wire: payload.billing,
+      };
     } catch (error) {
       return {
         status: "unavailable",
@@ -972,11 +993,14 @@ export class GrokStdioProbeTransport implements GrokProbeTransport {
         params: {},
       });
       const result = await responses.await("2");
-      if (typeof result !== "object" || result === null) {
-        throw new Error("grok `_x.ai/billing` returned no result payload");
+      const billing = GrokBillingResponseSchema.safeParse(result);
+      if (!billing.success) {
+        throw new Error(
+          "grok `_x.ai/billing` returned no usable result payload",
+        );
       }
       return {
-        billing: result as GrokBillingResponse,
+        billing: billing.data,
         catalog,
       };
     } finally {
@@ -988,12 +1012,6 @@ export class GrokStdioProbeTransport implements GrokProbeTransport {
 }
 
 const KIMI_WEEKLY_MINUTES = 7 * 24 * 60;
-
-const kimiIsoOrNull = (value: string | undefined): string | null => {
-  if (value === undefined) return null;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
-};
 
 /** Turn one /usages response into a discovered pool. The payload is account-wide — one weekly quota and a set of rate windows with no model names anywhere — so there is exactly one pool and it carries `["*"]`. The 300-minute rate window is the five-hour one; the weekly's 7-day length is the documented refresh, not a payload field. Both windows are things this surface meters, so a missing or unparseable number is `unknown`, never `not-metered`. The membership level is the vendor's own plan name, used as the label the way Claude's `subscription_type` and Grok's tier are. */
 export function readingsFromKimiUsages(
@@ -1014,7 +1032,7 @@ export function readingsFromKimiUsages(
       : {
           usedPct: weeklyPercent,
           windowMinutes: KIMI_WEEKLY_MINUTES,
-          resetsAt: kimiIsoOrNull(weeklyDetail.resetTime),
+          resetsAt: isoOrNull(weeklyDetail.resetTime),
         };
 
   const fiveHourEntry = (parsed.data.limits ?? [])
@@ -1040,7 +1058,7 @@ export function readingsFromKimiUsages(
       : {
           usedPct: fiveHourPercent,
           windowMinutes: fiveHourEntry.minutes,
-          resetsAt: kimiIsoOrNull(fiveHourEntry.detail.resetTime),
+          resetsAt: isoOrNull(fiveHourEntry.detail.resetTime),
         };
 
   if (fiveHour === null && weekly === null) return [];
@@ -1096,6 +1114,6 @@ export class KimiQuotaProbe implements QuotaProbe {
         reason: "kimi /usages returned no usable usage reading",
       };
     }
-    return { status: "ok", pools, catalog: [] };
+    return { status: "ok", pools, catalog: [], wire: payload.response };
   }
 }

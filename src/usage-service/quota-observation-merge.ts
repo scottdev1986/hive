@@ -1,4 +1,5 @@
 import type { QuotaObservation } from "../schemas/quota";
+import { instantMs } from "./quota-windows";
 
 /**
  * Folding a new quota reading into the stored one, window by window.
@@ -10,8 +11,11 @@ import type { QuotaObservation } from "../schemas/quota";
  * number is what a spawn gets admitted against.
  */
 
-const newer = (left: string | null, right: string | null): boolean =>
-  left !== null && (right === null || left >= right);
+const newer = (left: string | null, right: string | null): boolean => {
+  const incoming = instantMs(left);
+  const stored = instantMs(right);
+  return incoming !== null && (stored === null || incoming >= stored);
+};
 
 /** A window's boundary is a fact of its own, and does not travel with its gauge. A vendor can state when the period turns over while stating nothing about how much of it is spent (grok's `_x.ai/billing` since 0.2.112); such a reading writes no `*ObservedAt`, so keying its reset to the gauge's recency would pick the prior window every time and the new boundary would never land — the stored reset would sit frozen at a time that has already passed, which reads downstream as "reset unknown" forever. A boundary only ever moves forward: a period that has turned over ends later than the one it replaced. So the later of the two wins, which also makes an out-of-order arrival harmless — an older reading cannot drag a fresh boundary backwards. An incoming reading with no boundary at all asserts nothing and keeps the stored one. */
 const laterBoundary = (
@@ -20,7 +24,11 @@ const laterBoundary = (
 ): string | null => {
   if (incoming === null) return stored;
   if (stored === null) return incoming;
-  return incoming > stored ? incoming : stored;
+  const incomingMs = instantMs(incoming);
+  const storedMs = instantMs(stored);
+  if (incomingMs === null) return stored;
+  if (storedMs === null) return incoming;
+  return incomingMs > storedMs ? incoming : stored;
 };
 
 export function mergeObservationWindows(

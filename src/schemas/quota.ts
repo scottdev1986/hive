@@ -113,8 +113,8 @@ export const QuotaObservationSchema = z.strictObject({
   provider: CapabilityProviderSchema,
   account: z.string().min(1).default("default"),
   pool: z.string().min(1),
-  fiveHourUsed: z.number().nonnegative(),
-  weeklyUsed: z.number().nonnegative(),
+  fiveHourUsed: z.number().nonnegative().nullable(),
+  weeklyUsed: z.number().nonnegative().nullable(),
   observedAt: formatlessString(z.iso.datetime({ offset: true })),
   fiveHourResetAt: formatlessString(z.iso.datetime({ offset: true }))
     .nullable()

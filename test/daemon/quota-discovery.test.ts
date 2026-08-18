@@ -4,12 +4,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { type CapabilityRecord, known } from "../../src/schemas/capability";
 import {
   QuotaConfigSchema,
   type QuotaLimit,
   type QuotaPoolStatus,
 } from "../../src/schemas/quota";
-import { QuotaService } from "../../src/usage-service/usage-quota";
 import { QuotaLedger } from "../../src/usage-service/quota-ledger";
 import {
   drainedWindowFor,
@@ -34,6 +34,7 @@ import {
   readingsFromGrokBilling,
   readingsFromKimiUsages,
 } from "../../src/usage-service/quota-sources";
+import { QuotaService } from "../../src/usage-service/usage-quota";
 import { required } from "../required";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
@@ -573,6 +574,24 @@ describe("window ordering", () => {
     expect(windows.weekly?.usedPct).toBe(20);
   });
 
+  test("does not label two weekly-length windows as five-hour plus weekly", () => {
+    const windows = orderRateLimitWindows({
+      primary: {
+        usedPercent: 10,
+        windowDurationMins: 10_080,
+        resetsAt: null,
+      },
+      secondary: {
+        usedPercent: 20,
+        windowDurationMins: 20_160,
+        resetsAt: null,
+      },
+    });
+    expect(windows.fiveHour).toBeNull();
+    expect(windows.weekly?.usedPct).toBe(20);
+    expect(windows.weekly?.windowMinutes).toBe(20_160);
+  });
+
   test("treats an unrepresentable reset epoch as unknown", () => {
     const windows = orderRateLimitWindows({
       primary: {
@@ -701,18 +720,12 @@ describe("startup quota discovery", () => {
 });
 
 describe("notification-driven quota updates", () => {
-  // observeCodexRateLimits must not require a configured pool to land a
-  // reading: an installation with no quota.toml would then throw away every
-  // authoritative percentage Codex hands it.
   test("stores an app-server reading when no pool is configured", async () => {
     const { quota, db } = await service();
     try {
-      const reading = await quota.observeCodexRateLimits(
-        "gpt-5.3-codex",
-        codexResponse,
-        now.toISOString(),
+      quota.applyDiscoveredReadings(
+        readingsFromCodexResponse(codexResponse, "default", now.toISOString()),
       );
-      expect(reading).toEqual({ fiveHourUsed: 57, weeklyUsed: 40 });
 
       const stored = quota.ledger.getObservation({
         provider: "codex",
@@ -730,30 +743,30 @@ describe("notification-driven quota updates", () => {
   test("a later notification advances the reading", async () => {
     const { quota, db } = await service();
     try {
-      await quota.observeCodexRateLimits(
-        "gpt-5.3-codex",
-        codexResponse,
-        now.toISOString(),
+      quota.applyDiscoveredReadings(
+        readingsFromCodexResponse(codexResponse, "default", now.toISOString()),
       );
       const later = new Date(now.getTime() + 60_000).toISOString();
-      await quota.observeCodexRateLimits(
-        "gpt-5.3-codex",
-        {
-          rateLimits: {
-            limitId: "codex",
-            primary: {
-              usedPercent: 61,
-              windowDurationMins: 300,
-              resetsAt: null,
-            },
-            secondary: {
-              usedPercent: 41,
-              windowDurationMins: 10_080,
-              resetsAt: null,
+      quota.applyDiscoveredReadings(
+        readingsFromCodexResponse(
+          {
+            rateLimits: {
+              limitId: "codex",
+              primary: {
+                usedPercent: 61,
+                windowDurationMins: 300,
+                resetsAt: null,
+              },
+              secondary: {
+                usedPercent: 41,
+                windowDurationMins: 10_080,
+                resetsAt: null,
+              },
             },
           },
-        },
-        later,
+          "default",
+          later,
+        ),
       );
       const status = pool(quota, "codex", new Date(now.getTime() + 60_000));
       expect(status.fiveHour.used).toBe(61);
@@ -780,13 +793,9 @@ describe("notification-driven quota updates", () => {
     };
     const { quota, db } = await service([], [override]);
     try {
-      const reading = await quota.observeCodexRateLimits(
-        "gpt-5.3-codex",
-        codexResponse,
-        now.toISOString(),
+      quota.applyDiscoveredReadings(
+        readingsFromCodexResponse(codexResponse, "default", now.toISOString()),
       );
-      // 57% of 200 units, 40% of 1000 units.
-      expect(reading).toEqual({ fiveHourUsed: 114, weeklyUsed: 400 });
       const status = pool(quota, "codex");
       expect(status.origin).toBe("manual");
       expect(status.overridesDiscovered).toBe(true);
@@ -1749,6 +1758,115 @@ describe("pools gate the models they actually meter", () => {
       "weekly:Fable",
     ]);
     expect(active.every((row) => row.model === "claude-fable-5")).toBe(true);
+  });
+
+  test("a capability-catalog overwrite still meters every id form of the model", async () => {
+    const { quota } = await service([claudeProbe(exhaustedFable)]);
+    await quota.refreshFromProviders(now, { force: true });
+    const at = now.toISOString();
+    const surface = "claude.initialize" as const;
+    const record: CapabilityRecord = {
+      provider: "claude",
+      accountFingerprint: "account",
+      cliVersion: "2.1.207",
+      canonicalId: "claude-fable-5",
+      variant: "1m",
+      launchToken: "claude-fable-5",
+      displayName: "Fable",
+      aliases: ["fable"],
+      entitled: known(true, surface, at),
+      hidden: known(false, surface, at),
+      supportsEffort: known(false, surface, at),
+      supportedEffortLevels: known([], surface, at),
+      defaultEffort: known("medium", surface, at),
+      observedAt: at,
+    };
+    quota.replaceCapabilityCatalog("claude", [record]);
+    expect(
+      quota
+        .poolsGoverning({ tool: "claude", model: "claude-fable-5[1m]" }, now)
+        .map((item) => item.pool),
+    ).toEqual(["subscription", "weekly:Fable"]);
+  });
+
+  test("a fresh general pool does not skip a still-unmeasured model cap", async () => {
+    let calls = 0;
+    let includeFable = false;
+    const probe: QuotaProbe = {
+      provider: "claude",
+      read: async () => {
+        calls += 1;
+        return {
+          status: "ok" as const,
+          pools: readingsFromClaudeUsage(
+            includeFable
+              ? exhaustedFable
+              : {
+                  subscription_type: "max",
+                  rate_limits_available: true,
+                  rate_limits: {
+                    five_hour: { utilization: 10, resets_at: null },
+                    seven_day: { utilization: 20, resets_at: null },
+                  },
+                },
+            "default",
+            now.toISOString(),
+          ),
+          catalog: catalogFromClaudeModels(claudeModels),
+        };
+      },
+    };
+    const { quota, db } = await service([probe]);
+    try {
+      await quota.refreshFromProviders(now, { force: true });
+      expect(calls).toBe(1);
+      quota.ledger.upsertDiscoveredPool({
+        provider: "claude",
+        account: "default",
+        pool: "weekly:Fable",
+        models: [],
+        label: "Fable",
+        fiveHourWindowMinutes: null,
+        weeklyWindowMinutes: 10_080,
+        fiveHourMeterState: "not-metered",
+        weeklyMeterState: "metered",
+        discoveredAt: now.toISOString(),
+        source: "provider",
+      });
+      includeFable = true;
+      const reports = await quota.refreshFromProviders(now);
+      expect(reports[0]?.status).toBe("ok");
+      expect(calls).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a stale discovered pool still books against itself, not unconfigured", async () => {
+    let clock = now;
+    const { quota, db } = await service(
+      [claudeProbe(exhaustedFable)],
+      [],
+      () => clock,
+    );
+    try {
+      await quota.refreshFromProviders(now, { force: true });
+      clock = new Date(now.getTime() + 2 * 60 * 60_000);
+      const reservation = quota.reserveLaunch(
+        "sam",
+        required(
+          (
+            await authorizeForQuotaTest([
+              { tool: "claude", model: "claude-opus-4-8" },
+            ])
+          )[0],
+        ),
+        "simple_coding",
+      );
+      expect(reservation.pool).toBe("subscription");
+    } finally {
+      db.close();
+    }
   });
 });
 

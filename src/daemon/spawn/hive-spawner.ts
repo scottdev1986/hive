@@ -609,13 +609,15 @@ export class HiveSpawner implements Spawner {
     if (quota === undefined) return;
     const held = quota.ledger.getActiveReservationForAgent(name);
     if (held === null) return;
-    await quota.cancel(held.id).catch((error: unknown) => {
+    try {
+      quota.cancel(held.id);
+    } catch (error: unknown) {
       console.error(
         `Hive failed to settle the stranded quota reservation for ${name}: ${
           error instanceof Error ? error.message : "unknown error"
         }`,
       );
-    });
+    }
   }
 
   /** Take exclusive hold of a name for the duration of this spawn. The reservation row is the arbiter, not the liveness scan: two spawns that both read an empty agents table still cannot both claim `maya`, because only one `INSERT OR IGNORE` reports a change. Concurrent spawns therefore walk on to different names instead of colliding. A reservation is held for exactly as long as a spawn is in flight, so an in-flight name is as unavailable as a live one — reuse can never race a spawning or recovering agent. */

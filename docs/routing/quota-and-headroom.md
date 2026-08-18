@@ -183,7 +183,7 @@ The controlled spend-sensitivity experiment (2026-07-13, grok 0.2.99 — raw tim
   stayed at zero while the percent climbed. The money rails on the same payload are a
   **guard** (*would this spend money?*), never a **gauge** (*how full is the pool?*).
   Rendering their zeros as capacity reads as "full tank."
-- It is **coarse and lagging** — integer percent, multi-minute delay. No tight control loop.
+- It is **coarse and lagging** — integer percent, multi-minute delay. No tight control loop. An omitted `creditUsagePercent` is 0% (xAI encodes a freshly reset window that way); a present but unreadable value is unknown.
 - The probe is session-free and non-billable (control stable).
 - Grok is therefore **metered** weekly and **positively not metered** for five hours.
   A recognized weekly surface that *lacks* the percent is `READ_FAILED`, **not**

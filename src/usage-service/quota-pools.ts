@@ -1,4 +1,4 @@
-import type { CapabilityProvider } from "../schemas/capability";
+import { type CapabilityProvider, splitVariant } from "../schemas/capability";
 import type { QuotaConfig, QuotaLimit, QuotaScope } from "../schemas/quota";
 import type { QuotaLedger } from "./quota-ledger";
 import type { DiscoveredQuotaPool } from "./quota-ledger-records";
@@ -10,7 +10,7 @@ import type { ResolvedQuotaLimit } from "./quota-pool-status";
  * Discovery writes what the providers said and `quota.toml` writes what the
  * user said; this folds the two into the pool list everything else reads.
  * It answers "which meters govern this model", never "may it spawn" — the
- * numbers belong to quota-pool-status.ts and the decision to quota.ts.
+ * numbers belong to quota-pool-status.ts and the booking to usage-quota.ts.
  */
 
 /** Enough of a launch to find its meters. Structurally what `AuthorizedLaunch` already carries, so an authorized candidate is one of these without conversion — and pool resolution stays clear of the launch-authorization module. */
@@ -54,37 +54,48 @@ function poolBinder(
   };
 }
 
+function metersModel(
+  poolModels: readonly string[],
+  candidateModel: string,
+): boolean {
+  const wanted = splitVariant(candidateModel).base.toLowerCase();
+  return poolModels.some((id) => {
+    if (id === "*") return false;
+    return (
+      id === candidateModel || splitVariant(id).base.toLowerCase() === wanted
+    );
+  });
+}
+
 /** Every pool Hive knows about: the user's explicit overrides first, then everything the providers told us about themselves. A manual pool that shares a discovered pool's scope replaces it outright and says so, which is the only form `quota.toml` still takes — Hive never requires one to route. */
 export function resolvedLimits(
   ledger: QuotaLedger,
   config: QuotaConfig,
 ): ResolvedQuotaLimit[] {
-  const manualScopes = new Set(config.limits.map(scopeKey));
-  const manual = config.limits.map(
-    (limit): ResolvedQuotaLimit => ({
+  const discoveredPools = ledger.discoveredPools();
+  const discoveredByScope = new Map(
+    discoveredPools.map((pool) => [scopeKey(pool), pool]),
+  );
+  const manual = config.limits.map((limit): ResolvedQuotaLimit => {
+    const discovered = discoveredByScope.get(scopeKey(limit));
+    return {
       ...limit,
       origin: "manual",
       unit: "units",
       routable: limit.models.length > 0,
-      label: null,
-      overridesDiscovered: false,
+      label: discovered?.label ?? null,
+      overridesDiscovered: discovered !== undefined,
       fiveHourWindowMinutes: 5 * 60,
       weeklyWindowMinutes: 7 * 24 * 60,
       fiveHourMeterState: "metered",
       weeklyMeterState: "metered",
-    }),
-  );
+    };
+  });
   const discovered: ResolvedQuotaLimit[] = [];
   const bind = poolBinder(ledger);
-  for (const pool of ledger.discoveredPools()) {
+  const manualScopes = new Set(config.limits.map(scopeKey));
+  for (const pool of discoveredPools) {
     if (manualScopes.has(scopeKey(pool))) {
-      const override = manual.find(
-        (limit) => scopeKey(limit) === scopeKey(pool),
-      );
-      if (override !== undefined) {
-        override.overridesDiscovered = true;
-        override.label = pool.label;
-      }
       continue;
     }
     const models = bind(pool);
@@ -128,18 +139,9 @@ export function limitsFor(
   const general = routable.filter((limit) => limit.models.includes("*"));
   const specific = routable.filter(
     (limit) =>
-      !limit.models.includes("*") && limit.models.includes(candidate.model),
+      !limit.models.includes("*") && metersModel(limit.models, candidate.model),
   );
   return [...general, ...specific];
-}
-
-export function limitFor(
-  ledger: QuotaLedger,
-  config: QuotaConfig,
-  candidate: QuotaCandidateIdentity,
-): ResolvedQuotaLimit | null {
-  const limits = limitsFor(ledger, config, candidate);
-  return limits.at(-1) ?? null;
 }
 
 export function generalLimit(

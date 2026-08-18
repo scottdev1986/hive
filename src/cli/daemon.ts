@@ -346,7 +346,6 @@ export async function runDaemon(): Promise<void> {
   const tokenUsage = new TokenUsageStore(db);
   const modelControlRefreshIntervalMs = 5 * 60_000;
   const capabilityRefreshAttempts = new Map<CapabilityProvider, number>();
-  const billingRefreshAttempts = new Map<CapabilityProvider, number>();
   const readStoredCapabilities = async (provider: CapabilityProvider) =>
     capabilityAuthority.current(provider)?.catalog ?? {
       status: "unavailable" as const,
@@ -354,20 +353,12 @@ export async function runDaemon(): Promise<void> {
     };
   const refreshModelControl = async (): Promise<void> => {
     const now = Date.now();
-    await Promise.all([
-      forEachProvider(async (provider) => {
-        const attemptedAt = capabilityRefreshAttempts.get(provider) ?? 0;
-        if (now - attemptedAt < modelControlRefreshIntervalMs) return;
-        capabilityRefreshAttempts.set(provider, now);
-        await capabilityAuthority.snapshot(provider).catch(() => undefined);
-      }),
-      forEachProvider(async (provider) => {
-        const attemptedAt = billingRefreshAttempts.get(provider) ?? 0;
-        if (now - attemptedAt < modelControlRefreshIntervalMs) return;
-        billingRefreshAttempts.set(provider, now);
-        await readBillingWithMemory(provider).catch(() => null);
-      }),
-    ]);
+    await forEachProvider(async (provider) => {
+      const attemptedAt = capabilityRefreshAttempts.get(provider) ?? 0;
+      if (now - attemptedAt < modelControlRefreshIntervalMs) return;
+      capabilityRefreshAttempts.set(provider, now);
+      await capabilityAuthority.snapshot(provider).catch(() => undefined);
+    });
   };
   const spawner = new HiveSpawner({
     ...terminalComposition.spawnerDependencies,

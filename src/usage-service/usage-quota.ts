@@ -9,7 +9,6 @@ import {
 } from "../schemas/capability";
 import {
   DEFAULT_PERCENT_ESTIMATES,
-  type QuotaConfidence,
   type QuotaConfig,
   type QuotaObservation,
   type QuotaObservationInput,
@@ -37,22 +36,23 @@ import {
 } from "./quota-pool-status";
 import {
   generalLimit,
-  limitFor,
   limitsFor,
   type QuotaCandidateIdentity,
   resolvedLimits,
   sameScope,
   scopeKey,
 } from "./quota-pools";
-import {
-  type CodexRateLimitsResponse,
-  type DiscoveredPoolReading,
-  orderRateLimitWindows,
-  type QuotaProbe,
-  type QuotaProbeResult,
-  readingsFromCodexResponse,
+import type {
+  DiscoveredPoolReading,
+  QuotaProbe,
+  QuotaProbeResult,
 } from "./quota-sources";
-import { add, iso } from "./quota-windows";
+import { add, instantMs, iso } from "./quota-windows";
+import { accountBillingFromUsage } from "./usage-credits/claude";
+import { accountBillingFromCodexRateLimits } from "./usage-credits/codex";
+import { accountBillingFromGrokBilling } from "./usage-credits/grok";
+import { accountBillingFromKimiUsage } from "./usage-credits/kimi";
+import { rememberBilling } from "./usage-credits/usage-credit-memory";
 
 export interface ControlQuotaRequest extends QuotaCandidateIdentity {
   agentName: string;
@@ -62,11 +62,6 @@ export interface ControlQuotaRequest extends QuotaCandidateIdentity {
 
 export type QuotaAlertSink = (body: string) => Promise<void>;
 export type QuotaClock = () => Date;
-
-export interface CodexQuotaReading {
-  fiveHourUsed: number;
-  weeklyUsed: number;
-}
 
 export interface QuotaRefreshReport {
   provider: CapabilityProvider;
@@ -81,6 +76,7 @@ export interface QuotaRefreshReport {
 }
 
 const OPERATOR_PROBE_MIN_INTERVAL_MS = 5_000;
+const UNCONFIGURED_ESTIMATE_UNITS = 10;
 
 interface CompletedProbe {
   status: "probed";
@@ -183,86 +179,51 @@ export class QuotaService {
   ): void {
     this.ledger.replaceModelCatalog(
       provider,
-      records.flatMap((record) =>
-        [
-          ...new Set([
-            record.displayName ?? record.canonicalId,
-            record.launchToken,
-            ...record.aliases,
-          ]),
-        ].map((displayName) => ({
-          provider,
-          modelId: record.canonicalId,
-          displayName,
-          discoveredAt: record.observedAt,
-        })),
-      ),
+      records.flatMap((record) => {
+        const variantId =
+          record.variant === null
+            ? null
+            : `${record.canonicalId}[${record.variant}]`;
+        const modelIds = [
+          ...new Set(
+            [
+              record.canonicalId,
+              record.launchToken,
+              variantId,
+              ...record.aliases,
+            ].filter((id): id is string => id !== null && id.length > 0),
+          ),
+        ];
+        const displayNames = [
+          ...new Set(
+            [
+              record.displayName,
+              record.canonicalId,
+              record.launchToken,
+              ...record.aliases,
+            ].filter(
+              (name): name is string => name !== null && name.length > 0,
+            ),
+          ),
+        ];
+        return modelIds.flatMap((modelId) =>
+          displayNames.map((displayName) => ({
+            provider,
+            modelId,
+            displayName,
+            discoveredAt: record.observedAt,
+          })),
+        );
+      }),
     );
   }
 
-  /** Record a Codex app-server rate-limit snapshot. These percentages are the most authoritative quota signal Hive ever sees, and they arrive on every turn. They are stored whether or not anyone wrote a `quota.toml`: an unconfigured install discovers its pool from this very payload. Do not require a configured pool: that would drop readings when none exists and leave the observation table with only estimates. Windows are identified by duration rather than by position, so a plan that reports its weekly bucket first cannot silently invert the two. */
-  async observeCodexRateLimits(
-    model: string,
-    response: CodexRateLimitsResponse,
-    observedAt = iso(this.clock()),
-  ): Promise<CodexQuotaReading | null> {
-    for (const reading of readingsFromCodexResponse(
-      response,
-      "default",
-      observedAt,
-    )) {
+  /** Persist readings a provider already handed us — probe results or a later snapshot. One-window plans store the window they have. */
+  applyDiscoveredReadings(readings: readonly DiscoveredPoolReading[]): void {
+    for (const reading of readings) {
       this.ledger.upsertDiscoveredPool(discoveredPoolFrom(reading));
+      this.recordDiscoveredReading(reading);
     }
-
-    const limit = limitFor(this.ledger, this.config, { tool: "codex", model });
-    if (limit !== null && limit.origin === "manual") {
-      const byId = response.rateLimitsByLimitId ?? {};
-      const snapshot =
-        byId[limit.pool] ??
-        Object.values(byId).find(
-          (candidate) => candidate.limitId === limit.pool,
-        ) ??
-        response.rateLimits;
-      const windows = orderRateLimitWindows(snapshot);
-      if (windows.fiveHour === null || windows.weekly === null) return null;
-      const fiveHourPct = windows.fiveHour.usedPct;
-      const weeklyPct = windows.weekly.usedPct;
-      if (fiveHourPct === null || weeklyPct === null) return null;
-      const reading = {
-        fiveHourUsed: (limit.fiveHourAllowance * fiveHourPct) / 100,
-        weeklyUsed: (limit.weeklyAllowance * weeklyPct) / 100,
-      };
-      await this.observe({
-        provider: "codex",
-        account: limit.account,
-        pool: limit.pool,
-        ...reading,
-        observedAt,
-        fiveHourResetAt: windows.fiveHour.resetsAt,
-        weeklyResetAt: windows.weekly.resetsAt,
-        source: "provider",
-        confidence: "authoritative",
-        fiveHourObservedAt: observedAt,
-        fiveHourSource: "provider",
-        fiveHourConfidence: "authoritative",
-        weeklyObservedAt: observedAt,
-        weeklySource: "provider",
-        weeklyConfidence: "authoritative",
-      });
-      return reading;
-    }
-
-    const routable = readingsFromCodexResponse(
-      response,
-      "default",
-      observedAt,
-    ).find((reading) => reading.models.includes("*"));
-    if (routable === undefined) return null;
-    await this.recordDiscoveredReading(routable);
-    const fiveHourUsed = routable.fiveHour?.usedPct ?? null;
-    const weeklyUsed = routable.weekly?.usedPct ?? null;
-    if (fiveHourUsed === null || weeklyUsed === null) return null;
-    return { fiveHourUsed, weeklyUsed };
   }
 
   poolsGoverning(
@@ -317,7 +278,13 @@ export class QuotaService {
         if (value.remainingPct === null || value.remainingPct > 0) continue;
         if (value.resetsAt === null) continue;
         const current = nearest[window];
-        if (current === null || value.resetsAt < current) {
+        const candidateMs = instantMs(value.resetsAt);
+        const currentMs = instantMs(current);
+        if (
+          current === null ||
+          (candidateMs !== null &&
+            (currentMs === null || candidateMs < currentMs))
+        ) {
           nearest[window] = value.resetsAt;
         }
       }
@@ -325,11 +292,11 @@ export class QuotaService {
     return nearest;
   }
 
-  async reconcileAgentModel(
+  reconcileAgentModel(
     agentName: string,
     liveModel: string,
     at = iso(this.clock()),
-  ): Promise<QuotaReservation[] | null> {
+  ): QuotaReservation[] | null {
     const held = this.ledger.getActiveReservationForAgent(agentName);
     if (held === null || held.model === liveModel) return null;
     const now = new Date(at);
@@ -345,9 +312,8 @@ export class QuotaService {
       }),
     );
     if (entries.length === 0) return null;
-    // Release first, then re-book: the released capacity is immediately available to the pools the run is really spending from, and a run can never be counted twice while the swap is in flight.
-    this.ledger.release(held.id, at);
-    const reservations = this.ledger.reserveGroupUnchecked(
+    return this.ledger.replaceReservationGroup(
+      held.id,
       this.reservationInputs(
         held.agentName,
         candidate,
@@ -358,12 +324,8 @@ export class QuotaService {
           ? { purpose: "control", controlMessageId: held.controlMessageId }
           : undefined,
       ),
+      held.startedAt,
     );
-    // The run that was already proving life is the same run after the swap. A re-keyed booking that forgot it had started would settle as "never ran" and record zero spend for a session that is demonstrably burning quota.
-    if (held.startedAt !== null && reservations[0] !== undefined) {
-      this.ledger.markStarted(reservations[0].id, held.startedAt);
-    }
-    return reservations;
   }
 
   private estimateFor(
@@ -371,7 +333,10 @@ export class QuotaService {
     category: RoutingCategory,
   ): { fiveHour: number; weekly: number } {
     if (limit.unit === "units") {
-      return { fiveHour: 10, weekly: 10 };
+      return {
+        fiveHour: UNCONFIGURED_ESTIMATE_UNITS,
+        weekly: UNCONFIGURED_ESTIMATE_UNITS,
+      };
     }
     const percent = DEFAULT_PERCENT_ESTIMATES[category];
     return { fiveHour: percent.fiveHour, weekly: percent.weekly };
@@ -394,7 +359,7 @@ export class QuotaService {
       model: candidate.model,
       effort: candidate.effort ?? null,
       category,
-      estimatedUnits: 10,
+      estimatedUnits: UNCONFIGURED_ESTIMATE_UNITS,
       now: iso(now),
       expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
       ...(purpose ?? {}),
@@ -491,7 +456,7 @@ export class QuotaService {
         !options.providers.includes(probe.provider)
       )
         continue;
-      if (options.force !== true && this.hasFreshReading(probe.provider, now)) {
+      if (options.force !== true && this.shouldSkipProbe(probe.provider, now)) {
         reports.push({ provider: probe.provider, status: "skipped", pools: 0 });
         continue;
       }
@@ -563,8 +528,9 @@ export class QuotaService {
       }
       for (const reading of result.pools) {
         this.ledger.upsertDiscoveredPool(discoveredPoolFrom(reading));
-        await this.recordDiscoveredReading(reading);
+        this.recordDiscoveredReading(reading);
       }
+      await this.rememberProbeBilling(probe.provider, result);
       reports.push({
         provider: probe.provider,
         status: "ok",
@@ -572,7 +538,7 @@ export class QuotaService {
         ...operatorEvidence,
       });
     }
-    if (options.trigger !== "operator" || probed) this.lastRefreshAt = now;
+    if (probed) this.lastRefreshAt = now;
     return reports;
   }
 
@@ -673,10 +639,8 @@ export class QuotaService {
     return active;
   }
 
-  /** Persist one probe reading. Only the windows the provider actually *gauged* are stamped; a window that was absent, or present with no readable gauge, keeps whatever provenance it already had, so a partial reading can never make a stale fact look fresh. A window with a boundary and no gauge still lands: its reset is written and its provenance is not. That is the reset-only row — usage stays unknown (`statusForLimit` publishes `used: null`, so nothing can drain from it) while the boundary the vendor stated is no longer thrown away. */
-  private async recordDiscoveredReading(
-    reading: DiscoveredPoolReading,
-  ): Promise<void> {
+  /** Persist one probe reading. Only gauged windows are stamped. A boundary with no gauge still lands; used stays null. */
+  private recordDiscoveredReading(reading: DiscoveredPoolReading): void {
     if (reading.fiveHour === null && reading.weekly === null) return;
     const scope = {
       provider: reading.provider,
@@ -697,16 +661,13 @@ export class QuotaService {
     this.ledger.upsertObservation(
       QuotaObservationSchema.parse({
         ...scope,
-        // An ungauged window stores the schema's meaningless zero: its null
-        // ObservedAt loses the upsert's recency merge, so the prior row's own
-        // number and provenance are what survive.
         fiveHourUsed:
           fiveHourPct === null
-            ? 0
+            ? null
             : scale(fiveHourPct, target?.fiveHourAllowance ?? 100),
         weeklyUsed:
           weeklyPct === null
-            ? 0
+            ? null
             : scale(weeklyPct, target?.weeklyAllowance ?? 100),
         observedAt: reading.observedAt,
         fiveHourResetAt: reading.fiveHour?.resetsAt ?? null,
@@ -731,18 +692,25 @@ export class QuotaService {
     );
   }
 
-  /** Whether a routable pool for this provider already carries a live reading in both windows. Only a measurement counts: a manual pool sitting on Hive's own `estimated` ledger has never been read from the provider, and skipping its probe would be how an user's override silently disables discovery. */
+  private shouldSkipProbe(provider: CapabilityProvider, now: Date): boolean {
+    if (!this.hasFreshReading(provider, now)) return false;
+    if (this.lastRefreshAt === null) return false;
+    return (
+      now.getTime() - this.lastRefreshAt.getTime() <
+      this.config.refreshIntervalMinutes * 60_000
+    );
+  }
+
+  /** Whether every routable pool for this provider is measured. One fresh general pool must not skip a stale model-scoped cap. */
   private hasFreshReading(provider: CapabilityProvider, now: Date): boolean {
-    const live = (confidence: QuotaConfidence): boolean =>
-      confidence === "authoritative" || confidence === "reported";
-    return resolvedLimits(this.ledger, this.config)
-      .filter((limit) => limit.provider === provider && limit.routable)
-      .some((limit) => {
-        const status = statusForLimit(this.ledger, limit, now);
-        return (
-          live(status.fiveHour.confidence) && live(status.weekly.confidence)
-        );
-      });
+    const limits = resolvedLimits(this.ledger, this.config).filter(
+      (limit) => limit.provider === provider && limit.routable,
+    );
+    if (limits.length === 0) return false;
+    return limits.every(
+      (limit) =>
+        measured(statusForLimit(this.ledger, limit, now), limit) !== null,
+    );
   }
 
   probeError(provider: CapabilityProvider): string | null {
@@ -862,11 +830,8 @@ export class QuotaService {
         status: statusForLimit(this.ledger, limit, now),
       }),
     );
-    const known = entries.filter(
-      (entry) => measured(entry.status, entry.limit) !== null,
-    );
     const inputs: ReserveQuotaInput[] =
-      entries.length === 0 || known.length === 0
+      entries.length === 0
         ? [
             this.unconfiguredReservationInput(
               agentName,
@@ -883,9 +848,7 @@ export class QuotaService {
     return reservation;
   }
 
-  async reserveControlRun(
-    request: ControlQuotaRequest,
-  ): Promise<QuotaReservation> {
+  reserveControlRun(request: ControlQuotaRequest): QuotaReservation {
     const existing = this.ledger.getActiveControlReservation(
       request.controlMessageId,
     );
@@ -901,10 +864,7 @@ export class QuotaService {
       }),
     );
     // A run no pool can measure cannot be authorized or refused on the numbers. Accounting still happens: the run gets an explicit unbounded reservation.
-    const known = entries.filter(
-      (entry) => measured(entry.status, entry.limit) !== null,
-    );
-    if (known.length === 0) {
+    if (entries.length === 0) {
       const reservation = this.ledger.insertUnboundedReservation(
         this.unconfiguredReservationInput(
           request.agentName,
@@ -954,13 +914,13 @@ export class QuotaService {
   }
 
   /** Settle a reservation into recorded usage. Each window is debited its own amount. Committing the five-hour estimate to the weekly ledger too would overstate weekly spend several-fold for a percent-denominated pool — a run is a large slice of five hours and a small slice of a week — and an overstated ledger refuses spawns that would have fit. When the provider reports one actual figure and no weekly counterpart, that figure is scaled by the ratio the reservation itself was estimated at. */
-  async reconcile(
+  reconcile(
     reservationId: string,
     units?: number,
     source: "provider" | "gateway" | "estimated" = "estimated",
     at = iso(this.clock()),
     weeklyUnits?: number,
-  ): Promise<void> {
+  ): void {
     const reservation = this.ledger.getReservation(reservationId);
     if (reservation === null) return;
     const estimatedWeekly =
@@ -979,11 +939,11 @@ export class QuotaService {
   }
 
   /** Settle a reservation whose run is over or never happened. `launchFailure` is the caller saying "this route did not produce a working agent" — the spawn failed outright, not merely a worktree that could not be created or a name that collided. Only that is evidence about the *route*, so only that is recorded against it. Attributing an unrelated failure to a model would quarantine a healthy route and make Hive the outage. */
-  async cancel(
+  cancel(
     reservationId: string,
     at = iso(this.clock()),
     launchFailure?: string,
-  ): Promise<void> {
+  ): void {
     const reservation = this.ledger.getReservation(reservationId);
     if (reservation === null || reservation.status !== "active") return;
     if (launchFailure !== undefined && reservation.startedAt === null) {
@@ -998,7 +958,7 @@ export class QuotaService {
     if (reservation.startedAt === null) {
       this.ledger.release(reservationId, at);
     } else {
-      await this.reconcile(reservationId, undefined, "estimated", at);
+      this.reconcile(reservationId, undefined, "estimated", at);
     }
   }
 
@@ -1022,7 +982,7 @@ export class QuotaService {
     return expired;
   }
 
-  async observe(observation: QuotaObservationInput): Promise<QuotaObservation> {
+  observe(observation: QuotaObservationInput): QuotaObservation {
     const raw = QuotaObservationSchema.parse(observation);
     const parsed: QuotaObservation =
       raw.fiveHourObservedAt === null && raw.weeklyObservedAt === null
@@ -1048,6 +1008,26 @@ export class QuotaService {
       );
     }
     return this.ledger.upsertObservation(parsed);
+  }
+
+  private async rememberProbeBilling(
+    provider: CapabilityProvider,
+    result: Extract<QuotaProbeResult, { status: "ok" }>,
+  ): Promise<void> {
+    if (result.wire === undefined) return;
+    const observedAt = iso(this.clock());
+    const billing =
+      provider === "claude"
+        ? accountBillingFromUsage(result.wire, observedAt)
+        : provider === "codex"
+          ? accountBillingFromCodexRateLimits(result.wire, observedAt)
+          : provider === "grok"
+            ? accountBillingFromGrokBilling(result.wire, observedAt)
+            : provider === "kimi"
+              ? accountBillingFromKimiUsage(result.wire, observedAt)
+              : null;
+    if (billing === null) return;
+    await rememberBilling(provider, billing);
   }
 
   private async sendAlert(body: string): Promise<void> {

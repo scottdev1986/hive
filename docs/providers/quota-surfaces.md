@@ -100,7 +100,7 @@ Hive calls the control request rather than the `api.anthropic.com/api/oauth/usag
 
 No five-hour field has ever been observed on `_x.ai/billing`. That is **absence by design**, and Hive records `fiveHourMeterState: "not-metered"` (`src/usage-service/quota-sources.ts: readingsFromGrokBilling`) — a positive statement.
 
-But: **a missing percent on a *recognized* surface is `unknown`, never `not-metered`** (`src/usage-service/quota-sources.ts: readingsFromGrokBilling`). The vendor *does* meter the weekly pool; a payload that parses but carries no usable number means Hive failed to read it, not that the vendor said "unlimited." The two states are one line apart in the code and they mean opposite things. (`weeklyMeterState: weekly === null ? "unknown" : "metered"`.)
+But: **a present, unreadable percent is `unknown`, never `not-metered`** (`src/usage-service/quota-sources.ts: readingsFromGrokBilling`). The vendor *does* meter the weekly pool. **An omitted `creditUsagePercent` is 0%**: xAI drops the field while usage rounds to zero and its own TUI decodes that absence the same way. A renamed key is indistinguishable from that omission on the wire — only pinning the payload's key set catches a rename.
 
 Grok's weekly pool binds account-wide as `models: ["*"]` (`src/usage-service/quota-sources.ts: readingsFromGrokBilling`), so **it needs no display-name join** — unlike the two below.
 

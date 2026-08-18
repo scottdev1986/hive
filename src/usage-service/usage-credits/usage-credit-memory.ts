@@ -3,8 +3,8 @@ import { getHiveHome } from "../../hive-home/home";
 import type { CapabilityProvider } from "../../schemas/capability";
 import { readAccountBilling } from "./reader";
 import {
-  AccountBillingSchema,
   type AccountBilling,
+  AccountBillingSchema,
 } from "./usage-credit-types";
 
 /** How stale a remembered billing reading may be and still answer the spend question. Judgment, not a measurement, so it is printed beside every use of it rather than buried here. The bound protects exactly one thing. A remembered reading is dangerous only if BOTH the pool has since crossed 100% AND usage credits have since been turned ON — below 100% there is nothing to bill, and with credits off nothing can pay. Credits are a setting the USER changes deliberately; he is not toggling them while a spawn is in flight. So the window only has to be short enough that his own pools cannot silently have gone from headroom to exhausted-and-billing without him knowing, and 30 minutes is comfortably inside that. Past it, the memory expires and the honest answer returns: unknown, so ask. */
@@ -43,6 +43,18 @@ async function rememberedBilling(
     return null;
   }
   return { value: remembered.data, ageMinutes };
+}
+
+/** Persist a billing reading taken from a quota probe so inventory does not spawn a second vendor process. */
+export async function rememberBilling(
+  provider: CapabilityProvider,
+  billing: AccountBilling,
+  path: string = billingMemoryPath(provider),
+): Promise<void> {
+  if (!usable(billing)) return;
+  await Bun.write(path, `${JSON.stringify(billing, null, 2)}\n`).catch(
+    () => undefined,
+  );
 }
 
 /** Read only the daemon's last valid billing observation. Never contacts a provider, so request handlers and UI projections can use it safely. */

@@ -18,6 +18,7 @@ import {
 } from "../../src/usage-service/quota-ledger";
 import { QuotaLedgerUnknownError } from "../../src/usage-service/quota-ledger-records";
 import { mergeObservationWindows } from "../../src/usage-service/quota-observation-merge";
+import { readingsFromCodexResponse } from "../../src/usage-service/quota-sources";
 import { calendarWeekBounds } from "../../src/usage-service/quota-windows";
 import { QuotaService } from "../../src/usage-service/usage-quota";
 import { required } from "../required";
@@ -736,36 +737,44 @@ describe("quota telemetry and alerts", () => {
   test("records Codex app-server windows as authoritative configured-pool observations", async () => {
     const { db } = await fileDatabase("codex-app-server");
     const ledger = new QuotaLedger(db);
+    const observedAt = "2026-07-10T12:00:00.000Z";
     const service = new QuotaService(
       ledger,
       config([
         limit("codex", 200, {
+          account: "default",
           pool: "codex",
+          models: ["*"],
           weeklyAllowance: 1_000,
         }),
       ]),
-      () => new Date("2026-07-10T12:00:00.000Z"),
+      () => new Date(observedAt),
     );
-    const reading = await service.observeCodexRateLimits("codex-model", {
-      rateLimits: {
-        limitId: "codex",
-        primary: {
-          usedPercent: 25,
-          windowDurationMins: 300,
-          resetsAt: 1_800_000_000,
+    service.applyDiscoveredReadings(
+      readingsFromCodexResponse(
+        {
+          rateLimits: {
+            limitId: "codex",
+            primary: {
+              usedPercent: 25,
+              windowDurationMins: 300,
+              resetsAt: 1_800_000_000,
+            },
+            secondary: {
+              usedPercent: 40,
+              windowDurationMins: 10_080,
+              resetsAt: 1_800_500_000,
+            },
+          },
         },
-        secondary: {
-          usedPercent: 40,
-          windowDurationMins: 10_080,
-          resetsAt: 1_800_500_000,
-        },
-      },
-    });
-    expect(reading).toEqual({ fiveHourUsed: 50, weeklyUsed: 400 });
+        "default",
+        observedAt,
+      ),
+    );
     expect(
       ledger.getObservation({
         provider: "codex",
-        account: "personal",
+        account: "default",
         pool: "codex",
       }),
     ).toMatchObject({
@@ -782,27 +791,43 @@ describe("quota telemetry and alerts", () => {
     db.close();
   });
 
-  test("does not invent an authoritative weekly value from a partial Codex snapshot", async () => {
+  test("a one-window Codex plan stores the window it has", async () => {
     const { db } = await fileDatabase("codex-partial");
     const ledger = new QuotaLedger(db);
+    const observedAt = "2026-07-10T12:00:00.000Z";
     const service = new QuotaService(
       ledger,
-      config([limit("codex")]),
-      () => new Date("2026-07-10T12:00:00.000Z"),
+      config([]),
+      () => new Date(observedAt),
+    );
+    service.applyDiscoveredReadings(
+      readingsFromCodexResponse(
+        {
+          rateLimits: {
+            primary: {
+              usedPercent: 25,
+              windowDurationMins: 300,
+              resetsAt: null,
+            },
+            secondary: null,
+          },
+        },
+        "default",
+        observedAt,
+      ),
     );
     expect(
-      await service.observeCodexRateLimits("codex-model", {
-        rateLimits: {
-          primary: {
-            usedPercent: 25,
-            windowDurationMins: 300,
-            resetsAt: null,
-          },
-          secondary: null,
-        },
+      ledger.getObservation({
+        provider: "codex",
+        account: "default",
+        pool: "default",
       }),
-    ).toEqual(null);
-    expect(ledger.getObservation(limit("codex"))).toEqual(null);
+    ).toMatchObject({
+      fiveHourUsed: 25,
+      weeklyUsed: null,
+      fiveHourObservedAt: observedAt,
+      weeklyObservedAt: null,
+    });
     db.close();
   });
 
@@ -979,7 +1004,7 @@ describe("a window the reading did not gauge", () => {
   // A reading that gauges only the weekly window. The five-hour window keeps
   // its never-observed nulls, so its Used field is dead weight: what lands is
   // decided by the merge, not by what the caller put there.
-  const weeklyOnlyReading = (fiveHourUsed: number): QuotaObservation =>
+  const weeklyOnlyReading = (fiveHourUsed: number | null): QuotaObservation =>
     QuotaObservationSchema.parse({
       ...scope,
       fiveHourUsed,
@@ -1013,7 +1038,7 @@ describe("a window the reading did not gauge", () => {
       weeklyConfidence: "authoritative",
     });
     const preFilled = mergeObservationWindows(prior, weeklyOnlyReading(42));
-    const zeroed = mergeObservationWindows(prior, weeklyOnlyReading(0));
+    const zeroed = mergeObservationWindows(prior, weeklyOnlyReading(null));
     expect(preFilled).toEqual(zeroed);
     // Pin what they equal, so the equivalence cannot pass on a shared wrong
     // answer: the prior measurement and its provenance survive for the
@@ -1025,8 +1050,36 @@ describe("a window the reading did not gauge", () => {
   });
 
   test("with no prior row the ungauged window lands as never-observed", () => {
-    const merged = mergeObservationWindows(null, weeklyOnlyReading(0));
-    expect(merged.fiveHourUsed).toBe(0);
+    const merged = mergeObservationWindows(null, weeklyOnlyReading(null));
+    expect(merged.fiveHourUsed).toBeNull();
     expect(merged.fiveHourObservedAt).toBeNull();
+  });
+
+  test("an offset timestamp is compared as an instant, not as a string", () => {
+    const prior = QuotaObservationSchema.parse({
+      ...scope,
+      fiveHourUsed: 10,
+      weeklyUsed: 10,
+      observedAt: "2026-07-10T15:00:00.000Z",
+      source: "provider",
+      confidence: "authoritative",
+      fiveHourObservedAt: "2026-07-10T15:00:00.000Z",
+      fiveHourSource: "provider",
+      fiveHourConfidence: "authoritative",
+    });
+    const laterPacific = QuotaObservationSchema.parse({
+      ...scope,
+      fiveHourUsed: 20,
+      weeklyUsed: 10,
+      observedAt: "2026-07-10T08:00:00-08:00",
+      source: "provider",
+      confidence: "authoritative",
+      fiveHourObservedAt: "2026-07-10T08:00:00-08:00",
+      fiveHourSource: "provider",
+      fiveHourConfidence: "authoritative",
+    });
+    const merged = mergeObservationWindows(prior, laterPacific);
+    expect(merged.fiveHourUsed).toBe(20);
+    expect(merged.fiveHourObservedAt).toBe("2026-07-10T08:00:00-08:00");
   });
 });

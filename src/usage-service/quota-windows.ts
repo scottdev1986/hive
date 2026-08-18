@@ -16,6 +16,13 @@ export function iso(date: Date): string {
   return date.toISOString();
 }
 
+/** Instant from an ISO string, or null when the value is missing or unparseable. Offset-aware — do not compare the strings. */
+export function instantMs(value: string | null | undefined): number | null {
+  if (value == null) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : null;
+}
+
 export function subtract(date: Date, milliseconds: number): string {
   return new Date(date.getTime() - milliseconds).toISOString();
 }
@@ -206,24 +213,29 @@ export function calendarWeekBounds(
 
 /** The two windows this pool is read against. A rolling week is measured back from now; a calendar week is measured from the user's own stated reset, and only that form has an end — a rolling window has no boundary to publish beyond the readings themselves. */
 export function windowBounds(
-  limit: QuotaLimit,
+  limit: QuotaLimit & {
+    fiveHourWindowMinutes?: number | null;
+    weeklyWindowMinutes?: number | null;
+  },
   now: Date,
 ): {
   fiveHourStart: string;
   weeklyStart: string;
   weeklyEnd: string | null;
 } {
+  const fiveHourMs = (limit.fiveHourWindowMinutes ?? 5 * 60) * 60_000;
   if (limit.weeklyWindow === "calendar") {
     const weekly = calendarWeekBounds(now, limit);
     return {
-      fiveHourStart: subtract(now, 5 * HOUR_MS),
+      fiveHourStart: subtract(now, fiveHourMs),
       weeklyStart: weekly.start,
       weeklyEnd: weekly.end,
     };
   }
+  const weeklyMs = (limit.weeklyWindowMinutes ?? 7 * 24 * 60) * 60_000;
   return {
-    fiveHourStart: subtract(now, 5 * HOUR_MS),
-    weeklyStart: subtract(now, 7 * DAY_MS),
+    fiveHourStart: subtract(now, fiveHourMs),
+    weeklyStart: subtract(now, weeklyMs),
     weeklyEnd: null,
   };
 }

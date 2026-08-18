@@ -1140,10 +1140,30 @@ export class QuotaLedger {
       .query(`
       SELECT * FROM quota_reservations
       WHERE instanceId = ? AND agentName = ? AND status = 'active'
-      ORDER BY createdAt DESC LIMIT 1
+      ORDER BY CASE WHEN id = groupId THEN 0 ELSE 1 END, createdAt DESC, id
+      LIMIT 1
     `)
       .get(this.instanceId, agentName);
     return row === null ? null : ReservationSchema.parse(row);
+  }
+
+  /** Release one group and book its replacement under a single write lock. */
+  replaceReservationGroup(
+    previousId: string,
+    inputs: ReserveQuotaInput[],
+    startedAt: string | null,
+  ): QuotaReservation[] {
+    if (inputs.length === 0) return [];
+    return this.immediate(() => {
+      this.release(previousId, inputs[0]?.now ?? startedAt ?? "");
+      const primary = inputs[0];
+      if (primary === undefined) return [];
+      for (const input of inputs) this.insert(input, primary.id);
+      if (startedAt !== null) {
+        this.markStarted(primary.id, startedAt);
+      }
+      return inputs.map((input) => this.requireReservation(input.id));
+    });
   }
 
   getActiveControlReservation(
@@ -1324,8 +1344,8 @@ export class QuotaLedger {
           merged.provider,
           merged.account,
           merged.pool,
-          merged.fiveHourUsed,
-          merged.weeklyUsed,
+          merged.fiveHourUsed ?? 0,
+          merged.weeklyUsed ?? 0,
           merged.observedAt,
           merged.fiveHourResetAt,
           merged.weeklyResetAt,
@@ -1375,7 +1395,13 @@ export class QuotaLedger {
     if (row === null) return null;
     try {
       // No backfill here. A null `*ObservedAt` means exactly what the schema says — that window was never observed. Existing rows are stamped when the columns are added; read-time inference cannot distinguish one of those rows from a reset-only row.
-      return QuotaObservationSchema.parse(row);
+      const parsed = QuotaObservationSchema.parse(row);
+      return {
+        ...parsed,
+        fiveHourUsed:
+          parsed.fiveHourObservedAt === null ? null : parsed.fiveHourUsed,
+        weeklyUsed: parsed.weeklyObservedAt === null ? null : parsed.weeklyUsed,
+      };
     } catch (error) {
       throw new Error(
         `Corrupt quota observation for ${scope.provider}/${scope.account}/${scope.pool}: ${
