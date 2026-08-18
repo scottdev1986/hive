@@ -48,11 +48,125 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         XCTAssertEqual(Theme.Metric.sidebarWidth, 188)
         XCTAssertEqual(Theme.Metric.topBarHeight, 59)
         XCTAssertEqual(Theme.Metric.controlMinHeight, 28)
-        XCTAssertEqual(Theme.Font.chromeNav.pointSize, 8)
-        XCTAssertEqual(Theme.Font.chromeGroup.pointSize, 6)
-        XCTAssertEqual(Theme.Font.screenSubtitle.pointSize, 8)
-        XCTAssertEqual(Theme.Font.sectionTitle.pointSize, 12)
-        XCTAssertEqual(Theme.Font.badge.pointSize, 7)
+    }
+
+    // MARK: - Type ramp
+
+    /// The smallest size macOS itself uses for an incidental caption. The
+    /// Workspace is read full-screen on a Retina display, where text under this
+    /// is uncomfortable rather than merely small, so the ramp treats it as a
+    /// hard floor rather than a target.
+    private static let legibilityFloor: CGFloat = 11
+
+    /// Reads the sizes out of the token source instead of a list written here,
+    /// because a list can only vouch for the tokens someone remembered to add
+    /// to it — and a token added below the floor is exactly the regression this
+    /// guards. Every ramp size is an `ofSize:` literal in that one file and
+    /// nothing else in it takes an `ofSize:`, so the scan sees all of them.
+    ///
+    /// An unreadable source file fails rather than skips: a guard that cannot
+    /// see the ramp cannot vouch for it, and green would be a lie.
+    private func rampSizesDeclaredInSource(
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> [(token: String, size: CGFloat)] {
+        let tokens = URL(fileURLWithPath: "\(#filePath)")
+            .deletingLastPathComponent()   // HiveWorkspaceTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // workspace
+            .appendingPathComponent("Sources/HiveWorkspace/DesignSystem/ThemeTokens.swift")
+        guard let source = try? String(contentsOf: tokens, encoding: .utf8) else {
+            XCTFail("cannot read \(tokens.path) to check the ramp", file: file, line: line)
+            return []
+        }
+        let pattern = #"static let (\w+) = NSFont\.\w+\(ofSize: ([0-9.]+)"#
+        let regex = try! NSRegularExpression(pattern: pattern)
+        let found = regex
+            .matches(in: source, range: NSRange(source.startIndex..., in: source))
+            .compactMap { match -> (token: String, size: CGFloat)? in
+                guard let name = Range(match.range(at: 1), in: source),
+                    let size = Range(match.range(at: 2), in: source),
+                    let value = Double(source[size])
+                else { return nil }
+                return (String(source[name]), CGFloat(value))
+            }
+        XCTAssertFalse(
+            found.isEmpty,
+            "the scan matched no tokens, so it proves nothing about the ramp",
+            file: file, line: line)
+        return found
+    }
+
+    func testNoTypeRampTokenResolvesBelowTheLegibilityFloor() {
+        for (token, size) in rampSizesDeclaredInSource() {
+            XCTAssertGreaterThanOrEqual(
+                size, Self.legibilityFloor,
+                "Theme.Font.\(token) is \(size)pt, under the \(Self.legibilityFloor)pt floor")
+        }
+    }
+
+    /// The floor alone would be met by setting every token to 11, which reads
+    /// as one undifferentiated block. Size is one of the three things carrying
+    /// this product's hierarchy, so each ladder must still step — strictly, not
+    /// merely differ. Tokens absent from a ladder are one of its tiers in
+    /// another weight, case or family, and are pinned to that tier below.
+    func testEachTypeRampLadderStepsDownWithoutTying() {
+        let ladders: [(String, [(String, NSFont)])] = [
+            ("page content", [
+                ("largeTitle", Theme.Font.largeTitle),
+                ("title", Theme.Font.title),
+                ("headline", Theme.Font.headline),
+                ("body", Theme.Font.body),
+                ("callout", Theme.Font.callout),
+                ("caption", Theme.Font.caption),
+            ]),
+            ("shell chrome", [
+                ("chromeBrand", Theme.Font.chromeBrand),
+                ("chromeProject", Theme.Font.chromeProject),
+                ("chromeControl", Theme.Font.chromeControl),
+                ("chromeMetadata", Theme.Font.chromeMetadata),
+            ]),
+            ("monospaced values", [
+                ("monoBody", Theme.Font.monoBody),
+                ("monoDigits", Theme.Font.monoDigits),
+                ("monoCaption", Theme.Font.monoCaption),
+            ]),
+        ]
+        for (ladder, steps) in ladders {
+            for (louder, quieter) in zip(steps, steps.dropFirst()) {
+                XCTAssertGreaterThan(
+                    louder.1.pointSize, quieter.1.pointSize,
+                    "\(ladder): \(louder.0) and \(quieter.0) have flattened together")
+            }
+        }
+    }
+
+    /// A token that shares a tier is meant to share its size and differ by
+    /// weight, case or family. Pinning the pairing keeps a later edit from
+    /// drifting one of them into a size level of its own, which is how a ramp
+    /// grows more levels than the design has.
+    func testTokensThatShareATierShareItsSize() {
+        let pairings: [(String, NSFont, String, NSFont)] = [
+            ("sectionTitle", Theme.Font.sectionTitle, "headline", Theme.Font.headline),
+            ("screenSubtitle", Theme.Font.screenSubtitle, "callout", Theme.Font.callout),
+            ("sectionLabel", Theme.Font.sectionLabel, "caption", Theme.Font.caption),
+            ("sectionMetadata", Theme.Font.sectionMetadata, "caption", Theme.Font.caption),
+            ("badge", Theme.Font.badge, "caption", Theme.Font.caption),
+            ("chromeNav", Theme.Font.chromeNav, "chromeProject", Theme.Font.chromeProject),
+            ("chromeSubtitle", Theme.Font.chromeSubtitle, "chromeMetadata", Theme.Font.chromeMetadata),
+            ("chromeGroup", Theme.Font.chromeGroup, "chromeMetadata", Theme.Font.chromeMetadata),
+        ]
+        for (token, font, tier, tierFont) in pairings {
+            XCTAssertEqual(
+                font.pointSize, tierFont.pointSize,
+                "\(token) has drifted off the \(tier) tier")
+        }
+    }
+
+    /// The one absolute the rest of the ramp is measured from. macOS treats
+    /// 13 pt as the smallest comfortable size for running text, so body prose
+    /// sits there and every other tier is a step away from it.
+    func testBodyProseSitsAtTheComfortableReadingSize() {
+        XCTAssertEqual(Theme.Font.body.pointSize, 13)
     }
 
     func testActionButtonAndBannerExposeTheTwoChromeLevels() throws {

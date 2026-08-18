@@ -44,8 +44,11 @@ final class ActionButton: NSButton {
             equalToConstant: Theme.Metric.chromeControlHeight).isActive = true
 
         if let symbol {
+            // Sized off the button's own label token so the glyph and the
+            // words stay in proportion when the ramp moves.
             image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+                .withSymbolConfiguration(
+                    .init(pointSize: Theme.Font.chromeControl.pointSize, weight: .semibold))
             imagePosition = title.isEmpty ? .imageOnly : .imageLeading
         }
 

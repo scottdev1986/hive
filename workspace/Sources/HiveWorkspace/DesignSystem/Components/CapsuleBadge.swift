@@ -56,8 +56,10 @@ final class CapsuleBadge: NSView {
         var views: [NSView] = []
         if let symbol, let image = NSImage(
             systemSymbolName: symbol, accessibilityDescription: nil) {
+            // The mark sits inline with the label and must grow with it; a
+            // fixed size here would leave a shrunken glyph beside the words.
             icon.image = image.withSymbolConfiguration(
-                .init(pointSize: 7, weight: .semibold))
+                .init(pointSize: Theme.Font.badge.pointSize, weight: .semibold))
             icon.contentTintColor = style.tint
             views.append(icon)
         }

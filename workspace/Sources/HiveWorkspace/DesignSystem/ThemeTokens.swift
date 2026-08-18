@@ -37,30 +37,58 @@ extension Theme {
         static let standard: TimeInterval = 0.18
     }
 
+    /// The type ramp. Two rules hold it together, and both are enforced by
+    /// `WorkspaceDesignSystemTests`:
+    ///
+    /// **11 pt is the floor.** macOS draws its smallest incidental caption at
+    /// 11 pt, and text below that is not comfortably readable at arm's length
+    /// on a Retina display at full screen. Nothing here goes under it. Body
+    /// prose sits at 13 pt, the smallest size macOS treats as comfortable for
+    /// running text.
+    ///
+    /// **Size carries hierarchy, so the tiers stay strictly ordered.** Three
+    /// ladders run in parallel — page content, shell chrome, and monospaced
+    /// values — and each one steps down without ever tying. Tokens that share
+    /// a size are one tier wearing different weights, cases or families
+    /// (`sectionLabel` is `caption` set semibold and uppercase); they are not
+    /// a level of their own and were never distinguished by size.
+    ///
+    /// Sizes are absolute rather than derived from a base and a scale factor:
+    /// the ladder is short, it is read far more often than it is changed, and
+    /// arithmetic would hide which tier a token belongs to.
     enum Font {
-        static let largeTitle = NSFont.systemFont(ofSize: 22, weight: .bold)
-        static let title = NSFont.systemFont(ofSize: 14, weight: .semibold)
-        static let headline = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        static let body = NSFont.systemFont(ofSize: 12)
-        static let callout = NSFont.systemFont(ofSize: 11)
-        static let caption = NSFont.systemFont(ofSize: 10)
-        static let sectionLabel = NSFont.systemFont(ofSize: 9, weight: .semibold)
-        static let badge = NSFont.monospacedSystemFont(ofSize: 7, weight: .semibold)
-        static let micro = NSFont.monospacedSystemFont(ofSize: 8, weight: .medium)
-        static let monoBody = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        static let monoCaption = NSFont.monospacedSystemFont(ofSize: 9.5, weight: .regular)
-        static let monoDigits = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        // Page content, loudest first.
+        static let largeTitle = NSFont.systemFont(ofSize: 26, weight: .bold)
+        static let title = NSFont.systemFont(ofSize: 17, weight: .semibold)
+        static let headline = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        static let body = NSFont.systemFont(ofSize: 13)
+        static let callout = NSFont.systemFont(ofSize: 12)
+        static let caption = NSFont.systemFont(ofSize: 11)
 
-        static let chromeBrand = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        static let chromeSubtitle = NSFont.monospacedSystemFont(ofSize: 7, weight: .regular)
-        static let chromeNav = NSFont.systemFont(ofSize: 8)
-        static let chromeGroup = NSFont.monospacedSystemFont(ofSize: 6, weight: .semibold)
-        static let chromeProject = NSFont.systemFont(ofSize: 10, weight: .semibold)
-        static let chromeMetadata = NSFont.monospacedSystemFont(ofSize: 7, weight: .regular)
-        static let chromeControl = NSFont.systemFont(ofSize: 8, weight: .semibold)
-        static let screenSubtitle = NSFont.systemFont(ofSize: 8)
-        static let sectionTitle = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        static let sectionMetadata = NSFont.systemFont(ofSize: 8)
+        // Content tiers in another voice.
+        static let sectionTitle = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        static let screenSubtitle = NSFont.systemFont(ofSize: 12)
+        static let sectionLabel = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        static let sectionMetadata = NSFont.systemFont(ofSize: 11)
+        static let badge = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+
+        // Monospaced values, loudest first.
+        static let monoBody = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        static let monoDigits = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        static let monoCaption = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+
+        // Shell chrome, loudest first. Chrome reads quieter than content at
+        // the same tier because it is furniture, but the sidebar's nav labels
+        // are how the product is navigated and sit at body size.
+        static let chromeBrand = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        static let chromeProject = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        static let chromeControl = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        static let chromeMetadata = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+
+        // Chrome tiers in another voice.
+        static let chromeNav = NSFont.systemFont(ofSize: 13)
+        static let chromeSubtitle = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        static let chromeGroup = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
     }
 
     enum Chrome {
