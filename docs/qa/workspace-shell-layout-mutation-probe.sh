@@ -26,11 +26,12 @@ esac
 SHELL_DIR="workspace/Sources/HiveWorkspace/Shell"
 CONTROLLER="$SHELL_DIR/WorkspaceShellWindowController.swift"
 PANEL="$SHELL_DIR/ShellAvailabilityPanel.swift"
+CARDVIEW="workspace/Sources/HiveWorkspace/DesignSystem/Components/CardView.swift"
 # Set per probe by target(); every mutation and restore goes through it.
 TARGET=""
 TARGET_PATH=""
 
-for source in "$CONTROLLER" "$PANEL"; do
+for source in "$CONTROLLER" "$PANEL" "$CARDVIEW"; do
   [ -f "$REPO_ROOT/$source" ] || die "no source at $REPO_ROOT/$source"
   [ -z "$(git -C "$REPO_ROOT" status --porcelain -- "$source")" ] \
     || die "$source has uncommitted edits; this probe restores it with git"
@@ -46,7 +47,7 @@ LOG_DIR="${ARTIFACTS:-$(mktemp -d -t workspace-shell-layout-mutation-probe)}"
 mkdir -p "$LOG_DIR" || die "cannot create log directory: $LOG_DIR"
 
 restore() {
-  git -C "$REPO_ROOT" checkout -- "$CONTROLLER" "$PANEL" 2>/dev/null || true
+  git -C "$REPO_ROOT" checkout -- "$CONTROLLER" "$PANEL" "$CARDVIEW" 2>/dev/null || true
 }
 trap restore EXIT
 
@@ -236,8 +237,9 @@ probe panel-fills-document testSparseScreenFillsItsViewportWithoutManufacturingS
 probe scroll-reset-on-route-change testDenseScreenScrollsInsideTheRequestedWindowSize \
   replace_unique "if routeChanged {" "if true {"
 
+target "$CARDVIEW"
 probe divider-vertical-hugging testVisibleWindowKeepsItsRequestedSizeAfterLayout \
-  delete_from_anchor "separator.setContentHuggingPriority(.defaultLow, for: .vertical)" 0
+  delete_from_anchor "box.setContentHuggingPriority(.defaultLow, for: .vertical)" 0
 
 target "$PANEL"
 probe screen-content-fills-width testDenseScreenFillsEveryWindowWidthItIsGiven \
