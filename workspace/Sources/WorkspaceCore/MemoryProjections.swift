@@ -736,10 +736,19 @@ public struct MemoryMaintenanceProjection: Codable, Equatable, Sendable, MemoryP
 public struct MemoryRecallRequest: Codable, Equatable, Sendable {
     public let query: String
     public let purpose: MemoryRecallPurpose
+    /// The token budget to fit this bundle into, or nil to take the daemon's
+    /// own. The wire reads an absent budget as "use the configured wake budget",
+    /// so a nil here is a request for that value rather than a request for none.
+    public let budget: Int?
 
-    public init(query: String, purpose: MemoryRecallPurpose = .explicitRecall) {
+    public init(
+        query: String,
+        purpose: MemoryRecallPurpose = .explicitRecall,
+        budget: Int? = nil
+    ) {
         self.query = query
         self.purpose = purpose
+        self.budget = budget
     }
 }
 

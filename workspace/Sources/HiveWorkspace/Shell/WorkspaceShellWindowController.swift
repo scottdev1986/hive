@@ -35,7 +35,7 @@ final class WorkspaceShellWindowController: NSWindowController {
     /// The daemon write seam. A launch without a daemon connection leaves this nil and the Model Control controls stay disabled rather than pretending.
     var policyWriteHandler: ((ShellPolicyWrite) -> Void)?
     var queenProviderSwapHandler: (() -> Void)?
-    var memoryRecallHandler: ((String) -> Void)?
+    var memoryRecallHandler: ((MemoryRecallRequest) -> Void)?
     var memoryLibraryPageHandler: ((MemoryLibraryStep, MemoryLibraryFilter) -> Void)?
     var memoryJobHandler: ((MemoryJobKind) -> Void)?
     private var memoryActionBanner: ShellBanner?
@@ -390,7 +390,8 @@ final class WorkspaceShellWindowController: NSWindowController {
                 })
         case (.memoryOverview, _):
             panel = MemoryOverviewScreenView(
-                screen: screen, overview: state.memory.overview)
+                screen: screen, overview: state.memory.overview,
+                onTestRecall: { [weak self] in self?.performRoute(.memoryRecallLab) })
         case (.memoryLibrary, _):
             panel = MemoryLibraryScreenView(
                 screen: screen,
@@ -412,7 +413,7 @@ final class WorkspaceShellWindowController: NSWindowController {
                 preview: state.memory.recall,
                 actionsEnabled: screen.availability == .current
                     && memoryRecallHandler != nil,
-                onInspect: { [weak self] query in self?.memoryRecallHandler?(query) })
+                onInspect: { [weak self] request in self?.memoryRecallHandler?(request) })
         case (.memoryMaintenance, _):
             panel = MemoryMaintenanceScreenView(
                 screen: screen,

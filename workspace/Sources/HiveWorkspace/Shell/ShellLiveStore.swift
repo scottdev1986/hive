@@ -250,7 +250,7 @@ struct ShellLiveStore {
         }
         do {
             let memoryRecall = try await MemoryRecallGateway(client: client)
-                .fetch(query: "memory")
+                .fetch(MemoryRecallRequest(query: "memory"))
             state.apply(
                 screen: MemoryScreenPresenter.recall(memoryRecall),
                 for: .memoryRecallLab)

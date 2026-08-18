@@ -67,13 +67,14 @@ struct MemoryRecallGateway {
         self.now = now
     }
 
-    func fetch(query: String) async throws -> ClientProjection<MemoryRecallPreview> {
+    func fetch(_ request: MemoryRecallRequest) async throws
+        -> ClientProjection<MemoryRecallPreview> {
         let lostAt = ISO8601DateFormatter().string(from: now())
         do {
             let (data, response) = try await client.send(
                 path: Self.read.path,
                 method: "POST",
-                body: MemoryRecallRequest(query: query))
+                body: request)
             if response.statusCode == 401 || response.statusCode == 403 {
                 return try projection(
                     availability: .unauthorized,

@@ -678,6 +678,70 @@ final class MemoryScreenViewTests: XCTestCase {
         XCTAssertEqual(count.stringValue, "Showing 2 of 19 receipts.")
     }
 
+    // MARK: Purpose and budget are the wire's own parameters
+
+    /// The two selectors the design draws that the wire really accepts. Scope is
+    /// the third one it draws, and this screen must not offer it in any form:
+    /// the recall request has no scope field for it to fill.
+    func testRecallSendsThePurposeAndBudgetTheReaderChose() throws {
+        nonisolated(unsafe) var requests: [MemoryRecallRequest] = []
+        let state = try ShellFixtureStore(directory: fixtureDirectory)
+            .loadState(scenario: .current)
+        let preview = try XCTUnwrap(state.memory.recall)
+        let view = MemoryRecallScreenView(
+            screen: screen(.current), preview: preview,
+            actionsEnabled: true, onInspect: { requests.append($0) })
+        view.layoutSubtreeIfNeeded()
+
+        let purpose = try XCTUnwrap(find(view, "memory-recall-purpose") as? NSPopUpButton)
+        let budget = try XCTUnwrap(find(view, "memory-recall-budget") as? NSTextField)
+        let run = try XCTUnwrap(find(view, "memory-recall-inspect") as? NSButton)
+        XCTAssertEqual(
+            purpose.itemTitles,
+            ["explicit-recall", "spawn-preview", "wake-preview"],
+            "the popup carries the daemon's own vocabulary")
+        XCTAssertEqual(
+            budget.stringValue, String(preview.budget),
+            "the field opens on the budget the daemon reported")
+
+        purpose.selectItem(at: 2)
+        budget.stringValue = "300"
+        run.performClick(nil)
+        XCTAssertEqual(
+            requests,
+            [MemoryRecallRequest(query: preview.query, purpose: .wakePreview, budget: 300)])
+
+        // An empty budget asks for the daemon's own, which is what the wire
+        // reads an absent budget as — never a request for none.
+        budget.stringValue = ""
+        run.performClick(nil)
+        XCTAssertEqual(requests.last?.budget, nil)
+
+        XCTAssertFalse(
+            identifiers(view).contains { $0.contains("scope") },
+            "the wire takes no scope, so the screen offers no scope control")
+    }
+
+    func testTheOverviewTestRecallActionAsksForTheRecallRoute() throws {
+        nonisolated(unsafe) var jumps = 0
+        let state = try ShellFixtureStore(directory: fixtureDirectory)
+            .loadState(scenario: .current)
+        let view = MemoryOverviewScreenView(
+            screen: screen(.current), overview: state.memory.overview,
+            onTestRecall: { jumps += 1 })
+        view.layoutSubtreeIfNeeded()
+
+        let action = try XCTUnwrap(
+            find(view, "memory-overview-test-recall") as? NSButton)
+        action.performClick(nil)
+        XCTAssertEqual(jumps, 1, "the header action runs a real route jump")
+        // The design's other header action opens a curated-memory editor this
+        // app has no client for, so it is absent rather than inert.
+        XCTAssertFalse(
+            labels(view).contains("New memory"),
+            "a control with nothing behind it is not drawn")
+    }
+
     // MARK: Refresh re-reads the page on screen
 
     func testRefreshReReadsThePageOnScreenRatherThanRestartingTheWalk() throws {

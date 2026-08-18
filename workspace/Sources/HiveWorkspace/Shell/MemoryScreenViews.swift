@@ -4,9 +4,22 @@ import AppKit
 import WorkspaceCore
 
 final class MemoryOverviewScreenView: NSView {
-    init(screen: ShellScreenProjection, overview: MemoryOverviewProjection?) {
+    init(
+        screen: ShellScreenProjection,
+        overview: MemoryOverviewProjection?,
+        onTestRecall: @escaping () -> Void = {}
+    ) {
         super.init(frame: .zero)
         setAccessibilityIdentifier("memory-overview-screen")
+        // The design's other header action is a curated-memory editor. The
+        // daemon has the fenced mutation wire for it, this app has no client,
+        // and a button that opens nothing is worse than no button: it is only
+        // discovered to be empty after it is trusted.
+        let testRecall = ActionButton(title: "Test recall", symbol: "magnifyingglass")
+        testRecall.setAccessibilityIdentifier("memory-overview-test-recall")
+        ShellButtonTarget.shared.register(testRecall, action: onTestRecall)
+        testRecall.target = ShellButtonTarget.shared
+        testRecall.action = #selector(ShellButtonTarget.fire(_:))
         var content: [NSView] = []
         if let overview {
             content.append(MemoryScreenParts.grid([
@@ -74,7 +87,7 @@ final class MemoryOverviewScreenView: NSView {
             subtitle: "Health and counts from one daemon-owned overview projection. "
                 + "Two canonical records and the one rebuildable projection over "
                 + "them stay visibly different.",
-            actions: [],
+            actions: [testRecall],
             content: content,
             in: self)
     }
@@ -304,7 +317,7 @@ final class MemoryRecallScreenView: NSView {
         screen: ShellScreenProjection,
         preview: MemoryRecallPreview?,
         actionsEnabled: Bool,
-        onInspect: @escaping (String) -> Void
+        onInspect: @escaping (MemoryRecallRequest) -> Void
     ) {
         super.init(frame: .zero)
         setAccessibilityIdentifier("memory-recall-screen")
@@ -312,6 +325,23 @@ final class MemoryRecallScreenView: NSView {
         query.placeholderString = "Recall query"
         query.font = Theme.Font.body
         query.setAccessibilityIdentifier("memory-recall-query")
+        // Purpose and budget are the wire's own request parameters. Scope is
+        // not one of them, so this screen offers no scope control at all: a
+        // filter the daemon cannot honour is not made honest by disabling it.
+        let purpose = NSPopUpButton(frame: .zero, pullsDown: false)
+        purpose.addItems(withTitles: Self.purposes.map(\.rawValue))
+        purpose.selectItem(at: Self.purposes.firstIndex(
+            of: preview?.purpose ?? .explicitRecall) ?? 0)
+        purpose.isEnabled = actionsEnabled
+        purpose.font = Theme.Font.chromeControl
+        purpose.controlSize = .small
+        purpose.setAccessibilityIdentifier("memory-recall-purpose")
+        let budget = NSTextField(string: preview.map { String($0.budget) } ?? "")
+        budget.placeholderString = "the daemon's own budget"
+        budget.font = Theme.Font.body
+        budget.formatter = Self.tokenFormatter
+        budget.isEnabled = actionsEnabled
+        budget.setAccessibilityIdentifier("memory-recall-budget")
         let inspect = ActionButton(
             title: "Run recall", symbol: "magnifyingglass", style: .primary)
         inspect.isEnabled = actionsEnabled
@@ -319,7 +349,14 @@ final class MemoryRecallScreenView: NSView {
         ShellButtonTarget.shared.register(inspect) {
             let trimmed = query.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
-            onInspect(trimmed)
+            // An empty budget field asks for the daemon's own budget, which is
+            // what the wire reads an absent budget as.
+            let tokens = Int(budget.stringValue.trimmingCharacters(
+                in: .whitespacesAndNewlines)).flatMap { $0 > 0 ? $0 : nil }
+            onInspect(MemoryRecallRequest(
+                query: trimmed,
+                purpose: Self.purposes[purpose.indexOfSelectedItem],
+                budget: tokens))
         }
         inspect.target = ShellButtonTarget.shared
         inspect.action = #selector(ShellButtonTarget.fire(_:))
@@ -329,6 +366,8 @@ final class MemoryRecallScreenView: NSView {
             subtitle: "read-only: this preview never advances a wake high-water",
             identifier: "memory-recall-form")
         form.add(query)
+        form.add(MemoryScreenParts.labelled("Purpose", purpose))
+        form.add(MemoryScreenParts.labelled("Budget · tokens", budget))
         form.add(inspect)
         if let preview {
             form.add(MemoryScreenParts.outcomePanel(preview))
@@ -429,6 +468,22 @@ final class MemoryRecallScreenView: NSView {
             content: content,
             in: self)
     }
+
+    /// The purposes the wire accepts, in the order the screen offers them. This
+    /// is the daemon's own vocabulary rather than a second list kept here.
+    private static let purposes: [MemoryRecallPurpose] = [
+        .explicitRecall, .spawnPreview, .wakePreview,
+    ]
+
+    /// A budget is a positive whole number of tokens or nothing at all, which is
+    /// exactly what the wire will take.
+    private static let tokenFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .none
+        formatter.allowsFloats = false
+        formatter.minimum = 1
+        return formatter
+    }()
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -1105,6 +1160,20 @@ enum MemoryScreenParts {
     }
 
     private static let stateSlotWidth: CGFloat = 108
+
+    /// A form control under the word for what it sets, in the reading order the
+    /// design uses: the label above, the control filling the width beneath it.
+    static func labelled(_ label: String, _ control: NSView) -> NSStackView {
+        let caption = NSTextField(labelWithString: label)
+        caption.font = Theme.Font.sectionLabel
+        caption.textColor = Theme.tertiaryText
+        let stack = NSStackView(views: [caption, control])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.xs
+        control.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
 
     static func factRow(
         _ label: String,

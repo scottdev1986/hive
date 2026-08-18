@@ -58,13 +58,13 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                     workbench.showControlUnavailable(error.localizedDescription)
                 }
                 startLiveRunFeed(workbench: workbench)
-                controller.memoryRecallHandler = { [weak self, weak controller] query in
+                controller.memoryRecallHandler = { [weak self, weak controller] request in
                     guard let self else { return }
                     Task { @MainActor in
                         do {
                             let client = try await ShellLiveStore(config: self.config).makeClient()
                             let projection = try await MemoryRecallGateway(client: client)
-                                .fetch(query: query)
+                                .fetch(request)
                             controller?.apply {
                                 let presented = MemoryScreenPresenter.recall(projection)
                                 $0.apply(screen: MemoryScreenPresenter.retainingValue(

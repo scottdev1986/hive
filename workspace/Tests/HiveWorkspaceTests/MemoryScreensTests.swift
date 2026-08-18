@@ -508,11 +508,11 @@ final class MemoryScreensTests: XCTestCase {
             WireDate.parseISO("2026-07-31T08:05:00.000Z"))
 
         let fresh = try await MemoryRecallGateway(client: client, now: { freshNow })
-            .fetch(query: "memory")
+            .fetch(MemoryRecallRequest(query: "memory"))
         let boundary = try await MemoryRecallGateway(client: client, now: { boundaryNow })
-            .fetch(query: "memory")
+            .fetch(MemoryRecallRequest(query: "memory"))
         let stale = try await MemoryRecallGateway(client: client, now: { staleNow })
-            .fetch(query: "memory")
+            .fetch(MemoryRecallRequest(query: "memory"))
         XCTAssertEqual(fresh.availability, .current)
         XCTAssertEqual(boundary.availability, .current)
         XCTAssertEqual(stale.availability, .current)
@@ -534,7 +534,7 @@ final class MemoryScreensTests: XCTestCase {
             })
 
         let projection = try await MemoryRecallGateway(client: client)
-            .fetch(query: "memory")
+            .fetch(MemoryRecallRequest(query: "memory"))
         XCTAssertEqual(projection.availability, .unauthorized)
         XCTAssertEqual(
             projection.evidence,
