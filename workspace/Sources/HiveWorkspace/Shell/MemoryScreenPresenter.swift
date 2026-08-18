@@ -122,6 +122,52 @@ public enum MemoryScreenPresenter {
         } ?? [])
     }
 
+    /// One library row resolved into the cells the table draws. Every kind fills
+    /// the same cells, and `detail` carries the provenance that is particular to
+    /// a kind — source and evidence for an article, the agent and session for a
+    /// digest — so no field the wire sent is dropped for layout.
+    struct LibraryRow: Equatable {
+        let id: String
+        let title: String
+        let detail: String
+        let kind: String
+        let scope: String
+        let status: String
+        let updated: String
+    }
+
+    static func libraryRow(_ item: MemoryLibraryItem) -> LibraryRow {
+        switch item {
+        case .article(let row), .pitfall(let row):
+            return LibraryRow(
+                id: row.id, title: row.title,
+                detail: "\(row.topic) · source \(row.source.rawValue) "
+                    + "· evidence \(row.evidence)",
+                kind: row.kind.rawValue, scope: row.scope.rawValue,
+                status: row.status.rawValue, updated: row.updated)
+        case .fact(let row):
+            let confidence = row.confidence.map { String($0) } ?? "unknown"
+            return LibraryRow(
+                id: row.id, title: row.title,
+                detail: "\(row.topic) · confidence \(confidence) · valid \(row.validAt)",
+                kind: row.kind, scope: row.scope.rawValue,
+                status: row.status.rawValue, updated: row.updated)
+        case .digest(let row):
+            return LibraryRow(
+                id: row.id, title: row.title,
+                detail: "\(row.topic) · agent \(row.agent) "
+                    + "· session \(row.sessionId ?? "unknown")",
+                kind: row.kind, scope: row.scope.rawValue,
+                status: row.status.rawValue, updated: row.updated)
+        case .rawReference(let row):
+            return LibraryRow(
+                id: row.id, title: row.title,
+                detail: "\(row.topic) · \(row.path) · \(row.bytes) bytes",
+                kind: row.kind, scope: row.scope.rawValue,
+                status: row.status.rawValue, updated: row.updated)
+        }
+    }
+
     /// The words deliberately differ. A mutation that maps `.absent` to `.empty` changes the user's claim and is pinned by a named test.
     static func store(_ state: MemoryStoreState) -> String {
         switch state {

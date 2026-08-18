@@ -1,4 +1,4 @@
-// MemoryScreenViews.swift The four Memory screens. Each renders exactly one typed daemon projection and nothing else: no screen here opens a memory file, a database, or a directory, so a route with no observed projection renders its availability state alone rather than a plausible-looking store. Absent, empty and available stores get three different renderings — an absent store draws no counts at all, because a number for a store that is not wired would be this client's invention rather than the daemon's reading.
+// MemoryScreenViews.swift The four Memory screens. Each renders exactly one typed daemon projection and nothing else: no screen here opens a memory file, a database, or a directory, so a route with no observed projection renders its availability state alone rather than a plausible-looking store. Absent, empty and available stores get three different renderings — an absent store draws no counts at all, because a number for a store that is not wired would be this client's invention rather than the daemon's reading. The four share one page shell, one filter idiom and one result-row idiom, all built here from the design system's primitives.
 
 import AppKit
 import WorkspaceCore
@@ -7,57 +7,74 @@ final class MemoryOverviewScreenView: NSView {
     init(screen: ShellScreenProjection, overview: MemoryOverviewProjection?) {
         super.init(frame: .zero)
         setAccessibilityIdentifier("memory-overview-screen")
-        var sections: [NSView] = []
+        var content: [NSView] = []
         if let overview {
-            sections.append(MemoryScreenParts.section("Curated wiki", [
+            content.append(MemoryScreenParts.grid([
+                MemoryScreenParts.metricCard(
+                    value: MemoryScreenParts.count(overview.wiki.articles, overview.wiki.state),
+                    caption: "curated articles · repo and global",
+                    identifier: "memory-metric-articles"),
+                MemoryScreenParts.metricCard(
+                    value: MemoryScreenParts.count(
+                        overview.episodic.events, overview.episodic.state),
+                    caption: "episodic events · \(overview.config.eventsHotDays)-day hot tier",
+                    identifier: "memory-metric-events"),
+                MemoryScreenParts.metricCard(
+                    value: MemoryScreenParts.count(
+                        overview.episodic.facts, overview.episodic.state),
+                    caption: "bi-temporal facts",
+                    identifier: "memory-metric-facts"),
+                MemoryScreenParts.metricCard(
+                    value: MemoryScreenParts.count(
+                        overview.wiki.unverifiedPitfalls, overview.wiki.state),
+                    caption: "unverified pitfalls",
+                    identifier: "memory-metric-unverified"),
+            ], columns: 4))
+
+            content.append(MemoryScreenParts.grid([
                 MemoryScreenParts.storeCard(
-                    name: "Wiki", identifier: "memory-store-wiki",
+                    name: "Curated wiki", identifier: "memory-store-wiki",
+                    caption: "canonical record · immutable observations and compiled entries",
                     state: overview.wiki.state,
                     readings: [
                         ("Articles", String(overview.wiki.articles)),
                         ("Pitfalls", String(overview.wiki.pitfalls)),
                         ("Unverified pitfalls", String(overview.wiki.unverifiedPitfalls)),
                     ]),
-            ] + overview.wiki.scopes.map { scope in
                 MemoryScreenParts.storeCard(
-                    name: "Wiki scope · \(scope.scope.rawValue)",
-                    identifier: "memory-store-wiki-\(scope.scope.rawValue)",
-                    state: scope.state,
-                    readings: [
-                        ("Articles", String(scope.articles)),
-                        ("Pitfalls", String(scope.pitfalls)),
-                        ("Unverified pitfalls", String(scope.unverifiedPitfalls)),
-                        ("Raw observations", String(scope.rawObservations)),
-                    ])
-            }))
-            sections.append(MemoryScreenParts.section("Episodic store", [
-                MemoryScreenParts.storeCard(
-                    name: "Episodic", identifier: "memory-store-episodic",
+                    name: "Episodic store", identifier: "memory-store-episodic",
+                    caption: "canonical record · events, facts and digests",
                     state: overview.episodic.state,
                     readings: [
                         ("Events", String(overview.episodic.events)),
                         ("Facts", String(overview.episodic.facts)),
                         ("Digests", String(overview.episodic.digests)),
                     ]),
-            ]))
-            sections.append(MemoryScreenParts.section(
-                "FTS and vectors",
-                MemoryScreenParts.indexCards(overview.indexes)))
-            sections.append(MemoryScreenParts.section(
-                "Lifecycle policy",
-                [MemoryScreenParts.configCard(overview.config)]))
-            sections.append(MemoryScreenParts.section(
-                "Known integrity gaps",
-                [MemoryScreenParts.gapsCard(overview.gaps)]))
-            sections.append(MemoryScreenParts.section(
-                "Recent memory operations",
-                MemoryScreenParts.jobCards(overview.lastJobs)))
+            ] + MemoryScreenParts.indexCards(overview.indexes), columns: 4))
+
+            content.append(MemoryScreenParts.scopesCard(overview.wiki.scopes))
+
+            content.append(MemoryScreenParts.grid([
+                MemoryScreenParts.recallHealthCard(
+                    indexes: overview.indexes, config: overview.config),
+                MemoryScreenParts.jobsCard(
+                    title: "Recent memory operations",
+                    subtitle: "the receipts the daemon kept",
+                    receipts: overview.lastJobs),
+            ], columns: 2))
+
+            content.append(MemoryScreenParts.grid([
+                MemoryScreenParts.configCard(overview.config),
+                MemoryScreenParts.gapsCard(overview.gaps),
+            ], columns: 2))
         }
-        MemoryScreenLayout.install(
-            controls: [],
-            sections: sections,
-            panel: ShellAvailabilityPanel(
-                route: .memoryOverview, screen: screen, contentInset: 0),
+        MemoryPage.install(
+            route: .memoryOverview,
+            screen: screen,
+            subtitle: "Health and counts from one daemon-owned overview projection. "
+                + "Canonical records and disposable indexes stay visibly different.",
+            actions: [],
+            content: content,
             in: self)
     }
 
@@ -75,44 +92,79 @@ final class MemoryLibraryScreenView: NSView {
     ) {
         super.init(frame: .zero)
         setAccessibilityIdentifier("memory-library-screen")
-        var controls: [NSView] = []
-        var sections: [NSView] = []
+        var content: [NSView] = []
         if let pager {
-            controls.append(MemoryScreenParts.filterControls(
+            content.append(MemoryScreenParts.filterControls(
                 filter: pager.filter, enabled: actionsEnabled, onFilter: onFilter))
             let page = pager.page
-            sections.append(MemoryScreenParts.section("Library", [
+            let table = MemoryScreenParts.sectionCard(
+                title: "Library rows",
+                subtitle: "ordered by row key, so a page walk cannot renumber "
+                    + "under a concurrent write",
+                identifier: "memory-library-rows")
+            table.add(MemoryScreenParts.resultHeader(columns: Self.columns))
+            if page.items.isEmpty {
+                table.add(MemoryScreenParts.note(
+                    "This page carries no rows.",
+                    identifier: "memory-library-no-rows",
+                    style: .quiet))
+            } else {
+                for item in page.items {
+                    let row = MemoryScreenPresenter.libraryRow(item)
+                    table.add(MemoryScreenParts.resultRow(
+                        leading: MemoryScreenParts.lifecycleBadge(row.status),
+                        title: row.title,
+                        detail: row.detail,
+                        columns: [
+                            MemoryScreenParts.Column(text: row.kind, width: Self.columns[0].width),
+                            MemoryScreenParts.Column(text: row.scope, width: Self.columns[1].width),
+                            MemoryScreenParts.Column(
+                                text: row.updated, width: Self.columns[2].width, mono: true),
+                        ],
+                        identifier: "memory-library-row-\(row.id)"))
+                }
+            }
+            table.add(MemoryScreenParts.pageControls(
+                pager: pager, enabled: actionsEnabled, onPage: onPage))
+
+            let aside = MemoryScreenParts.column([
                 MemoryScreenParts.storeCard(
-                    name: "Library", identifier: "memory-store-library",
+                    name: "Library page", identifier: "memory-store-library",
+                    caption: "the daemon's own page of this filtered list",
                     state: page.state,
                     readings: [
                         ("Matching rows", String(page.total)),
                         ("Rows on this page", String(page.items.count)),
                         ("Page", String(pager.pageNumber)),
                     ]),
-            ]))
-            if !page.items.isEmpty {
-                let card = CardView()
-                card.setAccessibilityIdentifier("memory-library-rows")
-                for item in page.items {
-                    let display = item.display
-                    let row = MemoryScreenParts.row(
-                        "\(display.kind) · \(display.id)", display.value)
-                    card.contentStack.addArrangedSubview(row)
-                    card.pinToContentWidth(row)
-                }
-                sections.append(MemoryScreenParts.section("Rows", [card]))
-            }
-            controls.append(MemoryScreenParts.pageControls(
-                pager: pager, enabled: actionsEnabled, onPage: onPage))
+                MemoryScreenParts.gapCard(
+                    title: "Selected memory",
+                    identifier: "memory-library-inspector-gap",
+                    detail: "This build has no typed edit or delete operation with a "
+                        + "reference guard and an expected revision, so a row cannot be "
+                        + "opened for change here. Rows are read exactly as the daemon "
+                        + "listed them."),
+            ])
+            content.append(MemoryScreenParts.split(main: table, aside: aside))
         }
-        MemoryScreenLayout.install(
-            controls: controls,
-            sections: sections,
-            panel: ShellAvailabilityPanel(
-                route: .memoryLibrary, screen: screen, contentInset: 0),
+        MemoryPage.install(
+            route: .memoryLibrary,
+            screen: screen,
+            subtitle: "Paginated daemon projection across curated articles, pitfalls, "
+                + "current facts, session digests, and raw evidence references. "
+                + "Scope and lifecycle are explicit.",
+            actions: [],
+            content: content,
             in: self)
     }
+
+    /// The table's own schema: kind, scope, and the update stamp sit in fixed
+    /// columns while the title and its provenance take the space that is left.
+    private static let columns: [MemoryScreenParts.Column] = [
+        MemoryScreenParts.Column(text: "Kind", width: 92),
+        MemoryScreenParts.Column(text: "Scope", width: 84),
+        MemoryScreenParts.Column(text: "Updated", width: 132, mono: true),
+    ]
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
@@ -129,8 +181,10 @@ final class MemoryRecallScreenView: NSView {
         setAccessibilityIdentifier("memory-recall-screen")
         let query = NSTextField(string: preview?.query ?? "")
         query.placeholderString = "Recall query"
+        query.font = Theme.Font.body
         query.setAccessibilityIdentifier("memory-recall-query")
-        let inspect = NSButton(title: "Inspect recall", target: nil, action: nil)
+        let inspect = ActionButton(
+            title: "Run recall", symbol: "magnifyingglass", style: .primary)
         inspect.isEnabled = actionsEnabled
         inspect.setAccessibilityIdentifier("memory-recall-inspect")
         ShellButtonTarget.shared.register(inspect) {
@@ -140,54 +194,105 @@ final class MemoryRecallScreenView: NSView {
         }
         inspect.target = ShellButtonTarget.shared
         inspect.action = #selector(ShellButtonTarget.fire(_:))
-        let controls = NSStackView(views: [query, inspect])
-        controls.orientation = .horizontal
-        controls.spacing = Theme.Space.s
-        query.widthAnchor.constraint(greaterThanOrEqualToConstant: 260).isActive = true
 
-        var sections: [NSView] = []
+        let form = MemoryScreenParts.sectionCard(
+            title: "Query",
+            subtitle: "read-only: this preview never advances a wake high-water",
+            identifier: "memory-recall-form")
+        form.add(query)
+        form.add(inspect)
         if let preview {
-            sections.append(MemoryScreenParts.section(
-                "Preview", [MemoryScreenParts.recallSummaryCard(preview)]))
-            sections.append(MemoryScreenParts.section(
-                "Budget partitions", [MemoryScreenParts.partitionsCard(preview)]))
+            form.add(MemoryScreenParts.outcomePanel(preview))
+            for (label, value) in [
+                ("Purpose", preview.purpose.rawValue),
+                ("Store", MemoryScreenPresenter.store(preview.state)),
+                ("Search provenance", preview.semantic),
+                ("Budget", "\(preview.tokens) of \(preview.budget) tokens"
+                    + (preview.truncated
+                        ? " · truncated to fit"
+                        : " · nothing was dropped for size")),
+                ("Omitted", "\(preview.omitted) rows · \(preview.omittedPitfalls) pitfalls · "
+                    + "\(preview.omittedArticles) articles"),
+                ("Mutation", "\(preview.mutation.rawValue) · the wake high-water "
+                    + (preview.highWaterAdvanced ? "advanced" : "did not advance")),
+                ("Note", preview.note),
+            ] {
+                form.add(MemoryScreenParts.factRow(label, value))
+            }
+        }
+
+        var content: [NSView] = []
+        if let preview {
+            var results: [NSView] = []
             if let trigger = preview.triggerPhrase {
-                sections.append(MemoryScreenParts.note(
+                results.append(MemoryScreenParts.note(
                     "A \(trigger.detected.rawValue) trigger phrase was detected in this "
                         + "query and treated as \(trigger.treatedAs.rawValue). "
                         + "It was reported, never executed.",
                     identifier: "memory-recall-trigger",
-                    color: .systemOrange))
+                    style: .attention))
             }
             if let warning = preview.warning {
-                sections.append(MemoryScreenParts.note(
-                    warning, identifier: "memory-recall-warning", color: .systemOrange))
+                results.append(MemoryScreenParts.note(
+                    warning, identifier: "memory-recall-warning", style: .attention))
             }
+
+            let ranked = MemoryScreenParts.sectionCard(
+                title: "Ranked results",
+                subtitle: "\(preview.rows.count) rows inside the budget",
+                identifier: "memory-recall-rows")
             if preview.rows.isEmpty {
-                sections.append(MemoryScreenParts.note(
+                ranked.add(MemoryScreenParts.note(
                     "This query matched no rows within the budget.",
                     identifier: "memory-recall-no-rows",
-                    color: .secondaryLabelColor))
+                    style: .quiet))
             } else {
-                let card = CardView()
-                card.setAccessibilityIdentifier("memory-recall-rows")
                 for row in preview.rows {
                     let flag = row.flag.map { " · \($0)" } ?? ""
-                    let view = MemoryScreenParts.row(
-                        "#\(row.rank) · \(row.class.rawValue)",
-                        "\(row.scope)/\(row.topic)/\(row.id) · \(row.date) · "
-                            + "\(row.status)\(flag) · \(row.title) — \(row.snippet)")
-                    card.contentStack.addArrangedSubview(view)
-                    card.pinToContentWidth(view)
+                    ranked.add(MemoryScreenParts.resultRow(
+                        leading: MemoryScreenParts.lifecycleBadge(row.status),
+                        title: row.title,
+                        detail: "\(row.snippet) · \(row.scope)/\(row.topic)/\(row.id)"
+                            + "\(flag)",
+                        columns: [
+                            MemoryScreenParts.Column(text: row.date, width: 132, mono: true),
+                        ],
+                        trailing: CapsuleBadge(
+                            text: "rank \(row.rank) · \(row.class.rawValue)",
+                            symbol: "number",
+                            style: .info),
+                        identifier: "memory-recall-row-\(row.id)"))
                 }
-                sections.append(MemoryScreenParts.section("Results", [card]))
             }
+            results.append(ranked)
+
+            let partitions = MemoryScreenParts.sectionCard(
+                title: "Budget partitions",
+                subtitle: "each class keeps its own reserve, so a starved class "
+                    + "is visible as itself",
+                identifier: "memory-recall-partitions")
+            for partition in preview.partitions {
+                partitions.add(MemoryScreenParts.factRow(
+                    partition.class.rawValue,
+                    "\(partition.usedTokens) of \(partition.reservedTokens) reserved tokens · "
+                        + "\(partition.kept) kept · \(partition.omitted) omitted",
+                    identifier: "memory-recall-partition-\(partition.class.rawValue)"))
+            }
+            results.append(partitions)
+            content.append(MemoryScreenParts.split(
+                main: MemoryScreenParts.column(results), aside: MemoryScreenParts.column([form]), asideLeads: true))
+        } else {
+            content.append(MemoryScreenParts.split(main: NSView(), aside: MemoryScreenParts.column([form]), asideLeads: true))
         }
-        MemoryScreenLayout.install(
-            controls: [controls],
-            sections: sections,
-            panel: ShellAvailabilityPanel(
-                route: .memoryRecallLab, screen: screen, contentInset: 0),
+
+        MemoryPage.install(
+            route: .memoryRecallLab,
+            screen: screen,
+            subtitle: "Read-only preview of the exact bounded bundle Hive would produce. "
+                + "It never advances an agent's wake high-water and never treats an "
+                + "agent-authored trigger phrase as authority.",
+            actions: [],
+            content: content,
             in: self)
     }
 
@@ -204,42 +309,46 @@ final class MemoryMaintenanceScreenView: NSView {
     ) {
         super.init(frame: .zero)
         setAccessibilityIdentifier("memory-maintenance-screen")
-        let controls = NSStackView()
-        controls.orientation = .horizontal
-        controls.spacing = Theme.Space.s
-        for kind in MemoryJobKind.allCases {
-            let button = NSButton(title: kind.title, target: nil, action: nil)
+
+        func job(_ kind: MemoryJobKind, style: ActionButton.Style = .neutral) -> ActionButton {
+            let button = ActionButton(title: kind.title, style: style)
             button.isEnabled = actionsEnabled
             button.setAccessibilityIdentifier("memory-job-\(kind.rawValue)")
             ShellButtonTarget.shared.register(button) { onStart(kind) }
             button.target = ShellButtonTarget.shared
             button.action = #selector(ShellButtonTarget.fire(_:))
-            controls.addArrangedSubview(button)
+            return button
         }
 
-        var sections: [NSView] = []
+        var content: [NSView] = []
         if let maintenance {
-            sections.append(MemoryScreenParts.section("FTS and vectors", [
+            let indexes = MemoryScreenParts.indexCards(
+                maintenance.indexes, action: job(.reindex, style: .primary))
+            content.append(MemoryScreenParts.grid(indexes + [
                 MemoryScreenParts.storeCard(
                     name: "Consolidation", identifier: "memory-store-consolidation",
+                    caption: "duplicate candidates the daemon scanned for",
                     state: maintenance.consolidation.state,
-                    readings: [("Candidates", String(maintenance.consolidation.candidates))]),
-            ] + MemoryScreenParts.indexCards(maintenance.indexes)))
-            sections.append(MemoryScreenParts.section(
-                "Lifecycle policy",
-                [MemoryScreenParts.configCard(maintenance.config)]))
-            sections.append(MemoryScreenParts.section("Jobs", [
-                MemoryScreenParts.storeCard(
-                    name: "Job receipts", identifier: "memory-store-jobs",
-                    state: maintenance.jobs.state,
-                    readings: [("Recorded", String(maintenance.jobs.recent.count))]),
-            ] + MemoryScreenParts.jobCards(maintenance.jobs.recent)))
+                    readings: [("Candidates", String(maintenance.consolidation.candidates))],
+                    actions: [job(.consolidationDryRun), job(.consolidationApply)]),
+                MemoryScreenParts.configCard(
+                    maintenance.config, action: job(.retentionSweep)),
+            ], columns: 2))
+
+            content.append(MemoryScreenParts.jobsCard(
+                title: "Job receipts",
+                subtitle: MemoryScreenPresenter.store(maintenance.jobs.state),
+                identifier: "memory-store-jobs-\(maintenance.jobs.state.rawValue)",
+                receipts: maintenance.jobs.recent))
         }
-        MemoryScreenLayout.install(
-            controls: [controls],
-            sections: sections,
-            panel: ShellAvailabilityPanel(
-                route: .memoryMaintenance, screen: screen, contentInset: 0),
+        MemoryPage.install(
+            route: .memoryMaintenance,
+            screen: screen,
+            subtitle: "Projection jobs, retention, and consolidation. Every operation "
+                + "runs in the daemon with a job receipt and a final readback; a job "
+                + "this build cannot name is not offered.",
+            actions: [],
+            content: content,
             in: self)
     }
 
@@ -249,6 +358,51 @@ final class MemoryMaintenanceScreenView: NSView {
 
 enum MemoryScreenParts {
 
+    /// One right-hand table cell. The screen owns the widths because each table
+    /// carries a different schema; the row owns everything else.
+    struct Column {
+        let text: String
+        let width: CGFloat
+        let mono: Bool
+
+        init(text: String, width: CGFloat, mono: Bool = false) {
+            self.text = text
+            self.width = width
+            self.mono = mono
+        }
+    }
+
+    enum NoteStyle {
+        case quiet
+        case attention
+    }
+
+    /// A store's count, or the word for a store that has none to give. An absent
+    /// store has no number at all: a zero here would be this client's invention.
+    static func count(_ value: Int, _ state: MemoryStoreState) -> String {
+        state == .absent ? "absent" : String(value)
+    }
+
+    /// The headline reading strip: one measured number and what it counts.
+    static func metricCard(value: String, caption: String, identifier: String) -> NSView {
+        let card = CardView()
+        card.setAccessibilityIdentifier(identifier)
+        let number = NSTextField(labelWithString: value)
+        number.font = Theme.Font.title
+        number.textColor = Theme.primaryText
+        number.compressHorizontally(priority: 460, toolTip: value)
+        let label = NSTextField(labelWithString: caption)
+        label.font = Theme.Font.screenSubtitle
+        label.textColor = Theme.secondaryText
+        label.compressHorizontally(priority: 440, toolTip: caption)
+        card.contentStack.spacing = Theme.Space.xs
+        card.contentStack.addArrangedSubview(number)
+        card.contentStack.addArrangedSubview(label)
+        card.pinToContentWidth(number)
+        card.pinToContentWidth(label)
+        return card
+    }
+
     /// One store's reading, in one of three shapes. Absent draws its reason and
     /// no counts; empty draws its measured zeros and says the store exists;
     /// available draws what was counted. The identifier carries the state so a
@@ -256,39 +410,48 @@ enum MemoryScreenParts {
     static func storeCard(
         name: String,
         identifier: String,
+        caption: String,
         state: MemoryStoreState,
-        readings: [(String, String)]
+        readings: [(String, String)],
+        actions: [NSView] = []
     ) -> CardView {
-        let card = CardView()
+        let trailing = NSStackView(views: [stateBadge(state)] + actions)
+        trailing.orientation = .horizontal
+        trailing.alignment = .centerY
+        trailing.spacing = Theme.Space.s
+        let card = sectionCard(
+            title: name,
+            subtitle: caption,
+            identifier: "\(identifier)-\(state.rawValue)",
+            trailingView: trailing)
         card.dashed = state == .absent
-        card.setAccessibilityIdentifier("\(identifier)-\(state.rawValue)")
-        let title = NSTextField(labelWithString: name)
-        title.font = Theme.Font.headline
-        card.contentStack.addArrangedSubview(title)
         let reading = NSTextField(
             wrappingLabelWithString: MemoryScreenPresenter.store(state))
         reading.font = Theme.Font.callout
-        reading.textColor = state == .absent ? .tertiaryLabelColor : .secondaryLabelColor
+        reading.textColor = state == .absent ? Theme.tertiaryText : Theme.secondaryText
         reading.maximumNumberOfLines = 0
-        card.contentStack.addArrangedSubview(reading)
-        card.pinToContentWidth(reading)
+        card.add(reading)
         guard state != .absent else { return card }
         for (label, value) in readings {
-            let row = self.row(label, value)
-            card.contentStack.addArrangedSubview(row)
-            card.pinToContentWidth(row)
+            card.add(factRow(label, value))
         }
         return card
     }
 
-    static func indexCards(_ indexes: MemoryIndexHealth) -> [NSView] {
+    static func indexCards(
+        _ indexes: MemoryIndexHealth,
+        action: NSView? = nil
+    ) -> [NSView] {
         [
             storeCard(
                 name: "Full-text index", identifier: "memory-index-fts",
+                caption: "rebuildable projection · never a record",
                 state: indexes.fts.state,
-                readings: [("Articles", String(indexes.fts.articles))]),
+                readings: [("Articles", String(indexes.fts.articles))],
+                actions: action.map { [$0] } ?? []),
             storeCard(
                 name: "Vector index", identifier: "memory-index-vectors",
+                caption: "rebuildable projection · embeddings over the records",
                 state: indexes.vectors.state,
                 readings: [
                     ("Articles", String(indexes.vectors.articles)),
@@ -300,9 +463,85 @@ enum MemoryScreenParts {
         ]
     }
 
-    static func configCard(_ config: MemoryConfigProjection) -> CardView {
-        let card = CardView()
-        card.setAccessibilityIdentifier("memory-config")
+    /// Every wiki scope with its own state, because one scope with rows and one
+    /// without are two readings and never an average of the two.
+    static func scopesCard(_ scopes: [MemoryOverviewProjection.Scope]) -> NSView {
+        let card = sectionCard(
+            title: "Wiki scopes",
+            subtitle: "each scope reports its own state and counts",
+            identifier: "memory-store-wiki-scopes")
+        guard !scopes.isEmpty else {
+            card.add(note(
+                "The daemon reported no wiki scope for this store.",
+                identifier: "memory-store-wiki-scopes-none",
+                style: .quiet))
+            return card
+        }
+        card.add(resultHeader(columns: [
+            Column(text: "Articles", width: 96),
+            Column(text: "Pitfalls", width: 96),
+            Column(text: "Unverified", width: 108),
+            Column(text: "Raw observations", width: 132),
+        ]))
+        for scope in scopes {
+            let absent = scope.state == .absent
+            card.add(resultRow(
+                leading: stateBadge(scope.state),
+                title: scope.scope.rawValue,
+                detail: MemoryScreenPresenter.store(scope.state),
+                columns: [
+                    Column(text: count(scope.articles, scope.state), width: 96, mono: true),
+                    Column(text: count(scope.pitfalls, scope.state), width: 96, mono: true),
+                    Column(
+                        text: count(scope.unverifiedPitfalls, scope.state),
+                        width: 108, mono: true),
+                    Column(
+                        text: count(scope.rawObservations, scope.state),
+                        width: 132, mono: true),
+                ],
+                identifier: "memory-store-wiki-\(scope.scope.rawValue)-\(scope.state.rawValue)",
+                dimmed: absent))
+        }
+        return card
+    }
+
+    /// What the recall path can answer with right now. The self-test line is an
+    /// explicit absence: this daemon projects no self-test result, and a screen
+    /// that quietly omitted the row would read as if none had ever been asked for.
+    static func recallHealthCard(
+        indexes: MemoryIndexHealth,
+        config: MemoryConfigProjection
+    ) -> NSView {
+        let card = sectionCard(
+            title: "Recall health",
+            subtitle: "what a recall can draw on today",
+            identifier: "memory-recall-health")
+        card.add(factRow(
+            "Full-text",
+            "\(MemoryScreenPresenter.store(indexes.fts.state)) · "
+                + "\(count(indexes.fts.articles, indexes.fts.state)) articles"))
+        card.add(factRow(
+            "Semantic",
+            "\(MemoryScreenPresenter.store(indexes.vectors.state)) · "
+                + "\(indexes.vectors.provider.rawValue) · \(indexes.vectors.model) · "
+                + "\(count(indexes.vectors.articles, indexes.vectors.state)) articles · "
+                + "\(count(indexes.vectors.facts, indexes.vectors.state)) facts"))
+        card.add(factRow(
+            "Last self-test",
+            "not projected — this daemon records no self-test result"))
+        card.add(factRow("Wake budget", "\(config.wakeBudgetTokens) tokens"))
+        return card
+    }
+
+    static func configCard(
+        _ config: MemoryConfigProjection,
+        action: NSView? = nil
+    ) -> CardView {
+        let card = sectionCard(
+            title: "Lifecycle policy",
+            subtitle: "retention and sweep as the daemon holds them",
+            identifier: "memory-config",
+            trailingView: action)
         for (label, value) in [
             ("Configuration revision", config.revision),
             ("Hot event retention", "\(config.eventsHotDays) days"),
@@ -311,9 +550,7 @@ enum MemoryScreenParts {
             ("Wake budget", "\(config.wakeBudgetTokens) tokens"),
             ("Embeddings", "\(config.embeddingProvider.rawValue) · \(config.embeddingModel)"),
         ] {
-            let row = self.row(label, value)
-            card.contentStack.addArrangedSubview(row)
-            card.pinToContentWidth(row)
+            card.add(factRow(label, value))
         }
         return card
     }
@@ -321,21 +558,24 @@ enum MemoryScreenParts {
     /// A gap is a named absence the daemon reported. An empty list says so in
     /// words: silence would read the same as "not asked".
     static func gapsCard(_ gaps: [MemoryOverviewProjection.Gap]) -> CardView {
-        let card = CardView()
-        card.setAccessibilityIdentifier(
-            gaps.isEmpty ? "memory-gaps-none" : "memory-gaps")
+        let card = sectionCard(
+            title: "Known integrity gaps",
+            subtitle: "reported by the daemon, not inferred here",
+            identifier: gaps.isEmpty ? "memory-gaps-none" : "memory-gaps")
         guard !gaps.isEmpty else {
-            let none = NSTextField(
-                labelWithString: "The daemon reported no gaps for this store.")
-            none.font = Theme.Font.callout
-            none.textColor = .secondaryLabelColor
-            card.contentStack.addArrangedSubview(none)
+            card.add(note(
+                "The daemon reported no gaps for this store.",
+                identifier: "memory-gaps-none-detail",
+                style: .quiet))
             return card
         }
         for gap in gaps {
-            let row = self.row(gap.code, gap.detail)
-            card.contentStack.addArrangedSubview(row)
-            card.pinToContentWidth(row)
+            card.add(resultRow(
+                leading: CapsuleBadge(
+                    text: "gap", symbol: "exclamationmark.triangle.fill", style: .warning),
+                title: gap.code,
+                detail: gap.detail,
+                identifier: "memory-gap-\(gap.code)"))
         }
         return card
     }
@@ -343,107 +583,94 @@ enum MemoryScreenParts {
     /// One receipt: what ran, how far it got, why it failed, and the readback it
     /// finished with. A failure is never summarised away, and a job with no
     /// readback says the readback is missing rather than showing nothing.
-    static func jobCards(_ receipts: [MemoryJobReceipt]) -> [NSView] {
+    static func jobsCard(
+        title: String,
+        subtitle: String,
+        identifier: String? = nil,
+        receipts: [MemoryJobReceipt]
+    ) -> NSView {
+        let card = sectionCard(
+            title: title,
+            subtitle: subtitle,
+            identifier: identifier ?? "memory-jobs")
         guard !receipts.isEmpty else {
-            let card = CardView()
-            card.setAccessibilityIdentifier("memory-jobs-none")
-            let none = NSTextField(
-                labelWithString: "No memory job has been recorded for this store.")
-            none.font = Theme.Font.callout
-            none.textColor = .secondaryLabelColor
-            card.contentStack.addArrangedSubview(none)
-            return [card]
+            card.add(note(
+                "No memory job has been recorded for this store.",
+                identifier: "memory-jobs-none",
+                style: .quiet))
+            return card
         }
-        return receipts.map { receipt in
-            let card = CardView()
-            card.setAccessibilityIdentifier("memory-job-receipt-\(receipt.id)")
-            let title = NSTextField(
-                labelWithString: "\(receipt.kind.title) · \(receipt.state.rawValue)")
-            title.font = Theme.Font.headline
-            card.contentStack.addArrangedSubview(title)
-
+        for receipt in receipts {
             let total = receipt.progress.total.map(String.init) ?? "unknown"
-            var readings = [
-                ("Progress", "\(receipt.progress.step) · \(receipt.progress.done)/\(total)"),
-                ("Requested by", receipt.requestedBy),
-                ("Started", receipt.startedAt),
-                ("Finished", receipt.finishedAt ?? "not yet"),
-                ("Summary", receipt.summary),
-            ]
+            let entry = NSStackView()
+            entry.orientation = .vertical
+            entry.alignment = .leading
+            entry.spacing = Theme.Space.xs
+            entry.setAccessibilityIdentifier("memory-job-receipt-\(receipt.id)")
+            entry.addArrangedSubview(resultRow(
+                leading: jobBadge(receipt.state),
+                title: receipt.kind.title,
+                detail: "\(receipt.progress.step) · \(receipt.progress.done)/\(total) · "
+                    + "requested by \(receipt.requestedBy) · \(receipt.summary)",
+                columns: [
+                    Column(text: receipt.startedAt, width: 168, mono: true),
+                    Column(text: receipt.finishedAt ?? "not yet", width: 168, mono: true),
+                ],
+                identifier: "memory-job-progress-\(receipt.id)",
+                showsSeparator: false))
+            var detail: [NSView] = []
             if let readback = receipt.readback {
-                readings += readback.keys.sorted().map {
-                    ("Readback · \($0)", readback[$0]?.display ?? "unknown")
+                for key in readback.keys.sorted() {
+                    detail.append(factRow(
+                        "Readback · \(key)", readback[key]?.display ?? "unknown"))
                 }
             } else {
-                readings.append((
+                detail.append(factRow(
                     "Readback",
                     "none was recorded, so this job's final state is unread"))
             }
-            for (label, value) in readings {
-                let row = self.row(label, value)
-                card.contentStack.addArrangedSubview(row)
-                card.pinToContentWidth(row)
-            }
             if let error = receipt.error {
-                let failure = NSTextField(wrappingLabelWithString: error)
-                failure.font = Theme.Font.callout
-                failure.textColor = .systemRed
-                failure.maximumNumberOfLines = 0
-                failure.setAccessibilityIdentifier("memory-job-failure-\(receipt.id)")
-                card.contentStack.addArrangedSubview(failure)
-                card.pinToContentWidth(failure)
+                detail.append(note(
+                    error,
+                    identifier: "memory-job-failure-\(receipt.id)",
+                    style: .attention,
+                    critical: true))
             }
-            return card
-        }
-    }
-
-    static func recallSummaryCard(_ preview: MemoryRecallPreview) -> CardView {
-        let card = CardView()
-        card.setAccessibilityIdentifier("memory-recall-summary")
-        for (label, value) in [
-            ("Query", preview.query),
-            ("Purpose", preview.purpose.rawValue),
-            ("Store", MemoryScreenPresenter.store(preview.state)),
-            ("Search provenance", preview.semantic),
-            ("Budget", "\(preview.tokens) of \(preview.budget) tokens"
-                + (preview.truncated ? " · truncated to fit" : " · nothing was dropped for size")),
-            ("Omitted", "\(preview.omitted) rows · \(preview.omittedPitfalls) pitfalls · "
-                + "\(preview.omittedArticles) articles"),
-            ("Mutation", "\(preview.mutation.rawValue) · the wake high-water "
-                + (preview.highWaterAdvanced ? "advanced" : "did not advance")),
-            ("Note", preview.note),
-        ] {
-            let row = self.row(label, value)
-            card.contentStack.addArrangedSubview(row)
-            card.pinToContentWidth(row)
+            // Indented to the row's name column, so a readback reads as this
+            // job's own rather than as another reading of the card.
+            entry.addArrangedSubview(
+                indent(column(detail), by: stateSlotWidth + Theme.Space.m))
+            for view in entry.arrangedSubviews {
+                view.widthAnchor.constraint(equalTo: entry.widthAnchor).isActive = true
+            }
+            card.add(entry)
         }
         return card
     }
 
-    /// The per-class budget split. Pitfalls and articles are shown side by side
-    /// with their own reserve so a class that ate the whole budget is visible as
-    /// itself rather than as a short result list.
-    static func partitionsCard(_ preview: MemoryRecallPreview) -> CardView {
-        let card = CardView()
-        card.setAccessibilityIdentifier("memory-recall-partitions")
-        for partition in preview.partitions {
-            let row = self.row(
-                partition.class.rawValue,
-                "\(partition.usedTokens) of \(partition.reservedTokens) reserved tokens · "
-                    + "\(partition.kept) kept · \(partition.omitted) omitted")
-            row.setAccessibilityIdentifier(
-                "memory-recall-partition-\(partition.class.rawValue)")
-            card.contentStack.addArrangedSubview(row)
-            card.pinToContentWidth(row)
-        }
-        return card
+    /// The recall outcome in one line, the way the design states it: provenance,
+    /// how many rows survived, and what the bundle cost against its budget.
+    static func outcomePanel(_ preview: MemoryRecallPreview) -> NSView {
+        let panel = InsetPanelView()
+        panel.setAccessibilityIdentifier("memory-recall-outcome")
+        let text = "\(preview.semantic) · \(preview.rows.count) rows · "
+            + "\(preview.tokens) of \(preview.budget) tokens · "
+            + (preview.truncated ? "truncated" : "not truncated")
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = Theme.Font.monoCaption
+        label.textColor = preview.truncated ? Theme.warning : Theme.positive
+        label.maximumNumberOfLines = 0
+        panel.contentStack.addArrangedSubview(label)
+        label.widthAnchor.constraint(
+            equalTo: panel.contentStack.widthAnchor).isActive = true
+        return panel
     }
 
     /// One popup per filter the wire accepts, each carrying the daemon's own
-    /// vocabulary. There is no sort control: the library is ordered by row key
-    /// so a page walk cannot renumber under a concurrent write, and offering a
-    /// newest-first the wire refuses would be offering something that does not
-    /// exist.
+    /// vocabulary. There is no sort control and no free-text search: the library
+    /// is ordered by row key so a page walk cannot renumber under a concurrent
+    /// write, and offering a query the wire refuses would be offering something
+    /// that does not exist.
     static func filterControls(
         filter: MemoryLibraryFilter,
         enabled: Bool,
@@ -462,6 +689,8 @@ enum MemoryScreenParts {
                 options.firstIndex(of: $0).map { $0 + 1 }
             } ?? 0)
             button.isEnabled = enabled
+            button.font = Theme.Font.chromeControl
+            button.controlSize = .small
             button.setAccessibilityIdentifier(identifier)
             ShellButtonTarget.shared.register(button) { [weak button] in
                 guard let index = button?.indexOfSelectedItem else { return }
@@ -471,7 +700,11 @@ enum MemoryScreenParts {
             button.action = #selector(ShellButtonTarget.fire(_:))
             return button
         }
+        let caption = NSTextField(labelWithString: "Filters")
+        caption.font = Theme.Font.sectionLabel
+        caption.textColor = Theme.tertiaryText
         let stack = NSStackView(views: [
+            caption,
             popup(
                 "memory-library-filter-kind", "All kinds",
                 MemoryLibraryFilter.kindOptions, filter.kinds,
@@ -487,8 +720,10 @@ enum MemoryScreenParts {
                 MemoryLibraryFilter.statusOptions, filter.statuses,
                 { MemoryLibraryFilter(
                     kinds: filter.kinds, scopes: filter.scopes, statuses: $0) }),
+            NSView.spacer(),
         ])
         stack.orientation = .horizontal
+        stack.alignment = .centerY
         stack.spacing = Theme.Space.s
         return stack
     }
@@ -500,11 +735,11 @@ enum MemoryScreenParts {
     ) -> NSView {
         func button(
             _ title: String,
+            _ symbol: String,
             _ identifier: String,
             _ step: MemoryLibraryStep?
         ) -> NSButton {
-            let button = NSButton(title: title, target: nil, action: nil)
-            button.bezelStyle = .rounded
+            let button = ActionButton(title: title, symbol: symbol)
             button.isEnabled = enabled && step != nil
             button.setAccessibilityIdentifier(identifier)
             if let step {
@@ -515,72 +750,401 @@ enum MemoryScreenParts {
             return button
         }
         let position = NSTextField(labelWithString: "Page \(pager.pageNumber)")
-        position.font = Theme.Font.caption
-        position.textColor = .secondaryLabelColor
+        position.font = Theme.Font.monoCaption
+        position.textColor = Theme.secondaryText
         position.setAccessibilityIdentifier("memory-library-page")
         let stack = NSStackView(views: [
-            button("Previous page", "memory-library-previous", pager.previousStep),
-            button("Next page", "memory-library-next", pager.nextStep),
+            button("Previous page", "chevron.left", "memory-library-previous", pager.previousStep),
+            button("Next page", "chevron.right", "memory-library-next", pager.nextStep),
             position,
         ])
         stack.orientation = .horizontal
+        stack.alignment = .centerY
         stack.spacing = Theme.Space.s
         return stack
     }
 
-    static func section(_ title: String, _ views: [NSView]) -> NSView {
-        let header = NSTextField(labelWithString: title.uppercased())
-        header.font = Theme.Font.sectionLabel
-        header.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [header] + views)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = Theme.Space.s
-        for view in views {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-        return stack
-    }
+    // MARK: - The shared row, header and note idioms
 
-    static func row(_ label: String, _ value: String) -> NSStackView {
-        let name = NSTextField(labelWithString: label)
-        name.font = Theme.Font.callout
-        name.textColor = .secondaryLabelColor
-        name.compressHorizontally(priority: 470, toolTip: label)
-        let reading = NSTextField(wrappingLabelWithString: value)
-        reading.font = Theme.Font.monoBody
-        reading.textColor = .labelColor
-        reading.compressHorizontally(priority: 460, toolTip: value)
-        let row = NSStackView(views: [name, reading])
-        row.orientation = .horizontal
-        row.spacing = Theme.Space.s
+    /// The one result row every Memory list draws: a state badge, the row's own
+    /// name with its provenance beneath, the schema's fixed columns, and an
+    /// optional trailing state. Two lists of memory rows cannot drift into two
+    /// idioms while they both come from here.
+    static func resultRow(
+        leading: NSView? = nil,
+        title: String,
+        detail: String,
+        columns: [Column] = [],
+        trailing: NSView? = nil,
+        identifier: String,
+        showsSeparator: Bool = true,
+        dimmed: Bool = false
+    ) -> DataTableRowView {
+        let name = NSTextField(labelWithString: title)
+        name.font = Theme.Font.body
+        name.textColor = dimmed ? Theme.tertiaryText : Theme.primaryText
+        name.lineBreakMode = .byTruncatingTail
+        name.compressHorizontally(priority: 460, toolTip: title)
+        let provenance = NSTextField(labelWithString: detail)
+        provenance.font = Theme.Font.caption
+        provenance.textColor = Theme.secondaryText
+        provenance.lineBreakMode = .byTruncatingTail
+        provenance.compressHorizontally(priority: 440, toolTip: detail)
+        let names = NSStackView(views: [name, provenance])
+        names.orientation = .vertical
+        names.alignment = .leading
+        names.spacing = 2
+
+        var views: [NSView] = [slot(leading, width: Self.stateSlotWidth), names]
+        views += columns.map(cell)
+        if let trailing { views.append(slot(trailing, width: Self.stateSlotWidth)) }
+        let row = DataTableRowView(
+            columns: views, spacing: Theme.Space.m, showsSeparator: showsSeparator)
+        fill(names, in: row, besides: views, columns: columns, hasTrailing: trailing != nil)
+        row.setAccessibilityIdentifier(identifier)
         return row
     }
 
-    static func note(_ text: String, identifier: String, color: NSColor) -> NSTextField {
+    /// The column captions above a table, in the same widths as its rows: the
+    /// same leading state slot and the same flexible name column, so a caption
+    /// sits over the cells it names.
+    static func resultHeader(columns: [Column], hasTrailingState: Bool = false) -> NSView {
+        let cells = columns.map { column -> NSView in
+            let label = NSTextField(labelWithString: column.text.uppercased())
+            label.font = Theme.Font.sectionLabel
+            label.textColor = Theme.tertiaryText
+            label.lineBreakMode = .byTruncatingTail
+            label.widthAnchor.constraint(equalToConstant: column.width).isActive = true
+            return label
+        }
+        let flexible = NSView()
+        flexible.translatesAutoresizingMaskIntoConstraints = false
+        flexible.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        var views: [NSView] = [slot(nil, width: Self.stateSlotWidth), flexible]
+        views += cells
+        if hasTrailingState { views.append(slot(nil, width: Self.stateSlotWidth)) }
+        let row = DataTableRowView(
+            columns: views, spacing: Theme.Space.m, showsSeparator: true)
+        fill(flexible, in: row, besides: views, columns: columns, hasTrailing: hasTrailingState)
+        row.setAccessibilityIdentifier("memory-table-head")
+        return row
+    }
+
+    /// The name column takes the width the fixed cells leave. A stack decides
+    /// that from hugging priorities, and a nested stack does not answer to the
+    /// content hugging its caller sets — so the row states the arithmetic itself
+    /// and a caption always lands over the cells it names.
+    private static func fill(
+        _ flexible: NSView,
+        in row: NSView,
+        besides views: [NSView],
+        columns: [Column],
+        hasTrailing: Bool
+    ) {
+        let slots = stateSlotWidth * (hasTrailing ? 2 : 1)
+        let cells = columns.reduce(0) { $0 + $1.width }
+        let gaps = Theme.Space.m * CGFloat(views.count - 1)
+        flexible.widthAnchor.constraint(
+            equalTo: row.widthAnchor, constant: -(slots + cells + gaps)).isActive = true
+    }
+
+    /// A fixed-width home for a badge. A capsule takes its width from its own
+    /// text, so without a slot every row would indent its title differently and
+    /// the columns would step in and out along the table.
+    private static func slot(_ view: NSView?, width: CGFloat) -> NSView {
+        let holder = NSView()
+        holder.translatesAutoresizingMaskIntoConstraints = false
+        holder.widthAnchor.constraint(equalToConstant: width).isActive = true
+        guard let view else {
+            holder.heightAnchor.constraint(equalToConstant: 1).isActive = true
+            return holder
+        }
+        holder.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+            view.trailingAnchor.constraint(lessThanOrEqualTo: holder.trailingAnchor),
+            view.topAnchor.constraint(equalTo: holder.topAnchor),
+            view.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+        ])
+        return holder
+    }
+
+    private static let stateSlotWidth: CGFloat = 108
+
+    static func factRow(
+        _ label: String,
+        _ value: String,
+        identifier: String? = nil
+    ) -> NSStackView {
+        let name = NSTextField(labelWithString: label)
+        name.font = Theme.Font.screenSubtitle
+        name.textColor = Theme.secondaryText
+        name.compressHorizontally(priority: 470, toolTip: label)
+        name.widthAnchor.constraint(greaterThanOrEqualToConstant: 132).isActive = true
+        let reading = NSTextField(wrappingLabelWithString: value)
+        reading.font = Theme.Font.monoCaption
+        reading.textColor = Theme.primaryText
+        reading.maximumNumberOfLines = 2
+        reading.compressHorizontally(priority: 460, toolTip: value)
+        let row = NSStackView(views: [name, reading])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = Theme.Space.s
+        if let identifier { row.setAccessibilityIdentifier(identifier) }
+        return row
+    }
+
+    static func note(
+        _ text: String,
+        identifier: String,
+        style: NoteStyle,
+        critical: Bool = false
+    ) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = Theme.Font.callout
-        label.textColor = color
+        switch style {
+        case .quiet: label.textColor = Theme.secondaryText
+        case .attention: label.textColor = critical ? Theme.critical : Theme.warning
+        }
         label.maximumNumberOfLines = 0
         label.setAccessibilityIdentifier(identifier)
         return label
     }
-}
 
-private enum MemoryScreenLayout {
-    /// Sections and the availability panel are the page and take its width;
-    /// controls keep their own size rather than stretching across the window.
-    static func install(
-        controls: [NSView],
-        sections: [NSView],
-        panel: ShellAvailabilityPanel,
-        in host: NSView
-    ) {
+    /// A control the daemon does not offer yet, named as the absence it is.
+    static func gapCard(title: String, identifier: String, detail: String) -> NSView {
+        let card = sectionCard(
+            title: title,
+            subtitle: "contract gap",
+            identifier: identifier,
+            trailingView: CapsuleBadge(
+                text: "not wired", symbol: "questionmark.circle.fill", style: .neutral))
+        card.dashed = true
+        card.add(note(detail, identifier: "\(identifier)-detail", style: .quiet))
+        return card
+    }
+
+    static func stateBadge(_ state: MemoryStoreState) -> CapsuleBadge {
+        switch state {
+        case .absent:
+            return CapsuleBadge(
+                text: "absent", symbol: "questionmark.circle.fill", style: .neutral)
+        case .empty:
+            return CapsuleBadge(text: "empty", symbol: "tray", style: .info)
+        case .ok:
+            return CapsuleBadge(
+                text: "available", symbol: "checkmark.circle.fill", style: .positive)
+        }
+    }
+
+    /// A memory row's lifecycle, badged by what it claims about itself.
+    static func lifecycleBadge(_ status: String) -> CapsuleBadge {
+        switch status {
+        case "verified", "current":
+            return CapsuleBadge(
+                text: status, symbol: "checkmark.seal.fill", style: .positive)
+        case "unverified", "stale":
+            return CapsuleBadge(
+                text: status, symbol: "exclamationmark.triangle.fill", style: .warning)
+        case "conflicted":
+            return CapsuleBadge(text: status, symbol: "arrow.triangle.branch", style: .critical)
+        default:
+            return CapsuleBadge(text: status, symbol: "circle.fill", style: .neutral)
+        }
+    }
+
+    static func jobBadge(_ state: MemoryJobState) -> CapsuleBadge {
+        switch state {
+        case .running:
+            return CapsuleBadge(text: state.rawValue, symbol: "clock.fill", style: .info)
+        case .succeeded:
+            return CapsuleBadge(
+                text: state.rawValue, symbol: "checkmark.circle.fill", style: .positive)
+        case .failed:
+            return CapsuleBadge(
+                text: state.rawValue, symbol: "xmark.octagon.fill", style: .critical)
+        }
+    }
+
+    // MARK: - Layout
+
+    static func sectionCard(
+        title: String,
+        subtitle: String? = nil,
+        identifier: String,
+        trailingView: NSView? = nil
+    ) -> SectionCardView {
+        let card = SectionCardView(
+            title: title, subtitle: subtitle, trailingView: trailingView)
+        card.setAccessibilityIdentifier(identifier)
+        // A card in a grid row is as tall as the tallest card beside it, and the
+        // surplus height would otherwise be shared out between the rows inside
+        // it — pushing the last ones off the page. The filler takes the surplus
+        // instead, so the readings stay together at the top of every card, and
+        // `add` keeps inserting above it.
+        let filler = MemoryCardFiller()
+        filler.translatesAutoresizingMaskIntoConstraints = false
+        filler.heightAnchor.constraint(greaterThanOrEqualToConstant: 0).isActive = true
+        filler.setContentHuggingPriority(.init(1), for: .vertical)
+        filler.setContentCompressionResistancePriority(.init(1), for: .vertical)
+        card.contentStack.addArrangedSubview(filler)
+        return card
+    }
+
+    static func indent(_ view: NSView, by leading: CGFloat) -> NSView {
+        let host = NSView()
         host.translatesAutoresizingMaskIntoConstraints = false
-        let stack = NSStackView(views: controls + sections + [panel])
+        view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: leading),
+            view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        return host
+    }
+
+    /// A column of cards that keeps every card at its own height. A stack pours
+    /// surplus height into whichever card hugs least, which reads as one card
+    /// swelling and the ones under it falling off the page.
+    static func column(_ views: [NSView]) -> NSView {
+        let host = NSView()
+        host.translatesAutoresizingMaskIntoConstraints = false
+        var previous: NSView?
+        for view in views {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                previous.map {
+                    view.topAnchor.constraint(
+                        equalTo: $0.bottomAnchor, constant: Theme.Space.m)
+                } ?? view.topAnchor.constraint(equalTo: host.topAnchor),
+            ])
+            previous = view
+        }
+        guard let last = previous else { return host }
+        last.bottomAnchor.constraint(lessThanOrEqualTo: host.bottomAnchor).isActive = true
+        let natural = last.bottomAnchor.constraint(equalTo: host.bottomAnchor)
+        natural.priority = .init(250)
+        natural.isActive = true
+        return host
+    }
+
+    /// Equal columns with a shared rhythm. A short last row keeps the column
+    /// width of a full one rather than stretching its cards across the page.
+    static func grid(_ views: [NSView], columns: Int) -> NSView {
+        var rows: [NSView] = []
+        for start in stride(from: 0, to: views.count, by: columns) {
+            var slice = Array(views[start..<min(start + columns, views.count)])
+            while slice.count < columns { slice.append(NSView()) }
+            let row = NSStackView(views: slice)
+            row.orientation = .horizontal
+            row.alignment = .top
+            row.distribution = .fillEqually
+            row.spacing = Theme.Space.m
+            rows.append(row)
+        }
+        let stack = NSStackView(views: rows)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Space.m
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        return stack
+    }
+
+    /// The two-column reading order the design uses for a list and its context:
+    /// the narrow column keeps its width and the wide one takes the rest, stated
+    /// as arithmetic because a stack left to its own devices packs both columns
+    /// against the leading edge and leaves the page half empty.
+    static func split(main: NSView, aside: NSView, asideLeads: Bool = false) -> NSView {
+        let stack = NSStackView(views: asideLeads ? [aside, main] : [main, aside])
+        stack.orientation = .horizontal
+        stack.alignment = .top
+        stack.spacing = Theme.Space.m
+        aside.widthAnchor.constraint(equalToConstant: asideWidth).isActive = true
+        main.widthAnchor.constraint(
+            equalTo: stack.widthAnchor,
+            constant: -(asideWidth + Theme.Space.m)).isActive = true
+        return stack
+    }
+
+    private static let asideWidth: CGFloat = 320
+
+    private static func cell(_ column: Column) -> NSView {
+        let label = NSTextField(labelWithString: column.text)
+        label.font = column.mono ? Theme.Font.monoCaption : Theme.Font.caption
+        label.textColor = Theme.secondaryText
+        label.lineBreakMode = .byTruncatingTail
+        label.compressHorizontally(priority: 450, toolTip: column.text)
+        label.widthAnchor.constraint(equalToConstant: column.width).isActive = true
+        return label
+    }
+}
+
+/// The empty last row that absorbs a stretched card's surplus height.
+private final class MemoryCardFiller: NSView {}
+
+private extension CardView {
+    /// Adds one full-width row to a card's content, above the filler that holds
+    /// the readings at the top. Every Memory row spans its card, so the width
+    /// constraint belongs with the add rather than at each call site.
+    func add(_ view: NSView) {
+        if contentStack.arrangedSubviews.last is MemoryCardFiller {
+            contentStack.insertArrangedSubview(
+                view, at: contentStack.arrangedSubviews.count - 1)
+        } else {
+            contentStack.addArrangedSubview(view)
+        }
+        pinToContentWidth(view)
+    }
+}
+
+private enum MemoryPage {
+    /// Every Memory screen opens the same way: the registry's title, the copy
+    /// that says what the screen is, the projection's own state, and then its
+    /// cards. The state block is read from the screen projection alone, so a
+    /// screen cannot claim a health its projection never reported, and a screen
+    /// with no observed value still says what it cannot show.
+    static func install(
+        route: ShellRoute,
+        screen: ShellScreenProjection,
+        subtitle: String,
+        actions: [NSView],
+        content: [NSView],
+        in host: NSView
+    ) {
+        host.translatesAutoresizingMaskIntoConstraints = false
+        let badge = CapsuleBadge(
+            text: screen.stateHeadline,
+            symbol: symbol(for: screen),
+            style: style(for: screen))
+        badge.setAccessibilityIdentifier("memory-screen-state-\(route.rawValue)")
+        let header = PageHeaderView(
+            title: route.title, subtitle: subtitle, actions: actions + [badge])
+
+        var views: [NSView] = [header, provenance(screen)]
+        if screen.availability != .current {
+            let explanation = MemoryScreenParts.note(
+                screen.stateExplanation,
+                identifier: "memory-screen-explanation-\(route.rawValue)",
+                style: .quiet)
+            let panel = InsetPanelView()
+            panel.contentStack.addArrangedSubview(explanation)
+            explanation.widthAnchor.constraint(
+                equalTo: panel.contentStack.widthAnchor).isActive = true
+            views.append(panel)
+        }
+        views += content
+
+        let stack = NSStackView(views: views)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.l
         stack.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -592,11 +1156,47 @@ private enum MemoryScreenLayout {
             stack.bottomAnchor.constraint(
                 lessThanOrEqualTo: host.bottomAnchor, constant: -Theme.Space.page),
         ])
-        for view in controls {
-            view.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor).isActive = true
-        }
-        for view in sections + [panel] {
+        for view in views {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+    }
+
+    /// The provenance of what is on the page: when it was observed, which
+    /// revision it came from, and how fresh that read is. An unknown field says
+    /// so rather than reading as a value.
+    private static func provenance(_ screen: ShellScreenProjection) -> NSView {
+        let text = "Observed \(screen.observedAt ?? "never") · "
+            + "revision \(screen.source.revision ?? "unknown") · "
+            + "\(screen.freshness.rawValue)"
+        let label = NSTextField(labelWithString: text)
+        label.font = Theme.Font.chromeMetadata
+        label.textColor = Theme.tertiaryText
+        label.lineBreakMode = .byTruncatingTail
+        label.compressHorizontally(priority: 440, toolTip: text)
+        return label
+    }
+
+    /// Severity comes from the projection's own banner, which WorkspaceCore
+    /// already derives, so this screen does not hold a second opinion about what
+    /// an availability means.
+    private static func style(for screen: ShellScreenProjection) -> CapsuleBadge.Style {
+        switch screen.banner?.severity {
+        case .none: return screen.availability == .current ? .positive : .neutral
+        case .info?: return .info
+        case .warning?: return .warning
+        case .critical?: return .critical
+        }
+    }
+
+    private static func symbol(for screen: ShellScreenProjection) -> String {
+        switch screen.banner?.severity {
+        case .none:
+            return screen.availability == .current
+                ? "checkmark.circle.fill"
+                : "questionmark.circle.fill"
+        case .info?: return "info.circle.fill"
+        case .warning?: return "exclamationmark.triangle.fill"
+        case .critical?: return "xmark.octagon.fill"
         }
     }
 }
