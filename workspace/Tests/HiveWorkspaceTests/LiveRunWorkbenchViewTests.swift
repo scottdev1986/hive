@@ -247,7 +247,7 @@ struct LiveRunWorkbenchViewTests {
         #expect(surfaces.count == 1)
         let labels = textFields(in: view).map(\.stringValue)
         #expect(labels.contains("queen"))
-        #expect(labels.contains("provider not projected"))
+        #expect(labels.contains("Unknown"))
         #expect(!labels.contains { $0.contains("TUI") })
         #expect(labels.filter { $0 == "Run hierarchy" }.count == 1)
     }

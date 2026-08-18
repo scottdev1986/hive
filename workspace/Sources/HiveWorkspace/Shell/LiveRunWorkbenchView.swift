@@ -801,12 +801,14 @@ final class LiveRunWorkbenchView: NSView {
             return
         }
         let provider = session.isQueen ? (queenProvider ?? session.provider) : session.provider
-        let mark = ProviderMarkView(provider: provider)
-        providerHost.addSubview(mark)
-        NSLayoutConstraint.activate([
-            mark.centerXAnchor.constraint(equalTo: providerHost.centerXAnchor),
-            mark.centerYAnchor.constraint(equalTo: providerHost.centerYAnchor),
-        ])
+        if let provider {
+            let mark = ProviderMarkView(provider: provider)
+            providerHost.addSubview(mark)
+            NSLayoutConstraint.activate([
+                mark.centerXAnchor.constraint(equalTo: providerHost.centerXAnchor),
+                mark.centerYAnchor.constraint(equalTo: providerHost.centerYAnchor),
+            ])
+        }
         inspectorName.stringValue = session.name
         inspectorModel.stringValue = session.model ?? "model unknown"
         statusValue.stringValue = session.rawStatus
@@ -1209,10 +1211,7 @@ final class LiveRunWorkbenchView: NSView {
         let providerID = session.isQueen
             ? (queenProvider ?? session.provider)
             : session.provider
-        if providerID == ProviderID("unknown") {
-            return "provider not projected"
-        }
-        return ProviderBranding.title(for: providerID)
+        return providerID.map(ProviderBranding.title(for:)) ?? "provider not projected"
     }
 
     private func present<Value>(
@@ -1292,9 +1291,8 @@ private final class LiveRunSessionButton: NSButton {
         let providerText: String
         let modelText: String
         if let session {
-            providerText = session.provider == ProviderID("unknown")
-                ? "provider not projected"
-                : ProviderBranding.title(for: session.provider)
+            providerText = session.provider.map(ProviderBranding.title(for:))
+                ?? "provider not projected"
             modelText = session.model ?? "model not projected"
         } else {
             providerText = "provider not projected"
@@ -1368,8 +1366,10 @@ private final class LiveRunSessionButton: NSButton {
             ?? hierarchyRow?.parentDiagnostic
         if let session {
             setAccessibilityIdentifier("live-run-session-\(session.id)")
+            let provider = session.provider.map(ProviderBranding.title(for:))
+                ?? "provider not projected"
             setAccessibilityLabel(
-                "\(session.name), \(ProviderBranding.title(for: session.provider)), \(session.activity.displayLabel)")
+                "\(session.name), \(provider), \(session.activity.displayLabel)")
         } else if let node = hierarchyRow?.node {
             setAccessibilityIdentifier("live-run-hierarchy-\(node.nodeId)")
             setAccessibilityLabel("\(titleText), session status unknown")
