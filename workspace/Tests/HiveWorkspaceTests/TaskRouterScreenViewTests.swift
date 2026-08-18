@@ -19,10 +19,15 @@ final class TaskRouterScreenViewTests: XCTestCase {
             .appendingPathComponent("WorkspaceCoreTests/Fixtures")
     }
 
+    private var denseFixtureDirectory: URL {
+        fixtureDirectory.deletingLastPathComponent().appendingPathComponent("Fixtures-dense")
+    }
+
     private func loadRow<Value: Decodable>(
-        _ name: String
+        _ name: String,
+        from directory: URL? = nil
     ) throws -> ClientProjection<Value> {
-        let url = fixtureDirectory.appendingPathComponent("\(name).json")
+        let url = (directory ?? fixtureDirectory).appendingPathComponent("\(name).json")
         let rows = try JSONDecoder().decode(
             [ClientProjection<Value>].self, from: Data(contentsOf: url))
         return try XCTUnwrap(rows.first { $0.availability == .current })
@@ -31,16 +36,20 @@ final class TaskRouterScreenViewTests: XCTestCase {
     private func makeView(
         category: TaskCategory? = nil,
         availability: ProjectionAvailability = .current,
+        dense: Bool = false,
+        probeState: ShellProviderProbeRefreshState = .idle,
+        onProbe: @escaping () -> Void = {},
         onSelectCategory: @escaping (TaskCategory) -> Void = { _ in },
         onEditRoute: @escaping (RoutingPolicyDocument.WireRoute?) -> Void = { _ in },
         onApply: @escaping () -> Void = {}
     ) throws -> TaskRouterScreenView {
+        let directory = dense ? denseFixtureDirectory : fixtureDirectory
         let policy: ClientProjection<RoutingPolicyDocument> = try loadRow(
-            "routing-policy-corpus")
+            "routing-policy-corpus", from: directory)
         let modelControl: ClientProjection<WorkspaceModelControlView> = try loadRow(
-            "model-control-corpus")
+            "model-control-corpus", from: directory)
         let inspection: ClientProjection<RouteInspection> = try loadRow(
-            "routing-inspection-corpus")
+            "routing-inspection-corpus", from: directory)
         let document = try XCTUnwrap(policy.value)
         let routing = try XCTUnwrap(modelControl.value?.routing)
         let selected = category ?? routing.categories.first!
@@ -75,6 +84,8 @@ final class TaskRouterScreenViewTests: XCTestCase {
             categories: routing.categories,
             category: selected,
             routing: routing,
+            probeState: probeState,
+            onProbe: onProbe,
             onSelectCategory: onSelectCategory,
             onEditRoute: onEditRoute,
             onApply: onApply)
@@ -95,6 +106,16 @@ final class TaskRouterScreenViewTests: XCTestCase {
         return found.joined(separator: "\n")
     }
 
+    private func textFields(in view: NSView) -> [NSTextField] {
+        var fields = view.subviews.flatMap(textFields(in:))
+        if let field = view as? NSTextField { fields.insert(field, at: 0) }
+        return fields
+    }
+
+    private func startX(of child: NSView, in ancestor: NSView) -> CGFloat {
+        ancestor.convert(child.bounds, from: child).minX
+    }
+
     func testRestyleUsesDesignSystemPrimitivesAndKeepsTheEditor() throws {
         let view = try makeView()
         XCTAssertNotNil(find(view, "hds-page-header"))
@@ -102,6 +123,7 @@ final class TaskRouterScreenViewTests: XCTestCase {
         XCTAssertNotNil(find(view, "hds-data-row"))
         XCTAssertNotNil(find(view, "hds-capsule-badge"))
         XCTAssertNotNil(find(view, "task-router-apply") as? ActionButton)
+        XCTAssertNotNil(find(view, "task-router-refresh") as? ActionButton)
         XCTAssertNotNil(find(view, "task-router-category") as? NSPopUpButton)
         XCTAssertNotNil(find(view, "task-router-mode") as? NSPopUpButton)
         XCTAssertNotNil(find(view, "task-router-matrix"))
@@ -201,6 +223,145 @@ final class TaskRouterScreenViewTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(identifiers.count, matrix)
+    }
+
+    func testProviderColumnsShareHeaderBodyAndEditorStartsAtEveryWindowWidth() throws {
+        let view = try makeView(category: .complexCoding, dense: true)
+        let providers = [
+            (id: "claude", title: "Claude"),
+            (id: "codex", title: "Codex"),
+            (id: "grok", title: "Grok"),
+            (id: "kimi", title: "Kimi"),
+            (id: "opencode", title: "OpenCode"),
+        ]
+
+        for width: CGFloat in [940, 1_420, 1_728] {
+            view.frame = NSRect(x: 0, y: 0, width: width, height: 3_000)
+            view.layoutSubtreeIfNeeded()
+
+            for provider in providers {
+                let header = try XCTUnwrap(
+                    find(view, "task-router-header-\(provider.id)"))
+                let body = try XCTUnwrap(
+                    find(view, "task-router-cell-code_review-\(provider.id)"))
+                let editor = try XCTUnwrap(
+                    find(view, "task-router-cell-complex_coding-\(provider.id)"))
+                let headerX = startX(of: header, in: view)
+
+                XCTAssertEqual(
+                    startX(of: body, in: view), headerX, accuracy: 0.5,
+                    "\(provider.title) body start drifted at \(width)pt")
+                XCTAssertEqual(
+                    startX(of: editor, in: view), headerX, accuracy: 0.5,
+                    "\(provider.title) editor start drifted at \(width)pt")
+            }
+        }
+    }
+
+    func testDenseFixtureFactsRemainProjectionBacked() throws {
+        let text = allText(in: try makeView(dense: true))
+        XCTAssertTrue(text.contains("10 / 10 routes"))
+        XCTAssertTrue(text.contains("4 / 5 providers enabled"))
+        XCTAssertTrue(text.contains("5 route members"))
+        XCTAssertTrue(text.contains("15 policy models with state enabled"))
+    }
+
+    func testNoMemberLabelsDoNotInstallDuplicateHelpTags() throws {
+        let emptyLabels = textFields(in: try makeView(dense: true)).filter {
+            $0.stringValue == "no member"
+        }
+        XCTAssertFalse(emptyLabels.isEmpty)
+        XCTAssertTrue(emptyLabels.allSatisfy { $0.toolTip == nil })
+    }
+
+    func testEveryWeightedCandidateShowsItsStoredWeightTrackAndValue() throws {
+        let view = try makeView(category: .complexCoding, dense: true)
+        let weights = [
+            ("simple_coding-codex/gpt-5.6-sol", 4),
+            ("simple_coding-grok/grok-4.5", 1),
+            ("complex_coding-claude/claude-opus-4-8", 3),
+            ("complex_coding-codex/gpt-5.6-sol", 1),
+            ("code_review-claude/claude-sonnet-5", 2),
+            ("debugging-claude/claude-fable-5", 1),
+        ]
+
+        for (key, value) in weights {
+            let weight = try XCTUnwrap(
+                find(view, "task-router-stored-weight-\(key)"),
+                "missing stored weight for \(key)")
+            XCTAssertNotNil(find(weight, "hds-meter-bar"))
+            let copy = allText(in: weight)
+            XCTAssertTrue(copy.contains("Stored weight"))
+            XCTAssertTrue(
+                copy.contains("Stored weight \(value)")
+                    || textFields(in: weight).contains { $0.stringValue == String(value) })
+        }
+    }
+
+    func testEffortPresentationUsesOneSpellingForLabelsAndPopups() throws {
+        let view = try makeView(
+            category: TaskCategory(rawValue: "planning", label: "Planning"),
+            dense: true)
+        let text = allText(in: view)
+        XCTAssertTrue(text.contains("Provider controlled"))
+        XCTAssertTrue(text.contains("Hive decides"))
+        XCTAssertFalse(text.contains("provider-controlled"))
+        XCTAssertFalse(text.contains("hive-decides"))
+
+        let popup = try XCTUnwrap(
+            find(view, "task-router-effort-claude/claude-opus-4-8")
+                as? NSPopUpButton)
+        XCTAssertEqual(popup.selectedItem?.title, "Hive decides")
+        XCTAssertTrue(popup.itemTitles.contains("Provider controlled"))
+        XCTAssertFalse(popup.itemTitles.contains("provider-controlled"))
+        XCTAssertFalse(popup.itemTitles.contains("hive-decides"))
+    }
+
+    func testRefreshUsesTheExistingProbeActionAndState() throws {
+        var refreshes = 0
+        let idle = try makeView(onProbe: { refreshes += 1 })
+        let refresh = try XCTUnwrap(
+            find(idle, "task-router-refresh") as? ActionButton)
+        XCTAssertEqual(refresh.title, "Refresh")
+        XCTAssertTrue(refresh.isEnabled)
+        refresh.performClick(nil)
+        XCTAssertEqual(refreshes, 1)
+
+        let refreshing = try makeView(probeState: .refreshing)
+        let pending = try XCTUnwrap(
+            find(refreshing, "task-router-refresh") as? ActionButton)
+        XCTAssertEqual(pending.title, "Refreshing provider probes…")
+        XCTAssertFalse(pending.isEnabled)
+
+        let succeeded = try makeView(probeState: .succeeded("2 providers refreshed"))
+        XCTAssertEqual(
+            (find(succeeded, "task-router-probe-status") as? NSTextField)?.stringValue,
+            "2 providers refreshed")
+        let failed = try makeView(probeState: .failed("probe request failed"))
+        XCTAssertEqual(
+            (find(failed, "task-router-probe-error") as? NSTextField)?.stringValue,
+            "probe request failed")
+    }
+
+    func testCataloglessMemberStatesWhyEffortCannotBeEdited() throws {
+        let heavyResearch = TaskCategory(
+            rawValue: "heavy_research", label: "Heavy research / synthesis")
+        let view = try makeView(category: heavyResearch, dense: true)
+        let popup = try XCTUnwrap(
+            find(view, "task-router-effort-claude/claude-fable-5")
+                as? NSPopUpButton)
+        XCTAssertFalse(popup.isEnabled)
+        XCTAssertEqual(popup.selectedItem?.title, "Provider controlled")
+        let refusal = try XCTUnwrap(
+            find(view, "task-router-effort-refusal-claude/claude-fable-5")
+                as? NSTextField)
+        XCTAssertTrue(refusal.stringValue.contains("not in the live routing catalog"))
+        XCTAssertFalse(refusal.stringValue.contains("choose a substitute"))
+
+        let collapsed = try makeView(dense: true)
+        let collapsedCell = try XCTUnwrap(
+            find(collapsed, "task-router-cell-heavy_research-claude"))
+        XCTAssertTrue(allText(in: collapsedCell).contains("effort unavailable"))
     }
 
     func testExistingMembershipControlsStillWriteTheDraft() throws {

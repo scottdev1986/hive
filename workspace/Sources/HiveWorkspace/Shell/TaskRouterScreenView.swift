@@ -22,12 +22,10 @@
 // no separate Review V3 draft projection, so this screen does not
 // invent that button.
 //
-// Width: the 1420pt floor was five equal vendor cells taking the selected
-// row's widest editor-chip fitting size (~163pt) at default compression
-// 750, plus the 148/136 columns and chrome. At the window's 940pt
-// minimum those cells compress and model names truncate; columns stay
-// in the same order. Nothing is dropped and nothing scrolls off the
-// window. Full names remain on the tooltip.
+// One card-owned column layout binds the header, collapsed rows, and editor
+// row to the same widths. At the window's 940pt minimum provider cells
+// compress and model names truncate without changing column ownership.
+// Nothing is dropped and full names remain on the tooltip.
 
 import AppKit
 import WorkspaceCore
@@ -58,6 +56,8 @@ final class TaskRouterScreenView: NSView {
         categories: [TaskCategory],
         category: TaskCategory,
         routing: WorkspaceRoutingPresentation,
+        probeState: ShellProviderProbeRefreshState,
+        onProbe: @escaping () -> Void,
         onSelectCategory: @escaping (TaskCategory) -> Void,
         onEditRoute: @escaping (RoutingPolicyDocument.WireRoute?) -> Void,
         onApply: @escaping () -> Void
@@ -81,14 +81,20 @@ final class TaskRouterScreenView: NSView {
         stack.spacing = Theme.Space.m
         stack.translatesAutoresizingMaskIntoConstraints = false
 
+        let refresh = refreshControl(state: probeState, onProbe: onProbe)
         let apply = applyControl()
         let header = PageHeaderView(
             title: "Task Router",
             subtitle: "Every catalogued task category and every known vendor. "
                 + "Inspection shares appear only when the daemon supplied them.",
-            actions: [apply])
+            actions: [refresh, apply])
         stack.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        if let status = Self.probeStatus(probeState) {
+            stack.addArrangedSubview(status)
+            status.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
 
         if let banner = screen.banner {
             let bannerView = ShellBannerView(banner: banner, presentation: .inline)
@@ -207,15 +213,23 @@ final class TaskRouterScreenView: NSView {
             subtitle: "One row per task, one cell per vendor. "
                 + "The selected row is the editor.")
         card.setAccessibilityIdentifier("task-router-matrix")
+        let columns = MatrixColumnLayout(
+            owner: card,
+            content: card.contentStack,
+            count: providers.count + 2,
+            taskWidth: Self.taskColumnWidth,
+            modeWidth: Self.modeColumnWidth)
 
         let header = matrixHeader()
         card.contentStack.addArrangedSubview(header)
         card.pinToContentWidth(header)
+        columns.bind(header.columns)
 
         for (index, item) in categories.enumerated() {
             let row = matrixRow(item, index: index)
             card.contentStack.addArrangedSubview(row)
             card.pinToContentWidth(row)
+            columns.bind(row.columns)
         }
         return card
     }
@@ -225,11 +239,13 @@ final class TaskRouterScreenView: NSView {
             columnHead("Task category"),
             columnHead("V3 mode"),
         ]
-        columns += providers.map { columnHead(providerColumnTitle($0)) }
+        columns += providers.map { provider in
+            matrixHeaderCell(
+                columnHead(providerColumnTitle(provider)),
+                identifier: "task-router-header-\(provider)")
+        }
         return MatrixRowView(
             columns: columns,
-            nameWidth: Self.taskColumnWidth,
-            modeWidth: Self.modeColumnWidth,
             selected: false)
     }
 
@@ -247,8 +263,6 @@ final class TaskRouterScreenView: NSView {
         }
         let row = MatrixRowView(
             columns: [name, mode] + cells,
-            nameWidth: Self.taskColumnWidth,
-            modeWidth: Self.modeColumnWidth,
             selected: selected)
         row.setAccessibilityIdentifier("task-router-matrix-row-\(item.rawValue)")
         return row
@@ -268,7 +282,7 @@ final class TaskRouterScreenView: NSView {
         button.contentTintColor = route == nil ? Theme.secondaryText : Theme.positive
         button.tag = index
         button.setAccessibilityLabel("Select \(item.label)")
-        button.lineBreakMode = .byTruncatingTail
+        button.alignment = .left
         button.toolTip = modeLabel
         button.lineBreakMode = .byTruncatingTail
         compressesHorizontally(button)
@@ -294,7 +308,7 @@ final class TaskRouterScreenView: NSView {
             let empty = NSTextField(labelWithString: "no member")
             empty.font = Theme.Font.caption
             empty.textColor = Theme.secondaryText
-            empty.compressHorizontally(priority: 430, toolTip: "no member")
+            empty.setContentCompressionResistancePriority(.init(430), for: .horizontal)
             stack.addArrangedSubview(empty)
         } else {
             for row in cellRows {
@@ -315,6 +329,10 @@ final class TaskRouterScreenView: NSView {
         stack.alignment = .leading
         stack.spacing = 1
         compressesHorizontally(stack)
+        if let weight = storedWeightView(for: row, category: category) {
+            stack.addArrangedSubview(weight)
+            weight.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
         if let bar = shareBar(for: row, category: category) {
             stack.addArrangedSubview(bar)
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -339,9 +357,17 @@ final class TaskRouterScreenView: NSView {
         title.spacing = Theme.Space.xs
         compressesHorizontally(title)
 
-        let effort = effortControl(row, index: index)
+        let effort = effortEditor(row, index: index)
         let weight = weightControl(row, index: index)
-        let stack = NSStackView(views: [title, effort, weight])
+        var controls: [NSView] = [title, effort]
+        if let storedWeight = storedWeightView(
+            for: row, category: category, valueControl: weight
+        ) {
+            controls.append(storedWeight)
+        } else {
+            controls.append(weight)
+        }
+        let stack = NSStackView(views: controls)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Space.xs
@@ -366,24 +392,68 @@ final class TaskRouterScreenView: NSView {
 
     private func compactDetail(_ row: TaskRouterRow) -> String {
         let effort = effortLabel(row)
-        guard let candidate = row.candidate else { return effort }
-        let weightEditable = draftRoute
-            .flatMap { routing.mode($0.mode) }?.weightEditable ?? false
-        if weightEditable {
-            return "\(effort) · weight \(candidate.weight)"
-        }
-        return effort
+        return row.unresolvable ? "\(effort) · effort unavailable" : effort
     }
 
     private func effortLabel(_ row: TaskRouterRow) -> String {
         guard let effort = row.candidate?.effort else { return "not a member" }
-        let catalogEntry = routing.catalog.first {
-            $0.provider == row.provider && $0.model == row.model
+        return effortPresentation(effort)
+    }
+
+    private func effortPresentation(
+        _ effort: RoutingPolicyDocument.CandidateEffort
+    ) -> String {
+        switch effort {
+        case .hiveDecides: return "Hive decides"
+        case .exact(let value): return value
+        case .none: return "No effort setting"
+        case .providerControlled: return "Provider controlled"
+        case .unknown(let mode): return mode
         }
-        if let match = catalogEntry?.effortOptions.first(where: { $0.effort == effort }) {
-            return match.label
+    }
+
+    private func storedWeightView(
+        for row: TaskRouterRow,
+        category: TaskCategory,
+        valueControl: NSView? = nil
+    ) -> NSView? {
+        guard row.isMember,
+              let candidate = row.candidate,
+              let route = editor.draft.policy.categories[category.rawValue],
+              routing.mode(route.mode)?.weightEditable == true else { return nil }
+        let range = routing.weightRange
+        let count = max(1, range.maximum - range.minimum + 1)
+        let position = max(1, candidate.weight - range.minimum + 1)
+        let bar = MeterBarView()
+        bar.state = .fill(fraction: Double(position) / Double(count), color: Theme.accent)
+        bar.setAccessibilityLabel("Stored weight \(candidate.weight)")
+
+        let value: NSView
+        if let valueControl {
+            let label = NSTextField(labelWithString: "Stored weight")
+            label.font = Theme.Font.monoCaption
+            label.textColor = Theme.secondaryText
+            let row = NSStackView(views: [label, valueControl])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = Theme.Space.xs
+            value = row
+        } else {
+            let label = NSTextField(labelWithString: "Stored weight \(candidate.weight)")
+            label.font = Theme.Font.monoCaption
+            label.textColor = Theme.secondaryText
+            value = label
         }
-        return effort.asWireEffort.cliArgument
+
+        let stack = NSStackView(views: [bar, value])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.xs
+        stack.setAccessibilityIdentifier(
+            "task-router-stored-weight-\(category.rawValue)-\(row.provider)/\(row.model)")
+        bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        compressesHorizontally(stack)
+        return stack
     }
 
     private func shareBar(for row: TaskRouterRow, category: TaskCategory) -> NSView? {
@@ -489,6 +559,22 @@ final class TaskRouterScreenView: NSView {
         label.textColor = Theme.secondaryText
         label.compressHorizontally(priority: 450, toolTip: text)
         return label
+    }
+
+    private func matrixHeaderCell(_ content: NSView, identifier: String) -> NSView {
+        let cell = NSView()
+        cell.translatesAutoresizingMaskIntoConstraints = false
+        cell.setAccessibilityIdentifier(identifier)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        cell.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
+            content.topAnchor.constraint(equalTo: cell.topAnchor),
+            content.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
+        ])
+        compressesHorizontally(cell)
+        return cell
     }
 
     private func providerColumnTitle(_ provider: String) -> String {
@@ -603,25 +689,24 @@ final class TaskRouterScreenView: NSView {
         return weight
     }
 
-    private func effortControl(_ row: TaskRouterRow, index: Int) -> NSPopUpButton {
+    private func effortEditor(_ row: TaskRouterRow, index: Int) -> NSView {
         let key = "\(row.provider)/\(row.model)"
         let effort = NSPopUpButton()
         let catalogEntry = routing.catalog.first {
             $0.provider == row.provider && $0.model == row.model
         }
         let options = catalogEntry?.effortOptions ?? []
-        effort.addItems(withTitles: options.map(\.label))
+        effort.addItems(withTitles: options.map { effortPresentation($0.effort) })
         let selectedOption = row.candidate.flatMap { candidate in
             options.firstIndex { $0.effort == candidate.effort }
         }
         if let selectedOption {
             effort.selectItem(at: selectedOption)
-        } else if let current = row.candidate?.effort.asWireEffort.cliArgument {
-            effort.addItem(withTitle: current)
+        } else if let current = row.candidate?.effort {
+            effort.addItem(withTitle: effortPresentation(current))
             effort.selectItem(at: options.count)
         }
         effort.tag = index
-        // An effort this build cannot name must not be respelled by a control.
         effort.isEnabled = editor.mutationsAllowed && row.isMember
             && selectedOption != nil
         effort.target = self
@@ -629,7 +714,25 @@ final class TaskRouterScreenView: NSView {
         effort.setAccessibilityIdentifier("task-router-effort-\(key)")
         effort.setAccessibilityLabel("Effort for \(key)")
         compressesHorizontally(effort)
-        return effort
+
+        guard editor.mutationsAllowed,
+              !effort.isEnabled,
+              row.isMember,
+              catalogEntry == nil else { return effort }
+        let refusal = "Effort unavailable — \(row.provider)/\(row.model) is not in the "
+            + "live routing catalog, so no legal choices were published."
+        let reason = NSTextField(wrappingLabelWithString: refusal)
+        reason.font = Theme.Font.caption
+        reason.textColor = Theme.secondaryText
+        reason.maximumNumberOfLines = 3
+        reason.setAccessibilityIdentifier("task-router-effort-refusal-\(key)")
+        reason.compressHorizontally(priority: 420)
+        let stack = NSStackView(views: [effort, reason])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.xs
+        compressesHorizontally(stack)
+        return stack
     }
 
     private func inspectionFact(
@@ -658,6 +761,61 @@ final class TaskRouterScreenView: NSView {
         button.setAccessibilityIdentifier("task-router-apply")
         applyButton = button
         return button
+    }
+
+    private func refreshControl(
+        state: ShellProviderProbeRefreshState,
+        onProbe: @escaping () -> Void
+    ) -> NSView {
+        let button = ActionButton(
+            title: state == .refreshing ? "Refreshing provider probes…" : "Refresh",
+            symbol: "arrow.clockwise",
+            target: ShellButtonTarget.shared,
+            action: #selector(ShellButtonTarget.fire(_:)))
+        button.isEnabled = state != .refreshing
+        button.setAccessibilityIdentifier("task-router-refresh")
+        ShellButtonTarget.shared.register(button, action: onProbe)
+        return button
+    }
+
+    private static func probeStatus(_ state: ShellProviderProbeRefreshState) -> NSView? {
+        let message: String
+        let style: CapsuleBadge.Style
+        let symbol: String
+        let identifier: String
+        switch state {
+        case .idle, .refreshing:
+            return nil
+        case .succeeded(let value):
+            message = value
+            style = .positive
+            symbol = "checkmark.circle.fill"
+            identifier = "task-router-probe-status"
+        case .failed(let value):
+            message = value
+            style = .critical
+            symbol = "exclamationmark.circle.fill"
+            identifier = "task-router-probe-error"
+        }
+        let panel = InsetPanelView()
+        let label = NSTextField(wrappingLabelWithString: message)
+        let row = NSStackView(views: [
+            CapsuleBadge(
+                text: style == .positive ? "refreshed" : "refresh failed",
+                symbol: symbol,
+                style: style),
+            label,
+        ])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = Theme.Space.s
+        label.font = Theme.Font.caption
+        label.textColor = style == .positive ? Theme.secondaryText : Theme.critical
+        label.maximumNumberOfLines = 0
+        label.setAccessibilityIdentifier(identifier)
+        panel.contentStack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
+        return panel
     }
 
     private var sendable: Bool {
@@ -823,20 +981,70 @@ final class TaskRouterScreenView: NSView {
     }
 }
 
-/// One matrix row with a fixed task column, a fixed mode column, and equal
-/// vendor cells. Column widths are pinned so labels, mode, and provider
-/// chips stay on a grid as window width changes.
+/// The card's seven column widths. Rows bind to these guides so content in one
+/// row cannot establish a different provider pitch from the rows around it.
+private final class MatrixColumnLayout {
+
+    private let guides: [NSLayoutGuide]
+
+    init(
+        owner: NSView,
+        content: NSView,
+        count: Int,
+        taskWidth: CGFloat,
+        modeWidth: CGFloat
+    ) {
+        precondition(count >= 3)
+        guides = (0..<count).map { _ in NSLayoutGuide() }
+        for guide in guides {
+            owner.addLayoutGuide(guide)
+            NSLayoutConstraint.activate([
+                guide.topAnchor.constraint(equalTo: owner.topAnchor),
+                guide.heightAnchor.constraint(equalToConstant: 0),
+            ])
+        }
+        guides[0].leadingAnchor.constraint(
+            equalTo: content.leadingAnchor, constant: Theme.Space.s).isActive = true
+        let task = guides[0].widthAnchor.constraint(equalToConstant: taskWidth)
+        task.priority = .defaultHigh
+        task.isActive = true
+        guides[1].leadingAnchor.constraint(
+            equalTo: guides[0].trailingAnchor, constant: Theme.Space.s).isActive = true
+        let mode = guides[1].widthAnchor.constraint(equalToConstant: modeWidth)
+        mode.priority = .defaultHigh
+        mode.isActive = true
+        guides[2].leadingAnchor.constraint(
+            equalTo: guides[1].trailingAnchor, constant: Theme.Space.s).isActive = true
+        for index in 3..<guides.count {
+            let guide = guides[index]
+            guide.leadingAnchor.constraint(
+                equalTo: guides[index - 1].trailingAnchor,
+                constant: Theme.Space.s).isActive = true
+            guide.widthAnchor.constraint(equalTo: guides[2].widthAnchor).isActive = true
+        }
+        guides.last!.trailingAnchor.constraint(
+            equalTo: content.trailingAnchor, constant: -Theme.Space.s).isActive = true
+    }
+
+    func bind(_ columns: [NSView]) {
+        precondition(columns.count == guides.count)
+        for (column, guide) in zip(columns, guides) {
+            column.widthAnchor.constraint(equalTo: guide.widthAnchor).isActive = true
+        }
+    }
+}
+
+/// One matrix row. Width decisions live in `MatrixColumnLayout`; this view
+/// only supplies shared padding and the selected-row background.
 private final class MatrixRowView: NSView {
 
-    let providerCells: [NSView]
+    let columns: [NSView]
 
     init(
         columns: [NSView],
-        nameWidth: CGFloat,
-        modeWidth: CGFloat,
         selected: Bool
     ) {
-        providerCells = Array(columns.dropFirst(2))
+        self.columns = columns
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -850,6 +1058,7 @@ private final class MatrixRowView: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .horizontal
         stack.alignment = .top
+        stack.distribution = .fill
         stack.spacing = Theme.Space.s
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -861,27 +1070,17 @@ private final class MatrixRowView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.s),
         ])
 
-        if columns.count >= 1 {
-            let name = columns[0].widthAnchor.constraint(equalToConstant: nameWidth)
-            name.priority = .defaultHigh
-            name.isActive = true
-        }
-        if columns.count >= 2 {
-            let mode = columns[1].widthAnchor.constraint(equalToConstant: modeWidth)
-            mode.priority = .defaultHigh
-            mode.isActive = true
-        }
-        if let first = providerCells.first {
-            for cell in providerCells {
-                cell.setContentCompressionResistancePriority(.init(250), for: .horizontal)
-                cell.setContentHuggingPriority(.init(1), for: .horizontal)
-            }
-            for cell in providerCells.dropFirst() {
-                cell.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
-            }
-        }
+        for column in columns { Self.makeHorizontallyCompressible(column) }
         stack.setContentCompressionResistancePriority(.init(250), for: .horizontal)
         setContentCompressionResistancePriority(.init(250), for: .horizontal)
+    }
+
+    /// Matrix content yields before the shared guide widths, so intrinsic labels
+    /// cannot turn the grid's natural fitting size into a window minimum.
+    private static func makeHorizontallyCompressible(_ view: NSView) {
+        view.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+        view.setContentHuggingPriority(.init(1), for: .horizontal)
+        for subview in view.subviews { makeHorizontallyCompressible(subview) }
     }
 
     @available(*, unavailable)

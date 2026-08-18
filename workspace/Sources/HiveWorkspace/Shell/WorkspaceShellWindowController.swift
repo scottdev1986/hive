@@ -376,6 +376,8 @@ final class WorkspaceShellWindowController: NSWindowController {
                 categories: routing.categories,
                 category: category,
                 routing: routing,
+                probeState: providerProbeRefreshState,
+                onProbe: { [weak self] in self?.probeRefreshHandler?() },
                 onSelectCategory: { [weak self] category in
                     self?.routerCategory = category
                     self?.render()
