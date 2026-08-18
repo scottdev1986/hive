@@ -716,7 +716,7 @@ describe("sessiond wire framing", () => {
         outputSeq: "19",
         checkpointSeq: "2",
         checkpointAvailable: true,
-        input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
+        input: { state: "FREE", ownerViewerId: null, claimId: null },
         viewerCount: 0,
         geometry: {
           columns: 111,
@@ -739,7 +739,6 @@ describe("sessiond wire framing", () => {
         diagnosticIds: [
           "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
           "SESSIOND_RESOURCES_UNAVAILABLE",
-          "SESSIOND_INPUT_STATE_UNAVAILABLE",
         ],
       });
       // No renewals on the wire at all. A create binds a terminal and returns;
