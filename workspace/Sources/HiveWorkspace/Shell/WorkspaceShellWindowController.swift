@@ -427,6 +427,7 @@ final class WorkspaceShellWindowController: NSWindowController {
             panel = ShellAvailabilityPanel(route: state.activeRoute, screen: screen)
         }
         screenHost.addSubview(panel)
+        releaseVerticalDividerHugging(panel)
         if panel is OuterHorizonScreenView {
             let constraint = screenHost.heightAnchor.constraint(
                 equalTo: screenScrollView.contentView.heightAnchor)
@@ -446,6 +447,25 @@ final class WorkspaceShellWindowController: NSWindowController {
         renderedRoute = state.activeRoute
     }
 
+    /// Vertical `hdsSeparator()` edges inherit required vertical hugging, which
+    /// is correct for a hairline in a vertical stack. The same hug in a
+    /// horizontal row unique-ifies the window height through the required
+    /// screen-to-row chain, so a 1-point-wide divider is released here.
+    private func releaseVerticalDividerHugging(_ view: NSView) {
+        if let box = view as? NSBox, box.boxType == .separator {
+            let pinnedWidth = box.constraints.contains { constraint in
+                constraint.firstAttribute == .width
+                    && constraint.secondAttribute == .notAnAttribute
+                    && constraint.relation == .equal
+                    && abs(constraint.constant - 1) < 0.5
+            }
+            if pinnedWidth {
+                box.setContentHuggingPriority(.defaultLow, for: .vertical)
+            }
+        }
+        view.subviews.forEach(releaseVerticalDividerHugging)
+    }
+
     private func renderInspector() {
         inspector?.removeFromSuperview()
         inspector = nil
@@ -462,13 +482,15 @@ final class WorkspaceShellWindowController: NSWindowController {
                 self?.perform(.toggleInspector)
             })
         panel.widthAnchor.constraint(equalToConstant: 320).isActive = true
-        let separator = NSBox.hdsSeparator()
-        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        mainRow.addArrangedSubview(separator)
+        let divider = NSBox.hdsSeparator()
+        // Vertical edge: its 1-point intrinsic height must not compete with the row.
+        divider.setContentHuggingPriority(.defaultLow, for: .vertical)
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        mainRow.addArrangedSubview(divider)
         mainRow.addArrangedSubview(panel)
-        separator.heightAnchor.constraint(equalTo: mainRow.heightAnchor).isActive = true
+        divider.heightAnchor.constraint(equalTo: mainRow.heightAnchor).isActive = true
         inspector = panel
-        inspectorSeparator = separator
+        inspectorSeparator = divider
     }
 
     private func renderDrawer() {
@@ -481,13 +503,15 @@ final class WorkspaceShellWindowController: NSWindowController {
             self?.perform(.toggleAttention)
         }
         drawer.widthAnchor.constraint(equalToConstant: 300).isActive = true
-        let separator = NSBox.hdsSeparator()
-        separator.widthAnchor.constraint(equalToConstant: 1).isActive = true
-        mainRow.addArrangedSubview(separator)
+        let divider = NSBox.hdsSeparator()
+        // Vertical edge: its 1-point intrinsic height must not compete with the row.
+        divider.setContentHuggingPriority(.defaultLow, for: .vertical)
+        divider.widthAnchor.constraint(equalToConstant: 1).isActive = true
+        mainRow.addArrangedSubview(divider)
         mainRow.addArrangedSubview(drawer)
-        separator.heightAnchor.constraint(equalTo: mainRow.heightAnchor).isActive = true
+        divider.heightAnchor.constraint(equalTo: mainRow.heightAnchor).isActive = true
         self.drawer = drawer
-        drawerSeparator = separator
+        drawerSeparator = divider
     }
 
     private func chainKeyViews() {
