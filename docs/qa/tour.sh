@@ -182,12 +182,22 @@ close_visible_dialog() { control_value close-dialog; }
 # checks on a stale image from an earlier run in a caller-supplied $ARTIFACTS.
 # The QA binary owns this capture so an interaction never attaches a debugger.
 capture() {
+  local response
+  CAPTURE_DESKTOP_LOCKED=0
   rm -f "$1"
-  control_value capture "$1" >/dev/null || return 1
+  response=$(control_value capture "$1") || return 1
+  if [ "$response" = LOCKED ]; then
+    CAPTURE_DESKTOP_LOCKED=1
+    return 2
+  fi
   if [ -n "${TOUR_FORCE_TINY_CAPTURE:-}" ]; then
     dd if=/dev/zero of="$1" bs=1024 count=4 status=none 2>/dev/null \
       || dd if=/dev/zero of="$1" bs=1024 count=4 2>/dev/null
   fi
+}
+
+desktop_lock_detail() {
+  echo "desktop session is locked; capture cannot show Workspace UI — unlock the Mac before collecting visual evidence"
 }
 
 # TOUR_FORCE_PERTURB_SETTLE corrupts the second frame so settledness dies.
@@ -801,6 +811,7 @@ done
 # changes, and the run still exits non-zero listing every red it found. Default
 # mode keeps the fatal behaviour that regression runs depend on.
 REDS=()
+BLOCKED_INTERACTIONS=()
 
 # Both ledgers belong to this run. Appending to whatever a reused ARTIFACTS root
 # already held would let a stale red outlive the run that found it, and a later
@@ -846,7 +857,12 @@ interaction_guard() {
 interaction_capture() {
   local slug="$1" png="$2" baseline="$3"
   local second detail identical="" settled=""
+  INTERACTION_BLOCKED_ON_DESKTOP=0
   capture "$png"
+  if [ "$CAPTURE_DESKTOP_LOCKED" = 1 ]; then
+    INTERACTION_BLOCKED_ON_DESKTOP=1
+    return 1
+  fi
   if [ -n "${TOUR_FORCE_INTERACTION_TINY:-}" ] && [ "$slug" = "run-menu-agent" ]; then
     dd if=/dev/zero of="$png" bs=1024 count=4 status=none 2>/dev/null \
       || dd if=/dev/zero of="$png" bs=1024 count=4 2>/dev/null
@@ -866,6 +882,10 @@ interaction_capture() {
       [ $? -ne 0 ] && break
       sleep 1
       capture "$png"
+      if [ "$CAPTURE_DESKTOP_LOCKED" = 1 ]; then
+        INTERACTION_BLOCKED_ON_DESKTOP=1
+        return 1
+      fi
       if ! detail=$(png_defect "$png"); then
         route_red "$slug" non-blank "$detail"
         return 1
@@ -877,6 +897,10 @@ interaction_capture() {
   for _ in 1 2 3 4 5; do
     sleep 1
     capture "$second"
+    if [ "$CAPTURE_DESKTOP_LOCKED" = 1 ]; then
+      INTERACTION_BLOCKED_ON_DESKTOP=1
+      return 1
+    fi
     if [ -n "${TOUR_FORCE_FOCUS_FLICKER:-}" ] && [ "$slug" = "run-menu-view" ]; then
       cp "$ARTIFACTS/$MODE-router.png" "$second"
     fi
@@ -929,6 +953,14 @@ interaction_capture() {
 
 finish_interaction() {
   local slug="$1" before="$2" ok_detail="$3" red_detail="$4"
+  if [ "${INTERACTION_BLOCKED_ON_DESKTOP:-0}" = 1 ]; then
+    local detail
+    detail=$(desktop_lock_detail)
+    interaction_status "$slug" blocked "$detail"
+    BLOCKED_INTERACTIONS+=("$slug [desktop-locked] $detail")
+    echo "BLOCKED $slug [desktop-locked]: $detail" >&2
+    return
+  fi
   if [ "${#REDS[@]}" -eq "$before" ]; then
     interaction_status "$slug" ok "$ok_detail"
     echo "ok $slug -> $ARTIFACTS/$MODE-$slug.png"
@@ -1221,6 +1253,12 @@ for i in "${!TITLES[@]}"; do
   # capture fail loudly rather than quietly differ.
   sleep 3
   capture "$png"
+  if [ "$CAPTURE_DESKTOP_LOCKED" = 1 ]; then
+    detail=$(desktop_lock_detail)
+    route_red "$slug" desktop-locked "$detail"
+    route_status "$slug" blocked "$detail"
+    continue
+  fi
   if ! detail=$(png_defect "$png"); then
     route_red "$slug" non-blank "$detail"
     route_status "$slug" blocked "capture unusable; nothing about this screen was assessable"
@@ -1233,6 +1271,13 @@ for i in "${!TITLES[@]}"; do
   # gets a visible name and is removed after the comparison.
   second="$ARTIFACTS/settle-$slug.png"
   capture "$second"
+  if [ "$CAPTURE_DESKTOP_LOCKED" = 1 ]; then
+    detail=$(desktop_lock_detail)
+    route_red "$slug" desktop-locked "$detail"
+    route_status "$slug" blocked "$detail"
+    rm -f "$second"
+    continue
+  fi
   perturb_capture "$second"
   if ! detail=$(png_defect "$second"); then
     route_red "$slug" non-blank "$detail"
@@ -1281,9 +1326,10 @@ done
 
 run_interactions
 
-if [ "${#REDS[@]}" -gt 0 ]; then
-  echo "tour: ${#TITLES[@]} routes walked, ${#REDS[@]} red(s):"
-  printf '  %s\n' "${REDS[@]}"
+if [ "${#REDS[@]}" -gt 0 ] || [ "${#BLOCKED_INTERACTIONS[@]}" -gt 0 ]; then
+  echo "tour: ${#TITLES[@]} routes walked, ${#REDS[@]} red(s), ${#BLOCKED_INTERACTIONS[@]} blocked interaction(s):"
+  [ "${#REDS[@]}" -eq 0 ] || printf '  %s\n' "${REDS[@]}"
+  [ "${#BLOCKED_INTERACTIONS[@]}" -eq 0 ] || printf '  %s\n' "${BLOCKED_INTERACTIONS[@]}"
   echo "tour: route outcomes in $ARTIFACTS/routes.tsv, interaction outcomes in $ARTIFACTS/interactions.tsv, reds in $ARTIFACTS/reds.tsv"
   echo "tour: artifacts=$ARTIFACTS (proof: $(cat "$ARTIFACTS/proof.txt"))"
   exit 1

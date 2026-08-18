@@ -234,6 +234,7 @@ public final class ShellTourDriver {
     }
 
     private func capture(window: NSWindow, path: String) -> String {
+        guard !desktopIsLocked(above: window) else { return "LOCKED" }
         guard let screen = window.screen else { return "0" }
         let frame = window.frame.intersection(screen.visibleFrame)
         guard !frame.isNull, !frame.isEmpty else { return "0" }
@@ -258,6 +259,18 @@ public final class ShellTourDriver {
             return "\(image.width)x\(image.height)"
         } catch {
             return "0"
+        }
+    }
+
+    private func desktopIsLocked(above window: NSWindow) -> Bool {
+        guard let windows = CGWindowListCopyWindowInfo(
+            .optionOnScreenAboveWindow,
+            CGWindowID(window.windowNumber)) as? [[String: Any]] else {
+            return false
+        }
+        return windows.contains { window in
+            (window[kCGWindowOwnerName as String] as? String) == "loginwindow"
+                && ((window[kCGWindowLayer as String] as? NSNumber)?.intValue ?? 0) >= 2_000
         }
     }
 }
