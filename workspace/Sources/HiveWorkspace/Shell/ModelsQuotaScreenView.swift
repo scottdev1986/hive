@@ -37,6 +37,7 @@ final class ModelsQuotaScreenView: NSView {
                 title: "Models & Quota",
                 subtitle: "Enablement is user consent. Usage is capacity evidence as published; it does not rank candidates or refuse a launch.",
                 actions: [probe]),
+            QueenProviderScreenView.provenance(screen),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -61,6 +62,26 @@ final class ModelsQuotaScreenView: NSView {
             grid.yPlacement = .fill
             stack.addArrangedSubview(grid)
             grid.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+            // The capacity evidence the daemon published, one row per pool, in
+            // its own words. These rows keep measured, stale, unmetered,
+            // estimated, reserved, held and excluded apart instead of
+            // collapsing unlike states into one percentage; they used to reach
+            // the page through the availability panel, and they are readings,
+            // not panel chrome, so the screen renders them itself.
+            if !screen.facts.isEmpty {
+                let evidence = SectionCardView(
+                    title: "Capacity evidence",
+                    subtitle: "as published, never re-derived here")
+                evidence.setAccessibilityIdentifier("models-quota-evidence")
+                for fact in screen.facts {
+                    let row = QueenProviderScreenView.factRow(fact.label, fact.value)
+                    evidence.contentStack.addArrangedSubview(row)
+                    evidence.pinToContentWidth(row)
+                }
+                stack.addArrangedSubview(evidence)
+                evidence.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            }
         } else {
             let panel = ShellAvailabilityPanel(
                 route: .modelsQuota, screen: screen, contentInset: 0)

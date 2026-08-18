@@ -530,7 +530,10 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertEqual(error.stringValue, "grok: fake Grok surface refused the probe")
         let retry = try view(
             controller, "models-quota-probe-refresh", as: NSButton.self)
-        XCTAssertEqual(retry.title, "Refresh provider probes")
+        // The control was renamed to "Refresh providers" when Models & Quota was
+        // restyled; the assertion still pins that the retry control is present,
+        // titled and enabled after a failed probe.
+        XCTAssertEqual(retry.title, "Refresh providers")
         XCTAssertTrue(retry.isEnabled)
         XCTAssertNotNil(try view(
             controller, "models-quota-meter-claude-5 hour window", as: NSView.self))
