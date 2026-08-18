@@ -2,6 +2,14 @@
 import AppKit
 import WorkspaceCore
 
+/// The only shell operations the separate QA target may drive. The concrete
+/// controller stays internal to the application module.
+public protocol WorkspaceShellQASurface: AnyObject {
+    var shellQAWindow: NSWindow? { get }
+    var shellQAHasLiveRunWorkbench: Bool { get }
+    func selectShellQARoute(named route: String) -> Bool
+}
+
 final class WorkspaceShellWindowController: NSWindowController {
 
     private var state: ShellState
@@ -494,6 +502,20 @@ final class WorkspaceShellWindowController: NSWindowController {
             inspectorClose.nextKeyView = drawer?.closeButton ?? buttons.first
         }
         drawer?.closeButton.nextKeyView = buttons.first
+    }
+}
+
+extension WorkspaceShellWindowController: WorkspaceShellQASurface {
+    var shellQAWindow: NSWindow? { window }
+    var shellQAHasLiveRunWorkbench: Bool { liveRunWorkbench != nil }
+
+    func selectShellQARoute(named route: String) -> Bool {
+        guard let route = ShellRoute(rawValue: route),
+              ShellScreenRegistry.screens.contains(where: { $0.route == route }) else {
+            return false
+        }
+        performRoute(route)
+        return true
     }
 }
 

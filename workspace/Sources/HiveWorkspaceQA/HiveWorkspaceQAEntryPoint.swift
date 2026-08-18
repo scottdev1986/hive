@@ -28,4 +28,7 @@ WorkspaceLaunch.run(qa: WorkspaceQAHooks(
             || SmokeRunner.productionPaneAgent(environment: environment) != nil
             || SmokeRunner.a4Proof(environment: environment) != nil else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { runner.run() }
+    },
+    shellTour: { surface in
+        ShellTourDriver.installIfRequested(surface: surface)
     }))

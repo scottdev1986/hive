@@ -56,6 +56,7 @@ usage() {
   echo "usage: qa/tour.sh fixture <corpus-dir>" >&2
   echo "       qa/tour.sh live <port> <instance-home> <hive-bin>" >&2
   echo "       qa/tour.sh self-check <corpus-dir>" >&2
+  echo "       qa/tour.sh lock-self-check" >&2
   exit 2
 }
 
@@ -66,6 +67,37 @@ WORKSPACE_ROOT="${WORKSPACE_ROOT:-$(qa_repo_root "$SCRIPT_DIR")/workspace}"
 BINARY="$WORKSPACE_ROOT/.build/debug/HiveWorkspaceQA"
 ARTIFACTS="${ARTIFACTS:-$(mktemp -d -t workspace-tour)}"
 
+# Worktrees have separate roots, so the lock must live in Git's shared common
+# directory. A worktree-local lock would let two agents tour the same desktop.
+GIT_COMMON_DIR=$(git -C "$(qa_repo_root "$SCRIPT_DIR")" rev-parse --path-format=absolute --git-common-dir) \
+  || { echo "qa: could not locate Git's shared directory for the tour lock" >&2; exit 1; }
+TOUR_LOCKFILE="$GIT_COMMON_DIR/hive-workspace-qa-tour.lock"
+if [ "${TOUR_LOCK_HELD:-}" != 1 ] \
+  && [ "${1:-}" != self-check ] && [ "${1:-}" != lock-self-check ]; then
+  mkdir -p "$GIT_COMMON_DIR" \
+    || { echo "qa: could not create the tour lock directory" >&2; exit 1; }
+  exec env TOUR_LOCK_HELD=1 perl -MFcntl=:flock,F_SETFD -e '
+    my ($path, @command) = @ARGV;
+    open my $lock, "+>>", $path or die "qa: could not open the tour lock\n";
+    unless (flock($lock, LOCK_EX | LOCK_NB)) {
+      seek($lock, 0, 0);
+      my ($pid, $started) = split " ", <$lock> // "";
+      my $elapsed = $pid ? `ps -p $pid -o etime=` : "";
+      chomp $elapsed;
+      $elapsed =~ s/^\s+|\s+$//g;
+      $pid = "unknown" unless $pid;
+      $elapsed = "an unknown duration" unless $elapsed;
+      print STDERR "FAIL: Workspace QA tour already running (pid $pid, running $elapsed); refuse concurrent capture\n";
+      exit 1;
+    }
+    seek($lock, 0, 0);
+    truncate($lock, 0);
+    print {$lock} "$$ " . time . "\n";
+    select((select($lock), $| = 1)[0]);
+    fcntl($lock, F_SETFD, 0) or die "qa: could not preserve the tour lock\n";
+    exec @command or die "qa: could not restart under the tour lock\n";
+  ' "$TOUR_LOCKFILE" "$0" "$@"
+fi
 die() {
   echo "FAIL: $*" >&2
   exit 1
@@ -97,130 +129,61 @@ LIVE_ENDPOINT_PROBES=(
   "memory/maintenance:memory-maintenance"
 )
 
-# Every lldb call targets the recorded PID. Never select the process by name:
-# the production Workspace and this test binary both match "HiveWorkspace".
-lldb_value() {
-  lldb -b -p "$APP_PID" -o "expr -l objc -- $1" -o detach 2>/dev/null \
-    | awk '/\$0 = /{print $NF}'
+control_value() {
+  local request response temporary value sequence
+  sequence=$(printf '%06d' "$CONTROL_SEQUENCE")
+  CONTROL_SEQUENCE=$((CONTROL_SEQUENCE + 1))
+  request="$QA_CONTROL/request-$sequence"
+  response="$QA_CONTROL/response-$sequence"
+  temporary="$QA_CONTROL/.request-$sequence"
+  {
+    printf '%s' "$1"
+    shift
+    for value in "$@"; do printf '\t%s' "$value"; done
+    printf '\n'
+  } > "$temporary" || return 1
+  mv "$temporary" "$request" || return 1
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if [ -f "$response" ]; then
+      cat "$response"
+      rm -f "$response"
+      return 0
+    fi
+    kill -0 "$APP_PID" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  return 1
 }
 
-# Message sends on id must be cast or lldb rejects the expression outright
-# ("no known method"), which is why every send below spells out its receiver
-# type.
-NSAPP='((NSApplication*)[NSApplication sharedApplication])'
-
-window_number() {
-  lldb_value "(long)[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] windowNumber]"
-}
-
-# 1 when nothing chrome-like is left to draw. Every part of that claim is
-# checked, one by one: no toolbar, a transparent title bar, no title text, and
-# all THREE traffic lights hidden — close (0), miniaturize (1) and zoom (2).
-# Checking one button and calling it "the traffic lights" fails open on the
-# other two, which are just as visible and repaint on focus just as readily.
-window_chrome_hidden() {
-  lldb_value "NSWindow *tourWindow = (NSWindow*)[[$NSAPP windows] objectAtIndex:0]; BOOL tourNoToolbar = ([tourWindow toolbar] == (NSToolbar*)0); BOOL tourClearBar = (BOOL)[tourWindow titlebarAppearsTransparent]; BOOL tourNoTitle = ((long)[tourWindow titleVisibility] == 1); BOOL tourNoClose = (BOOL)[(NSButton*)[tourWindow standardWindowButton:0] isHidden]; BOOL tourNoMin = (BOOL)[(NSButton*)[tourWindow standardWindowButton:1] isHidden]; BOOL tourNoZoom = (BOOL)[(NSButton*)[tourWindow standardWindowButton:2] isHidden]; (long)(tourNoToolbar && tourClearBar && tourNoTitle && tourNoClose && tourNoMin && tourNoZoom)"
-}
-
-# 1 when the window covers everything its screen makes available. Compared
-# against visibleFrame because AppKit refuses to put a titled window over the
-# menu bar, so frame is a target no such window can ever reach.
-window_fills_screen() {
-  lldb_value "NSWindow *tourWindow = (NSWindow*)[[$NSAPP windows] objectAtIndex:0]; NSRect tourFrame = (NSRect)[tourWindow frame]; NSRect tourScreen = (NSRect)[(NSScreen*)[tourWindow screen] visibleFrame]; (long)(tourFrame.size.width >= tourScreen.size.width && tourFrame.size.height >= tourScreen.size.height)"
-}
-
-# Set the window against its current screen immediately before each route
-# capture. The shell can move between screens during a long QA walk, and the
-# evidence must use the visible frame of the screen that actually owns it.
-zoom_window_to_active_screen() {
-  lldb_value "extern void objc_msgSend(void); typedef struct { double x; double y; double width; double height; } TourRect; NSWindow *tourWindow = (NSWindow*)[[$NSAPP windows] objectAtIndex:0]; NSScreen *tourScreen = (NSScreen*)[tourWindow screen]; TourRect tourTarget = ((TourRect(*)(id,SEL))(void*)&objc_msgSend)(tourScreen,@selector(visibleFrame)); ((void(*)(id,SEL,TourRect,BOOL,BOOL))(void*)&objc_msgSend)(tourWindow,@selector(setFrame:display:animate:),tourTarget,YES,NO); [[tourWindow contentView] layoutSubtreeIfNeeded]; (long)tourWindow"
-}
-
-# BFS the window's view tree for the button with this exact accessibility label
-# and schedule a click on the app's own run loop, after detach. Echoes the button pointer:
-# [nil performClick:] is a silent no-op, so the CALLER must refuse a zero
-# pointer or a missed click turns into a full tour of one screen.
-click_route() {
-  lldb_value "NSMutableArray *q = [NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSButton *hit = (NSButton*)0; while ([q count] > 0) { NSView *v = (NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSButton class]] && [((NSString*)[v accessibilityIdentifier]) isEqualToString:@\"shell-nav-$1\"]) { hit = (NSButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [hit performSelector:@selector(performClick:) withObject:(id)0 afterDelay:1.0]; (long)hit"
-}
-
-# Queue an exact main-menu family on the app's run loop. Calling the popup
-# method synchronously would keep LLDB attached for the whole menu-tracking
-# session; the queued block starts only after detach, leaving capture() free to
-# observe the real open menu. objc_msgSend carries the point as its ABI shape
-# because LLDB's Objective-C++ expression context cannot pass AppKit's NSPoint.
-open_menu() {
-  lldb_value "extern void objc_msgSend(void); typedef struct { double x; double y; } TourPoint; NSMenu *hit=(NSMenu*)0; for (NSMenuItem *top in [[$NSAPP mainMenu] itemArray]) { if ([[[top submenu] title] isEqualToString:@\"$1\"]) { hit=[top submenu]; break; } } NSWindow *win=(NSWindow*)[[$NSAPP windows] objectAtIndex:0]; NSView *host=(NSView*)[win contentView]; [[NSOperationQueue mainQueue] addOperationWithBlock:^{ TourPoint p={8.0, [host bounds].size.height-8.0}; ((void(*)(id,SEL,id,TourPoint,id))(void*)&objc_msgSend)(hit, @selector(popUpMenuPositioningItem:atLocation:inView:), (id)0, p, host); }]; (long)hit"
-}
-
-close_menu() {
-  lldb_value "NSMenu *hit=(NSMenu*)0; for (NSMenuItem *top in [[$NSAPP mainMenu] itemArray]) { if ([[[top submenu] title] isEqualToString:@\"$1\"]) { hit=[top submenu]; break; } } [hit cancelTrackingWithoutAnimation]; (long)hit"
-}
-
-# Dispatch one catalog item through the same target/action pair AppKit uses.
-# Exact menu and item titles keep a renamed or moved command from silently
-# exercising some neighboring action.
-invoke_menu_item() {
-  lldb_value "NSMenuItem *hit=(NSMenuItem*)0; for (NSMenuItem *top in [[$NSAPP mainMenu] itemArray]) { NSMenu *menu=[top submenu]; if ([[menu title] isEqualToString:@\"$1\"]) { for (NSMenuItem *item in [menu itemArray]) { if ([[item title] isEqualToString:@\"$2\"]) { hit=item; break; } } } } [[NSOperationQueue mainQueue] addOperationWithBlock:^{ [$NSAPP sendAction:[hit action] to:[hit target] from:hit]; }]; (long)hit"
-}
-
-open_popup_exact() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSPopUpButton *hit=(NSPopUpButton*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSPopUpButton class]] && [(NSString*)[v accessibilityIdentifier] isEqualToString:@\"$1\"]) { hit=(NSPopUpButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [hit performSelector:@selector(performClick:) withObject:(id)0 afterDelay:1.0]; (long)hit"
-}
-
-open_popup_prefix() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSPopUpButton *hit=(NSPopUpButton*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; NSString *tourIdentifier=(NSString*)[v accessibilityIdentifier]; if ([v isKindOfClass:[NSPopUpButton class]] && [tourIdentifier hasPrefix:@\"$1\"] && [(NSPopUpButton*)v isEnabled]) { hit=(NSPopUpButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [hit performSelector:@selector(performClick:) withObject:(id)0 afterDelay:1.0]; (long)hit"
-}
-
-close_popup_exact() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSPopUpButton *hit=(NSPopUpButton*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSPopUpButton class]] && [(NSString*)[v accessibilityIdentifier] isEqualToString:@\"$1\"]) { hit=(NSPopUpButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [[hit menu] cancelTrackingWithoutAnimation]; (long)hit"
-}
-
-close_popup_prefix() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSPopUpButton *hit=(NSPopUpButton*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; NSString *tourIdentifier=(NSString*)[v accessibilityIdentifier]; if ([v isKindOfClass:[NSPopUpButton class]] && [tourIdentifier hasPrefix:@\"$1\"] && [(NSPopUpButton*)v isEnabled]) { hit=(NSPopUpButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } [[hit menu] cancelTrackingWithoutAnimation]; (long)hit"
-}
-
-# Pick a different real item and fire the popup's product action. The returned
-# value is selectedIndex+1, reserving zero for a missing or one-item control.
-select_popup_exact() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSPopUpButton *hit=(NSPopUpButton*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSPopUpButton class]] && [(NSString*)[v accessibilityIdentifier] isEqualToString:@\"$1\"]) { hit=(NSPopUpButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } long tourItemCount=(long)[hit numberOfItems]; long tourNextIndex=tourItemCount > 1 ? (((long)[hit indexOfSelectedItem]+1)%tourItemCount) : -1; if (tourNextIndex >= 0) { [hit selectItemAtIndex:tourNextIndex]; [hit sendAction:[hit action] to:[hit target]]; } tourNextIndex+1"
-}
-
-select_popup_prefix() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSPopUpButton *hit=(NSPopUpButton*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; NSString *tourIdentifier=(NSString*)[v accessibilityIdentifier]; if ([v isKindOfClass:[NSPopUpButton class]] && [tourIdentifier hasPrefix:@\"$1\"] && [(NSPopUpButton*)v isEnabled]) { hit=(NSPopUpButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } long tourItemCount=(long)[hit numberOfItems]; long tourNextIndex=tourItemCount > 1 ? (((long)[hit indexOfSelectedItem]+1)%tourItemCount) : -1; if (tourNextIndex >= 0) { [hit selectItemAtIndex:tourNextIndex]; [hit sendAction:[hit action] to:[hit target]]; } tourNextIndex+1"
-}
-
-popup_selected_exact() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSPopUpButton *hit=(NSPopUpButton*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSPopUpButton class]] && [(NSString*)[v accessibilityIdentifier] isEqualToString:@\"$1\"]) { hit=(NSPopUpButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } (long)(hit != (NSPopUpButton*)0 && (long)[hit indexOfSelectedItem] == $2)"
-}
-
-popup_selected_prefix() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSPopUpButton *hit=(NSPopUpButton*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; NSString *tourIdentifier=(NSString*)[v accessibilityIdentifier]; if ([v isKindOfClass:[NSPopUpButton class]] && [tourIdentifier hasPrefix:@\"$1\"] && [(NSPopUpButton*)v isEnabled]) { hit=(NSPopUpButton*)v; break; } [q addObjectsFromArray:[v subviews]]; } (long)(hit != (NSPopUpButton*)0 && (long)[hit indexOfSelectedItem] == $2)"
-}
-
-view_identifier_exists() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSView *hit=(NSView*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([(NSString*)[v accessibilityIdentifier] isEqualToString:@\"$1\"]) { hit=v; break; } [q addObjectsFromArray:[v subviews]]; } (long)hit"
-}
-
-set_text_field() {
-  lldb_value "NSMutableArray *q=[NSMutableArray arrayWithObject:[(NSWindow*)[[$NSAPP windows] objectAtIndex:0] contentView]]; NSTextField *hit=(NSTextField*)0; while ([q count] > 0) { NSView *v=(NSView*)[q objectAtIndex:0]; [q removeObjectAtIndex:0]; if ([v isKindOfClass:[NSTextField class]] && [(NSString*)[v accessibilityIdentifier] isEqualToString:@\"$1\"]) { hit=(NSTextField*)v; break; } [q addObjectsFromArray:[v subviews]]; } [hit setStringValue:@\"$2\"]; [[hit window] makeFirstResponder:hit]; (long)(hit != (NSTextField*)0 && [[hit stringValue] isEqualToString:@\"$2\"])"
-}
-
-attach_visible_dialog() {
-  lldb_value "NSArray *wins=[$NSAPP windows]; NSWindow *main=(NSWindow*)[wins objectAtIndex:0]; NSWindow *dialog=(NSWindow*)0; for (NSWindow *candidate in wins) { if (candidate != main && [candidate isVisible]) { dialog=candidate; break; } } [main addChildWindow:dialog ordered:1]; (long)[dialog windowNumber]"
-}
-
-close_visible_dialog() {
-  lldb_value "NSArray *wins=[$NSAPP windows]; NSWindow *main=(NSWindow*)[wins objectAtIndex:0]; NSWindow *dialog=(NSWindow*)0; for (NSWindow *candidate in wins) { if (candidate != main && [candidate isVisible]) { dialog=candidate; break; } } [main removeChildWindow:dialog]; [dialog close]; (long)(dialog != (NSWindow*)0 && ![dialog isVisible])"
-}
+window_number() { control_value window-number; }
+window_frame() { control_value window-frame; }
+window_chrome_hidden() { control_value window-chrome-hidden; }
+window_fills_screen() { control_value window-fills-screen; }
+zoom_window_to_active_screen() { control_value zoom-window; }
+click_route() { control_value route "$1"; }
+live_run_workbench() { control_value live-run-workbench; }
+open_menu() { control_value open-menu "$1"; }
+close_menu() { control_value close-menu "$1"; }
+invoke_menu_item() { control_value invoke-menu-item "$1" "$2"; }
+open_popup_exact() { control_value open-popup-exact "$1"; }
+open_popup_prefix() { control_value open-popup-prefix "$1"; }
+close_popup_exact() { control_value close-popup-exact "$1"; }
+close_popup_prefix() { control_value close-popup-prefix "$1"; }
+select_popup_exact() { control_value select-popup-exact "$1"; }
+select_popup_prefix() { control_value select-popup-prefix "$1"; }
+popup_selected_exact() { control_value popup-selected-exact "$1" "$2"; }
+popup_selected_prefix() { control_value popup-selected-prefix "$1" "$2"; }
+view_identifier_exists() { control_value view-exists "$1"; }
+set_text_field() { control_value set-text "$1" "$2"; }
+attach_visible_dialog() { control_value attach-dialog; }
+close_visible_dialog() { control_value close-dialog; }
 
 # Deleting any prior file first means a failed capture can never pass the
 # checks on a stale image from an earlier run in a caller-supplied $ARTIFACTS.
-# TOUR_FORCE_TINY_CAPTURE replaces the capture with a sub-floor blob so the
-# non-blank assert fires (self-check re-enters the real tour with this set).
+# The QA binary owns this capture so an interaction never attaches a debugger.
 capture() {
   rm -f "$1"
-  screencapture -x -o -l "$WINID" "$1" || return 1
+  control_value capture "$1" >/dev/null || return 1
   if [ -n "${TOUR_FORCE_TINY_CAPTURE:-}" ]; then
     dd if=/dev/zero of="$1" bs=1024 count=4 status=none 2>/dev/null \
       || dd if=/dev/zero of="$1" bs=1024 count=4 2>/dev/null
@@ -241,7 +204,7 @@ perturb_capture() {
 # whether that ends the run or is recorded and walked past.
 png_defect() {
   if [ ! -f "$1" ]; then
-    echo "no capture written at $1 (screencapture failed?)"
+    echo "no capture written at $1 (QA capture command failed?)"
     return 1
   fi
   local size
@@ -521,11 +484,46 @@ free_port() {
   python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
 }
 
+run_lock_self_check() {
+  local check_dir holder refusal code owner
+  check_dir=$(mktemp -d -t tour-lock-self-check)
+  refusal="$check_dir/refusal.txt"
+  TOUR_DISPLAY_AWAKE=1 TOUR_LOCK_TEST_HOLD_SECONDS=30 "$0" lock-probe \
+    >"$check_dir/holder.txt" 2>&1 &
+  holder=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    owner=$(awk 'NR == 1 { print $1 }' "$TOUR_LOCKFILE" 2>/dev/null || true)
+    [ "$owner" = "$holder" ] && break
+    kill -0 "$holder" 2>/dev/null || break
+    sleep 0.1
+  done
+  [ "$owner" = "$holder" ] || {
+    wait "$holder" 2>/dev/null || true
+    die "lock self-check holder did not acquire the tour lock: $(cat "$check_dir/holder.txt")"
+  }
+
+  TOUR_DISPLAY_AWAKE=1 "$0" lock-probe >"$refusal" 2>&1
+  code=$?
+  [ "$code" -ne 0 ] \
+    || die "concurrent tour lock probe exited 0"
+  grep -Fq "Workspace QA tour already running (pid $holder, running" "$refusal" \
+    || die "concurrent tour lock refusal did not name the holder and duration: $(cat "$refusal")"
+  echo "self-check: concurrent tour refuses with holder pid and duration"
+
+  kill -TERM "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  TOUR_DISPLAY_AWAKE=1 "$0" lock-probe >"$check_dir/reacquire.txt" 2>&1 \
+    || die "tour lock remained held after a killed run: $(cat "$check_dir/reacquire.txt")"
+  echo "self-check: killed tour releases the lock"
+}
+
 run_self_check() {
   local corpus="$1"
   local check_dir port fake_pid fake_token proof_bad proof_ok
   local slow_port slow_pid slow_out slow_rc
   check_dir=$(mktemp -d -t tour-self-check)
+
+  run_lock_self_check
 
   # --- nil-click: click a route no sidebar button has ---
   probe_fixture_guard nil-click 'sidebar route .* not found' \
@@ -611,6 +609,8 @@ MODE="${1:-}"
 LIVE_PORT=""
 LIVE_INSTANCE_HOME=""
 LIVE_HIVE_BIN=""
+SELF_CHECK=0
+LOCK_SELF_CHECK=0
 case "$MODE" in
 fixture)
   CORPUS="${2:-}"
@@ -642,7 +642,14 @@ live)
 self-check)
   CORPUS="${2:-}"
   [ -d "$CORPUS" ] || usage
-  run_self_check "$CORPUS"
+  SELF_CHECK=1
+  ;;
+lock-probe)
+  [ $# -eq 1 ] || usage
+  ;;
+lock-self-check)
+  [ $# -eq 1 ] || usage
+  LOCK_SELF_CHECK=1
   ;;
 *)
   usage
@@ -680,10 +687,30 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+# Self-check is an orchestrator for fresh fixture tours, not a GUI tour itself.
+# Its child fixture runs acquire the real lock one at a time.
+if [ "$SELF_CHECK" = 1 ]; then
+  run_self_check "$CORPUS"
+fi
+if [ "$LOCK_SELF_CHECK" = 1 ]; then
+  run_lock_self_check
+  exit 0
+fi
+
+if [ "$MODE" = lock-probe ]; then
+  lock_probe_seconds="${TOUR_LOCK_TEST_HOLD_SECONDS:-0}"
+  while [ "$lock_probe_seconds" -gt 0 ]; do
+    sleep 1
+    lock_probe_seconds=$((lock_probe_seconds - 1))
+  done
+  exit 0
+fi
 
 echo "tour: mode=$MODE artifacts=$ARTIFACTS"
 
-(cd "$WORKSPACE_ROOT" && swift build > "$ARTIFACTS/build.log" 2>&1) \
+(cd "$WORKSPACE_ROOT" && swift build --product HiveWorkspaceQA > "$ARTIFACTS/build.log" 2>&1) \
   || die "swift build failed in $WORKSPACE_ROOT: $(tail -5 "$ARTIFACTS/build.log")"
 
 # Headless proof first: the measured launch line is the machine-readable dump
@@ -726,8 +753,12 @@ if [ "$MODE" = live ]; then
   assert_live_404_not_false_disconnect "$LIVE_PORT" "$proof" "$live_auth"
 fi
 
+QA_CONTROL="$ARTIFACTS/qa-control"
+CONTROL_SEQUENCE=0
+mkdir -p "$QA_CONTROL" || die "could not create the QA control directory"
 env -u HIVE_SHELL_PROOF_MUTATE \
-  "$BINARY" "${LAUNCH_ARGS[@]}" > "$ARTIFACTS/app.log" 2>&1 &
+  "$BINARY" "${LAUNCH_ARGS[@]}" --workspace-shell-qa-control "$QA_CONTROL" \
+  > "$ARTIFACTS/app.log" 2>&1 &
 APP_PID=$!
 
 WINID=""
@@ -740,6 +771,8 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   sleep 2
 done
 [ -n "$WINID" ] || die "no window appeared within the wait budget"
+WINDOW_FRAME=$(window_frame) || die "could not read the QA window frame"
+printf 'window=%s frame=%s\n' "$WINID" "$WINDOW_FRAME" > "$ARTIFACTS/window.txt"
 
 # A window number exists as soon as the window does, which says nothing about
 # whether it has taken the screen yet. Capturing before it has holds a title
@@ -1161,6 +1194,12 @@ for i in "${!TITLES[@]}"; do
     route_status "$slug" blocked "nothing was clicked; nothing about this screen was assessable"
     continue
   fi
+  if [ "$slug" = run ] && [ "$(live_run_workbench)" != "1" ]; then
+    route_red "$slug" screen-substitute \
+      "Live Run did not install its workbench; refusing to capture a substitute screen"
+    route_status "$slug" blocked "Live Run workbench missing; capture is not assessable"
+    continue
+  fi
 
   zoomed=$(zoom_window_to_active_screen)
   if [ -z "$zoomed" ] || [ "$zoomed" = "0" ] \
@@ -1190,7 +1229,7 @@ for i in "${!TITLES[@]}"; do
   pixels=$(png_pixel_size "$png") \
     || { route_red "$slug" pixel-size "could not read captured PNG dimensions"; route_status "$slug" blocked "capture dimensions are not assessable"; continue; }
   sleep 1
-  # screencapture refuses dot-prefixed destinations, so the scratch capture
+  # The in-process command writes an ordinary artifact, so the scratch capture
   # gets a visible name and is removed after the comparison.
   second="$ARTIFACTS/settle-$slug.png"
   capture "$second"

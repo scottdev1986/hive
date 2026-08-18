@@ -7,15 +7,21 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
 
     private let config: LaunchConfig
     private let launch: WorkspaceShellLaunch
+    private let shellTour: ((any WorkspaceShellQASurface) -> Void)?
     private var controller: WorkspaceShellWindowController?
     private var liveRunFeed: FeedClient?
     private var liveRunControlGateway: LiveRunControlGateway?
     private let liveRunWorkspaceSessionID = "workspace-shell-\(UUID().uuidString)"
     private var liveRunInventoryRevision = 0
 
-    init(config: LaunchConfig, launch: WorkspaceShellLaunch) {
+    init(
+        config: LaunchConfig,
+        launch: WorkspaceShellLaunch,
+        shellTour: ((any WorkspaceShellQASurface) -> Void)? = nil
+    ) {
         self.config = config
         self.launch = launch
+        self.shellTour = shellTour
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -42,15 +48,15 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                 instanceLabel: config.instanceID.map { "instance · \($0)" }
                     ?? "development launch — no instance")
             let controller = WorkspaceShellWindowController(context: context, state: state)
+            let workbench = LiveRunWorkbenchView(config: config)
+            controller.installLiveRunWorkbench(workbench)
             if launch.isLive {
-                let workbench = LiveRunWorkbenchView(config: config)
                 do {
                     liveRunControlGateway = LiveRunControlGateway(
                         client: try await ShellLiveStore(config: config).makeClient())
                 } catch {
                     workbench.showControlUnavailable(error.localizedDescription)
                 }
-                controller.installLiveRunWorkbench(workbench)
                 startLiveRunFeed(workbench: workbench)
                 controller.memoryRecallHandler = { [weak self, weak controller] query in
                     guard let self else { return }
@@ -270,6 +276,9 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                         }
                     }
                 }
+            } else {
+                workbench.showUnavailable(
+                    "Fixture launch has no workspace-feed snapshot; Live Run is unavailable.")
             }
             self.controller = controller
             NSApp.mainMenu = ShellMenuBuilder.build(target: controller)
@@ -293,6 +302,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                 }
                 window.setFrame(screen.visibleFrame, display: true)
             }
+            shellTour?(controller)
     }
 
     @MainActor

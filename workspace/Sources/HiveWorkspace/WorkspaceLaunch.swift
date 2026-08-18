@@ -26,12 +26,18 @@ public struct WorkspaceQAHooks {
     /// drive the window at all.
     public var smoke: ((_ surface: any SmokeSurface, _ config: LaunchConfig) -> Void)?
 
+    /// Gives the QA executable the shell window after it is visible. The shipped
+    /// app installs no hook, so the file-driven tour driver is not linked there.
+    public var shellTour: ((any WorkspaceShellQASurface) -> Void)?
+
     public init(
         fixtureShell: ((_ arguments: [String]) -> FixtureShellLoader?)? = nil,
-        smoke: ((_ surface: any SmokeSurface, _ config: LaunchConfig) -> Void)? = nil
+        smoke: ((_ surface: any SmokeSurface, _ config: LaunchConfig) -> Void)? = nil,
+        shellTour: ((any WorkspaceShellQASurface) -> Void)? = nil
     ) {
         self.fixtureShell = fixtureShell
         self.smoke = smoke
+        self.shellTour = shellTour
     }
 }
 
@@ -58,7 +64,8 @@ public enum WorkspaceLaunch {
         }
         let delegate: NSApplicationDelegate = WorkspaceShellDelegate(
             config: config,
-            launch: shellLaunch)
+            launch: shellLaunch,
+            shellTour: qa.shellTour)
         app.delegate = delegate
         let smokeVisible = ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1"
         let backgroundOnly = (config.smoke && !smokeVisible) || shellLaunch.proofMode
