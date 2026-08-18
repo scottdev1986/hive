@@ -216,6 +216,12 @@ final class OuterHorizonScreenTests: XCTestCase {
             onToggleExpansion: { _ in })
         workbench.frame = NSRect(x: 0, y: 0, width: 1_200, height: 900)
         workbench.layoutSubtreeIfNeeded()
+        let railWidth = Theme.Metric.sidebarWidth + Theme.Space.l * 2
+        XCTAssertEqual(railWidth, 280)
+        XCTAssertEqual(
+            1_200 - railWidth,
+            920,
+            "the wider rail costs the centre 60 points at this workbench width")
 
         let crew = horizon.visibleRows.filter { row in
             guard case .present(let binding) = row.node.binding else { return false }

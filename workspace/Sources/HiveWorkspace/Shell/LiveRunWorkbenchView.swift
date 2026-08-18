@@ -703,11 +703,8 @@ final class LiveRunWorkbenchView: NSView {
         }
 
         titleLabel.stringValue = session.isQueen ? "queen" : session.name
-        let selectionDetail = session.isQueen
-            ? session.rawStatus
-            : (session.task ?? session.rawStatus)
         subtitleLabel.stringValue =
-            "\(agentUiLine(for: session)) · \(selectionDetail)"
+            "\(agentUiLine(for: session)) · \(session.rawStatus)"
         updateControlStrip(session)
         updateCenterBadges(session)
         updateInspector(session)
@@ -813,7 +810,7 @@ final class LiveRunWorkbenchView: NSView {
         inspectorName.stringValue = session.name
         inspectorModel.stringValue = session.model ?? "model unknown"
         statusValue.stringValue = session.rawStatus
-        if !session.isQueen, let task = session.task, !task.isEmpty {
+        if let task = session.task, !task.isEmpty {
             taskTitle.stringValue = task
             taskBody.stringValue =
                 "Acceptance is workflow state, never inferred from terminal output. "
@@ -1293,20 +1290,21 @@ private final class LiveRunSessionButton: NSButton {
         // its siblings is not a row anyone can choose from.
         name.compressHorizontally(priority: 620, toolTip: titleText)
         let roleText = role ?? Self.roleLine(hierarchyRow?.node)
-        let sessionDetail: String
+        let providerText: String
+        let modelText: String
         if let session {
-            sessionDetail = session.isQueen
-                ? session.rawStatus
-                : (session.task ?? session.model ?? session.rawStatus)
+            providerText = session.provider == ProviderID("unknown")
+                ? "provider not projected"
+                : ProviderBranding.title(for: session.provider)
+            modelText = session.model ?? "model not projected"
         } else {
-            sessionDetail = Self.lifecycleLine(hierarchyRow?.node) + " · session unknown"
+            providerText = "provider not projected"
+            modelText = "model not projected"
         }
-        let detail = NSTextField(labelWithString: "\(roleText) · \(sessionDetail)")
-        detail.font = Theme.Font.caption
-        detail.textColor = Theme.tertiaryText
-        detail.lineBreakMode = .byTruncatingTail
-        detail.compressHorizontally(priority: 560, toolTip: detail.stringValue)
-        let copy = NSStackView(views: [name, detail])
+        let roleLabel = rowDetail(roleText)
+        let providerLabel = rowDetail(providerText)
+        let modelLabel = rowDetail(modelText)
+        let copy = NSStackView(views: [name, roleLabel, providerLabel, modelLabel])
         copy.orientation = .vertical
         copy.alignment = .leading
         copy.spacing = 1
@@ -1367,7 +1365,7 @@ private final class LiveRunSessionButton: NSButton {
             ])
         }
 
-        toolTip = session.flatMap { $0.isQueen ? $0.rawStatus : ($0.task ?? $0.model) }
+        toolTip = session.flatMap { $0.model ?? $0.rawStatus }
             ?? hierarchyRow?.parentDiagnostic
         if let session {
             setAccessibilityIdentifier("live-run-session-\(session.id)")
@@ -1406,6 +1404,15 @@ private final class LiveRunSessionButton: NSButton {
         }
         let rendered = [role, assignment].compactMap { $0 }.joined(separator: " · ")
         return rendered.isEmpty ? "hierarchy role unknown" : rendered
+    }
+
+    private func rowDetail(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = Theme.Font.caption
+        label.textColor = Theme.tertiaryText
+        label.lineBreakMode = .byTruncatingTail
+        label.compressHorizontally(priority: 560, toolTip: text)
+        return label
     }
 
     private static func lifecycleLine(_ node: HierarchyNodeProjection?) -> String {

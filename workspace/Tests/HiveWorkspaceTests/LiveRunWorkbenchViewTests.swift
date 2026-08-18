@@ -281,6 +281,25 @@ struct LiveRunWorkbenchViewTests {
         #expect(findView(in: view, identifier: "live-run-inspector-tab-session") != nil)
     }
 
+    @Test("A projected task appears only in the inspector task section")
+    func taskAppearsOnce() throws {
+        let task = "Investigate the exact task rendering site"
+        let view = LiveRunWorkbenchView { session in
+            FakeSurface(locator: session.locator!)
+        }
+        view.setRouteVisible(true)
+        view.apply(try projection([
+            agent("david", provider: "codex", generation: 3)
+                .replacingOccurrences(
+                    of: #""status":"idle""#,
+                    with: #""status":"idle","taskDescription":"\#(task)""#),
+        ]))
+
+        let rendered = textFields(in: view).filter { $0.stringValue == task }
+        #expect(rendered.count == 1)
+        #expect(findView(in: view, identifier: "live-run-session-id-david")?.toolTip != task)
+    }
+
     @Test("Shell attach and detach commands consume the workbench's exact locator")
     func shellCommandsUseSelectedLocator() throws {
         let workbench = LiveRunWorkbenchView { session in
