@@ -1348,8 +1348,9 @@ private final class LiveRunSessionButton: NSButton {
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.s),
         ])
         copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        copy.setContentCompressionResistancePriority(.required, for: .horizontal)
         chip.setContentHuggingPriority(.required, for: .horizontal)
-        chip.setContentCompressionResistancePriority(.init(200), for: .horizontal)
+        chip.setContentCompressionResistancePriority(.init(1), for: .horizontal)
 
         if selected {
             let bar = NSView()

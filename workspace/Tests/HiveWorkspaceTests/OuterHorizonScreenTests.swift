@@ -235,6 +235,10 @@ final class OuterHorizonScreenTests: XCTestCase {
                 identifier: "live-run-hierarchy-\(row.node.nodeId)"))
             let name = try XCTUnwrap(allTextFields(in: button)
                 .first { $0.stringValue.hasPrefix("dense-crew-") })
+            XCTAssertGreaterThanOrEqual(
+                name.frame.width,
+                (name.stringValue as NSString).size(withAttributes: [.font: try XCTUnwrap(name.font)]).width,
+                "identity text must own enough of the rail to draw inside its column")
             let characterCount = prefixCharacterCount(
                 fitting: name.frame.width,
                 from: name.stringValue,
