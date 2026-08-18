@@ -14,8 +14,8 @@ import {
   defaultReleaseInstallDeps,
   type EmbeddingsReleaseInstallDeps,
   installEmbeddingsFromRelease,
-} from "../../src/release/embeddings-install";
-import { EMBEDDINGS_RUNTIME_ASSET } from "../../src/release/embeddings-runtime";
+} from "../../src/embeddings-runtime/install";
+import { EMBEDDINGS_RUNTIME_ASSET } from "../../src/embeddings-runtime/runtime";
 import type { ReleaseManifest } from "../../src/release/manifest";
 import type { ReleaseSource } from "../../src/update-service/source";
 import { HIVE_VERSION } from "../../src/shared/version";

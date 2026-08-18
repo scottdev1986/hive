@@ -16,7 +16,7 @@ import {
   writeMemoryFact,
 } from "../memory-service/memory-store";
 import type { MemoryWriteFileInput } from "../memory-service/store-records";
-import type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
+import type { EmbeddingsInstallOutcome } from "../embeddings-runtime/install";
 import { slugify } from "../shared/slugify";
 import { ensureEmbeddingsRuntime } from "./embeddings-command";
 import { provisionGraphify } from "./graphify-command";

@@ -11,8 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { embeddingsDigestForBuild } from "../../src/release/build";
-import { embeddingsRuntimeDigest } from "../../src/release/embeddings-digest";
+import { embeddingsRuntimeDigest } from "../../src/embeddings-runtime/digest";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 /** A minimal runtime tree with the same shape provisioning produces. */
@@ -165,17 +164,5 @@ describe("embeddingsRuntimeDigest", () => {
     } finally {
       await cleanup();
     }
-  });
-});
-
-describe("embedding digest build policy", () => {
-  test("unsigned dev builds do not pin a separately staged runtime", () => {
-    expect(embeddingsDigestForBuild(null, "loaded-digest")).toBeNull();
-  });
-
-  test("keyed releases pin the runtime they ship", () => {
-    expect(
-      embeddingsDigestForBuild("release-public-key", "loaded-digest"),
-    ).toBe("loaded-digest");
   });
 });

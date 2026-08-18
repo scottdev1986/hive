@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { EMBEDDINGS_RUNTIME_BUNDLE } from "../memory-service/embeddings";
-import { embeddingsRuntimeDigest } from "./embeddings-digest";
+import { EMBEDDINGS_RUNTIME_BUNDLE, embeddingsRuntimeDigest } from "./digest";
 
 export const EMBEDDINGS_RUNTIME_ASSET = "embeddings-runtime.tar.gz";
 
@@ -164,7 +163,7 @@ export interface EmbeddingsRuntimeArtifact {
   path: string;
   sha256: string;
   size: number;
-  /** SHA-256 of the staged tree's LOADED surface (see embeddings-digest.ts). Computed before the staging dir is torn down, and equal to what a user's machine has after unpacking, because the tarball extracts the same files at the same relative paths. This is the value compiled into the CLI so the loader can refuse a tampered runtime. */
+  /** SHA-256 of the staged tree's LOADED surface (see digest.ts). Computed before the staging dir is torn down, and equal to what a user's machine has after unpacking, because the tarball extracts the same files at the same relative paths. This is the value compiled into the CLI so the loader can refuse a tampered runtime. */
   loadedDigest: string;
 }
 

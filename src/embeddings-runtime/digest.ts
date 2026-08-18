@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+/** The ESM file the compiled daemon dynamic-imports. Lives next to the digest so the loader and the packer share one path without either importing the other subsystem. */
+export const EMBEDDINGS_RUNTIME_BUNDLE = join("dist", "entry.js");
+
 const COVERED_ROOTS = ["dist", "bin"] as const;
 
 /** SHA-256 over every file under `dist/` and `bin/`, each contribution being the runtime-relative path followed by the file's bytes, in sorted path order — so the digest is stable across machines and changes if a file is modified, added, removed, or renamed. Throws if a covered root is missing, which is itself a runtime that must not be loaded. */

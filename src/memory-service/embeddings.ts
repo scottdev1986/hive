@@ -1,11 +1,16 @@
-// Semantic memory uses local ONNX embeddings plus the vector index maintained in the episodic store. Posture, mirroring graphify's healthy/unhealthy stance: the semantic surface is either AVAILABLE (model loaded, dimension asserted) or UNAVAILABLE with a plain-language detail — it NEVER crashes the daemon and NEVER fabricates vectors (hash pseudo-embeddings are the named failure mode). When it is unavailable, recall degrades to the FTS-only bundle. There is deliberately no automatic fallback machinery: `embedding_provider: "api"` is a manual escape hatch, not a failover — the knob parses and reports an honest not-configured/not-implemented state, and that is all it does. The model loads LAZILY on first use: daemon start pays nothing (~2 s init, ~100–300 MB RSS warm), and daemons that never see a recall never load it. Models cache under the Hive-owned models dir (~/.hive/models, HIVE_HOME-respecting), not any global default cache. The deployed daemon is a single-file `bun build --compile` binary. A compiled binary cannot resolve a package's bare-specifier dependency graph from a real node_modules directory — fastembed's own `import "onnxruntime-node"` fails, and the onnxruntime .node/.dylib natives cannot ride inside the single file. A compiled binary can dynamic-import a pre-bundled single ESM file by absolute path, whose internal runtime `require()` of relative native assets then loads fine. So the runtime ships as an EXTERNAL bundle under ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME override), provisioned and probe-verified by installing, updating, or initializing Hive; the repo's node_modules stays the dev fallback. Each mode — runtime missing, bundle broken, native lib unloadable, bytes not matching the digest this build shipped — is a DISTINCT labeled state, never one generic "unavailable". A release build refuses to import a runtime whose loaded bytes are not the ones it shipped with (release/embeddings-digest.ts): importing dist/entry.js executes plain JavaScript out of a user-writable directory, so integrity is checked immediately before the import, and fails closed.
+// Semantic memory uses local ONNX embeddings plus the vector index maintained in the episodic store. Posture, mirroring graphify's healthy/unhealthy stance: the semantic surface is either AVAILABLE (model loaded, dimension asserted) or UNAVAILABLE with a plain-language detail — it NEVER crashes the daemon and NEVER fabricates vectors (hash pseudo-embeddings are the named failure mode). When it is unavailable, recall degrades to the FTS-only bundle. There is deliberately no automatic fallback machinery: `embedding_provider: "api"` is a manual escape hatch, not a failover — the knob parses and reports an honest not-configured/not-implemented state, and that is all it does. The model loads LAZILY on first use: daemon start pays nothing (~2 s init, ~100–300 MB RSS warm), and daemons that never see a recall never load it. Models cache under the Hive-owned models dir (~/.hive/models, HIVE_HOME-respecting), not any global default cache. The deployed daemon is a single-file `bun build --compile` binary. A compiled binary cannot resolve a package's bare-specifier dependency graph from a real node_modules directory — fastembed's own `import "onnxruntime-node"` fails, and the onnxruntime .node/.dylib natives cannot ride inside the single file. A compiled binary can dynamic-import a pre-bundled single ESM file by absolute path, whose internal runtime `require()` of relative native assets then loads fine. So the runtime ships as an EXTERNAL bundle under ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME override), provisioned and probe-verified by installing, updating, or initializing Hive; the repo's node_modules stays the dev fallback. Each mode — runtime missing, bundle broken, native lib unloadable, bytes not matching the digest this build shipped — is a DISTINCT labeled state, never one generic "unavailable". A release build refuses to import a runtime whose loaded bytes are not the ones it shipped with (embeddings-runtime/digest.ts): importing dist/entry.js executes plain JavaScript out of a user-writable directory, so integrity is checked immediately before the import, and fails closed.
 import { dirname, join } from "node:path";
 import { getHiveHome } from "../hive-home/home";
-import { embeddingsRuntimeDigest } from "../release/embeddings-digest";
+import {
+  EMBEDDINGS_RUNTIME_BUNDLE,
+  embeddingsRuntimeDigest,
+} from "../embeddings-runtime/digest";
 import type { MemoryEmbeddingModel } from "../schemas/config-schema";
 import { HIVE_EMBEDDINGS_DIGEST } from "../shared/version";
 import type { EpisodicStore, MemoryEmbeddingRow } from "./episodic";
 import { errorMessage } from "../shared/error-message";
+
+export { EMBEDDINGS_RUNTIME_BUNDLE };
 
 /** The embedder the rest of the daemon codes against. Unit tests substitute a mock here — `bun test` never downloads a model. */
 export interface MemoryEmbedder {
@@ -65,8 +70,6 @@ export function memoryModelsDir(): string {
 }
 
 export const EMBEDDINGS_RUNTIME_HOME_ENV = "HIVE_EMBEDDINGS_HOME";
-
-export const EMBEDDINGS_RUNTIME_BUNDLE = join("dist", "entry.js");
 
 export function embeddingsRuntimeDir(): string {
   const override = Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV];

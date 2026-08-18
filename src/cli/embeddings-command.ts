@@ -1,4 +1,4 @@
-// Provision the external embedding runtime the compiled daemon loads (defect D1; see the header of src/memory-service/embeddings.ts for why a single-file binary cannot carry fastembed's native graph). There is no user-facing install command: installing Hive installs the runtime (install.sh unpacks it from the release), updating Hive updates it (`hive update`), and `hive init` provisions and load-verifies it. A dev run points HIVE_EMBEDDINGS_SOURCE at a checkout so the same init step stages from node_modules instead of downloading. A runtime already on disk that probe-verifies is kept, because re-staging (or re-downloading) over a healthy install buys nothing. Anything else provisions, by build kind: - RELEASE (this build carries the pinned runtime digest): always download the pinned `embeddings-runtime.tar.gz` from this binary's own release, verified against the Ed25519-signed release manifest before anything is unpacked (src/release/embeddings-install.ts). A checkout in reach is a developer detail this path must never notice: the release loader only accepts the digest its release shipped, so a locally staged tree could only ever be refused. - DEV: copy fastembed and its full dependency closure from a checkout's node_modules (HIVE_EMBEDDINGS_SOURCE, or walking up from the cwd) into ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME override) and bundle it with `bun build`. The staging pipeline itself lives in src/release/embeddings-runtime.ts, shared with the release build so the shipped artifact is byte-for-byte the dev layout. Either way, install is only "done" when the strict probe passes: load the installed bundle — never the node_modules fallback — and embed a probe string at the model's width (dimensions=384).
+// Provision the external embedding runtime the compiled daemon loads (defect D1; see the header of src/memory-service/embeddings.ts for why a single-file binary cannot carry fastembed's native graph). There is no user-facing install command: installing Hive installs the runtime (install.sh unpacks it from the release), updating Hive updates it (`hive update`), and `hive init` provisions and load-verifies it. A dev run points HIVE_EMBEDDINGS_SOURCE at a checkout so the same init step stages from node_modules instead of downloading. A runtime already on disk that probe-verifies is kept, because re-staging (or re-downloading) over a healthy install buys nothing. Anything else provisions, by build kind: - RELEASE (this build carries the pinned runtime digest): always download the pinned `embeddings-runtime.tar.gz` from this binary's own release, verified against the Ed25519-signed release manifest before anything is unpacked (src/embeddings-runtime/install.ts). A checkout in reach is a developer detail this path must never notice: the release loader only accepts the digest its release shipped, so a locally staged tree could only ever be refused. - DEV: copy fastembed and its full dependency closure from a checkout's node_modules (HIVE_EMBEDDINGS_SOURCE, or walking up from the cwd) into ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME override) and bundle it with `bun build`. The staging pipeline itself lives in src/embeddings-runtime/runtime.ts, shared with the release build so the shipped artifact is byte-for-byte the dev layout. Either way, install is only "done" when the strict probe passes: load the installed bundle — never the node_modules fallback — and embed a probe string at the model's width (dimensions=384).
 import { join } from "node:path";
 import {
   EMBEDDINGS_RUNTIME_BUNDLE,
@@ -10,21 +10,21 @@ import {
   defaultReleaseInstallDeps,
   type EmbeddingsInstallOutcome,
   installEmbeddingsFromRelease,
-} from "../release/embeddings-install";
+} from "../embeddings-runtime/install";
 import {
   findSourceNodeModules,
   stageEmbeddingRuntime,
-} from "../release/embeddings-runtime";
+} from "../embeddings-runtime/runtime";
 import { resolveVariant } from "../hive-home/variant";
 import { HIVE_EMBEDDINGS_DIGEST } from "../shared/version";
 import { errorMessage } from "../shared/error-message";
 
-export type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
+export type { EmbeddingsInstallOutcome } from "../embeddings-runtime/install";
 export {
   collectFastembedClosure,
   findSourceNodeModules,
   stageEmbeddingRuntime,
-} from "../release/embeddings-runtime";
+} from "../embeddings-runtime/runtime";
 
 const PROBE_MODEL = "bge-small-en-v1.5" as const;
 

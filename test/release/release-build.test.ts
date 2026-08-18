@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildHashFor,
   cliDefines,
+  embeddingsDigestForBuild,
   machoRpaths,
   nonSystemMachODependencies,
 } from "../../src/release/build";
@@ -91,6 +92,16 @@ describe("what a CLI binary is told about itself at compile time", () => {
     expect(omitted).not.toContain("HIVE_RELEASE_PUBLIC_KEY");
     expect(omitted).not.toContain("HIVE_EMBEDDINGS_DIGEST");
     expect(omitted).toContain("HIVE_BUILD_VARIANT");
+  });
+
+  test("unsigned dev builds do not pin a separately staged runtime", () => {
+    expect(embeddingsDigestForBuild(null, "loaded-digest")).toBeNull();
+  });
+
+  test("keyed releases pin the runtime they ship", () => {
+    expect(
+      embeddingsDigestForBuild("release-public-key", "loaded-digest"),
+    ).toBe("loaded-digest");
   });
 });
 

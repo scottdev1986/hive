@@ -14,7 +14,7 @@ import {
   buildEmbeddingsRuntimeArtifact,
   EMBEDDINGS_RUNTIME_ASSET,
   findSourceNodeModules,
-} from "./embeddings-runtime";
+} from "../embeddings-runtime/runtime";
 import {
   MANIFEST_ASSET,
   parseReleaseManifest,
@@ -535,7 +535,7 @@ async function finalizeWorkspace(
   }));
 }
 
-/** The embedding runtime the installer downloads on machines without a checkout. Staged from this checkout's node_modules through the exact pipeline the CLI's own install uses (src/release/embeddings-runtime.ts), so the shipped bytes are the bytes the dev flow produces. The bundle is darwin-universal — onnxruntime-node ships both darwin slices in one package and the tokenizers binding is a universal napi binary — so, like the Workspace tarball, one asset is listed for both architectures. Nothing in it is Developer-ID-signed (they are upstream napi binaries); its trust anchor is the manifest SHA-256, exactly like every other artifact. */
+/** The embedding runtime the installer downloads on machines without a checkout. Staged from this checkout's node_modules through the exact pipeline the CLI's own install uses (src/embeddings-runtime/runtime.ts), so the shipped bytes are the bytes the dev flow produces. The bundle is darwin-universal — onnxruntime-node ships both darwin slices in one package and the tokenizers binding is a universal napi binary — so, like the Workspace tarball, one asset is listed for both architectures. Nothing in it is Developer-ID-signed (they are upstream napi binaries); its trust anchor is the manifest SHA-256, exactly like every other artifact. */
 async function buildEmbeddingsRuntime(
   options: Options,
 ): Promise<{ artifacts: ReleaseArtifact[]; loadedDigest: string }> {

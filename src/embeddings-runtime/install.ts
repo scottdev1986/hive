@@ -10,13 +10,13 @@ import {
   HIVE_RELEASE_PUBLIC_KEY,
   HIVE_VERSION,
 } from "../shared/version";
-import { EMBEDDINGS_RUNTIME_ASSET } from "./embeddings-runtime";
+import { EMBEDDINGS_RUNTIME_ASSET } from "./runtime";
 import {
   artifactMatches,
   type HiveArch,
   selectArtifact,
   verifyManifest,
-} from "./manifest";
+} from "../release/manifest";
 import { errorMessage } from "../shared/error-message";
 
 export type EmbeddingsInstallOutcome =

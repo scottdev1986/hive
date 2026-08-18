@@ -1,5 +1,5 @@
 /**
- * The shared bundling pipeline (src/release/embeddings-runtime.ts), exercised
+ * The shared bundling pipeline (src/embeddings-runtime/runtime.ts), exercised
  * end to end against a planted fixture node_modules: stage the closure, run
  * the real `bun build`, and tar the result — the artifact step build.ts runs.
  * The fixture's "fastembed" is a trivial ESM module; no model, no network.
@@ -12,7 +12,7 @@ import {
   buildEmbeddingsRuntimeArtifact,
   EMBEDDINGS_RUNTIME_ASSET,
   stageEmbeddingRuntime,
-} from "../../src/release/embeddings-runtime";
+} from "../../src/embeddings-runtime/runtime";
 
 const tempRoots: string[] = [];
 
