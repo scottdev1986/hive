@@ -1184,7 +1184,7 @@ final class LiveRunWorkbenchView: NSView {
         return source?.visibleRows.first { row in
             if session.isQueen {
                 if case .present(let binding) = row.node.binding {
-                    return binding.agentId == LiveRunSessionSummary.queenName
+                    return binding.agentId == session.name
                         || binding.agentId == LiveRunSessionSummary.queenID
                 }
                 return false

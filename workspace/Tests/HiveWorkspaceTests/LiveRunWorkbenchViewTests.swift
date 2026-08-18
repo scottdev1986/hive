@@ -247,7 +247,7 @@ struct LiveRunWorkbenchViewTests {
         #expect(surfaces.count == 1)
         let labels = textFields(in: view).map(\.stringValue)
         #expect(labels.contains("queen"))
-        #expect(labels.contains("Unknown"))
+        #expect(labels.contains("gpt-5.6-sol"))
         #expect(!labels.contains { $0.contains("TUI") })
         #expect(labels.filter { $0 == "Run hierarchy" }.count == 1)
     }
@@ -354,7 +354,8 @@ struct LiveRunWorkbenchViewTests {
 
     private func queenOrchestrator(generation: Int) -> String {
         """
-        {"status":"working","host":"sessiond","hostState":"running",
+        {"name":"queen","status":"working","tool":"codex","model":"gpt-5.6-sol",
+         "host":"sessiond","hostState":"running",
          "sessionLocator":{"schemaVersion":1,"instanceId":"rig",
            "subject":{"kind":"root"},"generation":\(generation),
            "sessionId":"ses_018f1e90-7b5a-7cc0-8000-000000000099",
