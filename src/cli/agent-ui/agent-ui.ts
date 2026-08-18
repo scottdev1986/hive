@@ -29,9 +29,15 @@ import type {
   ObservabilitySeverity,
   ObservabilitySource,
 } from "../../schemas/observability";
+import {
+  formatWakePrompt,
+  WakePayloadRequestSchema,
+  WakePayloadSchema,
+} from "../../schemas/wake-payload";
 import { systemNowIso } from "../../shared/clock";
 import { errorMessage } from "../../shared/error-message";
 import { reportProtocolSessionFacts } from "../../usage-service/protocol-facts-report";
+import { decodeJson } from "../daemon-response";
 import type { OutboundJournal, OutboundRow } from "./outbound-journal";
 import {
   bannerContent,
@@ -155,7 +161,7 @@ export interface UiDiagnosticReport {
   readonly reason: string;
 }
 
-/** A wake points the agent to its mailbox; it never copies mail into a prompt. Naming the item id taught models to hive_mail_claim before hive_mail_poll, which the ledger refused as an unpresented body. The mailbox is the authority on what is waiting, and the instruction to go read it is true whether or not a particular item survived. */
+/** Legacy wake prompt for when daemon fetch fails. */
 export function wakePrompt(wake: WakeItem): string {
   const instruction =
     "Poll your mailbox, claim at most one control item, and settle it before " +
@@ -1973,13 +1979,17 @@ export class AgentUi {
   ): Promise<void> {
     this.scheduler = commitDispatch(this.scheduler, item);
     const clientInputId = randomUUID();
+    
+    // Fetch wake payload (mail counts + memory delta) from daemon
+    const wakeText = await this.buildWakePrompt(item.wake);
+    
     const receipt = await this.session.submit({
       session: {
         vendorSessionId: this.vendorSessionId,
         replayedHistory: false,
       },
       clientInputId,
-      text: wakePrompt(item.wake),
+      text: wakeText,
     });
     if (receipt.outcome === "accepted") {
       this.scheduler = onSubmissionAccepted(this.scheduler, receipt.turnId);
@@ -2025,6 +2035,50 @@ export class AgentUi {
       );
     }
     this.refresh();
+  }
+
+  /** Build wake prompt with mail counts and memory delta from daemon. Falls back to legacy prompt if daemon is unavailable or fetch fails. */
+  private async buildWakePrompt(wake: WakeItem): Promise<string> {
+    // If no daemon port, fall back to legacy prompt
+    if (this.daemonPort === undefined) {
+      return wakePrompt(wake);
+    }
+
+    try {
+      const request = WakePayloadRequestSchema.parse({
+        recipient: this.identity.agentName,
+        wakeId: wake.wakeId,
+        oldestItemId: wake.oldestItemId,
+        lane: wake.lane,
+      });
+
+      const response = await fetch(
+        `http://127.0.0.1:${this.daemonPort}/wake-payload`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Hive-Subject": this.identity.agentName,
+          },
+          body: JSON.stringify(request),
+        },
+      );
+
+      if (!response.ok) {
+        console.error(
+          `wake-payload fetch failed: ${response.status} — falling back to legacy prompt`,
+        );
+        return wakePrompt(wake);
+      }
+
+      const payload = WakePayloadSchema.parse(await decodeJson(response));
+      return formatWakePrompt(payload);
+    } catch (error) {
+      console.error(
+        `wake-payload build failed: ${errorMessage(error)} — falling back to legacy prompt`,
+      );
+      return wakePrompt(wake);
+    }
   }
 
   private reportTurnObserved(
