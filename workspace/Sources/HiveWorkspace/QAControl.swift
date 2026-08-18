@@ -83,9 +83,16 @@ final class QAControl {
         } catch {}
     }
 
+    // Controls are named by their accessibility identifier because that is how
+    // the product assigns names: setAccessibilityIdentifier leaves NSView's
+    // `identifier` nil, and the two properties never mirror each other, so
+    // reading `identifier` here finds none of the shipped controls. This reads
+    // the property in-process; it drives no out-of-process accessibility API
+    // and needs no permission.
     private func enumerate(window: NSWindow?) -> [QAControlResponse.Control] {
         liveControls(window: window).compactMap { control -> QAControlResponse.Control? in
-            guard let identifier = control.identifier?.rawValue else { return nil }
+            let identifier = control.accessibilityIdentifier()
+            guard !identifier.isEmpty else { return nil }
             let present = functionallyPresent(control, in: window)
             return QAControlResponse.Control(
                 identifier: identifier,
@@ -138,7 +145,7 @@ final class QAControl {
         if verb == "invoke" {
             guard let identifier,
                   let control = harness.liveControls(window: window).first(where: {
-                      $0.identifier?.rawValue == identifier
+                      $0.accessibilityIdentifier() == identifier
                   }) else {
                 return QAControlResponse(
                     requestId: requestId, status: "fail", root: "hive-workspace-qa-root",

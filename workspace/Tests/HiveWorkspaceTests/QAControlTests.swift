@@ -12,7 +12,7 @@ final class QAControlTests: XCTestCase {
     func testInvokeFiresTheLiveControlsOwnTargetAction() {
         let target = Target()
         let button = NSButton(title: "Models & Quota", target: target, action: #selector(Target.fire(_:)))
-        button.identifier = NSUserInterfaceItemIdentifier("shell-nav-models")
+        button.setAccessibilityIdentifier("shell-nav-models")
         button.frame = NSRect(x: 10, y: 10, width: 120, height: 30)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
                               styleMask: .titled, backing: .buffered, defer: false)
@@ -30,7 +30,7 @@ final class QAControlTests: XCTestCase {
 
     func testAHiddenAncestorDefeatsFunctionalPresence() {
         let button = NSButton(title: "Models & Quota", target: nil, action: nil)
-        button.identifier = NSUserInterfaceItemIdentifier("shell-nav-models")
+        button.setAccessibilityIdentifier("shell-nav-models")
         button.frame = NSRect(x: 10, y: 10, width: 120, height: 30)
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
         container.addSubview(button)
