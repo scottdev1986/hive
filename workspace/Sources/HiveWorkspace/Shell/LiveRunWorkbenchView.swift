@@ -702,9 +702,9 @@ final class LiveRunWorkbenchView: NSView {
             controlProjection = nil
         }
 
-        titleLabel.stringValue = session.isQueen ? "queen" : session.name
+        titleLabel.stringValue = session.name
         subtitleLabel.stringValue =
-            "\(agentUiLine(for: session)) · \(session.rawStatus)"
+            "\(providerLine(for: session)) · \(session.rawStatus)"
         updateControlStrip(session)
         updateCenterBadges(session)
         updateInspector(session)
@@ -1202,18 +1202,17 @@ final class LiveRunWorkbenchView: NSView {
             if let role, let assignment { return "\(role) · \(assignment)" }
             if let role { return role }
         }
-        if session.isQueen { return "orchestrator · no code" }
-        return agentUiLine(for: session)
+        return "hierarchy role unknown"
     }
 
-    private func agentUiLine(for session: LiveRunSessionSummary) -> String {
+    private func providerLine(for session: LiveRunSessionSummary) -> String {
         let providerID = session.isQueen
             ? (queenProvider ?? session.provider)
             : session.provider
         if providerID == ProviderID("unknown") {
-            return "Agent UI"
+            return "provider not projected"
         }
-        return "Agent UI · \(ProviderBranding.title(for: providerID))"
+        return ProviderBranding.title(for: providerID)
     }
 
     private func present<Value>(
@@ -1272,7 +1271,7 @@ private final class LiveRunSessionButton: NSButton {
 
         let titleText: String
         if let session {
-            titleText = session.isQueen ? "queen · root" : session.name
+            titleText = session.name
         } else if let node = hierarchyRow?.node,
                   case .present(let binding) = node.binding {
             titleText = binding.agentId
