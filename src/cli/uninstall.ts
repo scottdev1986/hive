@@ -42,6 +42,7 @@ import {
   installRoot,
 } from "../update-service/paths";
 import { stopHive } from "./control";
+import { isAgentWorktreePath } from "./invoker";
 import { fetchAgentStatus, requestSettlementSweep } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { type ConfirmFn, confirmOnTty } from "./prompt";
@@ -60,6 +61,12 @@ export interface UninstallDeps {
   acquireLease: (
     purpose: MachineMutationPurpose,
   ) => Promise<MachineMutationLease>;
+  /**
+   * Where this uninstall was invoked from. Defaults to `process.cwd()`. Tests
+   * inject a non-worktree path so they can exercise the rest of the uninstaller
+   * from inside an agent worktree without tripping the fleet-install guard.
+   */
+  cwd?: string;
 }
 
 async function stopInstances(): Promise<void> {
@@ -122,6 +129,25 @@ export const defaultUninstallDeps: UninstallDeps = {
   stopInstances,
   acquireLease: acquireMachineMutationLease,
 };
+
+/**
+ * Agent shells inherit HIVE_INSTALL_ROOT and HIVE_BIN_LINK pointing at the
+ * owner's fleet. BIN_NAME already distinguishes this variant's own install
+ * (`hive` vs `hive-$VARIANT`); a worktree is not that path's owner. Same
+ * rule as `hive stop`: agent shells hold no fleet authority.
+ */
+function refuseAgentWorktreeUninstall(
+  deps: UninstallDeps,
+  target: string,
+): boolean {
+  const cwd = deps.cwd ?? process.cwd();
+  if (!isAgentWorktreePath(cwd)) return false;
+  deps.log(
+    `Refusing to uninstall ${target} from an agent worktree (${cwd}): agent shells inherit HIVE_INSTALL_ROOT and HIVE_BIN_LINK pointing at the owner install, and hold no fleet-uninstall authority.\n` +
+      "No files were removed. Fix: run `hive uninstall` from the primary checkout, outside .hive/worktrees/.",
+  );
+  return true;
+}
 
 function liveTeamRefusal(blockers: readonly InstanceMutationBlocker[]): string {
   return (
@@ -324,6 +350,7 @@ export async function runUninstallRepo(
   options: { yes?: boolean } = {},
   deps: UninstallDeps = defaultUninstallDeps,
 ): Promise<number> {
+  if (refuseAgentWorktreeUninstall(deps, root)) return 1;
   const plan = [
     `This removes Hive from ${root}:`,
     "  - stops the selected daemon only when its handshake proves it serves this project",
@@ -444,6 +471,9 @@ export async function runUninstallMachine(
   options: { yes?: boolean; purge?: boolean } = {},
   deps: UninstallDeps = defaultUninstallDeps,
 ): Promise<number> {
+  if (refuseAgentWorktreeUninstall(deps, `${installRoot()} (${binLink()})`)) {
+    return 1;
+  }
   const method = detectInstallMethod(process.execPath);
   const resolved = resolveVariant();
   // A non-prod variant must never clear ~/.hive. Equality with defaultHome is

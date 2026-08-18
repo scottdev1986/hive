@@ -16,7 +16,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { runCommand } from "../../src/adapters/graphify";
 import {
@@ -227,6 +227,7 @@ describe("the dev daemon's home survives /tmp", () => {
         liveTeams: async () => [],
         stopInstances: async () => {},
         acquireLease: async () => ({ release: () => {} }),
+        cwd: tmpdir(),
       };
       expect(await runUninstallMachine({ yes: true, purge: true }, deps)).toBe(
         0,

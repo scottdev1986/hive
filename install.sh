@@ -40,6 +40,19 @@ BIN_NAME=hive
 ROOT="${HIVE_INSTALL_ROOT:-$HOME/.local/share/$BIN_NAME}"
 BIN_LINK="${HIVE_BIN_LINK:-$BIN_DIR/$BIN_NAME}"
 
+# AGENT_WORKTREE_INSTALL_GUARD
+# Agent shells inherit HIVE_INSTALL_ROOT and HIVE_BIN_LINK pointing at the
+# owner's fleet, so those overrides are the default here. BIN_NAME already
+# names this variant's own path ($HOME/.local/share/$BIN_NAME for prod
+# `hive`, otherwise `hive-$VARIANT`); a worktree is not that path's owner.
+# Refuse before any write. The owner path is the primary checkout.
+caller_cwd="${PWD:-$(pwd)}"
+case "$caller_cwd" in
+  */.hive/worktrees|*/.hive/worktrees/*)
+    die "refusing to install $BIN_NAME to $ROOT from an agent worktree ($caller_cwd): agent shells inherit HIVE_INSTALL_ROOT and HIVE_BIN_LINK pointing at the owner install. This variant's own path is $HOME/.local/share/$BIN_NAME. Fix: run the installer from the primary checkout, outside .hive/worktrees/."
+    ;;
+esac
+
 # This installer is Darwin-only. BSD mv's -h is the no-follow half of the
 # atomic rename: without it, a `current` symlink to a directory is followed and
 # the temporary link is moved inside the old version while mv exits zero.

@@ -101,6 +101,9 @@ function probe(
       leaseEvents.push(`acquire:${purpose}`);
       return { release: () => leaseEvents.push(`release:${purpose}`) };
     },
+    // bun test from an agent worktree would otherwise trip the fleet-install
+    // guard. Owner-path tests keep this default; worktree-refusal tests override.
+    cwd: tmpdir(),
     ...overrides,
   };
   return { deps, lines, stops, leaseEvents };
@@ -1062,5 +1065,98 @@ describe("uninstall retention follows the variant record", () => {
       restore();
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("uninstall refuses the owner install from an agent worktree", () => {
+  test("machine uninstall from a worktree refuses and does not touch the target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-worktree-"));
+    const worktree = join(root, ".hive", "worktrees", "elton");
+    const home = join(root, "home");
+    const fleet = join(root, "fleet");
+    const previousHome = process.env.HIVE_HOME;
+    const previousInstall = process.env.HIVE_INSTALL_ROOT;
+    const previousLink = process.env.HIVE_BIN_LINK;
+    try {
+      await mkdir(worktree, { recursive: true });
+      await mkdir(home, { recursive: true });
+      await mkdir(fleet, { recursive: true });
+      await writeFile(join(home, "canary"), "keep-home\n");
+      await writeFile(join(fleet, "canary"), "keep-fleet\n");
+      process.env.HIVE_HOME = home;
+      process.env.HIVE_INSTALL_ROOT = fleet;
+      process.env.HIVE_BIN_LINK = join(root, "bin", "hive");
+      const { deps, lines, stops } = probe(true, { cwd: worktree });
+      expect(await runUninstallMachine({ yes: true }, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(lines.join("\n")).toContain("agent worktree");
+      expect(lines.join("\n")).toContain(worktree);
+      expect(lines.join("\n")).toContain(fleet);
+      expect(await readFile(join(home, "canary"), "utf8")).toBe("keep-home\n");
+      expect(await readFile(join(fleet, "canary"), "utf8")).toBe(
+        "keep-fleet\n",
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+      if (previousInstall === undefined) delete process.env.HIVE_INSTALL_ROOT;
+      else process.env.HIVE_INSTALL_ROOT = previousInstall;
+      if (previousLink === undefined) delete process.env.HIVE_BIN_LINK;
+      else process.env.HIVE_BIN_LINK = previousLink;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("repo uninstall from a worktree refuses and removes nothing", async () => {
+    const root = await gitRepo();
+    const worktree = join(root, ".hive", "worktrees", "elton");
+    try {
+      await mkdir(join(root, "graphify-out"), { recursive: true });
+      await mkdir(worktree, { recursive: true });
+      const { deps, lines, stops } = probe(true, { cwd: worktree });
+      expect(await runUninstallRepo(root, { yes: true }, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(existsSync(join(root, "graphify-out"))).toBe(true);
+      expect(lines.join("\n")).toContain("agent worktree");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("the owner path still uninstalls when cwd is not a worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-owner-"));
+    const home = join(root, "home");
+    const previous = process.env.HIVE_HOME;
+    try {
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, "hive.db"), "");
+      process.env.HIVE_HOME = home;
+      const { deps, lines } = probe(true);
+      expect(await runUninstallMachine({ yes: true }, deps)).toBe(0);
+      expect(existsSync(join(home, "hive.db"))).toBe(false);
+      expect(lines.join("\n")).not.toContain("agent worktree");
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("removing the worktree guard lets an agent-shaped uninstall delete the home", async () => {
+    const source = await readFile(
+      join(import.meta.dir, "../../src/cli/uninstall.ts"),
+      "utf8",
+    );
+    expect(source).toContain(
+      "if (refuseAgentWorktreeUninstall(deps, root)) return 1;",
+    );
+    const machineCall = "refuseAgentWorktreeUninstall(deps, ";
+    expect(source.split(machineCall).length).toBe(3);
+    const mutated = source.replaceAll(
+      /if \(refuseAgentWorktreeUninstall\([\s\S]*?return 1;\n(?: {2}\}\n)?/g,
+      "",
+    );
+    expect(mutated).not.toBe(source);
+    expect(mutated).not.toContain(machineCall);
   });
 });
