@@ -68,7 +68,15 @@ These assert behaviour and return a machine-readable pass or fail:
   `verify-announcement.ts` — shared helpers
 - `reset-test-project.sh` — restore the designated QA project to its seed
 - `workspace-shell-layout-mutation-probe.sh` — proves layout unit tests fail
-  when their protected decision is removed
+  when their protected decision is removed; reads every run through
+  `scripts/qa/classify-swift-test-run.sh`
+
+`scripts/qa/classify-swift-test-run.sh` is the one reader of a `swift test`
+log, for this probe and for anyone else. It prints `caught`, `survived` or
+`no-measurement`, and `--self-check` proves it separates the three. Use it
+instead of grepping a log by hand: a crashed run has already printed green
+per-suite accounting lines before it dies, and there is no macOS crash report
+to fall back on, so an unanchored grep reports a dead process as a clean run.
 
 `docs/qa/rig-checks.sh` proves the isolation refusals in both directions.
 
