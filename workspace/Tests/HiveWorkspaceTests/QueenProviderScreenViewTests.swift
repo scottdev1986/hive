@@ -78,6 +78,16 @@ final class QueenProviderScreenViewTests: XCTestCase {
         XCTAssertTrue(text.contains("18446744073709551615"))
     }
 
+    func testTheFiveVendorCardsHaveEqualWidthsAndTheLiveVendorIsOutlined() throws {
+        let controller = try makeController()
+        let cards = try ["claude", "codex", "grok", "kimi", "opencode"].map {
+            try view(controller, "queen-provider-card-\($0)")
+        }
+        XCTAssertEqual(Set(cards.map { Int($0.frame.width.rounded()) }).count, 1)
+        XCTAssertEqual(cards[0].layer?.borderWidth, 2)
+        XCTAssertEqual(cards[1].layer?.borderWidth, 0)
+    }
+
     /// A vendor that cannot launch here is offered and disabled. Hiding it
     /// would read as "no such vendor", which is a different claim.
     func testAVendorThatCannotLaunchIsShownDisabledRatherThanHidden() throws {

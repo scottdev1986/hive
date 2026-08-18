@@ -27,30 +27,43 @@ final class QueenProviderScreenView: NSView {
                 subtitle: "Choose which vendor Hive uses for the live Queen. This setting is separate from worker routing."),
             Self.provenance(screen),
             currentQueenCard(),
-            observedCard(),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Space.m
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        for status in statusPanels() {
-            stack.addArrangedSubview(status)
-            status.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-
-        let options = NSGridView(views: [editor.observed.vendorIDs.map(vendorCard)])
+        let vendorCards = editor.observed.vendorIDs.map(vendorCard)
+        let options = NSGridView(views: [vendorCards])
         options.translatesAutoresizingMaskIntoConstraints = false
         options.columnSpacing = Theme.Space.m
         options.xPlacement = .fill
         options.yPlacement = .fill
         stack.addArrangedSubview(options)
         options.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        if let first = vendorCards.first {
+            for card in vendorCards.dropFirst() {
+                card.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
+            }
+        }
 
         let confirmation = SectionCardView(
             title: "Set live Queen vendor",
             subtitle: selectionCopy(),
             trailingView: swapControl())
+        let facts = observedFacts()
+        if !facts.isEmpty {
+            let factGrid = NSGridView(views: [facts.map { Self.factRow($0.label, $0.value) }])
+            factGrid.translatesAutoresizingMaskIntoConstraints = false
+            factGrid.columnSpacing = Theme.Space.l
+            factGrid.xPlacement = .fill
+            confirmation.contentStack.addArrangedSubview(factGrid)
+            confirmation.pinToContentWidth(factGrid)
+        }
+        if let status = mutationStatus() {
+            confirmation.contentStack.addArrangedSubview(status)
+            confirmation.pinToContentWidth(status)
+        }
         stack.addArrangedSubview(confirmation)
         confirmation.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
@@ -118,22 +131,9 @@ final class QueenProviderScreenView: NSView {
         return label
     }
 
-    /// The projection's own reading of the root, in its own words: which
-    /// provider is live, what the record says about its health, and the change
-    /// revision a compare-and-set is fenced on. The vendor facts are drawn on
-    /// the vendor cards instead of repeated here.
-    private func observedCard() -> NSView {
+    private func observedFacts() -> [ShellScreenFact] {
         let vendorLabels = Set(editor.observed.vendorIDs.map { $0.rawValue })
-        let card = SectionCardView(
-            title: "Observed root",
-            subtitle: "read from the daemon, never inferred here")
-        card.setAccessibilityIdentifier("queen-provider-observed")
-        for fact in editor.observed.facts where !vendorLabels.contains(fact.label) {
-            let row = Self.factRow(fact.label, fact.value)
-            card.contentStack.addArrangedSubview(row)
-            card.pinToContentWidth(row)
-        }
-        return card
+        return editor.observed.facts.filter { !vendorLabels.contains($0.label) }
     }
 
     static func factRow(_ label: String, _ value: String) -> NSView {
@@ -158,6 +158,8 @@ final class QueenProviderScreenView: NSView {
         let available = editor.observed.vendors[vendor.rawValue]?.available == true
         let isSelected = selected == vendor
         let card = CardView()
+        card.setAccessibilityIdentifier("queen-provider-card-\(vendor.rawValue)")
+        card.dashed = !available
         let button = NSButton(
             radioButtonWithTitle: "", target: self,
             action: #selector(vendorPicked(_:)))
@@ -194,7 +196,13 @@ final class QueenProviderScreenView: NSView {
         card.contentStack.addArrangedSubview(badge)
         card.contentStack.addArrangedSubview(reason)
         card.pinToContentWidth(reason)
-        card.alphaValue = button.isEnabled || isSelected ? 1 : Theme.disabledContentAlpha
+        if isSelected {
+            card.wantsLayer = true
+            card.layer?.borderWidth = 2
+            card.layer?.borderColor = Theme.accent.cgColor
+            card.layer?.cornerRadius = Theme.Metric.cardCornerRadius
+        }
+        card.alphaValue = button.isEnabled || isSelected ? 1 : 0.72
         return card
     }
 
@@ -218,47 +226,48 @@ final class QueenProviderScreenView: NSView {
         return "\(ProviderBranding.title(for: selected)) is the observed live provider."
     }
 
-    private func statusPanels() -> [NSView] {
-        var panels: [NSView] = []
+    private func mutationStatus() -> NSView? {
+        var messages: [String] = []
+        var style: CapsuleBadge.Style = .neutral
+        var identifier = "queen-provider-idle"
         if let competing = editor.competingRevision {
-            panels.append(status(
-                "queen-provider-conflict",
-                "Another change reached the Queen first (revision \(competing)). Nothing was launched or terminated, and your choice is kept below.",
-                style: .warning))
+            identifier = "queen-provider-conflict"
+            style = .warning
+            messages.append("Another change reached the Queen first (revision \(competing)). Nothing was launched or terminated, and your choice is kept below.")
         }
         switch editor.observed.change.state {
         case .pending:
-            panels.append(status(
-                "queen-provider-pending",
-                "A change was accepted and the requested provider has not been observed running yet.",
-                style: .info))
+            identifier = "queen-provider-pending"
+            style = .info
+            messages.append("A change was accepted and the requested provider has not been observed running yet.")
         case .failed:
-            panels.append(status(
-                "queen-provider-failed",
-                editor.observed.change.failure
-                    ?? "The last change failed. The prior provider was preserved.",
-                style: .critical))
+            identifier = "queen-provider-failed"
+            style = .critical
+            messages.append(editor.observed.change.failure
+                ?? "The last change failed. The prior provider was preserved.")
         case .idle:
             break
         case .unknown(let state):
-            panels.append(status(
-                "queen-provider-unknown-state",
-                "The daemon reports a change state this build does not know: \(state). No claim is made about what is in flight.",
-                style: .warning))
+            identifier = "queen-provider-unknown-state"
+            style = .warning
+            messages.append("The daemon reports a change state this build does not know: \(state). No claim is made about what is in flight.")
         }
         if editor.hasDraft {
-            panels.append(status(
-                "queen-provider-draft",
-                "Unsent choice: \(selected?.rawValue ?? "none").",
-                style: .info))
+            if messages.isEmpty {
+                identifier = "queen-provider-draft"
+                style = .info
+            }
+            messages.append("Unsent choice: \(selected?.rawValue ?? "none").")
         }
         if !editor.mutationsAllowed {
-            panels.append(status(
-                "queen-provider-readonly",
-                "This projection is not current, so no change can be sent. The vendors below are the last observed reading.",
-                style: .warning))
+            if messages.isEmpty {
+                identifier = "queen-provider-readonly"
+                style = .warning
+            }
+            messages.append("This projection is not current, so no change can be sent. The vendors below are the last observed reading.")
         }
-        return panels
+        guard !messages.isEmpty else { return nil }
+        return status(identifier, messages.joined(separator: " "), style: style)
     }
 
     private var selected: ProviderID? {

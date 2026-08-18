@@ -62,22 +62,24 @@ final class ModelsQuotaScreenView: NSView {
             grid.yPlacement = .fill
             stack.addArrangedSubview(grid)
             grid.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            Self.equalizeWidths(cards)
 
-            // The capacity evidence the daemon published, one row per pool, in
-            // its own words. These rows keep measured, stale, unmetered,
-            // estimated, reserved, held and excluded apart instead of
-            // collapsing unlike states into one percentage; they used to reach
-            // the page through the availability panel, and they are readings,
-            // not panel chrome, so the screen renders them itself.
             if !screen.facts.isEmpty {
                 let evidence = SectionCardView(
                     title: "Capacity evidence",
                     subtitle: "as published, never re-derived here")
                 evidence.setAccessibilityIdentifier("models-quota-evidence")
-                for fact in screen.facts {
-                    let row = QueenProviderScreenView.factRow(fact.label, fact.value)
-                    evidence.contentStack.addArrangedSubview(row)
-                    evidence.pinToContentWidth(row)
+                let rows = Self.compactEvidence(screen.facts).map(Self.evidenceRow)
+                let evidenceGrid = NSGridView(views: Self.gridRows(rows, columns: 2))
+                evidenceGrid.translatesAutoresizingMaskIntoConstraints = false
+                evidenceGrid.rowSpacing = Theme.Space.s
+                evidenceGrid.columnSpacing = Theme.Space.m
+                evidenceGrid.xPlacement = .fill
+                evidenceGrid.yPlacement = .fill
+                evidence.contentStack.addArrangedSubview(evidenceGrid)
+                evidence.pinToContentWidth(evidenceGrid)
+                for row in rows {
+                    row.widthAnchor.constraint(greaterThanOrEqualToConstant: 250).isActive = true
                 }
                 stack.addArrangedSubview(evidence)
                 evidence.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -140,6 +142,7 @@ final class ModelsQuotaScreenView: NSView {
             identity.alignment = .centerY
             identity.spacing = Theme.Space.s
             card.contentStack.addArrangedSubview(identity)
+            card.pinToContentWidth(identity)
 
             let usage = presentation?.usage.rendered
                 ?? ProviderUsage.unknown(reason: "daemon presentation missing")
@@ -237,8 +240,7 @@ final class ModelsQuotaScreenView: NSView {
             name.font = Theme.Font.monoCaption
             name.textColor = Theme.primaryText
             name.compressHorizontally(toolTip: model.canonicalId)
-            let detail = NSTextField(labelWithString:
-                reading.map { "\($0.state) · \($0.source)" } ?? "policy unavailable")
+            let detail = NSTextField(labelWithString: modelDetail(model, reading: reading))
             detail.font = Theme.Font.sectionMetadata
             detail.textColor = Theme.secondaryText
             detail.compressHorizontally()
@@ -260,12 +262,66 @@ final class ModelsQuotaScreenView: NSView {
         }
     }
 
-    private static func gridRows(_ cards: [NSView]) -> [[NSView]] {
-        stride(from: 0, to: cards.count, by: 3).map { index in
-            (0..<3).map { offset in
+    private static func modelDetail(
+        _ model: WorkspaceModelPresentation,
+        reading: WorkspaceRoutingModelState?
+    ) -> String {
+        let policy = reading.map { "\($0.state) · \($0.source)" } ?? "policy unavailable"
+        let effort: String
+        switch model.effortAxis {
+        case .known(let levels, let defaultLevel):
+            effort = "effort \(defaultLevel ?? levels.joined(separator: "/"))"
+        case .none:
+            effort = "provider-controlled effort"
+        case .unknown(let reason):
+            effort = "effort unknown — \(reason)"
+        }
+        return "\(policy) · \(effort)"
+    }
+
+    private static func evidenceRow(_ fact: ShellScreenFact) -> NSView {
+        let panel = InsetPanelView()
+        let label = NSTextField(labelWithString: fact.label)
+        label.font = Theme.Font.sectionLabel
+        label.textColor = Theme.secondaryText
+        label.compressHorizontally(toolTip: fact.label)
+        let value = NSTextField(wrappingLabelWithString: fact.value)
+        value.font = Theme.Font.caption
+        value.textColor = Theme.primaryText
+        value.maximumNumberOfLines = 2
+        value.compressHorizontally(toolTip: fact.value)
+        panel.contentStack.addArrangedSubview(label)
+        panel.contentStack.addArrangedSubview(value)
+        value.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
+        return panel
+    }
+
+    private static func compactEvidence(_ facts: [ShellScreenFact]) -> [ShellScreenFact] {
+        var seen = Set<String>()
+        return facts.filter { fact in
+            let state = fact.value.split(separator: "·", maxSplits: 1)
+                .first.map { String($0).trimmingCharacters(in: .whitespaces) }
+                ?? fact.value
+            let key = fact.label == "Generated" || fact.label == "Providers" || fact.label == "Quota"
+                ? fact.label
+                : state
+            return seen.insert(key).inserted
+        }
+    }
+
+    private static func gridRows(_ cards: [NSView], columns: Int = 3) -> [[NSView]] {
+        stride(from: 0, to: cards.count, by: columns).map { index in
+            (0..<columns).map { offset in
                 guard index + offset < cards.count else { return NSView() }
                 return cards[index + offset]
             }
+        }
+    }
+
+    private static func equalizeWidths(_ views: [NSView]) {
+        guard let first = views.first else { return }
+        for view in views.dropFirst() {
+            view.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
         }
     }
 
