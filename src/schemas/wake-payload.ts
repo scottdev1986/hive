@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { MailLaneSchema } from "./mail";
 import {
-  type MemoryRecallRow,
   MemoryRecallRowSchema,
-  type MemoryRecallSemantic,
   MemoryRecallSemanticSchema,
 } from "./memory-projections";
 

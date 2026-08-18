@@ -233,12 +233,14 @@ describe("the turn scheduler", () => {
       lane: "control",
       oldestItemId: "m1",
       brokerSeq: 1,
+      backlogCount: 1,
     });
     state = enqueueWake(state, {
       wakeId: "w2",
       lane: "control",
       oldestItemId: "m2",
       brokerSeq: 2,
+      backlogCount: 1,
     });
 
     expect(state.controlWakes).toHaveLength(2);
@@ -316,6 +318,7 @@ describe("the turn scheduler", () => {
       lane: "control";
       oldestItemId: string;
       brokerSeq: number;
+      backlogCount: number;
     };
     let state = EMPTY_SCHEDULER;
     let dispatches = 0;
@@ -368,6 +371,7 @@ describe("the turn scheduler", () => {
       wakeId: "w1",
       lane: "control" as const,
       oldestItemId: "m1",
+      backlogCount: 1,
     };
     let state = EMPTY_SCHEDULER;
     for (let attempt = 0; attempt < MAIL_WAKE_MAX_ATTEMPTS; attempt += 1) {
@@ -395,6 +399,7 @@ describe("the turn scheduler", () => {
         lane,
         oldestItemId: "m1",
         brokerSeq: 1,
+        backlogCount: 1,
       });
       state = onTurnStarted(state, "t1");
       state = enqueueWake(state, {
@@ -402,6 +407,7 @@ describe("the turn scheduler", () => {
         lane,
         oldestItemId: "m1",
         brokerSeq: 2,
+        backlogCount: 1,
       });
       state = onTurnBoundary(state, "t1");
 
