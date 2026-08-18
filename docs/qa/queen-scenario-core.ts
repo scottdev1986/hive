@@ -128,9 +128,9 @@ export function deliveryEvidenceLabel(
 }
 
 /**
- * S catalog authority for the Q leg (qa/suite.sh MATRIX_ROWS). Only rows whose
- * owner is Q may appear in queen-scenario.jsonl; determinism is per-row from
- * the catalog, never a blanket value.
+ * Catalog authority for the Q leg. Only rows whose owner is Q may appear in
+ * queen-scenario.jsonl; determinism is per-row from the catalog, never a
+ * blanket value.
  */
 export const Q_CATALOG_ROWS = {
   "SYS-07": "bounded",

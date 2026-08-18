@@ -1,13 +1,15 @@
-# qa/ — the agent-runnable QA rig
+# qa/ — isolated functional QA
 
-Tools for standing up an isolated QA Hive an agent can test against — daemon
-from current source, own scratch home, aimed at the designated target repo —
-without touching the user's Hive or the shared development instance.
+Hive QA tests behaviour: does the button exist, does it work. Screenshots,
+pixel comparison, and click-at-coordinates driving of the Workspace app are
+gone. Appearance is the owner's job when they want it.
 
-A human who wants the installed `hive-qa` binary — not this source-running
-rig — uses the Makefile lifecycle instead:
+## Isolated install
 
-    make qa          # install.sh --variant qa, init the test repo, run it
+A human or agent who wants the installed `hive-qa` binary uses the Makefile
+lifecycle:
+
+    make build && make qa-clean && make qa
     make qa-clean    # product uninstall --repo, then uninstall --purge
 
 `make qa` defaults `PROJECT` to `/Users/scottkellar/Projects/hive-test-project`
@@ -23,15 +25,17 @@ commands, checks that the QA installation paths are gone, and checks that
 install locations) matches the pre-qa snapshot. Nested live-fleet writes
 are not part of that compare — they would make every run red.
 
-## Use
+The staging and isolation scripts live in `scripts/qa/` and are load-bearing
+for this lifecycle. Do not move them.
+
+## Source-running rig
+
+For suites that need a daemon from current source rather than the installed
+binary:
 
     docs/qa/rig.sh up                  # bring up the QA daemon, leave it running
     docs/qa/rig.sh run <cmd...>        # up, run cmd in the QA environment, down
     docs/qa/rig.sh down                # stop; exit 1 if anything survives
-    docs/qa/suite.sh fixture           # private rig + landed legs → suite-report.jsonl
-    docs/qa/suite.sh probe missing-row|forged-tier|teardown-leak
-    docs/qa/suite.sh probe workspace-ui   # workspace shell legs must be able to fail
-    docs/qa/workspace-ui.sh run <artifacts> <home> <port> <hive-bin>
 
 Parameters (env): `QA_HOME` (default: a short checkout-specific `/tmp/hvqa-*`
 path), `QA_PROJECT` (default `/Users/scottkellar/Projects/hive-test-project`),
@@ -42,20 +46,31 @@ After `up`, use the published `home` rather than the caller's input spelling.
 The port is in `<home>/daemon.port`; logs and artifacts are below that same
 resolved home. Every bring-up appends its source SHA, sessiond identity, and
 source-hash assert result to `<home>/artifacts/rig-record.txt`. The rig prints
-the coordinates and writes them to `<home>/artifacts/coordinates.txt`:
+the coordinates and writes them to `<home>/artifacts/coordinates.txt`.
 
-    requested_home=/tmp/hvqa-...
-    home=/private/tmp/hvqa-...
-    default_home=/private/tmp/hvqa-.../default
-    port=12345
-    project=/Users/scottkellar/Projects/hive-test-project
-    source=/path/to/hive-checkout
-    hive_bin=/private/tmp/hvqa-.../artifacts/hive-bin
-
-`hive_bin` is an executable shim (`exec bun run <source>/src/cli.ts`) for tour
-live mode and the suite. Pass published `home`, `port`, and `hive_bin` directly
-to consumers. Never discover a QA daemon by globbing `/tmp/hvqa-*`: several
+`hive_bin` is an executable shim (`exec bun run <source>/src/cli.ts`) for
+source-running consumers. Pass published `home`, `port`, and `hive_bin`
+directly. Never discover a QA daemon by globbing `/tmp/hvqa-*`: several
 rigs may coexist, and a name alone does not prove where a path resolves.
+
+## Headless suites
+
+These assert behaviour and return a machine-readable pass or fail:
+
+- `agent-scenario.ts` / `daemon-scenario.ts` / `queen-scenario.ts` — scenario
+  legs, typically via `docs/qa/rig.sh run`
+- `mail-vendor-run.sh` — mail vendor conformance, via the rig
+- `workspace-ui.sh` — headless Workspace shell proof (`HIVE_SHELL_PROOF=1`,
+  no window); one `ROW|…` line per matrix row
+- `u5-terminal-workbench-*.ts` / `u5-feed-stdin-journal.ts` /
+  `u5-workspace-feed-bridge.ts` — terminal-workbench and feed contracts
+- `qa-client.ts`, `repo-root.ts`, `hold-owner.ts`, `unknown-record.ts`,
+  `verify-announcement.ts` — shared helpers
+- `reset-test-project.sh` — restore the designated QA project to its seed
+- `workspace-shell-layout-mutation-probe.sh` — proves layout unit tests fail
+  when their protected decision is removed
+
+`docs/qa/rig-checks.sh` proves the isolation refusals in both directions.
 
 ## Gate — why this cannot reach dev or prod
 

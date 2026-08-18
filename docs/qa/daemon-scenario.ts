@@ -69,7 +69,7 @@ writeFileSync(recordsPath, "");
 const evidence = ["daemon-scenario.jsonl"];
 const records: QaRowRecord[] = [];
 
-// Matrix determinism for D-owned rows (must match qa/suite.sh MATRIX_ROWS).
+// Matrix determinism for D-owned rows.
 const BOUNDED_IDS = new Set([
   "MCP-06",
   "MCP-07",
