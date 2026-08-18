@@ -21,6 +21,13 @@
 // is the compare-and-set write against the document revision. There is
 // no separate Review V3 draft projection, so this screen does not
 // invent that button.
+//
+// Width: the 1420pt floor was five equal vendor cells taking the selected
+// row's widest editor-chip fitting size (~163pt) at default compression
+// 750, plus the 148/136 columns and chrome. At the window's 940pt
+// minimum those cells compress and model names truncate; columns stay
+// in the same order. Nothing is dropped and nothing scrolls off the
+// window. Full names remain on the tooltip.
 
 import AppKit
 import WorkspaceCore
@@ -117,6 +124,8 @@ final class TaskRouterScreenView: NSView {
             stack.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.page),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.page),
         ])
+        compressesHorizontally(stack)
+        compressesHorizontally(self)
     }
 
     @available(*, unavailable)
@@ -261,7 +270,8 @@ final class TaskRouterScreenView: NSView {
         button.setAccessibilityLabel("Select \(item.label)")
         button.lineBreakMode = .byTruncatingTail
         button.toolTip = modeLabel
-        button.setContentCompressionResistancePriority(.init(440), for: .horizontal)
+        button.lineBreakMode = .byTruncatingTail
+        compressesHorizontally(button)
         return button
     }
 
@@ -279,6 +289,7 @@ final class TaskRouterScreenView: NSView {
         stack.spacing = Theme.Space.xs
         stack.setAccessibilityIdentifier(
             "task-router-cell-\(item.rawValue)-\(provider)")
+        compressesHorizontally(stack)
         if cellRows.isEmpty {
             let empty = NSTextField(labelWithString: "no member")
             empty.font = Theme.Font.caption
@@ -295,20 +306,15 @@ final class TaskRouterScreenView: NSView {
     }
 
     private func memberChip(_ row: TaskRouterRow, category: TaskCategory) -> NSView {
-        let model = NSTextField(labelWithString: row.model)
-        model.font = Theme.Font.headline
-        model.textColor = Theme.primaryText
-        model.compressHorizontally(priority: 430, toolTip: row.model)
-
-        let detail = NSTextField(labelWithString: compactDetail(row))
-        detail.font = Theme.Font.monoCaption
-        detail.textColor = Theme.accent
-        detail.compressHorizontally(priority: 420, toolTip: compactDetail(row))
+        let model = truncatingLabel(row.model, font: Theme.Font.headline, color: Theme.primaryText)
+        let detail = truncatingLabel(
+            compactDetail(row), font: Theme.Font.monoCaption, color: Theme.accent, priority: 420)
 
         let stack = NSStackView(views: [model, detail])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 1
+        compressesHorizontally(stack)
         if let bar = shareBar(for: row, category: category) {
             stack.addArrangedSubview(bar)
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -326,14 +332,12 @@ final class TaskRouterScreenView: NSView {
             return memberChip(row, category: category)
         }
         let member = membershipCheckbox(row, index: index)
-        let model = NSTextField(labelWithString: row.model)
-        model.font = Theme.Font.headline
-        model.textColor = Theme.primaryText
-        model.compressHorizontally(priority: 430, toolTip: row.model)
+        let model = truncatingLabel(row.model, font: Theme.Font.headline, color: Theme.primaryText)
         let title = NSStackView(views: [member, model])
         title.orientation = .horizontal
         title.alignment = .centerY
         title.spacing = Theme.Space.xs
+        compressesHorizontally(title)
 
         let effort = effortControl(row, index: index)
         let weight = weightControl(row, index: index)
@@ -341,6 +345,7 @@ final class TaskRouterScreenView: NSView {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Space.xs
+        compressesHorizontally(stack)
         if let bar = shareBar(for: row, category: category) {
             stack.addArrangedSubview(bar)
             bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -410,6 +415,7 @@ final class TaskRouterScreenView: NSView {
             symbol: "exclamationmark.triangle",
             style: .warning)
         badge.setAccessibilityIdentifier("task-router-unresolvable-\(key)")
+        compressesHorizontally(badge)
         return badge
     }
 
@@ -539,6 +545,7 @@ final class TaskRouterScreenView: NSView {
         popup.setAccessibilityLabel("Task category")
         popup.target = self
         popup.action = #selector(categoryChanged(_:))
+        compressesHorizontally(popup)
         return popup
     }
 
@@ -556,6 +563,7 @@ final class TaskRouterScreenView: NSView {
         popup.setAccessibilityLabel("Router mode")
         popup.target = self
         popup.action = #selector(modeChanged(_:))
+        compressesHorizontally(popup)
         return popup
     }
 
@@ -620,6 +628,7 @@ final class TaskRouterScreenView: NSView {
         effort.action = #selector(effortChanged(_:))
         effort.setAccessibilityIdentifier("task-router-effort-\(key)")
         effort.setAccessibilityLabel("Effort for \(key)")
+        compressesHorizontally(effort)
         return effort
     }
 
@@ -793,6 +802,25 @@ final class TaskRouterScreenView: NSView {
         label.setAccessibilityIdentifier(identifier)
         return label
     }
+
+    private func truncatingLabel(
+        _ text: String,
+        font: NSFont,
+        color: NSColor,
+        priority: Float = 430
+    ) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = font
+        label.textColor = color
+        label.lineBreakMode = .byTruncatingTail
+        label.compressHorizontally(priority: priority, toolTip: text)
+        return label
+    }
+
+    private func compressesHorizontally(_ view: NSView) {
+        view.setContentCompressionResistancePriority(.init(250), for: .horizontal)
+        view.setContentHuggingPriority(.init(1), for: .horizontal)
+    }
 }
 
 /// One matrix row with a fixed task column, a fixed mode column, and equal
@@ -834,16 +862,26 @@ private final class MatrixRowView: NSView {
         ])
 
         if columns.count >= 1 {
-            columns[0].widthAnchor.constraint(equalToConstant: nameWidth).isActive = true
+            let name = columns[0].widthAnchor.constraint(equalToConstant: nameWidth)
+            name.priority = .defaultHigh
+            name.isActive = true
         }
         if columns.count >= 2 {
-            columns[1].widthAnchor.constraint(equalToConstant: modeWidth).isActive = true
+            let mode = columns[1].widthAnchor.constraint(equalToConstant: modeWidth)
+            mode.priority = .defaultHigh
+            mode.isActive = true
         }
         if let first = providerCells.first {
+            for cell in providerCells {
+                cell.setContentCompressionResistancePriority(.init(250), for: .horizontal)
+                cell.setContentHuggingPriority(.init(1), for: .horizontal)
+            }
             for cell in providerCells.dropFirst() {
                 cell.widthAnchor.constraint(equalTo: first.widthAnchor).isActive = true
             }
         }
+        stack.setContentCompressionResistancePriority(.init(250), for: .horizontal)
+        setContentCompressionResistancePriority(.init(250), for: .horizontal)
     }
 
     @available(*, unavailable)
