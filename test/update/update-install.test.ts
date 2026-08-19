@@ -325,6 +325,31 @@ describe("ensureStaged: an already-staged version is re-proved, never assumed", 
     expect(downloads).toBe(0);
   });
 
+  test("staged terminfo is checked for presence, not against the discarded tarball digest", async () => {
+    await ensureStaged(stageDeps("0.0.7"));
+    const terminfoEntry = join(
+      versionDir("0.0.7", root),
+      "resources",
+      "terminfo",
+      "x",
+      "xterm-ghostty",
+    );
+    const noDownload = stageDeps("0.0.7", {
+      download: async () => {
+        throw new Error("re-proving staged files must not download artifacts");
+      },
+    });
+
+    writeFileSync(terminfoEntry, "different extracted bytes\n");
+    await expect(ensureStaged(noDownload)).resolves.toMatchObject({
+      reused: true,
+    });
+
+    writeInstallState({ active: "0.0.7", previous: null }, root);
+    rmSync(terminfoEntry);
+    await expect(ensureStaged(noDownload)).rejects.toThrow(/missing terminfo/);
+  });
+
   test("a signed re-proof makes a legacy staged version safe to roll back to", async () => {
     fakeVersion("0.0.7");
     const result = await ensureStaged(

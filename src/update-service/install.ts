@@ -303,17 +303,27 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
 }
 
 export interface StageOutcome extends StageResult {
-  /** True when the bytes were already on disk and were re-proved rather than refetched. */
+  /** True when an existing version directory passed `proveStaged` rather than being refetched. */
   readonly reused: boolean;
 }
 
-/** Re-prove a version that is already on disk, using the same gates a fresh download passes: the digest the signed manifest names, and the binary stating its own version when asked. "It is already staged" is not evidence. The bytes could have been put there by an older build that had no release key, left behind by a run that crashed between download and activation, or edited on disk afterwards. Trusting them because a directory exists would make the whole fail-closed chain conditional on nothing having gone wrong earlier, which is exactly the assumption an updater is not allowed to make. Re-hashing 65 MB costs a fraction of a second; activating an unverified binary costs the machine. */
+/**
+ * Re-prove a version that is already on disk.
+ *
+ * The CLI and hive-sessiond must match the digests in the signed manifest; the
+ * CLI must also state the requested version when run. The manifest names the
+ * compressed terminfo archive, but staging extracts and discards that archive,
+ * so its digest cannot authenticate the extracted bytes. Reuse only checks that
+ * the xterm-ghostty entry the runtime needs is present.
+ *
+ * "It is already staged" is not evidence for an executable. Older builds,
+ * interrupted updates, or later edits could have put different bytes there.
+ */
 async function proveStaged(
   deps: StageDeps,
   manifest: ReleaseManifest,
   cli: ReleaseArtifact,
   sessiond: ReleaseArtifact,
-  _terminfo: ReleaseArtifact,
   root: string,
   signature: string,
 ): Promise<StageOutcome> {
@@ -357,7 +367,7 @@ async function proveStaged(
     );
   }
 
-  // Verify terminfo exists (we don't re-hash the tarball since it was extracted)
+  // The signed digest names the discarded archive, not these extracted bytes.
   const terminfoEntry = join(
     versionDir(version, root),
     "resources",
@@ -389,21 +399,12 @@ async function proveStaged(
 /** The one way in. Produce a version directory that has passed every gate — whether that means downloading it or re-proving what is already there. Do not treat `isStaged()` as proof: that skips the manifest signature, digest, and probe checks, so a crash between download and activation could bypass the fail-closed path. Routing both cases through here ensures no prior state can yield an activation without verification. */
 export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
   const root = deps.root ?? installRoot();
-  const { manifest, signature, cli, sessiond, terminfo } =
-    trustSignedRelease(deps);
+  const { manifest, signature, cli, sessiond } = trustSignedRelease(deps);
   const version = manifest.version;
 
   if (isStaged(version, root)) {
     try {
-      return await proveStaged(
-        deps,
-        manifest,
-        cli,
-        sessiond,
-        terminfo,
-        root,
-        signature,
-      );
+      return await proveStaged(deps, manifest, cli, sessiond, root, signature);
     } catch (error) {
       // The staged copy is not what the signed manifest describes. Discarding and refetching is safe *unless* it is the version currently running: deleting the active install to recover from a bad staging would trade a refused update for a broken one. There we refuse and say what to remove.
       if (readInstallState(root).active === version) throw error;
