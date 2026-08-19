@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  MAIL_MAX_ATTEMPTS,
+  MAIL_SLO_BREACH_SECONDS,
+} from "./mail";
 
 // The limits leave enough headroom for the daemon, orchestrator, and operating system to remain responsive while Hive refuses to add load.
 export const ResourceLimitsSchema = z.strictObject({
@@ -25,6 +29,23 @@ export const ArtifactsConfigSchema = z.strictObject({
   retention_days: z.number().int().positive().default(90),
 });
 
+export const MailConfigSchema = z.strictObject({
+  // Retry counts above this bound are operationally indistinguishable from never quarantining a poison message, and usually signal a mistyped value.
+  max_attempts: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .default(MAIL_MAX_ATTEMPTS),
+  // A breach window longer than a month cannot provide a useful latency alert and is more likely a unit mistake.
+  slo_breach_seconds: z
+    .number()
+    .int()
+    .min(1)
+    .max(2_592_000)
+    .default(MAIL_SLO_BREACH_SECONDS),
+});
+
 export const AutonomySchema = z.enum(["dangerous", "sandboxed"]);
 
 /** The `/autonomy` wire envelope, in both directions. What a body that does not match means is the caller's to decide — the daemon refuses the request, the CLI throws, the feed degrades to an omitted field — so this says only what a match is. */
@@ -42,6 +63,7 @@ export const HiveConfigSchema = z.strictObject({
     .prefault({}),
   resources: ResourceLimitsSchema.prefault({}),
   artifacts: ArtifactsConfigSchema.prefault({}),
+  mail: MailConfigSchema.prefault({}),
   memory: z
     .strictObject({
       retention: MemoryRetentionConfigSchema.prefault({}),
@@ -55,6 +77,7 @@ export const HiveConfigSchema = z.strictObject({
 
 export type ResourceLimits = z.infer<typeof ResourceLimitsSchema>;
 export type ArtifactsConfig = z.output<typeof ArtifactsConfigSchema>;
+export type MailConfig = z.output<typeof MailConfigSchema>;
 export type MemoryRetentionConfig = z.output<
   typeof MemoryRetentionConfigSchema
 >;

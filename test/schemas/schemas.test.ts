@@ -36,6 +36,7 @@ describe("HiveConfigSchema", () => {
         minSystemAvailableMb: 4_096,
       },
       artifacts: { retention_days: 90 },
+      mail: { max_attempts: 5, slo_breach_seconds: 600 },
       memory: {
         retention: {
           events_hot_days: 30,

@@ -468,6 +468,10 @@ export async function runDaemon(): Promise<void> {
         readPolicy: () => routingPolicy.read(),
       }),
     resources: config.resources,
+    mail: {
+      maxAttempts: config.mail.max_attempts,
+      sloBreachSeconds: config.mail.slo_breach_seconds,
+    },
     retention: config.memory.retention,
     artifacts: config.artifacts,
     wakeBudgetTokens: config.memory.wake_budget_tokens,

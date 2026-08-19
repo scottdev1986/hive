@@ -74,6 +74,16 @@ export interface MailBrokerDeps {
   readonly safePointAt?: (recipient: string) => string | null;
 }
 
+export interface MailServiceConfig {
+  readonly maxAttempts: number;
+  readonly sloBreachSeconds: number;
+}
+
+const DEFAULT_MAIL_SERVICE_CONFIG: MailServiceConfig = {
+  maxAttempts: MAIL_MAX_ATTEMPTS,
+  sloBreachSeconds: MAIL_SLO_BREACH_SECONDS,
+};
+
 /** The authenticated caller. Both halves are load-bearing. The subject decides which mailbox the call may touch, and the generation decides whether this incarnation is still the one an envelope was addressed to — an agent that was respawned is a different consumer even though it answers to the same name. This is the subject and generation the request's own capability carries; the hierarchy binding keeps a separate epoch with a separate writer, and nothing here joins the two. */
 export type MailActor = Readonly<{
   subject: string;
@@ -101,7 +111,10 @@ export const SYSTEM_MAIL_ROUTES: Readonly<
 
 /** The mailbox's operation surface, holding its dependencies once. The dependencies used to be assembled at each call site instead, and the three assemblies had drifted: only the tool boundary passed `beforeClaim` and `beforeComplete`, so whether a claim or a settlement checked delivery evidence depended on which assembly the call happened to arrive through. Holding them in one place is what makes that divergence unrepresentable — there is no second assembly left to disagree with this one. The operations keep taking `now` from the caller rather than reading a clock, so a test and the daemon drive time the same way. */
 export class MailService {
-  constructor(private readonly deps: MailBrokerDeps) {}
+  constructor(
+    private readonly deps: MailBrokerDeps,
+    private readonly config: MailServiceConfig = DEFAULT_MAIL_SERVICE_CONFIG,
+  ) {}
 
   get store(): MailStore {
     return this.deps.store;
@@ -116,11 +129,23 @@ export class MailService {
   }
 
   claim(actor: MailActor, request: unknown, now: Date): MailClaimReceipt {
-    return hiveMailClaim(this.deps, actor, request, now);
+    return hiveMailClaim(
+      this.deps,
+      actor,
+      request,
+      now,
+      this.config.maxAttempts,
+    );
   }
 
   complete(actor: MailActor, request: unknown, now: Date): MailCompleteReceipt {
-    return hiveMailComplete(this.deps, actor, request, now);
+    return hiveMailComplete(
+      this.deps,
+      actor,
+      request,
+      now,
+      this.config.maxAttempts,
+    );
   }
 
   status(actor: MailActor, request: unknown, now: Date): MailStatusResult {
@@ -297,7 +322,7 @@ export class MailService {
     }
     for (const stale of this.deps.store.staleControlMail(
       now.toISOString(),
-      MAIL_SLO_BREACH_SECONDS,
+      this.config.sloBreachSeconds,
     )) {
       const safePoint = safePointAt(stale.recipient);
       if (safePoint === null || safePoint <= stale.waitingSince) continue;
@@ -317,7 +342,11 @@ export class MailService {
   }
 
   sweepDeadlines(now: Date): MailRelease[] {
-    return sweepMailDeadlines(this.deps.store, now);
+    return sweepMailDeadlines(
+      this.deps.store,
+      now,
+      this.config.maxAttempts,
+    );
   }
 
   /** Keeps work owned by a live provider turn from expiring underneath it. An
@@ -341,7 +370,7 @@ export class MailService {
           handlerId: lease.handlerId,
           leaseUntil,
           now: at,
-          maxAttempts: MAIL_MAX_ATTEMPTS,
+          maxAttempts: this.config.maxAttempts,
         }),
       );
   }
@@ -594,6 +623,7 @@ export function hiveMailClaim(
   actor: MailActor,
   request: unknown,
   now: Date,
+  maxAttempts = MAIL_MAX_ATTEMPTS,
 ): MailClaimReceipt {
   const input = parseRequest(MailClaimRequestSchema, request);
   const recipient = actingAs(deps, actor, input.recipient);
@@ -628,7 +658,7 @@ export function hiveMailClaim(
     handlerId: input.handlerId,
     leaseUntil: plusSeconds(now, MAIL_LEASE_SECONDS),
     now: at,
-    maxAttempts: MAIL_MAX_ATTEMPTS,
+    maxAttempts,
   });
   const claimed = deps.store.getItem(input.itemId);
   if (claimed === null) {
@@ -653,6 +683,7 @@ export function hiveMailComplete(
   actor: MailActor,
   request: unknown,
   now: Date,
+  maxAttempts = MAIL_MAX_ATTEMPTS,
 ): MailCompleteReceipt {
   const input = parseRequest(MailCompleteRequestSchema, request);
   const recipient = actingAs(deps, actor, input.recipient);
@@ -669,7 +700,7 @@ export function hiveMailComplete(
         ? plusSeconds(now, input.retryAfterSeconds)
         : null,
     now: now.toISOString(),
-    maxAttempts: MAIL_MAX_ATTEMPTS,
+    maxAttempts,
   });
   // Settling frees the lane, which can make an older message offerable that no publish will ever announce again — it arrived while the lane was busy and was deliberately withheld then. Without this the second instruction in a burst waits for a third to arrive before anybody is woken for it.
   announceNextWaiting(deps, recipient, now);
@@ -765,10 +796,14 @@ export function hiveMailStatus(
 }
 
 /** Applies the deadlines that have passed, for every mailbox. The cutover wires this to the daemon's existing sweep cadence. It is a separate entry point rather than something a read does on the way past, which is what keeps `hive_mail_poll` and `hive_mail_status` read-only. */
-export function sweepMailDeadlines(store: MailStore, now: Date): MailRelease[] {
+export function sweepMailDeadlines(
+  store: MailStore,
+  now: Date,
+  maxAttempts = MAIL_MAX_ATTEMPTS,
+): MailRelease[] {
   const at = now.toISOString();
   return [
-    ...store.sweepExpiredLeases(at, MAIL_MAX_ATTEMPTS),
+    ...store.sweepExpiredLeases(at, maxAttempts),
     ...store.sweepExpiredItems(at),
   ];
 }

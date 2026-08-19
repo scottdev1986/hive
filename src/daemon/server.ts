@@ -26,7 +26,11 @@ import {
   hiveInstanceSuffix,
   sessiondRuntimeRoot,
 } from "../hive-home/home";
-import { type MailRecipientState, MailService } from "../mail-service/service";
+import {
+  type MailRecipientState,
+  MailService,
+  type MailServiceConfig,
+} from "../mail-service/service";
 import { MailStore } from "../mail-service/store";
 import { MailWakeAclError, MailWakeLedger } from "../mail-service/wake-ledger";
 import { MailWakeStore } from "../mail-service/wake-store";
@@ -403,6 +407,7 @@ export interface HiveDaemonOptions {
   refreshModelControl?: () => Promise<void>;
   /** Override the bound stop() waits for an in-flight sweep to unwind. */
   maintenanceDrainTimeoutMs?: number;
+  mail?: MailServiceConfig;
   resources?: ResourceLimits;
   retention?: MemoryRetentionConfig;
   artifacts?: ArtifactsConfig;
@@ -555,16 +560,19 @@ export class HiveDaemon {
       (exhausted) => this.mailService.reportUndeliveredWake(exhausted),
       (itemId) => this.mailService.stillOffers(itemId),
     );
-    this.mailService = new MailService({
-      store: this.mail,
-      recipients: (named: string) => this.mailRecipient(named),
-      notifyReady: (ready) => this.mailWake.publishReady(ready),
-      beforeClaim: (itemId, recipient) =>
-        this.mailWake.requirePresented(itemId, recipient),
-      beforeComplete: (itemId, recipient) =>
-        this.mailWake.requireClaimed(itemId, recipient),
-      safePointAt: (recipient) => this.db.latestSafePointAt(recipient),
-    });
+    this.mailService = new MailService(
+      {
+        store: this.mail,
+        recipients: (named: string) => this.mailRecipient(named),
+        notifyReady: (ready) => this.mailWake.publishReady(ready),
+        beforeClaim: (itemId, recipient) =>
+          this.mailWake.requirePresented(itemId, recipient),
+        beforeComplete: (itemId, recipient) =>
+          this.mailWake.requireClaimed(itemId, recipient),
+        safePointAt: (recipient) => this.db.latestSafePointAt(recipient),
+      },
+      options.mail,
+    );
     this.status =
       options.statusService ??
       StatusService.create(this.db, hiveInstanceSuffix());

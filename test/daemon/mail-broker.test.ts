@@ -43,6 +43,10 @@ const WORKER: MailActor = { subject: "worker", agentGeneration: 1 };
 const ADA: MailActor = { subject: "ada", agentGeneration: 4 };
 
 const LIVE = new Set(["ada", "bo", "queen", "worker"]);
+const OPERATOR_MAIL_POLICY = {
+  maxAttempts: 1,
+  sloBreachSeconds: 10,
+};
 
 const resolver = (
   overrides: Record<string, MailRecipientState> = {},
@@ -152,6 +156,110 @@ describe("live lease renewal", () => {
     expect(
       deps.store.listEvents(receipt.itemId).map((event) => event.kind),
     ).toEqual(["published", "claimed"]);
+  });
+});
+
+describe("operator mail policy reaches every service branch", () => {
+  test("the configured SLO reports mail after the configured wait", async () => {
+    const deps = {
+      ...store(),
+      safePointAt: () => at(1).toISOString(),
+    };
+    const configured = new MailService(deps, OPERATOR_MAIL_POLICY);
+    configured.publish(QUEEN, control(), T0);
+
+    await configured.sweep(at(11));
+
+    expect(
+      configured.poll(QUEEN, { recipient: "queen" }, at(12)).workDigest[0]
+        ?.topic,
+    ).toBe("mail-latency");
+  });
+
+  test("claim uses the configured attempt limit when releasing an expired lease", () => {
+    const deps = store();
+    const configured = new MailService(deps, OPERATOR_MAIL_POLICY);
+    const receipt = configured.publish(QUEEN, control(), T0);
+    configured.claim(
+      ADA,
+      { recipient: "ada", itemId: receipt.itemId, handlerId: "first" },
+      T0,
+    );
+
+    expect(() =>
+      configured.claim(
+        ADA,
+        { recipient: "ada", itemId: receipt.itemId, handlerId: "second" },
+        at(MAIL_LEASE_SECONDS + 1),
+      ),
+    ).toThrow(MailItemNotClaimableError);
+  });
+
+  test("completion uses the configured attempt limit for a deferral", () => {
+    const deps = store();
+    const configured = new MailService(deps, OPERATOR_MAIL_POLICY);
+    const receipt = configured.publish(QUEEN, control(), T0);
+    configured.claim(
+      ADA,
+      { recipient: "ada", itemId: receipt.itemId, handlerId: "handler" },
+      T0,
+    );
+
+    configured.complete(
+      ADA,
+      {
+        recipient: "ada",
+        itemId: receipt.itemId,
+        handlerId: "handler",
+        disposition: "deferred",
+      },
+      at(1),
+    );
+
+    expect(deps.store.getItem(receipt.itemId)).toBeNull();
+    expect(deps.store.listDeadLetters("ada")[0]?.reason).toBe(
+      "attempts-exhausted",
+    );
+  });
+
+  test("deadline sweep uses the configured attempt limit", () => {
+    const deps = store();
+    const configured = new MailService(deps, OPERATOR_MAIL_POLICY);
+    const receipt = configured.publish(QUEEN, control(), T0);
+    configured.claim(
+      ADA,
+      { recipient: "ada", itemId: receipt.itemId, handlerId: "handler" },
+      T0,
+    );
+
+    expect(configured.sweepDeadlines(at(MAIL_LEASE_SECONDS + 1))).toEqual([
+      {
+        itemId: receipt.itemId,
+        outcome: "dead-lettered",
+        reason: "attempts-exhausted",
+      },
+    ]);
+  });
+
+  test("live lease renewal forwards the configured attempt limit", () => {
+    const deps = store();
+    const configured = new MailService(deps, OPERATOR_MAIL_POLICY);
+    const receipt = configured.publish(QUEEN, control(), T0);
+    configured.claim(
+      ADA,
+      { recipient: "ada", itemId: receipt.itemId, handlerId: "handler" },
+      T0,
+    );
+    const claim = deps.store.claim.bind(deps.store);
+    const observed: number[] = [];
+    deps.store.claim = (input) => {
+      observed.push(input.maxAttempts);
+      return claim(input);
+    };
+
+    configured.renewLiveLeases(ADA, at(1));
+
+    expect(observed).toEqual([1]);
   });
 });
 

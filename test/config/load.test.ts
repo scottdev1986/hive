@@ -31,6 +31,7 @@ describe("config loading", () => {
     await resetHome();
     expect(await loadHiveConfig()).toMatchObject({
       autonomy: "sandboxed",
+      mail: { max_attempts: 5, slo_breach_seconds: 600 },
       resources: { enabled: true },
     });
     expect(await loadQuotaConfig()).toMatchObject({
@@ -52,6 +53,40 @@ describe("config loading", () => {
       '[benchmarks]\nmode = "off"\n',
     );
     expect((await loadHiveConfig()).benchmarks.mode).toBe("off");
+  });
+
+  test("loads operator mail policy from the hive config", async () => {
+    await resetHome();
+    await writeFile(
+      join(hiveHome, "config.toml"),
+      "[mail]\nmax_attempts = 2\nslo_breach_seconds = 30\n",
+    );
+    expect((await loadHiveConfig()).mail).toEqual({
+      max_attempts: 2,
+      slo_breach_seconds: 30,
+    });
+  });
+
+  test("invalid mail policy names the config file and field", async () => {
+    for (const [field, value] of [
+      ["max_attempts", "0"],
+      ["max_attempts", "-1"],
+      ["max_attempts", "1.5"],
+      ["max_attempts", "101"],
+      ["slo_breach_seconds", "0"],
+      ["slo_breach_seconds", "-1"],
+      ["slo_breach_seconds", "1.5"],
+      ["slo_breach_seconds", "2592001"],
+    ] as const) {
+      await resetHome();
+      await writeFile(
+        join(hiveHome, "config.toml"),
+        `[mail]\n${field} = ${value}\n`,
+      );
+      const loading = loadHiveConfig();
+      await expect(loading).rejects.toThrow(join(hiveHome, "config.toml"));
+      await expect(loading).rejects.toThrow(field);
+    }
   });
 
   test("a leftover [lifecycle] section is refused, not ignored", async () => {
