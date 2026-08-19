@@ -1,6 +1,8 @@
 # Terminal host visibility extension v1.0.0
 
-Status: **candidate shape frozen; cross-vendor review pending**. This is the project-neutral A0 extension required before representation-backed production create admission can open. The neutral qualification fixture passes L–S with a deliberate mutation control for every case. Production implementation and live process proof are intentionally deferred until this shape passes its independent contract review.
+Status: **candidate shape frozen; cross-vendor review pending**. This is the project-neutral A0 extension. The neutral qualification fixture passes L–S with a deliberate mutation control for every case.
+
+**Implementation status.** Production's `SessiondHost` implements `LandedTerminalHost` (`src/daemon/session-host/sessiond-host.ts:278`), not `VisibilityTerminalHost` (`src/daemon/session-host/terminal-host-visibility-contract.ts:113`). The Required behavior below describes this frozen profile. It is not a description of the production host.
 
 This profile extends [terminal host v1.0.0](terminal-host-v1.md). It replaces the base `create` operation with a visibility-guarded request and adds renewal. All other terminal-host operations retain their v1.0.0 shape.
 
@@ -15,10 +17,12 @@ The host receives only neutral evidence: one source-session identity, its exact 
 - A **visibility source** is an opaque source-session identity plus an exact process identity `{processId, startToken}`.
 - An **inventory revision** is a canonical positive decimal integer. It orders complete snapshots from one source session. Revisions from different source sessions are unrelated.
 - A **visibility request** carries exactly one visibility source and one inventory revision. The guarded create request separately carries the base terminal create request whose opaque key names the represented record.
-- A **visibility lease** binds the host-issued exact session reference `{key, incarnation}`, the accepted source identity, and the accepted revision. It is `active` only between its `issuedAt` and finite `expiresAt` timestamps. After its deadline it is `expired` and carries the typed teardown result; an expired lease is never authority.
+- A **visibility lease** binds the host-issued exact session reference `{key, incarnation}`, the accepted source identity, and the accepted revision. It is `active` only between its `issuedAt` and finite `expiresAt` timestamps. After its deadline it is `expired` and is never authority to renew. The deadline bounds the wire's `expiresAt` and the input-claim window; it does not decide whether the terminal may live.
 - A **current representation** is the exact session key in the source's latest complete inventory. Multiple keys may validly share one current inventory revision.
 
 ## Required behavior
+
+This section is the frozen `VisibilityTerminalHost` profile. Production does not implement that profile; see Implementation status.
 
 ### 1. Create admission
 
@@ -44,11 +48,13 @@ Renewal names the exact session reference and repeats the complete visibility re
 
 A successful renewal returns a new active lease and finite expiry. A rejected or unknown renewal has `renewed: false`. It does not extend the deadline. Except when the deadline has already expired, rejection does not pretend that the prior lease or process vanished; the existing bounded deadline remains authoritative.
 
-### 4. Expiry and teardown
+### 4. Expiry and observed liveness
 
-Every lease has a finite, implementation-recorded duration; the neutral fixture freezes 15 seconds. At expiry the host marks that lease expired, stops accepting renewal, requests immediate process-tree termination for the exact session generation, and records termination, reap, descendant, and survivor evidence through the base inspection contract. Each expired lease is reconciled independently: a thrown teardown becomes a typed `unknown` result and cannot skip teardown of later leases. Signal delivery alone is not success. Unknown evidence or survivors remain explicit failure states and keep the session key fenced; only complete verified absence releases it for a new generation.
+Every lease has a finite, implementation-recorded duration; the neutral fixture freezes 15 seconds. A running host holds its own lease open. Liveness is observed — the host watches its supervisor's process — so the deadline only bounds the wire's `expiresAt` and the input-claim window; it does not decide whether the terminal may live. Nothing has to arrive for the host to stay open: reading an unrenewed lease as death kills working agents whose vendor TUI is rendered and running.
 
-Source death does not require an event from the dead process. It prevents renewal, so the existing deadline expires and drives the same exact-generation teardown. A renderer disconnect has no effect on the lease.
+The lease is re-scoped, not deleted. `renew()` still fences a foreign workspace session identity, a lower revision, and an already-expired lease. An expired lease is never authority to renew.
+
+Source death does not require an event from the dead process. It is observed on the supervisor process, not inferred from a missed renewal, and a missed renewal does not terminate the process tree. A renderer disconnect has no effect on the lease.
 
 ### 5. Honest failures and completeness
 
@@ -81,7 +87,7 @@ Partial, unavailable, or unknown inventory or identity evidence returns `unknown
 | M | Equal current revision can authorize multiple represented keys; replay of an older revision and an unverified future revision fail closed. | Neutral green |
 | N | PID plus exact start token and liveness are required; same-PID start-token reuse and dead sources fail. | Neutral green |
 | O | Equal/later renewal succeeds only while the latest complete inventory still represents the exact key. | Neutral green |
-| P | Source death prevents renewal; the bounded deadline expires the lease, isolates each teardown failure as typed `unknown`, and continues exact-generation process-tree termination for every other expired lease. | Neutral green |
+| P | Source death is observed on the supervisor process, not inferred from a missed renewal. The deadline bounds the wire's `expiresAt` and the input-claim window; it does not terminate the process tree. | Neutral green |
 | Q | Incomplete inventory evidence returns typed `unknown` and never invokes create. | Neutral green |
 | R | Neither the same source nor a second source can create over a session key with an active or unreconciled leased generation. | Neutral green |
 | S | Renewal with a different incarnation is fenced. | Neutral green |
@@ -90,6 +96,6 @@ Every neutral case has a mutation control: injecting that case's semantic violat
 
 ## Design and external basis
 
-- The request/lease split keeps admission separate from continued authority. A distinct lifecycle channel supplies full-snapshot freshness, renewal requires the represented session to remain present, and source death expires the lease.
+- The request/lease split keeps admission separate from continued authority. A distinct lifecycle channel supplies full-snapshot freshness. Renewal still fences identity and ordering. Source death is observed on the supervisor process rather than inferred from a missed renewal.
 - Apple's [`getpeereid(3)`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/getpeereid.3.html) documents kernel-supplied effective credentials for a connected UNIX-domain peer. These credentials can authenticate the local channel but do not replace exact process identity.
 - Apple's XNU [`proc_bsdinfo`](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info.h) exposes the process PID and start-time seconds/microseconds. A production Darwin adapter can derive and re-read an exact start token from operating-system process data; this contract deliberately keeps that mechanism out of its vocabulary.
