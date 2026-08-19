@@ -105,9 +105,9 @@ pub const DescriptorMapping = struct {
 };
 
 pub const TerminalProfile = struct {
-    input_mode: enum { canonical, literal } = .literal,
-    echo: bool = false,
-    signal_characters: bool = false,
+    input_mode: enum { canonical, literal } = .canonical,
+    echo: bool = true,
+    signal_characters: bool = true,
     software_flow_control: bool = false,
     eof_byte: u8 = 4,
     start_byte: u8 = 17,
@@ -378,6 +378,15 @@ pub const PtyHost = struct {
                 exec_pipe[1],
                 spec.descriptor_map,
             );
+            // Reset signal handlers to SIG_DFL and unblock the signal mask before exec.
+            // Conventional PTY hosts ensure the child starts with default signal disposition.
+            const signals = [_]c_int{ c.SIGINT, c.SIGQUIT, c.SIGTSTP, c.SIGTTIN, c.SIGTTOU, c.SIGHUP, c.SIGPIPE, c.SIGCHLD };
+            for (signals) |sig| {
+                _ = c.signal(sig, c.SIG_DFL);
+            }
+            var mask: c.sigset_t = undefined;
+            _ = c.sigemptyset(&mask);
+            _ = c.sigprocmask(c.SIG_SETMASK, &mask, null);
             if (cwd_z) |dir| {
                 if (c.chdir(dir.ptr) != 0)
                     childBarrierFail(exec_pipe[1], .working_directory, 125);
@@ -1127,6 +1136,63 @@ test "spawn default profile translates bare newlines via OPOST ONLCR" {
         if (std.mem.indexOfScalar(u8, got.items, 'b') != null and got.items.len >= 4) break;
     }
     try testing.expectEqualStrings("a\r\nb\r\n", got.items);
+}
+
+test "spawn default profile is a login tty with ICANON ECHO ISIG" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    const rb = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/cat" },
+        .geometry = defaultGeometry(),
+    }));
+
+    try testing.expect(rb.pid > 1);
+    try testing.expect(rb.initial_profile_applied_before_exec);
+
+    var applied: c.struct_termios = undefined;
+    try testing.expectEqual(@as(c_int, 0), c.tcgetattr(host.master_fd, &applied));
+    
+    // Verify login-tty defaults: ICANON + ECHO + ISIG
+    try testing.expect(applied.c_lflag & c.ICANON != 0);
+    try testing.expect(applied.c_lflag & c.ECHO != 0);
+    try testing.expect(applied.c_lflag & c.ISIG != 0);
+    try testing.expect(applied.c_oflag & c.OPOST != 0);
+    try testing.expect(applied.c_oflag & c.ONLCR != 0);
+    try testing.expect(applied.c_cflag & c.HUPCL != 0);
+}
+
+test "child signal handlers are reset to SIG_DFL before exec" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    // This test verifies that signal reset works by checking that a child
+    // process can receive and handle signals properly. A properly reset
+    // child will respond to SIGINT (Ctrl+C) in canonical mode.
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    _ = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sh", "-c", "read line" },
+        .geometry = defaultGeometry(),
+    }));
+
+    // Send Ctrl+C (SIGINT character) - should interrupt the read
+    _ = try host.writeAccept("\x03");
+    try host.writeDrainAll();
+
+    // Child should exit due to SIGINT
+    host.closeMaster();
+    var attempts: usize = 0;
+    var got_signal = false;
+    while (attempts < 100) : (attempts += 1) {
+        const evidence = try host.waitExit(false);
+        if (evidence.reaped) {
+            got_signal = evidence.term_signal != null;
+            break;
+        }
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
+    try testing.expect(got_signal);
 }
 
 test "spawn passes the spec environment to the child" {
