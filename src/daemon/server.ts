@@ -3655,6 +3655,8 @@ export class HiveDaemon {
         sessionLocator: SessionLocatorSchema,
         // Who asked for this kill: CLI subcommand, argv, and parent pid, written onto the allow-decision audit row. Free-form and truncated rather than validated: a kill must never be refused because its provenance string is long.
         origin: z.string().optional(),
+        // The user ended this agent himself, from the Workspace sidebar's Close Agent item, rather than the orchestrator ending it. Nothing else about the kill changes; this only decides whether the orchestrator is told a closure she did not order has happened. It is a request field because this endpoint is the one place the two callers are distinguishable: `hive kill` (src/cli/control.ts killAgentCli) sends sessionLocator and origin and never this. Reading it off `origin` instead would make the notification depend on parsing a free-form audit string.
+        userClosed: z.boolean().optional(),
       })
       .safeParse(body);
     if (!parsed.success) {
@@ -3707,13 +3709,31 @@ export class HiveDaemon {
       );
     }
     try {
-      return json(await this.killAgentTeardown(agent));
+      const teardown = await this.killAgentTeardown(agent);
+      if (parsed.data.userClosed === true) {
+        await this.reportUserClosed(agent);
+      }
+      return json(teardown);
     } catch (error) {
       return json(
         { error: error instanceof Error ? error.message : "Kill failed" },
         { status: 500 },
       );
     }
+  }
+
+  /** Tell the orchestrator that the USER ended this agent. A kill she ordered needs no telling — she already knows — so this fires only for the Workspace's Close Agent, and it fires after the teardown so it can never announce a closure that did not happen. It rides the control lane because she has to act on it: the agent is gone and whatever board story it held needs a new owner. The work lane would be wrong here for a measured reason, not a stylistic one — work items from one sender on one topic coalesce while unread (src/mail-service/store.ts coalesceInTx), so closing two agents before she polls would leave her holding only the second agent's name. The idempotency key is the agent id, so a double-click cannot deliver twice. A failed publish must not fail the kill: the agent is already dead, and reporting the kill as failed would be the larger lie. */
+  private async reportUserClosed(agent: AgentRecord): Promise<void> {
+    await this.mailService
+      .publishSystem(
+        "hive-control",
+        ORCHESTRATOR_NAME,
+        `The user closed ${agent.name} from the Workspace sidebar. ` +
+          "You did not order this kill. " +
+          `${agent.name} is gone; anything you had in flight with it needs a new owner.`,
+        { idempotencyKey: `user-closed:${agent.id}` },
+      )
+      .catch(() => undefined);
   }
 
   /** POST /stop — fleet shutdown as one atomic-or-abortive daemon request. Evaluate every gate before anything dies so a mid-flight failure or dead requesting client cannot leave a partially killed fleet under a live daemon: 1. user authorization (the same agent:kill the pane X needs); 2. the invoker must not be an agent worktree shell — client-reported and therefore accident prevention, not a security boundary (a same-UID process can read the user credential); 3. unlanded work refuses the stop unless explicitly confirmed, naming the agents and their unlanded state; 4. the daemon writes and verifies the graceful-shutdown checkpoint. A checkpoint failure clears the stop latch and reports stop-failed before any kill. Past that latch, the daemon drives every kill and then its own exit to completion whether or not the requesting client survives — the handler is not cancelled by a vanished request. A teardown failure reports stop-failed and leaves the daemon up: exiting over survivors would strand them with nothing left to supervise or reap them. */
