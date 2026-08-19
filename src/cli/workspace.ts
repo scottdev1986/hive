@@ -56,7 +56,7 @@ export interface LaunchDeps {
   ) => Promise<void>;
   readonly runningWorkspacePid?: (instanceHome: string) => number | null;
   readonly runningOrchestratorPid?: (instanceId: string) => number | null;
-  readonly activateWorkspace?: (pid: number) => Promise<void>;
+  readonly activateWorkspace?: (app: string) => Promise<number>;
 }
 
 /** First live process whose command line contains every needle, or null. */
@@ -92,18 +92,6 @@ export function orchestratorProcessPid(instanceId: string): number | null {
     `--instance-id`,
     instanceId,
   ]);
-}
-
-export async function activateWorkspaceProcess(pid: number): Promise<void> {
-  await new Promise<void>((resolvePromise) => {
-    const child = spawn("osascript", [
-      "-e",
-      `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
-    ]);
-    const done = (): void => resolvePromise();
-    child.once("close", done);
-    child.once("error", done);
-  });
 }
 
 /** Starts the session's Queen supervisor outside the Workspace process. The
@@ -180,18 +168,32 @@ function instanceHome(args: readonly string[]): string | undefined {
   return index === -1 ? undefined : args[index + 1];
 }
 
-const openApp = async (
-  app: string,
-  args: readonly string[],
-): Promise<number> => {
+const runOpen = async (args: readonly string[]): Promise<number> => {
   return await new Promise((resolvePromise, reject) => {
-    const child = spawn("open", workspaceOpenArguments(app, args), {
-      stdio: "ignore",
-    });
+    const child = spawn("open", args, { stdio: "ignore" });
     child.on("error", reject);
     child.on("close", (code) => resolvePromise(code ?? 0));
   });
 };
+
+const openApp = async (app: string, args: readonly string[]): Promise<number> =>
+  runOpen(workspaceOpenArguments(app, args));
+
+/** Activating carries no `-n`: that flag is what makes `open` mint a second app,
+ * and minting a second one is the thing the caller already decided against. */
+export function workspaceActivateArguments(app: string): string[] {
+  return ["-a", app];
+}
+
+/** Bring this repository's already-running Workspace forward. `open -a` without
+ * `-n` activates the running app instead of minting a second one, which is the
+ * same request a Dock click makes: it needs no automation permission and drives
+ * no process outside the app. Activation is therefore bundle-wide — it raises a
+ * running Workspace, not a chosen pid — so with two repositories open at once it
+ * can raise the other repository's window. Targeting one instance needs an entry
+ * point in the app, which it does not have yet. */
+const activateWorkspaceApp = async (app: string): Promise<number> =>
+  runOpen(workspaceActivateArguments(app));
 
 export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
   const root = deps.root ?? installRoot();
@@ -229,10 +231,7 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
       instanceHome,
     );
     if (existingWorkspace !== null) {
-      await (deps.activateWorkspace ?? activateWorkspaceProcess)(
-        existingWorkspace,
-      );
-      return 0;
+      return await (deps.activateWorkspace ?? activateWorkspaceApp)(app);
     }
     const instanceId = hiveInstanceSuffix();
     const existingOrchestrator = (

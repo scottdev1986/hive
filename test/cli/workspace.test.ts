@@ -15,6 +15,7 @@ import {
   runningCommandPid,
   runWorkspace,
   WorkspaceNotInstalledError,
+  workspaceActivateArguments,
   workspaceOpenArguments,
   workspaceOrchestratorArguments,
 } from "../../src/cli/workspace";
@@ -134,7 +135,7 @@ describe("hive opens the installed release Workspace", () => {
   test("a second launch of the same instance activates the existing window", async () => {
     install("0.0.7");
     const opened: (readonly string[])[] = [];
-    const activated: number[] = [];
+    const activated: string[] = [];
     let started = 0;
     const code = await launchWorkspace({
       root,
@@ -146,8 +147,9 @@ describe("hive opens the installed release Workspace", () => {
         return 0;
       },
       runningWorkspacePid: () => 4242,
-      activateWorkspace: async (pid) => {
-        activated.push(pid);
+      activateWorkspace: async (activatedApp) => {
+        activated.push(activatedApp);
+        return 0;
       },
       session: {
         cwd: "/tmp/proj",
@@ -160,7 +162,7 @@ describe("hive opens the installed release Workspace", () => {
     expect(code).toBe(0);
     expect(opened).toEqual([]);
     expect(started).toBe(0);
-    expect(activated).toEqual([4242]);
+    expect(activated).toEqual([join(root, "current", "HiveWorkspace.app")]);
   });
 
   test("a first launch still starts the orchestrator when none is running", async () => {
@@ -203,6 +205,12 @@ describe("hive opens the installed release Workspace", () => {
       },
     });
     expect(started).toBe(0);
+  });
+
+  test("activating never passes -n, which would mint a second app", () => {
+    const args = workspaceActivateArguments("/Applications/HiveWorkspace.app");
+    expect(args).toEqual(["-a", "/Applications/HiveWorkspace.app"]);
+    expect(args).not.toContain("-n");
   });
 
   test("runningCommandPid requires every needle and reads the pid", () => {
