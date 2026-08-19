@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProgram } from "../../src/cli";
@@ -20,7 +26,7 @@ afterEach(() => {
 describe("qa-control fails closed", () => {
   test("refuses before touching the mailbox without the QA gate", async () => {
     delete process.env.HIVE_QA;
-    expect(await runQAControl("enumerate")).toBe(2);
+    expect(await runQAControl({ verb: "enumerate" })).toBe(2);
   });
 
   test("requires an explicit default home before touching a mailbox", async () => {
@@ -29,7 +35,7 @@ describe("qa-control fails closed", () => {
     process.env.HIVE_HOME = home;
     delete process.env.HIVE_DEFAULT_HOME;
     try {
-      expect(await runQAControl("enumerate")).toBe(2);
+      expect(await runQAControl({ verb: "enumerate" })).toBe(2);
       expect(existsSync(join(home, "qa-control"))).toBe(false);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -41,7 +47,7 @@ describe("qa-control fails closed", () => {
     process.env.HIVE_QA = "1";
     process.env.HIVE_DEFAULT_HOME = home;
     try {
-      expect(await runQAControl("enumerate", undefined, undefined, 20)).toBe(2);
+      expect(await runQAControl({ verb: "enumerate" }, 20)).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -55,11 +61,50 @@ describe("qa-control fails closed", () => {
     // mailbox from the install home, so a request addressed here is never read.
     process.env.HIVE_HOME = join(home, "instances", "run-1");
     try {
-      expect(await runQAControl("enumerate", undefined, undefined, 20)).toBe(2);
+      expect(await runQAControl({ verb: "enumerate" }, 20)).toBe(2);
       expect(existsSync(join(home, "qa-control", "request.json"))).toBe(true);
       expect(existsSync(join(home, "instances", "run-1", "qa-control"))).toBe(
         false,
       );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("sends a popup selection request and maps a refusal to no measurement", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-qa-control-"));
+    process.env.HIVE_QA = "1";
+    process.env.HIVE_DEFAULT_HOME = home;
+    try {
+      const result = runQAControl(
+        { verb: "select", identifier: "task-router-mode", title: "Missing" },
+        100,
+      );
+      const request = JSON.parse(
+        readFileSync(join(home, "qa-control", "request.json"), "utf8"),
+      ) as {
+        requestId: string;
+        verb: string;
+        identifier: string;
+        title: string;
+      };
+      expect(request).toMatchObject({
+        verb: "select",
+        identifier: "task-router-mode",
+        title: "Missing",
+      });
+      writeFileSync(
+        join(home, "qa-control", `response.${request.requestId}.json`),
+        JSON.stringify({
+          requestId: request.requestId,
+          status: "refused",
+          root: "hive-workspace-qa-root",
+          count: 0,
+          terminator: `qa-control-end:${request.requestId}:0`,
+          reason: "popup item not found",
+        }),
+      );
+      expect(await result).toBe(2);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

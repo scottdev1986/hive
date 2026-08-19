@@ -944,25 +944,65 @@ export function createProgram(): Command {
   if (process.env.HIVE_BUILD_VARIANT === "qa") {
     program
       .command("qa-control", { hidden: true })
-      .argument("<verb>", "enumerate or invoke")
+      .argument("<verb>", "enumerate, invoke, or select")
       .argument("[identifier]", "live control identifier")
       .option("--input <value>", "native control input")
+      .option("--title <title>", "popup item title")
+      .option("--index <index>", "popup item index")
       .action(
         async (
           verb: string,
           identifier: string | undefined,
-          options: { input?: string },
+          options: { input?: string; title?: string; index?: string },
         ) => {
-          if (verb !== "enumerate" && verb !== "invoke") {
-            process.stderr.write("NO MEASUREMENT: unknown qa-control verb\n");
-            process.exitCode = 2;
+          if (verb === "enumerate") {
+            process.exitCode = await runQAControl({ verb });
             return;
           }
-          process.exitCode = await runQAControl(
-            verb,
-            identifier,
-            options.input,
-          );
+          if (verb === "invoke" && identifier !== undefined) {
+            process.exitCode = await runQAControl({
+              verb,
+              identifier,
+              ...(options.input === undefined ? {} : { input: options.input }),
+            });
+            return;
+          }
+          if (verb === "select" && identifier !== undefined) {
+            const hasTitle = options.title !== undefined;
+            const hasIndex = options.index !== undefined;
+            if (hasTitle === hasIndex) {
+              process.stderr.write(
+                "NO MEASUREMENT: select requires exactly one of --title or --index\n",
+              );
+              process.exitCode = 2;
+              return;
+            }
+            if (hasTitle) {
+              process.exitCode = await runQAControl({
+                verb,
+                identifier,
+                title: options.title as string,
+              });
+              return;
+            }
+            const index = Number(options.index);
+            if (!Number.isInteger(index)) {
+              process.stderr.write(
+                "NO MEASUREMENT: popup index must be an integer\n",
+              );
+              process.exitCode = 2;
+              return;
+            }
+            process.exitCode = await runQAControl({ verb, identifier, index });
+            return;
+          }
+          if (verb !== "enumerate" && verb !== "invoke" && verb !== "select") {
+            process.stderr.write("NO MEASUREMENT: unknown qa-control verb\n");
+          } else
+            process.stderr.write(
+              "NO MEASUREMENT: qa-control requires an identifier\n",
+            );
+          process.exitCode = 2;
         },
       );
   }

@@ -27,6 +27,8 @@ final class QAControl {
         let verb: String
         let identifier: String?
         let input: String?
+        let title: String?
+        let index: Int?
     }
 
     private let directory: URL
@@ -67,6 +69,8 @@ final class QAControl {
             verb: request.verb,
             identifier: request.identifier,
             input: request.input,
+            itemTitle: request.title,
+            itemIndex: request.index,
             window: window,
             route: surface.qaCurrentRoute,
             requestId: request.requestId))
@@ -135,6 +139,8 @@ final class QAControl {
         verb: String,
         identifier: String?,
         input: String?,
+        itemTitle: String? = nil,
+        itemIndex: Int? = nil,
         window: NSWindow,
         route: String,
         requestId: String
@@ -159,6 +165,58 @@ final class QAControl {
                 || !NSApp.sendAction(control.action!, to: control.target, from: control) {
                 status = "fail"
                 reason = "control is not actionable"
+            }
+        } else if verb == "select" {
+            guard let identifier,
+                  let popup = harness.liveControls(window: window).first(where: {
+                      $0.accessibilityIdentifier() == identifier
+                  }) as? NSPopUpButton else {
+                return QAControlResponse(
+                    requestId: requestId, status: "fail", root: "hive-workspace-qa-root",
+                    route: route, controls: controls, count: controls.count,
+                    terminator: "qa-control-end:\(requestId):\(controls.count)",
+                    reason: "popup not found")
+            }
+            guard popup.isEnabled, popup.action != nil else {
+                status = "fail"
+                reason = "popup is not actionable"
+                let after = harness.enumerate(window: window)
+                return QAControlResponse(
+                    requestId: requestId, status: status, root: "hive-workspace-qa-root",
+                    route: route, controls: after, count: after.count,
+                    terminator: "qa-control-end:\(requestId):\(after.count)", reason: reason)
+            }
+            let selected: Bool
+            switch (itemTitle, itemIndex) {
+            case let (.some(title), nil):
+                popup.selectItem(withTitle: title)
+                selected = popup.selectedItem?.title == title
+            case let (nil, .some(index)) where popup.itemArray.indices.contains(index):
+                popup.selectItem(at: index)
+                selected = true
+            case (.some, .some):
+                return QAControlResponse(
+                    requestId: requestId, status: "refused", root: "hive-workspace-qa-root",
+                    route: route, controls: controls, count: controls.count,
+                    terminator: "qa-control-end:\(requestId):\(controls.count)",
+                    reason: "popup selection is ambiguous")
+            default:
+                return QAControlResponse(
+                    requestId: requestId, status: "refused", root: "hive-workspace-qa-root",
+                    route: route, controls: controls, count: controls.count,
+                    terminator: "qa-control-end:\(requestId):\(controls.count)",
+                    reason: "popup item not found")
+            }
+            guard selected else {
+                return QAControlResponse(
+                    requestId: requestId, status: "refused", root: "hive-workspace-qa-root",
+                    route: route, controls: controls, count: controls.count,
+                    terminator: "qa-control-end:\(requestId):\(controls.count)",
+                    reason: "popup item not found")
+            }
+            if !NSApp.sendAction(popup.action!, to: popup.target, from: popup) {
+                status = "fail"
+                reason = "popup is not actionable"
             }
         }
         let after = harness.enumerate(window: window)

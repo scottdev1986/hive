@@ -385,4 +385,28 @@ final class TaskRouterScreenViewTests: XCTestCase {
             edited?.candidates.first { $0.model == "claude-opus-4-8" }?.weight,
             40)
     }
+
+    #if HIVE_QA_BUILD
+    func testQAControlSelectsRouterModeByIndexAndWritesTheDraft() throws {
+        let modelControl: ClientProjection<WorkspaceModelControlView> = try loadRow(
+            "model-control-corpus")
+        let routing = try XCTUnwrap(modelControl.value?.routing)
+        var edited: RoutingPolicyDocument.WireRoute?
+        let view = try makeView(onEditRoute: { edited = $0 })
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 1_000),
+                              styleMask: .titled, backing: .buffered, defer: false)
+        window.contentView?.addSubview(view)
+
+        let response = QAControl.process(
+            verb: "select", identifier: "task-router-mode", input: nil,
+            itemTitle: nil, itemIndex: 1,
+            window: window, route: "router", requestId: "request")
+
+        XCTAssertEqual(response.status, "ok")
+        XCTAssertEqual(
+            (find(view, "task-router-mode") as? NSPopUpButton)?.indexOfSelectedItem,
+            1)
+        XCTAssertEqual(edited?.mode, routing.modes[0].id)
+    }
+    #endif
 }

@@ -10,12 +10,18 @@ import { join } from "node:path";
 
 export type QAControlRequest =
   | { requestId: string; verb: "enumerate" }
-  | { requestId: string; verb: "invoke"; identifier: string; input?: string };
+  | { requestId: string; verb: "invoke"; identifier: string; input?: string }
+  | { requestId: string; verb: "select"; identifier: string; title: string }
+  | { requestId: string; verb: "select"; identifier: string; index: number };
+
+type WithoutRequestId<Request> = Request extends unknown
+  ? Omit<Request, "requestId">
+  : never;
+
+export type QAControlCommand = WithoutRequestId<QAControlRequest>;
 
 export async function runQAControl(
-  verb: "enumerate" | "invoke",
-  identifier?: string,
-  input?: string,
+  command: QAControlCommand,
   timeoutMs = 5_000,
 ): Promise<number> {
   if (process.env.HIVE_QA !== "1") {
@@ -29,24 +35,11 @@ export async function runQAControl(
     );
     return 2;
   }
-  if (verb === "invoke" && identifier === undefined) {
-    process.stderr.write("NO MEASUREMENT: invoke requires an identifier\n");
-    return 2;
-  }
-
   const directory = join(home, "qa-control");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
   const requestId = crypto.randomUUID();
-  const request: QAControlRequest =
-    verb === "enumerate"
-      ? { requestId, verb }
-      : {
-          requestId,
-          verb,
-          identifier: identifier as string,
-          ...(input === undefined ? {} : { input }),
-        };
+  const request: QAControlRequest = { requestId, ...command };
   const requestPath = join(directory, "request.json");
   const temporaryPath = join(directory, `request.${requestId}.tmp`);
   const responsePath = join(directory, `response.${requestId}.json`);
@@ -58,7 +51,7 @@ export async function runQAControl(
     try {
       const response = JSON.parse(readFileSync(responsePath, "utf8")) as {
         requestId?: string;
-        status?: "ok" | "fail";
+        status?: "ok" | "fail" | "refused";
         root?: string;
         count?: number;
         terminator?: string;
@@ -71,13 +64,15 @@ export async function runQAControl(
         response.count === undefined ||
         response.terminator !==
           `qa-control-end:${requestId}:${response.count}` ||
-        (response.status !== "ok" && response.status !== "fail")
+        (response.status !== "ok" &&
+          response.status !== "fail" &&
+          response.status !== "refused")
       ) {
         process.stderr.write("NO MEASUREMENT: invalid qa-control response\n");
         return 2;
       }
       process.stdout.write(`${JSON.stringify(response)}\n`);
-      return response.status === "ok" ? 0 : 1;
+      return response.status === "ok" ? 0 : response.status === "fail" ? 1 : 2;
     } catch {
       await Bun.sleep(50);
     }
