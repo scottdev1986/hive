@@ -4,7 +4,7 @@ Status: **shape frozen**. This is the project-neutral target boundary for termin
 
 Real-session verification has two halves: one is done and the other is partial. The real-host discriminators are DONE — the three rows that were pending A1 (B, C, D) now pass, and the named real discriminators THV1-REAL-B/D/E/F/K run green inside the ordinary native suite. A project-neutral real-sessiond adapter is PARTIAL: a neutral controller over real sessions is verified present on main and serves creation, listing, inspection, termination, and ordered resize against real processes with measured reap evidence. Resize is served, with one part of §5 still PARTIAL. The production host binds a real terminal, the route is proven from the caller across the neutral transport into a real pseudo-terminal rather than by invoking the handler, and a resize reconciles BOTH representations it must move — the pseudo-terminal and the shadow terminal state — so no revision is reported applied while only one of them holds it. What is not yet complete is idempotent replay: a repeated transaction never mutates the terminal twice, but it does not yet replay its receipt, because receipt storage is durable per-session state that lands with the neutral event journal. Resumable attachment, ordered event subscription, and visibility renewal have no neutral handler at all. This status becomes **frozen** only once that adapter is complete and this boundary is implemented over the qualified host (A2; see Deferred boundary work). The half-open state is deliberate: the previous closure of this contract was reversed precisely because a status claimed more than its evidence.
 
-The host accepts an opaque session key, a command, a terminal profile, and an initial window. It owns terminal I/O and reports evidence. Product identity, agent identity, provider choice, authorization, repository/worktree concepts, and product lifecycle policy are exclusively adapter concerns above this boundary. A consumer whose creation authority depends on a live external representation adopts the separately versioned [terminal-host visibility extension](terminal-host-visibility-v1.md); UI policy still terminates in its adapter.
+The host accepts an opaque session key, a command, a terminal profile, and an initial window. It owns terminal I/O and reports evidence. Product identity, agent identity, provider choice, authorization, repository/worktree concepts, and product lifecycle policy are exclusively adapter concerns above this boundary. UI policy still terminates in its adapter.
 
 ## Normative vocabulary
 
@@ -83,7 +83,7 @@ This operation set is semantic. Implementations may combine transport messages o
 
 ## Freeze qualification A–K and U
 
-Row letters are unique across the contract family rather than per document: A–K are defined here, L–S in the [visibility extension](terminal-host-visibility-v1.md) whose neutral fixture also owns T, and section 11's row continues that shared sequence at U.
+Row letters are unique across the contract family rather than per document: A–K are defined here, and section 11's row continues that shared sequence at U.
 
 | ID | Required observation | Shape status |
 |---|---|---|

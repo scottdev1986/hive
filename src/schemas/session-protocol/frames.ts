@@ -52,6 +52,9 @@ export const FRAME_TYPES = {
   INSPECTED: 0x0113,
   TERMINATE: 0x0114,
   TERMINATED: 0x0115,
+  // 0x0116 stays reserved forever. A retired opcode is never recycled:
+  // reusing it would make an old client's VISIBILITY_RENEW mean a new
+  // feature, and that failure is silent.
   VISIBILITY_RENEW: 0x0116,
   RENEWED: 0x0117,
   ATTACH_REQUEST: 0x0200,

@@ -475,32 +475,6 @@ const fixtureTerminalHostEventAcknowledgement = {
   through: fixtureTerminalHostEventCursor,
   availableEventCredit: 1_024,
 };
-const fixtureTerminalHostVisibilityRequest = {
-  sourceSession: "workspace-session-7",
-  sourceProcess: { processId: 5150, startToken: "5150:998877" },
-  inventoryRevision: "19",
-};
-const fixtureTerminalHostVisibilityRenewalRequest = {
-  session: fixtureTerminalHostSession,
-  visibility: fixtureTerminalHostVisibilityRequest,
-};
-// A lease is active only BETWEEN issuedAt and a finite expiresAt, and the
-// visibility extension freezes that neutral duration at 15 seconds — so an
-// active fixture must span a real window, not collapse to a single instant.
-const FIXTURE_LEASE_EXPIRY = "2026-07-16T12:00:15.000Z";
-const fixtureTerminalHostVisibilityRenewalResult = {
-  state: "active",
-  renewed: true,
-  lease: {
-    session: fixtureTerminalHostSession,
-    sourceSession: fixtureTerminalHostVisibilityRequest.sourceSession,
-    sourceProcess: fixtureTerminalHostVisibilityRequest.sourceProcess,
-    inventoryRevision: fixtureTerminalHostVisibilityRequest.inventoryRevision,
-    state: "active",
-    issuedAt: FIXTURE_TIME,
-    expiresAt: FIXTURE_LEASE_EXPIRY,
-  },
-};
 const fixtureTerminalHostTerminationRequest = {
   session: fixtureTerminalHostSession,
   mode: "immediate",
@@ -1057,35 +1031,6 @@ const validCases: readonly WireCorpusCase[] = [
     value: fixtureTerminalHostEventAcknowledgement,
   },
   {
-    name: "frozen neutral visibility renewal repeats the complete request",
-    schema: "terminalHostVisibilityRenewalRequest",
-    value: fixtureTerminalHostVisibilityRenewalRequest,
-  },
-  {
-    name: "frozen neutral visibility renewal returns a new active bounded lease",
-    schema: "terminalHostVisibilityRenewalResult",
-    value: fixtureTerminalHostVisibilityRenewalResult,
-  },
-  {
-    name: "frozen neutral visibility renewal rejects with one typed reason",
-    schema: "terminalHostVisibilityRenewalResult",
-    value: {
-      state: "rejected",
-      renewed: false,
-      reason: "stale-revision",
-      diagnostic: "revision 19 is behind the source",
-    },
-  },
-  {
-    name: "frozen neutral visibility renewal reports incomplete evidence as unknown",
-    schema: "terminalHostVisibilityRenewalResult",
-    value: {
-      state: "unknown",
-      renewed: false,
-      diagnostic: "inventory revision unavailable",
-    },
-  },
-  {
     name: "frozen neutral termination request",
     schema: "terminalHostTerminationRequest",
     value: fixtureTerminalHostTerminationRequest,
@@ -1635,48 +1580,6 @@ const invalidCases: readonly WireCorpusCase[] = [
     value: {
       ...fixtureTerminalHostEventAcknowledgement,
       through: { eventSequence: "013", outputOffset: "4096" },
-    },
-  },
-  {
-    name: "frozen visibility renewal rejects a nonpositive inventory revision",
-    schema: "terminalHostVisibilityRenewalRequest",
-    value: {
-      ...fixtureTerminalHostVisibilityRenewalRequest,
-      visibility: {
-        ...fixtureTerminalHostVisibilityRequest,
-        inventoryRevision: "0",
-      },
-    },
-  },
-  {
-    name: "frozen visibility renewal cannot reject for an untyped reason",
-    schema: "terminalHostVisibilityRenewalResult",
-    value: {
-      state: "rejected",
-      renewed: false,
-      reason: "renderer-disconnect",
-      diagnostic: "viewer went away",
-    },
-  },
-  {
-    name: "frozen visibility rejection cannot claim it renewed the lease",
-    schema: "terminalHostVisibilityRenewalResult",
-    value: {
-      state: "rejected",
-      renewed: true,
-      reason: "lease-expired",
-      diagnostic: "deadline already passed",
-    },
-  },
-  {
-    name: "frozen active lease cannot expire at the instant it was issued",
-    schema: "terminalHostVisibilityRenewalResult",
-    value: {
-      ...fixtureTerminalHostVisibilityRenewalResult,
-      lease: {
-        ...fixtureTerminalHostVisibilityRenewalResult.lease,
-        expiresAt: fixtureTerminalHostVisibilityRenewalResult.lease.issuedAt,
-      },
     },
   },
   {

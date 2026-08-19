@@ -59,8 +59,6 @@ import {
   TerminalHostSubscriptionEventSchema,
   TerminalHostTerminationRequestSchema,
   TerminalHostTerminationResultSchema,
-  TerminalHostVisibilityRenewalRequestSchema,
-  TerminalHostVisibilityRenewalResultSchema,
 } from "./terminal-host";
 
 export const SESSION_WIRE_SCHEMAS = {
@@ -104,10 +102,6 @@ export const SESSION_WIRE_SCHEMAS = {
   terminalHostEventAcknowledgementRequest:
     TerminalHostEventAcknowledgementRequestSchema,
   terminalHostEventAcknowledgement: TerminalHostEventAcknowledgementSchema,
-  terminalHostVisibilityRenewalRequest:
-    TerminalHostVisibilityRenewalRequestSchema,
-  terminalHostVisibilityRenewalResult:
-    TerminalHostVisibilityRenewalResultSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,
