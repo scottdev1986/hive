@@ -80,7 +80,15 @@ struct LiveRunProjectionTests {
         #expect(absent.provider == nil)
         #expect(absent.model == nil)
         #expect(absent.task == nil)
-        #expect(absent.activity == .unknown)
+        #expect(absent.rawStatus == "working")
+        #expect(absent.activity == .working)
+
+        let disconnectedLine = try #require(FeedLine.parse(
+            #"{"v":1,"agents":[],"orchestrator":{"name":"queen","status":null,"host":"sessiond","hostState":"running","hostDiagnostic":null,"sessionLocator":null}}"#))
+        let disconnected = try #require(
+            LiveRunProjection(feedLine: disconnectedLine).sessions.first)
+        #expect(disconnected.rawStatus == "disconnected")
+        #expect(disconnected.activity == .disconnected)
 
         let presentLine = try #require(FeedLine.parse(
             #"{"v":1,"agents":[],"orchestrator":{"name":"wire-queen","status":"working","tool":"codex","model":"gpt-5.6-sol","host":"sessiond","hostState":"running","hostDiagnostic":null,"sessionLocator":null}}"#))

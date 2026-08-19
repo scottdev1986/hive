@@ -17,7 +17,7 @@ final class ProjectSwitcherTests: XCTestCase {
         switcher.showPanel()
         defer { NSApp.windows.filter { $0.title == "Projects" }.forEach { $0.close() } }
 
-        XCTAssertTrue(labelValues().contains("1 panes"))
+        XCTAssertTrue(labelValues().contains("1 panes · 1 running"))
 
         _ = state.apply(feed: [AgentSnapshot(
             name: "worker", status: "working",

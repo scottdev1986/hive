@@ -31,7 +31,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
 
         let first = locator(generation: 1)
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
-            name: "queen", status: nil, host: "sessiond", hostState: "awaiting-visibility",
+            name: "queen", status: "spawning", host: "sessiond", hostState: "awaiting-visibility",
             sessionLocator: first))
         let provisionalView = try XCTUnwrap(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID))
@@ -40,7 +40,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             "an exact locator always starts the shared terminal lifecycle")
 
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
-            name: "queen", status: nil, host: "sessiond", hostState: "awaiting-visibility",
+            name: "queen", status: "spawning", host: "sessiond", hostState: "awaiting-visibility",
             sessionLocator: first))
         XCTAssertTrue(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID) === provisionalView)

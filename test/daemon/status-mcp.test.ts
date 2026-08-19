@@ -915,11 +915,17 @@ describe("WP7 MCP status tools", () => {
 
     expect((await report(1, "working")).status).toBe(200);
     expect(
+      daemon.status.orchestratorProviderStatus(ORCHESTRATOR_NAME, runId),
+    ).toMatchObject({ status: "working" });
+    expect(
       daemon.status.orchestratorStatus(
         db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
       ),
     ).toBe("working");
     expect((await report(2, "done")).status).toBe(200);
+    expect(
+      daemon.status.orchestratorProviderStatus(ORCHESTRATOR_NAME, runId),
+    ).toMatchObject({ status: "done" });
     expect(
       daemon.status.orchestratorStatus(
         db.recentOrchestratorSignals(ORCHESTRATOR_NAME),

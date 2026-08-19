@@ -114,14 +114,15 @@ public final class ProjectState {
     public static let orchestratorVisibilityID = "root"
     public static let orchestratorRecipient = "queen"
 
-    /// The master pane is the selected orchestrator terminal, created by the window at open — the feed's `agents` array only describes worker agents. It is seeded "unknown", which is not a status word of its own. Do not seed a concrete word here: ANY constant is a fabrication, and one outside the daemon's vocabulary is degraded to gray by the dot's unknown-word rule — permanently marking the root, alive by definition whenever this app runs, as a gray "unknown". The real status arrives on the feed's `orchestrator` field and is applied below; until the first snapshot lands, "unknown" is the honest word, and gray is the honest colour.
+    /// The master pane is the selected orchestrator terminal, created before the first feed snapshot. Until the daemon reports the queen's exact state, the app is connecting to that status source; this is transport lifecycle, not a guessed turn state.
     @discardableResult
     public func addOrchestrator(title: String = "Queen") -> [StateChange] {
         let paneID = ProjectState.orchestratorPaneID
         guard panes[paneID] == nil else { return [] }
         panes[paneID] = PaneState(
             id: paneID, kind: .orchestrator, title: title,
-            feedStatus: "unknown", status: .unknown, headerDetail: "unknown")
+            feedStatus: "connecting", status: .running, headerDetail: "Connecting",
+            activity: .spawning)
         layout.insert(paneID, in: layoutBounds)
         orchestratorPane = paneID
         var changes: [StateChange] = [.paneAdded(paneID), .layoutChanged]
@@ -132,7 +133,7 @@ public final class ProjectState {
         return changes
     }
 
-    /// Reconciles one feed snapshot against the pane set: - unknown live agent → pane inserted (least-disruptive split) - known agent → metadata/status refreshed, attention transitions applied - `closedAt` present, or agent vanished from the snapshot → the pane is marked close-pending exactly once; the UI closes it after the grace. - agents already closed (or "dead") that never had a pane are ignored. - the root's status (a separate field, since the root has no AgentRecord) updates the orchestrator pane; nil means the daemon could not honestly say, so the pane goes back to "unknown" rather than keeping a stale word.
+    /// Reconciles one feed snapshot against the pane set: - unknown live agent → pane inserted (least-disruptive split) - known agent → metadata/status refreshed, attention transitions applied - `closedAt` present, or agent vanished from the snapshot → the pane is marked close-pending exactly once; the UI closes it after the grace. - agents already closed (or "dead") that never had a pane are ignored. - the root's status (a separate field, since the root has no AgentRecord) updates the orchestrator pane and raises the same attention used by worker questions.
     @discardableResult
     public func apply(feed agents: [AgentSnapshot],
                       orchestrator: OrchestratorSnapshot? = nil) -> [StateChange] {
@@ -224,22 +225,48 @@ public final class ProjectState {
         return inventory
     }
 
-    /// The root's status word from one snapshot. A nil snapshot is the daemon saying it does not know (no turn events, or a self-contradicting record that means the root's hooks are not reaching it) — so the pane reverts to "unknown" and its dot goes gray. Reverting matters: holding the last known word would turn a lost signal into a confident stale claim, which is the exact failure this whole change exists to remove. It does not clear an already measured terminal locator; missing turn state is not host exit.
+    /// Applies the daemon's provider-native queen status. A missing snapshot is
+    /// a disconnected status channel, never an unknown turn; it clears stale
+    /// attention without erasing an already measured terminal locator.
     private func applyOrchestrator(_ snapshot: OrchestratorSnapshot?) -> [StateChange] {
         let paneID = ProjectState.orchestratorPaneID
         guard var pane = panes[paneID] else { return [] }
         let previous = pane
-        pane.feedStatus = snapshot?.status ?? "unknown"
-        pane.headerDetail = snapshot?.presentation.headerDetail ?? "unknown"
-        pane.status = snapshot?.presentation.paneStatus.paneStatus() ?? .unknown
-        pane.activity = snapshot?.presentation.renderedActivity ?? .unknown
-        pane.terminalVisibilityState = snapshot?.presentation.renderedTerminalState
+        if let snapshot {
+            pane.feedStatus = snapshot.effectiveStatus
+            pane.headerDetail = snapshot.renderedHeaderDetail
+            pane.status = snapshot.renderedPaneStatus(
+                acknowledged: acknowledged.contains(paneID))
+            pane.activity = snapshot.renderedActivity
+            pane.attentionPresentation = snapshot.presentation.attention
+            pane.terminalVisibilityState = snapshot.presentation.renderedTerminalState
+        } else {
+            pane.feedStatus = "disconnected"
+            pane.headerDetail = "Disconnected"
+            pane.status = .disconnected(
+                reason: "queen status feed is unavailable",
+                lastConfirmed: previous.feedStatus)
+            pane.activity = .disconnected
+            pane.attentionPresentation = nil
+        }
         if let host = snapshot?.host {
             pane.sessionLocator = host == "sessiond" ? snapshot?.sessionLocator : nil
         }
         guard pane != previous else { return [] }
+        let attentionChanged =
+            pane.attentionPresentation != previous.attentionPresentation
+            || pane.status != previous.status
+        if attentionChanged {
+            acknowledged.remove(paneID)
+            attention.resolveAll(paneID: paneID, projectID: projectID)
+        }
         panes[paneID] = pane
-        return [.statusChanged(paneID)]
+        var changes: [StateChange] = [.statusChanged(paneID)]
+        if attentionChanged {
+            let raised = raiseAttention(for: pane)
+            changes.append(contentsOf: raised.isEmpty ? [.attentionChanged] : raised)
+        }
+        return changes
     }
 
     private func isDisconnected(_ status: PaneStatus) -> Bool {
@@ -256,7 +283,7 @@ public final class ProjectState {
             pane.status = .disconnected(reason: reason, lastConfirmed: pane.feedStatus)
             pane.activity = .disconnected
             pane.terminalVisibilityState = .reconnecting
-            pane.feedStatus = "unknown"
+            pane.feedStatus = pane.kind == .orchestrator ? "disconnected" : "unknown"
             pane.headerDetail = reason
             panes[paneID] = pane
             changes.append(.statusChanged(paneID))

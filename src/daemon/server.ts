@@ -889,6 +889,9 @@ export class HiveDaemon {
       terminalHost: this.terminalHost,
       vendorAvailability: this.queenVendorAvailability,
       rootObservation: this.queenRootObservation,
+      rootProviderStatus: (providerRunId) =>
+        this.status.orchestratorProviderStatus(ORCHESTRATOR_NAME, providerRunId)
+          ?.status ?? null,
       authenticate: (request, route) => this.authenticate(request, route),
       denied: (decision) => this.denied(decision),
       authorize: (
@@ -2786,7 +2789,7 @@ export class HiveDaemon {
     }
   }
 
-  /** `GET /orchestrator-status` — the root identity Workspace cannot read from an agents-table row. Turn state comes from root events, while provider and model come from its active ProviderRun; each stays null when its own source has no answer. Gated on `status:read`, the same action `hive_status` needs: this is root status, not a new kind of authority, and the feed already holds it. */
+  /** `GET /orchestrator-status` — the root identity Workspace cannot read from an agents-table row. The exact provider turn projection wins; conservative boundaries support older sources, and host lifecycle keeps the status concrete between those observations. */
   private orchestratorStatusEndpoint(request: Request): Response {
     // A poll surface (the feed asks every second): don't audit allows.
     const authorized = this.authorizeRoute(
@@ -2798,11 +2801,35 @@ export class HiveDaemon {
     if (!authorized.ok) return authorized.response;
     const host = this.orchestratorSessiond?.snapshot() ?? null;
     const providerRun = this.rootProviderRun();
+    const providerStatus =
+      providerRun === null
+        ? null
+        : this.status.orchestratorProviderStatus(
+            ORCHESTRATOR_NAME,
+            providerRun.runId,
+          );
+    const boundaryStatus = this.status.orchestratorStatus(
+      this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
+    );
+    const status: OrchestratorHostStatus["status"] =
+      host?.state === "failed"
+        ? "failed"
+        : host?.state === "exited"
+          ? "exited"
+          : host?.state === "awaiting-visibility"
+            ? "spawning"
+            : (providerStatus?.status ??
+              boundaryStatus ??
+              (providerRun !== null
+                ? "connecting"
+                : host?.state === "running"
+                  ? "ready"
+                  : "disconnected"));
     const body: OrchestratorHostStatus = {
       name: ORCHESTRATOR_NAME,
-      status: this.status.orchestratorStatus(
-        this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
-      ),
+      status,
+      statusObservedAt:
+        status === providerStatus?.status ? providerStatus.observedAt : null,
       tool: providerRun?.provider ?? null,
       model: providerRun?.model ?? null,
       host: "sessiond",

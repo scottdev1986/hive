@@ -90,8 +90,8 @@ public struct LiveRunSessionSummary: Equatable {
         name = orchestrator.name
         provider = orchestrator.tool.map { ProviderID($0) }
         model = orchestrator.model
-        rawStatus = orchestrator.status ?? "unknown"
-        activity = orchestrator.presentation.renderedActivity
+        rawStatus = orchestrator.effectiveStatus
+        activity = orchestrator.renderedActivity
         task = nil
         if let candidate = orchestrator.sessionLocator,
            Self.isAttachable(candidate, agentID: Self.queenID) {

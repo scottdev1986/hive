@@ -127,11 +127,12 @@
     "presentation": {
       "panePresence": "visible",
       "terminalState": "pending",
-      "headerDetail": "working",
+      "headerDetail": "Working",
       "paneStatus": {
         "kind": "running"
       },
-      "activity": "working"
+      "activity": "working",
+      "attention": null
     }
   }
 }

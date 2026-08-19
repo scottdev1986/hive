@@ -206,7 +206,16 @@ describe("queen provider projection", () => {
     expect(projection.root).toEqual({ name: "queen", instanceId: "inst-1" });
   });
 
-  test("derives health from turn signals and names a contradiction", () => {
+  test("prefers exact provider health and retains conservative legacy fallback", () => {
+    const asking = buildQueenProviderProjection({
+      ...base,
+      signals: ["turn-end", "turn-end"],
+      providerStatus: "awaiting_answer",
+      observedLiveProvider: "claude",
+    });
+    expect(asking.health).toEqual("awaiting_answer");
+    expect(asking.contradicted).toEqual(false);
+
     const working = buildQueenProviderProjection({
       ...base,
       signals: ["turn-start"],
@@ -215,17 +224,18 @@ describe("queen provider projection", () => {
     expect(working.health).toEqual("working");
     expect(working.contradicted).toEqual(false);
 
-    // A turn that ended without starting: health withdrawn, contradiction named.
+    // A legacy turn that ended without starting is named as a contradiction;
+    // disconnected is the concrete lifecycle state when no root is observed.
     const lying = buildQueenProviderProjection({
       ...base,
       signals: ["turn-end", "turn-end"],
     });
-    expect(lying.health).toBeNull();
+    expect(lying.health).toEqual("disconnected");
     expect(lying.contradicted).toEqual(true);
 
-    // No signals at all is unknown, never a contradiction.
+    // No signals and no live root is disconnected, never unknown.
     const silent = buildQueenProviderProjection(base);
-    expect(silent.health).toBeNull();
+    expect(silent.health).toEqual("disconnected");
     expect(silent.contradicted).toEqual(false);
   });
 

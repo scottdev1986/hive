@@ -80,14 +80,22 @@ export const ATTENTION_STATES = [
 ] as const;
 export const STATUS_FRESHNESS_STATES = ["fresh", "stale", "unknown"] as const;
 
-/** The root's status words, derived from its own turn-boundary events. The one
- * authority for this union: every wire surface that reports the root's status
- * (queen-provider projection, orchestrator-host envelope) names this schema,
- * and the daemon's status service derives values of this type. */
+/** The root's status words. Provider-native turn states are preserved exactly;
+ * lifecycle words cover launch, connection, and exit before or after a turn. */
 export const ORCHESTRATOR_STATUSES = [
   "spawning",
+  "connecting",
+  "ready",
+  "queued",
+  "submitting",
   "working",
   "idle",
+  "awaiting_approval",
+  "awaiting_answer",
+  "cancelling",
+  "done",
+  "failed",
+  "disconnected",
   "exited",
 ] as const;
 export const OrchestratorStatusSchema = z.enum(ORCHESTRATOR_STATUSES);

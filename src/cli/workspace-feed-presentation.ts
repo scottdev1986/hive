@@ -1,5 +1,8 @@
 import type { AgentRecord } from "../schemas/agent";
-import type { WorkspaceStatusDimensionsV1 } from "../schemas/status-envelope";
+import type {
+  OrchestratorStatus,
+  WorkspaceStatusDimensionsV1,
+} from "../schemas/status-envelope";
 import type { WorkspaceOrchestratorSnapshot } from "./workspace-feed";
 
 export type WorkspacePanePresentation =
@@ -71,11 +74,18 @@ function headerDetail(agent: AgentRecord): string {
 function paneFromWord(raw: string): WorkspacePanePresentation {
   switch (raw) {
     case "spawning":
+    case "connecting":
+    case "ready":
+    case "queued":
+    case "submitting":
     case "working":
     case "idle":
+    case "cancelling":
       return { kind: "running" };
     case "awaiting-approval":
+    case "awaiting_approval":
       return { kind: "waiting", waitingKind: "approval" };
+    case "awaiting_answer":
     case "control-paused":
     case "stuck":
       return { kind: "waiting", waitingKind: "userInput" };
@@ -84,6 +94,7 @@ function paneFromWord(raw: string): WorkspacePanePresentation {
     case "failed":
       return { kind: "failed" };
     case "dead":
+    case "disconnected":
     case "exited":
       return {
         kind: "disconnected",
@@ -140,23 +151,31 @@ function paneFromDimensions(
 
 function activityFromWord(raw: string): WorkspaceAgentActivity {
   switch (raw) {
+    case "queued":
+    case "submitting":
     case "working":
+    case "cancelling":
       return "working";
+    case "ready":
     case "idle":
       return "idle";
     case "awaiting-approval":
+    case "awaiting_approval":
+    case "awaiting_answer":
     case "control-paused":
     case "stuck":
       return "needs-user";
     case "held":
       return "held";
     case "spawning":
+    case "connecting":
       return "spawning";
     case "done":
       return "done";
     case "failed":
       return "failed";
     case "dead":
+    case "disconnected":
     case "exited":
       return "disconnected";
     default:
@@ -223,6 +242,8 @@ function attentionSeverity(
   }
   switch (raw) {
     case "awaiting-approval":
+    case "awaiting_approval":
+    case "awaiting_answer":
     case "control-paused":
     case "stuck":
       return "waiting";
@@ -306,11 +327,11 @@ export function presentWorkspaceAgent(
 
 export function presentWorkspaceOrchestrator(
   snapshot: WorkspaceOrchestratorSnapshot,
-): Omit<WorkspaceAgentPresentation, "attention"> {
+): WorkspaceAgentPresentation {
   const raw =
     snapshot.host === "sessiond" && snapshot.hostState === "failed"
       ? "failed"
-      : (snapshot.status ?? "unknown");
+      : snapshot.status;
   const terminalState: WorkspaceAgentPresentation["terminalState"] =
     snapshot.host === "sessiond" && snapshot.hostState === "running"
       ? "live"
@@ -319,11 +340,66 @@ export function presentWorkspaceOrchestrator(
         : snapshot.host === "sessiond" && snapshot.hostState === "failed"
           ? "failed"
           : "pending";
+  const label = orchestratorStatusLabel(raw);
+  const raisedAt = Date.parse(snapshot.statusObservedAt ?? "") / 1_000;
+  const attention: WorkspaceAttentionPresentation | null =
+    raw === "awaiting_answer"
+      ? {
+          id: `status-orchestrator:${snapshot.name}`,
+          severity: "waiting",
+          title: "Queen is asking a question",
+          detail: "Answer needed in the queen pane",
+          raisedAt: Number.isFinite(raisedAt) ? raisedAt : 0,
+        }
+      : raw === "awaiting_approval"
+        ? {
+            id: `status-orchestrator:${snapshot.name}`,
+            severity: "waiting",
+            title: "Queen is awaiting approval",
+            detail: "Approval needed in the queen pane",
+            raisedAt: Number.isFinite(raisedAt) ? raisedAt : 0,
+          }
+        : null;
   return {
     panePresence: "visible",
     terminalState,
-    headerDetail: raw,
+    headerDetail: label,
     paneStatus: paneFromWord(raw),
     activity: activityFromWord(raw),
+    attention,
   };
+}
+
+/** Matches the status words rendered at the bottom of the queen's agent-ui. */
+function orchestratorStatusLabel(status: OrchestratorStatus): string {
+  switch (status) {
+    case "spawning":
+      return "Spawning";
+    case "connecting":
+      return "Connecting";
+    case "ready":
+      return "Ready";
+    case "idle":
+      return "Idle";
+    case "queued":
+      return "Queued";
+    case "submitting":
+      return "Sending";
+    case "working":
+      return "Working";
+    case "awaiting_approval":
+      return "Approval needed";
+    case "awaiting_answer":
+      return "Answer needed";
+    case "cancelling":
+      return "Stopping";
+    case "done":
+      return "Done";
+    case "failed":
+      return "Failed";
+    case "disconnected":
+      return "Disconnected";
+    case "exited":
+      return "Exited";
+  }
 }

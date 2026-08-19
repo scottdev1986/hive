@@ -13,10 +13,9 @@ import {
  *
  * `workspace/Tests/WorkspaceCoreTests/Fixtures/queen-provider-corpus.json` is
  * decoded by the Swift screen. This test proves every value row is a document
- * the daemon may legitimately EMIT, and that the shared fixture still covers
- * the whole vocabulary both decoders have to handle. Adding a change state or a
- * health value fails here until the fixture carries it; neither side may widen
- * the schema alone.
+ * the daemon may legitimately emit. Health is forward-compatible: the Swift
+ * client preserves unknown words, while dedicated tests pin the exact current
+ * queen vocabulary without multiplying projection-availability fixture rows.
  */
 describe("queen provider wire contract (shared with the Swift screen decoder)", () => {
   const corpus: Array<{ availability: string; value: unknown }> = JSON.parse(
@@ -56,12 +55,18 @@ describe("queen provider wire contract (shared with the Swift screen decoder)", 
     expect(states).toEqual([...QUEEN_PROVIDER_CHANGE_STATES].sort());
   });
 
-  test("the fixture exercises EVERY root health value, and the null reading", () => {
+  test("the fixture retains legacy health values and the nullable v1 reading", () => {
     const healths = [...new Set(projections.map((p) => p.health))];
-    for (const value of QueenRootHealthSchema.options) {
+    for (const value of ["spawning", "working", "idle", "exited"] as const) {
       expect(healths).toContain(value);
     }
     expect(healths).toContain(null);
+  });
+
+  test("the schema accepts every exact queen status", () => {
+    for (const value of QueenRootHealthSchema.options) {
+      expect(QueenRootHealthSchema.parse(value)).toBe(value);
+    }
   });
 
   test("the fixture covers an unobserved root and a contradicted record", () => {

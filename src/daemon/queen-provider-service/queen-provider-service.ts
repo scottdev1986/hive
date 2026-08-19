@@ -23,7 +23,10 @@ import {
   PrepareQueenLaunchResponseSchema,
   RecoveryRepliesRequestSchema,
 } from "../../schemas/run-checkpoint";
-import type { WorkspaceSnapshotV2 } from "../../schemas/status-envelope";
+import type {
+  OrchestratorStatus,
+  WorkspaceSnapshotV2,
+} from "../../schemas/status-envelope";
 import { errorMessage } from "../../shared/error-message";
 import type {
   Action,
@@ -63,6 +66,7 @@ export interface QueenProviderServiceDependencies {
   terminalHost: HiveTerminalHostAdapter;
   vendorAvailability: () => Record<CapabilityProvider, { available: boolean }>;
   rootObservation: (() => CapabilityProvider | null) | null;
+  rootProviderStatus: (providerRunId: string) => OrchestratorStatus | null;
   authenticate: (request: Request, route: string) => Decision;
   denied: (decision: Denial) => Response;
   authorize: (
@@ -139,9 +143,12 @@ export class QueenProviderService {
     observed: CapabilityProvider | null,
   ): QueenProviderProjection {
     const control = this.controlStore().read();
+    const run = this.deps.db.getActiveRootProviderRun(hiveInstanceSuffix());
     return buildQueenProviderProjection({
       instanceId: hiveInstanceSuffix(),
       signals: this.deps.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
+      providerStatus:
+        run === null ? null : this.deps.rootProviderStatus(run.runId),
       observedLiveProvider: observed,
       vendors: this.deps.vendorAvailability(),
       change: {

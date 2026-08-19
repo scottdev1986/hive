@@ -284,7 +284,7 @@ The exact attestation is permitted only when the runner actually enforced and pr
 ## See Also
 
 - [Multiple concurrent instances](../daemon/multi-instance.md) — the instance boundary and shared-machine exceptions
-- [Orchestrator status](../daemon/orchestrator-status.md) — measured root state and honest unknown
+- [Orchestrator status](../daemon/orchestrator-status.md) — measured root turn and connection state
 - [Workspace blueprint](../workspace/blueprint.md) — visible product surface
 - [Graphify integration](../graphify/integration.md) — graph behavior and degradation rules
 - [Versioning and release](versioning-and-release.md) — native artifact and activation contract

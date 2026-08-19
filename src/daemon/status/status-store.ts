@@ -700,6 +700,30 @@ export class StatusStore implements WorkspaceStatusEventSource {
     return { revision, events: [...unique.values()] };
   }
 
+  /** The newest provider-native status event for one root ProviderRun. The
+   * entity/run binding excludes stale predecessor sessions; seqKey supplies
+   * daemon acceptance order when provider timestamps tie. */
+  latestProviderStatusEvent(
+    entity: WorkspaceEventV2["entity"],
+    providerRunId: string,
+    kind: "status.runtime" | "status.turn",
+  ): WorkspaceEventV2 | null {
+    const row = this.db.database
+      .query(`
+        SELECT payload FROM status_workspace_events
+        WHERE entityKey = ?
+          AND json_extract(payload, '$.source.kind') = 'provider-protocol'
+          AND json_extract(payload, '$.data.providerRunId') = ?
+          AND json_extract(payload, '$.kind') = ?
+        ORDER BY seqKey DESC LIMIT 1
+      `)
+      .get(statusEntityKey(entity), providerRunId, kind);
+    if (row === null) return null;
+    return WorkspaceEventV2Schema.parse(
+      JSON.parse(EventRowSchema.parse(row).payload),
+    );
+  }
+
   /** The newest sequence this agent's own entity has produced, or null when it has produced nothing. A monotonic identity rather than a timestamp. A watcher that samples this before an action and again after can tell that the stream genuinely advanced; a wall clock only tells it that some clock moved, and every writer of a shared clock moves it. */
   newestAgentEventSeq(agentId: string): string | null {
     const row = this.db.database

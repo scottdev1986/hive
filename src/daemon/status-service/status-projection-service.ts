@@ -38,6 +38,8 @@ const PROVIDER_RUNTIME_STATES = [
   "exited",
 ] as const satisfies readonly (typeof RUNTIME_STATES)[number][];
 
+const ProviderRuntimeStatusSchema = z.enum(PROVIDER_RUNTIME_STATES);
+
 const PROVIDER_TURN_STATES = [
   "idle",
   "queued",
@@ -48,10 +50,12 @@ const PROVIDER_TURN_STATES = [
   "failed",
 ] as const satisfies readonly (typeof TURN_STATES)[number][];
 
+const ProviderTurnStatusSchema = z.enum(PROVIDER_TURN_STATES);
+
 export const ProviderStatusProjectionSchema = z
   .strictObject({
-    runtime: z.enum(PROVIDER_RUNTIME_STATES).optional(),
-    turn: z.enum(PROVIDER_TURN_STATES).optional(),
+    runtime: ProviderRuntimeStatusSchema.optional(),
+    turn: ProviderTurnStatusSchema.optional(),
   })
   .refine(
     (value) => value.runtime !== undefined || value.turn !== undefined,
@@ -330,6 +334,38 @@ export class StatusService {
     signals: readonly OrchestratorSignalKind[],
   ): OrchestratorStatus | null {
     return deriveOrchestratorStatus(signals);
+  }
+
+  /** Reads the same provider-native projection shown by agent-ui. Its footer
+   * keeps the exact turn as the primary label whenever one exists; runtime
+   * state supplies the label only before the first turn. */
+  orchestratorProviderStatus(
+    name: string,
+    providerRunId: string,
+  ): Readonly<{
+    status: OrchestratorStatus;
+    observedAt: string;
+  }> | null {
+    const turnEvent = this.events.latestProviderStatusEvent(
+      { kind: "orchestrator", id: canonicalOrchestratorName(name) },
+      providerRunId,
+      "status.turn",
+    );
+    const runtimeEvent = this.events.latestProviderStatusEvent(
+      { kind: "orchestrator", id: canonicalOrchestratorName(name) },
+      providerRunId,
+      "status.runtime",
+    );
+    const turn = ProviderTurnStatusSchema.safeParse(turnEvent?.data.value);
+    const runtime = ProviderRuntimeStatusSchema.safeParse(
+      runtimeEvent?.data.value,
+    );
+    if (turn.success && turnEvent !== null) {
+      return { status: turn.data, observedAt: turnEvent.occurredAt };
+    }
+    return runtime.success && runtimeEvent !== null
+      ? { status: runtime.data, observedAt: runtimeEvent.occurredAt }
+      : null;
   }
 
   observeProvider(raw: ProviderStatusReport): FusedAgentStatus | null {

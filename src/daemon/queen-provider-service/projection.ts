@@ -14,6 +14,7 @@ import { resolveWorkingKimiExecutable } from "../../adapters/providers/kimi-cli"
 import { resolveWorkingOpencodeExecutable } from "../../adapters/providers/opencode-cli";
 import { systemNow } from "../../shared/clock";
 import {
+  type OrchestratorStatus,
   deriveOrchestratorStatus,
   type OrchestratorSignalKind,
 } from "../status-service/status-service";
@@ -77,6 +78,7 @@ export function vendorAvailabilityReader(
 export interface QueenProviderProjectionInputs {
   instanceId: string;
   signals: readonly OrchestratorSignalKind[];
+  providerStatus?: OrchestratorStatus | null;
   observedLiveProvider: CapabilityProvider | null;
   vendors: Record<CapabilityProvider, { available: boolean }>;
   change: {
@@ -91,12 +93,20 @@ export function buildQueenProviderProjection(
   inputs: QueenProviderProjectionInputs,
 ): QueenProviderProjection {
   const [newest, previous] = inputs.signals;
+  const providerStatus = inputs.providerStatus ?? null;
+  const legacyStatus = deriveOrchestratorStatus(inputs.signals);
   return QueenProviderProjectionSchema.parse({
     schemaVersion: 1,
     root: { name: ORCHESTRATOR_NAME, instanceId: inputs.instanceId },
     liveProvider: inputs.observedLiveProvider,
-    health: deriveOrchestratorStatus(inputs.signals),
-    contradicted: newest === "turn-end" && previous !== "turn-start",
+    health:
+      providerStatus ??
+      legacyStatus ??
+      (inputs.observedLiveProvider === null ? "disconnected" : "connecting"),
+    contradicted:
+      providerStatus === null &&
+      newest === "turn-end" &&
+      previous !== "turn-start",
     vendors: Object.fromEntries(
       CAPABILITY_PROVIDERS.map((provider) => [
         provider,

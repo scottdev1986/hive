@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { ORCHESTRATOR_NAME } from "../../schemas/agent";
 import { CapabilityProviderSchema } from "../../schemas/capability";
-import { domainUuidV7Schema } from "../../schemas/primitives";
+import {
+  domainUuidV7Schema,
+  Rfc3339UtcMillisecondsSchema,
+} from "../../schemas/primitives";
 import { OrchestratorStatusSchema } from "../../schemas/status-envelope";
 import {
   type HiveTerminalBinding,
@@ -36,11 +39,13 @@ export const OrchestratorSessiondStateSchema = z.enum([
  * `GET /orchestrator-status`, in full.
  *
  * The root's turn status, provider identity, and terminal lifecycle are
- * independent measurements. Each stays nullable because none is guessed.
+ * independent measurements. Status is always concrete: provider-native turn
+ * state wins, while connection lifecycle covers periods without a turn.
  */
 export const OrchestratorHostStatusSchema = z.strictObject({
   name: z.literal(ORCHESTRATOR_NAME),
-  status: OrchestratorStatusSchema.nullable(),
+  status: OrchestratorStatusSchema,
+  statusObservedAt: Rfc3339UtcMillisecondsSchema.nullable().optional(),
   tool: CapabilityProviderSchema.nullable().optional(),
   model: z.string().min(1).nullable().optional(),
   host: OrchestratorHostKindSchema,

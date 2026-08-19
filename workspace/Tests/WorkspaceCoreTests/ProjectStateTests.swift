@@ -410,12 +410,12 @@ final class ProjectStateTests: XCTestCase {
             feed: [],
             orchestrator: OrchestratorSnapshot(
                 name: "queen",
-                status: nil,
+                status: "spawning",
                 host: "sessiond",
                 hostState: "awaiting-visibility",
                 sessionLocator: first,
                 presentation: rootPresentation(
-                    activity: "unknown", terminalState: "pending"))),
+                    activity: "spawning", terminalState: "pending"))),
             [.statusChanged(ProjectState.orchestratorPaneID)])
         XCTAssertEqual(state.visibilityInventory(), WorkspaceVisibilityInventory(
             inventoryRevision: "1",
@@ -442,7 +442,7 @@ final class ProjectStateTests: XCTestCase {
             "a supervisor relaunch must replace the exact root generation")
         state.apply(feed: [], orchestrator: nil)
         XCTAssertEqual(state.panes[ProjectState.orchestratorPaneID]?.sessionLocator, second,
-                       "unknown turn state is not evidence that the terminal vanished")
+                       "a disconnected status channel is not evidence that the terminal vanished")
     }
 
     func testFailedRootHostIsFailureNotReconnect() {
@@ -458,7 +458,7 @@ final class ProjectStateTests: XCTestCase {
 
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(
             name: "queen",
-            status: nil,
+            status: "failed",
             host: "sessiond",
             hostState: "failed",
             hostDiagnostic: "native host registration failed",
@@ -471,10 +471,46 @@ final class ProjectStateTests: XCTestCase {
                 activity: "failed")))
 
         let pane = state.panes[ProjectState.orchestratorPaneID]
-        XCTAssertEqual(pane?.feedStatus, "unknown")
+        XCTAssertEqual(pane?.feedStatus, "failed")
         XCTAssertEqual(pane?.status, .failed(acknowledged: false))
         XCTAssertEqual(pane?.terminalVisibilityState, .failed)
         XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .failed)
+    }
+
+    func testQueenQuestionRaisesAndThenClearsAttention() throws {
+        let state = ProjectState(projectID: "proj", displayName: "hive")
+        state.addOrchestrator()
+        let waiting = AgentFeedPresentation(
+            panePresence: "visible",
+            terminalState: "live",
+            headerDetail: "Answer needed",
+            paneStatus: FeedPanePresentation(kind: "waiting", waitingKind: "userInput"),
+            activity: "needs-user",
+            attention: FeedAttentionPresentation(
+                id: "status-orchestrator:queen",
+                severity: "waiting",
+                title: "Queen is asking a question",
+                detail: "Answer needed in the queen pane",
+                raisedAt: 1_755_518_460))
+
+        let changes = state.apply(feed: [], orchestrator: OrchestratorSnapshot(
+            name: "queen", status: "awaiting_answer",
+            presentation: waiting))
+        let pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
+        XCTAssertEqual(pane.activity, .needsUser)
+        XCTAssertEqual(pane.status, .waiting(.userInput))
+        XCTAssertEqual(state.attention.ordered.map(\.title), ["Queen is asking a question"])
+        XCTAssertTrue(changes.contains(.attentionChanged))
+
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(
+            name: "queen", status: "working",
+            presentation: AgentFeedPresentation(
+                panePresence: "visible",
+                terminalState: "live",
+                headerDetail: "Working",
+                paneStatus: FeedPanePresentation(kind: "running"),
+                activity: "working")))
+        XCTAssertTrue(state.attention.ordered.isEmpty)
     }
 
     func testPromoteAndReturnOrchestrator() {
@@ -498,11 +534,9 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertNil(state.attention.ordered.first { $0.paneID == failed })
     }
 
-    /// Feed loss turns every pane disconnected/unknown, including the
-    /// orchestrator. Its status is measured from the root's turn boundaries, so
-    /// a dead feed makes it as untrustworthy as any agent's — the root may have
-    /// started or finished turns since the last line we read. The terminal stays
-    /// attached; what we lost is our knowledge of the root, not the root.
+    /// Feed loss turns every pane disconnected. Worker raw status becomes
+    /// unknown, while the queen's concrete status word is disconnected; neither
+    /// keeps the stale turn that preceded transport loss.
     func testMarkFeedLostTurnsEveryPaneGrayIncludingTheOrchestrator() {
         let state = drivenState()
         state.markFeedLost()
@@ -510,7 +544,9 @@ final class ProjectStateTests: XCTestCase {
             if case .disconnected = pane.status {} else {
                 XCTFail("\(paneID) should be disconnected after feed loss")
             }
-            XCTAssertEqual(pane.feedStatus, "unknown",
+            XCTAssertEqual(
+                pane.feedStatus,
+                pane.kind == .orchestrator ? "disconnected" : "unknown",
                            "\(paneID) must not keep a stale status word")
         }
     }

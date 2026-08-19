@@ -234,16 +234,48 @@ describe("workspace feed presentation", () => {
 
     expect(
       presentWorkspaceOrchestrator(
-        orchestrator(null, {
+        orchestrator("failed", {
           hostState: "failed",
         }),
       ),
     ).toEqual({
       panePresence: "visible",
       terminalState: "failed",
-      headerDetail: "failed",
+      headerDetail: "Failed",
       paneStatus: { kind: "failed" },
       activity: "failed",
+      attention: null,
+    });
+  });
+
+  test("matches the queen TUI's done, idle, and question states", () => {
+    expect(presentWorkspaceOrchestrator(orchestrator("done"))).toMatchObject({
+      headerDetail: "Done",
+      paneStatus: { kind: "completed" },
+      activity: "done",
+      attention: null,
+    });
+    expect(presentWorkspaceOrchestrator(orchestrator("idle"))).toMatchObject({
+      headerDetail: "Idle",
+      paneStatus: { kind: "running" },
+      activity: "idle",
+      attention: null,
+    });
+    expect(
+      presentWorkspaceOrchestrator(
+        orchestrator("awaiting_answer", { statusObservedAt: timestamp }),
+      ),
+    ).toMatchObject({
+      headerDetail: "Answer needed",
+      paneStatus: { kind: "waiting", waitingKind: "userInput" },
+      activity: "needs-user",
+      attention: {
+        id: "status-orchestrator:queen",
+        severity: "waiting",
+        title: "Queen is asking a question",
+        detail: "Answer needed in the queen pane",
+        raisedAt: Date.parse(timestamp) / 1_000,
+      },
     });
   });
 });
@@ -512,8 +544,23 @@ describe("runWorkspaceFeed", () => {
     ]);
   });
 
-  test("preserves every known orchestrator lifecycle word", () => {
-    for (const status of ["spawning", "working", "idle", "exited"] as const) {
+  test("preserves every known orchestrator status word", () => {
+    for (const status of [
+      "spawning",
+      "connecting",
+      "ready",
+      "queued",
+      "submitting",
+      "working",
+      "idle",
+      "awaiting_approval",
+      "awaiting_answer",
+      "cancelling",
+      "done",
+      "failed",
+      "disconnected",
+      "exited",
+    ] as const) {
       expect(
         parseWorkspaceOrchestratorSnapshot({
           name: "queen",
@@ -537,18 +584,18 @@ describe("runWorkspaceFeed", () => {
     ).toBeNull();
   });
 
-  test("preserves a pending root locator before any turn status exists", () => {
+  test("preserves a pending root locator with a concrete launch status", () => {
     expect(
       parseWorkspaceOrchestratorSnapshot({
         name: "queen",
-        status: null,
+        status: "spawning",
         host: "sessiond",
         hostState: "awaiting-visibility",
         hostDiagnostic: null,
         sessionLocator: rootLocator,
       }),
     ).toEqual(
-      orchestrator(null, {
+      orchestrator("spawning", {
         host: "sessiond",
         hostState: "awaiting-visibility",
         sessionLocator: rootLocator,
@@ -566,11 +613,11 @@ describe("runWorkspaceFeed", () => {
     ).toBeNull();
   });
 
-  test("preserves exact root provider identity and honest absence", () => {
+  test("preserves exact root provider identity while connecting", () => {
     expect(
       parseWorkspaceOrchestratorSnapshot({
         name: "queen",
-        status: null,
+        status: "connecting",
         tool: "codex",
         model: "gpt-5.6-sol",
         host: "sessiond",
@@ -579,7 +626,7 @@ describe("runWorkspaceFeed", () => {
         sessionLocator: null,
       }),
     ).toEqual(
-      orchestrator(null, {
+      orchestrator("connecting", {
         tool: "codex",
         model: "gpt-5.6-sol",
       }),
@@ -925,26 +972,19 @@ describe("runWorkspaceFeed", () => {
     expect(run.lines[0]?.agents).toHaveLength(1);
   });
 
-  /**
-   * When the daemon cannot honestly say what the root is doing, the field must
-   * be ABSENT — not "idle", not a stale last value, not a placeholder. The
-   * Workspace renders a missing status as unknown/gray, so omission is how the
-   * wire says "nobody knows", and an absent field is unknown, never false.
-   * Defaulting to a status word fabricates a measurement.
-   */
-  test("omits the field entirely when the root's status is unknown", async () => {
+  test("omits the field when the root-status channel is unavailable", async () => {
     const run = await runScript(
       [last(snapshot(agent("maya")))],
       absentAutonomy,
       async () => null,
     );
     expect(run.lines[0]).not.toHaveProperty("orchestrator");
-    // Unknowable root status must not drop the rest of the snapshot.
+    // A failed independent root read must not drop the rest of the snapshot.
     expect(run.lines[0]?.agents).toHaveLength(1);
   });
 
-  test("carries a pending sessiond root locator when turn status is unknown", async () => {
-    const pending = orchestrator(null, {
+  test("carries a pending sessiond root locator with spawning status", async () => {
+    const pending = orchestrator("spawning", {
       host: "sessiond",
       hostState: "awaiting-visibility",
       sessionLocator: rootLocator,

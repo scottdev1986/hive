@@ -2,21 +2,42 @@
 
 import Foundation
 
-/// What the root is doing. Nil on the wire is honest ignorance — no signal yet, or a record that cannot be trusted.
+/// What the root is doing. Current daemons preserve the queen TUI's exact turn
+/// state; unknown values remain round-trippable for wire compatibility.
 public enum QueenRootHealth: Equatable, Sendable {
     case spawning
+    case connecting
+    case ready
+    case queued
+    case submitting
     case working
     case idle
+    case awaitingApproval
+    case awaitingAnswer
+    case cancelling
+    case done
+    case failed
+    case disconnected
     case exited
     /// A state a newer daemon reports. Kept verbatim so one unknown value costs this row its health reading and never the whole screen.
     case unknown(String)
 
     public var label: String {
         switch self {
-        case .spawning: return "spawning"
-        case .working: return "working"
-        case .idle: return "idle"
-        case .exited: return "exited"
+        case .spawning: return "Spawning"
+        case .connecting: return "Connecting"
+        case .ready: return "Ready"
+        case .queued: return "Queued"
+        case .submitting: return "Sending"
+        case .working: return "Working"
+        case .idle: return "Idle"
+        case .awaitingApproval: return "Approval needed"
+        case .awaitingAnswer: return "Answer needed"
+        case .cancelling: return "Stopping"
+        case .done: return "Done"
+        case .failed: return "Failed"
+        case .disconnected: return "Disconnected"
+        case .exited: return "Exited"
         case .unknown(let value): return value
         }
     }
@@ -26,8 +47,18 @@ extension QueenRootHealth: Codable {
     public init(from decoder: Decoder) throws {
         switch try decoder.singleValueContainer().decode(String.self) {
         case "spawning": self = .spawning
+        case "connecting": self = .connecting
+        case "ready": self = .ready
+        case "queued": self = .queued
+        case "submitting": self = .submitting
         case "working": self = .working
         case "idle": self = .idle
+        case "awaiting_approval": self = .awaitingApproval
+        case "awaiting_answer": self = .awaitingAnswer
+        case "cancelling": self = .cancelling
+        case "done": self = .done
+        case "failed": self = .failed
+        case "disconnected": self = .disconnected
         case "exited": self = .exited
         case let other: self = .unknown(other)
         }
@@ -35,7 +66,25 @@ extension QueenRootHealth: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        try container.encode(label)
+        let value: String
+        switch self {
+        case .awaitingApproval: value = "awaiting_approval"
+        case .awaitingAnswer: value = "awaiting_answer"
+        case .submitting: value = "submitting"
+        case .cancelling: value = "cancelling"
+        case .spawning: value = "spawning"
+        case .connecting: value = "connecting"
+        case .ready: value = "ready"
+        case .queued: value = "queued"
+        case .working: value = "working"
+        case .idle: value = "idle"
+        case .done: value = "done"
+        case .failed: value = "failed"
+        case .disconnected: value = "disconnected"
+        case .exited: value = "exited"
+        case .unknown(let raw): value = raw
+        }
+        try container.encode(value)
     }
 }
 

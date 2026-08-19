@@ -254,7 +254,7 @@ public struct WorkspaceVisibilityInventory: Equatable, Encodable {
     }
 }
 
-/// What the orchestrator is doing, as measured by the daemon from the root's own turn-boundary events and active ProviderRun. The root is not a spawned agent and has no AgentRecord, so it travels beside the `agents` array rather than inside it. Nil fields stay nil rather than becoming plausible substitutes.
+/// What the orchestrator is doing, measured from the same provider-native turn projection shown in the queen TUI. The root is not a spawned agent and has no AgentRecord, so it travels beside the `agents` array rather than inside it. `status` remains optional only so a stale feed binary fails disconnected instead of crashing the app; the current wire always sends it.
 public struct OrchestratorSnapshot: Equatable, Decodable {
     public let name: String
     public let status: String?
@@ -300,6 +300,68 @@ public struct OrchestratorSnapshot: Equatable, Decodable {
             AgentSessionLocator.self, forKey: .sessionLocator)
         presentation = (try? container.decodeIfPresent(
             AgentFeedPresentation.self, forKey: .presentation)) ?? .unknown
+    }
+
+    /// Current daemons send a complete presentation. These fallbacks keep an
+    /// older or partially upgraded feed concrete by rendering its exact status
+    /// word instead of turning only the queen gray as unknown.
+    public var effectiveStatus: String { status ?? "disconnected" }
+
+    public var renderedHeaderDetail: String {
+        guard presentation.headerDetail == "unknown" else {
+            return presentation.headerDetail
+        }
+        switch effectiveStatus {
+        case "spawning": return "Spawning"
+        case "connecting": return "Connecting"
+        case "ready": return "Ready"
+        case "queued": return "Queued"
+        case "submitting": return "Sending"
+        case "working": return "Working"
+        case "idle": return "Idle"
+        case "awaiting_approval": return "Approval needed"
+        case "awaiting_answer": return "Answer needed"
+        case "cancelling": return "Stopping"
+        case "done": return "Done"
+        case "failed": return "Failed"
+        case "disconnected": return "Disconnected"
+        case "exited": return "Exited"
+        default: return effectiveStatus
+        }
+    }
+
+    public var renderedActivity: AgentActivity {
+        let reported = presentation.renderedActivity
+        guard reported == .unknown else { return reported }
+        switch effectiveStatus {
+        case "spawning", "connecting": return .spawning
+        case "ready", "idle": return .idle
+        case "queued", "submitting", "working", "cancelling": return .working
+        case "awaiting_approval", "awaiting_answer": return .needsUser
+        case "done": return .done
+        case "failed": return .failed
+        case "disconnected", "exited": return .disconnected
+        default: return .unknown
+        }
+    }
+
+    public func renderedPaneStatus(acknowledged: Bool = false) -> PaneStatus {
+        let reported = presentation.paneStatus.paneStatus(acknowledged: acknowledged)
+        guard reported == .unknown else { return reported }
+        switch effectiveStatus {
+        case "spawning", "connecting", "ready", "queued", "submitting", "working", "idle",
+             "cancelling":
+            return .running
+        case "awaiting_approval": return .waiting(.approval)
+        case "awaiting_answer": return .waiting(.userInput)
+        case "done": return .completed(acknowledged: acknowledged)
+        case "failed": return .failed(acknowledged: acknowledged)
+        case "disconnected", "exited":
+            return .disconnected(
+                reason: "queen reported \(effectiveStatus)",
+                lastConfirmed: effectiveStatus)
+        default: return .unknown
+        }
     }
 }
 
@@ -408,7 +470,7 @@ public struct FeedLine: Decodable {
     }
 }
 
-/// What an agent is actually doing, as measured by the daemon. Its appearance is the single legend consumed by both the header symbol and status border. `needsUser` is only ever a measured condition: the daemon sets awaiting-approval when a pending approval record exists, and control-paused/stuck when the agent is genuinely blocked on a user. It is never inferred from idleness or elapsed time — an agent that finished and an agent stuck waiting on you are different states. `held` is the quota drain handler pausing an agent whose provider window is spent; it resumes on its own once the window resets, so it is neither `idle` (no work pending) nor `needsUser` (nothing for a user to do). The hold reason and reset time live in Models & Quota, not here. An unrecognized or absent status word is `unknown`, never one of the working/idle/needsUser/held states.
+/// What an agent is actually doing, as measured by the daemon. Its appearance is the single legend consumed by both the header symbol and status border. `needsUser` is only ever a measured condition: the provider reported a pending approval or question, or Hive reported control-paused/stuck. It is never inferred from idleness or elapsed time — an agent that finished and an agent stuck waiting on you are different states. `held` is the quota drain handler pausing an agent whose provider window is spent; it resumes on its own once the window resets, so it is neither `idle` (no work pending) nor `needsUser` (nothing for a user to do). The hold reason and reset time live in Models & Quota, not here. An unrecognized or absent worker status word is `unknown`; the queen uses explicit connection lifecycle instead.
 public enum AgentActivity: Equatable {
     case working
     case idle

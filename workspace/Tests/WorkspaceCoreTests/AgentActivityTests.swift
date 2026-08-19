@@ -101,9 +101,9 @@ final class AgentActivityTests: XCTestCase {
         let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
         state.addOrchestrator()
         var pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
-        XCTAssertEqual(pane.feedStatus, "unknown")
-        XCTAssertEqual(pane.activity, .unknown)
-        XCTAssertEqual(pane.status, .unknown)
+        XCTAssertEqual(pane.feedStatus, "connecting")
+        XCTAssertEqual(pane.activity, .spawning)
+        XCTAssertEqual(pane.status, .running)
 
         state.apply(
             feed: [],
@@ -118,7 +118,10 @@ final class AgentActivityTests: XCTestCase {
 
         state.apply(feed: [], orchestrator: nil)
         pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
-        XCTAssertEqual(pane.activity, .unknown)
-        XCTAssertEqual(pane.status, .unknown)
+        XCTAssertEqual(pane.feedStatus, "disconnected")
+        XCTAssertEqual(pane.activity, .disconnected)
+        if case .disconnected = pane.status {} else {
+            XCTFail("an unavailable queen status channel must render disconnected")
+        }
     }
 }

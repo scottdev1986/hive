@@ -17,7 +17,9 @@ export const QueenRootIdentitySchema = z.strictObject({
 });
 export type QueenRootIdentity = z.infer<typeof QueenRootIdentitySchema>;
 
-/** What the root is doing, derived from its own turn-boundary events. Null is honest ignorance: no signal yet, or a record that cannot be trusted. The status words themselves have one authority: status-envelope.ts. */
+/** What the root is doing. Current projections preserve provider-native turn
+ * state and use lifecycle states outside a turn. Nullable remains a v1 wire
+ * compatibility allowance for projections written by older daemons. */
 export const QueenRootHealthSchema = OrchestratorStatusSchema;
 export type QueenRootHealth = z.infer<typeof QueenRootHealthSchema>;
 
@@ -45,7 +47,8 @@ export const QueenProviderProjectionSchema = z.strictObject({
   /** The provider of the observed running root, or null when no root foreground process is currently observed. Never a launch argument. */
   liveProvider: CapabilityProviderSchema.nullable(),
   health: QueenRootHealthSchema.nullable(),
-  /** True when the root's own event record is self-contradictory (a turn ended that never started), which also forces `health: null` — a record that lies about one thing does not get to vouch for another. */
+  /** True only when the legacy boundary fallback is contradictory and no
+   * provider-native status supersedes it. */
   contradicted: z.boolean(),
   vendors: z.record(CapabilityProviderSchema, QueenVendorCapabilitySchema),
   change: QueenProviderChangeSchema,

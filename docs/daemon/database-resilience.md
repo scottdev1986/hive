@@ -88,5 +88,5 @@ Read this section if you read nothing else. Each item is the absence test, appli
 ## See Also
 
 - [Authorization](authorization.md) — the audit log's role in the auto-re-arm budget; the same absence rule in the land guard
-- [Orchestrator status](orchestrator-status.md) — absence of news is unknown, never a state
+- [Orchestrator status](orchestrator-status.md) — exact queen turn state with explicit connection lifecycle
 - [Routing policy](../routing/routing-policy.md) — the consent record and why it may not be reseeded

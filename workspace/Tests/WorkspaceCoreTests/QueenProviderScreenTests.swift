@@ -82,6 +82,25 @@ final class QueenProviderScreenTests: XCTestCase {
         XCTAssertEqual(decoded.healthDescription, "quiescing", "rendered verbatim")
     }
 
+    func testProviderNativeQuestionAndDoneStatesUseQueenTUILabels() throws {
+        let current = try projection()
+        var raw = try JSONSerialization.jsonObject(
+            with: try JSONEncoder().encode(current)) as! [String: Any]
+        raw["health"] = "awaiting_answer"
+        var decoded = try JSONDecoder().decode(
+            QueenProviderProjection.self,
+            from: try JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(decoded.health, .awaitingAnswer)
+        XCTAssertEqual(decoded.healthDescription, "Answer needed")
+
+        raw["health"] = "done"
+        decoded = try JSONDecoder().decode(
+            QueenProviderProjection.self,
+            from: try JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(decoded.health, .done)
+        XCTAssertEqual(decoded.healthDescription, "Done")
+    }
+
     func testAContradictedRecordReportsTheContradictionRatherThanAHealth() throws {
         let stale = try projection(.stale)
         XCTAssertTrue(stale.contradicted)
