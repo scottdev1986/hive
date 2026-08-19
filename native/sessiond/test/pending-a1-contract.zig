@@ -557,7 +557,12 @@ test "THV1-REAL-K: canonical EOF raw control-D and hangup remain distinct" {
     _ = switch (try literal.spawn(.{
         .argv = &[_][]const u8{"/bin/cat"},
         .envp = &[_][]const u8{},
-        .terminal_profile = .{ .input_mode = .literal, .eof_byte = 4 },
+        .terminal_profile = .{
+            .input_mode = .literal,
+            .echo = false,
+            .signal_characters = false,
+            .eof_byte = 4,
+        },
         .geometry = .{ .columns = 80, .rows = 24 },
     })) {
         .running => {},

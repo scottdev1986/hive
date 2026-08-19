@@ -41,6 +41,11 @@ test "user input reaches the PTY byte-exact and in submission order" {
     defer host.deinit();
     switch (try host.spawn(.{
         .argv = &.{ "/bin/sh", "-c", "exec /bin/cat > \"$1\"", "hive-input-test", output_path },
+        .terminal_profile = .{
+            .input_mode = .literal,
+            .echo = false,
+            .signal_characters = false,
+        },
         .geometry = .{ .columns = 80, .rows = 24 },
     })) {
         .running => {},
@@ -76,6 +81,11 @@ test "maximum user body is accepted as one PTY queue write" {
     defer host.deinit();
     switch (try host.spawn(.{
         .argv = &.{ "/bin/sh", "-c", "exec /bin/cat >/dev/null" },
+        .terminal_profile = .{
+            .input_mode = .literal,
+            .echo = false,
+            .signal_characters = false,
+        },
         .geometry = .{ .columns = 80, .rows = 24 },
     })) {
         .running => {},

@@ -380,13 +380,17 @@ pub const PtyHost = struct {
             );
             // Reset signal handlers to SIG_DFL and unblock the signal mask before exec.
             // Conventional PTY hosts ensure the child starts with default signal disposition.
-            const signals = [_]c_int{ c.SIGINT, c.SIGQUIT, c.SIGTSTP, c.SIGTTIN, c.SIGTTOU, c.SIGHUP, c.SIGPIPE, c.SIGCHLD };
+            var default_action: posix.Sigaction = .{
+                .handler = .{ .handler = posix.SIG.DFL },
+                .mask = posix.sigemptyset(),
+                .flags = 0,
+            };
+            const signals = [_]u8{ posix.SIG.INT, posix.SIG.QUIT, posix.SIG.TSTP, posix.SIG.TTIN, posix.SIG.TTOU, posix.SIG.HUP, posix.SIG.PIPE, posix.SIG.CHLD };
             for (signals) |sig| {
-                _ = c.signal(sig, c.SIG_DFL);
+                posix.sigaction(sig, &default_action, null);
             }
-            var mask: c.sigset_t = undefined;
-            _ = c.sigemptyset(&mask);
-            _ = c.sigprocmask(c.SIG_SETMASK, &mask, null);
+            const mask = posix.sigemptyset();
+            posix.sigprocmask(posix.SIG.SETMASK, &mask, null);
             if (cwd_z) |dir| {
                 if (c.chdir(dir.ptr) != 0)
                     childBarrierFail(exec_pipe[1], .working_directory, 125);
@@ -1068,8 +1072,7 @@ test "spawn cat: readback proves pid/pgid/start-token/executable" {
         if (evidence.reaped) break;
         std.Thread.sleep(10 * std.time.ns_per_ms);
     }
-    if (!evidence.reaped) {
-    }
+    if (!evidence.reaped) {}
 }
 
 test "spawn applies the exact terminal profile and reports real job-control evidence" {
@@ -1144,7 +1147,7 @@ test "spawn default profile is a login tty with ICANON ECHO ISIG" {
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
     const rb = try expectRunning(try host.spawn(.{
-        .argv = &[_][]const u8{ "/bin/cat" },
+        .argv = &[_][]const u8{"/bin/cat"},
         .geometry = defaultGeometry(),
     }));
 
@@ -1153,7 +1156,7 @@ test "spawn default profile is a login tty with ICANON ECHO ISIG" {
 
     var applied: c.struct_termios = undefined;
     try testing.expectEqual(@as(c_int, 0), c.tcgetattr(host.master_fd, &applied));
-    
+
     // Verify login-tty defaults: ICANON + ECHO + ISIG
     try testing.expect(applied.c_lflag & c.ICANON != 0);
     try testing.expect(applied.c_lflag & c.ECHO != 0);
@@ -1278,6 +1281,11 @@ test "writeDrainAll bounds a stalled consumer with DrainStalled and keeps the qu
     // sleep never reads stdin: once the kernel tty buffer fills, every drain would-blocks.
     _ = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{ "/bin/sleep", "30" },
+        .terminal_profile = .{
+            .input_mode = .literal,
+            .echo = false,
+            .signal_characters = false,
+        },
         .geometry = defaultGeometry(),
     }));
 

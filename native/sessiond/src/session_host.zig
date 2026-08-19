@@ -1798,7 +1798,16 @@ fn runHostRoleWithControl(
         // Login-tty profile for interactive zsh + hive agent-ui. Default profile is
         // ICANON + ECHO + ISIG + OPOST|ONLCR + HUPCL. OpenTUI will raw the slave itself;
         // when it exits, zsh is already a normal interactive shell.
-        .terminalProfile = .{},
+        .terminalProfile = .{
+            .inputMode = .canonical,
+            .echo = true,
+            .signalCharacters = true,
+            .softwareFlowControl = false,
+            .eofByte = 4,
+            .startByte = 17,
+            .stopByte = 19,
+            .hangupOnLastClose = true,
+        },
         .initialWindow = .{
             .columns = spec.value.geometry.columns,
             .rows = spec.value.geometry.rows,
@@ -3979,6 +3988,11 @@ test "two viewers interleave user input through one ordered arbiter" {
     defer pty.deinit();
     _ = switch (try pty.spawn(.{
         .argv = &.{ "/bin/sh", "-c", "exec /bin/cat > \"$1\"", "hive-input-test", output_path },
+        .terminal_profile = .{
+            .input_mode = .literal,
+            .echo = false,
+            .signal_characters = false,
+        },
         .geometry = .{ .columns = 80, .rows = 24 },
     })) {
         .running => |readback| readback,
