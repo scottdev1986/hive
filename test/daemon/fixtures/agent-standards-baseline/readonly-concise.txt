@@ -10,7 +10,7 @@ Read only what the task names. Search for the lines that matter rather than read
 
 If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise — commit your WIP, then call hive_escalate once with the evidence and a handoff. Keep working until queen answers. Never grind on under-powered, and never quietly lower the quality bar instead.
 
-After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.
+After reporting a landing or milestone, call hive_mail_poll and settle any control messages before continuing with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from queen.
 
 ## Coding guidelines
 

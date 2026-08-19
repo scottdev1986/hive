@@ -83,7 +83,8 @@ describe("WakePayloadService", () => {
     const db = new HiveDatabase(":memory:");
     const mailStore = new MailStore(db);
 
-    // Write articles with different dates
+    // First writes are unverified: the schema refuses verified without a
+    // date, and the store refuses an author verifying their own article.
     const articles: Array<MemoryWriteInput> = [
       {
         scope: "repo",
@@ -93,7 +94,7 @@ describe("WakePayloadService", () => {
         body: "This is an old article.",
         source: "user",
         evidence: "test",
-        status: "verified",
+        status: "unverified",
         kind: "article",
         date: "2026-07-01",
         tags: [],
@@ -107,7 +108,7 @@ describe("WakePayloadService", () => {
         body: "This is a recent article.",
         source: "user",
         evidence: "test",
-        status: "verified",
+        status: "unverified",
         kind: "article",
         date: "2026-08-01",
         tags: [],
@@ -121,7 +122,7 @@ describe("WakePayloadService", () => {
         body: "This is the newest article.",
         source: "user",
         evidence: "test",
-        status: "verified",
+        status: "unverified",
         kind: "article",
         date: "2026-08-02",
         tags: [],
@@ -175,7 +176,7 @@ describe("WakePayloadService", () => {
         ),
         source: "user",
         evidence: "test",
-        status: "verified",
+        status: "unverified",
         kind: "article",
         date: `2026-08-${String(i + 1).padStart(2, "0")}`,
         tags: [],
@@ -377,7 +378,7 @@ describe("formatWakePrompt", () => {
     expect(text).not.toContain("memory delta");
     expect(text).not.toContain("changes since");
     expect(text).not.toContain("nothing new");
-    
+
     // Should use honest empty language
     expect(text).toContain("No matching memory for this wake");
     expect(text).toContain("This is not a since-last-wake check");

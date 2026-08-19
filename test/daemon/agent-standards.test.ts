@@ -496,8 +496,9 @@ test("a spawn over a repo with no standards file uses the generic scaffold", asy
 });
 
 // Assembly pin: baseline standards plus the current preamble must match the
-// captured prompts. The preamble changed with the team-role split; recapture
-// the goldens when that contract changes, not when live AGENT_STANDARDS.md does.
+// captured prompts. Recapture the goldens when the preamble contract changes
+// (CONTINUOUS_EXECUTION now requires hive_mail_poll and settlement before
+// continuing), not when live AGENT_STANDARDS.md does.
 describe("the move changed the source of the text and nothing else", () => {
   const golden = async (file: string): Promise<string> =>
     readFile(join(BASELINE, file), "utf8");
