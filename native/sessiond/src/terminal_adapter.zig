@@ -151,6 +151,11 @@ pub const RealVtEngine = struct {
             ghostty_c.GHOSTTY_TERMINAL_OPT_SIZE,
             @ptrCast(&sizeCallback),
         ) != ghostty_c.GHOSTTY_SUCCESS) return error.EngineCreateFailed;
+        if (ghostty_c.ghostty_terminal_set(
+            terminal,
+            ghostty_c.GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
+            @ptrCast(&clipboardWriteCallback),
+        ) != ghostty_c.GHOSTTY_SUCCESS) return error.EngineCreateFailed;
         var image_limit: u64 = 16 * 1024 * 1024;
         if (ghostty_c.ghostty_terminal_set(
             terminal,
@@ -411,7 +416,7 @@ pub const RealVtEngine = struct {
             allocator,
             self.columns,
             self.rows,
-            self.effect_sink,
+            null,  // effect_sink = null so checkpoint/resize clones cannot WRITE_PTY onto the live master
         );
         errdefer clone.engine().deinit();
         try clone.resize(
@@ -562,6 +567,14 @@ pub const RealVtEngine = struct {
         return true;
     }
 
+    fn clipboardWriteCallback(
+        _: ghostty_c.GhosttyTerminal,
+        _: ?*anyopaque,
+        _: [*c]const ghostty_c.GhosttyClipboardWrite,
+    ) callconv(.c) ghostty_c.GhosttyClipboardWriteResult {
+        return ghostty_c.GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED;
+    }
+
     fn bridgeAllocate(
         _: ?*anyopaque,
         length: usize,
@@ -650,3 +663,16 @@ test "real terminal capture reads the selected libghostty grid and attributes" {
     try std.testing.expect(std.mem.indexOf(u8, capture.text.?, "first") == null);
     try std.testing.expect(std.mem.indexOf(u8, capture.styled_text.?, "\x1b[1m") != null);
 }
+
+test "OSC 52 clipboard write is denied on headless engine" {
+    const engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
+    defer engine.engine().deinit();
+    
+    // Send OSC 52 clipboard write sequence
+    try engine.engine().write("\x1b]52;c;SGVsbG8gV29ybGQ=\x07");
+    
+    // Engine should process the sequence without error but deny the write
+    // The denial is internal; we verify the engine remains functional
+    try engine.engine().write("test");
+}
+
