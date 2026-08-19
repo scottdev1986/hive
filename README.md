@@ -96,7 +96,7 @@ Run `hive <command> --help` for the complete options. Hook, local capability-hel
 
 ## Isolation and multiple instances
 
-The default home at `~/.hive` stores setup and preference state. Every ordinary Workspace launch selects a fresh runtime home under `~/.hive/instances/run-<uuid>` before starting its daemon. An explicit named instance uses `~/.hive/instances/<name>` when stable naming is needed:
+The default home at `~/.hive` stores setup and preference state. Every ordinary Workspace launch uses one home per repository under `~/.hive/instances/repo-<projectKey>` and reuses that daemon and board on the next launch. An explicit named instance uses `~/.hive/instances/<name>` when you want a name you chose:
 
 ```sh
 hive --instance client-a init
@@ -104,7 +104,7 @@ hive --instance client-a
 hive instances
 ```
 
-Instances have separate identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, `sessiond` runtime, worktrees, and owned branches. Repository landing is serialized across instances. Provider quota is deliberately machine-wide because it belongs to the signed-in vendor account, not to one Hive instance. Hive never reads, stores, or manages provider passwords, API keys, session secrets, or keychain entries; provider sign-in remains entirely owned by each vendor CLI.
+Different repositories have separate identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, and `sessiond` runtime. A second `hive` in the same repository reuses that instance. Repository landing is serialized. Provider quota is deliberately machine-wide because it belongs to the signed-in vendor account, not to one Hive instance. Hive never reads, stores, or manages provider passwords, API keys, session secrets, or keychain entries; provider sign-in remains entirely owned by each vendor CLI.
 
 Machine-wide update, rollback, and uninstall operations refuse while any instance has a live or unobservable team. Repository uninstall removes only the current repository's Hive footprint, including an unchanged generated `AGENT_STANDARDS.md` and Hive's marked `.gitignore` entries; committed copies are left as deletions for the user to review and push. It stops the selected daemon only after its handshake proves it serves that repository; a daemon serving another repository is never signaled.
 

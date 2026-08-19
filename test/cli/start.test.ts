@@ -2,7 +2,15 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startSession } from "../../src/cli/start";
+import {
+  prepareRepoWorkspaceInstance,
+  startSession,
+} from "../../src/cli/start";
+import {
+  namedInstanceHome,
+  repoInstanceName,
+} from "../../src/daemon/lifecycle/instances";
+import { projectKey } from "../../src/daemon/project-identity-core/state";
 
 // Hive's own state goes to a throwaway HIVE_HOME here, never into the repo.
 let hiveHome: string;
@@ -110,6 +118,60 @@ describe("startSession", () => {
       expect(started).toEqual(false);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("prepareRepoWorkspaceInstance", () => {
+  const originalDefaultHome = process.env.HIVE_DEFAULT_HOME;
+
+  afterAll(() => {
+    if (originalDefaultHome === undefined) delete process.env.HIVE_DEFAULT_HOME;
+    else process.env.HIVE_DEFAULT_HOME = originalDefaultHome;
+  });
+
+  test("a second launch of the same repo reuses the board", async () => {
+    const root = await bareRepo();
+    process.env.HIVE_DEFAULT_HOME = hiveHome;
+    process.env.HIVE_HOME = hiveHome;
+    try {
+      await prepareRepoWorkspaceInstance(root);
+      const first = process.env.HIVE_HOME;
+      expect(first).toBe(namedInstanceHome(repoInstanceName(projectKey(root))));
+      if (first === undefined) {
+        throw new Error("expected a selected instance home");
+      }
+      await writeFile(join(first, "hive.db"), "keep-this-board");
+      process.env.HIVE_HOME = hiveHome;
+      await prepareRepoWorkspaceInstance(root);
+      expect(process.env.HIVE_HOME).toBe(first);
+      expect(await Bun.file(join(first, "hive.db")).text()).toBe(
+        "keep-this-board",
+      );
+    } finally {
+      process.env.HIVE_HOME = hiveHome;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("two repositories get two instance homes", async () => {
+    const firstRepo = await bareRepo();
+    const secondRepo = await bareRepo();
+    process.env.HIVE_DEFAULT_HOME = hiveHome;
+    process.env.HIVE_HOME = hiveHome;
+    try {
+      await prepareRepoWorkspaceInstance(firstRepo);
+      const firstHome = process.env.HIVE_HOME;
+      process.env.HIVE_HOME = hiveHome;
+      await prepareRepoWorkspaceInstance(secondRepo);
+      expect(process.env.HIVE_HOME).not.toBe(firstHome);
+      expect(process.env.HIVE_HOME).toBe(
+        namedInstanceHome(repoInstanceName(projectKey(secondRepo))),
+      );
+    } finally {
+      process.env.HIVE_HOME = hiveHome;
+      await rm(firstRepo, { recursive: true, force: true });
+      await rm(secondRepo, { recursive: true, force: true });
     }
   });
 });

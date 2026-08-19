@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
-import type { DatabaseHost } from "../../shared/database-host";
 import type { AgentRecord } from "../../schemas/agent";
 import type {
   AgentBindingRef,
@@ -17,11 +16,8 @@ import {
   type WorkspaceSnapshotV2,
   WorkspaceSnapshotV2Schema,
 } from "../../schemas/status-envelope";
+import type { DatabaseHost } from "../../shared/database-host";
 import type { Role } from "../authorization/authorization-service";
-import {
-  projectHierarchyEntities,
-  projectStrandedManifestEntity,
-} from "../status-service/status-hierarchy-projection";
 import { HierarchyStore } from "../hierarchy-store";
 import {
   ManifestJournal,
@@ -42,6 +38,10 @@ import {
   isAuthenticatedReportEvent,
   statusCandidateForEvent,
 } from "../status-service/status-current-projection";
+import {
+  projectHierarchyEntities,
+  projectStrandedManifestEntity,
+} from "../status-service/status-hierarchy-projection";
 
 interface StatusDatabase extends DatabaseHost {
   getAgentById(id: string): AgentRecord | null;
@@ -828,23 +828,29 @@ export class StatusStore implements WorkspaceStatusEventSource {
     return row?.seq ?? "0";
   }
 
-  /** The hierarchy half of the snapshot: store reads in, projected entities out. All decisions about what a record projects to belong to the projector, so this stays a load-and-call with no shaping of its own. Every field the projection can render is fed from a store read here. A field left unfed reads as absent, which the projection reports as "nothing supplied this" — an honest answer, but the wrong one when the record was sitting in the database the whole time. A repo with no Run asserts no topology. The stranded row is keyed by agent rather than by run and is emitted either way: gating an agent-keyed answer on run-keyed state is how stranded work in a repo with no Run yet would go missing. */
+  /** The hierarchy half of the snapshot: store reads in, projected entities out. All decisions about what a record projects to belong to the projector, so this stays a load-and-call with no shaping of its own. Every field the projection can render is fed from a store read here. A field left unfed reads as absent, which the projection reports as "nothing supplied this" — an honest answer, but the wrong one when the record was sitting in the database the whole time. Only this instance's active run is the live picture — the same test liveRoot and hierarchyStatusContext already use. A leftover run from a previous instance identity stays in the store and stays off Live Run. A repo with no current Run asserts no topology. The stranded row is keyed by agent rather than by run and is emitted either way: gating an agent-keyed answer on run-keyed state is how stranded work in a repo with no Run yet would go missing. */
   private hierarchyEntities(): WorkspaceSnapshotV2["entities"] {
     const store = new HierarchyStore(this.db);
-    const topology = store.listRuns().flatMap((run) => {
-      const nodes = store.listNodes(run.runId);
-      return projectHierarchyEntities({
-        run,
-        topology: store.getTopologyDecision(run.runId, run.topology.revision),
-        budget: store.getRunBudget(run.runId, run.budget.revision),
-        nodes,
-        bindings: liveBindings(store, nodes),
-        reviews: store.listReviews(run.runId),
-        runDecisions: store.listRunControlDecisions(run.runId),
-        transfers: store.listOwnershipTransfers(run.runId),
-        tasks: store.listTasks(run.runId),
+    const topology = store
+      .listRuns()
+      .filter(
+        (run) =>
+          run.instanceId === this.instanceId && run.lifecycle === "active",
+      )
+      .flatMap((run) => {
+        const nodes = store.listNodes(run.runId);
+        return projectHierarchyEntities({
+          run,
+          topology: store.getTopologyDecision(run.runId, run.topology.revision),
+          budget: store.getRunBudget(run.runId, run.budget.revision),
+          nodes,
+          bindings: liveBindings(store, nodes),
+          reviews: store.listReviews(run.runId),
+          runDecisions: store.listRunControlDecisions(run.runId),
+          transfers: store.listOwnershipTransfers(run.runId),
+          tasks: store.listTasks(run.runId),
+        });
       });
-    });
 
     const stranded = new ManifestJournal(this.db)
       .listAttention()

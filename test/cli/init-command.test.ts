@@ -200,7 +200,7 @@ describe("hive init command boundary", () => {
       session: { cwd: string; port: number };
     };
     expect(
-      selected.home.startsWith(join(defaultHome, "instances", "run-")),
+      selected.home.startsWith(join(defaultHome, "instances", "repo-")),
     ).toBe(true);
     expect(selected.initialized).toBe(true);
     expect(selected.session).toEqual({ cwd: repo, port: 45123 });

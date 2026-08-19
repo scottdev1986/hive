@@ -52,7 +52,7 @@ export interface StoredArtifact extends ArtifactMetadata {
   body: string;
 }
 
-/** This project's artifact root, where every new artifact is written: the machine-level home behind the live HIVE_HOME. A named or per-run instance home resolves back to the default home, so artifacts survive the fresh instance each installed session gets. Keyed by the same project uuid the rest of Hive's per-project state uses, so moving or renaming the checkout does not orphan what agents wrote. */
+/** This project's artifact root, where every new artifact is written: the machine-level home behind the live HIVE_HOME. A named or per-repo instance home resolves back to the default home, so artifacts are not trapped inside one instance directory. Keyed by the same project uuid the rest of Hive's per-project state uses, so moving or renaming the checkout does not orphan what agents wrote. */
 export function artifactsRoot(repoRoot: string): string {
   return join(machineHiveHome(), "artifacts", projectKey(repoRoot));
 }

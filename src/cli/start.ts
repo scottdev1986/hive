@@ -1,5 +1,6 @@
-/** Workspace launch — the session boundary. Each public Workspace launch owns the terminal long enough to print the update notice and prepare the repository before selecting a new runtime. Initialization is a separate repo-only command and never calls this module. The check is best-effort and never blocks. A machine with no network prints "could not check for updates" and starts anyway. It never prints "up to date" on a failed check, because that sentence is a claim about the world and we would not have looked. */
+/** Workspace launch — the session boundary. Each public Workspace launch owns the terminal long enough to print the update notice and prepare the repository before selecting this repo's instance. Initialization is a separate repo-only command and never calls this module. The check is best-effort and never blocks. A machine with no network prints "could not check for updates" and starts anyway. It never prints "up to date" on a failed check, because that sentence is a claim about the world and we would not have looked. */
 
+import { existsSync } from "node:fs";
 import { cp, mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { installGraphify } from "../adapters/graphify";
@@ -8,8 +9,11 @@ import {
   expectedDaemonHandshake,
   isRunning,
 } from "../daemon/lifecycle/daemon-lifecycle";
-import { selectFreshInstance } from "../daemon/lifecycle/instances";
-import { projectStateDir } from "../daemon/project-identity-core/state";
+import { selectRepoInstance } from "../daemon/lifecycle/instances";
+import {
+  projectKey,
+  projectStateDir,
+} from "../daemon/project-identity-core/state";
 import { getHiveHome, isDefaultHiveHome } from "../hive-home/home";
 import { errorMessage } from "../shared/error-message";
 import type { UpdateCheck } from "../update-service/check";
@@ -112,12 +116,14 @@ export interface StartedSession {
   readonly cwd: string;
 }
 
-async function prepareFreshWorkspaceInstance(cwd: string): Promise<void> {
+/** Bind this process to the one instance that owns `cwd`'s repository. A second launch of the same repo reuses that home and its hive.db. An explicit HIVE_HOME (dev, --instance, a test) is left alone. */
+export async function prepareRepoWorkspaceInstance(cwd: string): Promise<void> {
   if (!isDefaultHiveHome()) return;
   const sourceHome = getHiveHome();
   const sourceProjectState = projectStateDir(cwd);
-  const targetHome = selectFreshInstance();
+  const targetHome = selectRepoInstance(projectKey(cwd));
   await mkdir(join(targetHome, "projects"), { recursive: true });
+  if (existsSync(join(targetHome, "hive.db"))) return;
   await cp(
     join(sourceHome, "project-registry.json"),
     join(targetHome, "project-registry.json"),
@@ -131,7 +137,7 @@ async function prepareFreshWorkspaceInstance(cwd: string): Promise<void> {
   });
 }
 
-/** The Workspace session boundary: update notice (best-effort), repo-only preparation, fresh-instance selection, and daemon bring-up. `hive init` deliberately does not cross this boundary. */
+/** The Workspace session boundary: update notice (best-effort), repo-only preparation, one instance per repository, and daemon bring-up. `hive init` deliberately does not cross this boundary. */
 export async function startSession(
   deps: StartDeps = {},
 ): Promise<StartedSession> {
@@ -162,7 +168,7 @@ export async function startSession(
       )}\n`,
     );
   }
-  await (deps.prepareInstance ?? prepareFreshWorkspaceInstance)(cwd);
+  await (deps.prepareInstance ?? prepareRepoWorkspaceInstance)(cwd);
   await (deps.ensureDaemon ?? ensureDaemonForBuild)(cwd);
   const port = await (deps.ensurePort ?? ensureStarted)();
   return { port, cwd };

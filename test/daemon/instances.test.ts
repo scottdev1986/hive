@@ -6,9 +6,9 @@ import { join } from "node:path";
 import {
   instanceMutationBlockers,
   namedInstanceHome,
-  ORDINARY_WORKSPACE_RUNTIME,
-  selectFreshInstance,
+  repoInstanceName,
   selectInstanceFromArgv,
+  selectRepoInstance,
 } from "../../src/daemon/lifecycle/instances";
 import { defaultHiveHome, machineHiveHome } from "../../src/hive-home/home";
 import { getQuotaDatabasePath } from "../../src/usage-service/quota-ledger";
@@ -21,7 +21,6 @@ afterEach(() => {
   else process.env.HIVE_HOME = originalHome;
   if (originalDefaultHome === undefined) delete process.env.HIVE_DEFAULT_HOME;
   else process.env.HIVE_DEFAULT_HOME = originalDefaultHome;
-  delete process.env[ORDINARY_WORKSPACE_RUNTIME];
 });
 
 describe("instance selection", () => {
@@ -64,32 +63,33 @@ describe("instance selection", () => {
     expect(process.env.HIVE_HOME).toBe("/tmp/existing-hive-home");
   });
 
-  test("ordinary launches can select a fresh isolated instance every time", () => {
-    const first = selectFreshInstance("first");
-    const second = selectFreshInstance("second");
-    expect(first).toBe(namedInstanceHome("run-first"));
-    expect(second).toBe(namedInstanceHome("run-second"));
-    expect(second).not.toBe(first);
-    expect(process.env.HIVE_HOME).toBe(second);
-    expect(process.env[ORDINARY_WORKSPACE_RUNTIME]).toBe("1");
+  test("a repository keeps one instance home across launches", () => {
+    const first = selectRepoInstance("project-aaaa");
+    const again = selectRepoInstance("project-aaaa");
+    const other = selectRepoInstance("project-bbbb");
+    expect(first).toBe(namedInstanceHome(repoInstanceName("project-aaaa")));
+    expect(again).toBe(first);
+    expect(other).toBe(namedInstanceHome(repoInstanceName("project-bbbb")));
+    expect(other).not.toBe(first);
+    expect(process.env.HIVE_HOME).toBe(other);
   });
 
-  test("an explicit named home is never mistaken for an ordinary runtime", () => {
-    selectFreshInstance("first");
+  test("an explicit named home still wins over the repo instance", () => {
+    selectRepoInstance("project-aaaa");
     selectInstanceFromArgv([
       "bun",
       "hive",
       "--instance",
-      "run-explicit",
+      "named-explicit",
       "init",
     ]);
-    expect(process.env[ORDINARY_WORKSPACE_RUNTIME]).toBeUndefined();
+    expect(process.env.HIVE_HOME).toBe(namedInstanceHome("named-explicit"));
   });
 
-  test("automatic runtimes share machine-scoped tools from the default home", () => {
-    expect(machineHiveHome(namedInstanceHome("run-first"))).toBe(
-      defaultHiveHome(),
-    );
+  test("repo instances share machine-scoped tools from the default home", () => {
+    expect(
+      machineHiveHome(namedInstanceHome(repoInstanceName("project-aaaa"))),
+    ).toBe(defaultHiveHome());
   });
 
   test("instance names cannot escape the registry directory", () => {

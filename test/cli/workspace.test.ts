@@ -12,6 +12,7 @@ import {
   type LaunchDeps,
   launchWorkspace,
   resolveWorkspaceApp,
+  runningCommandPid,
   runWorkspace,
   WorkspaceNotInstalledError,
   workspaceOpenArguments,
@@ -128,6 +129,96 @@ describe("hive opens the installed release Workspace", () => {
       },
     });
     expect(argLists).toEqual([[]]);
+  });
+
+  test("a second launch of the same instance activates the existing window", async () => {
+    install("0.0.7");
+    const opened: (readonly string[])[] = [];
+    const activated: number[] = [];
+    let started = 0;
+    const code = await launchWorkspace({
+      root,
+      startOrchestrator: async () => {
+        started += 1;
+      },
+      open: async (_app, args) => {
+        opened.push(args);
+        return 0;
+      },
+      runningWorkspacePid: () => 4242,
+      activateWorkspace: async (pid) => {
+        activated.push(pid);
+      },
+      session: {
+        cwd: "/tmp/proj",
+        port: 4567,
+        projectId: "project-uuid",
+        projectName: "proj",
+        hivePath: "/opt/hive/bin/hive",
+      },
+    });
+    expect(code).toBe(0);
+    expect(opened).toEqual([]);
+    expect(started).toBe(0);
+    expect(activated).toEqual([4242]);
+  });
+
+  test("a first launch still starts the orchestrator when none is running", async () => {
+    install("0.0.7");
+    let started = 0;
+    await launchWorkspace({
+      root,
+      startOrchestrator: async () => {
+        started += 1;
+      },
+      open: async () => 0,
+      runningWorkspacePid: () => null,
+      runningOrchestratorPid: () => null,
+      session: {
+        cwd: "/tmp/proj",
+        port: 4567,
+        projectId: "project-uuid",
+        projectName: "proj",
+      },
+    });
+    expect(started).toBe(1);
+  });
+
+  test("an already-running queen supervisor is not started again", async () => {
+    install("0.0.7");
+    let started = 0;
+    await launchWorkspace({
+      root,
+      startOrchestrator: async () => {
+        started += 1;
+      },
+      open: async () => 0,
+      runningWorkspacePid: () => null,
+      runningOrchestratorPid: () => 88,
+      session: {
+        cwd: "/tmp/proj",
+        port: 4567,
+        projectId: "project-uuid",
+        projectName: "proj",
+      },
+    });
+    expect(started).toBe(0);
+  });
+
+  test("runningCommandPid requires every needle and reads the pid", () => {
+    expect(
+      runningCommandPid(
+        ["HiveWorkspace", "--instance-home /tmp/hv-a"],
+        () =>
+          "  11 /bin/zsh\n  99 HiveWorkspace --instance-home /tmp/hv-a --port 1\n",
+      ),
+    ).toBe(99);
+    expect(
+      runningCommandPid(
+        ["HiveWorkspace", "--instance-home /tmp/hv-a"],
+        () => "  99 HiveWorkspace --instance-home /tmp/hv-other\n",
+      ),
+    ).toBeNull();
   });
 
   test("with a session it hands the app the project, port, and hive binary", async () => {

@@ -307,6 +307,47 @@ describe("the hierarchy snapshot assembler", () => {
     });
   });
 
+  test("a run from another instance is not the live picture", async () => {
+    const db = new HiveDatabase(":memory:");
+    databases.push(db);
+    seed(db);
+    const store = new HierarchyStore(db);
+    const foreignRunId = "run_019fb7c0-0000-7000-8000-000000000099";
+    const foreignNodeId = "node_019fb7c0-0000-7000-8000-000000000098";
+    store.putRun(
+      {
+        ...run(),
+        runId: foreignRunId,
+        instanceId: "some-other-instance",
+      },
+      null,
+    );
+    store.putNode(
+      {
+        nodeId: foreignNodeId,
+        runId: foreignRunId,
+        parentNodeId: null,
+        ownerNodeId: null,
+        organizationalRole: "lead-worker",
+        assignmentKind: "lead-coordination",
+        taskScope: [],
+        capacityCharge: 0,
+        lifecycle: "active",
+        revision: "1",
+      },
+      null,
+    );
+
+    const snapshot = await new StatusStore(db, instanceId).fetchSnapshot();
+    expect(snapshot.entities.some((entity) => entity.id === foreignRunId)).toBe(
+      false,
+    );
+    expect(
+      snapshot.entities.some((entity) => entity.id === foreignNodeId),
+    ).toBe(false);
+    expect(snapshot.entities.some((entity) => entity.id === runId)).toBe(true);
+  });
+
   test("a run with no tasks reads present-and-empty, not unread", async () => {
     // A run that holds no task answers "none recorded" — never "the source
     // was not read".

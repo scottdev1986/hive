@@ -338,7 +338,7 @@ describe("artifact durability across homes", () => {
   // evidence cannot live under the instance. A rig is the machine home plus an
   // instance under it — HIVE_DEFAULT_HOME and HIVE_HOME exactly as an
   // installed session sets them — and the registry is copied between instances
-  // the way prepareFreshWorkspaceInstance copies it, so the project key holds.
+  // the way prepareRepoWorkspaceInstance copies it, so the project key holds.
   async function withInstanceRig(
     run: (rig: { machineHome: string; instanceHome: string }) => Promise<void>,
   ): Promise<void> {

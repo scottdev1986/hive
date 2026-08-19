@@ -1,6 +1,6 @@
-/** `hive` — open a fresh instance for the project you're in. Run inside a git worktree, bare `hive` resolves the repository root, runs the Workspace session boundary (update notice, fresh runtime selection, daemon bring-up, init-once onboarding line), starts the Queen supervisor, and launches the installed release app with only the project and daemon coordinates it needs to render. Run outside a git repo, it stays a project-neutral launcher: a forced release-metadata check, then an argless launch that shows the app's placeholder window — the same home a Dock click gets. There is deliberately no development fallback. Not a symlink into `workspace/.build`, not a `swift run`, not an environment variable that quietly prefers a debug bundle. A `hive` that sometimes launches a debug build is a `hive` whose bug reports cannot be trusted, and the one thing worse than "Workspace is not installed" is "Workspace launched, and nobody can say which one". The app lives inside the active version directory, so the symlink that activates a CLI release activates its Workspace in the same atomic rename. They cannot skew. */
+/** `hive` — open this repository's Hive. Run inside a git worktree, bare `hive` resolves the repository root, runs the Workspace session boundary (update notice, one instance per repo, daemon bring-up, init-once onboarding line), starts the Queen supervisor if it is not already running, and launches the installed release app — or brings the existing window forward if this repo already has one. A second launch in the same repo never mints a second board or a second window. Different repos may run at the same time. Run outside a git repo, it stays a project-neutral launcher: a forced release-metadata check, then an argless launch that shows the app's placeholder window — the same home a Dock click gets. There is deliberately no development fallback. Not a symlink into `workspace/.build`, not a `swift run`, not an environment variable that quietly prefers a debug bundle. A `hive` that sometimes launches a debug build is a `hive` whose bug reports cannot be trusted, and the one thing worse than "Workspace is not installed" is "Workspace launched, and nobody can say which one". The app lives inside the active version directory, so the symlink that activates a CLI release activates its Workspace in the same atomic rename. They cannot skew. */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 import { resolveProjectRoot } from "../daemon/project-identity-core/project-root";
@@ -54,6 +54,56 @@ export interface LaunchDeps {
   readonly startOrchestrator?: (
     session: NonNullable<LaunchDeps["session"]>,
   ) => Promise<void>;
+  readonly runningWorkspacePid?: (instanceHome: string) => number | null;
+  readonly runningOrchestratorPid?: (instanceId: string) => number | null;
+  readonly activateWorkspace?: (pid: number) => Promise<void>;
+}
+
+/** First live process whose command line contains every needle, or null. */
+export function runningCommandPid(
+  needles: readonly string[],
+  listCommands: () => string = listProcessCommands,
+): number | null {
+  for (const line of listCommands().split("\n")) {
+    if (!needles.every((needle) => line.includes(needle))) continue;
+    const pid = Number.parseInt(line.trim(), 10);
+    if (Number.isSafeInteger(pid) && pid > 0) return pid;
+  }
+  return null;
+}
+
+function listProcessCommands(): string {
+  const result = spawnSync("ps", ["-ax", "-o", "pid=,command="], {
+    encoding: "utf8",
+  });
+  return typeof result.stdout === "string" ? result.stdout : "";
+}
+
+export function workspaceProcessPid(instanceHome: string): number | null {
+  return runningCommandPid([
+    "HiveWorkspace",
+    `--instance-home ${instanceHome}`,
+  ]);
+}
+
+export function orchestratorProcessPid(instanceId: string): number | null {
+  return runningCommandPid([
+    "workspace-orchestrator",
+    `--instance-id`,
+    instanceId,
+  ]);
+}
+
+export async function activateWorkspaceProcess(pid: number): Promise<void> {
+  await new Promise<void>((resolvePromise) => {
+    const child = spawn("osascript", [
+      "-e",
+      `tell application "System Events" to set frontmost of (first process whose unix id is ${pid}) to true`,
+    ]);
+    const done = (): void => resolvePromise();
+    child.once("close", done);
+    child.once("error", done);
+  });
 }
 
 /** Starts the session's Queen supervisor outside the Workspace process. The
@@ -174,7 +224,25 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
           deps.session.hivePath ?? process.execPath,
         ];
   if (deps.session !== undefined) {
-    await (deps.startOrchestrator ?? startWorkspaceOrchestrator)(deps.session);
+    const instanceHome = getHiveHome();
+    const existingWorkspace = (deps.runningWorkspacePid ?? workspaceProcessPid)(
+      instanceHome,
+    );
+    if (existingWorkspace !== null) {
+      await (deps.activateWorkspace ?? activateWorkspaceProcess)(
+        existingWorkspace,
+      );
+      return 0;
+    }
+    const instanceId = hiveInstanceSuffix();
+    const existingOrchestrator = (
+      deps.runningOrchestratorPid ?? orchestratorProcessPid
+    )(instanceId);
+    if (existingOrchestrator === null) {
+      await (deps.startOrchestrator ?? startWorkspaceOrchestrator)(
+        deps.session,
+      );
+    }
   }
   return (deps.open ?? openApp)(app, args);
 }

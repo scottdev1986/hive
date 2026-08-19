@@ -4,12 +4,12 @@
 
 ## Summary
 
-A Hive instance is a `HIVE_HOME`. `~/.hive` is the default setup and preference home, but an ordinary `hive`, `hive claude`, `hive codex`, or `hive grok` launch switches to a fresh `~/.hive/instances/run-<uuid>` runtime before daemon lookup. `hive --instance <name>` remains the explicit stable-name form. Each runtime has its own identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, runtime files, terminal sessions, and project state. Instances may operate on the same repository without sharing control-plane state. A fresh or named instance's empty or untouched provisional Model Control policy inherits a one-time copy of the default home's user-authored policy, so opening another window does not require re-enabling every model. Ordinary fresh Workspaces then overlay the machine selection-only preference; explicit named/default homes keep later edits local. Provider authentication is outside Hive: it uses the vendor CLIs' existing signed-in sessions and never reads or writes provider passwords, API keys, session secrets, or keychain entries.
+A Hive instance is a `HIVE_HOME`. `~/.hive` is the default setup and preference home. An ordinary `hive`, `hive claude`, `hive codex`, or `hive grok` launch selects `~/.hive/instances/repo-<projectKey>` — one home per git repository. `hive --instance <name>` remains the explicit override. Each instance has its own identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, runtime files, terminal sessions, and project state. Two repositories may run at the same time; two windows on the same repository may not. A new or untouched instance's provisional Model Control policy inherits a one-time copy of the default home's user-authored policy. Provider authentication is outside Hive: it uses the vendor CLIs' existing signed-in sessions and never reads or writes provider passwords, API keys, session secrets, or keychain entries.
 
-Workspace launch is order-independent and never focuses an existing Workspace.
-Every public launch asks LaunchServices for a new macOS process. Unqualified
-launches also select a new runtime home, so two launches from the same repository
-have distinct instance ids, daemons, ports, databases, session namespaces, and windows.
+One Hive instance is active per repository. Different repositories may run at
+the same time. A second launch in a repo that already has a Hive brings that
+window forward and reuses the daemon and `hive.db`; it does not mint a second
+board or a second process. `--instance <name>` remains the explicit override.
 
 Three resources cannot be isolated by instance and are coordinated instead:
 
@@ -23,7 +23,7 @@ The automated live test starts two real daemon processes on one repository, spaw
 
 `hiveInstanceSuffix()` is the first ten hexadecimal characters of SHA-256 over the resolved `HIVE_HOME`. That stable value scopes terminal sessions and other runtime names (`src/hive-home/instance-identity.ts: hiveInstanceSuffix`).
 
-The global `--instance <name>` option selects a named home before a command runs. Without that option, the Workspace session boundary finishes repo-only preparation, snapshots that repository's registry binding and derived setup state into a new home, and calls `selectFreshInstance`, producing a new `run-<uuid>` runtime before it inspects or starts a daemon (`src/daemon/lifecycle/instances.ts`, `src/cli/start.ts`). The snapshot carries the init stamp and Graphify project state forward without sharing daemon lifecycle files or the database. The instances directory is the registry: Hive discovers the default home plus directories below `~/.hive/instances`, reads their lifecycle files, and accepts a running instance only when its handshake reports the expected instance id. There is no shared mutable instance-registry file.
+The global `--instance <name>` option selects a named home before a command runs. Without that option, the Workspace session boundary finishes repo-only preparation and selects `instances/repo-<projectKey>` — one home per git repository, shared by every worktree of that repo (`src/daemon/lifecycle/instances.ts`, `src/cli/start.ts`). The first launch copies the registry binding and derived setup state into that home. Later launches reuse the home and its database. The instances directory is the registry: Hive discovers the default home plus directories below `~/.hive/instances`, reads their lifecycle files, and accepts a running instance only when its handshake reports the expected instance id. There is no shared mutable instance-registry file.
 
 Each home permits one daemon:
 

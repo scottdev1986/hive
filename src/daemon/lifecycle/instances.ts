@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -16,7 +15,10 @@ import { probeHandshake } from "./handshake";
 
 const INSTANCE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
-export const ORDINARY_WORKSPACE_RUNTIME = "HIVE_ORDINARY_WORKSPACE_RUNTIME";
+/** Stable instance name for one git repository. Worktrees share the project key, so they share this home. */
+export function repoInstanceName(projectKey: string): string {
+  return `repo-${projectKey}`;
+}
 
 export function namedInstanceHome(name: string): string {
   if (!INSTANCE_NAME.test(name)) {
@@ -29,15 +31,13 @@ export function namedInstanceHome(name: string): string {
 
 export function selectInstance(name: string): string {
   const home = namedInstanceHome(name);
-  delete process.env[ORDINARY_WORKSPACE_RUNTIME];
   process.env.HIVE_HOME = home;
   return home;
 }
 
-export function selectFreshInstance(id: string = randomUUID()): string {
-  const home = selectInstance(`run-${id}`);
-  process.env[ORDINARY_WORKSPACE_RUNTIME] = "1";
-  return home;
+/** Point this process at the one Hive home that owns this repository. A second launch of the same repo lands here instead of minting a new empty board. */
+export function selectRepoInstance(projectKey: string): string {
+  return selectInstance(repoInstanceName(projectKey));
 }
 
 export function selectInstanceFromArgv(argv: readonly string[]): string | null {

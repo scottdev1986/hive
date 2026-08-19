@@ -648,8 +648,14 @@ final class LiveRunWorkbenchView: NSView {
                     renderedSessionIDs.insert(session.id)
                 }
             }
+            // A live feed is the current crew. Hierarchy rows with no matching
+            // session are leftover board nodes, not agents you can attach.
+            // With no feed (fixture, or the snapshot arrived first) the
+            // projected tree is all the rail has, so it still draws.
+            let liveFeed = !sessions.isEmpty
             for row in horizon.visibleRows {
                 let session = matchingSession(for: row.node)
+                if liveFeed && session == nil { continue }
                 let button = LiveRunSessionButton(
                     session: session,
                     hierarchyRow: row,

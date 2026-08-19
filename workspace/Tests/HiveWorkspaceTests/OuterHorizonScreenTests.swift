@@ -255,6 +255,40 @@ final class OuterHorizonScreenTests: XCTestCase {
             "the characters that fit before truncation must identify every crew row: \(visibleNames)")
     }
 
+    func testALiveFeedDoesNotDrawUnboundHierarchyRows() throws {
+        let snapshot = try snapshotWithCurrentDigest("full-hive-dense-19")
+        let horizon = OuterHorizonScreenState(snapshot: snapshot)
+        let feed = """
+            {"v":1,"agents":[{"id":"zoe","name":"zoe","tool":"codex","model":"gpt-5.4",
+             "status":"working",
+             "sessionLocator":{"schemaVersion":1,"instanceId":"rig",
+               "subject":{"kind":"agent","agentId":"zoe"},"generation":1,
+               "sessionId":"ses_018f4f5e-0000-7000-8000-000000000104",
+               "hostKind":"sessiond","engineBuildId":"engine"},
+             "presentation":{"panePresence":"visible","terminalState":"live",
+               "headerDetail":"working","paneStatus":{"kind":"running"},
+               "activity":"working"}}]}
+            """
+        let workbench = LiveRunWorkbenchView(terminalFactory: nil)
+        workbench.apply(try LiveRunProjection(feedLine: XCTUnwrap(FeedLine.parse(feed))))
+        workbench.applyHierarchy(
+            horizon,
+            screen: currentScreen(snapshot),
+            onSelect: { _ in },
+            onToggleExpansion: { _ in })
+        XCTAssertNotNil(findView(workbench, identifier: "live-run-session-zoe"))
+        let crew = horizon.visibleRows.filter { row in
+            guard case .present(let binding) = row.node.binding else { return false }
+            return binding.agentId.hasPrefix("dense-crew-")
+        }
+        XCTAssertGreaterThan(crew.count, 0)
+        for row in crew {
+            XCTAssertNil(
+                findView(workbench, identifier: "live-run-hierarchy-\(row.node.nodeId)"),
+                "live feed must not present leftover hierarchy as the current crew")
+        }
+    }
+
     func testStatusCapsuleRendersItsFullWordAtTheRealRailWidth() throws {
         let snapshot = try snapshotWithCurrentDigest("full-hive-dense-19")
         let horizon = OuterHorizonScreenState(snapshot: snapshot)
