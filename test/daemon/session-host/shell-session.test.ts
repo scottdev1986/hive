@@ -1,5 +1,7 @@
+import { mkdir } from "node:fs/promises";
 import { describe, expect, test } from "bun:test";
 import {
+  prepareSessionZdotdir,
   shellSessionLaunch,
   TERMINAL_SHELL,
 } from "../../../src/daemon/session-host/shell-session";
@@ -21,18 +23,47 @@ describe("shell-backed terminal sessions", () => {
     );
   });
 
+  test("prepares ZDOTDIR with init files that source user's config", async () => {
+    const sessionId = "ses_test123";
+    const zdotdir = await prepareSessionZdotdir(sessionId);
+    
+    // ZDOTDIR should exist
+    expect(zdotdir).toContain(sessionId);
+    const Bun = (await import("bun")).default;
+    
+    // .zshrc should exist and contain the bootstrap
+    const zshrc = await Bun.file(`${zdotdir}/.zshrc`).text();
+    expect(zshrc).toContain("HIVE_AGENT_UI_COMMAND");
+    expect(zshrc).toContain("HIVE_TUI_LAUNCHED");
+    expect(zshrc).toContain("HIVE_USER_ZDOTDIR");
+    
+    // .zprofile should forward to user's file
+    const zprofile = await Bun.file(`${zdotdir}/.zprofile`).text();
+    expect(zprofile).toContain("HIVE_USER_ZDOTDIR");
+    
+    // .zlogin should forward to user's file
+    const zlogin = await Bun.file(`${zdotdir}/.zlogin`).text();
+    expect(zlogin).toContain("HIVE_USER_ZDOTDIR");
+  });
+
   test("provider exit leaves the same terminal at a working zsh", async () => {
     const launch = shellSessionLaunch(
       "print -r -- __HIVE_PROVIDER_RAN__; false",
     );
     const shellHome = tempRoot("hive-shell-session-");
+    await mkdir(shellHome, { recursive: true });
+    
+    // Prepare a real ZDOTDIR for the test
+    const zdotdir = await prepareSessionZdotdir("test-session");
+    
     const child = Bun.spawn([...launch.argv], {
       cwd: shellHome,
       env: {
         HOME: shellHome,
-        ZDOTDIR: shellHome,
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         TERM: "xterm-256color",
+        ZDOTDIR: zdotdir,
+        HIVE_USER_ZDOTDIR: shellHome,
         ...launch.env,
       },
       stdin: "pipe",
