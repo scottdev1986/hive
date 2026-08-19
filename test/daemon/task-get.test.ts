@@ -621,7 +621,7 @@ describe("spawn taskId linkage", () => {
     );
 
     const db = new HiveDatabase(":memory:");
-    const boardTask = fixtureTask();
+    const boardTask = fixtureTask({ state: "assigned" });
     const unmeasuredCodexRecord: CapabilityRecord = {
       provider: "codex",
       accountFingerprint: "codex:task-get",
@@ -720,8 +720,6 @@ describe("spawn taskId linkage", () => {
         taskId: boardTask.taskId,
       });
       expect(admitted.status).toBe("spawning");
-      expect(startedAgent.name).toBe(admitted.name);
-      expect(boardTask.state).toBe("in-progress");
       const promptDirectory = join(home, "runtime", "prompts");
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if (
@@ -747,6 +745,8 @@ describe("spawn taskId linkage", () => {
         if (!db.isAgentNameReserved(admitted.name)) break;
         await Bun.sleep(5);
       }
+      expect(startedAgent.name).toBeNull();
+      expect(boardTask.state).toBe("assigned");
       expect(db.getAgentById(admitted.id)?.status).toBe("unknown");
     } finally {
       db.close();
