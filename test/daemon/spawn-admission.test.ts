@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   copyFile,
   mkdir,
@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { HierarchyService } from "../../src/daemon/hierarchy-service/hierarchy-service";
 import { RunControl } from "../../src/daemon/hierarchy-service/hierarchy-run-control";
 import { HierarchyValidationError } from "../../src/daemon/hierarchy-service/records";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
@@ -18,6 +19,7 @@ import type {
   SessionInspection,
   SessionLocator,
 } from "../../src/daemon/session-host/session-host-contract";
+import { SessiondWireError } from "../../src/daemon/session-host/sessiond-host";
 import {
   type HierarchySpawnFields,
   SpawnAdmission,
@@ -1681,13 +1683,16 @@ test("spawner binds after readiness and preserves identities when terminal death
     "bind-then-throws",
     "paused-before-launch",
     "wrong-head",
+    "starts-board-task",
   ] as const) {
     const launchFails = scenario === "provider-fails";
     const workingBeforeBind = scenario === "working-before-bind";
     const bindThenThrows = scenario === "bind-then-throws";
     const pauseBeforeLaunch = scenario === "paused-before-launch";
     const wrongHead = scenario === "wrong-head";
-    const succeeds = scenario === "succeeds" || workingBeforeBind;
+    const startsBoardTask = scenario === "starts-board-task";
+    const succeeds =
+      scenario === "succeeds" || workingBeforeBind || startsBoardTask;
     const root = await mkdtemp(join(tmpdir(), "hive-spawn-admission-root-"));
     const home = await mkdtemp(join(tmpdir(), "hive-spawn-admission-home-"));
     const worktree = join(root, "worker");
@@ -1696,6 +1701,12 @@ test("spawner binds after readiness and preserves identities when terminal death
     const previousHome = process.env.HIVE_HOME;
     process.env.HIVE_HOME = home;
     const launchedDb = new HiveDatabase(":memory:");
+    const launchDiagnostics: string[] = [];
+    const launchDiagnosticSpy = launchFails
+      ? spyOn(console, "error").mockImplementation((...values) => {
+          launchDiagnostics.push(values.map(String).join(" "));
+        })
+      : null;
     const launchedStore = new HierarchyStore(launchedDb);
     const spec: DelegationSpec = {
       ...delegationSpec,
@@ -1705,6 +1716,11 @@ test("spawner binds after readiness and preserves identities when terminal death
       },
     };
     seed(launchedDb, launchedStore, validRun(), spec);
+    const launchedHierarchy = new HierarchyService({
+      db: launchedDb,
+      repoRoot: root,
+      authorizeTool: () => {},
+    });
     const launchedAdmission = bindThenThrows
       ? new (class extends SpawnAdmission {
           override bindAfterReadiness(
@@ -1737,6 +1753,20 @@ test("spawner binds after readiness and preserves identities when terminal death
       db: launchedDb,
       repoRoot: root,
       hierarchyAdmission: () => launchedAdmission,
+      ...(startsBoardTask
+        ? {
+            startBoardTask: (
+              startedTaskId: string,
+              agentId: string,
+              agentName: string,
+            ) =>
+              launchedHierarchy.startTaskFromSpawn(
+                startedTaskId,
+                agentId,
+                agentName,
+              ),
+          }
+        : {}),
       port: 4_317,
       config: {},
       readRoutingPolicy: () => policy,
@@ -1875,7 +1905,18 @@ test("spawner binds after readiness and preserves identities when terminal death
             unboundAt: null,
           });
         }
-        expect(launchedDb.listRunOutcomes()).toEqual([]);
+        if (bindThenThrows) {
+          expect(launchedDb.listRunOutcomes()).toEqual([]);
+        } else {
+          expect(launchedDb.listRunOutcomes()).toMatchObject([
+            { outcome: "launch-failed" },
+          ]);
+        }
+        if (launchFails) {
+          expect(launchDiagnostics).toContain(
+            `Hive launch failed for ${record.name}: provider launch failed`,
+          );
+        }
         const activeRun = launchedDb.getActiveProviderRunForAgent(record.id);
         if (bindThenThrows) {
           expect(activeRun).toMatchObject({
@@ -1900,6 +1941,14 @@ test("spawner binds after readiness and preserves identities when terminal death
         expect(launchedAdmission.recipientBindingState(launchedRecord)).toBe(
           "bound",
         );
+        if (startsBoardTask) {
+          expect(launchedStore.getTask(taskId)).toMatchObject({
+            revision: "2",
+            state: "in-progress",
+            assigneeNodeId: workerNodeId,
+            blockers: [`IN PROGRESS. Assignee: ${record.name} (${record.id}).`],
+          });
+        }
       }
 
       const promptDirectory = join(home, "runtime", "prompts");
@@ -1911,6 +1960,7 @@ test("spawner binds after readiness and preserves identities when terminal death
       const prompt = await readFile(join(promptDirectory, promptName), "utf8");
       expect(prompt.split(briefId)).toHaveLength(2);
     } finally {
+      launchDiagnosticSpy?.mockRestore();
       launchedDb.close();
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
@@ -2309,7 +2359,7 @@ test("a sessiond-alive terminal keeps its hierarchy binding and is never stopped
   }
 }, 10_000);
 
-test("a launch that aborts before the AgentRecord releases the identity for a corrected retry", async () => {
+test("a failed launch leaves the hierarchy task and identity dispatchable for retry", async () => {
   const routed: RoutingPolicy = {
     schemaVersion: 3,
     revision: 1,
@@ -2334,13 +2384,15 @@ test("a launch that aborts before the AgentRecord releases the identity for a co
   };
   const unrouted: RoutingPolicy = { ...routed, categories: {} };
 
-  // Every throw point between the identity reservation and the AgentRecord
-  // insertion, in the order the spawn reaches them.
+  // The capacity refusal crosses the background-launch boundary but is still
+  // authoritative that no host was created. It must release the failed
+  // identity without weakening the treatment of genuinely unknown terminals.
   for (const scenario of [
     { fault: "routing-refusal", rejects: "has no route and no global route" },
     { fault: "worktree-failure", rejects: "worktree creation failed" },
     { fault: "wrong-head", rejects: "launch worktree, branch, or base" },
     { fault: "record-insert", rejects: "agent row insert failed" },
+    { fault: "terminal-create", rejects: null },
   ] as const) {
     const root = await mkdtemp(join(tmpdir(), "hive-spawn-release-root-"));
     const home = await mkdtemp(join(tmpdir(), "hive-spawn-release-home-"));
@@ -2350,6 +2402,13 @@ test("a launch that aborts before the AgentRecord releases the identity for a co
     const previousHome = process.env.HIVE_HOME;
     process.env.HIVE_HOME = home;
     const launchedDb = new HiveDatabase(":memory:");
+    const launchDiagnostics: string[] = [];
+    const launchDiagnosticSpy =
+      scenario.fault === "terminal-create"
+        ? spyOn(console, "error").mockImplementation((...values) => {
+            launchDiagnostics.push(values.map(String).join(" "));
+          })
+        : null;
     const launchedStore = new HierarchyStore(launchedDb);
     const spec: DelegationSpec = {
       ...delegationSpec,
@@ -2361,6 +2420,11 @@ test("a launch that aborts before the AgentRecord releases the identity for a co
       () => now,
       () => briefId,
     );
+    const launchedHierarchy = new HierarchyService({
+      db: launchedDb,
+      repoRoot: root,
+      authorizeTool: () => {},
+    });
     // Armed for the first spawn only. Disarming it is the correction whose
     // retry has to be admitted.
     let faulted = true;
@@ -2382,6 +2446,20 @@ test("a launch that aborts before the AgentRecord releases the identity for a co
       db: scenario.fault === "record-insert" ? faultyDb : launchedDb,
       repoRoot: root,
       hierarchyAdmission: () => launchedAdmission,
+      ...(scenario.fault === "terminal-create"
+        ? {
+            startBoardTask: (
+              startedTaskId: string,
+              agentId: string,
+              agentName: string,
+            ) =>
+              launchedHierarchy.startTaskFromSpawn(
+                startedTaskId,
+                agentId,
+                agentName,
+              ),
+          }
+        : {}),
       port: 4_317,
       config: {},
       readRoutingPolicy: () =>
@@ -2441,6 +2519,13 @@ test("a launch that aborts before the AgentRecord releases the identity for a co
         admit: async () => null,
         terminalHost: {
           create: async (specification) => {
+            if (faulted && scenario.fault === "terminal-create") {
+              throw new SessiondWireError(
+                "CAPACITY_EXCEEDED",
+                "terminal host capacity unavailable",
+                null,
+              );
+            }
             locator = specification.locator;
             return {
               locator,
@@ -2470,9 +2555,28 @@ test("a launch that aborts before the AgentRecord releases the identity for a co
         ...hierarchyFields({}, spec),
       } as const;
 
-      await expect(spawner.spawn(request)).rejects.toThrow(scenario.rejects);
-      // The abort is pre-record, so the reservation is the only thing the
-      // failed attempt could still be holding.
+      if (scenario.rejects === null) {
+        const admitted = await spawner.spawn(request);
+        expect(admitted.status).toBe("spawning");
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          if (launchedDb.getAgentById(workerAgentId) === null) break;
+          await Bun.sleep(5);
+        }
+        expect(launchedDb.listRunOutcomes()).toMatchObject([
+          { outcome: "launch-failed" },
+        ]);
+        expect(launchDiagnostics).toContain(
+          `Hive launch failed for ${admitted.name}: sessiond CAPACITY_EXCEEDED: terminal host capacity unavailable`,
+        );
+        expect(launchedStore.getTask(taskId)).toMatchObject({
+          revision: "1",
+          state: "assigned",
+          assigneeNodeId: workerNodeId,
+          blockers: [],
+        });
+      } else {
+        await expect(spawner.spawn(request)).rejects.toThrow(scenario.rejects);
+      }
       expect(launchedDb.getAgentById(workerAgentId)).toBeNull();
       expect(launchedStore.getAgentBinding(workerBinding)).toBeNull();
 
@@ -2491,12 +2595,22 @@ test("a launch that aborts before the AgentRecord releases the identity for a co
         credentialId: "credential-worker",
         unboundAt: null,
       });
-      // Positive control: releasing a dead reservation must not release a live
-      // one. The retry now holds the identity, so the next one is refused.
-      expect(() =>
-        launchedAdmission.preflight(hierarchyFields({}, spec), "author"),
-      ).toThrow("is already reserved");
+      if (scenario.fault === "terminal-create") {
+        expect(launchedStore.getTask(taskId)).toMatchObject({
+          revision: "2",
+          state: "in-progress",
+          assigneeNodeId: workerNodeId,
+          blockers: [`IN PROGRESS. Assignee: ${record.name} (${record.id}).`],
+        });
+      } else {
+        // Positive control: releasing a dead reservation must not release a live
+        // one. The retry now holds the identity, so the next one is refused.
+        expect(() =>
+          launchedAdmission.preflight(hierarchyFields({}, spec), "author"),
+        ).toThrow("is already reserved");
+      }
     } finally {
+      launchDiagnosticSpy?.mockRestore();
       launchedDb.close();
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;

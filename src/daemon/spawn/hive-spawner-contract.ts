@@ -34,6 +34,7 @@ type AgentStore = Pick<
   | "discardSpawn"
   | "getAgentById"
   | "getActiveProviderRunByTerminal"
+  | "getRunOutcome"
   | "getLiveAgentByName"
   | "insertAgent"
   | "insertProviderRun"

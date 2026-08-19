@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { connect } from "node:net";
 import {
   CaptureRequestSchema,
@@ -235,17 +235,47 @@ export async function issueHostAttachGrant(options: {
   };
 }
 
-/** The SHA-256 of the `hive-sessiond` executable. A host compares this against its own binary: adoption proves not just that the caller holds the capability but that it is running the same build. It is the executable's hash, NOT the engine build id — those are different values and the host refuses a mismatch as unauthenticated. */
-const executableHashes = new Map<string, Promise<string>>();
+type ExecutableHashEntry = Readonly<{
+  identity: string;
+  digest: Promise<string>;
+  token: symbol;
+}>;
 
-export function executableBuildHash(path: string): Promise<string> {
-  const cached = executableHashes.get(path);
-  if (cached !== undefined) return cached;
-  const digest = readFile(path).then((bytes) =>
-    createHash("sha256").update(bytes).digest("hex"),
+/** Hashing the multi-megabyte sessiond binary on every control request is wasted I/O, but its dev path is stable across in-place rebuilds. Cache against the file itself — including inode and nanosecond change metadata — so replacing or rewriting those bytes cannot leave a daemon authenticating the prior build. */
+const executableHashes = new Map<string, ExecutableHashEntry>();
+
+async function executableFileIdentity(path: string): Promise<string> {
+  const value = await stat(path, { bigint: true });
+  return [value.dev, value.ino, value.size, value.mtimeNs, value.ctimeNs].join(
+    ":",
   );
-  executableHashes.set(path, digest);
-  return digest;
+}
+
+export async function executableBuildHash(path: string): Promise<string> {
+  const identity = await executableFileIdentity(path);
+  const cached = executableHashes.get(path);
+  if (cached?.identity === identity) return await cached.digest;
+
+  const token = Symbol(path);
+  const digest = (async () => {
+    const bytes = await readFile(path);
+    const hashed = createHash("sha256").update(bytes).digest("hex");
+    if ((await executableFileIdentity(path)) === identity) return hashed;
+    if (executableHashes.get(path)?.token === token) {
+      executableHashes.delete(path);
+    }
+    return await executableBuildHash(path);
+  })();
+  const entry = { identity, digest, token };
+  executableHashes.set(path, entry);
+  try {
+    return await digest;
+  } catch (error) {
+    if (executableHashes.get(path)?.token === token) {
+      executableHashes.delete(path);
+    }
+    throw error;
+  }
 }
 
 export async function captureHostTerminal(options: {

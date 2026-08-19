@@ -24,6 +24,7 @@ import {
   type WireErrorCode,
 } from "../../schemas/session-protocol";
 import { systemClock } from "../../shared/clock";
+import { errorMessage } from "../../shared/error-message";
 import {
   adoptHost,
   captureHostTerminal,
@@ -324,6 +325,7 @@ export class SessiondHost implements LandedTerminalHost {
     const queuedAt = Date.now();
     // A create forks a host, a login shell and a vendor CLI, and the reply waits for all of it — against the same 10 s deadline an INSPECT gets. When a wide burst loses hosts to create timeouts, the two numbers that tell queueing apart from a slow launch are the only ones missing.
     const admittedAt = Date.now();
+    let hostCreated = false;
     try {
       const adoptionSecret = new Uint8Array(randomBytes(32));
       const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
@@ -341,6 +343,7 @@ export class SessiondHost implements LandedTerminalHost {
           readyTimeoutMilliseconds:
             TERMINAL_LIMITS.createRpcTimeoutMilliseconds,
         });
+        hostCreated = true;
         // Both the stream and the process handle are retained: the stream is the terminal's channel to Hive, and dropping the handle can let the runtime reap a healthy host.
         this.hostControl.set(locator.sessionId, launched.control);
         this.hostProcess.set(locator.sessionId, launched.process);
@@ -368,9 +371,17 @@ export class SessiondHost implements LandedTerminalHost {
         }
       }
     } catch (error) {
-      // Nothing was created, so the pending binding must not survive as a pane.
-      this.pendingBindings.releaseUncreatedTerminalHostSession(locator);
-      throw error;
+      if (!hostCreated) {
+        this.pendingBindings.releaseUncreatedTerminalHostSession(locator);
+        throw error;
+      }
+      // The binding is the durable route back to a host that registered but
+      // failed adoption or result validation. Dropping it would turn a created
+      // terminal into an uninspectable launch and erase the distinction from a
+      // refusal that happened before any host existed.
+      throw new SessiondProtocolError(
+        `sessiond host ${locator.sessionId} was created but launch finalization failed: ${errorMessage(error)}`,
+      );
     }
   }
 
@@ -425,12 +436,13 @@ export class SessiondHost implements LandedTerminalHost {
 
   /** The engine build the hosts will actually run. The build belongs to the linked VT engine, not a running process, so ask the binary that will be executed without requiring a broker. */
   async discoverEngineBuildId(): Promise<string> {
-    const cached = this.engineBuildIdCache;
-    if (cached !== null) return cached;
     const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
     if (executablePath === null) {
       throw new SessiondProtocolError("hive-sessiond binary was not found");
     }
+    const executableHash = await executableBuildHash(executablePath);
+    const cached = this.engineBuildIdCache;
+    if (cached?.executableHash === executableHash) return cached.engineBuildId;
     const child = Bun.spawn([executablePath, "engine-build-id"], {
       stdout: "pipe",
       stderr: "ignore",
@@ -439,11 +451,17 @@ export class SessiondHost implements LandedTerminalHost {
     if (value.length === 0) {
       throw new SessiondProtocolError("hive-sessiond reported no engine build");
     }
-    this.engineBuildIdCache = value;
+    if ((await executableBuildHash(executablePath)) !== executableHash) {
+      return await this.discoverEngineBuildId();
+    }
+    this.engineBuildIdCache = { executableHash, engineBuildId: value };
     return value;
   }
 
-  private engineBuildIdCache: string | null = null;
+  private engineBuildIdCache: Readonly<{
+    executableHash: string;
+    engineBuildId: string;
+  }> | null = null;
 
   /** The bounded visible-text read behind `hive_terminal_observe`. The host reads its libghostty grid directly. This does not attach a viewer, focus, claim, resize, or type. */
   async capture(

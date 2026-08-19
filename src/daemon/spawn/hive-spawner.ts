@@ -1150,9 +1150,6 @@ export class HiveSpawner implements Spawner {
       readOnly,
       writeRevoked: false,
     });
-    if (boardTaskId !== undefined) {
-      this.dependencies.startBoardTask?.(boardTaskId, agentId, name);
-    }
     stranded.release = null;
     const planned = plannedWorktree(
       this.dependencies.repoRoot,
@@ -1245,34 +1242,55 @@ export class HiveSpawner implements Spawner {
             })
           : current;
       }
+      this.recordLaunchFailure(
+        record,
+        decision.decisionId,
+        providerRunId,
+        failureReason,
+      );
       if (!neverCreated && !(await this.terminalReportedDead(record))) {
-        return this.preserveUnverifiedLaunch(record, failureReason);
+        return this.preserveUnverifiedLaunch(record);
       }
-      if (hierarchyIdentity !== null && hierarchyAdmission !== null) {
-        hierarchyAdmission.failLaunch(hierarchyIdentity);
-        if (!neverCreated) {
-          await this.stopVerifiedSession(
+      try {
+        if (hierarchyIdentity !== null && hierarchyAdmission !== null) {
+          hierarchyAdmission.failLaunch(hierarchyIdentity);
+          if (!neverCreated) {
+            await this.stopVerifiedSession(
+              record,
+              "Hierarchy provider launch failed",
+            );
+          }
+          return await this.failSpawn(
             record,
-            "Hierarchy provider launch failed",
+            worktree,
+            failureReason,
+            layer,
+            decision.decisionId,
+            providerRunId,
+            neverCreated ? "never-created" : undefined,
           );
         }
-        return await this.failSpawn(
+        return await this.failSpawnIfStillSpawning(
           record,
           worktree,
           failureReason,
           layer,
           decision.decisionId,
           providerRunId,
+          neverCreated ? "never-created" : undefined,
         );
+      } catch (error) {
+        // A synchronous spawn reports discarded cleanup by throwing. This
+        // launch is already detached, so forwarding that verdict makes its
+        // outer rescue recreate the discarded row as `stuck`.
+        if (
+          error instanceof SpawnFailedError &&
+          this.dependencies.db.getAgentById(record.id) === null
+        ) {
+          return record;
+        }
+        throw error;
       }
-      return await this.failSpawnIfStillSpawning(
-        record,
-        worktree,
-        failureReason,
-        layer,
-        decision.decisionId,
-        providerRunId,
-      );
     };
 
     const launch = async (): Promise<void> => {
@@ -1511,6 +1529,12 @@ export class HiveSpawner implements Spawner {
             hierarchyCredentialId,
           );
         }
+        // Starting the task earlier invalidates the assigned revision that every
+        // hierarchy re-check must still prove. A failed launch therefore makes
+        // no board claim to compensate, while a live launch advances it once.
+        if (boardTaskId !== undefined) {
+          this.dependencies.startBoardTask?.(boardTaskId, agentId, name);
+        }
         // MCP reachability measures a control channel, not process liveness. A
         // provider that misses this deadline is still a started run when the
         // readiness watch already proved its launched process alive, so it can
@@ -1614,11 +1638,7 @@ export class HiveSpawner implements Spawner {
     });
   }
 
-  private preserveUnverifiedLaunch(
-    record: AgentRecord,
-    failureReason: string,
-  ): AgentRecord {
-    console.warn(`Hive ${record.name}: ${failureReason}`);
+  private preserveUnverifiedLaunch(record: AgentRecord): AgentRecord {
     return this.dependencies.db.insertAgent({
       ...(this.dependencies.db.getAgentById(record.id) ?? record),
       status: "unknown",
@@ -1654,6 +1674,7 @@ export class HiveSpawner implements Spawner {
     layer: QuarantineLaunchLayer,
     decisionId: string,
     providerRunId: string,
+    terminalDisposition?: "never-created",
   ): Promise<AgentRecord> {
     const current = this.dependencies.db.getAgentById(record.id);
     if (current !== null && current.status !== "spawning") {
@@ -1672,6 +1693,7 @@ export class HiveSpawner implements Spawner {
       layer,
       decisionId,
       providerRunId,
+      terminalDisposition,
     );
   }
 
@@ -1692,8 +1714,11 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     decisionId: string,
     providerRunId: string,
+    failureReason: string,
     endedAt = new Date().toISOString(),
   ): void {
+    const firstReport =
+      this.dependencies.db.getRunOutcome(providerRunId) === null;
     this.dependencies.db.recordRunOutcome({
       decisionId,
       providerRunId,
@@ -1705,6 +1730,9 @@ export class HiveSpawner implements Spawner {
       startedAt: record.createdAt,
       endedAt,
     });
+    if (firstReport) {
+      console.error(`Hive launch failed for ${record.name}: ${failureReason}`);
+    }
   }
 
   private async failSpawn(
@@ -1771,7 +1799,13 @@ export class HiveSpawner implements Spawner {
       }
     }
     const endedAt = new Date().toISOString();
-    this.recordLaunchFailure(record, decisionId, providerRunId, endedAt);
+    this.recordLaunchFailure(
+      record,
+      decisionId,
+      providerRunId,
+      failureReason,
+      endedAt,
+    );
     let failed = this.dependencies.db.insertAgent({
       ...(this.dependencies.db.getAgentById(record.id) ?? stopping),
       status: "dead",

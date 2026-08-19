@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../../src/daemon/database/hive-database";
+import { executableBuildHash } from "../../../src/daemon/session-host/host-control";
 import type {
   CaptureResult,
   SessionSpec,
@@ -517,6 +519,47 @@ describe("sessiond wire framing", () => {
     );
   });
 
+  test("invalidates the executable digest when a build replaces the same path", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-hash-"));
+    const executable = join(directory, "hive-sessiond");
+    try {
+      await writeFile(executable, "first-build");
+      const first = await executableBuildHash(executable);
+      const replacement = "replacement-sessiond-build";
+      await writeFile(executable, replacement);
+      const second = await executableBuildHash(executable);
+
+      expect(second).not.toBe(first);
+      expect(second).toBe(
+        createHash("sha256").update(replacement).digest("hex"),
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("invalidates engine discovery when the executable identity changes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-engine-"));
+    const executable = join(directory, "hive-sessiond");
+    const previous = process.env.HIVE_SESSIOND_BIN;
+    process.env.HIVE_SESSIOND_BIN = executable;
+    try {
+      await writeFile(executable, "#!/bin/sh\nprintf engine-one\n");
+      await chmod(executable, 0o755);
+      const host = new SessiondHost();
+      await expect(host.discoverEngineBuildId()).resolves.toBe("engine-one");
+
+      await writeFile(executable, "#!/bin/sh\nprintf replacement-engine-two\n");
+      await expect(host.discoverEngineBuildId()).resolves.toBe(
+        "replacement-engine-two",
+      );
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_SESSIOND_BIN;
+      else process.env.HIVE_SESSIOND_BIN = previous;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("reports whether an exit wait belongs to this daemon instance", async () => {
     const host = new SessiondHost();
     await expect(
@@ -607,6 +650,34 @@ describe("sessiond wire framing", () => {
     );
     // Nothing was created, so the pending binding must not survive as a pane.
     expect(released).toEqual([brokerLocator]);
+  });
+
+  test("retains the binding when a created host fails finalization", async () => {
+    const released: unknown[] = [];
+    const bindings: TerminalHostBindingStore = {
+      ...pendingBindings,
+      releaseUncreatedTerminalHostSession: (candidate) => {
+        released.push(candidate);
+        return true;
+      },
+    };
+    const host = new SessiondHost({
+      launchHost: recordingLauncher().launch,
+      adoptHost: (async () => {
+        throw new Error("host refused stale executable digest");
+      }) as never,
+      pendingBindings: bindings,
+    });
+
+    await expect(host.create(sessionSpec)).rejects.toThrow(
+      `sessiond host ${brokerLocator.sessionId} was created but launch finalization failed: host refused stale executable digest`,
+    );
+    expect(released).toEqual([]);
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      host.waitForHostExit(brokerLocator.sessionId, abort.signal),
+    ).resolves.toEqual({ kind: "aborted" });
   });
 
   test("composes negotiated create through the adapter and a real binding database", async () => {
