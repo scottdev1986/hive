@@ -300,8 +300,11 @@ struct LiveRunWorkbenchViewTests {
         #expect(findView(in: view, identifier: "live-run-session-id-david")?.toolTip != task)
     }
 
-    @Test("Shell attach and detach commands consume the workbench's exact locator")
-    func shellCommandsUseSelectedLocator() throws {
+    /// The route, not a menu command, owns the viewer: navigating to Live Run
+    /// attaches the exact-generation terminal and navigating away detaches it.
+    /// This pins the capability the retired Agent menu commands only repeated.
+    @Test("Route navigation alone attaches and detaches the Live Run viewer")
+    func routeNavigationDrivesViewerAttachment() throws {
         let workbench = LiveRunWorkbenchView { session in
             FakeSurface(locator: session.locator!)
         }
@@ -316,10 +319,12 @@ struct LiveRunWorkbenchViewTests {
             state: ShellState())
         controller.installLiveRunWorkbench(workbench)
 
-        controller.perform(ShellCommand.detachTerminalView)
+        // The default route is already Live Run, so installation attaches.
+        #expect(controller.installedLiveRunTerminalCount == 1)
+        #expect(controller.selectedLiveRunLocator?.generation == 4)
+        controller.apply { $0.navigate(to: .modelsQuota) }
         #expect(controller.installedLiveRunTerminalCount == 0)
-        #expect(controller.currentState.activeRoute == .modelsQuota)
-        controller.perform(ShellCommand.attachLiveTerminal)
+        controller.apply { $0.navigate(to: .liveRun) }
         #expect(controller.installedLiveRunTerminalCount == 1)
         #expect(controller.selectedLiveRunLocator?.generation == 4)
     }

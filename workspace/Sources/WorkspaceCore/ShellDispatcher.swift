@@ -27,8 +27,8 @@ public struct ShellDispatcher {
         case .route(let route):
             return navigate(to: route, state: &state)
         case .responderChain, .local(.aboutPanel), .local(.detachWorkspace),
-             .local(.enterFullTerminal), .local(.attachLiveTerminal), .local(.detachTerminalView):
-            // Responder-chain items carry their own selectors and never reach the dispatcher in production; About, detach, entering the full terminal, and attaching/detaching the live viewer are performed by the window controller when it observes this outcome.
+             .local(.enterFullTerminal):
+            // Responder-chain items carry their own selectors and never reach the dispatcher in production; About, detach, and entering the full terminal are performed by the window controller when it observes this outcome.
             outcome = .localPerformed(command)
         case .local(.toggleAttentionDrawer):
             state.setAttentionDrawer(visible: !state.attentionDrawerVisible)

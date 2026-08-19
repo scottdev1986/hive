@@ -202,31 +202,6 @@ final class WorkspaceShellWindowController: NSWindowController {
     }
 
     func perform(_ command: ShellCommand) {
-        if command == .attachLiveTerminal {
-            state.navigate(to: .liveRun)
-            liveRunWorkbench?.setRouteVisible(true)
-            state.record(outcome: liveRunWorkbench?.selectedLocator == nil
-                ? .surfaceUnavailable(
-                    command,
-                    reason: "No exact-generation Live Run session is selected.")
-                : .localPerformed(command))
-            render()
-            return
-        }
-        if command == .detachTerminalView {
-            guard liveRunWorkbench?.installedTerminalCount == 1 else {
-                state.record(outcome: .surfaceUnavailable(
-                    command,
-                    reason: "No exact-generation terminal viewer is attached."))
-                render()
-                return
-            }
-            state.navigate(to: .modelsQuota)
-            liveRunWorkbench?.setRouteVisible(false)
-            state.record(outcome: .localPerformed(command))
-            render()
-            return
-        }
         let outcome = dispatcher.dispatch(command, state: &state)
         switch outcome {
         case .localPerformed(.aboutHive):

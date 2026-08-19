@@ -53,24 +53,6 @@ final class ShellDispatcherTests: XCTestCase {
 
     // MARK: Local actions
 
-    /// The two surviving terminal commands resolve as honest local actions —
-    /// pure at the dispatcher level, with no daemon wire to mint an intent
-    /// against. The window controller performs the real attach/detach when it
-    /// observes this outcome (proved in LiveRunWorkbenchViewTests).
-    func testAttachAndDetachTerminalCommandsResolveAsLocalActions() {
-        let dispatcher = ShellDispatcher()
-        var state = makeState()
-
-        XCTAssertEqual(ShellCommand.attachLiveTerminal.resolution, .local(.attachLiveTerminal))
-        XCTAssertEqual(ShellCommand.detachTerminalView.resolution, .local(.detachTerminalView))
-        XCTAssertEqual(
-            dispatcher.dispatch(.attachLiveTerminal, state: &state),
-            .localPerformed(.attachLiveTerminal))
-        XCTAssertEqual(
-            dispatcher.dispatch(.detachTerminalView, state: &state),
-            .localPerformed(.detachTerminalView))
-    }
-
     func testDrawerToggleFlipsState() {
         let dispatcher = ShellDispatcher()
         var state = makeState()

@@ -29,6 +29,8 @@ final class ShellMenuEnumerationTests: XCTestCase {
         "acknowledge-attention", "close-agent",
         "pause-run", "resume-run", "redirect-through-queen", "abort-run",
         "new-curated-memory", "reindex-memory", "stop-hive",
+        // The Agent menu's two terminal commands, ruled out with the menu.
+        "attach-live-terminal", "detach-terminal-view",
     ]
     private static let retiredTitles = [
         "Promote to Master", "Return Queen to Master", "Show Projects",
@@ -39,6 +41,7 @@ final class ShellMenuEnumerationTests: XCTestCase {
         "Stop Provider…", "Terminate Terminal…", "Acknowledge Attention",
         "Close Agent…", "Pause Run…", "Resume Run…", "Redirect Through Queen…",
         "Abort Run…", "New Curated Memory…", "Reindex…", "Stop Hive…",
+        "Attach Live Terminal", "Detach Terminal View",
     ]
 
     private func makeController() -> WorkspaceShellWindowController {
@@ -134,12 +137,12 @@ final class ShellMenuEnumerationTests: XCTestCase {
         }
     }
 
-    func testMenuTitlesAreTheSevenContractMenus() throws {
+    func testMenuTitlesAreTheSixContractMenus() throws {
         let controller = makeController()
         try withInstalledMenu(controller) { menu in
             XCTAssertEqual(
                 menu.items.compactMap { $0.submenu?.title },
-                ["Hive", "Edit", "View", "Agent", "Memory", "Queen", "Window"])
+                ["Hive", "Edit", "View", "Memory", "Queen", "Window"])
         }
     }
 
@@ -158,7 +161,7 @@ final class ShellMenuEnumerationTests: XCTestCase {
             // The retired menus themselves must not exist either.
             XCTAssertEqual(
                 menu.items.compactMap { $0.submenu?.title }
-                    .filter { ["Navigate", "Pane", "Communications", "Gates", "Run"].contains($0) },
+                    .filter { ["Navigate", "Pane", "Communications", "Gates", "Run", "Agent"].contains($0) },
                 [])
         }
     }
@@ -230,16 +233,6 @@ final class ShellMenuEnumerationTests: XCTestCase {
                     "\(command) must route to \(route)")
                 XCTAssertEqual(
                     controller.currentState.lastOutcome, .routed(route))
-            case .local(.attachLiveTerminal), .local(.detachTerminalView):
-                // No Live Run workbench is installed on this controller, so
-                // both honestly refuse rather than claim a viewer that isn't there.
-                controller.performShellCommand(makeItem(command))
-                guard case .surfaceUnavailable(let observed, _) =
-                    controller.currentState.lastOutcome else {
-                    XCTFail("\(command) did not resolve against the viewer")
-                    continue
-                }
-                XCTAssertEqual(observed, command)
             case .local(.toggleAttentionDrawer):
                 let before = controller.currentState.attentionDrawerVisible
                 controller.performShellCommand(makeItem(command))

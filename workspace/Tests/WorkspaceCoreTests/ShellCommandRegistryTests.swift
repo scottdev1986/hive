@@ -44,6 +44,11 @@ final class ShellCommandRegistryTests: XCTestCase {
         "new-curated-memory",
         "reindex-memory",
         "stop-hive",
+        // The Agent menu's two terminal commands: working commands the owner
+        // ruled out along with the menu itself — route navigation already
+        // attaches and detaches the Live Run viewer.
+        "attach-live-terminal",
+        "detach-terminal-view",
     ]
 
     /// Retired user-visible titles: banned even under a fresh identifier.
@@ -75,6 +80,8 @@ final class ShellCommandRegistryTests: XCTestCase {
         "New Curated Memory…",
         "Reindex…",
         "Stop Hive…",
+        "Attach Live Terminal",
+        "Detach Terminal View",
     ]
 
     func testEveryCommandResolvesToExactlyOneWellFormedTarget() throws {
@@ -95,8 +102,7 @@ final class ShellCommandRegistryTests: XCTestCase {
                     "\(command) must say why its surface is absent")
             case .local(.aboutPanel), .local(.detachWorkspace),
                  .local(.toggleAttentionDrawer), .local(.toggleInspector),
-                 .local(.enterFullTerminal), .local(.attachLiveTerminal),
-                 .local(.detachTerminalView):
+                 .local(.enterFullTerminal):
                 break
             }
         }
@@ -120,10 +126,10 @@ final class ShellCommandRegistryTests: XCTestCase {
         }
     }
 
-    func testMenusAreTheSevenContractMenus() {
+    func testMenusAreTheSixContractMenus() {
         XCTAssertEqual(
             ShellMenu.allCases.map(\.rawValue),
-            ["Hive", "Edit", "View", "Agent", "Memory", "Queen", "Window"])
+            ["Hive", "Edit", "View", "Memory", "Queen", "Window"])
     }
 
     /// The shipping menu map, command for command. A menu that drifts from
@@ -141,8 +147,6 @@ final class ShellCommandRegistryTests: XCTestCase {
                 .showLiveRun, .showTaskRouter, .showModelsQuota,
                 .toggleAttention, .toggleInspector, .enterFullTerminal,
             ])
-        XCTAssertEqual(
-            Set(ShellMenu.agent.commands), [.attachLiveTerminal, .detachTerminalView])
         XCTAssertEqual(
             Set(ShellMenu.memory.commands), [
                 .memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance,
@@ -183,16 +187,6 @@ final class ShellCommandRegistryTests: XCTestCase {
                 resolutions.count, 1,
                 "\(key.key) is bound to commands that disagree: \(commands)")
         }
-    }
-
-    /// The two surviving terminal commands resolve honestly as local actions
-    /// the window controller performs — never as a daemon mutation this build
-    /// has no wire for.
-    func testAttachAndDetachTerminalCommandsAreLocalActions() {
-        XCTAssertEqual(
-            ShellCommand.attachLiveTerminal.resolution, .local(.attachLiveTerminal))
-        XCTAssertEqual(
-            ShellCommand.detachTerminalView.resolution, .local(.detachTerminalView))
     }
 
     /// A route command pointing at the WRONG screen is still a well-formed

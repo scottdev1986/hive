@@ -1,4 +1,4 @@
-// ShellCommand.swift The complete command catalog of the new Workspace shell: every menu item in every menu, each resolving to exactly one screen route, one responder-chain selector, or one named local action. The enum switch IS the registry — a command cannot exist without its resolution, which makes the dispatcher total by construction and enumerable in tests. Retired pane-era commands (promote-to-master, return-Queen-to-master, Close Pane, Show Projects, a Navigate menu, a floating Attention window, Communications/Gates routes, a generic provider approval) have no case here and therefore no way to be reached. Neither do the eighteen dead menu-intent commands (Queen vendor picks, Agent's provider/terminal/attention controls beyond the two terminal commands, the whole Run menu, and Memory's curate/reindex actions) — they never reached a daemon wire in this build and are gone rather than left half-wired.
+// ShellCommand.swift The complete command catalog of the new Workspace shell: every menu item in every menu, each resolving to exactly one screen route, one responder-chain selector, or one named local action. The enum switch IS the registry — a command cannot exist without its resolution, which makes the dispatcher total by construction and enumerable in tests. Retired pane-era commands (promote-to-master, return-Queen-to-master, Close Pane, Show Projects, a Navigate menu, a floating Attention window, Communications/Gates routes, a generic provider approval) have no case here and therefore no way to be reached. Neither do the eighteen dead menu-intent commands (Queen vendor picks, the Agent menu's provider/terminal/attention controls, the whole Run menu, and Memory's curate/reindex actions) — they never reached a daemon wire in this build and are gone rather than left half-wired. The Agent menu's two terminal commands (attach-live-terminal, detach-terminal-view) followed them when the owner ruled the whole menu out: route navigation already attaches the Live Run viewer on arrival and detaches it on departure, so the commands added no capability.
 
 import Foundation
 
@@ -6,7 +6,6 @@ public enum ShellMenu: String, CaseIterable, Equatable, Sendable {
     case hive = "Hive"
     case edit = "Edit"
     case view = "View"
-    case agent = "Agent"
     case memory = "Memory"
     case queen = "Queen"
     case window = "Window"
@@ -39,11 +38,6 @@ public enum ShellLocalAction: Equatable, Sendable {
     /// surface exists in live mode, so this is a real destination rather than a
     /// refusal that sounds honest while describing a capability the app has.
     case enterFullTerminal
-    /// Attach the Live Run workbench's exact-generation viewer. A real
-    /// destination the window controller performs, not a daemon mutation.
-    case attachLiveTerminal
-    /// Detach the attached viewer and return to Models & Quota.
-    case detachTerminalView
     case toggleAttentionDrawer
     case toggleInspector
     case unavailableSurface(reason: String)
@@ -72,8 +66,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
     case toggleAttention = "toggle-attention"
     case toggleInspector = "toggle-inspector"
     case enterFullTerminal = "enter-full-terminal"
-    case attachLiveTerminal = "attach-live-terminal"
-    case detachTerminalView = "detach-terminal-view"
     case memoryOverview = "memory-overview"
     case memoryLibrary = "memory-library"
     case memoryRecallLab = "memory-recall-lab"
@@ -92,8 +84,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
             return .edit
         case .showLiveRun, .toggleAttention, .toggleInspector, .enterFullTerminal:
             return .view
-        case .attachLiveTerminal, .detachTerminalView:
-            return .agent
         case .memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance:
             return .memory
         case .showQueenProvider:
@@ -120,8 +110,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .toggleAttention: return "Attention"
         case .toggleInspector: return "Toggle Inspector"
         case .enterFullTerminal: return "Enter Full Terminal"
-        case .attachLiveTerminal: return "Attach Live Terminal"
-        case .detachTerminalView: return "Detach Terminal View"
         case .memoryOverview: return "Overview"
         case .memoryLibrary: return "Library"
         case .memoryRecallLab: return "Recall Lab"
@@ -148,7 +136,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .toggleAttention: return ShellKeyEquivalent("a", [.command, .option])
         case .toggleInspector: return ShellKeyEquivalent("i", [.command, .option])
         case .enterFullTerminal: return ShellKeyEquivalent("f", [.command, .control])
-        case .attachLiveTerminal: return ShellKeyEquivalent("\r")
         case .showQueenProvider: return ShellKeyEquivalent("Q")
         case .minimizeWindow: return ShellKeyEquivalent("m")
         default: return nil
@@ -172,8 +159,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .toggleAttention: return .local(.toggleAttentionDrawer)
         case .toggleInspector: return .local(.toggleInspector)
         case .enterFullTerminal: return .local(.enterFullTerminal)
-        case .attachLiveTerminal: return .local(.attachLiveTerminal)
-        case .detachTerminalView: return .local(.detachTerminalView)
         case .memoryLibrary: return .route(.memoryLibrary)
         case .memoryRecallLab: return .route(.memoryRecallLab)
         case .memoryMaintenance: return .route(.memoryMaintenance)

@@ -30,10 +30,6 @@ enum ShellMenuBuilder {
             .toggleInspector,
             .enterFullTerminal,
         ]),
-        (.agent, [
-            .attachLiveTerminal,
-            .detachTerminalView,
-        ]),
         (.memory, [
             .memoryOverview,
             .memoryLibrary,
