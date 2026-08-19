@@ -86,6 +86,7 @@ import type {
 import { SessiondWireError } from "../session-host/sessiond-host";
 import {
   type ShellSessionLaunch,
+  prepareSessionZdotdir,
   shellSessionLaunch,
 } from "../session-host/shell-session";
 import type { WorkspaceVisibilityAdmission } from "../session-host/workspace-visibility";
@@ -244,8 +245,9 @@ export class HiveSpawner implements Spawner {
   ): Promise<void> {
     const admission = await this.requireSessiondCreationPolicy(record);
     const shell = shellSessionLaunch(command);
+    const spec = await this.sessiondSpec(record, shell, launchGrantId, admission.geometry);
     const created = await this.requireSessiondHost(record).create(
-      this.sessiondSpec(record, shell, launchGrantId, admission.geometry),
+      spec,
       {
         locator: requireSessiondAgentLocator(record),
         visibility: admission.visibility,
@@ -332,20 +334,24 @@ export class HiveSpawner implements Spawner {
     return this.dependencies.sessiond.terminalHost;
   }
 
-  private sessiondSpec(
+  private async sessiondSpec(
     record: AgentRecord,
     shell: ShellSessionLaunch,
     launchGrantId: string,
     geometry: SessionSpec["geometry"],
-  ): SessionSpec {
+  ): Promise<SessionSpec> {
     if (record.worktreePath === null) {
       throw new Error(
         `Agent ${record.id} has no worktree for session creation`,
       );
     }
+    const locator = requireSessiondAgentLocator(record);
+    const zdotdir = await prepareSessionZdotdir(locator.sessionId);
+    const userZdotdir = process.env.ZDOTDIR ?? process.env.HOME ?? "";
+    
     return {
       schemaVersion: 1,
-      locator: requireSessiondAgentLocator(record),
+      locator,
       provider: record.tool,
       toolSessionId: record.toolSessionId ?? null,
       cwd: record.worktreePath,
@@ -353,6 +359,8 @@ export class HiveSpawner implements Spawner {
       environment: {
         ...providerTerminalEnvironment(process.env),
         ...shell.env,
+        ZDOTDIR: zdotdir,
+        HIVE_USER_ZDOTDIR: userZdotdir,
       },
       expectedExecutable: shell.expectedExecutable,
       readOnly: record.readOnly,

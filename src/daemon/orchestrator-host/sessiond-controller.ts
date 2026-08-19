@@ -20,6 +20,7 @@ import type { HiveTerminalHostAdapter } from "../session-host/hive-terminal-host
 import { shellJoin } from "../../shared/shell-quote";
 import {
   type ShellSessionLaunch,
+  prepareSessionZdotdir,
   shellSessionLaunch,
 } from "../session-host/shell-session";
 import type { TerminalHostBindingStore } from "../session-host/terminal-host-binding";
@@ -298,8 +299,8 @@ export class OrchestratorSessiondController {
         this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
       let hostOrigin: HostOrigin = "inherited";
       if (existing?.createEvidence === undefined) {
-        const created = await this.dependencies.terminalHost.create(
-          this.sessionSpec(params, locator, policy.geometry),
+      const created = await this.dependencies.terminalHost.create(
+          await this.sessionSpec(params, locator, policy.geometry),
           { locator, visibility: policy.visibility },
         );
         createdInspection = created.inspection;
@@ -549,11 +550,14 @@ export class OrchestratorSessiondController {
     });
   }
 
-  private sessionSpec(
+  private async sessionSpec(
     params: SessionCreateParams,
     locator: OrchestratorSessiondSnapshot["locator"],
     geometry: SessionSpec["geometry"],
-  ): SessionSpec {
+  ): Promise<SessionSpec> {
+    const zdotdir = await prepareSessionZdotdir(locator.sessionId);
+    const userZdotdir = process.env.ZDOTDIR ?? process.env.HOME ?? "";
+    
     return {
       schemaVersion: 1,
       locator,
@@ -567,6 +571,8 @@ export class OrchestratorSessiondController {
           ...params.environment,
         }),
         ...params.shell.env,
+        ZDOTDIR: zdotdir,
+        HIVE_USER_ZDOTDIR: userZdotdir,
       },
       expectedExecutable: params.shell.expectedExecutable,
       readOnly: false,
