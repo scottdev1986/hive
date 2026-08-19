@@ -216,6 +216,7 @@ QA_ENV := \
 	HIVE_INSTALL_ROOT=$(QA_INSTALL_ROOT) \
 	HIVE_BIN_LINK=$(QA_BIN_LINK) \
 	HIVE_BIN_DIR=$(QA)/bin \
+	HIVE_SESSIOND_ROOT=$(QA)/sessiond \
 	HIVE_DISABLE_UPDATES=1 \
 	HIVE_GRAPHIFY_MANIFEST=$(QA_GRAPHIFY_LOCAL_MANIFEST) \
 	HIVE_PORT=0 \
@@ -224,7 +225,7 @@ QA_ENV := \
 
 # The five public commands, then the internal structure they pull in.
 .PHONY: clean clean-all build run test sessiond toolchain graphify-local
-.PHONY: build-qa qa qa-clean graphify-qa
+.PHONY: build-qa qa qa-run qa-clean graphify-qa
 
 graphify-local: $(GRAPHIFY_LOCAL_MANIFEST)
 
@@ -447,6 +448,22 @@ qa:
 	  wait "$$daemon_pid" 2>/dev/null || true; \
 	  exit 1; \
 	fi
+
+# The QA runner against the rig `make qa` left up: fence preflight first, then
+# rows driven through the qa-control gate and verified on the daemon's own MCP
+# and HTTP clients. Exit 0 pass, 1 measured fail, 2 no measurement. The runner
+# wiring pins travel as HIVE_QA_RUNNER_* so the runner reads the Makefile's own
+# variables rather than re-deriving them.
+qa-run:
+	@set -e; \
+	[ -x "$(QA_BIN)" ] || { echo "no qa install at $(QA_BIN); run 'make qa' first" >&2; exit 2; }; \
+	env $(QA_ENV) \
+	  HIVE_QA_RUNNER_REPO_ROOT="$(ROOT)" \
+	  HIVE_QA_RUNNER_STAGING_ROOT="$(QA)" \
+	  HIVE_QA_RUNNER_DEV_HOME="$(DEV_HOME)" \
+	  HIVE_QA_RUNNER_USER_HIVE="$(USER_HIVE)" \
+	  HIVE_QA_RUNNER_PROJECT="$(QA_PROJECT)" \
+	  bun run "$(ROOT)/scripts/qa/run-qa.ts"
 
 # Product uninstall, then isolation checks. Order is load-bearing: repo
 # uninstall first, machine uninstall --purge, then check the qa paths are gone

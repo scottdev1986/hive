@@ -76,7 +76,7 @@ test("the dev commands stay unchanged and the independent QA lifecycle is declar
   expect(makefile).toContain(
     ".PHONY: clean clean-all build run test sessiond toolchain graphify-local",
   );
-  expect(makefile).toContain(".PHONY: build-qa qa qa-clean graphify-qa");
+  expect(makefile).toContain(".PHONY: build-qa qa qa-run qa-clean graphify-qa");
   expect(makefile).toContain("HIVE_DEFAULT_HOME=$(QA_HOME)");
 });
 
@@ -219,6 +219,20 @@ test("make -n qa resolves the default staging root outside the checkout", () => 
   // same isolated-QA-home family docs/qa/rig.sh already uses.
   expect(output).toMatch(/\/tmp\/hvqa-[0-9a-f]+/);
   expect(output).not.toContain(`mkdir -p "${join(root, ".qa")}`);
+});
+
+test("make -n qa pins HIVE_SESSIOND_ROOT under the QA staging root", () => {
+  const result = Bun.spawnSync(["make", "-n", "qa"], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const output = result.stdout.toString() + result.stderr.toString();
+  expect(result.exitCode, output).toBe(0);
+  // Make's own expansion of QA_ENV, not a recipe-text assertion: the sessiond
+  // socket root must ride along under the same /tmp/hvqa-<tag> staging root,
+  // or sessiond sockets land in the machine-wide run dir (qa-plan-v2 fence 1).
+  expect(output).toMatch(/HIVE_SESSIOND_ROOT=\/tmp\/hvqa-[0-9a-f]+\/sessiond/);
 });
 
 test("make qa refuses a QA staging root inside the hive checkout", () => {
