@@ -153,6 +153,7 @@ interface TrustedRelease {
   readonly signature: string;
   readonly cli: ReleaseArtifact;
   readonly sessiond: ReleaseArtifact;
+  readonly terminfo: ReleaseArtifact;
 }
 
 function trustSignedRelease(deps: StageDeps): TrustedRelease {
@@ -180,7 +181,13 @@ function trustSignedRelease(deps: StageDeps): TrustedRelease {
       `Release ${manifest.version} has no sessiond build for darwin-${deps.arch}`,
     );
   }
-  return { manifest, signature, cli, sessiond };
+  const terminfo = selectArtifact(manifest, "terminfo", deps.arch);
+  if (terminfo === null) {
+    throw new UpdateError(
+      `Release ${manifest.version} has no terminfo bundle for darwin-${deps.arch}`,
+    );
+  }
+  return { manifest, signature, cli, sessiond, terminfo };
 }
 
 function probeMatchesVersion(reported: string, version: string): boolean {
@@ -195,7 +202,7 @@ export interface StageResult {
 
 export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   const root = deps.root ?? installRoot();
-  const { manifest, signature, cli, sessiond } = trustSignedRelease(deps);
+  const { manifest, signature, cli, sessiond, terminfo } = trustSignedRelease(deps);
   const app = selectArtifact(manifest, "workspace", deps.arch);
 
   const version = manifest.version;
@@ -254,6 +261,24 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   const stagedSessiond = sessiondPath(staging);
   await writeFile(stagedSessiond, sessiondBytes);
   await chmod(stagedSessiond, 0o755);
+  
+  // Terminfo tarball contains resources/terminfo/. Extract it to staging so locateBundledTerminfo() finds it next to sessiond.
+  const terminfoBytes = await fetchArtifact(terminfo);
+  const terminfoTarball = join(staging, terminfo.name);
+  await writeFile(terminfoTarball, terminfoBytes);
+  const tarProc = Bun.spawn(["tar", "-xzf", terminfoTarball, "-C", staging], {
+    cwd: staging,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const tarExit = await tarProc.exited;
+  if (tarExit !== 0) {
+    await rm(staging, { recursive: true, force: true });
+    throw new UpdateError(
+      `Refusing update: failed to extract terminfo tarball (tar exited ${tarExit})`,
+    );
+  }
+  await rm(terminfoTarball, { force: true });
 
   if (app !== null && deps.unpackApp !== undefined) {
     const appBytes = await fetchArtifact(app);
@@ -287,6 +312,7 @@ async function proveStaged(
   manifest: ReleaseManifest,
   cli: ReleaseArtifact,
   sessiond: ReleaseArtifact,
+  terminfo: ReleaseArtifact,
   root: string,
   signature: string,
 ): Promise<StageOutcome> {
@@ -329,6 +355,16 @@ async function proveStaged(
         "does not match the SHA-256 in the signed manifest",
     );
   }
+  
+  // Verify terminfo exists (we don't re-hash the tarball since it was extracted)
+  const terminfoEntry = join(versionDir(version, root), "resources", "terminfo", "x", "xterm-ghostty");
+  try {
+    readFileSync(terminfoEntry);
+  } catch {
+    throw new UpdateError(
+      `Refusing update: staged hive ${version} is missing terminfo at ${terminfoEntry}`,
+    );
+  }
 
   await writeVerificationMaterial(
     versionDir(version, root),
@@ -346,12 +382,12 @@ async function proveStaged(
 /** The one way in. Produce a version directory that has passed every gate — whether that means downloading it or re-proving what is already there. Do not treat `isStaged()` as proof: that skips the manifest signature, digest, and probe checks, so a crash between download and activation could bypass the fail-closed path. Routing both cases through here ensures no prior state can yield an activation without verification. */
 export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
   const root = deps.root ?? installRoot();
-  const { manifest, signature, cli, sessiond } = trustSignedRelease(deps);
+  const { manifest, signature, cli, sessiond, terminfo } = trustSignedRelease(deps);
   const version = manifest.version;
 
   if (isStaged(version, root)) {
     try {
-      return await proveStaged(deps, manifest, cli, sessiond, root, signature);
+      return await proveStaged(deps, manifest, cli, sessiond, terminfo, root, signature);
     } catch (error) {
       // The staged copy is not what the signed manifest describes. Discarding and refetching is safe *unless* it is the version currently running: deleting the active install to recover from a bad staging would trade a refused update for a broken one. There we refuse and say what to remove.
       if (readInstallState(root).active === version) throw error;
