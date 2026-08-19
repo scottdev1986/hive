@@ -817,20 +817,6 @@ const validCases: readonly WireCorpusCase[] = [
     value: { schemaVersion: 1, ...fixtureTerminalHostTerminationResult },
   },
   {
-    name: "VISIBILITY_RENEW exact generation",
-    schema: "visibilityRenewPayload",
-    value: {
-      schemaVersion: 1,
-      locator: fixtureLocator,
-      ...fixtureVisibilityRequest,
-    },
-  },
-  {
-    name: "RENEWED lease",
-    schema: "renewedPayload",
-    value: { schemaVersion: 1, ...fixtureVisibilityLease },
-  },
-  {
     name: "ATTACH_REQUEST exact generation",
     schema: "attachRequestPayload",
     value: {
@@ -1355,21 +1341,6 @@ const invalidCases: readonly WireCorpusCase[] = [
       schemaVersion: 1,
       ...fixtureTerminalHostTerminationResult,
       reap: undefined,
-    },
-  },
-  {
-    name: "VISIBILITY_RENEW rejects missing locator",
-    schema: "visibilityRenewPayload",
-    value: { schemaVersion: 1, ...fixtureVisibilityRequest },
-  },
-  {
-    name: "RENEWED rejects missing locator",
-    schema: "renewedPayload",
-    value: {
-      schemaVersion: 1,
-      state: "active",
-      expiresAt: fixtureVisibilityLease.expiresAt,
-      openTerminalRevision: "7",
     },
   },
   {

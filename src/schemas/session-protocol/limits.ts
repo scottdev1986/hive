@@ -21,7 +21,6 @@ export const TERMINAL_LIMITS = {
   /** A create is not an RPC that reads a record. It forks a host process, which forks a login `zsh -l -i` — sourcing the user's whole shell profile — which execs a vendor CLI, and the reply waits for all of it. Measured Create latency grows sharply under wide bursts because vendor CLIs start concurrently with the host. The host is competing with. Under one shared 10 s budget the 31-wide burst lost 26 of 31 hosts to create and HELLO timeouts while every create was in fact progressing normally. Bounding "fork a shell and a vendor" with the same number as "read a record" is the same conflation the visibility lease made, one layer down. */
   createRpcTimeoutMilliseconds: 60_000,
   attachGrantTimeoutMilliseconds: 30_000,
-  visibilityRenewalMilliseconds: 5_000,
   visibilityExpiryMilliseconds: 15_000,
   connectionPingIntervalMilliseconds: 5_000,
   missedPongIntervalsBeforeDetach: 3,

@@ -15,7 +15,6 @@ import {
   SessionSpecSchema,
   SessionVisibilitySchema,
   TerminalGeometrySchema,
-  VisibilityLeaseSchema,
   VisibilityRequestSchema,
 } from "./session-protocol-schema";
 import {
@@ -365,19 +364,6 @@ export const TerminatedPayloadSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     ...TerminalHostTerminationResultSchema.unwrap().shape,
-  })
-  .readonly();
-export const VisibilityRenewPayloadSchema = z
-  .strictObject({
-    schemaVersion: z.literal(1),
-    locator: SessionLocatorSchema,
-    ...VisibilityRequestSchema.unwrap().shape,
-  })
-  .readonly();
-export const RenewedPayloadSchema = z
-  .strictObject({
-    schemaVersion: z.literal(1),
-    ...VisibilityLeaseSchema.unwrap().shape,
   })
   .readonly();
 export const AttachRequestPayloadSchema = z

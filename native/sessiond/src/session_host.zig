@@ -435,7 +435,7 @@ fn serveControlRequest(
         try writeHostFailure(allocator, stream, request.header, .malformed_frame);
         return;
     }
-    // Same-uid + instanceId + buildId prove only that the peer is A local process running the same executable; the 32-byte adoption secret is the proof it is THE broker that owns this host. HOST_ADOPT is therefore the only pre-adoption verb: terminate, grant_register, visibility_renew and any future privileged RPC fail closed until adoption has set core.adopted (write-once for the host's lifetime).
+    // Same-uid + instanceId + buildId prove only that the peer is A local process running the same executable; the 32-byte adoption secret is the proof it is THE broker that owns this host. HOST_ADOPT is therefore the only pre-adoption verb: terminate, grant_register, and any future privileged RPC fail closed until adoption has set core.adopted (write-once for the host's lifetime).
     if (request.header.type_code != generated.frame_type.host_adopt and !core.adopted) {
         try writeHostFailure(allocator, stream, request.header, .unauthenticated);
         return;
@@ -483,28 +483,6 @@ fn serveControlRequest(
             try protocol.writeFrame(
                 stream,
                 request.header.response(generated.frame_type.grant_register, response.len),
-                response,
-            );
-        },
-        generated.frame_type.visibility_renew => {
-            const response = core.renewVisibility(request.payload, now_ns) catch |err| {
-                try writeHostFailure(
-                    allocator,
-                    stream,
-                    request.header,
-                    switch (err) {
-                        error.InvalidWorkspaceIdentity => .unauthenticated,
-                        error.VisibilityExpired => .not_ready,
-                        error.VisibilityForbidden => .forbidden,
-                        else => .malformed_frame,
-                    },
-                );
-                return;
-            };
-            defer core.allocator.free(response);
-            try protocol.writeFrame(
-                stream,
-                request.header.response(generated.frame_type.renewed, response.len),
                 response,
             );
         },
@@ -3222,29 +3200,6 @@ test "host.sock fails closed for privileged broker RPCs before adoption" {
     try expectUnauthenticatedRefusal(&grant_response);
     try std.testing.expectEqual(@as(usize, 0), core.grants.items.len);
 
-    // VISIBILITY_RENEW pre-adoption: typed refusal, lease untouched.
-    const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
-        return error.MissingWorkspaceIdentity;
-    var token_storage: [64]u8 = undefined;
-    const token = try workspace.start_token.format(&token_storage);
-    const renew_payload = try visibilityRenewPayload(
-        std.testing.allocator,
-        registration,
-        c.getpid(),
-        token,
-        2,
-    );
-    defer std.testing.allocator.free(renew_payload);
-    var renew_response = try serveOneControlRequest(
-        &core,
-        registration,
-        generated.frame_type.visibility_renew,
-        renew_payload,
-    );
-    defer renew_response.deinit(std.testing.allocator);
-    try expectUnauthenticatedRefusal(&renew_response);
-    try std.testing.expectEqual(@as(u64, 1), core.lease.open_terminal_revision);
-
     const terminate_payload = try terminationPayload(std.testing.allocator, registration, "immediate");
     defer std.testing.allocator.free(terminate_payload);
     var terminate_response = try serveOneControlRequest(
@@ -4189,117 +4144,6 @@ test "GRANT_REGISTER positive control rejects an expired grant" {
     defer std.testing.allocator.free(payload);
     try std.testing.expectError(error.Expired, core.registerGrant(payload, 2_000));
     try std.testing.expectEqual(@as(usize, 0), core.grants.items.len);
-}
-
-fn visibilityRenewPayload(
-    allocator: std.mem.Allocator,
-    registration: HostRegistration,
-    workspace_pid: i32,
-    workspace_start_token: []const u8,
-    revision: u64,
-) ![]u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    var revision_storage: [32]u8 = undefined;
-    const revision_text = try std.fmt.bufPrint(&revision_storage, "{d}", .{revision});
-    var root = std.json.ObjectMap.init(arena.allocator());
-    try root.put("schemaVersion", .{ .integer = 1 });
-    try root.put("locator", try locatorValue(arena.allocator(), registration.record.locator));
-    try root.put("workspaceSessionId", .{ .string = registration.record.visibility.workspace_session_id });
-    try root.put("workspacePid", .{ .integer = workspace_pid });
-    try root.put("workspaceStartToken", .{ .string = workspace_start_token });
-    try root.put("openTerminalRevision", .{ .string = try arena.allocator().dupe(u8, revision_text) });
-    return std.json.Stringify.valueAlloc(
-        allocator,
-        std.json.Value{ .object = root },
-        .{},
-    );
-}
-
-test "host.sock VISIBILITY_RENEW verifies workspace identity and extends exact lease" {
-    const secret: [32]u8 = @splat(0x31);
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.heap.c_allocator,
-        registration,
-        secret,
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
-        return error.MissingWorkspaceIdentity;
-    var token_storage: [64]u8 = undefined;
-    const token = try workspace.start_token.format(&token_storage);
-    const payload = try visibilityRenewPayload(
-        std.testing.allocator,
-        registration,
-        c.getpid(),
-        token,
-        2,
-    );
-    defer std.testing.allocator.free(payload);
-    // Privileged broker RPCs fail closed until adoption.
-    try adoptForTest(&core, registration, secret);
-    var sockets = try socketPair();
-    defer sockets[0].close();
-    defer sockets[1].close();
-    var server: HostConnectionThread = .{
-        .stream = sockets[1],
-        .core = &core,
-        .now_ns = 2_000,
-    };
-    const thread = try std.Thread.spawn(.{}, HostConnectionThread.run, .{&server});
-    errdefer thread.join();
-    errdefer _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
-
-    try writeTestBrokerHello(sockets[0], registration);
-    try readTestWelcome(sockets[0]);
-    try writeTestHostRequest(sockets[0], generated.frame_type.visibility_renew, payload);
-    var response = try readRequiredFrame(std.testing.allocator, sockets[0]);
-    defer response.deinit(std.testing.allocator);
-    thread.join();
-
-    try std.testing.expect(server.failure == null);
-    try std.testing.expectEqual(generated.frame_type.renewed, response.header.type_code);
-    try std.testing.expect(protocol.validateControlPayload(
-        std.testing.allocator,
-        generated.wire_schema.renewed_payload,
-        response.payload,
-    ));
-    try std.testing.expectEqual(@as(u64, 2), core.lease.open_terminal_revision);
-    try std.testing.expectEqual(
-        @as(u64, 2_000 + generated.limits.visibility_expiry_ms * std.time.ns_per_ms),
-        core.lease.expires_mono_ns,
-    );
-}
-
-test "VISIBILITY_RENEW positive control rejects a false workspace start token" {
-    const secret: [32]u8 = @splat(0x31);
-    const registration = fixtureRegistration();
-    var core = try HostCore.init(
-        std.testing.allocator,
-        registration,
-        secret,
-        "/tmp/hive-sessiond",
-        "host-build-a",
-        1_000,
-    );
-    defer core.deinit();
-    const payload = try visibilityRenewPayload(
-        std.testing.allocator,
-        registration,
-        c.getpid(),
-        "0:0",
-        2,
-    );
-    defer std.testing.allocator.free(payload);
-    try std.testing.expectError(
-        error.InvalidWorkspaceIdentity,
-        core.renewVisibility(payload, 2_000),
-    );
-    try std.testing.expectEqual(@as(u64, 1), core.lease.open_terminal_revision);
 }
 
 fn terminationPayload(

@@ -815,7 +815,6 @@ pub const limits = struct {
     pub const control_rpc_timeout_ms: u64 = ${TERMINAL_LIMITS.controlRpcTimeoutMilliseconds};
     pub const create_rpc_timeout_ms: u64 = ${TERMINAL_LIMITS.createRpcTimeoutMilliseconds};
     pub const attach_grant_timeout_ms: u64 = ${TERMINAL_LIMITS.attachGrantTimeoutMilliseconds};
-    pub const visibility_renewal_ms: u64 = ${TERMINAL_LIMITS.visibilityRenewalMilliseconds};
     pub const visibility_expiry_ms: u64 = ${TERMINAL_LIMITS.visibilityExpiryMilliseconds};
     pub const connection_ping_interval_ms: u64 = ${TERMINAL_LIMITS.connectionPingIntervalMilliseconds};
     pub const missed_pong_intervals: u8 = ${TERMINAL_LIMITS.missedPongIntervalsBeforeDetach};

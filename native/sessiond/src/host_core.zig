@@ -59,15 +59,6 @@ const WireHostAttach = struct {
     afterSeq: []const u8,
 };
 
-const WireVisibilityRenew = struct {
-    schemaVersion: u8,
-    locator: WireLocator,
-    workspaceSessionId: []const u8,
-    workspacePid: i32,
-    workspaceStartToken: []const u8,
-    openTerminalRevision: []const u8,
-};
-
 const WireTerminalSessionRef = struct {
     key: []const u8,
     incarnation: []const u8,
@@ -1200,58 +1191,6 @@ pub const HostCore = struct {
             .after_seq = after_seq,
         };
         return authorization;
-    }
-
-    pub fn renewVisibility(self: *HostCore, payload: []const u8, now_ns: u64) ![]u8 {
-        if (!protocol.validateControlPayload(
-            self.allocator,
-            generated.wire_schema.visibility_renew_payload,
-            payload,
-        )) return error.InvalidVisibilityRenewal;
-        var parsed = try std.json.parseFromSlice(WireVisibilityRenew, self.allocator, payload, .{
-            .ignore_unknown_fields = true,
-        });
-        defer parsed.deinit();
-        var locator_arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer locator_arena.deinit();
-        const locator = try parseLocator(locator_arena.allocator(), parsed.value.locator);
-        if (!locator.eql(self.registration.record.locator))
-            return error.InvalidVisibilityRenewal;
-        const workspace = switch (process_inspector.observeProcess(parsed.value.workspacePid)) {
-            .present => |identity| identity,
-            .absent, .unobservable => return error.InvalidWorkspaceIdentity,
-        };
-        var token_storage: [64]u8 = undefined;
-        const token = try workspace.start_token.format(&token_storage);
-        if (!std.mem.eql(u8, token, parsed.value.workspaceStartToken))
-            return error.InvalidWorkspaceIdentity;
-        const revision = try std.fmt.parseInt(u64, parsed.value.openTerminalRevision, 10);
-        try self.lease.renew(
-            parsed.value.workspaceSessionId,
-            revision,
-            now_ns,
-        );
-        self.registration.record.visibility.state = .visible;
-        self.registration.record.visibility.open_terminal_revision = revision;
-        self.registration.record.visibility.expires_mono_ns = self.lease.expires_mono_ns;
-        var expiry_storage: [24]u8 = undefined;
-        const expires_at = try self.leaseWallDeadline(now_ns, &expiry_storage);
-        var revision_storage: [32]u8 = undefined;
-        const revision_text = try std.fmt.bufPrint(&revision_storage, "{d}", .{revision});
-        var arena = std.heap.ArenaAllocator.init(self.allocator);
-        defer arena.deinit();
-        var root = std.json.ObjectMap.init(arena.allocator());
-        try root.put("schemaVersion", .{ .integer = 1 });
-        try root.put("locator", try locatorValue(arena.allocator(), self.registration.record.locator));
-        try root.put("state", .{ .string = "active" });
-        try root.put("expiresAt", .{ .string = expires_at });
-        try root.put("openTerminalRevision", .{ .string = try arena.allocator().dupe(u8, revision_text) });
-        return stringifyValidatedPayload(
-            self.allocator,
-            root,
-            generated.wire_schema.renewed_payload,
-            error.InvalidVisibilityResponse,
-        );
     }
 
     pub fn terminate(self: *HostCore, payload: []const u8) ![]u8 {

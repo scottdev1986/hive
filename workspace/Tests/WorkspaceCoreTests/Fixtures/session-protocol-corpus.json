@@ -1013,51 +1013,6 @@
       }
     },
     {
-      "name": "VISIBILITY_RENEW exact generation",
-      "schema": "visibilityRenewPayload",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "workspaceSessionId": "workspace-fixture",
-        "workspacePid": 4000,
-        "workspaceStartToken": "4000:123455",
-        "openTerminalRevision": "7"
-      }
-    },
-    {
-      "name": "RENEWED lease",
-      "schema": "renewedPayload",
-      "value": {
-        "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
-        "state": "active",
-        "expiresAt": "2026-07-16T12:00:15.000Z",
-        "openTerminalRevision": "7"
-      }
-    },
-    {
       "name": "ATTACH_REQUEST exact generation",
       "schema": "attachRequestPayload",
       "value": {
@@ -3084,27 +3039,6 @@
         "survivors": [],
         "completeness": "complete",
         "diagnostics": []
-      }
-    },
-    {
-      "name": "VISIBILITY_RENEW rejects missing locator",
-      "schema": "visibilityRenewPayload",
-      "value": {
-        "schemaVersion": 1,
-        "workspaceSessionId": "workspace-fixture",
-        "workspacePid": 4000,
-        "workspaceStartToken": "4000:123455",
-        "openTerminalRevision": "7"
-      }
-    },
-    {
-      "name": "RENEWED rejects missing locator",
-      "schema": "renewedPayload",
-      "value": {
-        "schemaVersion": 1,
-        "state": "active",
-        "expiresAt": "2026-07-16T12:00:15.000Z",
-        "openTerminalRevision": "7"
       }
     },
     {

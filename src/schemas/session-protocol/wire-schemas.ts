@@ -17,11 +17,9 @@ import {
   ListedPayloadSchema,
   ListPayloadSchema,
   PingPongPayloadSchema,
-  RenewedPayloadSchema,
   ResizePayloadSchema,
   TerminatedPayloadSchema,
   TerminatePayloadSchema,
-  VisibilityRenewPayloadSchema,
   WelcomePayloadSchema,
 } from "./payloads";
 import {
@@ -77,8 +75,6 @@ export const SESSION_WIRE_SCHEMAS = {
   inspectedPayload: InspectedPayloadSchema,
   terminatePayload: TerminatePayloadSchema,
   terminatedPayload: TerminatedPayloadSchema,
-  visibilityRenewPayload: VisibilityRenewPayloadSchema,
-  renewedPayload: RenewedPayloadSchema,
   attachRequestPayload: AttachRequestPayloadSchema,
   attachGrantPayload: AttachGrantPayloadSchema,
   hostAttachPayload: HostAttachPayloadSchema,
