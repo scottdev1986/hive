@@ -10,6 +10,7 @@
 // product failure, so it always lands on NO MEASUREMENT.
 import { realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { runStage1Rows } from "./stage1-rows";
 
 export interface ExecResult {
   exitCode: number;
@@ -286,6 +287,7 @@ export function parseCredentialHeaders(stdout: string): Record<string, string> {
 /** The oracle side: reads the daemon through the product's own MCP session and user HTTP client. Built by the entrypoint; rows receive null when the rig offers no port or credential, which they report as NO MEASUREMENT. */
 export interface ObserveClients {
   httpStatus(path: string): Promise<number>;
+  httpJson(path: string): Promise<{ status: number; body: unknown }>;
   mcpCall(
     name: string,
     args: Record<string, unknown>,
@@ -294,31 +296,53 @@ export interface ObserveClients {
   close(): Promise<void>;
 }
 
-interface GateResponse {
-  route?: string;
-  reason?: string;
+export interface GateControl {
+  identifier: string;
+  enabled: boolean;
+  actionable: boolean;
+  functionallyPresent: boolean;
 }
 
-type GateAnswer =
+export interface GateResponse {
+  route?: string;
+  reason?: string;
+  controls?: GateControl[];
+}
+
+export type GateAnswer =
   | { outcome: "answered"; exitCode: number; response: GateResponse }
   | { outcome: "no-measurement"; reason: string };
 
-async function gate(
+export type GateCommand =
+  | { verb: "enumerate" }
+  | { verb: "invoke"; identifier: string; input?: string }
+  | { verb: "select"; identifier: string; title?: string; index?: number };
+
+/** One qa-control round trip through the installed QA binary. Exit 2 and an unparseable stdout are rig facts (NO MEASUREMENT); exit 1 with the app's reason is a measured refusal. */
+export async function gate(
   exec: Exec,
   qaBin: string,
-  verb: "enumerate" | "invoke",
-  identifier?: string,
+  command: GateCommand,
 ): Promise<GateAnswer> {
-  const argv =
-    identifier === undefined
-      ? [qaBin, "qa-control", verb]
-      : [qaBin, "qa-control", verb, identifier];
+  const argv = [qaBin, "qa-control", command.verb];
+  if (command.verb !== "enumerate") {
+    argv.push(command.identifier);
+    if (command.verb === "invoke" && command.input !== undefined) {
+      argv.push("--input", command.input);
+    }
+    if (command.verb === "select") {
+      if (command.title !== undefined) argv.push("--title", command.title);
+      if (command.index !== undefined)
+        argv.push("--index", String(command.index));
+    }
+  }
   const result = await exec(argv);
   if (result.exitCode === 2) {
     return {
       outcome: "no-measurement",
       reason:
-        result.stderr.trim() || `qa-control ${verb} reported NO MEASUREMENT`,
+        result.stderr.trim() ||
+        `qa-control ${command.verb} reported NO MEASUREMENT`,
     };
   }
   try {
@@ -330,12 +354,12 @@ async function gate(
   } catch {
     return {
       outcome: "no-measurement",
-      reason: `qa-control ${verb} printed no parseable response`,
+      reason: `qa-control ${command.verb} printed no parseable response`,
     };
   }
 }
 
-/** The proof row: enumerate, invoke shell-nav-models, then assert on a SECOND enumerate that the route moved. The invoke response snapshots the pre-action route, so it is never consulted for post-state. */
+/** The proof row: enumerate, invoke the shell nav that is NOT the current route, then assert on a SECOND enumerate that the route moved. The invoke response snapshots the pre-action route, so it is never consulted for post-state. Driving away from the current route rather than always at models keeps the row repeatable: a second consecutive run starts on the screen the first run left. */
 export async function rowRouteTransition(
   exec: Exec,
   qaBin: string,
@@ -343,7 +367,7 @@ export async function rowRouteTransition(
   boundMs = 5_000,
 ): Promise<RowResult> {
   const id = "QA1-01-route-transition";
-  const first = await gate(exec, qaBin, "enumerate");
+  const first = await gate(exec, qaBin, { verb: "enumerate" });
   if (first.outcome === "no-measurement") {
     return { id, status: "NO MEASUREMENT", reason: first.reason };
   }
@@ -362,7 +386,11 @@ export async function rowRouteTransition(
       reason: "enumerate answered without a route",
     };
   }
-  const invoke = await gate(exec, qaBin, "invoke", "shell-nav-models");
+  const target = routeBefore === "models" ? "router" : "models";
+  const invoke = await gate(exec, qaBin, {
+    verb: "invoke",
+    identifier: `shell-nav-${target}`,
+  });
   if (invoke.outcome === "no-measurement") {
     return { id, status: "NO MEASUREMENT", reason: invoke.reason };
   }
@@ -371,20 +399,21 @@ export async function rowRouteTransition(
       id,
       status: "FAIL",
       reason:
-        invoke.response.reason ?? "invoke shell-nav-models reported a failure",
+        invoke.response.reason ??
+        `invoke shell-nav-${target} reported a failure`,
     };
   }
   let gateAlive = true;
   const moved = await waitFor(
     async () => {
-      const again = await gate(exec, qaBin, "enumerate");
+      const again = await gate(exec, qaBin, { verb: "enumerate" });
       if (again.outcome === "no-measurement") {
         gateAlive = false;
         return null;
       }
       gateAlive = true;
       const route = again.response.route;
-      return typeof route === "string" && route !== routeBefore ? route : null;
+      return route === target ? route : null;
     },
     boundMs,
     sleep,
@@ -406,7 +435,7 @@ export async function rowRouteTransition(
   return {
     id,
     status: "FAIL",
-    reason: `invoke shell-nav-models reported ok but the route stayed ${routeBefore}`,
+    reason: `invoke shell-nav-${target} reported ok but the route stayed ${routeBefore}`,
   };
 }
 
@@ -464,6 +493,14 @@ export interface RunDeps extends PreflightDeps {
   sleep: (ms: number) => Promise<void>;
   out: (line: string) => void;
   err: (line: string) => void;
+  /** Stage-1 rows; a parameter so this module's own tests stay hermetic. Defaults to the real stage. */
+  stage1?: (ctx: {
+    exec: Exec;
+    qaBin: string;
+    observe: ObserveClients | null;
+    sleep: (ms: number) => Promise<void>;
+    baselinePath: string;
+  }) => Promise<RowResult[]>;
 }
 
 /** Preflight, then the rows, then the 0/1/2 exit. The build identity the preflight proved is recorded on stderr so the row lines on stdout stay the whole reporting contract. */
@@ -481,6 +518,15 @@ export async function runQA(deps: RunDeps): Promise<number> {
     await rowRouteTransition(deps.exec, fence.qaBin, deps.sleep),
     await rowObserveClients(observe, deps.sleep),
   ];
+  rows.push(
+    ...(await (deps.stage1 ?? runStage1Rows)({
+      exec: deps.exec,
+      qaBin: fence.qaBin,
+      observe,
+      sleep: deps.sleep,
+      baselinePath: join(deps.rig.stagingRoot, "state", "qa-rig-baseline.json"),
+    })),
+  );
   if (observe !== null) {
     await observe.close().catch(() => undefined);
   }

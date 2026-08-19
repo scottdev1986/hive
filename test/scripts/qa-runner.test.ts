@@ -489,6 +489,7 @@ describe("the route-transition proof row", () => {
 function observe(overrides: Partial<ObserveClients>): ObserveClients {
   return {
     httpStatus: async () => 200,
+    httpJson: async () => ({ status: 200, body: {} }),
     mcpCall: async () => ({ agents: [] }),
     close: async () => {},
     ...overrides,
@@ -583,6 +584,7 @@ describe("runQA end to end with fakes", () => {
       sleep,
       out: (line) => out.push(line),
       err: (line) => err.push(line),
+      stage1: async () => [],
     });
     expect(exit).toBe(0);
     expect(out).toHaveLength(2);
@@ -609,6 +611,7 @@ describe("runQA end to end with fakes", () => {
       sleep,
       out: (line) => out.push(line),
       err: () => {},
+      stage1: async () => [],
     });
     expect(exit).toBe(2);
     expect(out[1]).toMatch(/^NO MEASUREMENT QA1-02-observe-clients /);

@@ -53,6 +53,10 @@ async function buildObserve(qaBin: string): Promise<ObserveClients | null> {
   const http = new UserDaemonClient({ port, fetch: fetcher });
   return {
     httpStatus: async (path) => (await http.request(path)).status,
+    httpJson: async (path) => {
+      const response = await http.request(path);
+      return { status: response.status, body: await response.json() };
+    },
     mcpCall: async (name, args, key) => await mcp.call(name, args, key),
     close: async () => await mcp.close(),
   };
