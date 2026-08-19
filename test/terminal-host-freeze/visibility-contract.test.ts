@@ -256,119 +256,6 @@ async function assertRenewalRequiresCurrentRepresentation(
   });
 }
 
-async function assertExpiryTearsDownExactTree(
-  host: NeutralVisibilityHostFixture,
-): Promise<void> {
-  const identity = source("source-p", 6105, "6105:100");
-  host.publishSnapshot({
-    source: identity,
-    inventoryRevision: "1",
-    representedSessionKeys: ["visible-p"],
-  });
-  const createRequest = {
-    terminal: terminal("visible-p"),
-    visibility: visibility(identity, "1"),
-  } as const;
-  const { session } = requireCreated(await host.create(createRequest));
-  host.setSourceLive(identity.sessionId, false);
-  expect(
-    await host.renewVisibility({
-      session,
-      visibility: visibility(identity, "1"),
-    }),
-  ).toMatchObject({
-    state: "rejected",
-    reason: "source-not-live",
-    renewed: false,
-  });
-
-  await host.advance(VISIBILITY_LEASE_MILLISECONDS - 1);
-  expect(host.currentLease(session)?.state).toBe("active");
-  expect((await host.inspect(session)).lifecycle).toBe("running");
-  await host.advance(1);
-  expect(host.currentLease(session)).toMatchObject({
-    state: "expired",
-    teardown: { state: "terminated", completeness: "complete" },
-  });
-  expect(host.expiryResult(session)).toMatchObject({
-    state: "terminated",
-    reap: {
-      authority: "direct-parent",
-      reaped: true,
-      completeness: "complete",
-    },
-    survivors: [],
-    completeness: "complete",
-  });
-  expect(await host.inspect(session)).toMatchObject({
-    lifecycle: "exited",
-    descendants: [],
-    survivors: [],
-  });
-  const replayed = requireCreated(await host.create(createRequest));
-  expect(replayed.session).toEqual(session);
-  expect(replayed.lease.state).toBe("expired");
-}
-
-async function assertExpirySweepIsolatesTerminationErrors(
-  host: NeutralVisibilityHostFixture,
-): Promise<void> {
-  const identity = source("source-p-sweep", 6110, "6110:100");
-  host.publishSnapshot({
-    source: identity,
-    inventoryRevision: "1",
-    representedSessionKeys: ["visible-p-failed-launch", "visible-p-running"],
-  });
-  const failedTerminal = terminal("visible-p-failed-launch");
-  const failed = requireCreated(
-    await host.create({
-      terminal: {
-        ...failedTerminal,
-        command: { ...failedTerminal.command, executable: "missing:command" },
-      },
-      visibility: visibility(identity, "1"),
-    }),
-  );
-  const running = requireCreated(
-    await host.create({
-      terminal: terminal("visible-p-running"),
-      visibility: visibility(identity, "1"),
-    }),
-  );
-
-  await expect(
-    host.advance(VISIBILITY_LEASE_MILLISECONDS),
-  ).resolves.toBeUndefined();
-  expect(host.expiryResult(failed.session)).toMatchObject({
-    state: "unknown",
-    completeness: "unknown",
-    reap: { authority: "unavailable", reaped: false, completeness: "unknown" },
-  });
-  expect(host.currentLease(failed.session)).toMatchObject({
-    state: "expired",
-    teardown: { state: "unknown", completeness: "unknown" },
-  });
-  expect(host.expiryResult(running.session)).toMatchObject({
-    state: "terminated",
-    completeness: "complete",
-  });
-  expect(host.currentLease(running.session)).toMatchObject({
-    state: "expired",
-    teardown: { state: "terminated", completeness: "complete" },
-  });
-  expect((await host.inspect(running.session)).lifecycle).toBe("exited");
-  expect(
-    await host.create({
-      terminal: terminal("visible-p-failed-launch", "unreconciled-generation"),
-      visibility: visibility(identity, "1"),
-    }),
-  ).toMatchObject({
-    state: "rejected",
-    reason: "duplicate-session-owner",
-    createInvoked: false,
-  });
-}
-
 async function assertCreateRejectionsAreSticky(
   host: NeutralVisibilityHostFixture,
 ): Promise<void> {
@@ -530,7 +417,7 @@ describe("terminal-host visibility extension shape freeze", () => {
   });
 });
 
-describe("neutral visibility fixture freeze L–S with mutation controls", () => {
+describe("neutral visibility fixture freeze L–O, Q–S with mutation controls", () => {
   const cases: readonly [
     string,
     (host: NeutralVisibilityHostFixture) => Promise<void>,
@@ -557,11 +444,6 @@ describe("neutral visibility fixture freeze L–S with mutation controls", () =>
       "renew-absent-session",
     ],
     [
-      "P bounded expiry tears down the exact process tree",
-      assertExpiryTearsDownExactTree,
-      "never-expire",
-    ],
-    [
       "Q incomplete evidence stays unknown",
       assertIncompleteEvidenceStaysUnknown,
       "claim-incomplete-evidence",
@@ -575,11 +457,6 @@ describe("neutral visibility fixture freeze L–S with mutation controls", () =>
       "S renewal fences the exact session generation",
       assertRenewalFencesSessionGeneration,
       "ignore-session-generation",
-    ],
-    [
-      "P2 expiry sweep isolates teardown errors",
-      assertExpirySweepIsolatesTerminationErrors,
-      "abort-sweep-on-teardown-failure",
     ],
     [
       "T create rejections are sticky",

@@ -1,6 +1,6 @@
 # Terminal host visibility extension v1.0.0
 
-Status: **candidate shape frozen; cross-vendor review pending**. This is the project-neutral A0 extension. The neutral qualification fixture passes L–S with a deliberate mutation control for every case.
+Status: **candidate shape frozen; cross-vendor review pending**. This is the project-neutral A0 extension. The neutral qualification fixture passes L–O and Q–S with a deliberate mutation control for every case. Rows P and P2 (kill-on-expiry) were removed from the freeze suite rather than rewritten: they asserted the inverse of production observed liveness.
 
 **Implementation status.** Production's `SessiondHost` implements `LandedTerminalHost` (`src/daemon/session-host/sessiond-host.ts:278`), not `VisibilityTerminalHost` (`src/daemon/session-host/terminal-host-visibility-contract.ts:113`). The Required behavior below describes this frozen profile. It is not a description of the production host.
 
@@ -87,7 +87,7 @@ Partial, unavailable, or unknown inventory or identity evidence returns `unknown
 | M | Equal current revision can authorize multiple represented keys; replay of an older revision and an unverified future revision fail closed. | Neutral green |
 | N | PID plus exact start token and liveness are required; same-PID start-token reuse and dead sources fail. | Neutral green |
 | O | Equal/later renewal succeeds only while the latest complete inventory still represents the exact key. | Neutral green |
-| P | Source death is observed on the supervisor process, not inferred from a missed renewal. The deadline bounds the wire's `expiresAt` and the input-claim window; it does not terminate the process tree. | Neutral green |
+| P | Source death is observed on the supervisor process, not inferred from a missed renewal. The deadline bounds the wire's `expiresAt` and the input-claim window; it does not terminate the process tree. | Not freeze-qualified |
 | Q | Incomplete inventory evidence returns typed `unknown` and never invokes create. | Neutral green |
 | R | Neither the same source nor a second source can create over a session key with an active or unreconciled leased generation. | Neutral green |
 | S | Renewal with a different incarnation is fenced. | Neutral green |
