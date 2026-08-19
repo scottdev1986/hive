@@ -101,13 +101,20 @@ export type WorkspaceVisibilityCandidate = Readonly<{
   agentName: string;
 }>;
 
-export type WorkspaceVisibilityAdmission = Readonly<{
+/** Workspace is live and may authorize a host create. It does not know a pane size. */
+export type WorkspaceVisibilityLease = Readonly<{
   engineBuildId: string;
-  geometry: TerminalGeometry;
   visibility: HiveTerminalPolicy["visibility"];
 }>;
 
-const DEFAULT_TERMINAL_GEOMETRY: TerminalGeometry = {
+/** A represented pane with a measured grid. The TUI inherits this size from the PTY; it is never programmed separately. */
+export type WorkspaceVisibilityAdmission = WorkspaceVisibilityLease &
+  Readonly<{
+    geometry: TerminalGeometry;
+  }>;
+
+/** Initial PTY winsize when no viewer has measured the pane yet. Sessiond still needs a grid to open the slave; the first attach/resize replaces it. */
+export const PTY_CREATE_GEOMETRY: TerminalGeometry = {
   columns: 80,
   rows: 24,
   widthPx: 800,
@@ -254,7 +261,7 @@ export class WorkspaceVisibilityAuthority {
     }
   }
 
-  async prepareAgentCreation(): Promise<WorkspaceVisibilityAdmission | null> {
+  async prepareAgentCreation(): Promise<WorkspaceVisibilityLease | null> {
     const snapshot = this.current;
     if (snapshot === null || !this.sourceIsLive(snapshot.source)) return null;
     try {
@@ -262,7 +269,6 @@ export class WorkspaceVisibilityAuthority {
       if (engineBuildId.length === 0) return null;
       return {
         engineBuildId,
-        geometry: DEFAULT_TERMINAL_GEOMETRY,
         visibility: {
           workspaceSessionId: snapshot.source.sessionId,
           workspacePid: snapshot.source.process.processId,
@@ -305,9 +311,12 @@ export class WorkspaceVisibilityAuthority {
       return null;
     }
     if (terminal.locator.engineBuildId !== engineBuildId) return null;
+    if (terminal.geometry === undefined || terminal.geometry === null) {
+      return null;
+    }
     return {
       engineBuildId,
-      geometry: terminal.geometry ?? DEFAULT_TERMINAL_GEOMETRY,
+      geometry: terminal.geometry,
       visibility: {
         workspaceSessionId: snapshot.source.sessionId,
         workspacePid: snapshot.source.process.processId,

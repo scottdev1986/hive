@@ -89,7 +89,10 @@ import {
   prepareSessionZdotdir,
   shellSessionLaunch,
 } from "../session-host/shell-session";
-import type { WorkspaceVisibilityAdmission } from "../session-host/workspace-visibility";
+import {
+  PTY_CREATE_GEOMETRY,
+  type WorkspaceVisibilityLease,
+} from "../session-host/workspace-visibility";
 import { NAME_POOL, selectAgentName } from "./agent-name-selection";
 import { buildAgentPrompt } from "./agent-prompt";
 import { loadAgentStandards } from "./agent-standards";
@@ -244,15 +247,21 @@ export class HiveSpawner implements Spawner {
     providerRunId: string,
   ): Promise<void> {
     const admission = await this.requireSessiondCreationPolicy(record);
+    const pane = await this.dependencies.sessiond.admit({
+      agentId: record.id,
+      agentName: record.name,
+    });
     const shell = shellSessionLaunch(command);
-    const spec = await this.sessiondSpec(record, shell, launchGrantId, admission.geometry);
-    const created = await this.requireSessiondHost(record).create(
-      spec,
-      {
-        locator: requireSessiondAgentLocator(record),
-        visibility: admission.visibility,
-      },
+    const spec = await this.sessiondSpec(
+      record,
+      shell,
+      launchGrantId,
+      pane?.geometry ?? PTY_CREATE_GEOMETRY,
     );
+    const created = await this.requireSessiondHost(record).create(spec, {
+      locator: requireSessiondAgentLocator(record),
+      visibility: admission.visibility,
+    });
     this.dependencies.db.insertProviderRun({
       runId: providerRunId,
       agentId: record.id,
@@ -312,13 +321,10 @@ export class HiveSpawner implements Spawner {
 
   private async requireSessiondCreationPolicy(
     record: AgentRecord,
-  ): Promise<WorkspaceVisibilityAdmission> {
+  ): Promise<WorkspaceVisibilityLease> {
     const locator = requireSessiondAgentLocator(record);
     const policy =
-      (await this.dependencies.sessiond.prepareAgentCreation({
-        agentId: record.id,
-        agentName: record.name,
-      })) ?? null;
+      (await this.dependencies.sessiond.prepareAgentCreation()) ?? null;
     if (policy === null) {
       throw new Error(`Agent ${record.id} has no sessiond creation policy`);
     }
@@ -348,7 +354,7 @@ export class HiveSpawner implements Spawner {
     const locator = requireSessiondAgentLocator(record);
     const zdotdir = await prepareSessionZdotdir(locator.sessionId);
     const userZdotdir = process.env.ZDOTDIR ?? process.env.HOME ?? "";
-    
+
     return {
       schemaVersion: 1,
       locator,
@@ -1080,10 +1086,7 @@ export class HiveSpawner implements Spawner {
       }
     }
     const sessiondPolicy =
-      await this.dependencies.sessiond.prepareAgentCreation({
-        agentId,
-        agentName: name,
-      });
+      await this.dependencies.sessiond.prepareAgentCreation();
     if (sessiondPolicy === null) {
       throw new SpawnFailedError(
         name,

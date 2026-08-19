@@ -82,7 +82,7 @@ final class SessiondPaneTerminal {
         guard !hasStarted, !detached else { return }
         hasStarted = true
         view?.prepareThemeBeforeAttach()
-        beginAttach(afterSeq: 0)
+        tryAttachWhenReady(afterSeq: 0)
     }
 
     /// Renderer detach only: the logical pane, the session, and the daemon's close/kill authority are untouched. Detach never claims close.
@@ -93,10 +93,22 @@ final class SessiondPaneTerminal {
         transport = nil
     }
 
-    private func beginAttach(afterSeq: UInt64) {
+    /// Wait for the live pane grid. Attaching at the PTY create default (80×24)
+    /// is what painted Hive's TUI as a small box inside a larger pane.
+    private func tryAttachWhenReady(afterSeq: UInt64) {
         guard !detached, !attachInFlight, !gaveUp else { return }
         let reported = view?.reportedGeometry
-        let geometry = reported?.isUsable == true ? reported! : Self.defaultGeometry
+        guard let geometry = reported, geometry.isUsable else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.tryAttachWhenReady(afterSeq: afterSeq)
+            }
+            return
+        }
+        beginAttach(afterSeq: afterSeq, geometry: geometry)
+    }
+
+    private func beginAttach(afterSeq: UInt64, geometry: TerminalGeometry) {
+        guard !detached, !attachInFlight, !gaveUp else { return }
         attachInFlight = true
         let geometryJSON = Self.encodeGeometry(geometry)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -318,7 +330,7 @@ final class SessiondPaneTerminal {
             self.recoveryTimer = nil
             if !self.attachInFlight {
                 self.view?.prepareThemeBeforeAttach()
-                self.beginAttach(afterSeq: self.view?.highWater ?? 0)
+                self.tryAttachWhenReady(afterSeq: self.view?.highWater ?? 0)
             }
         }
         recoveryTimer = timer
@@ -384,15 +396,6 @@ final class SessiondPaneTerminal {
             ?? Data("{}".utf8)
         return String(data: data, encoding: .utf8) ?? "{}"
     }
-
-    private static let defaultGeometry = TerminalGeometry(
-        columns: 80,
-        rows: 24,
-        widthPx: 800,
-        heightPx: 480,
-        cellWidthPx: 10,
-        cellHeightPx: 20
-    )
 }
 
 enum SessiondPaneTerminalError: Error, LocalizedError, CustomStringConvertible {

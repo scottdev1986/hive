@@ -220,7 +220,7 @@ describe("WorkspaceVisibilityAuthority", () => {
     );
   });
 
-  test("missing renderer geometry starts at a conventional terminal size", async () => {
+  test("a pane without measured geometry is not admitted", async () => {
     const host = authority();
     expect(
       host.value.publish(
@@ -240,32 +240,21 @@ describe("WorkspaceVisibilityAuthority", () => {
         agentId: "agent-1",
         agentName: "visible-agent",
       }),
-    ).resolves.toMatchObject({
-      geometry: {
-        columns: 80,
-        rows: 24,
-        widthPx: 800,
-        heightPx: 480,
-        cellWidthPx: 10,
-        cellHeightPx: 20,
-      },
-    });
+    ).resolves.toBeNull();
   });
 
-  test("agent creation uses the live Workspace without requiring a pane", async () => {
+  test("host create is allowed from a live Workspace without a pane", async () => {
     const host = authority();
     expect(host.value.publish(snapshot("1", { terminals: [] }))).toMatchObject({
       state: "accepted",
     });
 
-    await expect(host.value.prepareAgentCreation()).resolves.toMatchObject({
+    await expect(host.value.prepareAgentCreation()).resolves.toEqual({
       engineBuildId,
-      geometry: {
-        columns: 80,
-        rows: 24,
-      },
       visibility: {
         workspaceSessionId: "workspace-session",
+        workspacePid: 7101,
+        workspaceStartToken: "7101:100",
         openTerminalRevision: "1",
       },
     });

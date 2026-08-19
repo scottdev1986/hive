@@ -236,8 +236,8 @@ function terminalWaitHarness(): Readonly<{
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-a",
         visibility,
-        geometry,
       }),
+      admit: async () => null,
     },
     terminalHost: {
       ...terminalTermination,
@@ -288,8 +288,8 @@ async function seedCompletedRoot(): Promise<
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-a",
         visibility,
-        geometry,
       }),
+      admit: async () => null,
     },
     terminalHost: {
       ...terminalTermination,
@@ -385,8 +385,8 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
           visibility,
-          geometry,
         }),
+        admit: async () => null,
       },
       terminalHost: {
         ...terminalTermination,
@@ -421,23 +421,24 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () =>
           ++admissionAttempts < 2
             ? null
-            : { engineBuildId: "engine-a", visibility, geometry },
+            : { engineBuildId: "engine-a", visibility },
+        admit: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
       },
       terminalHost: {
         ...terminalTermination,
         create: async (spec, policy) => {
           expect(spec.geometry).toEqual(geometry);
-          expect(spec.environment).toEqual({
+          expect(spec.environment).toMatchObject({
             BASE_ENV: "base",
             HIVE_ROOT_FIXTURE: "1",
+            HIVE_TUI_LAUNCHED: "0",
           });
-          expect(spec.argv.slice(0, 4)).toEqual([
-            TERMINAL_SHELL,
-            "-l",
-            "-i",
-            "-c",
-          ]);
-          expect(spec.argv.at(-1)).toBe("'codex' '--no-alt-screen'");
+          expect(spec.argv).toEqual([TERMINAL_SHELL, "-l", "-i"]);
+          expect(spec.environment.HIVE_AGENT_UI_COMMAND).toContain("codex");
           expect(spec.expectedExecutable).toBe(TERMINAL_SHELL);
           creates += 1;
           bindings.bindTerminalHostSession(policy);
@@ -488,8 +489,8 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
           visibility,
-          geometry,
         }),
+        admit: async () => null,
       },
       terminalHost: {
         ...terminalTermination,
@@ -522,6 +523,7 @@ describe("OrchestratorSessiondController", () => {
       providerRuns: new MemoryProviderRuns(),
       visibility: {
         prepareAgentCreation: async () => null,
+        admit: async () => null,
       },
       terminalHost: {
         ...terminalTermination,
@@ -550,8 +552,8 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
           visibility,
-          geometry,
         }),
+        admit: async () => null,
       },
       terminalHost: {
         ...terminalTermination,
@@ -602,8 +604,8 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
           visibility,
-          geometry,
         }),
+        admit: async () => null,
       },
       terminalHost: {
         ...terminalTermination,
@@ -647,8 +649,8 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
           visibility,
-          geometry,
         }),
+        admit: async () => null,
       },
       terminalHost: {
         ...terminalTermination,
@@ -693,8 +695,8 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
           visibility,
-          geometry,
         }),
+        admit: async () => null,
       },
       terminalHost: {
         ...terminalTermination,
@@ -750,8 +752,8 @@ describe("OrchestratorSessiondController", () => {
           prepareAgentCreation: async () => ({
             engineBuildId: "engine-a",
             visibility,
-            geometry,
           }),
+          admit: async () => null,
         },
         terminalHost: {
           ...terminalHost,
@@ -780,8 +782,8 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
           visibility,
-          geometry,
         }),
+        admit: async () => null,
       },
       terminalHost,
       sleep: async () => {},
@@ -838,8 +840,8 @@ function headlessHarness(): Readonly<{
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-a",
         visibility,
-        geometry,
       }),
+      admit: async () => null,
     },
     terminalHost: {
       create: async (spec, policy) => {
@@ -1040,8 +1042,8 @@ describe("OrchestratorSessiondController headless root", () => {
             workspaceStartToken: macProcessIdentity(process.pid).startToken,
             openTerminalRevision: "1",
           },
-          geometry,
         }),
+        admit: async () => null,
       },
       terminalHost,
     });

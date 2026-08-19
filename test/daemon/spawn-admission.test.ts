@@ -1804,15 +1804,6 @@ test("spawner binds after readiness and preserves identities when terminal death
       sessiond: {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-1",
-          geometry: readyInspection({
-            schemaVersion: 1,
-            instanceId: "instance-1",
-            subject: { kind: "agent", agentId: workerAgentId },
-            generation: 1,
-            sessionId: "ses_018f4f5e-0000-7000-8000-000000000002",
-            hostKind: "sessiond",
-            engineBuildId: "engine-1",
-          }).geometry,
           visibility: {
             workspaceSessionId: "workspace-fixture",
             workspacePid: 3_800,
@@ -2065,15 +2056,6 @@ test("a hierarchy-spawned agent's launch prompt carries its open assignment pair
     sessiond: {
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-1",
-        geometry: readyInspection({
-          schemaVersion: 1,
-          instanceId: "instance-1",
-          subject: { kind: "agent", agentId: workerAgentId },
-          generation: 1,
-          sessionId: "ses_018f4f5e-0000-7000-8000-000000000002",
-          hostKind: "sessiond",
-          engineBuildId: "engine-1",
-        }).geometry,
         visibility: {
           workspaceSessionId: "workspace-fixture",
           workspacePid: 3_800,
@@ -2286,15 +2268,6 @@ test("a sessiond-alive terminal keeps its hierarchy binding and is never stopped
     sessiond: {
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-1",
-        geometry: readyInspection({
-          schemaVersion: 1,
-          instanceId: "instance-1",
-          subject: { kind: "agent", agentId: workerAgentId },
-          generation: 1,
-          sessionId: "ses_018f4f5e-0000-7000-8000-000000000002",
-          hostKind: "sessiond",
-          engineBuildId: "engine-1",
-        }).geometry,
         visibility: {
           workspaceSessionId: "workspace-fixture",
           workspacePid: 3_800,
@@ -2500,15 +2473,6 @@ test("a failed launch leaves the hierarchy task and identity dispatchable for re
       sessiond: {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-1",
-          geometry: readyInspection({
-            schemaVersion: 1,
-            instanceId: "instance-1",
-            subject: { kind: "agent", agentId: workerAgentId },
-            generation: 1,
-            sessionId: "ses_018f4f5e-0000-7000-8000-000000000002",
-            hostKind: "sessiond",
-            engineBuildId: "engine-1",
-          }).geometry,
           visibility: {
             workspaceSessionId: "workspace-fixture",
             workspacePid: 3_800,

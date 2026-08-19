@@ -24,7 +24,12 @@ import {
   shellSessionLaunch,
 } from "../session-host/shell-session";
 import type { TerminalHostBindingStore } from "../session-host/terminal-host-binding";
-import type { WorkspaceVisibilityAuthority } from "../session-host/workspace-visibility";
+import { ORCHESTRATOR_NAME } from "../../schemas/agent";
+import {
+  PTY_CREATE_GEOMETRY,
+  ROOT_VISIBILITY_ID,
+  type WorkspaceVisibilityAuthority,
+} from "../session-host/workspace-visibility";
 
 export const OrchestratorSessiondLaunchSchema = z
   .strictObject({
@@ -86,7 +91,10 @@ export interface OrchestratorSessiondDependencies {
     insertProviderRun(run: ProviderRun): ProviderRun;
   }>;
   bindings: TerminalHostBindingStore;
-  visibility: Pick<WorkspaceVisibilityAuthority, "prepareAgentCreation">;
+  visibility: Pick<
+    WorkspaceVisibilityAuthority,
+    "prepareAgentCreation" | "admit"
+  >;
   instanceId: string;
   sleep?: (milliseconds: number) => Promise<void>;
   now?: () => number;
@@ -299,8 +307,16 @@ export class OrchestratorSessiondController {
         this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
       let hostOrigin: HostOrigin = "inherited";
       if (existing?.createEvidence === undefined) {
-      const created = await this.dependencies.terminalHost.create(
-          await this.sessionSpec(params, locator, policy.geometry),
+        const pane = await this.dependencies.visibility.admit({
+          agentId: ROOT_VISIBILITY_ID,
+          agentName: ORCHESTRATOR_NAME,
+        });
+        const created = await this.dependencies.terminalHost.create(
+          await this.sessionSpec(
+            params,
+            locator,
+            pane?.geometry ?? PTY_CREATE_GEOMETRY,
+          ),
           { locator, visibility: policy.visibility },
         );
         createdInspection = created.inspection;
@@ -557,7 +573,7 @@ export class OrchestratorSessiondController {
   ): Promise<SessionSpec> {
     const zdotdir = await prepareSessionZdotdir(locator.sessionId);
     const userZdotdir = process.env.ZDOTDIR ?? process.env.HOME ?? "";
-    
+
     return {
       schemaVersion: 1,
       locator,

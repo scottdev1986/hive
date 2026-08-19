@@ -73,23 +73,20 @@ final class SessiondPaneReattachTests: XCTestCase {
         XCTAssertEqual(terminal.reconnectDelay, 1, accuracy: 0.0001)
     }
 
-    func testStartDoesNotWaitForMeasuredGeometry() {
+    func testStartDoesNotAttachUntilGeometryIsUsable() {
         let terminal = makeTerminal()
-        var requestedGeometry: String?
-        terminal.requestGrant = {
-            requestedGeometry = $0
+        var requested = false
+        terminal.requestGrant = { _ in
+            requested = true
             throw SessiondPaneTerminalError.grantRefused("test")
         }
 
         terminal.start()
-        let deadline = Date().addingTimeInterval(2)
-        while requestedGeometry == nil, Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
 
         XCTAssertTrue(terminal.hasStarted)
-        XCTAssertTrue(requestedGeometry?.contains("\"columns\":80") == true)
-        XCTAssertTrue(requestedGeometry?.contains("\"rows\":24") == true)
+        XCTAssertFalse(requested, "attach must wait for the live pane grid")
+        terminal.detach()
     }
 
     /// A detached pane never retries and never reports a failure — renderer

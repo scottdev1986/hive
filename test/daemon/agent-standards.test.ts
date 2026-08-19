@@ -451,14 +451,6 @@ test("a spawn over a repo with no standards file uses the generic scaffold", asy
     sessiond: {
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-test",
-        geometry: {
-          columns: 80,
-          rows: 24,
-          widthPx: 800,
-          heightPx: 480,
-          cellWidthPx: 10,
-          cellHeightPx: 20,
-        },
         visibility: {
           workspaceSessionId: "workspace-test",
           workspacePid: 123,

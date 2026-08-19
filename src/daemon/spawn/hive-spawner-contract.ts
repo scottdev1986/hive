@@ -20,12 +20,11 @@ import type { QuotaService } from "../../usage-service/usage-quota";
 import type { HiveDatabase } from "../database/hive-database";
 import type { CommandOutput } from "../resource-management/resources";
 import type { StopAgentSession } from "../resource-management/teardown";
+import type { HiveTerminalHostAdapter } from "../session-host/hive-terminal-host";
 import type {
-  HiveTerminalHostAdapter,
-  HiveTerminalPolicy,
-} from "../session-host/hive-terminal-host";
-import type { SessionSpec } from "../session-host/session-host-contract";
-import type { WorkspaceVisibilityAdmission } from "../session-host/workspace-visibility";
+  WorkspaceVisibilityAdmission,
+  WorkspaceVisibilityLease,
+} from "../session-host/workspace-visibility";
 import type { SpawnAdmission } from "./admission";
 
 type AgentStore = Pick<
@@ -90,22 +89,13 @@ export interface SessiondSpawnAdmission {
     HiveTerminalHostAdapter,
     "create" | "inspect" | "terminate"
   >;
-  prepareAgentCreation(
-    candidate: Readonly<{
-      agentId: string;
-      agentName: string;
-    }>,
-  ): Promise<WorkspaceVisibilityAdmission | null>;
+  prepareAgentCreation(): Promise<WorkspaceVisibilityLease | null>;
   admit(
     candidate: Readonly<{
       agentId: string;
       agentName: string;
     }>,
-  ): Promise<Readonly<{
-    engineBuildId: string;
-    geometry: SessionSpec["geometry"];
-    visibility: HiveTerminalPolicy["visibility"];
-  }> | null>;
+  ): Promise<WorkspaceVisibilityAdmission | null>;
 }
 
 export interface HiveSpawnerDependencies {

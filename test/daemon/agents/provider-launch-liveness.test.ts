@@ -151,14 +151,6 @@ async function liveKimiLaunch(
     sessiond: {
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-test",
-        geometry: {
-          columns: 80,
-          rows: 24,
-          widthPx: 800,
-          heightPx: 480,
-          cellWidthPx: 10,
-          cellHeightPx: 20,
-        },
         visibility: {
           workspaceSessionId: "workspace-fixture",
           workspacePid: 3_800,

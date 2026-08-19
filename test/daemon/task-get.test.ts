@@ -640,14 +640,6 @@ describe("spawn taskId linkage", () => {
     };
     const admission = {
       engineBuildId: "engine-task-get",
-      geometry: {
-        columns: 80,
-        rows: 24,
-        widthPx: 800,
-        heightPx: 480,
-        cellWidthPx: 10,
-        cellHeightPx: 20,
-      },
       visibility: {
         workspaceSessionId: "workspace-task-get-spawn",
         workspacePid: 123,

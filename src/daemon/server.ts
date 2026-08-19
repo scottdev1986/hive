@@ -273,6 +273,7 @@ import {
   type WorkspaceVisibilityAdmission,
   type WorkspaceVisibilityAuthority,
   type WorkspaceVisibilityCandidate,
+  type WorkspaceVisibilityLease,
   WorkspaceVisibilitySnapshotSchema,
 } from "./session-host/workspace-visibility";
 import { DrainHandler, type ReplacementDrain } from "./spawn/drain-handler";
@@ -1274,7 +1275,7 @@ export class HiveDaemon {
     return this.workspaceVisibility?.prepare() ?? Promise.resolve(null);
   }
 
-  prepareAgentSessiondSpawn(): Promise<WorkspaceVisibilityAdmission | null> {
+  prepareAgentSessiondSpawn(): Promise<WorkspaceVisibilityLease | null> {
     return (
       this.workspaceVisibility?.prepareAgentCreation() ?? Promise.resolve(null)
     );
