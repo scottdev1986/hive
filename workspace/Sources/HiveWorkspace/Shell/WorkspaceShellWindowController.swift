@@ -45,14 +45,7 @@ final class WorkspaceShellWindowController: NSWindowController {
     init(context: ShellSidebarView.Context, state: ShellState) {
         self.state = state
         routerCategory = state.modelControlView?.routing.categories.first
-        dispatcher = ShellDispatcher(
-            transport: shellUnavailableTransport,
-            intentTransport: {
-                switch $0 {
-                case .attachViewer, .detachViewer: return .viewer
-                default: return .unavailable
-                }
-            })
+        dispatcher = ShellDispatcher()
         sidebar = ShellSidebarView(context: context, onSelect: { _ in })
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),

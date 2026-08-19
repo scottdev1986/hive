@@ -313,7 +313,7 @@ struct LiveRunWorkbenchViewTests {
                 projectName: "Hive",
                 projectPath: "/tmp/hive",
                 instanceLabel: "rig"),
-            state: ShellState(workspaceSource: ProjectionSource(revision: "7")))
+            state: ShellState())
         controller.installLiveRunWorkbench(workbench)
 
         controller.perform(ShellCommand.detachTerminalView)

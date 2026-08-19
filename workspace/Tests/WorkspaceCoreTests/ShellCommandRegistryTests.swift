@@ -1,9 +1,10 @@
 // ShellCommandRegistryTests.swift
 //
 // Proves the dispatcher registry is a total function over the menu tree:
-// every command resolves to exactly one typed intent, one screen route, one
-// responder-chain selector, or one named local action — and none of the
-// retired pane-era commands exists in the new tree.
+// every command resolves to exactly one screen route, one responder-chain
+// selector, or one named local action — and none of the retired pane-era
+// commands, nor the eighteen dead menu-intent commands, exists in the new
+// tree.
 
 import XCTest
 @testable import WorkspaceCore
@@ -23,6 +24,26 @@ final class ShellCommandRegistryTests: XCTestCase {
         "show-attention-queue",
         "floating-attention",
         "approve-provider-request",
+        // The eighteen dead menu-intent commands: their daemon wire never
+        // existed in this build, and the owner ruled the whole feature out.
+        "select-queen-claude",
+        "select-queen-codex",
+        "select-queen-grok",
+        "select-queen-kimi",
+        "select-queen-opencode",
+        "pause-provider",
+        "resume-provider",
+        "stop-provider",
+        "terminate-terminal",
+        "acknowledge-attention",
+        "close-agent",
+        "pause-run",
+        "resume-run",
+        "redirect-through-queen",
+        "abort-run",
+        "new-curated-memory",
+        "reindex-memory",
+        "stop-hive",
     ]
 
     /// Retired user-visible titles: banned even under a fresh identifier.
@@ -36,6 +57,24 @@ final class ShellCommandRegistryTests: XCTestCase {
         "Show Attention Queue",
         "Communications",
         "Gates",
+        "Select Claude…",
+        "Select Codex…",
+        "Select Grok…",
+        "Select Kimi Code…",
+        "Select OpenCode…",
+        "Pause Provider",
+        "Resume Provider",
+        "Stop Provider…",
+        "Terminate Terminal…",
+        "Acknowledge Attention",
+        "Close Agent…",
+        "Pause Run…",
+        "Resume Run…",
+        "Redirect Through Queen…",
+        "Abort Run…",
+        "New Curated Memory…",
+        "Reindex…",
+        "Stop Hive…",
     ]
 
     func testEveryCommandResolvesToExactlyOneWellFormedTarget() throws {
@@ -45,18 +84,6 @@ final class ShellCommandRegistryTests: XCTestCase {
                 XCTAssertTrue(
                     ShellRoute.allCases.contains(route),
                     "\(command) routes to an unknown screen")
-            case .intent(let body):
-                // The intent is typed and envelope-ready: it must survive the
-                // MutationIntent wire as itself.
-                let intent = MutationIntent(
-                    intentID: "test-\(command.rawValue)",
-                    expected: .revision("1"),
-                    idempotencyKey: "test-key",
-                    body: body)
-                let data = try JSONEncoder().encode(intent)
-                let decoded = try JSONDecoder().decode(
-                    MutationIntent<ShellIntentBody>.self, from: data)
-                XCTAssertEqual(decoded, intent, "\(command)'s intent must round-trip")
             case .responderChain(let action):
                 XCTAssertFalse(action.isEmpty)
                 XCTAssertTrue(
@@ -68,7 +95,8 @@ final class ShellCommandRegistryTests: XCTestCase {
                     "\(command) must say why its surface is absent")
             case .local(.aboutPanel), .local(.detachWorkspace),
                  .local(.toggleAttentionDrawer), .local(.toggleInspector),
-                 .local(.enterFullTerminal):
+                 .local(.enterFullTerminal), .local(.attachLiveTerminal),
+                 .local(.detachTerminalView):
                 break
             }
         }
@@ -92,10 +120,10 @@ final class ShellCommandRegistryTests: XCTestCase {
         }
     }
 
-    func testMenusAreTheEightContractMenus() {
+    func testMenusAreTheSevenContractMenus() {
         XCTAssertEqual(
             ShellMenu.allCases.map(\.rawValue),
-            ["Hive", "Edit", "View", "Agent", "Run", "Memory", "Queen", "Window"])
+            ["Hive", "Edit", "View", "Agent", "Memory", "Queen", "Window"])
     }
 
     /// The shipping menu map, command for command. A menu that drifts from
@@ -103,8 +131,7 @@ final class ShellCommandRegistryTests: XCTestCase {
     func testMenuContentsMatchTheContract() {
         XCTAssertEqual(
             Set(ShellMenu.hive.commands), [
-                .aboutHive, .openMemoryManager,
-                .detachWorkspace, .stopHive,
+                .aboutHive, .openMemoryManager, .detachWorkspace,
             ])
         XCTAssertEqual(
             Set(ShellMenu.edit.commands),
@@ -115,26 +142,13 @@ final class ShellCommandRegistryTests: XCTestCase {
                 .toggleAttention, .toggleInspector, .enterFullTerminal,
             ])
         XCTAssertEqual(
-            Set(ShellMenu.agent.commands), [
-                .attachLiveTerminal, .detachTerminalView, .pauseProvider,
-                .resumeProvider, .stopProvider, .terminateTerminal,
-                .acknowledgeAttention, .closeAgent,
-            ])
-        XCTAssertEqual(
-            Set(ShellMenu.run.commands), [
-                .pauseRun, .resumeRun,
-                .redirectThroughQueen, .abortRun,
-            ])
+            Set(ShellMenu.agent.commands), [.attachLiveTerminal, .detachTerminalView])
         XCTAssertEqual(
             Set(ShellMenu.memory.commands), [
-                .memoryOverview, .memoryLibrary, .memoryRecallLab,
-                .newCuratedMemory, .memoryMaintenance, .reindexMemory,
+                .memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance,
             ])
         XCTAssertEqual(
-            Set(ShellMenu.queen.commands), [
-                .selectQueenClaude, .selectQueenCodex, .selectQueenGrok,
-                .selectQueenKimi, .selectQueenOpenCode, .showQueenProvider,
-            ])
+            Set(ShellMenu.queen.commands), [.showQueenProvider])
         XCTAssertEqual(
             Set(ShellMenu.window.commands), [.minimizeWindow, .zoomWindow])
     }
@@ -171,25 +185,14 @@ final class ShellCommandRegistryTests: XCTestCase {
         }
     }
 
-    /// The intent set is deliberate: converting a daemon command into a local
-    /// stub (or vice versa) changes this set and fails loudly.
-    func testExactlyTheDaemonBoundCommandsAreIntents() {
-        let intents = ShellCommand.allCases.filter {
-            if case .intent = $0.resolution { return true }
-            return false
-        }
+    /// The two surviving terminal commands resolve honestly as local actions
+    /// the window controller performs — never as a daemon mutation this build
+    /// has no wire for.
+    func testAttachAndDetachTerminalCommandsAreLocalActions() {
         XCTAssertEqual(
-            Set(intents), [
-                .stopHive,
-                .attachLiveTerminal, .detachTerminalView, .pauseProvider,
-                .resumeProvider, .stopProvider, .terminateTerminal,
-                .acknowledgeAttention, .closeAgent,
-                .pauseRun, .resumeRun,
-                .redirectThroughQueen, .abortRun,
-                .newCuratedMemory, .reindexMemory,
-                .selectQueenClaude, .selectQueenCodex, .selectQueenGrok,
-                .selectQueenKimi, .selectQueenOpenCode,
-            ])
+            ShellCommand.attachLiveTerminal.resolution, .local(.attachLiveTerminal))
+        XCTAssertEqual(
+            ShellCommand.detachTerminalView.resolution, .local(.detachTerminalView))
     }
 
     /// A route command pointing at the WRONG screen is still a well-formed

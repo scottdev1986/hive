@@ -1,4 +1,4 @@
-// ShellCommand.swift The complete command catalog of the new Workspace shell: every menu item in every menu, each resolving to exactly one typed intent, one screen route, one responder-chain selector, or one named local action. The enum switch IS the registry — a command cannot exist without its resolution, which makes the dispatcher total by construction and enumerable in tests. Retired pane-era commands (promote-to-master, return-Queen-to-master, Close Pane, Show Projects, a Navigate menu, a floating Attention window, Communications/Gates routes, a generic provider approval) have no case here and therefore no way to be reached.
+// ShellCommand.swift The complete command catalog of the new Workspace shell: every menu item in every menu, each resolving to exactly one screen route, one responder-chain selector, or one named local action. The enum switch IS the registry — a command cannot exist without its resolution, which makes the dispatcher total by construction and enumerable in tests. Retired pane-era commands (promote-to-master, return-Queen-to-master, Close Pane, Show Projects, a Navigate menu, a floating Attention window, Communications/Gates routes, a generic provider approval) have no case here and therefore no way to be reached. Neither do the eighteen dead menu-intent commands (Queen vendor picks, Agent's provider/terminal/attention controls beyond the two terminal commands, the whole Run menu, and Memory's curate/reindex actions) — they never reached a daemon wire in this build and are gone rather than left half-wired.
 
 import Foundation
 
@@ -7,7 +7,6 @@ public enum ShellMenu: String, CaseIterable, Equatable, Sendable {
     case edit = "Edit"
     case view = "View"
     case agent = "Agent"
-    case run = "Run"
     case memory = "Memory"
     case queen = "Queen"
     case window = "Window"
@@ -40,6 +39,11 @@ public enum ShellLocalAction: Equatable, Sendable {
     /// surface exists in live mode, so this is a real destination rather than a
     /// refusal that sounds honest while describing a capability the app has.
     case enterFullTerminal
+    /// Attach the Live Run workbench's exact-generation viewer. A real
+    /// destination the window controller performs, not a daemon mutation.
+    case attachLiveTerminal
+    /// Detach the attached viewer and return to Models & Quota.
+    case detachTerminalView
     case toggleAttentionDrawer
     case toggleInspector
     case unavailableSurface(reason: String)
@@ -47,7 +51,6 @@ public enum ShellLocalAction: Equatable, Sendable {
 
 public enum ShellCommandResolution: Equatable, Sendable {
     case route(ShellRoute)
-    case intent(ShellIntentBody)
     /// A standard AppKit responder-chain selector (Edit and Window menus); handled by the responder chain, never by the dispatcher.
     case responderChain(action: String)
     case local(ShellLocalAction)
@@ -59,7 +62,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
     case showModelsQuota = "show-models-quota"
     case openMemoryManager = "open-memory-manager"
     case detachWorkspace = "detach-workspace"
-    case stopHive = "stop-hive"
     case undo
     case redo
     case cut
@@ -72,34 +74,17 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
     case enterFullTerminal = "enter-full-terminal"
     case attachLiveTerminal = "attach-live-terminal"
     case detachTerminalView = "detach-terminal-view"
-    case pauseProvider = "pause-provider"
-    case resumeProvider = "resume-provider"
-    case stopProvider = "stop-provider"
-    case terminateTerminal = "terminate-terminal"
-    case acknowledgeAttention = "acknowledge-attention"
-    case closeAgent = "close-agent"
-    case pauseRun = "pause-run"
-    case resumeRun = "resume-run"
-    case redirectThroughQueen = "redirect-through-queen"
-    case abortRun = "abort-run"
     case memoryOverview = "memory-overview"
     case memoryLibrary = "memory-library"
     case memoryRecallLab = "memory-recall-lab"
-    case newCuratedMemory = "new-curated-memory"
     case memoryMaintenance = "memory-maintenance"
-    case reindexMemory = "reindex-memory"
-    case selectQueenClaude = "select-queen-claude"
-    case selectQueenCodex = "select-queen-codex"
-    case selectQueenGrok = "select-queen-grok"
-    case selectQueenKimi = "select-queen-kimi"
-    case selectQueenOpenCode = "select-queen-opencode"
     case showQueenProvider = "show-queen-provider"
     case minimizeWindow = "minimize-window"
     case zoomWindow = "zoom-window"
 
     public var menu: ShellMenu {
         switch self {
-        case .aboutHive, .openMemoryManager, .detachWorkspace, .stopHive:
+        case .aboutHive, .openMemoryManager, .detachWorkspace:
             return .hive
         case .showTaskRouter, .showModelsQuota:
             return .view
@@ -107,16 +92,11 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
             return .edit
         case .showLiveRun, .toggleAttention, .toggleInspector, .enterFullTerminal:
             return .view
-        case .attachLiveTerminal, .detachTerminalView, .pauseProvider, .resumeProvider,
-             .stopProvider, .terminateTerminal, .acknowledgeAttention, .closeAgent:
+        case .attachLiveTerminal, .detachTerminalView:
             return .agent
-        case .pauseRun, .resumeRun, .redirectThroughQueen, .abortRun:
-            return .run
-        case .memoryOverview, .memoryLibrary, .memoryRecallLab, .newCuratedMemory,
-             .memoryMaintenance, .reindexMemory:
+        case .memoryOverview, .memoryLibrary, .memoryRecallLab, .memoryMaintenance:
             return .memory
-        case .selectQueenClaude, .selectQueenCodex, .selectQueenGrok, .selectQueenKimi,
-             .selectQueenOpenCode, .showQueenProvider:
+        case .showQueenProvider:
             return .queen
         case .minimizeWindow, .zoomWindow:
             return .window
@@ -130,7 +110,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .showModelsQuota: return "Models & Quota"
         case .openMemoryManager: return "Memory Manager…"
         case .detachWorkspace: return "Detach Workspace"
-        case .stopHive: return "Stop Hive…"
         case .undo: return "Undo"
         case .redo: return "Redo"
         case .cut: return "Cut"
@@ -143,27 +122,10 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .enterFullTerminal: return "Enter Full Terminal"
         case .attachLiveTerminal: return "Attach Live Terminal"
         case .detachTerminalView: return "Detach Terminal View"
-        case .pauseProvider: return "Pause Provider"
-        case .resumeProvider: return "Resume Provider"
-        case .stopProvider: return "Stop Provider…"
-        case .terminateTerminal: return "Terminate Terminal…"
-        case .acknowledgeAttention: return "Acknowledge Attention"
-        case .closeAgent: return "Close Agent…"
-        case .pauseRun: return "Pause Run…"
-        case .resumeRun: return "Resume Run…"
-        case .redirectThroughQueen: return "Redirect Through Queen…"
-        case .abortRun: return "Abort Run…"
         case .memoryOverview: return "Overview"
         case .memoryLibrary: return "Library"
         case .memoryRecallLab: return "Recall Lab"
-        case .newCuratedMemory: return "New Curated Memory…"
         case .memoryMaintenance: return "Maintenance"
-        case .reindexMemory: return "Reindex…"
-        case .selectQueenClaude: return "Select Claude…"
-        case .selectQueenCodex: return "Select Codex…"
-        case .selectQueenGrok: return "Select Grok…"
-        case .selectQueenKimi: return "Select Kimi Code…"
-        case .selectQueenOpenCode: return "Select OpenCode…"
         case .showQueenProvider: return "Queen Provider"
         case .minimizeWindow: return "Minimize"
         case .zoomWindow: return "Zoom"
@@ -187,9 +149,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .toggleInspector: return ShellKeyEquivalent("i", [.command, .option])
         case .enterFullTerminal: return ShellKeyEquivalent("f", [.command, .control])
         case .attachLiveTerminal: return ShellKeyEquivalent("\r")
-        case .acknowledgeAttention: return ShellKeyEquivalent("K")
-        case .closeAgent: return ShellKeyEquivalent("W")
-        case .newCuratedMemory: return ShellKeyEquivalent("n")
         case .showQueenProvider: return ShellKeyEquivalent("Q")
         case .minimizeWindow: return ShellKeyEquivalent("m")
         default: return nil
@@ -203,7 +162,6 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .showModelsQuota: return .route(.modelsQuota)
         case .openMemoryManager, .memoryOverview: return .route(.memoryOverview)
         case .detachWorkspace: return .local(.detachWorkspace)
-        case .stopHive: return .intent(.stopHive)
         case .undo: return .responderChain(action: "undo:")
         case .redo: return .responderChain(action: "redo:")
         case .cut: return .responderChain(action: "cut:")
@@ -214,28 +172,11 @@ public enum ShellCommand: String, Codable, CaseIterable, Equatable, Hashable, Se
         case .toggleAttention: return .local(.toggleAttentionDrawer)
         case .toggleInspector: return .local(.toggleInspector)
         case .enterFullTerminal: return .local(.enterFullTerminal)
-        case .attachLiveTerminal: return .intent(.attachViewer)
-        case .detachTerminalView: return .intent(.detachViewer)
-        case .pauseProvider: return .intent(.pauseProvider)
-        case .resumeProvider: return .intent(.resumeProvider)
-        case .stopProvider: return .intent(.stopProvider)
-        case .terminateTerminal: return .intent(.terminateTerminal)
-        case .acknowledgeAttention: return .intent(.acknowledgeAttention)
-        case .closeAgent: return .intent(.closeAgentCascade)
-        case .pauseRun: return .intent(.pauseRun)
-        case .resumeRun: return .intent(.resumeRun)
-        case .redirectThroughQueen: return .intent(.redirectThroughQueen)
-        case .abortRun: return .intent(.abortRun)
+        case .attachLiveTerminal: return .local(.attachLiveTerminal)
+        case .detachTerminalView: return .local(.detachTerminalView)
         case .memoryLibrary: return .route(.memoryLibrary)
         case .memoryRecallLab: return .route(.memoryRecallLab)
-        case .newCuratedMemory: return .intent(.newCuratedMemory)
         case .memoryMaintenance: return .route(.memoryMaintenance)
-        case .reindexMemory: return .intent(.reindexMemory)
-        case .selectQueenClaude: return .intent(.setLiveQueenProvider(.claude))
-        case .selectQueenCodex: return .intent(.setLiveQueenProvider(.codex))
-        case .selectQueenGrok: return .intent(.setLiveQueenProvider(.grok))
-        case .selectQueenKimi: return .intent(.setLiveQueenProvider(.kimi))
-        case .selectQueenOpenCode: return .intent(.setLiveQueenProvider(.opencode))
         case .showQueenProvider: return .route(.queen)
         case .minimizeWindow: return .responderChain(action: "performMiniaturize:")
         case .zoomWindow: return .responderChain(action: "performZoom:")

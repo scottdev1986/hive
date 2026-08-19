@@ -5,8 +5,6 @@ import Foundation
 /// What one dispatched command did. Commands are never silent: every dispatch lands in exactly one of these, and the last one stays visible in state.
 public enum ShellCommandOutcome: Equatable, Sendable {
     case routed(ShellRoute)
-    /// A typed intent went through the envelope and came back with a result — accepted or rejected, always with the observed post-state.
-    case mutationResolved(MutationResult<ShellMutationPostState>)
     case localPerformed(ShellCommand)
     /// The command's surface is not in this build; the reason is shown, never a stub success and never a greyed-out fake.
     case surfaceUnavailable(ShellCommand, reason: String)
@@ -32,8 +30,6 @@ public struct ShellState: Equatable {
     public private(set) var outerHorizonWarning: ShellBanner?
     /// The daemon's last refusal of a Model Control write. A refusal changed nothing observed, so it is kept apart from the projection: the screen says the write was refused instead of claiming the daemon is gone.
     public private(set) var policyWriteRefusal: String?
-    /// The workspace observation mutations compare against: the Live Run snapshot's source. Nothing else is a sound CAS token for a shell intent.
-    public private(set) var workspaceSource: ProjectionSource
     public private(set) var lastOutcome: ShellCommandOutcome?
 
     public init(
@@ -52,7 +48,6 @@ public struct ShellState: Equatable {
         outerHorizon: OuterHorizonScreenState? = nil,
         outerHorizonWarning: ShellBanner? = nil,
         policyWriteRefusal: String? = nil,
-        workspaceSource: ProjectionSource = ProjectionSource(),
         lastOutcome: ShellCommandOutcome? = nil
     ) {
         self.activeRoute = activeRoute
@@ -70,7 +65,6 @@ public struct ShellState: Equatable {
         self.outerHorizon = outerHorizon
         self.outerHorizonWarning = outerHorizonWarning
         self.policyWriteRefusal = policyWriteRefusal
-        self.workspaceSource = workspaceSource
         self.lastOutcome = lastOutcome
     }
 
@@ -102,9 +96,6 @@ public struct ShellState: Equatable {
 
     public mutating func apply(screen: ShellScreenProjection, for route: ShellRoute) {
         screens[route] = screen
-        if route == .liveRun {
-            workspaceSource = screen.source
-        }
     }
 
     public mutating func apply(attention queue: AttentionQueue) {
@@ -291,37 +282,11 @@ public struct ShellState: Equatable {
         screens[activeRoute]
     }
 
-    /// The CAS token an intent compares against, derived from the observed workspace source. nil means nothing has been observed — and a mutation with nothing to compare must not be sent at all.
-    public var mutationExpectation: MutationExpectation? {
-        switch (workspaceSource.revision, workspaceSource.generation) {
-        case let (revision?, generation?) where !revision.isEmpty:
-            return .revisionAndEpoch(revision: revision, epoch: String(generation))
-        case let (revision?, nil) where !revision.isEmpty:
-            return .revision(revision)
-        case let (nil, generation?):
-            return .epoch(String(generation))
-        default:
-            return nil
-        }
-    }
-
     public var commandBanner: ShellBanner? {
         if let policyWriteRefusal {
             return ShellBanner(severity: .warning, text: policyWriteRefusal)
         }
         switch lastOutcome {
-        case .mutationResolved(let result):
-            switch result.outcome {
-            case .accepted:
-                return ShellBanner(
-                    severity: .info,
-                    text: "The daemon accepted "
-                        + "\(result.observedPostState.command.title).")
-            case .rejected(let failure):
-                return ShellBanner(
-                    severity: .warning,
-                    text: failure.message)
-            }
         case .surfaceUnavailable(let command, let reason):
             return ShellBanner(
                 severity: .info,

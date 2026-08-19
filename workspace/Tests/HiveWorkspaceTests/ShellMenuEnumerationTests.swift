@@ -22,17 +22,28 @@ final class ShellMenuEnumerationTests: XCTestCase {
         "promote-to-master", "return-queen-to-master", "close-pane",
         "focus-queen", "show-projects", "project-switcher", "navigate",
         "show-attention-queue", "floating-attention", "approve-provider-request",
+        // The eighteen dead menu-intent commands.
+        "select-queen-claude", "select-queen-codex", "select-queen-grok",
+        "select-queen-kimi", "select-queen-opencode",
+        "pause-provider", "resume-provider", "stop-provider", "terminate-terminal",
+        "acknowledge-attention", "close-agent",
+        "pause-run", "resume-run", "redirect-through-queen", "abort-run",
+        "new-curated-memory", "reindex-memory", "stop-hive",
     ]
     private static let retiredTitles = [
         "Promote to Master", "Return Queen to Master", "Show Projects",
         "Close Pane", "Focus Queen", "Navigate", "Show Attention Queue",
         "Communications", "Gates",
+        "Select Claude…", "Select Codex…", "Select Grok…", "Select Kimi Code…",
+        "Select OpenCode…", "Pause Provider", "Resume Provider",
+        "Stop Provider…", "Terminate Terminal…", "Acknowledge Attention",
+        "Close Agent…", "Pause Run…", "Resume Run…", "Redirect Through Queen…",
+        "Abort Run…", "New Curated Memory…", "Reindex…", "Stop Hive…",
     ]
 
     private func makeController() -> WorkspaceShellWindowController {
         _ = NSApplication.shared
         var state = ShellState()
-        // An observed workspace source so intent commands mint envelopes.
         state.apply(
             screen: ShellScreenProjection(
                 availability: .current,
@@ -123,12 +134,12 @@ final class ShellMenuEnumerationTests: XCTestCase {
         }
     }
 
-    func testMenuTitlesAreTheEightContractMenus() throws {
+    func testMenuTitlesAreTheSevenContractMenus() throws {
         let controller = makeController()
         try withInstalledMenu(controller) { menu in
             XCTAssertEqual(
                 menu.items.compactMap { $0.submenu?.title },
-                ["Hive", "Edit", "View", "Agent", "Run", "Memory", "Queen", "Window"])
+                ["Hive", "Edit", "View", "Agent", "Memory", "Queen", "Window"])
         }
     }
 
@@ -147,7 +158,7 @@ final class ShellMenuEnumerationTests: XCTestCase {
             // The retired menus themselves must not exist either.
             XCTAssertEqual(
                 menu.items.compactMap { $0.submenu?.title }
-                    .filter { ["Navigate", "Pane", "Communications", "Gates"].contains($0) },
+                    .filter { ["Navigate", "Pane", "Communications", "Gates", "Run"].contains($0) },
                 [])
         }
     }
@@ -219,29 +230,16 @@ final class ShellMenuEnumerationTests: XCTestCase {
                     "\(command) must route to \(route)")
                 XCTAssertEqual(
                     controller.currentState.lastOutcome, .routed(route))
-            case .intent:
+            case .local(.attachLiveTerminal), .local(.detachTerminalView):
+                // No Live Run workbench is installed on this controller, so
+                // both honestly refuse rather than claim a viewer that isn't there.
                 controller.performShellCommand(makeItem(command))
-                if command == .attachLiveTerminal || command == .detachTerminalView {
-                    guard case .surfaceUnavailable(let observed, _) =
-                        controller.currentState.lastOutcome else {
-                        XCTFail("\(command) did not resolve against the viewer")
-                        continue
-                    }
-                    XCTAssertEqual(observed, command)
+                guard case .surfaceUnavailable(let observed, _) =
+                    controller.currentState.lastOutcome else {
+                    XCTFail("\(command) did not resolve against the viewer")
                     continue
                 }
-                guard case .mutationResolved(let result) =
-                    controller.currentState.lastOutcome
-                else {
-                    XCTFail("\(command) did not resolve as a mutation")
-                    continue
-                }
-                guard case .rejected(let failure) = result.outcome else {
-                    XCTFail("an in-flight wire must never report success")
-                    continue
-                }
-                XCTAssertEqual(failure.code, "unavailable")
-                XCTAssertEqual(result.observedPostState.command, command)
+                XCTAssertEqual(observed, command)
             case .local(.toggleAttentionDrawer):
                 let before = controller.currentState.attentionDrawerVisible
                 controller.performShellCommand(makeItem(command))
