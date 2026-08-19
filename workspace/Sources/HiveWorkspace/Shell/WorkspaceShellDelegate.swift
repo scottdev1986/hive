@@ -11,6 +11,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     private var controller: WorkspaceShellWindowController?
     private var liveRunFeed: FeedClient?
     private var liveRunControlGateway: LiveRunControlGateway?
+    private var agentKillGateway: AgentKillGateway?
     private var qaControl: QAControl?
     private let liveRunWorkspaceSessionID = "workspace-shell-\(UUID().uuidString)"
     private var liveRunInventoryRevision = 0
@@ -57,8 +58,9 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             qaControl = QAControl(surface: controller)
             if launch.isLive {
                 do {
-                    liveRunControlGateway = LiveRunControlGateway(
-                        client: try await ShellLiveStore(config: config).makeClient())
+                    let client = try await ShellLiveStore(config: config).makeClient()
+                    liveRunControlGateway = LiveRunControlGateway(client: client)
+                    agentKillGateway = AgentKillGateway(client: client)
                 } catch {
                     workbench.showControlUnavailable(error.localizedDescription)
                 }
@@ -347,6 +349,12 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             submitLiveRunControl(
                 operation, projection: projection, workbench: workbench)
         }
+        if let agentKillGateway {
+            workbench.closeAgentHandler = { [weak self, weak workbench] session in
+                guard let self, let workbench else { return }
+                closeAgent(session, gateway: agentKillGateway, workbench: workbench)
+            }
+        }
         feed.onLine = { [weak workbench] line in
             do {
                 workbench?.apply(try LiveRunProjection(feedLine: line))
@@ -398,6 +406,46 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             workbench.applyControlProjection(projection)
+        }
+    }
+
+    /// Carries the sidebar's Close Agent through the daemon's kill route and
+    /// reports what came back. The agent's disappearance from the rail is the
+    /// daemon's own read-back and is proof enough of a success; a refusal, a
+    /// transport failure, or processes that outlived SIGKILL are all failures
+    /// the user is told about, because a kill that only looks like it worked is
+    /// worse than one that plainly did not.
+    @MainActor
+    private func closeAgent(
+        _ session: LiveRunSessionSummary,
+        gateway: AgentKillGateway,
+        workbench: LiveRunWorkbenchView
+    ) {
+        guard let locator = session.locator else { return }
+        Task { @MainActor [weak workbench] in
+            do {
+                let outcome = try await gateway.closeAgent(
+                    name: session.name, locator: locator)
+                let survivors = outcome.reaped.survivors
+                guard survivors.isEmpty else {
+                    workbench?.applyCloseOutcome(
+                        "\(session.name) was killed but \(survivors.count) of its "
+                            + "process(es) survived SIGKILL and are still running: "
+                            + survivors
+                                .map { "pid \($0.pid) (\($0.command))" }
+                                .joined(separator: ", "))
+                    return
+                }
+                workbench?.applyCloseOutcome(nil)
+                if let preserved = outcome.preserved {
+                    workbench?.showControlMessage(
+                        "Closed \(session.name). Unlanded work preserved: "
+                            + "\(preserved.branch) at \(preserved.ref).")
+                }
+            } catch {
+                workbench?.applyCloseOutcome(
+                    "\(session.name) was not closed: \(error.localizedDescription)")
+            }
         }
     }
 

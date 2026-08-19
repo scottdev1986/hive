@@ -88,12 +88,19 @@ final class LiveRunWorkbenchView: NSView {
     private var inspectorTab: ShellInspectorTab = .task
     private var horizon: OuterHorizonScreenState?
     private var horizonScreen: ShellScreenProjection?
+    private var closeRefusal: String?
     private var onHorizonSelect: ((String) -> Void)?
     private var onHorizonToggle: ((String) -> Void)?
     private var queenProvider: ProviderID?
 
     var onVisibleSessionChanged: ((LiveRunSessionSummary?) -> Void)?
     var onControlRequested: ((LiveRunControlOperation, LiveRunControlProjection) -> Void)?
+
+    /// Where a user-ordered close leaves the view. Left nil when the launch has
+    /// no authenticated daemon connection, which is what makes the rail's Close
+    /// Agent item disable itself rather than accept a click it cannot honour —
+    /// the same honesty the Model Control writes keep with a nil policy handler.
+    var closeAgentHandler: ((LiveRunSessionSummary) -> Void)?
 
     convenience init(config: LaunchConfig) {
         let factory: TerminalFactory? = config.isComplete
@@ -147,6 +154,10 @@ final class LiveRunWorkbenchView: NSView {
             rebuildRail()
         }
         renderSelection()
+        // Restored after the banner was cleared above: the feed heartbeats every
+        // five seconds, so a close refusal written once would be wiped before it
+        // was read, and a refusal the user never sees reads as a success.
+        if let closeRefusal { showControlMessage(closeRefusal) }
     }
 
     func applyQueenProvider(_ provider: ProviderID?) {
@@ -225,6 +236,44 @@ final class LiveRunWorkbenchView: NSView {
         errorLabel.stringValue = message
         errorLabel.isHidden = false
     }
+
+    /// Whether Close Agent can act on this row. It needs an exact agent identity
+    /// and an exact session generation — the kill route refuses anything else —
+    /// and a handler to carry the kill. The queen is excluded because she has no
+    /// AgentRecord for that route to find, so closing her could only ever be a
+    /// 404. A row that fails any of these gets a disabled menu item, never one
+    /// that accepts a click and does nothing.
+    func canCloseAgent(_ session: LiveRunSessionSummary?) -> Bool {
+        guard let session, !session.isQueen,
+              session.agentID != nil, session.locator != nil
+        else { return false }
+        return closeAgentHandler != nil
+    }
+
+    /// The one door a user-ordered close goes through. The rail's Close Agent
+    /// item calls it, and a QA invoke of the same action must call it too:
+    /// two doors onto one kill is how one of them quietly stops matching.
+    func requestCloseAgent(_ session: LiveRunSessionSummary) {
+        guard canCloseAgent(session) else { return }
+        closeRefusal = nil
+        errorLabel.isHidden = true
+        closeAgentHandler?(session)
+    }
+
+    /// The close finished. `refusal` is nil when the agent really is gone, and
+    /// otherwise says why it is not — held rather than written straight to the
+    /// banner so the next feed snapshot cannot erase it.
+    func applyCloseOutcome(_ refusal: String?) {
+        closeRefusal = refusal
+        if let refusal {
+            showControlMessage(refusal)
+        } else {
+            errorLabel.isHidden = true
+        }
+    }
+
+    /// What the Live Run banner is showing, or nil when it is showing nothing.
+    var bannerText: String? { errorLabel.isHidden ? nil : errorLabel.stringValue }
 
     func setRouteVisible(_ visible: Bool) {
         guard routeVisible != visible else { return }
@@ -562,6 +611,17 @@ final class LiveRunWorkbenchView: NSView {
         return stack
     }
 
+    /// A hierarchy row with no live session is a leftover board node, not an
+    /// agent anyone can close, so it gets the disabled item a nil action makes.
+    private func closeAgentAction(
+        for session: LiveRunSessionSummary?
+    ) -> LiveRunSessionButton.CloseAgentAction? {
+        guard let session else { return nil }
+        return LiveRunSessionButton.CloseAgentAction(
+            isEnabled: { [weak self] in self?.canCloseAgent(session) ?? false },
+            perform: { [weak self] in self?.requestCloseAgent(session) })
+    }
+
     private func rebuildRail() {
         for view in railHost.subviews {
             view.removeFromSuperview()
@@ -637,7 +697,8 @@ final class LiveRunWorkbenchView: NSView {
                 depth: 0,
                 role: roleLine(for: queen),
                 onSelect: { [weak self] in self?.selectSession(id: queen.id) },
-                onToggle: nil)
+                onToggle: nil,
+                closeAgent: closeAgentAction(for: queen))
             railStack.addArrangedSubview(button)
             button.widthAnchor.constraint(equalTo: railStack.widthAnchor).isActive = true
             renderedSessionIDs.insert(queen.id)
@@ -669,7 +730,8 @@ final class LiveRunWorkbenchView: NSView {
                     },
                     onToggle: row.hasChildren ? { [weak self] in
                         self?.onHorizonToggle?(row.node.nodeId)
-                    } : nil)
+                    } : nil,
+                    closeAgent: closeAgentAction(for: session))
                 railStack.addArrangedSubview(button)
                 button.widthAnchor.constraint(equalTo: railStack.widthAnchor).isActive = true
             }
@@ -682,7 +744,8 @@ final class LiveRunWorkbenchView: NSView {
                 depth: session.isQueen ? 0 : 1,
                 role: roleLine(for: session),
                 onSelect: { [weak self] in self?.selectSession(id: session.id) },
-                onToggle: nil)
+                onToggle: nil,
+                closeAgent: closeAgentAction(for: session))
             railStack.addArrangedSubview(button)
             button.widthAnchor.constraint(equalTo: railStack.widthAnchor).isActive = true
         }
@@ -1247,9 +1310,19 @@ private final class LiveRunRailClipView: NSClipView {
     override var isFlipped: Bool { true }
 }
 
-private final class LiveRunSessionButton: NSButton {
+private final class LiveRunSessionButton: NSButton, NSMenuItemValidation {
+    /// What the row's Close Agent item can do. Both closures are asked when the
+    /// menu opens rather than when the row is built, so a daemon connection that
+    /// arrived — or went away — since the last rail rebuild is what the item
+    /// reflects.
+    struct CloseAgentAction {
+        let isEnabled: () -> Bool
+        let perform: () -> Void
+    }
+
     private let onSelect: () -> Void
     private let onToggle: (() -> Void)?
+    private let closeAgent: CloseAgentAction?
 
     init(
         session: LiveRunSessionSummary?,
@@ -1259,10 +1332,12 @@ private final class LiveRunSessionButton: NSButton {
         role: String? = nil,
         expanded: Bool = false,
         onSelect: @escaping () -> Void,
-        onToggle: (() -> Void)?
+        onToggle: (() -> Void)?,
+        closeAgent: CloseAgentAction? = nil
     ) {
         self.onSelect = onSelect
         self.onToggle = onToggle
+        self.closeAgent = closeAgent
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         isBordered = false
@@ -1392,6 +1467,11 @@ private final class LiveRunSessionButton: NSButton {
             setAccessibilityIdentifier("live-run-hierarchy-\(node.nodeId)")
             setAccessibilityLabel("\(titleText), session status unknown")
         }
+        // Every rail row carries the menu, including rows that cannot be closed:
+        // a right-click that opens nothing is indistinguishable from a right-click
+        // the app ignored. Setting `menu` is what buys right-click, control-click
+        // and the keyboard context-menu key from AppKit in one line.
+        menu = closeAgentMenu(rowIdentifier: accessibilityIdentifier())
         heightAnchor.constraint(
             greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight + Theme.Space.s).isActive = true
     }
@@ -1405,6 +1485,29 @@ private final class LiveRunSessionButton: NSButton {
 
     @objc private func toggleRow() {
         onToggle?()
+    }
+
+    @objc private func closeAgentRow() {
+        closeAgent?.perform()
+    }
+
+    /// AppKit asks this each time the menu opens, which is what keeps the item's
+    /// enabled state a live answer instead of one frozen at rail-rebuild time.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        guard item.action == #selector(closeAgentRow) else { return true }
+        return closeAgent?.isEnabled() ?? false
+    }
+
+    private func closeAgentMenu(rowIdentifier: String) -> NSMenu {
+        let menu = NSMenu()
+        menu.identifier = NSUserInterfaceItemIdentifier("\(rowIdentifier)-menu")
+        let item = NSMenuItem(
+            title: "Close Agent", action: #selector(closeAgentRow), keyEquivalent: "")
+        item.target = self
+        item.identifier = NSUserInterfaceItemIdentifier("\(rowIdentifier)-close-agent")
+        item.setAccessibilityIdentifier("\(rowIdentifier)-close-agent")
+        menu.addItem(item)
+        return menu
     }
 
     private static func roleLine(_ node: HierarchyNodeProjection?) -> String {
