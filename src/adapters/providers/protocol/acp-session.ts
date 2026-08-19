@@ -186,6 +186,8 @@ export class AcpProviderSession implements ProviderSession {
   private closed = false;
   private loadReplayChunkCount = 0;
   private observingLoadReplay = false;
+  /** ACP session/new has no instruction field. Grok and Kimi only see a queen boot capsule (or worker brief) if it rides the first session/prompt. OpenCode already injects that file through opencode.json and must not get a second copy. */
+  private pendingInstruction: string | undefined;
 
   private constructor(
     profile: AcpVendorProfile,
@@ -362,6 +364,14 @@ export class AcpProviderSession implements ProviderSession {
       });
     }
 
+    if (
+      (this.profile.provider === "grok" || this.profile.provider === "kimi") &&
+      input.instruction !== undefined &&
+      input.instruction !== ""
+    ) {
+      this.pendingInstruction = input.instruction;
+    }
+
     return { vendorSessionId: sessionId, replayedHistory: false };
   }
 
@@ -450,11 +460,17 @@ export class AcpProviderSession implements ProviderSession {
     });
 
     try {
+      const instruction = this.pendingInstruction;
+      this.pendingInstruction = undefined;
+      const text =
+        instruction === undefined
+          ? input.text
+          : `${instruction}\n\n${input.text}`;
       const result = await this.client.acp.request(
         acpMethods.agent.session.prompt,
         {
           sessionId,
-          prompt: [{ type: "text", text: input.text }],
+          prompt: [{ type: "text", text }],
         },
       );
       this.mark("prompt", "supported");

@@ -148,6 +148,45 @@ describe("kimi acp adapter", () => {
     await seen.stop();
   });
 
+  test("the first prompt carries newSession instruction; the second does not", async () => {
+    const session = await connect();
+    const seen = new Collector(session);
+    const created = await session.newSession({
+      cwd: import.meta.dir,
+      instruction: [
+        "## Identity and proof",
+        "successionId: qsc_test_capsule",
+        "targetGeneration: 3",
+      ].join("\n"),
+    });
+    await session.submit({
+      session: created,
+      clientInputId: "capsule-kickoff",
+      text: "repeat-prompt Follow your boot capsule.",
+    });
+    await seen.waitFor((e) => e.some((x) => x.kind === "message-delta"));
+    const first = seen.events.find((e) => e.kind === "message-delta");
+    const firstText = first && "text" in first ? first.text : "";
+    expect(firstText).toContain("successionId: qsc_test_capsule");
+    expect(firstText).toContain("targetGeneration: 3");
+    expect(firstText).toContain("repeat-prompt Follow your boot capsule.");
+
+    await session.submit({
+      session: created,
+      clientInputId: "later-turn",
+      text: "repeat-prompt later",
+    });
+    await seen.waitFor(
+      (e) => e.filter((x) => x.kind === "message-delta").length >= 2,
+    );
+    const second = seen.events.filter((e) => e.kind === "message-delta").at(-1);
+    const secondText = second && "text" in second ? second.text : "";
+    expect(secondText).toBe("repeat-prompt later");
+    expect(secondText).not.toContain("qsc_test_capsule");
+    await session.close();
+    await seen.stop();
+  });
+
   test("a failed ACP prompt surfaces the child vendor diagnostic safely", async () => {
     const session = await connect();
     const seen = new Collector(session);

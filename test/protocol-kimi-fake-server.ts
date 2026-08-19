@@ -7,6 +7,7 @@
  * Not itself a test.
  *
  * Behaviors by prompt text:
+ * - contains "repeat-prompt"   → agent_message_chunk of the full prompt text
  * - contains "echo"            → tool_call update, then permission reverse-RPC
  *                                in "default" mode; runs straight through
  *                                in any autonomous mode
@@ -117,6 +118,18 @@ function handleRequest(msg: {
       const blocks = Array.isArray(msg.params?.prompt) ? msg.params.prompt : [];
       const first = blocks[0] as { text?: string } | undefined;
       const text = first?.text ?? "";
+      if (text.includes("repeat-prompt")) {
+        notify({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text },
+        });
+        send({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: { stopReason: "end_turn" },
+        });
+        return;
+      }
       if (text.includes("essay")) {
         promptAwaitingCancel = msg.id;
         notify({
