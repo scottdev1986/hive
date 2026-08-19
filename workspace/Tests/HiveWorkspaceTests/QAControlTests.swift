@@ -88,6 +88,28 @@ final class QAControlTests: XCTestCase {
         XCTAssertTrue(target.sender === popup)
     }
 
+    func testSelectChoosesPopupItemByIndexAndFiresItsOwnTargetAction() {
+        let target = PopupTarget()
+        let popup = NSPopUpButton()
+        popup.addItems(withTitles: ["First", "Second"])
+        popup.setAccessibilityIdentifier("task-router-mode")
+        popup.target = target
+        popup.action = #selector(PopupTarget.choose(_:))
+        popup.frame = NSRect(x: 10, y: 10, width: 120, height: 30)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: .titled, backing: .buffered, defer: false)
+        window.contentView?.addSubview(popup)
+
+        let response = QAControl.process(
+            verb: "select", identifier: "task-router-mode", input: nil,
+            itemTitle: nil, itemIndex: 1,
+            window: window, route: "router", requestId: "request")
+
+        XCTAssertEqual(response.status, "ok")
+        XCTAssertEqual(popup.indexOfSelectedItem, 1)
+        XCTAssertTrue(target.sender === popup)
+    }
+
     func testSelectRefusesAnUnknownTitleAndOutOfRangeIndex() {
         let popup = NSPopUpButton()
         popup.addItem(withTitle: "First")

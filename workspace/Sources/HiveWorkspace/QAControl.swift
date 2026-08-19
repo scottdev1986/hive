@@ -193,7 +193,7 @@ final class QAControl {
                 selected = popup.selectedItem?.title == title
             case let (nil, .some(index)) where popup.itemArray.indices.contains(index):
                 popup.selectItem(at: index)
-                selected = true
+                selected = popup.indexOfSelectedItem == index
             case (.some, .some):
                 return QAControlResponse(
                     requestId: requestId, status: "refused", root: "hive-workspace-qa-root",
