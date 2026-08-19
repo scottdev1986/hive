@@ -209,6 +209,7 @@ else
 QA_PROJECT := /Users/scottkellar/Projects/hive-test-project
 endif
 QA_ENV := \
+	-u HIVE_CAPABILITY_TOKEN \
 	HIVE_QA=1 \
 	HIVE_HOME=$(QA_HOME) \
 	HIVE_DEFAULT_HOME=$(QA_HOME) \

@@ -40,24 +40,6 @@ BIN_NAME=hive
 ROOT="${HIVE_INSTALL_ROOT:-$HOME/.local/share/$BIN_NAME}"
 BIN_LINK="${HIVE_BIN_LINK:-$BIN_DIR/$BIN_NAME}"
 
-# AGENT_WORKTREE_INSTALL_GUARD
-# Agent shells inherit HIVE_INSTALL_ROOT and HIVE_BIN_LINK pointing at the
-# owner's fleet, so those overrides are the default here. BIN_NAME already
-# names this variant's own path ($HOME/.local/share/$BIN_NAME for prod
-# `hive`, otherwise `hive-$VARIANT`). cwd under .hive/worktrees is the cheap
-# first test; HIVE_CAPABILITY_TOKEN is the cwd-independent one — wrapSpawnWithCapabilityEnv
-# sets it on every production agent launch and descendants inherit it. Owner
-# make/build/clean do not. Refuse before any write.
-caller_cwd="${PWD:-$(pwd)}"
-agent_caller=""
-case "$caller_cwd" in
-  */.hive/worktrees|*/.hive/worktrees/*) agent_caller=1 ;;
-esac
-if [ -n "${HIVE_CAPABILITY_TOKEN:-}" ]; then agent_caller=1; fi
-if [ -n "$agent_caller" ]; then
-  die "refusing to install $BIN_NAME to $ROOT: this process is an agent (worktree $caller_cwd or HIVE_CAPABILITY_TOKEN is set) and agent shells inherit HIVE_INSTALL_ROOT and HIVE_BIN_LINK pointing at the owner install. This variant's own path is $HOME/.local/share/$BIN_NAME. Fix: run the installer from an owner shell that does not carry an agent credential, outside .hive/worktrees/."
-fi
-
 # This installer is Darwin-only. BSD mv's -h is the no-follow half of the
 # atomic rename: without it, a `current` symlink to a directory is followed and
 # the temporary link is moved inside the old version while mv exits zero.

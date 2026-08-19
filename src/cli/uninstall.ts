@@ -42,7 +42,6 @@ import {
   installRoot,
 } from "../update-service/paths";
 import { stopHive } from "./control";
-import { isAgentCaller } from "./invoker";
 import { fetchAgentStatus, requestSettlementSweep } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { type ConfirmFn, confirmOnTty } from "./prompt";
@@ -61,21 +60,6 @@ export interface UninstallDeps {
   acquireLease: (
     purpose: MachineMutationPurpose,
   ) => Promise<MachineMutationLease>;
-  /** Where this uninstall was invoked from. Defaults to `process.cwd()`. */
-  cwd?: string;
-  /**
-   * Environment used to detect an agent caller. Defaults to `process.env`.
-   * Tests pass a copy so they can set or clear HIVE_CAPABILITY_TOKEN without
-   * mutating the process.
-   */
-  env?: Record<string, string | undefined>;
-  /**
-   * The root this invocation owns. Production never sets this — the CLI has
-   * no flag for it — so an agent `hive uninstall` always uses the inherited
-   * env root and is refused. Tests that must actually uninstall pass a
-   * scratch path here instead of escaping the guard by moving cwd.
-   */
-  ownedRoot?: string;
 }
 
 async function stopInstances(): Promise<void> {
@@ -138,27 +122,6 @@ export const defaultUninstallDeps: UninstallDeps = {
   stopInstances,
   acquireLease: acquireMachineMutationLease,
 };
-
-/**
- * Agent shells inherit HIVE_INSTALL_ROOT and HIVE_BIN_LINK pointing at the
- * owner's fleet. cwd under .hive/worktrees is the cheap first test;
- * HIVE_CAPABILITY_TOKEN is cwd-independent (wrapSpawnWithCapabilityEnv).
- * An explicit ownedRoot is a test-owned target, not a cwd escape.
- */
-function refuseAgentWorktreeUninstall(
-  deps: UninstallDeps,
-  target: string,
-): boolean {
-  if (deps.ownedRoot !== undefined) return false;
-  const cwd = deps.cwd ?? process.cwd();
-  const env = deps.env ?? process.env;
-  if (!isAgentCaller(cwd, env)) return false;
-  deps.log(
-    `Refusing to uninstall ${target}: this process is an agent (worktree ${cwd} or HIVE_CAPABILITY_TOKEN is set) and agent shells inherit HIVE_INSTALL_ROOT and HIVE_BIN_LINK pointing at the owner install.\n` +
-      "No files were removed. Fix: run `hive uninstall` from an owner shell that does not carry an agent credential, outside .hive/worktrees/.",
-  );
-  return true;
-}
 
 function liveTeamRefusal(blockers: readonly InstanceMutationBlocker[]): string {
   return (
@@ -361,7 +324,6 @@ export async function runUninstallRepo(
   options: { yes?: boolean } = {},
   deps: UninstallDeps = defaultUninstallDeps,
 ): Promise<number> {
-  if (refuseAgentWorktreeUninstall(deps, root)) return 1;
   const plan = [
     `This removes Hive from ${root}:`,
     "  - stops the selected daemon only when its handshake proves it serves this project",
@@ -482,9 +444,6 @@ export async function runUninstallMachine(
   options: { yes?: boolean; purge?: boolean } = {},
   deps: UninstallDeps = defaultUninstallDeps,
 ): Promise<number> {
-  if (refuseAgentWorktreeUninstall(deps, `${installRoot()} (${binLink()})`)) {
-    return 1;
-  }
   const method = detectInstallMethod(process.execPath);
   const resolved = resolveVariant();
   // A non-prod variant must never clear ~/.hive. Equality with defaultHome is

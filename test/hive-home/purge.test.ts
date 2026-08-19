@@ -9,7 +9,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync } from "node:fs";
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runCommand } from "../../src/adapters/graphify";
 import {
@@ -62,7 +61,6 @@ function silentDeps(lines: string[]): UninstallDeps {
     liveTeams: async () => [],
     stopInstances: async () => {},
     acquireLease: async () => ({ release: () => {} }),
-    ownedRoot: tmpdir(),
   };
 }
 

@@ -1,6 +1,5 @@
 // Who is invoking this CLI process — captured at the origin because the audit row is the only record that survives a teardown cascade. A bare ppid is useless once the parent exits, so record enough identity to attribute a teardown from the audit row alone. This is accident prevention, not a security boundary: a same-UID process can read the user credential and lie about all of it (credentials.ts says the same). What it buys is that every HONEST caller — every test runner, build script, Workspace teardown and user shell — is decisively attributable from its audit row alone.
 import { spawnSync } from "node:child_process";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "../adapters/providers/shared/capability-env";
 
 export interface InvokerIdentity {
   readonly pid: number;
@@ -20,26 +19,6 @@ export function isAgentWorktreePath(path: string): boolean {
   return (
     path.includes("/.hive/worktrees/") || path.endsWith("/.hive/worktrees")
   );
-}
-
-/**
- * Every production agent launch prefixes HIVE_CAPABILITY_TOKEN via
- * wrapSpawnWithCapabilityEnv, and the pane copies process.env into the
- * provider. Descendants inherit it. Owner make/build/clean DEV_ENV does not
- * set it. Empty is absent: a missing or blank token is not an agent.
- */
-export function isAgentCapabilityEnv(
-  env: Record<string, string | undefined> = process.env,
-): boolean {
-  return (env[HIVE_CAPABILITY_TOKEN_ENV] ?? "").length > 0;
-}
-
-/** Agent-ness: worktree cwd is the cheap first test; the token is cwd-independent. */
-export function isAgentCaller(
-  cwd: string,
-  env: Record<string, string | undefined> = process.env,
-): boolean {
-  return isAgentWorktreePath(cwd) || isAgentCapabilityEnv(env);
 }
 
 function readProcess(pid: number): { ppid: number; command: string } | null {

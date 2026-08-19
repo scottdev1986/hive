@@ -5,7 +5,6 @@ import {
   chmod,
   mkdir,
   mkdtemp,
-  readFile,
   readlink,
   rm,
   symlink,
@@ -646,66 +645,6 @@ fi
     expect(await Bun.$`${workingBinary} --version`.text()).toBe("hive 1.2.3\n");
   });
 
-  test("an agent worktree install refuses and does not touch the target", async () => {
-    const fixture = await createInstallerFixture("1.2.3");
-    const build = await stageLocalBuild(fixture, "1.2.3");
-    const worktree = join(fixture.root, ".hive", "worktrees", "elton");
-    await mkdir(worktree, { recursive: true });
-    const canary = join(fixture.installRoot, "canary");
-    await mkdir(fixture.installRoot, { recursive: true });
-    await writeFile(canary, "owner-install\n");
-
-    const installed = await runInstaller(
-      fixture,
-      "1.2.3",
-      ["--variant", "dev", "--from-build", build],
-      {
-        cwd: worktree,
-        extraEnv: {
-          HIVE_BIN_LINK: join(fixture.binDir, "hive"),
-          HIVE_CAPABILITY_TOKEN: "test-agent-capability",
-        },
-      },
-    );
-
-    expect(installed.exitCode).toBe(1);
-    expect(installed.stderr).toContain("this process is an agent");
-    expect(installed.stderr).toContain(fixture.installRoot);
-    expect(installed.stderr).toContain("hive-dev");
-    expect(await readFile(canary, "utf8")).toBe("owner-install\n");
-    expect(existsSync(join(fixture.installRoot, "versions", "1.2.3"))).toBe(
-      false,
-    );
-  });
-
-  test("a capability token refuses even after cd out of the worktree", async () => {
-    const fixture = await createInstallerFixture("1.2.3");
-    const build = await stageLocalBuild(fixture, "1.2.3");
-    const canary = join(fixture.installRoot, "canary");
-    await mkdir(fixture.installRoot, { recursive: true });
-    await writeFile(canary, "owner-install\n");
-
-    const installed = await runInstaller(
-      fixture,
-      "1.2.3",
-      ["--variant", "dev", "--from-build", build],
-      {
-        cwd: fixture.root,
-        extraEnv: {
-          HIVE_BIN_LINK: join(fixture.binDir, "hive"),
-          HIVE_CAPABILITY_TOKEN: "test-agent-capability",
-        },
-      },
-    );
-
-    expect(installed.exitCode).toBe(1);
-    expect(installed.stderr).toContain("HIVE_CAPABILITY_TOKEN");
-    expect(await readFile(canary, "utf8")).toBe("owner-install\n");
-    expect(existsSync(join(fixture.installRoot, "versions", "1.2.3"))).toBe(
-      false,
-    );
-  });
-
   test("the owner path still installs when cwd is not a worktree", async () => {
     const fixture = await createInstallerFixture("1.2.3");
     const build = await stageLocalBuild(fixture, "1.2.3");
@@ -721,31 +660,20 @@ fi
     );
   });
 
-  test("removing the worktree guard lets an agent-shaped install write the target", async () => {
+  test("an agent-shaped caller installs to its scratch target", async () => {
     const fixture = await createInstallerFixture("1.2.3");
     const build = await stageLocalBuild(fixture, "1.2.3");
-    const source = await readFile(join(repoRoot, "install.sh"), "utf8");
-    const mutated = source.replace(
-      /# AGENT_WORKTREE_INSTALL_GUARD[\s\S]*?(?=\n# This installer is Darwin-only)/,
-      "",
-    );
-    expect(mutated).not.toBe(source);
-    expect(mutated).not.toContain("AGENT_WORKTREE_INSTALL_GUARD");
-    expect(mutated).not.toContain("HIVE_CAPABILITY_TOKEN");
-    const script = join(fixture.root, "install-mutated.sh");
-    await writeFile(script, mutated);
-    const elsewhere = join(fixture.root, "elsewhere");
-    await mkdir(elsewhere, { recursive: true });
+    const worktree = join(fixture.root, ".hive", "worktrees", "elton");
+    await mkdir(worktree, { recursive: true });
 
     const installed = await runInstaller(
       fixture,
       "1.2.3",
       ["--variant", "dev", "--from-build", build],
       {
-        cwd: elsewhere,
-        script,
+        cwd: worktree,
         extraEnv: {
-          HIVE_BIN_LINK: join(fixture.binDir, "hive"),
+          HIVE_BIN_LINK: join(fixture.binDir, "hive-dev"),
           HIVE_CAPABILITY_TOKEN: "test-agent-capability",
         },
       },
@@ -756,7 +684,7 @@ fi
     expect(existsSync(join(fixture.installRoot, "versions", "1.2.3"))).toBe(
       true,
     );
-    expect(await readlink(join(fixture.binDir, "hive"))).toBe(
+    expect(await readlink(join(fixture.binDir, "hive-dev"))).toBe(
       join(fixture.installRoot, "current", "hive"),
     );
   });

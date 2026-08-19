@@ -311,6 +311,7 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
     const home = join(fixture, "home");
     const userHive = join(home, ".hive");
     const argvLog = join(fixture, "uninstall-argv");
+    const capabilityLog = join(fixture, "uninstall-capability");
     initRepo(project);
     mkdirSync(userHive, { recursive: true });
     writeFileSync(join(userHive, "sentinel"), "untouched\n");
@@ -319,7 +320,9 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
       [
         "#!/bin/sh",
         `log=${JSON.stringify(argvLog)}`,
+        `capability_log=${JSON.stringify(capabilityLog)}`,
         'printf "%s\\n" "$*" >> "$log"',
+        `printf "%s\\n" "\${HIVE_CAPABILITY_TOKEN-unset}" >> "$capability_log"`,
         "exit 0",
         "",
       ].join("\n"),
@@ -343,12 +346,19 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
         QA_HOME: join(qa, "home"),
         USER_HIVE: userHive,
       },
-      { ...process.env, HOME: home },
+      {
+        ...process.env,
+        HOME: home,
+        HIVE_CAPABILITY_TOKEN: "owner-fleet-capability",
+      },
     );
     expect(result.exitCode, result.output).toBe(0);
     expect(result.output).toContain("no listed qa path remains");
     expect(readFileSync(argvLog, "utf8")).toBe(
       "stop --force\nuninstall --repo --yes\nuninstall --yes --purge\n",
+    );
+    expect(readFileSync(capabilityLog, "utf8")).toBe(
+      "unset\nunset\nunset\n",
     );
     expect(readFileSync(join(userHive, "sentinel"), "utf8")).toBe(
       "untouched\n",

@@ -101,10 +101,6 @@ function probe(
       leaseEvents.push(`acquire:${purpose}`);
       return { release: () => leaseEvents.push(`release:${purpose}`) };
     },
-    // Explicit test-owned root: production never passes this. Suites that
-    // actually uninstall keep the real worktree cwd and this scratch path
-    // instead of escaping the guard by moving cwd.
-    ownedRoot: join(tmpdir(), "hive-test-owned-install"),
     ...overrides,
   };
   return { deps, lines, stops, leaseEvents };
@@ -511,6 +507,27 @@ describe("hive uninstall --repo", () => {
 });
 
 describe("hive uninstall", () => {
+  test("without a terminal and without --yes it refuses and removes nothing", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-home-non-tty-"));
+    const previous = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = home;
+    try {
+      await writeFile(join(home, "canary"), "keep\n");
+      const { deps, lines, stops, leaseEvents } = probe(null);
+      expect(await runUninstallMachine({}, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(leaseEvents).toEqual([]);
+      expect(lines.join("\n")).toContain("This removes Hive from this machine");
+      expect(lines.join("\n")).toContain(home);
+      expect(lines.join("\n")).toContain("pass --yes");
+      expect(await readFile(join(home, "canary"), "utf8")).toBe("keep\n");
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   test("a non-prod variant refuses to uninstall the production home", async () => {
     const previousHome = process.env.HIVE_HOME;
     const previousDefaultHome = process.env.HIVE_DEFAULT_HOME;
@@ -1069,166 +1086,50 @@ describe("uninstall retention follows the variant record", () => {
   });
 });
 
-describe("uninstall refuses the owner install from an agent caller", () => {
-  const agentEnv = {
-    ...process.env,
-    HIVE_CAPABILITY_TOKEN: "test-agent-capability",
-  };
-
-  test("machine uninstall from a worktree refuses and does not touch the target", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-worktree-"));
-    const worktree = join(root, ".hive", "worktrees", "elton");
+describe("uninstall does not treat agent identity as a hard stop", () => {
+  test("a caller carrying a capability token reaches the machine confirmation gate", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-agent-"));
     const home = join(root, "home");
-    const fleet = join(root, "fleet");
     const previousHome = process.env.HIVE_HOME;
-    const previousInstall = process.env.HIVE_INSTALL_ROOT;
-    const previousLink = process.env.HIVE_BIN_LINK;
+    const previousToken = process.env.HIVE_CAPABILITY_TOKEN;
     try {
-      await mkdir(worktree, { recursive: true });
       await mkdir(home, { recursive: true });
-      await mkdir(fleet, { recursive: true });
-      await writeFile(join(home, "canary"), "keep-home\n");
-      await writeFile(join(fleet, "canary"), "keep-fleet\n");
+      await writeFile(join(home, "canary"), "keep\n");
       process.env.HIVE_HOME = home;
-      process.env.HIVE_INSTALL_ROOT = fleet;
-      process.env.HIVE_BIN_LINK = join(root, "bin", "hive");
-      const { deps, lines, stops } = probe(true, {
-        cwd: worktree,
-        env: agentEnv,
-        ownedRoot: undefined,
-      });
-      expect(await runUninstallMachine({ yes: true }, deps)).toBe(1);
+      process.env.HIVE_CAPABILITY_TOKEN = "test-agent-capability";
+      const { deps, lines, stops } = probe(null);
+      expect(await runUninstallMachine({}, deps)).toBe(1);
       expect(stops).toEqual([]);
-      expect(lines.join("\n")).toContain("this process is an agent");
-      expect(lines.join("\n")).toContain("HIVE_CAPABILITY_TOKEN");
-      expect(await readFile(join(home, "canary"), "utf8")).toBe("keep-home\n");
-      expect(await readFile(join(fleet, "canary"), "utf8")).toBe(
-        "keep-fleet\n",
-      );
+      expect(lines.join("\n")).toContain("This removes Hive from this machine");
+      expect(lines.join("\n")).toContain("pass --yes");
+      expect(lines.join("\n")).not.toContain("this process is an agent");
+      expect(await readFile(join(home, "canary"), "utf8")).toBe("keep\n");
     } finally {
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
-      if (previousInstall === undefined) delete process.env.HIVE_INSTALL_ROOT;
-      else process.env.HIVE_INSTALL_ROOT = previousInstall;
-      if (previousLink === undefined) delete process.env.HIVE_BIN_LINK;
-      else process.env.HIVE_BIN_LINK = previousLink;
+      if (previousToken === undefined) delete process.env.HIVE_CAPABILITY_TOKEN;
+      else process.env.HIVE_CAPABILITY_TOKEN = previousToken;
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("a capability token refuses even after cd out of the worktree", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-token-"));
-    const desk = join(root, "elsewhere");
-    const home = join(root, "home");
-    const previous = process.env.HIVE_HOME;
-    try {
-      await mkdir(desk, { recursive: true });
-      await mkdir(home, { recursive: true });
-      await writeFile(join(home, "canary"), "keep-home\n");
-      process.env.HIVE_HOME = home;
-      const { deps, lines, stops } = probe(true, {
-        cwd: desk,
-        env: agentEnv,
-        ownedRoot: undefined,
-      });
-      expect(await runUninstallMachine({ yes: true }, deps)).toBe(1);
-      expect(stops).toEqual([]);
-      expect(lines.join("\n")).toContain("HIVE_CAPABILITY_TOKEN");
-      expect(await readFile(join(home, "canary"), "utf8")).toBe("keep-home\n");
-    } finally {
-      if (previous === undefined) delete process.env.HIVE_HOME;
-      else process.env.HIVE_HOME = previous;
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("an explicit test-owned root uninstalls from a worktree without moving cwd", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-owned-"));
-    const worktree = join(root, ".hive", "worktrees", "elton");
-    const home = join(root, "home");
-    const previous = process.env.HIVE_HOME;
-    try {
-      await mkdir(worktree, { recursive: true });
-      await mkdir(home, { recursive: true });
-      await writeFile(join(home, "hive.db"), "");
-      process.env.HIVE_HOME = home;
-      const { deps, lines } = probe(true, {
-        cwd: worktree,
-        env: agentEnv,
-        ownedRoot: home,
-      });
-      expect(await runUninstallMachine({ yes: true }, deps)).toBe(0);
-      expect(existsSync(join(home, "hive.db"))).toBe(false);
-      expect(lines.join("\n")).not.toContain("this process is an agent");
-    } finally {
-      if (previous === undefined) delete process.env.HIVE_HOME;
-      else process.env.HIVE_HOME = previous;
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("repo uninstall from a worktree refuses and removes nothing", async () => {
+  test("a caller carrying a capability token reaches the repo confirmation gate", async () => {
     const root = await gitRepo();
-    const worktree = join(root, ".hive", "worktrees", "elton");
+    const previousToken = process.env.HIVE_CAPABILITY_TOKEN;
     try {
       await mkdir(join(root, "graphify-out"), { recursive: true });
-      await mkdir(worktree, { recursive: true });
-      const { deps, lines, stops } = probe(true, {
-        cwd: worktree,
-        env: agentEnv,
-        ownedRoot: undefined,
-      });
-      expect(await runUninstallRepo(root, { yes: true }, deps)).toBe(1);
+      process.env.HIVE_CAPABILITY_TOKEN = "test-agent-capability";
+      const { deps, lines, stops } = probe(null);
+      expect(await runUninstallRepo(root, {}, deps)).toBe(1);
       expect(stops).toEqual([]);
       expect(existsSync(join(root, "graphify-out"))).toBe(true);
-      expect(lines.join("\n")).toContain("this process is an agent");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("the owner path still uninstalls without an agent credential", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-owner-"));
-    const home = join(root, "home");
-    const previous = process.env.HIVE_HOME;
-    try {
-      await mkdir(home, { recursive: true });
-      await writeFile(join(home, "hive.db"), "");
-      process.env.HIVE_HOME = home;
-      const env = { ...process.env };
-      delete env.HIVE_CAPABILITY_TOKEN;
-      const { deps, lines } = probe(true, {
-        cwd: join(root, "primary"),
-        env,
-        ownedRoot: undefined,
-      });
-      await mkdir(join(root, "primary"), { recursive: true });
-      expect(await runUninstallMachine({ yes: true }, deps)).toBe(0);
-      expect(existsSync(join(home, "hive.db"))).toBe(false);
+      expect(lines.join("\n")).toContain(`This removes Hive from ${root}`);
+      expect(lines.join("\n")).toContain("pass --yes");
       expect(lines.join("\n")).not.toContain("this process is an agent");
     } finally {
-      if (previous === undefined) delete process.env.HIVE_HOME;
-      else process.env.HIVE_HOME = previous;
+      if (previousToken === undefined) delete process.env.HIVE_CAPABILITY_TOKEN;
+      else process.env.HIVE_CAPABILITY_TOKEN = previousToken;
       await rm(root, { recursive: true, force: true });
     }
-  });
-
-  test("removing the worktree guard lets an agent-shaped uninstall delete the home", async () => {
-    const source = await readFile(
-      join(import.meta.dir, "../../src/cli/uninstall.ts"),
-      "utf8",
-    );
-    expect(source).toContain(
-      "if (refuseAgentWorktreeUninstall(deps, root)) return 1;",
-    );
-    expect(source).toContain("isAgentCaller");
-    const machineCall = "refuseAgentWorktreeUninstall(deps, ";
-    expect(source.split(machineCall).length).toBe(3);
-    const mutated = source.replaceAll(
-      /if \(refuseAgentWorktreeUninstall\([\s\S]*?return 1;\n(?: {2}\}\n)?/g,
-      "",
-    );
-    expect(mutated).not.toBe(source);
-    expect(mutated).not.toContain(machineCall);
   });
 });

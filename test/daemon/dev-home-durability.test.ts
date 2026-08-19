@@ -227,7 +227,6 @@ describe("the dev daemon's home survives /tmp", () => {
         liveTeams: async () => [],
         stopInstances: async () => {},
         acquireLease: async () => ({ release: () => {} }),
-        ownedRoot: root,
       };
       expect(await runUninstallMachine({ yes: true, purge: true }, deps)).toBe(
         0,
