@@ -561,10 +561,13 @@ export class OrchestratorSessiondController {
       toolSessionId: null,
       cwd: params.cwd,
       argv: params.shell.argv,
-      environment: providerTerminalEnvironment({
-        ...(this.dependencies.environment ?? process.env),
-        ...params.environment,
-      }),
+      environment: {
+        ...providerTerminalEnvironment({
+          ...(this.dependencies.environment ?? process.env),
+          ...params.environment,
+        }),
+        ...params.shell.env,
+      },
       expectedExecutable: params.shell.expectedExecutable,
       readOnly: false,
       capabilityEpoch: 0,

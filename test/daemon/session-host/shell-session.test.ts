@@ -6,19 +6,13 @@ import {
 import { tempRoot } from "../../temp-root";
 
 describe("shell-backed terminal sessions", () => {
-  test("starts a login zsh and enters the provider as its first command", () => {
+  test("starts a conventional interactive login zsh with command in environment", () => {
     const launch = shellSessionLaunch("codex --model gpt-5.6-sol");
 
-    expect(launch.argv.slice(0, 5)).toEqual([
-      TERMINAL_SHELL,
-      "-l",
-      "-i",
-      "-c",
-      expect.stringContaining('eval "$hive_terminal_command"'),
-    ]);
-    expect(launch.argv.at(-2)).toBe("hive-terminal");
-    expect(launch.argv.at(-1)).toBe("codex --model gpt-5.6-sol");
+    expect(launch.argv).toEqual([TERMINAL_SHELL, "-l", "-i"]);
     expect(launch.expectedExecutable).toBe(TERMINAL_SHELL);
+    expect(launch.env.HIVE_AGENT_UI_COMMAND).toBe("codex --model gpt-5.6-sol");
+    expect(launch.env.HIVE_TUI_LAUNCHED).toBe("0");
   });
 
   test("refuses a command that cannot be entered into a terminal", () => {
@@ -39,6 +33,7 @@ describe("shell-backed terminal sessions", () => {
         ZDOTDIR: shellHome,
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         TERM: "xterm-256color",
+        ...launch.env,
       },
       stdin: "pipe",
       stdout: "pipe",

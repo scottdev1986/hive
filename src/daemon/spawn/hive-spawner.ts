@@ -350,7 +350,10 @@ export class HiveSpawner implements Spawner {
       toolSessionId: record.toolSessionId ?? null,
       cwd: record.worktreePath,
       argv: shell.argv,
-      environment: providerTerminalEnvironment(process.env),
+      environment: {
+        ...providerTerminalEnvironment(process.env),
+        ...shell.env,
+      },
       expectedExecutable: shell.expectedExecutable,
       readOnly: record.readOnly,
       capabilityEpoch: record.capabilityEpoch,
