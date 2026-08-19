@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { type ReleaseManifest, sha256 } from "../../src/release/manifest";
 import {
   activate,
@@ -43,6 +43,28 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 const CLI_BYTES = new TextEncoder().encode("#!/bin/sh\necho hive 0.0.7\n");
 const SESSIOND_BYTES = new TextEncoder().encode("#!/bin/sh\necho sessiond\n");
+
+function packTerminfoBytes(): Uint8Array {
+  const tree = mkdtempSync(join(tmpdir(), "hive-terminfo-"));
+  const entry = join(tree, "resources", "terminfo", "x", "xterm-ghostty");
+  mkdirSync(dirname(entry), { recursive: true });
+  writeFileSync(entry, "xterm-ghostty\n");
+  const tarball = join(tree, "hive-terminfo.tar.gz");
+  const tar = Bun.spawnSync([
+    "tar",
+    "-czf",
+    tarball,
+    "-C",
+    tree,
+    "resources/terminfo",
+  ]);
+  if (tar.exitCode !== 0) {
+    throw new Error(tar.stderr.toString() || "failed to pack terminfo fixture");
+  }
+  return new Uint8Array(readFileSync(tarball));
+}
+
+const TERMINFO_BYTES = packTerminfoBytes();
 const RELEASE_KEY = (() => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   return {
@@ -87,6 +109,15 @@ const manifestFor = (
       sha256: sha256(sessiondBytes),
       buildHash: `sessiond-hash-of-${version}`,
     },
+    {
+      name: "hive-terminfo.tar.gz",
+      kind: "terminfo",
+      platform: "darwin",
+      arch: "arm64",
+      size: TERMINFO_BYTES.byteLength,
+      sha256: sha256(TERMINFO_BYTES),
+      buildHash: `terminfo-hash-of-${version}`,
+    },
   ],
 });
 
@@ -105,6 +136,7 @@ const stageDeps = (
     publicKey: RELEASE_KEY.publicKey,
     download: async (name: string) => {
       if (name.startsWith("hive-sessiond-")) return SESSIOND_BYTES;
+      if (name === "hive-terminfo.tar.gz") return TERMINFO_BYTES;
       return CLI_BYTES;
     },
     probeVersion: async () => `hive ${version} (abc1234)`,
@@ -123,6 +155,11 @@ function fakeVersion(version: string, exitOk = true): void {
   chmodSync(cliPath(dir), 0o755);
   writeFileSync(sessiondPath(dir), "#!/bin/sh\necho sessiond\n");
   chmodSync(sessiondPath(dir), 0o755);
+  mkdirSync(join(dir, "resources", "terminfo", "x"), { recursive: true });
+  writeFileSync(
+    join(dir, "resources", "terminfo", "x", "xterm-ghostty"),
+    "xterm-ghostty\n",
+  );
 }
 
 async function signedVersion(version: string): Promise<void> {
@@ -143,6 +180,17 @@ describe("staging a release", () => {
     expect(result.version).toEqual("0.0.7");
     expect(isStaged("0.0.7", root)).toEqual(true);
     expect(existsSync(sessiondPath(versionDir("0.0.7", root)))).toEqual(true);
+    expect(
+      existsSync(
+        join(
+          versionDir("0.0.7", root),
+          "resources",
+          "terminfo",
+          "x",
+          "xterm-ghostty",
+        ),
+      ),
+    ).toEqual(true);
   });
 
   test("refuses an unsigned release when no release key is available", async () => {

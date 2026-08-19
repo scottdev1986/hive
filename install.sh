@@ -125,10 +125,12 @@ if [ -z "$FROM_BUILD" ]; then
   fetch "hive-darwin-$ARCH"
   fetch "hive-sessiond-darwin-$ARCH"
   fetch HiveWorkspace.tar.gz
+  fetch hive-terminfo.tar.gz
 else
   cp "$FROM_BUILD/hive-darwin-$ARCH" "$TMP/hive-darwin-$ARCH" || die "build has no hive-darwin-$ARCH"
   cp "$FROM_BUILD/hive-sessiond-darwin-$ARCH" "$TMP/hive-sessiond-darwin-$ARCH" || die "build has no hive-sessiond-darwin-$ARCH"
   cp "$FROM_BUILD/HiveWorkspace.tar.gz" "$TMP/HiveWorkspace.tar.gz" || die "build has no HiveWorkspace.tar.gz"
+  cp "$FROM_BUILD/hive-terminfo.tar.gz" "$TMP/hive-terminfo.tar.gz" || die "build has no hive-terminfo.tar.gz"
 fi
 
 # Every artifact digest must match the manifest. The manifest arrives over TLS;
@@ -147,6 +149,7 @@ if [ -z "$FROM_BUILD" ]; then
   verify "hive-darwin-$ARCH"
   verify "hive-sessiond-darwin-$ARCH"
   verify HiveWorkspace.tar.gz
+  verify hive-terminfo.tar.gz
 fi
 
 VERSION_DIR="$ROOT/versions/$RESOLVED"
@@ -157,6 +160,13 @@ chmod 755 "$STAGING_DIR/hive"
 mv "$TMP/hive-sessiond-darwin-$ARCH" "$STAGING_DIR/hive-sessiond"
 chmod 755 "$STAGING_DIR/hive-sessiond"
 tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$STAGING_DIR"
+# Same layout hive update stages: resources/terminfo next to hive-sessiond.
+# Queen cannot launch without it; a missing bundle is a broken install, not a
+# degraded one.
+tar -xzf "$TMP/hive-terminfo.tar.gz" -C "$STAGING_DIR" ||
+  die "could not extract hive-terminfo.tar.gz"
+[ -f "$STAGING_DIR/resources/terminfo/x/xterm-ghostty" ] ||
+  die "staged install is missing resources/terminfo/x/xterm-ghostty"
 
 # Exact manifest bytes + normalized signature for offline rollback. This shell
 # does not verify Ed25519; the installed binary does before rollback.

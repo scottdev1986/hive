@@ -9,12 +9,12 @@ import {
   DAEMON_SCHEMA_EPOCH,
   DAEMON_WIRE_PROTOCOL,
 } from "../daemon/lifecycle/daemon-lifecycle";
-import { type HiveVariant, parseVariant } from "../hive-home/variant";
 import {
   buildEmbeddingsRuntimeArtifact,
   EMBEDDINGS_RUNTIME_ASSET,
   findSourceNodeModules,
 } from "../embeddings-runtime/runtime";
+import { type HiveVariant, parseVariant } from "../hive-home/variant";
 import {
   MANIFEST_ASSET,
   parseReleaseManifest,
@@ -568,12 +568,10 @@ async function buildEmbeddingsRuntime(
 }
 
 /** Bundle the xterm-ghostty terminfo database so Hive is self-contained. The tarball contains resources/terminfo/ with the compiled terminfo tree. Like embeddings, it is architecture-independent but listed once per arch so the manifest validation passes. The installer extracts this next to hive-sessiond so locateBundledTerminfo() finds it. */
-async function buildTerminfo(
-  options: Options,
-): Promise<ReleaseArtifact[]> {
+async function buildTerminfo(options: Options): Promise<ReleaseArtifact[]> {
   const terminfoSource = join(options.repoRoot, "resources", "terminfo");
   const tarball = join(options.out, TERMINFO_ASSET);
-  
+
   // Verify the source terminfo exists
   const terminfoEntry = join(terminfoSource, "x", "xterm-ghostty");
   if (!(await Bun.file(terminfoEntry).exists())) {
@@ -582,13 +580,13 @@ async function buildTerminfo(
         "Expected resources/terminfo/x/xterm-ghostty to exist.",
     );
   }
-  
-  // Create tarball of resources/terminfo
+
+  // Members are resources/terminfo/..., matching locateBundledTerminfo() next to hive-sessiond.
   await sh(
-    ["tar", "-czf", tarball, "-C", join(options.repoRoot, "resources"), "terminfo"],
+    ["tar", "-czf", tarball, "-C", options.repoRoot, "resources/terminfo"],
     options.repoRoot,
   );
-  
+
   const stat = await digest(tarball);
   return TARGETS.map((target) => ({
     name: TERMINFO_ASSET,
@@ -619,7 +617,7 @@ export async function build(options: Options): Promise<ReleaseManifest> {
         "runtime it loads",
     );
   }
-  
+
   // Build terminfo tarball. Not signed (text files), trust anchor is the manifest SHA-256.
   const terminfo = await buildTerminfo(options);
 
