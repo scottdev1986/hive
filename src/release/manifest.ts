@@ -23,7 +23,7 @@ const ReleaseVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 
 const ArtifactSchema = z.strictObject({
   name: AssetNameSchema,
-  kind: z.enum(["cli", "workspace", "sessiond", "embeddings"]),
+  kind: z.enum(["cli", "workspace", "sessiond", "embeddings", "terminfo"]),
   platform: z.literal("darwin"),
   arch: z.enum(["arm64", "x64"]),
   size: z.number().int().nonnegative(),
