@@ -1795,17 +1795,10 @@ fn runHostRoleWithControl(
             .completeEnvironment = try environmentEntries(a, spec.value.environment),
             .descriptorMap = &.{},
         },
-        // Spelled out to preserve the behaviour of the bare spawn this replaced, which passed no profile and so took the terminal layer's defaults. The frozen spec carries no profile to honour yet.
-        .terminalProfile = .{
-            .inputMode = .literal,
-            .echo = false,
-            .signalCharacters = false,
-            .softwareFlowControl = false,
-            .eofByte = 4,
-            .startByte = 17,
-            .stopByte = 19,
-            .hangupOnLastClose = true,
-        },
+        // Login-tty profile for interactive zsh + hive agent-ui. Default profile is
+        // ICANON + ECHO + ISIG + OPOST|ONLCR + HUPCL. OpenTUI will raw the slave itself;
+        // when it exits, zsh is already a normal interactive shell.
+        .terminalProfile = .{},
         .initialWindow = .{
             .columns = spec.value.geometry.columns,
             .rows = spec.value.geometry.rows,
