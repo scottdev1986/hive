@@ -6,9 +6,14 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { Capability } from "../../src/daemon/authorization/authorization-service";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawn/spawn-service";
+import {
+  MailRulingRequiredError,
+  MailTools,
+} from "../../src/mail-service/mail-tools";
 import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 import { required } from "../required";
@@ -102,18 +107,42 @@ function killRequest(
   token: string,
   body: Record<string, unknown>,
 ): Request {
-  return new Request(
-    `http://hive/agents/${encodeURIComponent(name)}/kill`,
-    {
-      method: "POST",
-      headers: {
-        Host: "127.0.0.1",
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
+  return new Request(`http://hive/agents/${encodeURIComponent(name)}/kill`, {
+    method: "POST",
+    headers: {
+      Host: "127.0.0.1",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
     },
-  );
+    body: JSON.stringify(body),
+  });
+}
+
+const queenCapability: Capability = {
+  id: "cap_queen",
+  subject: ORCHESTRATOR_NAME,
+  role: "writer",
+  epoch: 0,
+  issuedAt: AT,
+  expiresAt: "2026-08-20T12:00:00.000Z",
+  revokedAt: null,
+};
+
+/** The tool boundary the orchestrator settles her mailbox through, over the
+ * daemon's real mail service, with a ruling record that cites nothing. */
+function queenMailTools(daemon: HiveDaemon): MailTools {
+  return new MailTools({
+    service: daemon.mailService,
+    wake: daemon.mailWake,
+    recipients: (named) => ({
+      kind: "live",
+      canonical: named === "orchestrator" ? ORCHESTRATOR_NAME : named,
+    }),
+    authorizeTool: () => {},
+    liveGeneration: () => 0,
+    now: () => new Date(AT),
+    requireRulingRecord: async () => false,
+  });
 }
 
 const userClosedMail = (daemon: HiveDaemon): string[] =>
@@ -193,6 +222,83 @@ describe("a user-ordered close tells the orchestrator; an orchestrator kill does
       expect(mail).toHaveLength(2);
       expect(mail.some((body) => body.includes("closed maya"))).toBe(true);
       expect(mail.some((body) => body.includes("closed ida"))).toBe(true);
+    } finally {
+      await rigged.dispose();
+    }
+  });
+
+  test("the orchestrator can settle it without writing a memory article first", async () => {
+    // The user attribution is in the BODY, not in the sender. A sender of "user"
+    // or "owner" would put this item behind the owner-ruling gate
+    // (MailTools.requireOwnerRuling), and every routine right-click would then
+    // force a memory_write before the orchestrator could clear her own mailbox.
+    const rigged = await rig();
+    try {
+      const seeded = required(rigged.db.getAgentByName("maya"));
+      await rigged.daemon.fetch(
+        killRequest("maya", rigged.token, {
+          sessionLocator: required(seeded.sessionLocator),
+          userClosed: true,
+        }),
+      );
+      const item = required(
+        rigged.daemon.mailService.unsettledFor(ORCHESTRATOR_NAME).at(-1),
+      );
+      const tools = queenMailTools(rigged.daemon);
+      tools.poll(queenCapability, { recipient: ORCHESTRATOR_NAME });
+      tools.claim(queenCapability, {
+        recipient: ORCHESTRATOR_NAME,
+        itemId: item.itemId,
+        handlerId: "queen-h1",
+      });
+
+      // requireRulingRecord answers "nothing cites this" for every id, so a
+      // settlement that succeeds here proves the gate did not apply.
+      const settled = await tools.complete(queenCapability, {
+        recipient: ORCHESTRATOR_NAME,
+        itemId: item.itemId,
+        handlerId: "queen-h1",
+        disposition: "completed",
+      });
+
+      expect(
+        (settled.structuredContent.mail as { disposition: string }).disposition,
+      ).toBe("completed");
+      expect(item.sender).not.toBe("user");
+      expect(item.sender).not.toBe("owner");
+      // The attribution the queen actually reads.
+      expect(item.body).toContain("The user closed maya");
+
+      // Positive control: the gate IS armed in this rig. An owner control item
+      // settled through the same tools with the same ruling record is refused,
+      // so the settlement above is a real absence, not a disabled check.
+      const owner = tools.publish(
+        { ...queenCapability, subject: "owner" },
+        {
+          from: "owner",
+          to: ORCHESTRATOR_NAME,
+          lane: "control",
+          topic: "ruling",
+          body: "a ruling",
+          idempotencyKey: "owner-ruling-1",
+        },
+      );
+      const ownerItemId = (owner.structuredContent.mail as { itemId: string })
+        .itemId;
+      tools.poll(queenCapability, { recipient: ORCHESTRATOR_NAME });
+      tools.claim(queenCapability, {
+        recipient: ORCHESTRATOR_NAME,
+        itemId: ownerItemId,
+        handlerId: "queen-h2",
+      });
+      await expect(
+        tools.complete(queenCapability, {
+          recipient: ORCHESTRATOR_NAME,
+          itemId: ownerItemId,
+          handlerId: "queen-h2",
+          disposition: "completed",
+        }),
+      ).rejects.toThrow(MailRulingRequiredError);
     } finally {
       await rigged.dispose();
     }
