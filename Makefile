@@ -12,8 +12,9 @@
 #
 # QA lifecycle (separate from the five; they keep their meaning):
 #
-#   make qa          install hive-qa into an isolated home, init the test project, run it
-#   make qa-clean    uninstall from the test project and remove qa
+#   make build-qa     build a standalone qa release without changing .dev/
+#   make qa           install the qa release, init the test project, run it
+#   make qa-clean     uninstall from the test project and remove qa
 #
 # Everything else here is internal structure, never a command to run by hand:
 # heals and remediation run inside these five. build is complete every time;
@@ -198,6 +199,9 @@ QA_BIN_LINK := $(QA)/bin/hive-qa
 QA_HOME := $(QA)/home
 QA_DAEMON_STARTUP_LOG := $(QA)/daemon-startup.log
 QA_STATE := $(QA)/state
+QA_BUILD_STAMP := $(QA)/build-ready
+QA_GRAPHIFY_LOCAL_DIR := $(QA)/graphify
+QA_GRAPHIFY_LOCAL_MANIFEST := $(QA_GRAPHIFY_LOCAL_DIR)/graphify-runtime.json
 USER_HIVE ?= $(HOME)/.hive
 ifeq ($(origin PROJECT),command line)
 QA_PROJECT := $(PROJECT)
@@ -213,14 +217,14 @@ QA_ENV := \
 	HIVE_BIN_LINK=$(QA_BIN_LINK) \
 	HIVE_BIN_DIR=$(QA)/bin \
 	HIVE_DISABLE_UPDATES=1 \
-	HIVE_GRAPHIFY_MANIFEST=$(GRAPHIFY_LOCAL_MANIFEST) \
+	HIVE_GRAPHIFY_MANIFEST=$(QA_GRAPHIFY_LOCAL_MANIFEST) \
 	HIVE_PORT=0 \
 	OTUI_ASSET_ROOT=$(ROOT)/node_modules \
 	TMPDIR=$(QA)/tmp
 
 # The five public commands, then the internal structure they pull in.
 .PHONY: clean clean-all build run test sessiond toolchain graphify-local
-.PHONY: qa qa-clean
+.PHONY: build-qa qa qa-clean graphify-qa
 
 graphify-local: $(GRAPHIFY_LOCAL_MANIFEST)
 
@@ -229,6 +233,13 @@ $(GRAPHIFY_LOCAL_MANIFEST): graphify.lock $(shell find "$(ROOT)/scripts/graphify
 	@"$(ROOT)/scripts/graphify/build.sh" --arch "$(if $(filter arm64,$(UNAME_M)),arm64,x64)" --out "$(GRAPHIFY_LOCAL_DIR)"
 	@bun run "$(ROOT)/scripts/graphify/write-manifest.ts" \
 	  --out "$(GRAPHIFY_LOCAL_DIR)" --manifest "$@" --build 1 \
+	  --source "$$(git rev-parse HEAD)"
+
+graphify-qa:
+	@mkdir -p "$(QA_GRAPHIFY_LOCAL_DIR)"
+	@"$(ROOT)/scripts/graphify/build.sh" --arch "$(if $(filter arm64,$(UNAME_M)),arm64,x64)" --out "$(QA_GRAPHIFY_LOCAL_DIR)"
+	@bun run "$(ROOT)/scripts/graphify/write-manifest.ts" \
+	  --out "$(QA_GRAPHIFY_LOCAL_DIR)" --manifest "$(QA_GRAPHIFY_LOCAL_MANIFEST)" --build 1 \
 	  --source "$$(git rev-parse HEAD)"
 
 # System zig (version pinned by the lock) + the hash-verified Ghostty dep cache.
@@ -334,6 +345,45 @@ build:
 	  sh "$(ROOT)/install.sh" --variant dev --from-build "$(DIST)" "$(DEV_VERSION)"
 	@echo "staged: $$("$(HIVE_BIN)" --version)"
 
+# Build one complete QA candidate from the current source snapshot. Its final
+# artifacts and Graphify runtime stay under QA. Repository dependencies and
+# compiler caches remain shared inputs, but this target never reads or writes
+# the .dev dist, installation, links, or Graphify runtime.
+# Build into a temporary sibling so a failed compile cannot leave a partial dist
+# that `make qa` mistakes for a candidate.
+build-qa:
+	@set -e; \
+	case "$(QA)" in "$(ROOT)"|"$(ROOT)"/*) \
+	  echo "refusing: QA staging root $(QA) is inside the hive checkout $(ROOT)" >&2; exit 2;; esac; \
+	case "$(QA_DIST)" in "$(QA)"/*) ;; *) \
+	  echo "refusing: QA_DIST $(QA_DIST) is outside QA staging root $(QA)" >&2; exit 2;; esac; \
+	case "$(QA_GRAPHIFY_LOCAL_DIR)" in "$(QA)"/*) ;; *) \
+	  echo "refusing: QA Graphify root $(QA_GRAPHIFY_LOCAL_DIR) is outside QA staging root $(QA)" >&2; exit 2;; esac; \
+	case "$(QA_GRAPHIFY_LOCAL_MANIFEST)" in "$(QA_GRAPHIFY_LOCAL_DIR)"/*) ;; *) \
+	  echo "refusing: QA Graphify manifest $(QA_GRAPHIFY_LOCAL_MANIFEST) is outside its artifact root $(QA_GRAPHIFY_LOCAL_DIR)" >&2; exit 2;; esac; \
+	case "$(QA_BUILD_STAMP)" in "$(QA)"/*) ;; *) \
+	  echo "refusing: QA build stamp $(QA_BUILD_STAMP) is outside QA staging root $(QA)" >&2; exit 2;; esac; \
+	/bin/rm -f "$(QA_BUILD_STAMP)"
+	$(MAKE) toolchain vendor-verify "$(GHOSTTYKIT_INFO)"
+	bun install --frozen-lockfile --os=darwin --cpu='*'
+	$(MAKE) graphify-qa
+	@set -e; \
+	mkdir -p "$(QA)"; \
+	qa_stage=$$(mktemp -d "$(QA)/dist.build.XXXXXX"); \
+	cleanup() { /bin/rm -rf "$$qa_stage"; }; \
+	trap cleanup EXIT HUP INT TERM; \
+	bun run "$(ROOT)/src/release/build.ts" --version "$(DEV_VERSION)" \
+	  --variant qa --commit $$(git -C "$(ROOT)" rev-parse --short HEAD) --out "$$qa_stage"; \
+	test -x "$$qa_stage/$(CLI_ASSET)" || { echo "make: QA build produced no $(CLI_ASSET)" >&2; exit 1; }; \
+	test -x "$$qa_stage/$(SESSIOND_ASSET)" || { echo "make: QA build produced no $(SESSIOND_ASSET)" >&2; exit 1; }; \
+	test -f "$$qa_stage/HiveWorkspace.tar.gz" || { echo "make: QA build produced no HiveWorkspace.tar.gz" >&2; exit 1; }; \
+	bun run "$(ROOT)/src/sessiond-schema-digest.ts" "$$qa_stage/$(SESSIOND_ASSET)" "$(ROOT)/workspace/Tests/WorkspaceCoreTests/Fixtures/session-protocol.schema.json"; \
+	/bin/rm -rf "$(QA_DIST)"; \
+	/bin/mv "$$qa_stage" "$(QA_DIST)"; \
+	touch "$(QA_BUILD_STAMP)"; \
+	trap - EXIT HUP INT TERM; \
+	echo "built qa: $$("$(QA_DIST)/$(CLI_ASSET)" --version)"
+
 # PROJECT defaults to this checkout (inside a worktree, that worktree). An
 # explicit PROJECT wins, but anything inside this checkout other than its root
 # is refused.
@@ -379,7 +429,6 @@ qa:
 	case "$(QA_HOME)" in "$(HOME)/.hive"|"$(HOME)/.hive"/*) \
 	  echo "refusing: QA_HOME is under the user hive home $(HOME)/.hive" >&2; exit 2;; esac; \
 	[ "$(QA_HOME)" != "$(DEV_HOME)" ] || { echo "refusing: QA_HOME is the live dev home" >&2; exit 2; }; \
-	[ -x "$(HIVE_BIN)" ] || { echo "no dev build staged; run 'make build' first" >&2; exit 2; }; \
 	proj=$$(cd "$(QA_PROJECT)" 2>/dev/null && pwd -P) || { echo "PROJECT does not exist: $(QA_PROJECT)" >&2; exit 2; }; \
 	if [ "$$proj" != "$(ROOT)" ]; then \
 	  case "$$proj/" in "$(ROOT)/"*) \
@@ -389,12 +438,15 @@ qa:
 	if [ -f "$(QA_STATE)/hive-before" ]; then \
 	  echo "refusing: leftover qa state at $(QA_STATE); run 'make qa-clean' first" >&2; exit 2; \
 	fi; \
+	[ -f "$(QA_BUILD_STAMP)" ] && \
+	[ -x "$(QA_DIST)/$(CLI_ASSET)" ] && \
+	[ -x "$(QA_DIST)/$(SESSIOND_ASSET)" ] && \
+	[ -f "$(QA_DIST)/HiveWorkspace.tar.gz" ] && \
+	[ -f "$(QA_GRAPHIFY_LOCAL_MANIFEST)" ] || \
+	  { echo "no qa build staged; run 'make build-qa' first" >&2; exit 2; }; \
 	mkdir -p "$(QA_STATE)" "$(QA)/bin" "$(QA)/tmp"; \
 	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_STATE)/hive-before"; \
-	if [ ! -x "$(QA_BIN)" ]; then \
-	  "$(ROOT)/scripts/qa/stage-qa.sh" "$(ROOT)" "$(DIST)" "$(QA_DIST)" "$(DEV_VERSION)" "$(CLI_ASSET)"; \
-	  env $(QA_ENV) sh "$(ROOT)/install.sh" --variant qa --from-build "$(QA_DIST)" "$(DEV_VERSION)"; \
-	fi; \
+	env $(QA_ENV) sh "$(ROOT)/install.sh" --variant qa --from-build "$(QA_DIST)" "$(DEV_VERSION)"; \
 	[ -x "$(QA_BIN)" ] || { echo "qa install produced no binary at $(QA_BIN)" >&2; exit 2; }; \
 	mkdir -p "$(QA_HOME)"; \
 	cd "$$proj"; \

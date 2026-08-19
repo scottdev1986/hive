@@ -9,11 +9,18 @@ gone. Appearance is the owner's job when they want it.
 A human or agent who wants the installed `hive-qa` binary uses the Makefile
 lifecycle:
 
-    make build && make qa-clean && make qa
+    make qa-clean && make build-qa && make qa
     make qa-clean    # product uninstall --repo, then uninstall --purge
 
-`make qa` defaults `PROJECT` to `/Users/scottkellar/Projects/hive-test-project`
-and keeps every guard `make run` already has. Its home is `/tmp/hvqa-<tag>/home`
+`make build-qa` compiles a complete QA release from the current source into
+`/tmp/hvqa-<tag>/dist`; it does not read or replace `.dev/dist`, the staged dev
+installation, or the dev Graphify runtime. The CLI is compiled as the `qa`
+variant. Workspace and sessiond are variant-neutral, but are rebuilt in the
+same invocation so all three artifacts come from one source snapshot.
+
+`make qa` installs that candidate and defaults `PROJECT` to
+`/Users/scottkellar/Projects/hive-test-project`. It keeps every guard `make run`
+already has. Its home is `/tmp/hvqa-<tag>/home`
 — the same isolated-QA-home family `docs/qa/rig.sh` uses for its own default,
 outside the checkout entirely — with `HIVE_HOME` and `HIVE_DEFAULT_HOME` both
 pinned there so uninstall cannot resolve to `~/.hive` or see the live fleet.
@@ -25,8 +32,8 @@ commands, checks that the QA installation paths are gone, and checks that
 install locations) matches the pre-qa snapshot. Nested live-fleet writes
 are not part of that compare — they would make every run red.
 
-The staging and isolation scripts live in `scripts/qa/` and are load-bearing
-for this lifecycle. Do not move them.
+The isolation scripts live in `scripts/qa/` and are load-bearing for this
+lifecycle. Do not move them.
 
 ## Source-running rig
 

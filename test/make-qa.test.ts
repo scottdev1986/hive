@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,7 +14,7 @@ import { OUTSIDE_REPO_TMPDIR } from "./outside-repo-tmpdir";
 const root = join(import.meta.dir, "..");
 
 function runMake(
-  target: "qa" | "qa-clean",
+  target: "build-qa" | "qa" | "qa-clean",
   vars: Record<string, string>,
   env: NodeJS.ProcessEnv = process.env,
 ): { exitCode: number; output: string } {
@@ -69,13 +70,78 @@ function initRepo(repo: string): void {
   expect(commit.exitCode, commit.stderr.toString()).toBe(0);
 }
 
-test("the five public .PHONY names are unchanged and qa is declared beside them", () => {
+test("the dev commands stay unchanged and the independent QA lifecycle is declared", () => {
   const makefile = readFileSync(join(root, "Makefile"), "utf8");
   expect(makefile).toContain(
     ".PHONY: clean clean-all build run test sessiond toolchain graphify-local",
   );
-  expect(makefile).toContain(".PHONY: qa qa-clean");
+  expect(makefile).toContain(".PHONY: build-qa qa qa-clean graphify-qa");
   expect(makefile).toContain("HIVE_DEFAULT_HOME=$(QA_HOME)");
+});
+
+test("build-qa creates a complete QA candidate without consuming dev output", () => {
+  const makefile = readFileSync(join(root, "Makefile"), "utf8");
+  const buildStart = makefile.indexOf("\nbuild-qa:\n");
+  const buildEnd = makefile.indexOf("\n# PROJECT defaults", buildStart);
+  const qaStart = makefile.indexOf("\nqa:\n");
+  const qaEnd = makefile.indexOf("\n# Product uninstall", qaStart);
+  expect(buildStart).toBeGreaterThan(-1);
+  expect(buildEnd).toBeGreaterThan(buildStart);
+  expect(qaStart).toBeGreaterThan(-1);
+  expect(qaEnd).toBeGreaterThan(qaStart);
+
+  const buildQa = makefile.slice(buildStart, buildEnd);
+  const qa = makefile.slice(qaStart, qaEnd);
+  expect(buildQa).toContain("--variant qa");
+  expect(buildQa).toContain('--out "$$qa_stage"');
+  expect(buildQa).toContain("$(SESSIOND_ASSET)");
+  expect(buildQa).toContain("HiveWorkspace.tar.gz");
+  expect(buildQa).not.toContain('"$(DIST)"');
+  expect(buildQa).not.toContain("$(HIVE_BIN)");
+  expect(buildQa).not.toContain("--skip-sessiond");
+  expect(buildQa).not.toContain("--skip-workspace");
+  expect(buildQa).toContain('touch "$(QA_BUILD_STAMP)"');
+  expect(qa).not.toContain("$(HIVE_BIN)");
+  expect(qa).not.toContain("$(DIST)");
+  expect(qa).not.toContain("stage-qa.sh");
+  expect(qa).toContain('[ -f "$(QA_BUILD_STAMP)" ]');
+  expect(makefile).toContain(
+    "HIVE_GRAPHIFY_MANIFEST=$(QA_GRAPHIFY_LOCAL_MANIFEST)",
+  );
+});
+
+test("make build-qa refuses output paths outside its QA root", () => {
+  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-build-qa-root-"));
+  try {
+    const qa = join(fixture, "qa");
+    const result = runMake("build-qa", {
+      QA: qa,
+      QA_DIST: join(fixture, "not-qa", "dist"),
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain("QA_DIST");
+    expect(result.output).toContain("is outside QA staging root");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("a failed build-qa invalidates the previous QA candidate", () => {
+  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-build-qa-fail-"));
+  try {
+    const qa = join(fixture, "qa");
+    const stamp = join(qa, "build-ready");
+    mkdirSync(qa, { recursive: true });
+    writeFileSync(stamp, "previous candidate\n");
+    const result = runMake("build-qa", {
+      MAKE: "/usr/bin/false",
+      QA: qa,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(existsSync(stamp)).toBe(false);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
 });
 
 test("make -n qa defaults PROJECT to the designated test repo", () => {
@@ -95,10 +161,7 @@ test("make qa refuses a PROJECT inside the hive checkout that is not its root", 
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-inside-"));
   try {
     const nested = join(root, "src");
-    const hiveBin = join(fixture, "hive-dev");
-    writeExec(hiveBin, "#!/bin/sh\nexit 0\n");
     const result = runMake("qa", {
-      HIVE_BIN: hiveBin,
       PROJECT: nested,
       QA: join(fixture, "qa"),
       USER_HIVE: join(fixture, "dot-hive"),
@@ -107,6 +170,26 @@ test("make qa refuses a PROJECT inside the hive checkout that is not its root", 
     expect(result.output).toContain(
       "PROJECT is inside the hive checkout but is not its root",
     );
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("make qa requires build-qa instead of a staged dev build", () => {
+  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-unbuilt-"));
+  try {
+    const project = join(fixture, "project");
+    initRepo(project);
+    const result = runMake("qa", {
+      PROJECT: project,
+      QA: join(fixture, "qa"),
+      USER_HIVE: join(fixture, "dot-hive"),
+    });
+    expect(result.exitCode).toBe(2);
+    expect(result.output).toContain(
+      "no qa build staged; run 'make build-qa' first",
+    );
+    expect(result.output).not.toContain("no dev build staged");
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
@@ -132,10 +215,7 @@ test("make qa refuses a QA staging root inside the hive checkout", () => {
     join(OUTSIDE_REPO_TMPDIR, "hive-qa-root-inside-"),
   );
   try {
-    const hiveBin = join(fixture, "hive-dev");
-    writeExec(hiveBin, "#!/bin/sh\nexit 0\n");
     const result = runMake("qa", {
-      HIVE_BIN: hiveBin,
       PROJECT: join(fixture, "project"),
       QA: join(root, ".qa"),
       USER_HIVE: join(fixture, "dot-hive"),
@@ -154,12 +234,9 @@ test("make qa refuses a QA_HOME under the user hive home", () => {
     const home = join(fixture, "home");
     const userHive = join(home, ".hive");
     mkdirSync(userHive, { recursive: true });
-    const hiveBin = join(fixture, "hive-dev");
-    writeExec(hiveBin, "#!/bin/sh\nexit 0\n");
     const result = runMake(
       "qa",
       {
-        HIVE_BIN: hiveBin,
         PROJECT: join(fixture, "project"),
         QA: join(fixture, "qa"),
         QA_HOME: join(userHive, "instances", "qa-test"),
@@ -184,8 +261,6 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
     initRepo(project);
     mkdirSync(userHive, { recursive: true });
     writeFileSync(join(userHive, "sentinel"), "untouched\n");
-    const hiveBin = join(fixture, "hive-dev");
-    writeExec(hiveBin, "#!/bin/sh\nexit 0\n");
     writeExec(
       join(qa, "root", "current", "hive"),
       [
@@ -208,7 +283,6 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
     expect(captureHive.exitCode, captureHive.stderr.toString()).toBe(0);
 
     const result = runMake("qa-clean", {
-      HIVE_BIN: hiveBin,
       PROJECT: project,
       QA: qa,
       QA_HOME: join(qa, "home"),
