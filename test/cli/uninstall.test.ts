@@ -101,9 +101,10 @@ function probe(
       leaseEvents.push(`acquire:${purpose}`);
       return { release: () => leaseEvents.push(`release:${purpose}`) };
     },
-    // bun test from an agent worktree would otherwise trip the fleet-install
-    // guard. Owner-path tests keep this default; worktree-refusal tests override.
-    cwd: tmpdir(),
+    // Explicit test-owned root: production never passes this. Suites that
+    // actually uninstall keep the real worktree cwd and this scratch path
+    // instead of escaping the guard by moving cwd.
+    ownedRoot: join(tmpdir(), "hive-test-owned-install"),
     ...overrides,
   };
   return { deps, lines, stops, leaseEvents };
@@ -1068,7 +1069,12 @@ describe("uninstall retention follows the variant record", () => {
   });
 });
 
-describe("uninstall refuses the owner install from an agent worktree", () => {
+describe("uninstall refuses the owner install from an agent caller", () => {
+  const agentEnv = {
+    ...process.env,
+    HIVE_CAPABILITY_TOKEN: "test-agent-capability",
+  };
+
   test("machine uninstall from a worktree refuses and does not touch the target", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-uninstall-worktree-"));
     const worktree = join(root, ".hive", "worktrees", "elton");
@@ -1086,12 +1092,15 @@ describe("uninstall refuses the owner install from an agent worktree", () => {
       process.env.HIVE_HOME = home;
       process.env.HIVE_INSTALL_ROOT = fleet;
       process.env.HIVE_BIN_LINK = join(root, "bin", "hive");
-      const { deps, lines, stops } = probe(true, { cwd: worktree });
+      const { deps, lines, stops } = probe(true, {
+        cwd: worktree,
+        env: agentEnv,
+        ownedRoot: undefined,
+      });
       expect(await runUninstallMachine({ yes: true }, deps)).toBe(1);
       expect(stops).toEqual([]);
-      expect(lines.join("\n")).toContain("agent worktree");
-      expect(lines.join("\n")).toContain(worktree);
-      expect(lines.join("\n")).toContain(fleet);
+      expect(lines.join("\n")).toContain("this process is an agent");
+      expect(lines.join("\n")).toContain("HIVE_CAPABILITY_TOKEN");
       expect(await readFile(join(home, "canary"), "utf8")).toBe("keep-home\n");
       expect(await readFile(join(fleet, "canary"), "utf8")).toBe(
         "keep-fleet\n",
@@ -1107,23 +1116,78 @@ describe("uninstall refuses the owner install from an agent worktree", () => {
     }
   });
 
+  test("a capability token refuses even after cd out of the worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-token-"));
+    const desk = join(root, "elsewhere");
+    const home = join(root, "home");
+    const previous = process.env.HIVE_HOME;
+    try {
+      await mkdir(desk, { recursive: true });
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, "canary"), "keep-home\n");
+      process.env.HIVE_HOME = home;
+      const { deps, lines, stops } = probe(true, {
+        cwd: desk,
+        env: agentEnv,
+        ownedRoot: undefined,
+      });
+      expect(await runUninstallMachine({ yes: true }, deps)).toBe(1);
+      expect(stops).toEqual([]);
+      expect(lines.join("\n")).toContain("HIVE_CAPABILITY_TOKEN");
+      expect(await readFile(join(home, "canary"), "utf8")).toBe("keep-home\n");
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an explicit test-owned root uninstalls from a worktree without moving cwd", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-uninstall-owned-"));
+    const worktree = join(root, ".hive", "worktrees", "elton");
+    const home = join(root, "home");
+    const previous = process.env.HIVE_HOME;
+    try {
+      await mkdir(worktree, { recursive: true });
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, "hive.db"), "");
+      process.env.HIVE_HOME = home;
+      const { deps, lines } = probe(true, {
+        cwd: worktree,
+        env: agentEnv,
+        ownedRoot: home,
+      });
+      expect(await runUninstallMachine({ yes: true }, deps)).toBe(0);
+      expect(existsSync(join(home, "hive.db"))).toBe(false);
+      expect(lines.join("\n")).not.toContain("this process is an agent");
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previous;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("repo uninstall from a worktree refuses and removes nothing", async () => {
     const root = await gitRepo();
     const worktree = join(root, ".hive", "worktrees", "elton");
     try {
       await mkdir(join(root, "graphify-out"), { recursive: true });
       await mkdir(worktree, { recursive: true });
-      const { deps, lines, stops } = probe(true, { cwd: worktree });
+      const { deps, lines, stops } = probe(true, {
+        cwd: worktree,
+        env: agentEnv,
+        ownedRoot: undefined,
+      });
       expect(await runUninstallRepo(root, { yes: true }, deps)).toBe(1);
       expect(stops).toEqual([]);
       expect(existsSync(join(root, "graphify-out"))).toBe(true);
-      expect(lines.join("\n")).toContain("agent worktree");
+      expect(lines.join("\n")).toContain("this process is an agent");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("the owner path still uninstalls when cwd is not a worktree", async () => {
+  test("the owner path still uninstalls without an agent credential", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-uninstall-owner-"));
     const home = join(root, "home");
     const previous = process.env.HIVE_HOME;
@@ -1131,10 +1195,17 @@ describe("uninstall refuses the owner install from an agent worktree", () => {
       await mkdir(home, { recursive: true });
       await writeFile(join(home, "hive.db"), "");
       process.env.HIVE_HOME = home;
-      const { deps, lines } = probe(true);
+      const env = { ...process.env };
+      delete env.HIVE_CAPABILITY_TOKEN;
+      const { deps, lines } = probe(true, {
+        cwd: join(root, "primary"),
+        env,
+        ownedRoot: undefined,
+      });
+      await mkdir(join(root, "primary"), { recursive: true });
       expect(await runUninstallMachine({ yes: true }, deps)).toBe(0);
       expect(existsSync(join(home, "hive.db"))).toBe(false);
-      expect(lines.join("\n")).not.toContain("agent worktree");
+      expect(lines.join("\n")).not.toContain("this process is an agent");
     } finally {
       if (previous === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previous;
@@ -1150,6 +1221,7 @@ describe("uninstall refuses the owner install from an agent worktree", () => {
     expect(source).toContain(
       "if (refuseAgentWorktreeUninstall(deps, root)) return 1;",
     );
+    expect(source).toContain("isAgentCaller");
     const machineCall = "refuseAgentWorktreeUninstall(deps, ";
     expect(source.split(machineCall).length).toBe(3);
     const mutated = source.replaceAll(

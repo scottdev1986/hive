@@ -62,7 +62,7 @@ function silentDeps(lines: string[]): UninstallDeps {
     liveTeams: async () => [],
     stopInstances: async () => {},
     acquireLease: async () => ({ release: () => {} }),
-    cwd: tmpdir(),
+    ownedRoot: tmpdir(),
   };
 }
 

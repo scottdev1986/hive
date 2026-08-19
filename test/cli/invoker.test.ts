@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   captureInvokerIdentity,
   formatInvokerOrigin,
+  isAgentCaller,
+  isAgentCapabilityEnv,
   isAgentWorktreePath,
   isTestRunnerEnv,
 } from "../../src/cli/invoker";
@@ -46,6 +48,15 @@ describe("invoker identity (#70)", () => {
     // Positive control: ordinary paths are not worktrees.
     expect(isAgentWorktreePath("/repo")).toBe(false);
     expect(isAgentWorktreePath("/repo/.hive/memory")).toBe(false);
+  });
+
+  test("a capability token is an agent even outside a worktree", () => {
+    expect(isAgentCapabilityEnv({})).toBe(false);
+    expect(isAgentCapabilityEnv({ HIVE_CAPABILITY_TOKEN: "" })).toBe(false);
+    expect(isAgentCapabilityEnv({ HIVE_CAPABILITY_TOKEN: "tok" })).toBe(true);
+    expect(isAgentCaller("/repo", { HIVE_CAPABILITY_TOKEN: "tok" })).toBe(true);
+    expect(isAgentCaller("/repo", {})).toBe(false);
+    expect(isAgentCaller("/repo/.hive/worktrees/elton", {})).toBe(true);
   });
 
   test("formats a compact, attributable origin string", () => {
