@@ -10,6 +10,8 @@ enum ShellProviderProbeRefreshState: Equatable {
 }
 
 final class ModelsQuotaScreenView: NSView {
+    private static let providerCardHeight: CGFloat = 215
+
     init(
         screen: ShellScreenProjection,
         view: WorkspaceModelControlView?,
@@ -63,27 +65,6 @@ final class ModelsQuotaScreenView: NSView {
             stack.addArrangedSubview(grid)
             grid.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
             Self.equalizeWidths(cards)
-
-            if !screen.facts.isEmpty {
-                let evidence = SectionCardView(
-                    title: "Capacity evidence",
-                    subtitle: "as published, never re-derived here")
-                evidence.setAccessibilityIdentifier("models-quota-evidence")
-                let rows = Self.compactEvidence(screen.facts).map(Self.evidenceRow)
-                let evidenceGrid = NSGridView(views: Self.gridRows(rows, columns: 2))
-                evidenceGrid.translatesAutoresizingMaskIntoConstraints = false
-                evidenceGrid.rowSpacing = Theme.Space.s
-                evidenceGrid.columnSpacing = Theme.Space.m
-                evidenceGrid.xPlacement = .fill
-                evidenceGrid.yPlacement = .fill
-                evidence.contentStack.addArrangedSubview(evidenceGrid)
-                evidence.pinToContentWidth(evidenceGrid)
-                for row in rows {
-                    row.widthAnchor.constraint(greaterThanOrEqualToConstant: 250).isActive = true
-                }
-                stack.addArrangedSubview(evidence)
-                evidence.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            }
         } else {
             let panel = ShellAvailabilityPanel(
                 route: .modelsQuota, screen: screen, contentInset: 0)
@@ -150,14 +131,18 @@ final class ModelsQuotaScreenView: NSView {
             identity.orientation = .horizontal
             identity.alignment = .centerY
             identity.spacing = Theme.Space.s
-            card.contentStack.addArrangedSubview(identity)
-            card.pinToContentWidth(identity)
+
+            let body = NSStackView(views: [identity])
+            body.translatesAutoresizingMaskIntoConstraints = false
+            body.orientation = .vertical
+            body.alignment = .leading
+            body.spacing = Theme.Space.m
 
             let usage = presentation?.usage.rendered
                 ?? ProviderUsage.unknown(reason: "daemon presentation missing")
             for row in usageRows(provider: provider, usage: usage) {
-                card.contentStack.addArrangedSubview(row)
-                card.pinToContentWidth(row)
+                body.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
             }
 
             for row in modelRows(
@@ -167,9 +152,35 @@ final class ModelsQuotaScreenView: NSView {
                 writable: writable,
                 onWrite: onWrite)
             {
-                card.contentStack.addArrangedSubview(row)
-                card.pinToContentWidth(row)
+                body.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
             }
+
+            let document = FlippedView()
+            document.translatesAutoresizingMaskIntoConstraints = false
+            document.addSubview(body)
+
+            let scroll = NSScrollView()
+            scroll.translatesAutoresizingMaskIntoConstraints = false
+            scroll.documentView = document
+            scroll.hasVerticalScroller = true
+            scroll.autohidesScrollers = true
+            scroll.drawsBackground = false
+            scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+            scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+            scroll.setAccessibilityIdentifier(
+                "models-quota-card-scroll-\(provider.rawValue)")
+
+            card.contentStack.addArrangedSubview(scroll)
+            card.pinToContentWidth(scroll)
+            NSLayoutConstraint.activate([
+                card.heightAnchor.constraint(equalToConstant: providerCardHeight),
+                document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+                body.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+                body.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+                body.topAnchor.constraint(equalTo: document.topAnchor),
+                body.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+            ])
             return card
         }
     }
@@ -288,39 +299,9 @@ final class ModelsQuotaScreenView: NSView {
         return "\(policy) · \(effort)"
     }
 
-    private static func evidenceRow(_ fact: ShellScreenFact) -> NSView {
-        let panel = InsetPanelView()
-        let label = NSTextField(labelWithString: fact.label)
-        label.font = Theme.Font.sectionLabel
-        label.textColor = Theme.secondaryText
-        label.compressHorizontally(toolTip: fact.label)
-        let value = NSTextField(wrappingLabelWithString: fact.value)
-        value.font = Theme.Font.caption
-        value.textColor = Theme.primaryText
-        value.maximumNumberOfLines = 2
-        value.compressHorizontally(toolTip: fact.value)
-        panel.contentStack.addArrangedSubview(label)
-        panel.contentStack.addArrangedSubview(value)
-        value.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
-        return panel
-    }
-
-    private static func compactEvidence(_ facts: [ShellScreenFact]) -> [ShellScreenFact] {
-        var seen = Set<String>()
-        return facts.filter { fact in
-            let state = fact.value.split(separator: "·", maxSplits: 1)
-                .first.map { String($0).trimmingCharacters(in: .whitespaces) }
-                ?? fact.value
-            let key = fact.label == "Generated" || fact.label == "Providers" || fact.label == "Quota"
-                ? fact.label
-                : state
-            return seen.insert(key).inserted
-        }
-    }
-
-    private static func gridRows(_ cards: [NSView], columns: Int = 3) -> [[NSView]] {
-        stride(from: 0, to: cards.count, by: columns).map { index in
-            (0..<columns).map { offset in
+    private static func gridRows(_ cards: [NSView]) -> [[NSView]] {
+        stride(from: 0, to: cards.count, by: 3).map { index in
+            (0..<3).map { offset in
                 guard index + offset < cards.count else { return NSView() }
                 return cards[index + offset]
             }

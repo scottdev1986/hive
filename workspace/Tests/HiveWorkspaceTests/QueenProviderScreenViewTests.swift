@@ -73,7 +73,7 @@ final class QueenProviderScreenViewTests: XCTestCase {
         let text = allText(in: try content(controller))
         XCTAssertTrue(text.contains("queen · instance-fixture"))
         XCTAssertTrue(text.contains("claude"))
-        XCTAssertTrue(text.contains("working"))
+        XCTAssertTrue(text.contains("Working"))
         // The revision is carried and shown as written, not narrowed.
         XCTAssertTrue(text.contains("18446744073709551615"))
     }
@@ -275,5 +275,40 @@ final class QueenProviderScreenViewTests: XCTestCase {
                 Set(widths).count, 1,
                 "state \(state) painted distinct pill widths \(widths)")
         }
+    }
+
+    func testModelCardsStayCompactAndScrollTheirCompleteBodies() throws {
+        let controller = try makeController()
+        try view(controller, "shell-nav-models", as: NSButton.self).performClick(nil)
+        controller.window?.layoutIfNeeded()
+
+        for id in ["claude", "codex", "grok", "kimi", "opencode"] {
+            let card = try view(controller, "models-quota-card-\(id)")
+            let scroll = try view(
+                controller, "models-quota-card-scroll-\(id)", as: NSScrollView.self)
+            XCTAssertEqual(card.frame.height, 215, accuracy: 1)
+            XCTAssertTrue(scroll.hasVerticalScroller)
+            XCTAssertTrue(scroll.autohidesScrollers)
+            XCTAssertLessThan(scroll.frame.height, card.frame.height)
+            XCTAssertNotNil(scroll.documentView)
+        }
+
+        let claudeScroll = try view(
+            controller, "models-quota-card-scroll-claude", as: NSScrollView.self)
+        let document = try XCTUnwrap(claudeScroll.documentView)
+        XCTAssertNotNil(find(document, "models-quota-meter-claude-5 hour window"))
+        XCTAssertNotNil(find(document, "models-quota-model-claude-claude-opus-4-8"))
+        XCTAssertGreaterThan(
+            document.frame.height,
+            claudeScroll.contentView.bounds.height,
+            "overflowing provider content must remain reachable inside its card")
+
+        let screenScroll = try view(controller, "shell-screen-scroll", as: NSScrollView.self)
+        let screenDocument = try XCTUnwrap(screenScroll.documentView)
+        XCTAssertEqual(
+            screenDocument.bounds.height,
+            screenScroll.contentView.bounds.height,
+            accuracy: 1,
+            "provider catalogs should scroll inside their cards, not lengthen the page")
     }
 }

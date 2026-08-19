@@ -149,21 +149,17 @@ final class WorkspaceShellViewTests: XCTestCase {
         XCTAssertTrue(text.contains("user-weighted"))
     }
 
-    func testModelsQuotaRendersEightDistinctEvidenceStates() throws {
+    func testModelsQuotaKeepsUsageInProviderCardsWithoutASeparateEvidenceSection() throws {
         let controller = try makeController()
         let button = try XCTUnwrap(findView(
             in: controller.window!.contentView!, identifier: "shell-nav-models") as? NSButton)
         button.performClick(nil)
-        let text = allText(in: controller.window!.contentView!).joined(separator: "\n")
-        for state in [
-            "measured", "unknown", "stale", "unmetered", "estimated",
-            "reserved", "hold", "excluded",
-        ] {
-            XCTAssertTrue(text.contains(state), "missing quota state \(state)")
-        }
-        XCTAssertTrue(text.contains("unknown — no numeric reading"))
-        XCTAssertTrue(text.contains("unconstrained, not free"))
-        XCTAssertTrue(text.contains("Hive local ledger · estimate"))
+        let content = controller.window!.contentView!
+        XCTAssertNil(findView(in: content, identifier: "models-quota-evidence"))
+        XCTAssertNotNil(findView(
+            in: content, identifier: "models-quota-meter-claude-5 hour window"))
+        XCTAssertNotNil(findView(
+            in: content, identifier: "models-quota-usage-opencode"))
     }
 
     func testRouterAndModelsExerciseAllSevenAvailabilityStates() throws {

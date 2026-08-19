@@ -578,15 +578,15 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertEqual(reason.stringValue, "codex CLI not signed in")
     }
 
-    func testQuotaEvidenceCarriesNoWriteControl() throws {
+    func testUsageReadingsCarryNoWriteControl() throws {
         let controller = try makeController()
         try show(.modelsQuota, in: controller)
         let screen = try view(controller, "shell-screen-host", as: NSView.self)
-        XCTAssertTrue(
-            allText(in: screen).contains("unknown — no numeric reading"),
-            "the quota evidence is still rendered")
+        XCTAssertNotNil(try view(
+            controller, "models-quota-meter-claude-5 hour window", as: NSView.self))
+        XCTAssertNil(find(screen, "models-quota-evidence"))
         // Every button on this screen is either the probe read or an
-        // enablement toggle. A quota preference has no control at all.
+        // enablement toggle. A usage preference has no control at all.
         for control in buttons(in: screen) {
             let identifier = control.accessibilityIdentifier()
             XCTAssertTrue(
