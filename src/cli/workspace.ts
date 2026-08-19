@@ -247,7 +247,6 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
 }
 
 export interface RunWorkspaceDeps {
-  readonly orchestrator?: OrchestratorTool;
   readonly cwd?: string;
   readonly resolveRoot?: (cwd: string) => string | null;
   readonly start?: (deps: StartDeps) => Promise<StartedSession>;
@@ -294,9 +293,6 @@ export async function runWorkspace(
         port: session.port,
         projectId: identity.id,
         projectName: identity.name,
-        ...(deps.orchestrator === undefined
-          ? {}
-          : { orchestrator: deps.orchestrator }),
       },
     });
   }

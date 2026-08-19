@@ -48,11 +48,6 @@ describe("wantsUpdateNotice", () => {
     for (const command of [
       undefined, // bare `hive` — startSession already prints the start notice
       "init",
-      "claude",
-      "codex",
-      "grok",
-      "kimi",
-      "opencode",
       "update",
       "event",
       "credential",

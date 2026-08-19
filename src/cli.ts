@@ -349,43 +349,6 @@ export function createProgram(): Command {
     .action(runUpdateSkip);
 
   program
-    .command("claude")
-    .description("Open Workspace with a read-only Claude orchestrator")
-    .action(async () => {
-      process.exitCode = await runWorkspace({ orchestrator: "claude" });
-    });
-
-  program
-    .command("codex")
-    .description("Open Workspace with a read-only Codex orchestrator")
-    .action(async () => {
-      process.exitCode = await runWorkspace({ orchestrator: "codex" });
-    });
-
-  program
-    .command("grok")
-    .description("Open Workspace with a read-only Grok orchestrator")
-    .action(async () => {
-      process.exitCode = await runWorkspace({ orchestrator: "grok" });
-    });
-
-  program
-    .command("kimi")
-    .description(
-      "Open Workspace with a Kimi orchestrator (uses Kimi's manual permission mode)",
-    )
-    .action(async () => {
-      process.exitCode = await runWorkspace({ orchestrator: "kimi" });
-    });
-
-  program
-    .command("opencode")
-    .description("Open Workspace with a read-only OpenCode orchestrator")
-    .action(async () => {
-      process.exitCode = await runWorkspace({ orchestrator: "opencode" });
-    });
-
-  program
     .command("status")
     .description("Show Hive agent status")
     .action(printStatus);
@@ -1011,7 +974,7 @@ export function createProgram(): Command {
       },
     );
 
-  // The Workspace master pane calls this private process boundary. Public vendor commands launch the app; they must never be invoked from the pane itself or the app would recursively open another Workspace.
+  // The Workspace starts this private process boundary. Public `hive` launches the app; this command must never be a user-facing launch verb or the app would recursively open another Workspace.
   program
     .command("workspace-orchestrator", { hidden: true })
     .requiredOption("--tool <tool>", "claude, codex, grok, kimi, or opencode")

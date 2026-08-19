@@ -2,27 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { createProgram } from "../../src/cli";
 
 describe("CLI command descriptions", () => {
-  test("all five vendors have first-class Workspace launch commands", () => {
-    const launches = new Map(
-      createProgram()
-        .commands.filter((command) =>
-          ["claude", "codex", "grok", "kimi", "opencode"].includes(
-            command.name(),
-          ),
-        )
-        .map((command) => [command.name(), command]),
-    );
-
-    expect([...launches.keys()]).toEqual([
-      "claude",
-      "codex",
-      "grok",
-      "kimi",
-      "opencode",
-    ]);
-    for (const command of launches.values()) {
-      expect(command.description()).toStartWith("Open Workspace with");
-      expect(command.options).toEqual([]);
+  test("queen vendor is not a CLI launch command", () => {
+    const names = createProgram().commands.map((command) => command.name());
+    for (const vendor of ["claude", "codex", "grok", "kimi", "opencode"]) {
+      expect(names).not.toContain(vendor);
     }
   });
 
@@ -84,6 +67,12 @@ describe("removed flags", () => {
     await expect(
       createProgram().parseAsync(["node", "hive", "init", "--refresh"]),
     ).rejects.toThrow(/unknown option.*--refresh/);
+  });
+
+  test("hive claude is not a launch spelling", async () => {
+    await expect(
+      createProgram().parseAsync(["node", "hive", "claude"]),
+    ).rejects.toThrow(/too many arguments.*claude/);
   });
 });
 
