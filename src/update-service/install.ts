@@ -202,7 +202,8 @@ export interface StageResult {
 
 export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   const root = deps.root ?? installRoot();
-  const { manifest, signature, cli, sessiond, terminfo } = trustSignedRelease(deps);
+  const { manifest, signature, cli, sessiond, terminfo } =
+    trustSignedRelease(deps);
   const app = selectArtifact(manifest, "workspace", deps.arch);
 
   const version = manifest.version;
@@ -261,7 +262,7 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   const stagedSessiond = sessiondPath(staging);
   await writeFile(stagedSessiond, sessiondBytes);
   await chmod(stagedSessiond, 0o755);
-  
+
   // Terminfo tarball contains resources/terminfo/. Extract it to staging so locateBundledTerminfo() finds it next to sessiond.
   const terminfoBytes = await fetchArtifact(terminfo);
   const terminfoTarball = join(staging, terminfo.name);
@@ -355,9 +356,15 @@ async function proveStaged(
         "does not match the SHA-256 in the signed manifest",
     );
   }
-  
+
   // Verify terminfo exists (we don't re-hash the tarball since it was extracted)
-  const terminfoEntry = join(versionDir(version, root), "resources", "terminfo", "x", "xterm-ghostty");
+  const terminfoEntry = join(
+    versionDir(version, root),
+    "resources",
+    "terminfo",
+    "x",
+    "xterm-ghostty",
+  );
   try {
     readFileSync(terminfoEntry);
   } catch {
@@ -382,12 +389,21 @@ async function proveStaged(
 /** The one way in. Produce a version directory that has passed every gate — whether that means downloading it or re-proving what is already there. Do not treat `isStaged()` as proof: that skips the manifest signature, digest, and probe checks, so a crash between download and activation could bypass the fail-closed path. Routing both cases through here ensures no prior state can yield an activation without verification. */
 export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
   const root = deps.root ?? installRoot();
-  const { manifest, signature, cli, sessiond, terminfo } = trustSignedRelease(deps);
+  const { manifest, signature, cli, sessiond, terminfo } =
+    trustSignedRelease(deps);
   const version = manifest.version;
 
   if (isStaged(version, root)) {
     try {
-      return await proveStaged(deps, manifest, cli, sessiond, terminfo, root, signature);
+      return await proveStaged(
+        deps,
+        manifest,
+        cli,
+        sessiond,
+        terminfo,
+        root,
+        signature,
+      );
     } catch (error) {
       // The staged copy is not what the signed manifest describes. Discarding and refetching is safe *unless* it is the version currently running: deleting the active install to recover from a bad staging would trade a refused update for a broken one. There we refuse and say what to remove.
       if (readInstallState(root).active === version) throw error;

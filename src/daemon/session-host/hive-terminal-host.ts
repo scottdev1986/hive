@@ -84,13 +84,13 @@ export function sessiondAgentProviderRunIsDead(
 ): boolean {
   // Terminal death always means the agent is dead
   if (sessiondTerminalIsDead(inspection)) return true;
-  
+
   // If there's no provider run but shell is idle, the agent is still alive
   // (agent-ui exited, leaving interactive zsh)
   if (activeRun === null && inspection.foreground.state === "shell-idle") {
     return false;
   }
-  
+
   // No provider run and not shell-idle means the agent is dead
   return activeRun === null;
 }
