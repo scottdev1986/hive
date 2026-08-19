@@ -342,11 +342,7 @@ export class MailService {
   }
 
   sweepDeadlines(now: Date): MailRelease[] {
-    return sweepMailDeadlines(
-      this.deps.store,
-      now,
-      this.config.maxAttempts,
-    );
+    return sweepMailDeadlines(this.deps.store, now, this.config.maxAttempts);
   }
 
   /** Keeps work owned by a live provider turn from expiring underneath it. An

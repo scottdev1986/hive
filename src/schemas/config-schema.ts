@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  MAIL_MAX_ATTEMPTS,
-  MAIL_SLO_BREACH_SECONDS,
-} from "./mail";
+import { MAIL_MAX_ATTEMPTS, MAIL_SLO_BREACH_SECONDS } from "./mail";
 
 // The limits leave enough headroom for the daemon, orchestrator, and operating system to remain responsive while Hive refuses to add load.
 export const ResourceLimitsSchema = z.strictObject({
@@ -31,12 +28,7 @@ export const ArtifactsConfigSchema = z.strictObject({
 
 export const MailConfigSchema = z.strictObject({
   // Retry counts above this bound are operationally indistinguishable from never quarantining a poison message, and usually signal a mistyped value.
-  max_attempts: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .default(MAIL_MAX_ATTEMPTS),
+  max_attempts: z.number().int().min(1).max(100).default(MAIL_MAX_ATTEMPTS),
   // A breach window longer than a month cannot provide a useful latency alert and is more likely a unit mistake.
   slo_breach_seconds: z
     .number()
