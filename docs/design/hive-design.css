@@ -1454,9 +1454,7 @@ html.doc-split-horizon .menu-popover { top: 27px; left: 12px; }
 html.doc-split-horizon .menu-popover[data-menu-panel="edit"] { left: 62px; }
 html.doc-split-horizon .menu-popover[data-menu-panel="view"] { left: 98px; }
 html.doc-split-horizon .menu-popover[data-menu-panel="navigate"] { left: 140px; }
-html.doc-split-horizon .menu-popover[data-menu-panel="agent"] { left: 207px; }
-html.doc-split-horizon .menu-popover[data-menu-panel="run"] { left: 253px; }
-html.doc-split-horizon .menu-popover[data-menu-panel="window"] { left: 286px; }
+html.doc-split-horizon .menu-popover[data-menu-panel="window"] { left: 207px; }
 html.doc-split-horizon .menu-item {
       display: grid;
       width: 100%;
