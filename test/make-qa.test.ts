@@ -357,9 +357,7 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
     expect(readFileSync(argvLog, "utf8")).toBe(
       "stop --force\nuninstall --repo --yes\nuninstall --yes --purge\n",
     );
-    expect(readFileSync(capabilityLog, "utf8")).toBe(
-      "unset\nunset\nunset\n",
-    );
+    expect(readFileSync(capabilityLog, "utf8")).toBe("unset\nunset\nunset\n");
     expect(readFileSync(join(userHive, "sentinel"), "utf8")).toBe(
       "untouched\n",
     );
