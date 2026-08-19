@@ -1993,10 +1993,10 @@ export class AgentUi {
   ): Promise<void> {
     this.scheduler = commitDispatch(this.scheduler, item);
     const clientInputId = randomUUID();
-    
+
     // Fetch wake payload (mail counts + memory delta) from daemon
     const wakeText = await this.buildWakePrompt(item.wake);
-    
+
     const receipt = await this.session.submit({
       session: {
         vendorSessionId: this.vendorSessionId,

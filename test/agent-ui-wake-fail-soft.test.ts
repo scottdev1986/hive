@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { formatWakePrompt } from "../src/cli/agent-ui/wake-prompt";
 import { PaneDaemonClient } from "../src/cli/agent-ui/pane-daemon-client";
 import type { WakePayload } from "../src/schemas/wake-payload";
@@ -46,23 +46,24 @@ describe("wake fail-soft (no daemon or /wake-payload failure)", () => {
       s.text.includes("Hive mail wake"),
     );
     expect(wakeSubmission).toBeDefined();
+    if (!wakeSubmission) throw new Error("wake submission was not recorded");
 
     // Should have lane and backlogCount
-    expect(wakeSubmission!.text).toContain("control lane");
-    expect(wakeSubmission!.text).toContain("3 available");
+    expect(wakeSubmission.text).toContain("control lane");
+    expect(wakeSubmission.text).toContain("3 available");
 
     // Should NOT have oldestItemId or wakeId
-    expect(wakeSubmission!.text).not.toContain("item-abc-123");
-    expect(wakeSubmission!.text).not.toContain("w1");
-    expect(wakeSubmission!.text).not.toContain("oldestItemId");
-    expect(wakeSubmission!.text).not.toContain("wakeId");
+    expect(wakeSubmission.text).not.toContain("item-abc-123");
+    expect(wakeSubmission.text).not.toContain("w1");
+    expect(wakeSubmission.text).not.toContain("oldestItemId");
+    expect(wakeSubmission.text).not.toContain("wakeId");
 
     // Should have poll instruction
-    expect(wakeSubmission!.text).toContain("hive_mail_poll");
+    expect(wakeSubmission.text).toContain("hive_mail_poll");
 
     // Should NOT have memory section (fail-soft drops memory)
-    expect(wakeSubmission!.text).not.toContain("Recent wiki");
-    expect(wakeSubmission!.text).not.toContain("Memory");
+    expect(wakeSubmission.text).not.toContain("Recent wiki");
+    expect(wakeSubmission.text).not.toContain("Memory");
   });
 
   test("daemon 5xx fail-soft → same fail-soft prompt", async () => {
@@ -85,14 +86,15 @@ describe("wake fail-soft (no daemon or /wake-payload failure)", () => {
       s.text.includes("Hive mail wake"),
     );
     expect(wakeSubmission).toBeDefined();
+    if (!wakeSubmission) throw new Error("wake submission was not recorded");
 
     // Same fail-soft assertions: lane + backlogCount, no oldestItemId
-    expect(wakeSubmission!.text).toContain("work lane");
-    expect(wakeSubmission!.text).toContain("5 available");
-    expect(wakeSubmission!.text).not.toContain("item-xyz-456");
-    expect(wakeSubmission!.text).not.toContain("w2");
-    expect(wakeSubmission!.text).toContain("hive_mail_poll");
-    expect(wakeSubmission!.text).not.toContain("Recent wiki");
+    expect(wakeSubmission.text).toContain("work lane");
+    expect(wakeSubmission.text).toContain("5 available");
+    expect(wakeSubmission.text).not.toContain("item-xyz-456");
+    expect(wakeSubmission.text).not.toContain("w2");
+    expect(wakeSubmission.text).toContain("hive_mail_poll");
+    expect(wakeSubmission.text).not.toContain("Recent wiki");
   });
 
   test("success path → formatWakePrompt output with counts and memory", async () => {
@@ -149,18 +151,19 @@ describe("wake fail-soft (no daemon or /wake-payload failure)", () => {
       s.text.includes("Hive mail wake"),
     );
     expect(wakeSubmission).toBeDefined();
+    if (!wakeSubmission) throw new Error("wake submission was not recorded");
 
     // Should match formatWakePrompt output
     const expectedText = formatWakePrompt(payload);
-    expect(wakeSubmission!.text).toBe(expectedText);
+    expect(wakeSubmission.text).toBe(expectedText);
 
     // Sanity checks on the formatted text
-    expect(wakeSubmission!.text).toContain("control lane");
-    expect(wakeSubmission!.text).toContain("Control: 2 available");
-    expect(wakeSubmission!.text).toContain("Work: 1 available");
-    expect(wakeSubmission!.text).toContain("Recent wiki");
-    expect(wakeSubmission!.text).toContain("Test article");
-    expect(wakeSubmission!.text).not.toContain("item-success"); // No oldestItemId
-    expect(wakeSubmission!.text).not.toContain("w3"); // No wakeId
+    expect(wakeSubmission.text).toContain("control lane");
+    expect(wakeSubmission.text).toContain("Control: 2 available");
+    expect(wakeSubmission.text).toContain("Work: 1 available");
+    expect(wakeSubmission.text).toContain("Recent wiki");
+    expect(wakeSubmission.text).toContain("Test article");
+    expect(wakeSubmission.text).not.toContain("item-success"); // No oldestItemId
+    expect(wakeSubmission.text).not.toContain("w3"); // No wakeId
   });
 });

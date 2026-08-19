@@ -1,6 +1,12 @@
 import type { MailStore } from "../mail-service/store";
-import { factVerificationFlag, listMemoryFacts } from "../memory-service/memory-store";
-import { partitionMemoryRecall, type MemoryRecallRow } from "../memory-service/recall";
+import {
+  factVerificationFlag,
+  listMemoryFacts,
+} from "../memory-service/memory-store";
+import {
+  partitionMemoryRecall,
+  type MemoryRecallRow,
+} from "../memory-service/recall";
 import type { WakePayload, WakePayloadRequest } from "../schemas/wake-payload";
 
 export interface WakePayloadServiceDeps {
@@ -54,22 +60,27 @@ export class WakePayloadService {
       rows = [];
     } else {
       state = "ok";
-      rows = recent.map((fact): MemoryRecallRow => ({
-        scope: fact.scope,
-        topic: fact.topic,
-        id: fact.id,
-        date: fact.date,
-        title: fact.title,
-        snippet: oneLine(fact.body).slice(0, 160),
-        status: fact.status,
-        flag: factVerificationFlag(fact),
-        pitfall: fact.kind === "pitfall",
-      }));
+      rows = recent.map(
+        (fact): MemoryRecallRow => ({
+          scope: fact.scope,
+          topic: fact.topic,
+          id: fact.id,
+          date: fact.date,
+          title: fact.title,
+          snippet: oneLine(fact.body).slice(0, 160),
+          status: fact.status,
+          flag: factVerificationFlag(fact),
+          pitfall: fact.kind === "pitfall",
+        }),
+      );
     }
 
     // Partition into pitfalls and articles, clamped to budget
     const partition = partitionMemoryRecall(
-      { pitfalls: rows.filter((r) => r.pitfall), articles: rows.filter((r) => !r.pitfall) },
+      {
+        pitfalls: rows.filter((r) => r.pitfall),
+        articles: rows.filter((r) => !r.pitfall),
+      },
       this.deps.wakeBudgetTokens,
     );
 

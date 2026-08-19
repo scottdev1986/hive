@@ -21,7 +21,11 @@ export function formatWakePrompt(payload: WakePayload): string {
   if (payload.memoryDelta.state !== "absent") {
     parts.push("", "## Recent wiki (date-ranked, not a since-last-wake delta)");
     if (payload.memoryDelta.semantic.startsWith("degraded:")) {
-      parts.push(memoryRecallDegradedWarning(payload.memoryDelta.semantic.slice("degraded:".length)));
+      parts.push(
+        memoryRecallDegradedWarning(
+          payload.memoryDelta.semantic.slice("degraded:".length),
+        ),
+      );
     }
     if (payload.memoryDelta.state === "empty") {
       parts.push(

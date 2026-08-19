@@ -48,7 +48,10 @@ const DEFAULT_IDENTITY: PaneIdentity = {
 export interface AgentUiHarnessOptions {
   readonly identity?: PaneIdentity;
   readonly capabilities?: MeasuredProviderCapabilities;
-  readonly paneClient?: Pick<import("../src/cli/agent-ui/pane-daemon-client").PaneDaemonClient, "request">;
+  readonly paneClient?: Pick<
+    import("../src/cli/agent-ui/pane-daemon-client").PaneDaemonClient,
+    "request"
+  >;
   readonly reportWake?: (report: FrontendWakeReport) => Promise<void>;
   readonly reportDiagnostic?: (report: UiDiagnosticReport) => void;
   readonly prepareJournal?: (journal: OutboundJournal) => Promise<void>;
@@ -98,7 +101,9 @@ export async function createAgentUiHarness(
       reportedWakes.push(report);
       await options.reportWake?.(report);
     },
-    ...(options.paneClient === undefined ? {} : { paneClient: options.paneClient }),
+    ...(options.paneClient === undefined
+      ? {}
+      : { paneClient: options.paneClient }),
     ...(options.reportDiagnostic === undefined
       ? {}
       : { reportDiagnostic: options.reportDiagnostic }),

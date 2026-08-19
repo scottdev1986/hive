@@ -99,7 +99,7 @@ const CONCISE_CATEGORIES: readonly RoutingCategory[] = [
 /** Categories that receive minimal standards (core rules only, no exhaustive detail). Simple mechanical tasks don't need full deletion/consolidation/measurement sections. */
 const MINIMAL_CATEGORIES: readonly RoutingCategory[] = [
   "light_research",
-  "summarization", 
+  "summarization",
   "simple_coding",
 ];
 

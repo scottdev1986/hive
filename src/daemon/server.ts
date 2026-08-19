@@ -3414,7 +3414,9 @@ export class HiveDaemon {
     );
     if (!parsed.success) {
       return json(
-        { error: parsed.error.issues[0]?.message ?? "bad wake payload request" },
+        {
+          error: parsed.error.issues[0]?.message ?? "bad wake payload request",
+        },
         { status: 400 },
       );
     }
@@ -3423,7 +3425,9 @@ export class HiveDaemon {
       canonicalOrchestratorName(parsed.data.recipient)
     ) {
       return json(
-        { error: `${subject} may not fetch wake payload for ${parsed.data.recipient}` },
+        {
+          error: `${subject} may not fetch wake payload for ${parsed.data.recipient}`,
+        },
         { status: 403 },
       );
     }
@@ -3431,10 +3435,7 @@ export class HiveDaemon {
       const payload = await this.wakePayloadService.build(parsed.data);
       return json(payload);
     } catch (error) {
-      return json(
-        { error: errorMessage(error) },
-        { status: 500 },
-      );
+      return json({ error: errorMessage(error) }, { status: 500 });
     }
   }
 
