@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -161,11 +162,16 @@ test("make qa refuses a PROJECT inside the hive checkout that is not its root", 
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-inside-"));
   try {
     const nested = join(root, "src");
-    const result = runMake("qa", {
-      PROJECT: nested,
-      QA: join(fixture, "qa"),
-      USER_HIVE: join(fixture, "dot-hive"),
-    });
+    const home = join(fixture, "home");
+    const result = runMake(
+      "qa",
+      {
+        PROJECT: nested,
+        QA: join(fixture, "qa"),
+        USER_HIVE: join(home, ".hive"),
+      },
+      { ...process.env, HOME: home },
+    );
     expect(result.exitCode).toBe(2);
     expect(result.output).toContain(
       "PROJECT is inside the hive checkout but is not its root",
@@ -179,12 +185,17 @@ test("make qa requires build-qa instead of a staged dev build", () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-unbuilt-"));
   try {
     const project = join(fixture, "project");
+    const home = join(fixture, "home");
     initRepo(project);
-    const result = runMake("qa", {
-      PROJECT: project,
-      QA: join(fixture, "qa"),
-      USER_HIVE: join(fixture, "dot-hive"),
-    });
+    const result = runMake(
+      "qa",
+      {
+        PROJECT: project,
+        QA: join(fixture, "qa"),
+        USER_HIVE: join(home, ".hive"),
+      },
+      { ...process.env, HOME: home },
+    );
     expect(result.exitCode).toBe(2);
     expect(result.output).toContain(
       "no qa build staged; run 'make build-qa' first",
@@ -228,6 +239,33 @@ test("make qa refuses a QA staging root inside the hive checkout", () => {
   }
 });
 
+test("make qa refuses a staging-root symlink into the user Hive home", () => {
+  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-root-link-"));
+  try {
+    const home = join(fixture, "home");
+    const userHive = join(home, ".hive");
+    const qa = join(fixture, "qa");
+    mkdirSync(userHive, { recursive: true });
+    symlinkSync(userHive, qa);
+    for (const target of ["build-qa", "qa", "qa-clean"] as const) {
+      const result = runMake(
+        target,
+        {
+          PROJECT: join(fixture, "project"),
+          QA: qa,
+          USER_HIVE: userHive,
+        },
+        { ...process.env, HOME: home },
+      );
+      expect(result.exitCode).toBe(2);
+      expect(result.output).toContain("QA staging root");
+      expect(result.output).toContain("under the user Hive home");
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test("make qa refuses a QA_HOME under the user hive home", () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-protected-"));
   try {
@@ -256,7 +294,8 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
   try {
     const qa = join(fixture, "qa");
     const project = join(fixture, "project");
-    const userHive = join(fixture, "dot-hive");
+    const home = join(fixture, "home");
+    const userHive = join(home, ".hive");
     const argvLog = join(fixture, "uninstall-argv");
     initRepo(project);
     mkdirSync(userHive, { recursive: true });
@@ -282,12 +321,16 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
     );
     expect(captureHive.exitCode, captureHive.stderr.toString()).toBe(0);
 
-    const result = runMake("qa-clean", {
-      PROJECT: project,
-      QA: qa,
-      QA_HOME: join(qa, "home"),
-      USER_HIVE: userHive,
-    });
+    const result = runMake(
+      "qa-clean",
+      {
+        PROJECT: project,
+        QA: qa,
+        QA_HOME: join(qa, "home"),
+        USER_HIVE: userHive,
+      },
+      { ...process.env, HOME: home },
+    );
     expect(result.exitCode, result.output).toBe(0);
     expect(result.output).toContain("no listed qa path remains");
     expect(readFileSync(argvLog, "utf8")).toBe(

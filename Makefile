@@ -352,18 +352,8 @@ build:
 # Build into a temporary sibling so a failed compile cannot leave a partial dist
 # that `make qa` mistakes for a candidate.
 build-qa:
-	@set -e; \
-	case "$(QA)" in "$(ROOT)"|"$(ROOT)"/*) \
-	  echo "refusing: QA staging root $(QA) is inside the hive checkout $(ROOT)" >&2; exit 2;; esac; \
-	case "$(QA_DIST)" in "$(QA)"/*) ;; *) \
-	  echo "refusing: QA_DIST $(QA_DIST) is outside QA staging root $(QA)" >&2; exit 2;; esac; \
-	case "$(QA_GRAPHIFY_LOCAL_DIR)" in "$(QA)"/*) ;; *) \
-	  echo "refusing: QA Graphify root $(QA_GRAPHIFY_LOCAL_DIR) is outside QA staging root $(QA)" >&2; exit 2;; esac; \
-	case "$(QA_GRAPHIFY_LOCAL_MANIFEST)" in "$(QA_GRAPHIFY_LOCAL_DIR)"/*) ;; *) \
-	  echo "refusing: QA Graphify manifest $(QA_GRAPHIFY_LOCAL_MANIFEST) is outside its artifact root $(QA_GRAPHIFY_LOCAL_DIR)" >&2; exit 2;; esac; \
-	case "$(QA_BUILD_STAMP)" in "$(QA)"/*) ;; *) \
-	  echo "refusing: QA build stamp $(QA_BUILD_STAMP) is outside QA staging root $(QA)" >&2; exit 2;; esac; \
-	/bin/rm -f "$(QA_BUILD_STAMP)"
+	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" build "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_DIST)" "$(QA_GRAPHIFY_LOCAL_DIR)" "$(QA_GRAPHIFY_LOCAL_MANIFEST)" "$(QA_BUILD_STAMP)"
+	@/bin/rm -f "$(QA_BUILD_STAMP)"
 	$(MAKE) toolchain vendor-verify "$(GHOSTTYKIT_INFO)"
 	bun install --frozen-lockfile --os=darwin --cpu='*'
 	$(MAKE) graphify-qa
@@ -385,8 +375,7 @@ build-qa:
 	echo "built qa: $$("$(QA_DIST)/$(CLI_ASSET)" --version)"
 
 # PROJECT defaults to this checkout (inside a worktree, that worktree). An
-# explicit PROJECT wins, but anything inside this checkout other than its root
-# is refused.
+# explicit PROJECT wins, but QA never runs against this checkout or a child.
 run:
 	@set -e; \
 	[ -x "$(HIVE_BIN)" ] || { echo "no dev build staged; run 'make build' first" >&2; exit 2; }; \
@@ -423,18 +412,8 @@ run:
 # isolation state before init so
 # qa-clean can check that the isolated QA lifecycle did not reach it.
 qa:
+	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
-	case "$(QA)" in "$(ROOT)"|"$(ROOT)"/*) \
-	  echo "refusing: QA staging root $(QA) is inside the hive checkout $(ROOT)" >&2; exit 2;; esac; \
-	case "$(QA_HOME)" in "$(HOME)/.hive"|"$(HOME)/.hive"/*) \
-	  echo "refusing: QA_HOME is under the user hive home $(HOME)/.hive" >&2; exit 2;; esac; \
-	[ "$(QA_HOME)" != "$(DEV_HOME)" ] || { echo "refusing: QA_HOME is the live dev home" >&2; exit 2; }; \
-	proj=$$(cd "$(QA_PROJECT)" 2>/dev/null && pwd -P) || { echo "PROJECT does not exist: $(QA_PROJECT)" >&2; exit 2; }; \
-	if [ "$$proj" != "$(ROOT)" ]; then \
-	  case "$$proj/" in "$(ROOT)/"*) \
-	    echo "refusing: PROJECT is inside the hive checkout but is not its root; point at the root or a separate repo" >&2; exit 2;; esac; \
-	fi; \
-	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
 	if [ -f "$(QA_STATE)/hive-before" ]; then \
 	  echo "refusing: leftover qa state at $(QA_STATE); run 'make qa-clean' first" >&2; exit 2; \
 	fi; \
@@ -449,7 +428,7 @@ qa:
 	env $(QA_ENV) sh "$(ROOT)/install.sh" --variant qa --from-build "$(QA_DIST)" "$(DEV_VERSION)"; \
 	[ -x "$(QA_BIN)" ] || { echo "qa install produced no binary at $(QA_BIN)" >&2; exit 2; }; \
 	mkdir -p "$(QA_HOME)"; \
-	cd "$$proj"; \
+	cd "$(QA_PROJECT)"; \
 	env $(QA_ENV) "$(QA_BIN)" init; \
 	/bin/rm -f "$(QA_DAEMON_STARTUP_LOG)"; \
 	env $(QA_ENV) "$(QA_BIN)" daemon >"$(QA_DAEMON_STARTUP_LOG)" 2>&1 & daemon_pid=$$!; \
@@ -473,21 +452,11 @@ qa:
 # uninstall first, machine uninstall --purge, then check the qa paths are gone
 # and ~/.hive matches the pre-qa inventory. Never rm -rf the test project.
 qa-clean:
+	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa-clean "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
-	case "$(QA)" in "$(ROOT)"|"$(ROOT)"/*) \
-	  echo "refusing: QA staging root $(QA) is inside the hive checkout $(ROOT)" >&2; exit 2;; esac; \
-	case "$(QA_HOME)" in "$(HOME)/.hive"|"$(HOME)/.hive"/*) \
-	  echo "refusing: QA_HOME is under the user hive home $(HOME)/.hive" >&2; exit 2;; esac; \
-	[ "$(QA_HOME)" != "$(DEV_HOME)" ] || { echo "refusing: QA_HOME is the live dev home" >&2; exit 2; }; \
-	proj=$$(cd "$(QA_PROJECT)" 2>/dev/null && pwd -P) || { echo "PROJECT does not exist: $(QA_PROJECT)" >&2; exit 2; }; \
-	if [ "$$proj" != "$(ROOT)" ]; then \
-	  case "$$proj/" in "$(ROOT)/"*) \
-	    echo "refusing: PROJECT is inside the hive checkout but is not its root; point at the root or a separate repo" >&2; exit 2;; esac; \
-	fi; \
-	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
 	[ -f "$(QA_STATE)/hive-before" ] || { echo "no pre-run isolation inventory at $(QA_STATE)/hive-before; run 'make qa' first" >&2; exit 2; }; \
 	[ -x "$(QA_BIN)" ] || { echo "no installed qa binary; cannot run the product uninstall" >&2; exit 2; }; \
-	cd "$$proj"; \
+	cd "$(QA_PROJECT)"; \
 	env $(QA_ENV) "$(QA_BIN)" stop --force || true; \
 	if [ -d "$(QA_HOME)/instances" ]; then \
 	  for inst in "$(QA_HOME)/instances"/*; do \

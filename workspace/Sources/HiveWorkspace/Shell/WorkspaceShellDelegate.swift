@@ -12,7 +12,9 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     private var liveRunFeed: FeedClient?
     private var liveRunControlGateway: LiveRunControlGateway?
     private var agentKillGateway: AgentKillGateway?
+#if HIVE_QA_BUILD
     private var qaControl: QAControl?
+#endif
     private let liveRunWorkspaceSessionID = "workspace-shell-\(UUID().uuidString)"
     private var liveRunInventoryRevision = 0
 
@@ -55,7 +57,9 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             let controller = WorkspaceShellWindowController(context: context, state: state)
             let workbench = LiveRunWorkbenchView(config: config)
             controller.installLiveRunWorkbench(workbench)
+#if HIVE_QA_BUILD
             qaControl = QAControl(surface: controller)
+#endif
             if launch.isLive {
                 do {
                     let client = try await ShellLiveStore(config: config).makeClient()

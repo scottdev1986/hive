@@ -1,3 +1,4 @@
+#if HIVE_QA_BUILD
 import AppKit
 
 struct QAControlResponse: Codable {
@@ -172,3 +173,4 @@ final class QAControl {
         surface = nil
     }
 }
+#endif

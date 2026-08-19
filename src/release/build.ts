@@ -331,6 +331,7 @@ export async function compileWorkspaceTo(args: {
   repoRoot: string;
   outBundle: string;
   version: string;
+  variant: HiveVariant;
   arches?: readonly string[];
   sourceDate?: string;
 }): Promise<void> {
@@ -348,17 +349,18 @@ export async function compileWorkspaceTo(args: {
         };
   const binPaths: string[] = [];
   for (const arch of arches) {
-    await sh(
-      ["swift", "build", "-c", "release", "--arch", arch],
-      workspace,
-      swiftEnv,
-    );
+    const swiftBuild = [
+      "swift",
+      "build",
+      "-c",
+      "release",
+      "--arch",
+      arch,
+      ...(args.variant === "qa" ? ["-Xswiftc", "-DHIVE_QA_BUILD"] : []),
+    ];
+    await sh(swiftBuild, workspace, swiftEnv);
     binPaths.push(
-      (
-        await Bun.$`swift build -c release --arch ${arch} --show-bin-path`
-          .cwd(workspace)
-          .text()
-      ).trim(),
+      (await output([...swiftBuild, "--show-bin-path"], workspace)).trim(),
     );
   }
 
@@ -417,6 +419,7 @@ async function compileWorkspace(options: Options): Promise<string> {
     repoRoot: options.repoRoot,
     outBundle: bundle,
     version: options.version,
+    variant: options.variant,
   });
   return bundle;
 }

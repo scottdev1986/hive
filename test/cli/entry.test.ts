@@ -72,7 +72,7 @@ describe("removed flags", () => {
   test("hive claude is not a launch spelling", async () => {
     await expect(
       createProgram().parseAsync(["node", "hive", "claude"]),
-    ).rejects.toThrow(/too many arguments.*claude/);
+    ).rejects.toThrow("unknown command 'claude'");
   });
 });
 

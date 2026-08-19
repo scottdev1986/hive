@@ -1,3 +1,4 @@
+#if HIVE_QA_BUILD
 import AppKit
 import XCTest
 @testable import HiveWorkspace
@@ -60,3 +61,4 @@ final class QAControlTests: XCTestCase {
         XCTAssertEqual(response.reason, "control not found")
     }
 }
+#endif

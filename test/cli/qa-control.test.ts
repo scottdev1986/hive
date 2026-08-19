@@ -2,22 +2,38 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createProgram } from "../../src/cli";
 import { runQAControl } from "../../src/cli/qa-control";
 
 const originalQA = process.env.HIVE_QA;
 const originalHome = process.env.HIVE_HOME;
 const originalDefaultHome = process.env.HIVE_DEFAULT_HOME;
+const originalBuildVariant = process.env.HIVE_BUILD_VARIANT;
 
 afterEach(() => {
   process.env.HIVE_QA = originalQA;
   process.env.HIVE_HOME = originalHome;
   process.env.HIVE_DEFAULT_HOME = originalDefaultHome;
+  process.env.HIVE_BUILD_VARIANT = originalBuildVariant;
 });
 
 describe("qa-control fails closed", () => {
   test("refuses before touching the mailbox without the QA gate", async () => {
     delete process.env.HIVE_QA;
     expect(await runQAControl("enumerate")).toBe(2);
+  });
+
+  test("requires an explicit default home before touching a mailbox", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-qa-control-"));
+    process.env.HIVE_QA = "1";
+    process.env.HIVE_HOME = home;
+    delete process.env.HIVE_DEFAULT_HOME;
+    try {
+      expect(await runQAControl("enumerate")).toBe(2);
+      expect(existsSync(join(home, "qa-control"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test("reports no measurement when the app is absent", async () => {
@@ -47,5 +63,17 @@ describe("qa-control fails closed", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  test("registers qa-control only in a QA build", () => {
+    process.env.HIVE_BUILD_VARIANT = "qa";
+    expect(createProgram().commands.map((command) => command.name())).toContain(
+      "qa-control",
+    );
+
+    delete process.env.HIVE_BUILD_VARIANT;
+    expect(
+      createProgram().commands.map((command) => command.name()),
+    ).not.toContain("qa-control");
   });
 });

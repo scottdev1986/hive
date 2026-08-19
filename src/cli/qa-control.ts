@@ -7,7 +7,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { defaultHiveHome } from "../hive-home/home";
 
 export type QAControlRequest =
   | { requestId: string; verb: "enumerate" }
@@ -23,12 +22,19 @@ export async function runQAControl(
     process.stderr.write("NO MEASUREMENT: qa-control requires HIVE_QA=1\n");
     return 2;
   }
+  const home = process.env.HIVE_DEFAULT_HOME;
+  if (home === undefined || home.length === 0) {
+    process.stderr.write(
+      "NO MEASUREMENT: qa-control requires HIVE_DEFAULT_HOME\n",
+    );
+    return 2;
+  }
   if (verb === "invoke" && identifier === undefined) {
     process.stderr.write("NO MEASUREMENT: invoke requires an identifier\n");
     return 2;
   }
 
-  const directory = join(defaultHiveHome(), "qa-control");
+  const directory = join(home, "qa-control");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   chmodSync(directory, 0o700);
   const requestId = crypto.randomUUID();

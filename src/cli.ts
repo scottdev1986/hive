@@ -242,7 +242,14 @@ export function createProgram(): Command {
   program.version(versionLine(), "-v, --version", "Print the Hive version");
 
   // Bare `hive` opens the project the shell is in: resolve the repo root, run the shared session boundary, and hand the app the project and daemon port. Outside a git repo it launches the app standalone (placeholder window) — the project-neutral home a Dock click gets. Never a dev Workspace build.
-  program.action(async () => {
+  program.argument("[unknown...]");
+  program.action(async (unknown: string[]) => {
+    if (unknown.length > 0) {
+      program.error(`unknown command '${unknown[0]}'`, {
+        code: "commander.unknownCommand",
+        exitCode: 1,
+      });
+    }
     process.exitCode = await runWorkspace();
   });
 
@@ -934,26 +941,31 @@ export function createProgram(): Command {
       },
     );
 
-  // The Workspace app's status wire: NDJSON agent snapshots on stdout plus the daemon-side viewer lease. Hidden because only the app spawns it.
-  program
-    .command("qa-control", { hidden: true })
-    .argument("<verb>", "enumerate or invoke")
-    .argument("[identifier]", "live control identifier")
-    .option("--input <value>", "native control input")
-    .action(
-      async (
-        verb: string,
-        identifier: string | undefined,
-        options: { input?: string },
-      ) => {
-        if (verb !== "enumerate" && verb !== "invoke") {
-          process.stderr.write("NO MEASUREMENT: unknown qa-control verb\n");
-          process.exitCode = 2;
-          return;
-        }
-        process.exitCode = await runQAControl(verb, identifier, options.input);
-      },
-    );
+  if (process.env.HIVE_BUILD_VARIANT === "qa") {
+    program
+      .command("qa-control", { hidden: true })
+      .argument("<verb>", "enumerate or invoke")
+      .argument("[identifier]", "live control identifier")
+      .option("--input <value>", "native control input")
+      .action(
+        async (
+          verb: string,
+          identifier: string | undefined,
+          options: { input?: string },
+        ) => {
+          if (verb !== "enumerate" && verb !== "invoke") {
+            process.stderr.write("NO MEASUREMENT: unknown qa-control verb\n");
+            process.exitCode = 2;
+            return;
+          }
+          process.exitCode = await runQAControl(
+            verb,
+            identifier,
+            options.input,
+          );
+        },
+      );
+  }
 
   program
     .command("workspace-feed", { hidden: true })

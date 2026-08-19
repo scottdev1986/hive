@@ -44,7 +44,7 @@ function install(version: string): string {
 }
 
 describe("hive opens the installed release Workspace", () => {
-  test("passes PATH and the private temp directory into a separate app", () => {
+  test("passes the process path and Hive homes into a separate app", () => {
     expect(
       workspaceOpenArguments(
         "/Applications/HiveWorkspace.app",
@@ -52,6 +52,8 @@ describe("hive opens the installed release Workspace", () => {
         "/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
         "/var/folders/user/T/",
         "1",
+        "/Users/me/.hive",
+        "/Users/me/.hive/instances/dev",
       ),
     ).toEqual([
       "-n",
@@ -63,6 +65,10 @@ describe("hive opens the installed release Workspace", () => {
       "TMPDIR=/var/folders/user/T/",
       "--env",
       "HIVE_QA=1",
+      "--env",
+      "HIVE_DEFAULT_HOME=/Users/me/.hive",
+      "--env",
+      "HIVE_HOME=/Users/me/.hive/instances/dev",
       "--args",
       "--orchestrator",
       "codex",
@@ -78,6 +84,9 @@ describe("hive opens the installed release Workspace", () => {
         ["--project", "/repo", "--instance-home", "/tmp/hv-abc123"],
         "/usr/bin",
         "/var/folders/user/T/",
+        "",
+        "",
+        "",
       ),
     ).toEqual([
       "-n",
