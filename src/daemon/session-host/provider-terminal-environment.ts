@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { machineHiveHome } from "../../hive-home/home";
+import { ensureTerminfoInstalled } from "./terminfo-installer";
 
 /**
  * Build the environment for a provider terminal session.
@@ -7,13 +6,14 @@ import { machineHiveHome } from "../../hive-home/home";
  * 
  * TERM: xterm-ghostty is the bundled Ghostty terminfo name.
  * COLORTERM: truecolor signals 24-bit color support.
- * TERMINFO_DIRS: Points to Hive's bundled terminfo database.
+ * TERMINFO: Points directly to Hive's bundled terminfo database (installed on demand).
+ * TERMINFO_DIRS: Fallback search path including Hive's terminfo plus system dirs.
  * 
  * NO_COLOR is stripped so agents see color by default.
  */
-export function providerTerminalEnvironment(
+export async function providerTerminalEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
-): Record<string, string> {
+): Promise<Record<string, string>> {
   const base = Object.fromEntries(
     Object.entries(environment).filter(
       (entry): entry is [string, string] =>
@@ -21,14 +21,16 @@ export function providerTerminalEnvironment(
     ),
   );
   
-  // Hive-bundled terminfo is installed alongside hive-sessiond in the machine home.
-  // This path exists whether running from dev or installed release.
-  const hiveTerminfoPath = join(machineHiveHome(), "terminfo");
+  // Ensure Hive's bundled terminfo is installed (no-op if already present).
+  // This makes Hive self-contained: no Ghostty.app, no tic, no system install required.
+  const hiveTerminfoPath = await ensureTerminfoInstalled();
   
   return {
     ...base,
     TERM: "xterm-ghostty",
     COLORTERM: "truecolor",
+    // TERMINFO points ncurses directly at Hive's bundled terminfo.
+    TERMINFO: hiveTerminfoPath,
     // TERMINFO_DIRS is a colon-separated list. Put Hive's bundled terminfo first,
     // then fall back to system terminfo dirs if something is missing.
     TERMINFO_DIRS: `${hiveTerminfoPath}:${environment.TERMINFO_DIRS ?? "/usr/share/terminfo:/lib/terminfo:/usr/local/share/terminfo"}`,

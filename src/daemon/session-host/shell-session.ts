@@ -27,6 +27,19 @@ const HIVE_ZSHRC = [
 ].join("\n");
 
 /**
+ * Forward to user's .zshenv if it exists.
+ * Login zsh reads this from ZDOTDIR before any other files.
+ */
+const HIVE_ZSHENV = [
+  "# Hive ZDOTDIR .zshenv - forward to user's file",
+  'if [[ -f "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshenv" ]]; then',
+  '  source "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshenv"',
+  'elif [[ -f "$HOME/.zshenv" ]]; then',
+  '  source "$HOME/.zshenv"',
+  "fi",
+].join("\n");
+
+/**
  * Forward to user's .zprofile if it exists.
  * Login zsh reads this from ZDOTDIR before .zshrc.
  */
@@ -60,7 +73,7 @@ export type ShellSessionLaunch = Readonly<{
 
 /**
  * Prepare a Hive-owned ZDOTDIR for this session with init files that:
- * 1. Source the user's real zsh config files (.zprofile, .zshrc, .zlogin)
+ * 1. Source the user's real zsh config files (.zshenv, .zprofile, .zshrc, .zlogin)
  * 2. Run `hive agent-ui` on first prompt (one-shot)
  * 3. Leave interactive zsh after agent-ui exits
  * 
@@ -74,6 +87,7 @@ export async function prepareSessionZdotdir(
   await mkdir(zdotdir, { recursive: true, mode: 0o700 });
   
   await Promise.all([
+    writeFile(join(zdotdir, ".zshenv"), HIVE_ZSHENV, { mode: 0o600 }),
     writeFile(join(zdotdir, ".zshrc"), HIVE_ZSHRC, { mode: 0o600 }),
     writeFile(join(zdotdir, ".zprofile"), HIVE_ZPROFILE, { mode: 0o600 }),
     writeFile(join(zdotdir, ".zlogin"), HIVE_ZLOGIN, { mode: 0o600 }),

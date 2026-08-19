@@ -566,10 +566,10 @@ export class OrchestratorSessiondController {
       cwd: params.cwd,
       argv: params.shell.argv,
       environment: {
-        ...providerTerminalEnvironment({
+        ...(await providerTerminalEnvironment({
           ...(this.dependencies.environment ?? process.env),
           ...params.environment,
-        }),
+        })),
         ...params.shell.env,
         ZDOTDIR: zdotdir,
         HIVE_USER_ZDOTDIR: userZdotdir,

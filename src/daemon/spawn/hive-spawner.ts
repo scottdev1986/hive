@@ -357,7 +357,7 @@ export class HiveSpawner implements Spawner {
       cwd: record.worktreePath,
       argv: shell.argv,
       environment: {
-        ...providerTerminalEnvironment(process.env),
+        ...(await providerTerminalEnvironment(process.env)),
         ...shell.env,
         ZDOTDIR: zdotdir,
         HIVE_USER_ZDOTDIR: userZdotdir,

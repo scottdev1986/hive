@@ -31,6 +31,10 @@ describe("shell-backed terminal sessions", () => {
     expect(zdotdir).toContain(sessionId);
     const Bun = (await import("bun")).default;
     
+    // .zshenv should forward to user's file (read first by login zsh)
+    const zshenv = await Bun.file(`${zdotdir}/.zshenv`).text();
+    expect(zshenv).toContain("HIVE_USER_ZDOTDIR");
+    
     // .zshrc should exist and contain the bootstrap
     const zshrc = await Bun.file(`${zdotdir}/.zshrc`).text();
     expect(zshrc).toContain("HIVE_AGENT_UI_COMMAND");
