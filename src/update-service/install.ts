@@ -313,7 +313,7 @@ async function proveStaged(
   manifest: ReleaseManifest,
   cli: ReleaseArtifact,
   sessiond: ReleaseArtifact,
-  terminfo: ReleaseArtifact,
+  _terminfo: ReleaseArtifact,
   root: string,
   signature: string,
 ): Promise<StageOutcome> {

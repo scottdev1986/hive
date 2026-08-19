@@ -11,8 +11,8 @@ export const TERMINAL_SHELL = "/bin/zsh";
 const HIVE_ZSHRC = [
   "# Hive one-shot terminal init",
   "# Source user's real zshrc if it exists",
-  'if [[ -f "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshrc" ]]; then',
-  '  source "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshrc"',
+  `if [[ -f "\${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshrc" ]]; then`,
+  `  source "\${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshrc"`,
   'elif [[ -f "$HOME/.zshrc" ]]; then',
   '  source "$HOME/.zshrc"',
   "fi",
@@ -21,9 +21,9 @@ const HIVE_ZSHRC = [
   "# 80x24 before any viewer exists; workspace attach sends SIGWINCH with",
   "# the real grid. A pane that is already 80x24 still gets that resize.",
   "# Skip the wait when stdout is not a tty (tests, pipes).",
-  'if [[ "${HIVE_TUI_LAUNCHED:-}" != "1" ]]; then',
+  `if [[ "\${HIVE_TUI_LAUNCHED:-}" != "1" ]]; then`,
   "  export HIVE_TUI_LAUNCHED=1",
-  '  if [[ -n "${HIVE_AGENT_UI_COMMAND:-}" ]]; then',
+  `  if [[ -n "\${HIVE_AGENT_UI_COMMAND:-}" ]]; then`,
   "    if [[ -t 1 ]]; then",
   "      hive_tty_ready=0",
   "      trap 'hive_tty_ready=1' WINCH",
@@ -50,8 +50,8 @@ const HIVE_ZSHRC = [
  */
 const HIVE_ZSHENV = [
   "# Hive ZDOTDIR .zshenv - forward to user's file",
-  'if [[ -f "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshenv" ]]; then',
-  '  source "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshenv"',
+  `if [[ -f "\${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshenv" ]]; then`,
+  `  source "\${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zshenv"`,
   'elif [[ -f "$HOME/.zshenv" ]]; then',
   '  source "$HOME/.zshenv"',
   "fi",
@@ -63,8 +63,8 @@ const HIVE_ZSHENV = [
  */
 const HIVE_ZPROFILE = [
   "# Hive ZDOTDIR .zprofile - forward to user's file",
-  'if [[ -f "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zprofile" ]]; then',
-  '  source "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zprofile"',
+  `if [[ -f "\${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zprofile" ]]; then`,
+  `  source "\${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zprofile"`,
   'elif [[ -f "$HOME/.zprofile" ]]; then',
   '  source "$HOME/.zprofile"',
   "fi",
@@ -76,8 +76,8 @@ const HIVE_ZPROFILE = [
  */
 const HIVE_ZLOGIN = [
   "# Hive ZDOTDIR .zlogin - forward to user's file",
-  'if [[ -f "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zlogin" ]]; then',
-  '  source "${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zlogin"',
+  `if [[ -f "\${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zlogin" ]]; then`,
+  `  source "\${HIVE_USER_ZDOTDIR:+$HIVE_USER_ZDOTDIR/}.zlogin"`,
   'elif [[ -f "$HOME/.zlogin" ]]; then',
   '  source "$HOME/.zlogin"',
   "fi",
