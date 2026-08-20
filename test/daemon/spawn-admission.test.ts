@@ -11,8 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
-import { HierarchyService } from "../../src/daemon/hierarchy-service/hierarchy-service";
 import { RunControl } from "../../src/daemon/hierarchy-service/hierarchy-run-control";
+import { HierarchyService } from "../../src/daemon/hierarchy-service/hierarchy-service";
 import { HierarchyValidationError } from "../../src/daemon/hierarchy-service/records";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import type {
@@ -849,6 +849,30 @@ test("measured worktree HEAD mismatch rejects SpawnBrief creation", () => {
   ).toThrow("launch worktree, branch, or base");
 });
 
+test("fresh dispatch is admitted when worktree HEAD moved since the run opened", () => {
+  const laterSha = "b".repeat(40);
+  const identity = admission.preflight(hierarchyFields(), "author");
+  const facts = launchFacts(identity, { baseSha: laterSha });
+  admission.stampMeasuredLaunch(identity, facts);
+  admission.prepareLaunch(identity, facts);
+  expect(admission.takeLaunchContext(identity).computedPointers.baseSha).toBe(
+    laterSha,
+  );
+});
+
+test("fresh dispatch is admitted when measured worktree is derived from a name the caller could not predeclare", () => {
+  const identity = admission.preflight(hierarchyFields(), "author");
+  const facts = launchFacts(identity, {
+    worktree: "/repo/.hive/worktrees/lincoln",
+    branch: "hive/lincoln",
+  });
+  admission.stampMeasuredLaunch(identity, facts);
+  admission.prepareLaunch(identity, facts);
+  const brief = admission.takeLaunchContext(identity);
+  expect(brief.computedPointers.worktree).toBe("/repo/.hive/worktrees/lincoln");
+  expect(brief.computedPointers.branch).toBe("hive/lincoln");
+});
+
 test.each([
   ["worktree", { worktree: "/repo/.hive/worktrees/forged" }],
   ["branch", { branch: "hive/forged" }],
@@ -1682,17 +1706,20 @@ test("spawner binds after readiness and preserves identities when terminal death
     "working-before-bind",
     "bind-then-throws",
     "paused-before-launch",
-    "wrong-head",
+    "moved-head",
     "starts-board-task",
   ] as const) {
     const launchFails = scenario === "provider-fails";
     const workingBeforeBind = scenario === "working-before-bind";
     const bindThenThrows = scenario === "bind-then-throws";
     const pauseBeforeLaunch = scenario === "paused-before-launch";
-    const wrongHead = scenario === "wrong-head";
+    const movedHead = scenario === "moved-head";
     const startsBoardTask = scenario === "starts-board-task";
     const succeeds =
-      scenario === "succeeds" || workingBeforeBind || startsBoardTask;
+      scenario === "succeeds" ||
+      workingBeforeBind ||
+      startsBoardTask ||
+      movedHead;
     const root = await mkdtemp(join(tmpdir(), "hive-spawn-admission-root-"));
     const home = await mkdtemp(join(tmpdir(), "hive-spawn-admission-home-"));
     const worktree = join(root, "worker");
@@ -1776,7 +1803,7 @@ test("spawner binds after readiness and preserves identities when terminal death
         path: worktree,
         branch: "hive/worker",
       }),
-      measureWorktreeHead: async () => (wrongHead ? "9".repeat(40) : baseSha),
+      measureWorktreeHead: async () => (movedHead ? "b".repeat(40) : baseSha),
       unavailableAgentNames: async () => new Set(),
       stopSession: async () => ({ killed: [], survivors: [] }),
       sleep: async () => {},
@@ -1844,16 +1871,6 @@ test("spawner binds after readiness and preserves identities when terminal death
         category: "simple_coding",
         ...hierarchyFields({}, spec),
       } as const;
-      if (wrongHead) {
-        await expect(spawner.spawn(request)).rejects.toThrow(
-          "launch worktree, branch, or base",
-        );
-        expect(launchCalls).toBe(0);
-        expect(launchedStore.getAgentBinding(workerBinding)).toBeNull();
-        expect(launchedDb.listRunOutcomes()).toHaveLength(1);
-        expect(launchedDb.listRunOutcomes()[0]?.outcome).toBe("launch-failed");
-        continue;
-      }
       const record = await spawner.spawn(request);
       expect(record.id).toBe(workerAgentId);
       expect(record.capabilityEpoch).toBe(1);
@@ -1924,6 +1941,7 @@ test("spawner binds after readiness and preserves identities when terminal death
           generation: 1,
           credentialId: "credential-worker",
           unboundAt: null,
+          ...(movedHead ? { baseSha: "b".repeat(40) } : {}),
         });
         const launchedRecord = launchedDb.getAgentById(record.id);
         if (launchedRecord === null) {
@@ -2363,7 +2381,6 @@ test("a failed launch leaves the hierarchy task and identity dispatchable for re
   for (const scenario of [
     { fault: "routing-refusal", rejects: "has no route and no global route" },
     { fault: "worktree-failure", rejects: "worktree creation failed" },
-    { fault: "wrong-head", rejects: "launch worktree, branch, or base" },
     { fault: "record-insert", rejects: "agent row insert failed" },
     { fault: "terminal-create", rejects: null },
   ] as const) {
@@ -2445,8 +2462,7 @@ test("a failed launch leaves the hierarchy task and identity dispatchable for re
         }
         return { path: worktree, branch: "hive/worker" };
       },
-      measureWorktreeHead: async () =>
-        faulted && scenario.fault === "wrong-head" ? "9".repeat(40) : baseSha,
+      measureWorktreeHead: async () => baseSha,
       settlement: {
         open: async () => {},
         settleFailed: async (_agent, failedWorktree) => ({

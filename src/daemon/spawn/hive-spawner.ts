@@ -85,8 +85,8 @@ import type {
 } from "../session-host/session-host-contract";
 import { SessiondWireError } from "../session-host/sessiond-host";
 import {
-  type ShellSessionLaunch,
   prepareSessionZdotdir,
+  type ShellSessionLaunch,
   shellSessionLaunch,
 } from "../session-host/shell-session";
 import {
@@ -1218,14 +1218,19 @@ export class HiveSpawner implements Spawner {
         const baseSha = await (
           this.dependencies.measureWorktreeHead ?? readWorktreeHead
         )(worktree.path);
-        hierarchyAdmission.prepareLaunch(hierarchyIdentity, {
+        const measuredFacts = {
           provider: tool,
           model,
           sessionLocator,
           worktree: worktree.path,
           branch: worktree.branch,
           baseSha,
-        });
+        };
+        hierarchyAdmission.stampMeasuredLaunch(
+          hierarchyIdentity,
+          measuredFacts,
+        );
+        hierarchyAdmission.prepareLaunch(hierarchyIdentity, measuredFacts);
       } catch (error) {
         hierarchyAdmission.failLaunch(hierarchyIdentity);
         const failed = await this.failSpawn(

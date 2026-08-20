@@ -4,6 +4,11 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AgentRecord } from "../../schemas/agent";
 import {
+  RunIdSchema,
+  SafeUintSchema,
+  TaskIdSchema,
+} from "../../schemas/hierarchy-ids";
+import {
   type AgentBinding,
   type AgentBindingRef,
   AgentBindingSchema,
@@ -11,6 +16,7 @@ import {
   AssignmentKindSchema,
   BriefIdSchema,
   type DelegationGrant,
+  type DelegationSpec,
   DelegationSpecSchema,
   GrantIdSchema,
   isDelegationGrantAttenuation,
@@ -24,15 +30,10 @@ import type {
   SpecRevision,
 } from "../../schemas/hierarchy-run";
 import type { TaskDetail } from "../../schemas/task-detail";
-import {
-  RunIdSchema,
-  SafeUintSchema,
-  TaskIdSchema,
-} from "../../schemas/hierarchy-ids";
 import { systemClock } from "../../shared/clock";
-import { canonicalJson } from "../status-service/status-service";
-import type { HierarchyStore } from "../hierarchy-store";
 import { ABORTED_RUN_ADMISSION_SEAM } from "../hierarchy-service/hierarchy-run-control";
+import type { HierarchyStore } from "../hierarchy-store";
+import { canonicalJson } from "../status-service/status-service";
 
 export const SpawnBriefInputSchema = z.strictObject({
   engineerConstraints: SpawnBriefSchema.shape.engineerConstraints.omit({
@@ -91,6 +92,7 @@ type Attempt = {
   identity: HierarchySpawnIdentity;
   launchFacts: HierarchyLaunchFacts | null;
   briefTaken: boolean;
+  measuredProvenanceStamped: boolean;
 };
 
 function sameJson(left: unknown, right: unknown): boolean {
@@ -174,8 +176,45 @@ export class SpawnAdmission {
         identity,
         launchFacts: null,
         briefTaken: false,
+        measuredProvenanceStamped: false,
       });
       return identity;
+    });
+  }
+
+  /**
+   * Records the worktree, branch, and HEAD the daemon actually created on this
+   * reserved attempt. Dispatchers cannot predeclare those facts: they are
+   * derived from an agent name Hive chooses after admission. prepareLaunch still
+   * compares measured facts to this stamped record, so a forged launch stays
+   * detectable.
+   */
+  stampMeasuredLaunch(
+    identity: HierarchySpawnIdentity,
+    facts: HierarchyLaunchFacts,
+  ): void {
+    const attempt = this.requireAttempt(identity);
+    this.store.transaction(() => {
+      if (attempt.measuredProvenanceStamped || attempt.launchFacts !== null) {
+        throw new SpawnAdmissionError("launch provenance was already stamped");
+      }
+      const spec = attempt.fields.delegationSpec;
+      if (spec === undefined) {
+        throw new SpawnAdmissionError(
+          "hierarchy spawn requires a DelegationSpec",
+        );
+      }
+      const stamped: DelegationSpec = {
+        ...spec,
+        inputs: { ...spec.inputs, baseSha: facts.baseSha },
+        authority: {
+          ...spec.authority,
+          worktree: facts.worktree,
+          branch: facts.branch,
+        },
+      };
+      attempt.fields = { ...attempt.fields, delegationSpec: stamped };
+      attempt.measuredProvenanceStamped = true;
     });
   }
 
@@ -188,6 +227,7 @@ export class SpawnAdmission {
       const checked = this.requireAuthority(
         attempt.fields,
         attempt.assignmentKind,
+        attempt.measuredProvenanceStamped,
       );
       this.assertIdentity(identity, checked.grant);
       this.requireUnboundIdentity(identity);
@@ -267,6 +307,7 @@ export class SpawnAdmission {
       const checked = this.requireAuthority(
         attempt.fields,
         attempt.assignmentKind,
+        attempt.measuredProvenanceStamped,
       );
       this.assertIdentity(identity, checked.grant);
       this.requireUnboundIdentity(identity);
@@ -291,6 +332,7 @@ export class SpawnAdmission {
       const checked = this.requireAuthority(
         attempt.fields,
         attempt.assignmentKind,
+        attempt.measuredProvenanceStamped,
       );
       this.assertIdentity(identity, checked.grant);
       this.requireUnboundIdentity(identity);
@@ -377,6 +419,7 @@ export class SpawnAdmission {
   private requireAuthority(
     fields: HierarchySpawnFields,
     assignmentKind: AssignmentKind,
+    measuredProvenanceStamped = false,
   ): CheckedAuthority {
     const run = this.store.getRun(fields.runId);
     if (run === null) {
@@ -459,7 +502,10 @@ export class SpawnAdmission {
         "hierarchy spawn requires a DelegationSpec",
       );
     }
-    if (!sameJson(task.delegationSpec, fields.delegationSpec)) {
+    if (
+      !measuredProvenanceStamped &&
+      !sameJson(task.delegationSpec, fields.delegationSpec)
+    ) {
       throw new SpawnAdmissionError(
         `DelegationSpec does not match assigned Task ${fields.taskId}`,
       );
@@ -471,8 +517,8 @@ export class SpawnAdmission {
       !spec.inputs.taskRevisions.some(
         (ref) => ref.taskId === task.taskId && ref.revision === task.revision,
       ) ||
-      spec.inputs.baseSha !== task.baseSha ||
-      task.baseSha !== run.baseSha
+      (!measuredProvenanceStamped &&
+        (spec.inputs.baseSha !== task.baseSha || task.baseSha !== run.baseSha))
     ) {
       throw new SpawnAdmissionError(
         "DelegationSpec pointers do not match the approved Run and assigned Task",
@@ -499,7 +545,7 @@ export class SpawnAdmission {
       node.ownerNodeId !== task.ownerNodeId ||
       !grant.taskIds.includes(fields.taskId) ||
       !grant.branches.includes(task.branch) ||
-      spec.authority.branch !== task.branch ||
+      (!measuredProvenanceStamped && spec.authority.branch !== task.branch) ||
       !sameBinding(spec.allowance.owner, grant.issuer) ||
       !spec.authority.permittedOperations.every((action) =>
         grant.actions.includes(action),

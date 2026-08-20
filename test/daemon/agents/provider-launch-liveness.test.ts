@@ -349,6 +349,7 @@ test("a launch is fully recorded before MCP reporting is consulted", async () =>
     hierarchyAdmission: () =>
       ({
         preflight: () => identity,
+        stampMeasuredLaunch: () => {},
         prepareLaunch: () => {},
         revalidateLaunch: () => {},
         takeLaunchContext: () => undefined,
