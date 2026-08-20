@@ -16,6 +16,7 @@ import {
   parseCredentialHeaders,
   runQA,
 } from "./runner";
+import { daemonHomesToWatch } from "./wait-ready";
 
 const exec: Exec = async (argv, options): Promise<ExecResult> => {
   const proc = Bun.spawn([...argv], {
@@ -44,18 +45,30 @@ function authedFetch(
   };
 }
 
-// The rig starts `hive daemon` from the staging root, which is not a git
-// repo, so the product leaves HIVE_HOME on the QA machine home and writes
-// daemon.port there. Observe through that pin; deriving a repo-instance home
-// talks to a daemon that is not the one `make qa` brought up.
+// Workspace start may replace the machine-home daemon with a repo-instance
+// daemon. Wait-ready already names both homes; observe the one that currently
+// has daemon.port so we talk to the process that survived bring-up.
 async function buildObserve(
   qaBin: string,
-  _project: string,
+  project: string,
 ): Promise<{ observe: ObserveClients; instanceHome: string } | null> {
-  const daemonHome = process.env.HIVE_HOME;
-  if (daemonHome === undefined || daemonHome.length === 0) return null;
-  const port = readDaemonPort(daemonHome);
-  if (port === null) return null;
+  const qaHome = process.env.HIVE_HOME;
+  if (qaHome === undefined || qaHome.length === 0) return null;
+  let daemonHome: string | null = null;
+  let port: number | null = null;
+  try {
+    for (const home of daemonHomesToWatch(qaHome, project)) {
+      const found = readDaemonPort(home);
+      if (found !== null) {
+        daemonHome = home;
+        port = found;
+        break;
+      }
+    }
+  } catch {
+    return null;
+  }
+  if (daemonHome === null || port === null) return null;
   const credential = await exec([qaBin, "credential", "--agent", "user"], {
     env: { ...process.env, HIVE_HOME: daemonHome },
   });

@@ -55,6 +55,7 @@ does not name this tree.
 `make qa` used to print daemon readiness from the startup announcement, then
 fail with no `daemon.port` under the QA home. The announcement is not the
 artefact the next step needs. `qa/wait-ready.ts` waits for a usable
-`daemon.port` under the repo-instance home (and the machine home, if they
-differ) before `make qa` continues, and prints that home so the memory probe
-reads the same place the daemon wrote.
+`daemon.port` under the repo-instance home and the machine home before
+`make qa` continues. Workspace start may move the live daemon onto the repo
+instance; `qa-run` observes whichever of those homes currently has the port
+file.
