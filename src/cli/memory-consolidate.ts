@@ -7,7 +7,7 @@ import {
   probeDaemonReuse,
 } from "../daemon/lifecycle/daemon-lifecycle";
 import { projectRootOrCwd } from "../daemon/project-identity-core/project-root";
-import { getHiveHome, hiveInstanceSuffix } from "../hive-home/home";
+import { hiveInstanceSuffix } from "../hive-home/home";
 import {
   type ConsolidationCandidate,
   type ConsolidationReport,
@@ -20,6 +20,7 @@ import {
   MemoryJobReceiptSchema,
   MemoryMaintenanceProjectionSchema,
 } from "../schemas/memory-projections";
+import { bindCliHiveHome } from "./bind-hive-home";
 import { UserDaemonClient } from "./user-daemon-client";
 
 export type ConsolidationApplyTarget =
@@ -37,7 +38,7 @@ export async function resolveConsolidationApplyTarget(
   repoRoot: string,
   dependencies: ConsolidationOwnershipDependencies = {},
 ): Promise<ConsolidationApplyTarget> {
-  const hiveHome = (dependencies.hiveHome ?? getHiveHome)();
+  const hiveHome = (dependencies.hiveHome ?? bindCliHiveHome)();
   const liveness = await (dependencies.liveness ?? daemonInstanceLiveness)(
     hiveHome,
     hiveInstanceSuffix(hiveHome),

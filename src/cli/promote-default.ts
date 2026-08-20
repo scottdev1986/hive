@@ -6,12 +6,9 @@ import {
   RoutingPolicyStore,
   readRoutingPolicyDatabase,
 } from "../daemon/routing-policy-store";
-import {
-  defaultHiveHome,
-  getHiveHome,
-  hiveInstanceSuffix,
-} from "../hive-home/home";
+import { defaultHiveHome, hiveInstanceSuffix } from "../hive-home/home";
 import type { RoutingPolicy } from "../schemas/routing-policy";
+import { bindCliHiveHome } from "./bind-hive-home";
 
 const PROMOTE_ACTOR = "hive-cli-promote-default";
 
@@ -29,7 +26,7 @@ export interface PromoteDefaultModelControlResult {
 export async function promoteDefaultModelControl(
   options: PromoteDefaultModelControlOptions = {},
 ): Promise<PromoteDefaultModelControlResult> {
-  const currentHome = resolve(options.currentHome ?? getHiveHome());
+  const currentHome = resolve(options.currentHome ?? bindCliHiveHome());
   const targetHome = resolve(options.defaultHome ?? defaultHiveHome());
   if (currentHome === targetHome) {
     throw new Error(

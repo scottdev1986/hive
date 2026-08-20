@@ -77,6 +77,7 @@ import {
   readRememberedBilling,
 } from "../usage-service/usage-credits/usage-credit-memory";
 import { QuotaService } from "../usage-service/usage-quota";
+import { bindCliHiveHome } from "./bind-hive-home";
 import { composeModelControlSnapshot } from "./model-control";
 
 export async function startBrokerAndDiscoverEngineBuildId(
@@ -234,6 +235,7 @@ export function spawnerExecutables(
 }
 
 export async function runDaemon(): Promise<void> {
+  bindCliHiveHome();
   // Lock first: the broker authenticates the single daemon-lock identity, so spawn under that identity only after the exclusive lock is held.
   await acquireDaemonLock();
   process.once("exit", () => releaseDaemonLock());

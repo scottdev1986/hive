@@ -3,6 +3,10 @@
 import { Command, CommanderError } from "commander";
 import { runAgentUi } from "./cli/agent-ui/run";
 import {
+  bindCliHiveHome,
+  cliCommandKeepsMachineHome,
+} from "./cli/bind-hive-home";
+import {
   attachGrantCli,
   autonomyCli,
   deleteMemoryCli,
@@ -1081,6 +1085,7 @@ export function createProgram(): Command {
 export async function main(argv = process.argv): Promise<number> {
   try {
     selectInstanceFromArgv(argv);
+    if (!cliCommandKeepsMachineHome(argv)) bindCliHiveHome();
     // The passive update notice trails user-facing commands (npm/gh shape): the check runs alongside the command, the line prints after it, and a failed or slow check is silence, never an error or a stall.
     await withTrailingUpdateNotice(wantsUpdateNotice(argv), () =>
       createProgram().parseAsync(argv),

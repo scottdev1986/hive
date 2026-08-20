@@ -15,6 +15,7 @@ import { errorMessage } from "../shared/error-message";
 import { fetchTokenUsage } from "../usage-service/token-usage-client";
 import { readBillingWithMemory } from "../usage-service/usage-credits/usage-credit-memory";
 import type { AccountBilling } from "../usage-service/usage-credits/usage-credit-types";
+import { bindCliHiveHome } from "./bind-hive-home";
 import { fetchQuotaStatus } from "./mcp";
 
 export type { ModelControlSnapshot } from "../daemon/routing-service/model-control-snapshot";
@@ -152,7 +153,12 @@ export async function buildModelControlSnapshot(
   const readBilling =
     dependencies.readBilling ??
     ((provider: CapabilityProvider) => readBillingWithMemory(provider));
-  const daemonPort = dependencies.daemonPort ?? readDaemonPort;
+  const daemonPort =
+    dependencies.daemonPort ??
+    (() => {
+      bindCliHiveHome();
+      return readDaemonPort();
+    });
   const quota = dependencies.quota ?? fetchQuotaStatus;
   const tokenUsage = dependencies.tokenUsage ?? fetchTokenUsage;
   const readQuota = async (): Promise<QuotaStatus[]> => {

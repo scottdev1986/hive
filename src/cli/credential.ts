@@ -3,10 +3,12 @@ import {
   readCredential,
   USER_SUBJECT,
 } from "../daemon/authorization/credentials";
+import { bindCliHiveHome } from "./bind-hive-home";
 
 export function authorizationHeaders(
   subject: string,
 ): Record<string, string> | null {
+  bindCliHiveHome();
   const token = readCredential(subject);
   return token === null ? null : { Authorization: `Bearer ${token}` };
 }

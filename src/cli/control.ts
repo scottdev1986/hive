@@ -16,6 +16,7 @@ import type { MemoryScope, MemoryWriteInput } from "../schemas/memory";
 import type { QuotaObservationInput } from "../schemas/quota";
 import type { SessionLocator } from "../schemas/session-protocol";
 import { isDaemonPort } from "../shared/daemon-port";
+import { bindCliHiveHome } from "./bind-hive-home";
 import {
   captureInvokerIdentity,
   formatInvokerOrigin,
@@ -40,6 +41,7 @@ import {
   UserDaemonClient,
 } from "./user-daemon-client";
 export function requireDaemonPort(explicitPort?: number): number {
+  if (explicitPort === undefined) bindCliHiveHome();
   const port = explicitPort ?? readDaemonPort();
   if (port === null || !isDaemonPort(port)) {
     throw new Error(
