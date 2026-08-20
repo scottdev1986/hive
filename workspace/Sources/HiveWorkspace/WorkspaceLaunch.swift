@@ -20,32 +20,23 @@ public struct WorkspaceQAHooks {
     /// that selects it, so the shipped app cannot be talked into fixtures.
     public var fixtureShell: ((_ arguments: [String]) -> FixtureShellLoader?)?
 
-    /// Hands the launched project window to the harness. Under `--smoke` the
-    /// app never becomes interactive and the harness exits the process; on a
-    /// normal launch the harness reads its own environment to decide whether to
-    /// drive the window at all.
-    public var smoke: ((_ surface: any SmokeSurface, _ config: LaunchConfig) -> Void)?
-
     /// Gives the QA executable the shell window after it is visible. The shipped
     /// app installs no hook, so the file-driven tour driver is not linked there.
     public var shellTour: ((any WorkspaceShellQASurface) -> Void)?
 
     public init(
         fixtureShell: ((_ arguments: [String]) -> FixtureShellLoader?)? = nil,
-        smoke: ((_ surface: any SmokeSurface, _ config: LaunchConfig) -> Void)? = nil,
         shellTour: ((any WorkspaceShellQASurface) -> Void)? = nil
     ) {
         self.fixtureShell = fixtureShell
-        self.smoke = smoke
         self.shellTour = shellTour
     }
 }
 
 public enum WorkspaceLaunch {
     /// The CLI launches the app with backend-issued project identity plus
-    /// --project <abs dir> --port <daemon port> --hive <abs hive binary>. `--smoke`
-    /// runs the headless end-to-end checks and exits 0/1; `--feed <binary>`
-    /// overrides the feed subprocess for that harness.
+    /// --project <abs dir> --port <daemon port> --hive <abs hive binary>.
+    /// `--feed <binary>` overrides the feed subprocess for a harness.
     public static func run(qa: WorkspaceQAHooks = WorkspaceQAHooks()) {
         // A helper can exit between an isRunning check and a pipe write. Make
         // that ordinary race throw EPIPE instead of terminating the Workspace.
@@ -67,9 +58,7 @@ public enum WorkspaceLaunch {
             launch: shellLaunch,
             shellTour: qa.shellTour)
         app.delegate = delegate
-        let smokeVisible = ProcessInfo.processInfo.environment["HIVE_SMOKE_VISIBLE"] == "1"
-        let backgroundOnly = (config.smoke && !smokeVisible) || shellLaunch.proofMode
-        app.setActivationPolicy(backgroundOnly ? .accessory : .regular)
+        app.setActivationPolicy(shellLaunch.proofMode ? .accessory : .regular)
         app.run()
     }
 }

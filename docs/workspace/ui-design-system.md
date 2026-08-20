@@ -39,7 +39,7 @@ The historical warning survives in the code at `workspace/Sources/HiveWorkspace/
 
 **A label whose compression resistance is ≥ `NSLayoutPriorityWindowSizeStayPut` (500) grows the WINDOW instead of truncating.** The AppKit default is **750**. So a perfectly ordinary "this long model id truncates with a tooltip" label, left at its defaults, silently instructed the layout pass to widen the window to fit — and the settings window opened absurdly wide (thousands of points, past the screen).
 
-Any soft "fill the available width" constraint must therefore sit **below 500**. The settings reading column is pinned at priority **490** (`workspace/Sources/HiveWorkspace/Settings/SettingsPageController.swift:49-54`), yielding to the hard 720 pt cap so narrow windows get margins and wide windows get a column, never a sprawl. Truncation + `toolTip` is the correct treatment; it just cannot be requested at a priority that outranks the window's right to stay put.
+Any soft "fill the available width" constraint must therefore sit **below 500**. Truncation + `toolTip` is the correct treatment; it just cannot be requested at a priority that outranks the window's right to stay put.
 
 ## Honest state: the two rules that were bugs
 
@@ -78,19 +78,11 @@ Near-limit coloring comes from the **remaining** fraction, not a hardcoded used-
 
 **Responsive.** Two-column pages collapse below `Metric.twoColumnBreakpoint`; windows enforce `Metric.minContentWidth` instead of rendering broken. Pages scroll in one `NSScrollView` with a flipped document view; nothing nests scroll views.
 
-**Threading (part of "responsive").** Any `hive` CLI subprocess read runs **off the main thread** — `ModelControlDataSource` is the pattern: background queue, main-queue callbacks, `dispatchPrecondition` guarding the subprocess call. Controls respond instantly from local state; reconciliation follows. A slow or dead read renders a visible loading or failed state — **never a frozen window, and never a stale number wearing a fresh label.**
+**Threading (part of "responsive").** Daemon reads run **off the main thread** — `WorkspaceDaemonClient` is the pattern: credential acquisition never runs on main, and observers always fire on main. Controls respond instantly from local state; reconciliation follows. A slow or dead read renders a visible loading or failed state — **never a frozen window, and never a stale number wearing a fresh label.**
 
 **Accessibility.** Every interactive element gets a real-words `setAccessibilityLabel`. Hit targets ≥ 28 pt. States survive Increase Contrast and color-blindness because they are words + symbols, not tints.
 
-## Honest open work
-
-The token ramp is still concentrated in the Model Control Center. Pane chrome uses the legacy top-level `Theme` font aliases but does not use `Theme.Space` or `Theme.Metric`. Verified still unbuilt as of 2026-07-14:
-
-- **Pane metrics are not tokenised.** `PaneView.swift` hardcodes `cornerRadius = 10` (:43, :50), `headerStack.spacing = 6` (:95), and a 14 pt status icon (:139-140). These duplicate `Metric.cardCornerRadius` and `Space.xs`/`s` by coincidence, not by reference — they will drift the first time a token moves.
-- **The Attention panel has no empty state.** Nothing renders when the queue is clear.
-- **No titlebar feed-health indicator.** A feed loss marks every pane disconnected, retries five times, and terminates the Workspace if the feed never returns (`workspace/Sources/HiveWorkspace/AppDelegate.swift:138-197`), but the titlebar itself carries no glanceable retry-health signal.
-
 ## See Also
 
-- [Workspace Blueprint](blueprint.md) — panes, feed contract, incidents, and rejected alternatives
-- [Model Control Center](../routing/model-control-center.md) — the Settings surface, this system's reference implementation
+- [Workspace Blueprint](blueprint.md)
+- [Model Control Center](../routing/model-control-center.md)

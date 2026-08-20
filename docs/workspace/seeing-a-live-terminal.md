@@ -35,18 +35,12 @@ make run
 | Step | What you should SEE |
 |---|---|
 | `make build` | Zig/GhosttyKit/sessiond/Swift build output, ending in `staged: hive 0.0.0 (<sha>, …)`. Stages an unsigned dev release under `.dev/`. |
-| `make run` | A **HiveWorkspace window opens with one full-window terminal pane already running** — the orchestrator ("queen") pane, a Claude TUI. This is a real TTY: type into it. |
-| type into the queen pane | e.g. `spawn an agent to list this repo`. The orchestrator calls `hive_spawn`; Hive selects and reserves the agent's name. |
-| a few seconds later | A **second pane appears** for the new agent, rendering that agent's live session. |
+| `make run` | A **HiveWorkspace Shell window opens on Live Run**, with queen selected in the session rail and one attached terminal. This is a real TTY: type into it. |
+| type into the queen terminal | e.g. `spawn an agent to list this repo`. The orchestrator calls `hive_spawn`; Hive selects and reserves the agent's name. |
+| a few seconds later | The new agent appears in the Live Run rail. Selecting it attaches that agent's live session. |
 
-Terminal number one requires **no agent**. `bootstrapOrchestrator()` runs
-unconditionally at launch (`workspace/Sources/HiveWorkspace/AppDelegate.swift:137`),
-so an empty workspace still shows the queen pane. If you see zero terminals, the
-app either never launched or fell to the no-project placeholder.
-
-There is **no spawn button**. `MainMenuBuilder.swift` has no "New Agent" item;
-agent creation is daemon-driven only. You ask the orchestrator, in prose, in its
-pane.
+There is **no spawn button**. Agent creation is daemon-driven: you ask the
+orchestrator, in prose, in its terminal.
 
 ## Symptom → cause
 
@@ -55,11 +49,11 @@ All of these read as "no terminal appeared".
 | Symptom | Cause | Fix |
 |---|---|---|
 | `error: too many arguments … got 1: run` + help dump | `hive run`/`hive build` are not commands | `make run`; bare `hive` to launch |
-| 480×200 window: "No project is open. Run `hive` from a project directory" | App launched without the 5-arg contract — a Dock click, or launched outside a git repo (`AppDelegate.swift:79-95`) | Launch via `make run`, or `hive` from inside a git repo |
+| Shell fault / no project identity | App launched without the project and daemon contract — a Dock click, or launched outside a git repo | Launch via `make run`, or `hive` from inside a git repo |
 | `no dev build staged; run 'make build' first` | `make run` with an empty `.dev/` | `make build` |
-| Queen pane fine, agent panes never appear | The workspace-feed subprocess is failing; statuses go stale. After 5 restarts the whole app quits | Check the daemon is up; re-run `make run` |
-| Agent pane themed but empty, no error, no badge | Ghostty/sessiond pane: `ghostty_init` or `makeView()` threw and was swallowed to NSLog (`PaneView.swift:60-63`) | Missing/mismatched `GhosttyKit.xcframework` → `make build` |
-| Agent pane with a **red badge / "renderer disconnected"** | sessiond attach failed 6 times: grant refused, locator mismatch, or UDS connect failed | Broker not ready; check `hive-sessiond` |
+| Queen terminal fine, spawned agents never appear in the rail | The workspace-feed subprocess is failing; statuses go stale | Check the daemon is up; re-run `make run` |
+| Live Run selected but the terminal is empty, no error | Ghostty/sessiond surface creation failed | Missing/mismatched `GhosttyKit.xcframework` → `make build` |
+| Live Run shows a renderer-unavailable wait | sessiond attach failed: grant refused, locator mismatch, or UDS connect failed | Broker not ready; check `hive-sessiond` |
 | App won't build at all | `workspace/Vendor/GhosttyKit.xcframework` absent — it's a `binaryTarget` build output, not checked in | `make build` |
 | Everything "works" but the surface returns nulls | Not an unlocked Aqua GUI session (locked screen, ssh, agent shell) | Run it yourself, at your own console, screen unlocked |
 
@@ -94,9 +88,8 @@ words would have saved this whole investigation.
 ## Milestone honesty
 
 **PARTIAL.** B2.2 and B2.4 landed; C1.0/C1.1/C1.2 landed on top. The sessiond →
-`HiveTerminalView` path is landed production code, default-on, gated only by the
-daemon-assigned `locator.hostKind == "sessiond"` — no feature flag
-(`ProjectWindowController.swift:307-317`).
+`HiveTerminalView` path is landed production code in Live Run, gated only by the
+daemon-assigned `locator.hostKind == "sessiond"` — no feature flag.
 
 What is **not** yet recorded is the live-GUI evidence cell. `raw/qualification/hive-b25-production-pane/EVIDENCE.md`
 marks "Production wiring full (sessiond agent + HiveTerminalView under real

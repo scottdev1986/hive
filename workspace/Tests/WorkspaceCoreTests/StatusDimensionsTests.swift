@@ -91,39 +91,4 @@ final class StatusDimensionsTests: XCTestCase {
         XCTAssertEqual(decoded.presentation.paneStatus.paneStatus(), .unknown)
     }
 
-    func testTerminalLossDisconnectsHealthWithoutFabricatingATurnState() throws {
-        let state = ProjectState(projectID: "project", displayName: "Hive")
-        state.apply(feed: [try agent(dimensions: dimensions())])
-        let disconnected = try agent(
-            flatStatus: "stuck",
-            dimensions: dimensions(health: "disconnected"),
-            presentation:
-                #"{"panePresence":"visible","terminalState":"reconnecting","headerDetail":"runtime=ready · turn=working · input=empty · mail=none · health=disconnected · attention=none","paneStatus":{"kind":"disconnected","reason":"health reported disconnected","lastConfirmed":"turn=working"},"activity":"disconnected","attention":null}"#)
-        state.apply(feed: [disconnected])
-
-        let pane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "worker")])
-        let status = try XCTUnwrap(disconnected.statusDimensions)
-        guard case .observed(let turn) = status.turn,
-              case .observed(let health) = status.health else {
-            return XCTFail("turn and health must remain separate observed facts")
-        }
-        XCTAssertEqual(turn.value, .working)
-        XCTAssertEqual(health.value, .disconnected)
-        if case .disconnected = pane.status {} else {
-            XCTFail("disconnected health must remain visible on the pane")
-        }
-        XCTAssertEqual(
-            pane.headerDescription,
-            "runtime=ready · turn=working · input=empty · mail=none · "
-                + "health=disconnected · attention=none")
-    }
-
-    func testDimensionsDoNotFallBackToTheLegacyFlatWord() throws {
-        let state = ProjectState(projectID: "project", displayName: "Hive")
-        state.apply(feed: [try agent(
-            flatStatus: "stuck",
-            dimensions: dimensions())])
-
-        XCTAssertTrue(state.attention.ordered.isEmpty)
-    }
 }

@@ -27,10 +27,10 @@ open -a HiveWorkspace --args \
 - `--hive` is the exact Hive binary used for daemon reads and terminal attach.
 
 The Shell is the only launch surface. Missing or invalid launch data produces a
-visible Shell fault; it never opens the retained pane-era UI as a fallback.
+visible Shell fault.
 
-The separate `HiveWorkspaceQA` executable adds frozen-corpus and smoke hooks.
-The shipped executable does not link those hooks.
+The separate `HiveWorkspaceQA` executable adds frozen-corpus hooks. The shipped
+executable does not link those hooks.
 
 ## Terminal lifecycle
 
@@ -79,10 +79,6 @@ lines; process exit alone is not proof that the run completed.
   Run workbench.
 - `HiveTerminalKit` provides the shared Ghostty renderer and session client.
 - `WorkspaceQAKit` provides hooks linked only by `HiveWorkspaceQA`.
-
-The pane-era AppDelegate, pane grid, project switcher, spatial navigation, and
-standalone Settings code remain compiled and tested for a later coordinated
-deletion. They are unreachable from both shipped and QA launch entry points.
 
 ## Keyboard map
 

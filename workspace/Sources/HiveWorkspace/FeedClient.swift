@@ -10,9 +10,9 @@ final class FeedClient {
     private var buffer = Data()
     private var stopped = false
 
-    /// All callbacks are delivered on the main queue. A nil orchestrator snapshot means its status channel failed; ProjectState renders that as disconnected rather than inventing a turn state.
+    /// All callbacks are delivered on the main queue. A nil orchestrator snapshot means its status channel failed; Live Run renders that as disconnected rather than inventing a turn state.
     var onSnapshot: (([AgentSnapshot], OrchestratorSnapshot?) -> Void)?
-    /// The strict shell adapter consumes the complete envelope so it can refuse an unsupported schema version before reading any agent fields. Legacy pane callers keep using `onSnapshot` below.
+    /// The strict shell adapter consumes the complete envelope so it can refuse an unsupported schema version before reading any agent fields.
     var onLine: ((FeedLine) -> Void)?
     var onMalformedLine: ((String) -> Void)?
     var onError: ((String) -> Void)?

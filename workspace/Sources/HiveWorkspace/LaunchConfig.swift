@@ -9,12 +9,8 @@ public struct LaunchConfig {
     var instanceHome: String?
     var hivePath: String?
     var feedOverride: String?
-    public var smoke = false
-    var settings = false
-    var settingsPage: String?
     /// Force the app appearance ("light"/"dark") — screenshot/verification affordance; never changes the system setting.
     var appearance: String?
-    var settingsWidth: Double?
 
     var isComplete: Bool {
         projectDirectory != nil && projectID != nil && projectName != nil
@@ -43,16 +39,8 @@ public struct LaunchConfig {
         var iterator = arguments.makeIterator()
         while let argument = iterator.next() {
             switch argument {
-            case "--smoke":
-                config.smoke = true
-            case "--settings":
-                config.settings = true
-            case "--settings-page":
-                config.settingsPage = iterator.next()
             case "--appearance":
                 config.appearance = iterator.next()
-            case "--settings-width":
-                config.settingsWidth = iterator.next().flatMap(Double.init)
             case "--project":
                 config.projectDirectory = iterator.next()
             case "--project-id":

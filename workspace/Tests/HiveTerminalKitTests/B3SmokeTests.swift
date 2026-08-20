@@ -14,8 +14,8 @@ import XCTest
 /// substrate gate, not a visual one.
 ///
 /// DELIBERATELY HEADLESS. GUI-bound checks (window becomes key, terminal owns
-/// first responder, app activation) live in `SmokeRunner`'s opt-in sessiond
-/// proof. Folding them in here would make this flaky and put an unlocked GUI
+/// first responder, app activation) belong to an interactive sessiond proof.
+/// Folding them in here would make this flaky and put an unlocked GUI
 /// session on the critical path of every run.
 ///
 /// DIRECT INPUT, NO RECEIPT. Interactive bytes use USER_INPUT rather than a

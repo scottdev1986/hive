@@ -1,59 +1,86 @@
+// AppearanceScreenView.swift
+//
+// Terminal theme and font. These are local presentation preferences, not
+// daemon policy, so this view writes HiveAppearancePreferences directly.
+// Live Run terminals already observe that notification and reconfigure in
+// place. Hive follows the system light/dark setting; a theme here changes
+// terminal content only.
+
 import AppKit
 import HiveTerminalKit
 
-/// Settings → Appearance: the terminal theme and the terminal font. Both selections persist and apply to panes that are already running, so the user never has to restart a session to see a choice take effect. There is deliberately no app-appearance control here. Hive follows the system appearance; the terminal *theme* is content, which is why it can be pinned independently without becoming an appearance override.
-final class AppearanceSettingsController: SettingsPageController {
+final class AppearanceScreenView: NSView {
 
     private let preferences: HiveAppearancePreferences
 
-    init(dataSource: ModelControlDataSource, preferences: HiveAppearancePreferences = .shared) {
+    init(preferences: HiveAppearancePreferences = .shared) {
         self.preferences = preferences
-        super.init(dataSource: dataSource)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        setAccessibilityIdentifier("appearance-screen")
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel("Appearance")
+        build()
     }
 
+    @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    override func buildContent() {
-        addHeader(
+    private func build() {
+        let header = PageHeaderView(
             title: "Appearance",
             subtitle: """
                 The terminal theme and font. Changes apply immediately to every \
-                open pane. Hive follows your system light or dark setting; \
+                live terminal. Hive follows your system light or dark setting; \
                 choosing a theme here changes terminal content only.
-                """
-        )
+                """)
 
-        contentStack.addArrangedSubview(
+        let stack = NSStackView(views: [
+            header,
             row(
                 label: "Terminal theme",
                 accessibility: "Terminal theme",
+                identifier: "appearance-theme",
                 titles: HiveTerminalThemeSelection.allCases.map(\.displayName),
                 selectedIndex: HiveTerminalThemeSelection.allCases
                     .firstIndex(of: preferences.themeSelection),
-                action: #selector(themeChanged(_:))
-            )
-        )
-
-        contentStack.addArrangedSubview(
+                action: #selector(themeChanged(_:))),
             row(
                 label: "Terminal font",
                 accessibility: "Terminal font",
+                identifier: "appearance-font",
                 titles: HiveTerminalFont.allCases.map(\.displayName),
                 selectedIndex: HiveTerminalFont.allCases.firstIndex(of: preferences.font),
-                action: #selector(fontChanged(_:))
-            )
-        )
+                action: #selector(fontChanged(_:))),
+        ])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = Theme.Space.m
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Theme.Space.page),
+            stack.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -Theme.Space.page),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.page),
+            stack.bottomAnchor.constraint(
+                equalTo: bottomAnchor, constant: -Theme.Space.page),
+            stack.widthAnchor.constraint(equalToConstant: 360),
+        ])
     }
 
     private func row(
         label: String,
         accessibility: String,
+        identifier: String,
         titles: [String],
         selectedIndex: Int?,
         action: Selector
     ) -> NSView {
         let caption = NSTextField(labelWithString: label)
         caption.font = Theme.Font.headline
+        caption.textColor = Theme.primaryText
         caption.compressHorizontally()
 
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -64,6 +91,7 @@ final class AppearanceSettingsController: SettingsPageController {
         popup.target = self
         popup.action = action
         popup.setAccessibilityLabel(accessibility)
+        popup.setAccessibilityIdentifier(identifier)
 
         let stack = NSStackView(views: [caption, popup])
         stack.orientation = .horizontal

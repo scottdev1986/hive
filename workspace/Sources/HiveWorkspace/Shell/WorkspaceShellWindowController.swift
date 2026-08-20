@@ -30,7 +30,6 @@ final class WorkspaceShellWindowController: NSWindowController {
     private var drawerSeparator: NSBox?
     private var inspector: ShellInspectorView?
     private var inspectorSeparator: NSBox?
-    private var settingsController: SettingsWindowController?
     /// Kept across shell renders so unrelated state refreshes can reuse the selected exact-generation viewer.
     private var liveRunWorkbench: LiveRunWorkbenchView?
     var probeRefreshHandler: (() -> Void)?
@@ -64,7 +63,6 @@ final class WorkspaceShellWindowController: NSWindowController {
             self?.performRoute(route)
         }
         topBar.onAttention = { [weak self] in self?.perform(.toggleAttention) }
-        topBar.onSettings = { [weak self] in self?.showSettings() }
         layoutContent()
         render()
         window.initialFirstResponder = sidebar.navButtonsInOrder.first
@@ -238,17 +236,6 @@ final class WorkspaceShellWindowController: NSWindowController {
         topBar.apply(
             queenProvider: state.queenProvider?.observed.liveProvider,
             attentionCount: state.attentionQueue.count)
-    }
-
-    private func showSettings() {
-        if settingsController == nil {
-            let config = LaunchConfig.parse(Array(CommandLine.arguments.dropFirst()))
-            settingsController = SettingsWindowController(
-                hivePath: config.hivePath,
-                daemonPort: config.port,
-                instanceHome: config.instanceHome)
-        }
-        settingsController?.show()
     }
 
     private func renderBanners() {
@@ -512,10 +499,11 @@ private final class ShellScreenDocumentView: NSView {
 private final class ShellTopBarView: NSView {
 
     var onAttention: () -> Void = {}
-    var onSettings: () -> Void = {}
 
     private let queenStatus = ActionButton(title: "Queen · Unknown")
     private let attentionStatus = ActionButton(title: "Attention 0")
+    private let appearanceButton = ActionButton(title: "", symbol: "gearshape")
+    private var appearancePopover: NSPopover?
 
     init() {
         super.init(frame: .zero)
@@ -533,15 +521,14 @@ private final class ShellTopBarView: NSView {
         attentionStatus.setAccessibilityIdentifier("shell-attention-status")
         attentionStatus.toolTip = "Show Attention queue (⌥⌘A)"
 
-        let settings = ActionButton(title: "", symbol: "gearshape")
-        settings.target = self
-        settings.action = #selector(settingsPressed(_:))
-        settings.setAccessibilityIdentifier("shell-settings")
-        settings.setAccessibilityLabel("Settings")
-        settings.toolTip = "Settings"
-        settings.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        appearanceButton.target = self
+        appearanceButton.action = #selector(appearancePressed(_:))
+        appearanceButton.setAccessibilityIdentifier("shell-appearance")
+        appearanceButton.setAccessibilityLabel("Appearance")
+        appearanceButton.toolTip = "Appearance"
+        appearanceButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
 
-        let statusRow = NSStackView(views: [queenStatus, attentionStatus, settings])
+        let statusRow = NSStackView(views: [queenStatus, attentionStatus, appearanceButton])
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         statusRow.orientation = .horizontal
         statusRow.alignment = .centerY
@@ -607,7 +594,23 @@ private final class ShellTopBarView: NSView {
     }
 
     @objc private func attentionPressed(_ sender: Any?) { onAttention() }
-    @objc private func settingsPressed(_ sender: Any?) { onSettings() }
+
+    @objc private func appearancePressed(_ sender: Any?) {
+        if let popover = appearancePopover, popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        let host = NSViewController()
+        host.view = AppearanceScreenView()
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = host
+        appearancePopover = popover
+        popover.show(
+            relativeTo: appearanceButton.bounds,
+            of: appearanceButton,
+            preferredEdge: .minY)
+    }
 }
 
 private final class ShellBrandView: NSView {

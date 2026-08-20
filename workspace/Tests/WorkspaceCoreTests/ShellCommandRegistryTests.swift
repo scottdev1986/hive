@@ -82,6 +82,7 @@ final class ShellCommandRegistryTests: XCTestCase {
         "Stop Hive…",
         "Attach Live Terminal",
         "Detach Terminal View",
+        "Settings…",
     ]
 
     func testEveryCommandResolvesToExactlyOneWellFormedTarget() throws {

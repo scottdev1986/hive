@@ -136,8 +136,7 @@ final class ShellPolicyEditingTests: XCTestCase {
         mode.sendAction(mode.action, to: mode.target)
         XCTAssertEqual(draftRoute(controller)?.mode, RouterMode.hiveEqual.rawValue)
         XCTAssertTrue(controller.currentState.router?.hasDraft ?? false)
-        // Equal split must not present the stored weight as an editable control
-        // (same gate RouteEditorView applies in the MCC settings editor).
+        // Equal split must not present the stored weight as an editable control.
         let equalWeight = try view(
             controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
         XCTAssertTrue(equalWeight.isHidden, "hive-equal hides the inert stored weight")

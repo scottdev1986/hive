@@ -42,6 +42,7 @@ final class ShellMenuEnumerationTests: XCTestCase {
         "Close Agent…", "Pause Run…", "Resume Run…", "Redirect Through Queen…",
         "Abort Run…", "New Curated Memory…", "Reindex…", "Stop Hive…",
         "Attach Live Terminal", "Detach Terminal View",
+        "Settings…",
     ]
 
     private func makeController() -> WorkspaceShellWindowController {

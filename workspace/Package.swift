@@ -85,14 +85,14 @@ let package = Package(
                 "WorkspaceCore",
                 "HiveTerminalKit",
             ],
-            // Official vendor marks for the Model Control Center. The release
-            // build copies the generated resource bundle into the .app
+            // Official vendor marks for Models & Quota and Queen Provider. The
+            // release build copies the generated resource bundle into the .app
             // (src/release/build.ts), so keep the directory `.copy`-stable.
             resources: [.copy("Resources/VendorMarks")]
         ),
         // The shipped product: an entry point and nothing else. It installs no
-        // QA hooks, which is what keeps the smoke checks and the fixture-corpus
-        // shell out of the binary a user launches from the Dock.
+        // QA hooks, which is what keeps the fixture-corpus shell out of the
+        // binary a user launches from the Dock.
         .executableTarget(
             name: "HiveWorkspaceApp",
             dependencies: ["HiveWorkspace"]

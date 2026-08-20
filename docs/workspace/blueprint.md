@@ -27,7 +27,7 @@ Bare `hive` is the graphical front door: it resolves and prepares the repository
 
 Queen's vendor is chosen in the Workspace (Queen Provider), not by a CLI spelling. Bare `hive` starts the same session boundary and restores the last chosen vendor; there is no plain-terminal escape hatch. `hive init` is the headless, repo-only onboarding boundary: skills, narrative memory, embeddings, and the Graphify code graph. It starts no daemon and opens no window.
 
-**There is no fixture mode and no headless acceptance mode.** The mock UI was deleted in commit 2b4c1c3 ("Replace mock Workspace with live tmux terminals"). The internal `--smoke` flag is a component diagnostic against real panes (`workspace/Sources/HiveWorkspace/LaunchConfig.swift:10-58`); it does not open the product experience and therefore cannot satisfy release acceptance. Pre-release acceptance launches the installed app through public `hive` and drives the visible vendor TUIs after choosing queen in the Workspace. Any document claiming the `workspace/` UI is a mock-driven prototype that "touches no control plane" is describing a build that no longer exists: the app speaks to the daemon.
+**There is no fixture mode and no headless acceptance mode.** The mock UI was deleted in commit 2b4c1c3 ("Replace mock Workspace with live tmux terminals"). The pane-era `--smoke` diagnostic was deleted with that UI. Pre-release acceptance launches the installed app through public `hive` and drives the visible vendor TUIs after choosing queen in the Workspace. Any document claiming the `workspace/` UI is a mock-driven prototype that "touches no control plane" is describing a build that no longer exists: the app speaks to the daemon.
 
 ## The feed contract
 

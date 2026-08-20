@@ -83,9 +83,9 @@ with a detail alongside `known` and `unknown`. Effort pickers are unblocked.
 
 ## The route editor
 
-Chains are gone. `RouteEditorView.swift` (`RouteSectionView`) renders one
-section per task category plus the **Global route** ("Used when a category has
-no route of its own"), each editing an unordered weighted candidate set:
+Chains are gone. `TaskRouterScreenView.swift` renders one row per task
+category plus the **Global route** ("Used when a category has no route of its
+own"), each editing an unordered weighted candidate set:
 
 - **Membership.** The add picker's atom is a (model, effort) pair; each model
   opens a submenu of its advertised effort levels. Every candidate is an
@@ -109,9 +109,9 @@ no route of its own"), each editing an unordered weighted candidate set:
   that spawns routed here **will fail** — it does not pretend a fallback
   exists.
 - **A stored route this build cannot fully spell is refused, not rewritten**
-  (`ModelControlDataSource.setRoute`): respelling one candidate's effort would
+  (`TaskRouterEditor.setRoute`): respelling one candidate's effort would
   be a routing change the user never made. The write fails with
-  `routeUnreadable` copy and nothing changes.
+  a visible refusal and nothing changes.
 
 Writing a route mirrors the daemon's `set-route` side effect: naming a model in
 a route keeps an explicit enabled row for it, while the provider master switch
@@ -249,12 +249,10 @@ is the sole writer.
 There is no machine selection preference file anymore; `routing-selection.json`
 died with the selection modes. Policy state lives in the daemon's store alone.
 
-The Settings controller keeps one data source while the window exists, but
-`SettingsWindowController.show()` refreshes the model-control snapshot every
-time the window is shown before restoring the selected page. Reopening Settings
-therefore cannot present the process's launch-time catalog or quota as if it
-were current; the in-window Refresh control is an additional explicit refresh,
-not the only one.
+The Workspace Shell reads the model-control snapshot when it loads Task Router
+and Models & Quota, and again after a successful policy write. A Refresh
+providers control on those screens re-probes; it is not a second settings
+window.
 
 ## Named instances inherit preferences, not runtime state
 
@@ -276,13 +274,12 @@ promote-default` (`RoutingPolicyStore.promote`).
 
 ## Status: built, including the route editor
 
-Shipped under `workspace/Sources/HiveWorkspace/Settings/`: `ProviderCardView`,
-`ModelRowView`, `RouteEditorView`, `EffortControlView`, `ModelControlDataSource`,
-`SettingsPageController`, `SettingsWindowController`, `UsageSettingsController`, plus
-`MCCCopy` — the read surface and the full write surface. The chain editor
-(`ChainEditorView`, move up/down, exhaustion popup) was deleted with the V2
-schema; no UI describes preference as order or fallback. Rendering conventions
-come from [../workspace/ui-design-system.md](../workspace/ui-design-system.md).
+Shipped under `workspace/Sources/HiveWorkspace/Shell/`: `TaskRouterScreenView`,
+`ModelsQuotaScreenView`, `ModelControlGateway`, and `RoutingPolicyGateway` —
+the read surface and the write surface. The chain editor (`ChainEditorView`,
+move up/down, exhaustion popup) was deleted with the V2 schema; no UI
+describes preference as order or fallback. Rendering conventions come from
+[../workspace/ui-design-system.md](../workspace/ui-design-system.md).
 
 **Routing boundary:** the exact category route when present, else Global, else
 refuse. A configured category route whose candidates all refuse fails the spawn

@@ -16,7 +16,3 @@ public struct ProjectID: Hashable, Comparable, Codable, Sendable, CustomStringCo
     public static func < (lhs: ProjectID, rhs: ProjectID) -> Bool { lhs.raw < rhs.raw }
 }
 
-public enum PaneKind: String, Codable {
-    case orchestrator
-    case agent
-}

@@ -804,7 +804,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
         liveRunFeed = nil
     }
 
-    /// Detach semantics: quitting the shell never stops the daemon or any session. Contrast with the pane era, whose quit drives `hive stop`.
+    /// Detach semantics: quitting the shell never stops the daemon or any session.
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {

@@ -168,7 +168,7 @@ struct ShellLiveStore {
             snapshot: outerHorizon.snapshot,
             warning: outerHorizon.warning)
 
-        let modelControl = await client.fetch(ModelControlDataSource.read)
+        let modelControl = await client.fetch(ModelControlGateway.read)
         let policy = modelControl.map { $0.routing.policy }
         let categories = modelControl.value?.routing.categories ?? []
         var inspections: [RouteInspection] = []

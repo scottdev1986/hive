@@ -276,7 +276,7 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         for identifier in [
             "shell-queen-status",
             "shell-attention-status",
-            "shell-settings",
+            "shell-appearance",
         ] {
             XCTAssertNotNil(findView(in: topBar, identifier: identifier), identifier)
         }
