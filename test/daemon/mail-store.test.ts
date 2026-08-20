@@ -58,11 +58,12 @@ const settle = (
   handlerId: string,
   disposition: "completed" | "deferred" | "rejected",
   second: number,
+  ownerGeneration = 4,
 ) =>
   store.settle({
     itemId,
     recipient: "ada",
-    ownerGeneration: 4,
+    ownerGeneration,
     handlerId,
     disposition,
     reason: null,
@@ -457,6 +458,7 @@ describe("standing conditions", () => {
         idempotencyKey: "q2",
         body: "kimi /usages answered HTTP 401 (again)",
         now: at(4),
+        recipientLiveGeneration: 4,
       }),
     );
     expect(repeat.outcome).toBe("restated");
@@ -484,6 +486,23 @@ describe("standing conditions", () => {
     store.clearStandingCondition("ada", "hive-quota", "quota:kimi:live-probe");
     const again = store.publish(standing({ idempotencyKey: "c2", now: at(3) }));
     expect(again.outcome).toBe("published");
+    expect(store.listAvailable("ada", "work", 0, 10, at(4))).toHaveLength(1);
+  });
+
+  test("an ack from an earlier incarnation does not suppress the next one", () => {
+    const { store } = rig();
+    const first = store.publish(standing({ idempotencyKey: "g1" }));
+    claim(store, first.itemId, "h1", 1, 15);
+    settle(store, first.itemId, "h1", "completed", 2, 15);
+    const next = store.publish(
+      standing({
+        idempotencyKey: "g2",
+        now: at(3),
+        recipientLiveGeneration: 16,
+      }),
+    );
+    expect(next.outcome).toBe("published");
+    expect(next.itemId).not.toBe(first.itemId);
     expect(store.listAvailable("ada", "work", 0, 10, at(4))).toHaveLength(1);
   });
 });

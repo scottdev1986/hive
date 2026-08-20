@@ -570,6 +570,7 @@ export class HiveDaemon {
         beforeComplete: (itemId, recipient) =>
           this.mailWake.requireClaimed(itemId, recipient),
         safePointAt: (recipient) => this.db.latestSafePointAt(recipient),
+        liveGeneration: (subject) => this.liveMailGeneration(subject),
       },
       options.mail,
     );

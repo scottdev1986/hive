@@ -76,6 +76,8 @@ export interface MailBrokerDeps {
   readonly beforeComplete?: (itemId: string, recipient: string) => void;
   /** When a recipient last reached a safe point, or null if it never has. Injected rather than queried, for the same reason `recipients` is: deciding a queue is degraded needs to know whether the agent has had a chance to read, but that is the daemon's fact about an agent's lifecycle, not the mailbox's. Reading the agents table from here would make this a service that reaches back into the registry instead of a boundary. Optional only because the operations do not need it — `sweep` does, and it refuses rather than proceeding without one. An absent reader would make every mailbox look like one that never reached a safe point, so the SLO half would report nothing while appearing to run. */
   readonly safePointAt?: (recipient: string) => string | null;
+  /** Live mailbox incarnation of a subject, used to scope standing-condition acks. */
+  readonly liveGeneration?: (subject: string) => number | null;
 }
 
 export interface MailServiceConfig {
@@ -541,6 +543,7 @@ export function hiveMailPublish(
     controlLaneCapacity: MAIL_CONTROL_LANE_CAPACITY,
     conditionId: input.conditionId,
     condition: input.condition,
+    recipientLiveGeneration: deps.liveGeneration?.(recipient) ?? null,
   });
   if (receipt.outcome !== "restated") {
     announceMailWaiting(deps, recipient, receipt, now);

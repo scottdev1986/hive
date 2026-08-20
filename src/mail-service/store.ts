@@ -114,6 +114,7 @@ export type MailPublishInput = Readonly<{
   controlLaneCapacity: number;
   conditionId?: string | null;
   condition?: string | null;
+  recipientLiveGeneration?: number | null;
 }>;
 
 export type MailClaimInput = Readonly<{
@@ -267,6 +268,7 @@ const MAIL_SCHEMA_DDL = `
           conditionId TEXT NOT NULL,
           condition TEXT NOT NULL,
           itemId TEXT NOT NULL,
+          ownerGeneration INTEGER NOT NULL,
           acknowledgedAt TEXT NOT NULL,
           PRIMARY KEY (recipient, sender, conditionId)
         );
@@ -524,7 +526,7 @@ export class MailStore {
         },
       });
       if (input.disposition === "completed") {
-        this.acknowledgeConditionInTx(item, input.now);
+        this.acknowledgeConditionInTx(item, input.now, input.ownerGeneration);
         this.deleteItemInTx(input.itemId);
       } else if (input.disposition === "rejected") {
         this.deadLetterInTx(item, "rejected", input.now, input.reason);
@@ -830,14 +832,21 @@ export class MailStore {
     if (conditionId === null || condition === null) return null;
     const ack = this.db.database
       .query(
-        `SELECT itemId, condition FROM mail_conditions
+        `SELECT itemId, condition, ownerGeneration FROM mail_conditions
          WHERE recipient = ? AND sender = ? AND conditionId = ?`,
       )
       .get(input.recipient, input.sender, conditionId) as {
       itemId: string;
       condition: string;
+      ownerGeneration: number;
     } | null;
-    if (ack === null || ack.condition !== condition) return null;
+    if (
+      ack === null ||
+      ack.condition !== condition ||
+      ack.ownerGeneration !== input.recipientLiveGeneration
+    ) {
+      return null;
+    }
     const seq = this.currentSeq(input.recipient);
     const receipt: MailPublishReceipt = {
       itemId: ack.itemId,
@@ -875,17 +884,23 @@ export class MailStore {
       .run(recipient, sender, conditionId);
   }
 
-  private acknowledgeConditionInTx(item: MailItem, now: string): void {
+  private acknowledgeConditionInTx(
+    item: MailItem,
+    now: string,
+    ownerGeneration: number,
+  ): void {
     const standing = this.publishedCondition(item.itemId);
     if (standing === null) return;
     this.db.database
       .query(
         `INSERT INTO mail_conditions (
-           recipient, sender, conditionId, condition, itemId, acknowledgedAt
-         ) VALUES (?, ?, ?, ?, ?, ?)
+           recipient, sender, conditionId, condition, itemId,
+           ownerGeneration, acknowledgedAt
+         ) VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(recipient, sender, conditionId) DO UPDATE SET
            condition = excluded.condition,
            itemId = excluded.itemId,
+           ownerGeneration = excluded.ownerGeneration,
            acknowledgedAt = excluded.acknowledgedAt`,
       )
       .run(
@@ -894,6 +909,7 @@ export class MailStore {
         standing.conditionId,
         standing.condition,
         item.itemId,
+        ownerGeneration,
         now,
       );
   }
