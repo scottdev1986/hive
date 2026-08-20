@@ -371,6 +371,28 @@ async function applyDraft(
   };
 }
 
+/** Set a weight field and apply, retrying the input exactly once when the first was verifiably lost (dead Apply with the member control enabled). Unlike a toggle, re-entering the same value is idempotent, so the retry can never change the outcome it is recovering. */
+async function driveWeightInput(
+  ctx: Stage1Context,
+  name: string,
+  value: number,
+): Promise<Drive> {
+  const command: GateCommand = {
+    verb: "invoke",
+    identifier: `task-router-weight-${name}`,
+    input: String(value),
+  };
+  const set = await drive(ctx, command);
+  if (!set.ok) return set;
+  let applied = await applyDraft(ctx, name);
+  if (!applied.ok && applied.screenState?.includes("memberEnabled=true")) {
+    const retry = await drive(ctx, command);
+    if (!retry.ok) return retry;
+    applied = await applyDraft(ctx, name);
+  }
+  return applied;
+}
+
 /** Toggle a membership checkbox and apply, retrying the toggle exactly once when the first was verifiably lost: Apply staying dead while the member control itself is enabled proves the toggle's edit never entered the draft (a dead Apply with the member control DISABLED is a fenced editor instead, and a second toggle there would only remove the member). */
 async function driveMemberToggle(
   ctx: Stage1Context,
@@ -617,14 +639,8 @@ export async function rowT103WeightWritesThrough(
   if (!fieldReady.ok) {
     return { id, status: fieldReady.status, reason: fieldReady.reason };
   }
-  const set = await drive(ctx, {
-    verb: "invoke",
-    identifier: `task-router-weight-${name}`,
-    input: String(target),
-  });
+  const set = await driveWeightInput(ctx, name, target);
   if (!set.ok) return { id, status: set.status, reason: set.reason };
-  const apply = await applyDraft(ctx);
-  if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
   const poll = await pollOracle(ctx, async () => {
     const candidate = candidateOf(await exportDoc(ctx), category, key);
     return candidate?.weight === target ? true : null;
@@ -650,16 +666,8 @@ export async function rowT103WeightWritesThrough(
       reason: `weight ${target} landed but the revision stayed ${revBefore}`,
     };
   }
-  const reset = await drive(ctx, {
-    verb: "invoke",
-    identifier: `task-router-weight-${name}`,
-    input: String(weightBefore),
-  });
+  const reset = await driveWeightInput(ctx, name, weightBefore);
   if (!reset.ok) return { id, status: reset.status, reason: reset.reason };
-  const reapply = await applyDraft(ctx);
-  if (!reapply.ok) {
-    return { id, status: reapply.status, reason: reapply.reason };
-  }
   const restored = await pollOracle(ctx, async () => {
     const candidate = candidateOf(await exportDoc(ctx), category, key);
     return candidate?.weight === weightBefore ? true : null;
