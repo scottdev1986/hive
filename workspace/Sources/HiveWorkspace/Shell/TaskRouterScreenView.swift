@@ -875,10 +875,13 @@ final class TaskRouterScreenView: NSView {
 
     @objc private func memberToggled(_ sender: NSButton) {
         guard let route = draftRoute, let row = row(for: sender) else { return }
+        let isMember = route.candidates.contains {
+            $0.provider == row.provider && $0.model == row.model
+        }
         var candidates = route.candidates.filter {
             !($0.provider == row.provider && $0.model == row.model)
         }
-        if sender.state == .on {
+        if !isMember {
             guard let catalogEntry = routing.catalog.first(where: {
                 $0.provider == row.provider && $0.model == row.model
             }) else { return }

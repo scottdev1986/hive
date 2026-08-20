@@ -37,6 +37,7 @@ final class TaskRouterScreenViewTests: XCTestCase {
         category: TaskCategory? = nil,
         availability: ProjectionAvailability = .current,
         dense: Bool = false,
+        document: RoutingPolicyDocument? = nil,
         probeState: ShellProviderProbeRefreshState = .idle,
         onProbe: @escaping () -> Void = {},
         onSelectCategory: @escaping (TaskCategory) -> Void = { _ in },
@@ -50,7 +51,8 @@ final class TaskRouterScreenViewTests: XCTestCase {
             "model-control-corpus", from: directory)
         let inspection: ClientProjection<RouteInspection> = try loadRow(
             "routing-inspection-corpus", from: directory)
-        let document = try XCTUnwrap(policy.value)
+        let fixtureDocument = try XCTUnwrap(policy.value)
+        let document = document ?? fixtureDocument
         let routing = try XCTUnwrap(modelControl.value?.routing)
         let selected = category ?? routing.categories.first!
         let facts = inspection.value.map { inspected -> [ShellScreenFact] in
@@ -384,6 +386,35 @@ final class TaskRouterScreenViewTests: XCTestCase {
         XCTAssertEqual(
             edited?.candidates.first { $0.model == "claude-opus-4-8" }?.weight,
             40)
+    }
+
+    func testMembershipActionUsesTheDraftInsteadOfCheckboxState() throws {
+        var firstEdit: RoutingPolicyDocument.WireRoute?
+        let firstView = try makeView(
+            category: .complexCoding,
+            onEditRoute: { firstEdit = $0 })
+        let firstMember = try XCTUnwrap(
+            find(firstView, "task-router-member-grok/grok-composer-2.5-fast") as? NSButton)
+
+        firstMember.sendAction(firstMember.action, to: firstMember.target)
+        let added = try XCTUnwrap(firstEdit)
+        XCTAssertTrue(added.candidates.contains { $0.model == "grok-composer-2.5-fast" })
+
+        let policy: ClientProjection<RoutingPolicyDocument> = try loadRow("routing-policy-corpus")
+        var document = try XCTUnwrap(policy.value)
+        document.categories[TaskCategory.complexCoding.rawValue] = added
+
+        var secondEdit: RoutingPolicyDocument.WireRoute?
+        let secondView = try makeView(
+            category: .complexCoding,
+            document: document,
+            onEditRoute: { secondEdit = $0 })
+        let secondMember = try XCTUnwrap(
+            find(secondView, "task-router-member-grok/grok-composer-2.5-fast") as? NSButton)
+
+        secondMember.sendAction(secondMember.action, to: secondMember.target)
+        let removed = try XCTUnwrap(secondEdit)
+        XCTAssertFalse(removed.candidates.contains { $0.model == "grok-composer-2.5-fast" })
     }
 
     #if HIVE_QA_BUILD

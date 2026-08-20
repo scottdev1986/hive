@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { sessiondStateRoot } from "../../hive-home/home";
 
 export const TERMINAL_SHELL = "/bin/zsh";
@@ -7,13 +7,14 @@ const TTY_READY_POLL_MS = 50;
 const TTY_READY_MAX_POLLS = 40;
 export const SHELL_SESSION_TTY_READY_WAIT_MS =
   TTY_READY_POLL_MS * TTY_READY_MAX_POLLS;
-const HIVE_ZDOTDIR_SEGMENT = "/sessiond-state/zdotdir/";
 
 export function userZdotdir(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
   const configured = environment.ZDOTDIR;
-  if (configured?.includes(HIVE_ZDOTDIR_SEGMENT) === true) {
+  if (
+    configured?.includes(`/${basename(sessiondStateRoot())}/zdotdir/`) === true
+  ) {
     return environment.HOME ?? "";
   }
   return configured ?? environment.HOME ?? "";
