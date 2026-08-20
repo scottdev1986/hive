@@ -883,6 +883,26 @@ test.each([
   ).toThrow("delegated provenance");
 });
 
+test("measured provenance stamp is write-once on one admitted attempt", () => {
+  const identity = admission.preflight(hierarchyFields(), "author");
+  const facts = launchFacts(identity);
+  admission.stampMeasuredLaunch(identity, facts);
+  expect(() => admission.stampMeasuredLaunch(identity, facts)).toThrow(
+    "already stamped",
+  );
+});
+
+test("a forged launch against an already-stamped admission is rejected", () => {
+  const identity = admission.preflight(hierarchyFields(), "author");
+  admission.stampMeasuredLaunch(identity, launchFacts(identity));
+  expect(() =>
+    admission.prepareLaunch(
+      identity,
+      launchFacts(identity, { worktree: "/repo/.hive/worktrees/forged" }),
+    ),
+  ).toThrow("delegated provenance");
+});
+
 test("reserved identity capabilityEpoch must still match the grant", () => {
   const identity = admission.preflight(hierarchyFields(), "author");
   // Identity pins the grant's epoch at reservation; a forged pin is refused.
