@@ -361,7 +361,18 @@ final class WorkspaceShellWindowController: NSWindowController {
                 },
                 onEditRoute: { [weak self] route in
                     guard let self else { return }
-                    apply { $0.editRouter { $0.setRoute(route, for: category) } }
+                    guard self.state.router == editor else {
+                        apply {
+                            $0.record(policyWriteRefusal:
+                                "The route changed before this edit could be applied. "
+                                    + "Review the current route and edit again.")
+                        }
+                        return
+                    }
+                    apply {
+                        $0.editRouter { $0.setRoute(route, for: category) }
+                        $0.record(policyWriteRefusal: nil)
+                    }
                 },
                 onApply: { [weak self] in
                     guard let self else { return }

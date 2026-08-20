@@ -162,8 +162,9 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertTrue(equal.isHidden)
         XCTAssertFalse(equal.isEnabled)
 
-        mode.selectItem(withTitle: "Weighted split")
-        mode.sendAction(mode.action, to: mode.target)
+        let restoredMode = try view(controller, "task-router-mode", as: NSPopUpButton.self)
+        restoredMode.selectItem(withTitle: "Weighted split")
+        restoredMode.sendAction(restoredMode.action, to: restoredMode.target)
         let restored = try view(
             controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
         XCTAssertFalse(restored.isHidden)
@@ -262,6 +263,65 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertTrue(try view(controller, "task-router-apply", as: NSButton.self).isEnabled)
         XCTAssertTrue(
             try view(controller, "task-router-weight-refusal", as: NSTextField.self).isHidden)
+    }
+
+    func testEditFromARebuiltRouterIsRefusedVisibly() throws {
+        let controller = try makeController()
+        try show(.taskRouter, in: controller)
+        try selectComplexCoding(in: controller)
+        let weight = try view(
+            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+        weight.stringValue = "40"
+
+        var refreshed = try XCTUnwrap(controller.currentState.router?.observed.policy)
+        refreshed.revision += 1
+        var route = try XCTUnwrap(refreshed.categories[TaskCategory.complexCoding.rawValue])
+        let candidate = try XCTUnwrap(route.candidates.firstIndex {
+            $0.model == "claude-opus-4-8"
+        })
+        route.candidates[candidate].weight = 4
+        refreshed.categories[TaskCategory.complexCoding.rawValue] = route
+        controller.apply {
+            $0.refresh(router: TaskRouterEditor(
+                snapshot: TaskRouterSnapshot(policy: refreshed), availability: .current))
+        }
+
+        weight.sendAction(weight.action, to: weight.target)
+
+        XCTAssertEqual(
+            draftRoute(controller)?.candidates.first { $0.model == "claude-opus-4-8" }?.weight,
+            4)
+        XCTAssertFalse(try view(controller, "task-router-apply", as: NSButton.self).isEnabled)
+        XCTAssertTrue(try view(
+            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self).isEnabled)
+        XCTAssertEqual(
+            controller.currentState.policyWriteRefusal,
+            "The route changed before this edit could be applied. Review the current route and edit again.")
+        XCTAssertTrue(allText(in: try content(controller)).contains(
+            "The route changed before this edit could be applied."))
+    }
+
+    func testEditSurvivesAnUnchangedRouterRefresh() throws {
+        let controller = try makeController()
+        try show(.taskRouter, in: controller)
+        try selectComplexCoding(in: controller)
+        let weight = try view(
+            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+        weight.stringValue = "40"
+
+        let observed = try XCTUnwrap(controller.currentState.router?.observed.policy)
+        controller.apply {
+            $0.refresh(router: TaskRouterEditor(
+                snapshot: TaskRouterSnapshot(policy: observed), availability: .current))
+        }
+
+        weight.sendAction(weight.action, to: weight.target)
+
+        XCTAssertEqual(
+            draftRoute(controller)?.candidates.first { $0.model == "claude-opus-4-8" }?.weight,
+            40)
+        XCTAssertTrue(try view(controller, "task-router-apply", as: NSButton.self).isEnabled)
+        XCTAssertNil(controller.currentState.policyWriteRefusal)
     }
 
     // MARK: The compare-and-set guard, on screen
