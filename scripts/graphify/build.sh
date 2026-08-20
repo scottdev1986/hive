@@ -85,7 +85,7 @@ smoke() ( # smoke <bundle-dir>  — extract, query, and MCP-serve a fixture
   (cd "$fix" && env -i PATH=/usr/bin:/bin HOME="$HOME" "$dist/graphify" update . >/dev/null 2>&1)
   (cd "$fix" && env -i PATH=/usr/bin:/bin HOME="$HOME" "$dist/graphify" query "who calls helper" 2>/dev/null | grep -q "helper")
   port="$(/usr/bin/python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-  (cd "$fix" && env -i PATH=/usr/bin:/bin HOME="$HOME" "$dist/graphify-mcp" --transport http --host 127.0.0.1 --port "$port" \
+  (cd "$fix" && exec env -i PATH=/usr/bin:/bin HOME="$HOME" "$dist/graphify-mcp" --transport http --host 127.0.0.1 --port "$port" \
       --stateless --json-response graphify-out/graph.json >/dev/null 2>&1) &
   pid=$!
   for _ in {1..50}; do
