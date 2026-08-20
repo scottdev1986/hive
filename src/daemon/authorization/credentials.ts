@@ -32,17 +32,24 @@ export function writeCredential(subject: string, token: string): string {
 }
 
 /** Reads a credential with a close-on-exec descriptor that is closed before this process can spawn anything. Returns null when no credential exists. When the subject is the user role, also tries the legacy `operator.cap` filename. */
-export function readCredential(subject: string): string | null {
-  const token = readCredentialFile(subject);
+export function readCredential(
+  subject: string,
+  hiveHome?: string,
+): string | null {
+  const token = readCredentialFile(subject, hiveHome);
   if (token !== null) return token;
-  if (subject === USER_SUBJECT) return readCredentialFile(LEGACY_USER_SUBJECT);
+  if (subject === USER_SUBJECT)
+    return readCredentialFile(LEGACY_USER_SUBJECT, hiveHome);
   return null;
 }
 
-function readCredentialFile(subject: string): string | null {
+function readCredentialFile(subject: string, hiveHome?: string): string | null {
   let fd: number;
   try {
-    fd = openSync(credentialPath(subject), constants.O_RDONLY | O_CLOEXEC);
+    fd = openSync(
+      credentialPath(subject, hiveHome),
+      constants.O_RDONLY | O_CLOEXEC,
+    );
   } catch (error) {
     // Absence is the common, silent case; anything else (EPERM, EIO) is a real fault that would otherwise masquerade as "no credential" and demote a legitimate holder to unauthenticated with no trace.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

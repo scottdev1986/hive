@@ -82,10 +82,13 @@ export function getDatabasePath(): string {
   return join(getHiveHome(), "hive.db");
 }
 
-export function credentialDirectory(): string {
-  return join(getHiveHome(), "credentials");
+export function credentialDirectory(hiveHome = getHiveHome()): string {
+  return join(hiveHome, "credentials");
 }
 
-export function credentialPath(subject: string): string {
-  return join(credentialDirectory(), `${subject}.cap`);
+export function credentialPath(
+  subject: string,
+  hiveHome = getHiveHome(),
+): string {
+  return join(credentialDirectory(hiveHome), `${subject}.cap`);
 }

@@ -52,9 +52,12 @@ export function requireDaemonPort(explicitPort?: number): number {
   return port;
 }
 
-function readDaemonPid(): number | null {
+export function readDaemonPid(hiveHome = getHiveHome()): number | null {
   try {
-    const pid = Number.parseInt(readFileSync(getPidFilePath(), "utf8"), 10);
+    const pid = Number.parseInt(
+      readFileSync(getPidFilePath(hiveHome), "utf8"),
+      10,
+    );
     return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
   } catch {
     return null;

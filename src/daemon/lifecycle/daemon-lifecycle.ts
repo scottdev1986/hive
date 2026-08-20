@@ -22,8 +22,8 @@ import {
 
 export * from "./handshake";
 
-export function getPidFilePath(): string {
-  return resolve(getHiveHome(), "daemon.pid");
+export function getPidFilePath(hiveHome = getHiveHome()): string {
+  return resolve(hiveHome, "daemon.pid");
 }
 
 export function getPortFilePath(hiveHome = getHiveHome()): string {
@@ -157,8 +157,11 @@ function processIsAlive(pid: number): boolean {
   return liveness === "live" || liveness === "other-uid";
 }
 
-function removeLockIfOwned(lock: DaemonLock): boolean {
-  const evidence = readDaemonLock();
+function removeLockIfOwned(
+  lock: DaemonLock,
+  hiveHome = getHiveHome(),
+): boolean {
+  const evidence = readDaemonLock(hiveHome);
   if (evidence.state !== "valid") return false;
   const current = evidence.value;
   if (
@@ -169,8 +172,8 @@ function removeLockIfOwned(lock: DaemonLock): boolean {
     current.executablePath !== lock.executablePath
   )
     return false;
-  rmSync(getDaemonLockPath(), { force: true });
-  const remaining = readDaemonLock();
+  rmSync(getDaemonLockPath(hiveHome), { force: true });
+  const remaining = readDaemonLock(hiveHome);
   if (remaining.state === "absent") return true;
   return (
     remaining.state === "valid" &&
@@ -182,8 +185,12 @@ function removeLockIfOwned(lock: DaemonLock): boolean {
   );
 }
 
-function assertLifecycleLockOwnership(pid: number, action: string): void {
-  const evidence = readDaemonLock();
+function assertLifecycleLockOwnership(
+  pid: number,
+  action: string,
+  hiveHome = getHiveHome(),
+): void {
+  const evidence = readDaemonLock(hiveHome);
   if (evidence.state === "absent") return;
   if (evidence.state === "unknown") {
     throw new Error(
@@ -192,7 +199,7 @@ function assertLifecycleLockOwnership(pid: number, action: string): void {
   }
   if (
     evidence.value.pid !== pid ||
-    evidence.value.instanceId !== hiveInstanceSuffix()
+    evidence.value.instanceId !== hiveInstanceSuffix(hiveHome)
   ) {
     throw new Error(
       `Refusing ${action} because lifecycle files belong to another daemon`,
@@ -264,14 +271,17 @@ export async function acquireDaemonLock(
   );
 }
 
-export function releaseDaemonLock(pid = process.pid): boolean {
-  const evidence = readDaemonLock();
+export function releaseDaemonLock(
+  pid = process.pid,
+  hiveHome = getHiveHome(),
+): boolean {
+  const evidence = readDaemonLock(hiveHome);
   if (evidence.state === "absent") return true;
   if (evidence.state === "unknown") return false;
   const lock = evidence.value;
-  if (lock.pid !== pid || lock.instanceId !== hiveInstanceSuffix())
+  if (lock.pid !== pid || lock.instanceId !== hiveInstanceSuffix(hiveHome))
     return false;
-  return removeLockIfOwned(lock);
+  return removeLockIfOwned(lock, hiveHome);
 }
 
 function readPositiveInteger(path: string): FileEvidence<number> {
@@ -383,24 +393,27 @@ export function writeLifecycleFiles(port: number, pid = process.pid): void {
   writeFileSync(getPortFilePath(), `${port}\n`);
 }
 
-export function cleanupLifecycleFiles(pid = process.pid): void {
-  assertLifecycleLockOwnership(pid, "lifecycle cleanup");
-  const evidence = readPositiveInteger(getPidFilePath());
+export function cleanupLifecycleFiles(
+  pid = process.pid,
+  hiveHome = getHiveHome(),
+): void {
+  assertLifecycleLockOwnership(pid, "lifecycle cleanup", hiveHome);
+  const evidence = readPositiveInteger(getPidFilePath(hiveHome));
   if (evidence.state === "unknown") {
     throw new Error(
       "Refusing lifecycle cleanup because pid ownership is unknown",
     );
   }
   if (evidence.state === "valid" && evidence.value !== pid) return;
-  rmSync(getPortFilePath(), { force: true });
-  if (readPositiveInteger(getPortFilePath()).state !== "absent") {
+  rmSync(getPortFilePath(hiveHome), { force: true });
+  if (readPositiveInteger(getPortFilePath(hiveHome)).state !== "absent") {
     throw new Error("Could not verify removal of the daemon port file");
   }
-  rmSync(getPidFilePath(), { force: true });
-  if (readPositiveInteger(getPidFilePath()).state !== "absent") {
+  rmSync(getPidFilePath(hiveHome), { force: true });
+  if (readPositiveInteger(getPidFilePath(hiveHome)).state !== "absent") {
     throw new Error("Could not verify removal of the daemon pid file");
   }
-  if (!releaseDaemonLock(pid)) {
+  if (!releaseDaemonLock(pid, hiveHome)) {
     throw new Error("Could not verify release of the daemon lock");
   }
 }

@@ -1,5 +1,5 @@
 /** `hive uninstall` removes Hive-owned integration without treating the command as authority to discard unsettled work. Repo uninstall asks the live settlement service to close exact-safe cases before stopping it, then removes byte-identical skills and standards, Hive's marked `.gitignore` entries, leaked runtime config, graph output, and derived project state. Any remaining worktree, branch, edited Hive file, or user file stays and is named. Machine uninstall removes the shared Hive home and managed install only after its separate live-team and mutation-lease checks. */
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -15,6 +15,7 @@ import {
   USER_SUBJECT,
 } from "../daemon/authorization/credentials";
 import {
+  cleanupLifecycleFiles,
   daemonInstanceLiveness,
   expectedDaemonHandshake,
   readDaemonHandshake,
@@ -51,7 +52,7 @@ import {
   installRoot,
 } from "../update-service/paths";
 import { resolveCliHiveHome } from "./bind-hive-home";
-import { requestDaemonStop, stopHive } from "./control";
+import { readDaemonPid, requestDaemonStop, stopHive } from "./control";
 import { fetchAgentStatus, requestSettlementSweep } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { type ConfirmFn, confirmOnTty } from "./prompt";
@@ -94,28 +95,8 @@ async function stopInstances(): Promise<void> {
   throw new Error("one or more Hive instances did not stop");
 }
 
-function readPidAtHome(home: string): number | null {
-  try {
-    const pid = Number.parseInt(
-      readFileSync(join(home, "daemon.pid"), "utf8"),
-      10,
-    );
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
 function fetchWithCredentialFromHome(home: string): AuthorizedFetch {
-  const previous = process.env.HIVE_HOME;
-  process.env.HIVE_HOME = home;
-  let token: string | null;
-  try {
-    token = readCredential(USER_SUBJECT);
-  } finally {
-    if (previous === undefined) delete process.env.HIVE_HOME;
-    else process.env.HIVE_HOME = previous;
-  }
+  const token = readCredential(USER_SUBJECT, home);
   return (input, init) => {
     const headers = new Headers(init?.headers);
     if (token !== null) headers.set("Authorization", `Bearer ${token}`);
@@ -125,12 +106,9 @@ function fetchWithCredentialFromHome(home: string): AuthorizedFetch {
 
 function stopHiveAtHome(home: string): Promise<void> {
   return stopHive({
-    readPid: () => readPidAtHome(home),
+    readPid: () => readDaemonPid(home),
     liveness: () => daemonInstanceLiveness(home, hiveInstanceSuffix(home)),
-    cleanup: () => {
-      rmSync(join(home, "daemon.port"), { force: true });
-      rmSync(join(home, "daemon.pid"), { force: true });
-    },
+    cleanup: (pid) => cleanupLifecycleFiles(pid ?? process.pid, home),
     requestStop: (body) => {
       const port = readDaemonPort(home);
       if (port === null) {
