@@ -1,21 +1,35 @@
 /** Point a CLI process at the Hive home the daemon for this repository actually uses. */
 
-import { selectRepoInstance } from "../daemon/lifecycle/instances";
+import {
+  namedInstanceHome,
+  repoInstanceName,
+} from "../daemon/lifecycle/instances";
 import { resolveProjectRoot } from "../daemon/project-identity-core/project-root";
 import { projectKey } from "../daemon/project-identity-core/state";
 import { getHiveHome, isDefaultHiveHome } from "../hive-home/home";
 
 /**
- * `hive` start already does this via selectRepoInstance; every other command
- * that reads daemon.port or the user credential must agree, or a repo with its
- * own instance talks to the machine home instead. An explicit HIVE_HOME or
- * --instance is left alone.
+ * The Hive home the daemon for `cwd`'s repository actually uses. Does not
+ * change process.env: `hive uninstall --repo` must ask this question about one
+ * project while the process stays on the machine home. An explicit HIVE_HOME
+ * or --instance is left alone.
  */
-export function bindCliHiveHome(cwd = process.cwd()): string {
+export function resolveCliHiveHome(cwd = process.cwd()): string {
   if (!isDefaultHiveHome()) return getHiveHome();
   const root = resolveProjectRoot(cwd);
   if (root === null) return getHiveHome();
-  return selectRepoInstance(projectKey(root));
+  return namedInstanceHome(repoInstanceName(projectKey(root)));
+}
+
+/**
+ * `hive` start already does this via selectRepoInstance; every other command
+ * that reads daemon.port or the user credential must agree, or a repo with its
+ * own instance talks to the machine home instead.
+ */
+export function bindCliHiveHome(cwd = process.cwd()): string {
+  const home = resolveCliHiveHome(cwd);
+  if (home !== getHiveHome()) process.env.HIVE_HOME = home;
+  return home;
 }
 
 /**

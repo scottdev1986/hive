@@ -41,6 +41,7 @@ import {
   detectInstallMethod,
   installRoot,
 } from "../update-service/paths";
+import { resolveCliHiveHome } from "./bind-hive-home";
 import { stopHive } from "./control";
 import { fetchAgentStatus, requestSettlementSweep } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
@@ -54,7 +55,7 @@ export interface UninstallDeps {
   stopCurrentInstance: () => Promise<void>;
   /** Whether the selected instance's live daemon serves the repo being uninstalled. A foreign daemon must never be signaled. */
   currentInstanceOwnsProject: (root: string) => Promise<boolean>;
-  settleCurrentProject: () => Promise<unknown>;
+  settleCurrentProject: (root: string) => Promise<unknown>;
   liveTeams: () => Promise<readonly InstanceMutationBlocker[]>;
   stopInstances: () => Promise<void>;
   acquireLease: (
@@ -89,7 +90,7 @@ export const defaultUninstallDeps: UninstallDeps = {
   log: console.log,
   stopCurrentInstance: stopHive,
   currentInstanceOwnsProject: async (root) => {
-    const port = readDaemonPort();
+    const port = readDaemonPort(resolveCliHiveHome(root));
     if (port === null) return false;
     try {
       const [actual, expected] = await Promise.all([
@@ -106,8 +107,8 @@ export const defaultUninstallDeps: UninstallDeps = {
       return false;
     }
   },
-  settleCurrentProject: async () => {
-    const port = readDaemonPort();
+  settleCurrentProject: async (root) => {
+    const port = readDaemonPort(resolveCliHiveHome(root));
     if (port === null)
       throw new Error("the project daemon has no readable port");
     return requestSettlementSweep(port);
@@ -343,7 +344,7 @@ export async function runUninstallRepo(
 
   if (await deps.currentInstanceOwnsProject(root)) {
     try {
-      await deps.settleCurrentProject();
+      await deps.settleCurrentProject(root);
       await deps.stopCurrentInstance();
     } catch (error) {
       deps.log(

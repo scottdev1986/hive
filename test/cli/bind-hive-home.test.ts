@@ -1,13 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   bindCliHiveHome,
   cliCommandKeepsMachineHome,
+  resolveCliHiveHome,
 } from "../../src/cli/bind-hive-home";
 import { requireDaemonPort } from "../../src/cli/control";
+import { defaultUninstallDeps } from "../../src/cli/uninstall";
+import { readDaemonPort } from "../../src/daemon/lifecycle/daemon-lifecycle";
 import {
   namedInstanceHome,
   repoInstanceName,
@@ -93,6 +96,36 @@ describe("CLI Hive-home resolution", () => {
       process.env.HIVE_HOME = machineHome;
       await rm(root, { recursive: true, force: true });
       await rm(isolated, { recursive: true, force: true });
+    }
+  });
+
+  test("hive uninstall --repo reads the repo-instance daemon.port without mutating HIVE_HOME", async () => {
+    const root = await bareRepo();
+    process.env.HIVE_HOME = machineHome;
+    rmSync(join(machineHome, "daemon.port"), { force: true });
+    const instanceHome = namedInstanceHome(repoInstanceName(projectKey(root)));
+    writePort(instanceHome, 45_032);
+    try {
+      expect(resolveCliHiveHome(root)).toBe(instanceHome);
+      expect(readDaemonPort()).toBe(null);
+      expect(readDaemonPort(resolveCliHiveHome(root))).toBe(45_032);
+      expect(getHiveHome()).toBe(machineHome);
+      expect(process.env.HIVE_HOME).toBe(machineHome);
+      expect(await defaultUninstallDeps.currentInstanceOwnsProject(root)).toBe(
+        false,
+      );
+      expect(process.env.HIVE_HOME).toBe(machineHome);
+      let thrown: unknown;
+      try {
+        await defaultUninstallDeps.settleCurrentProject(root);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).not.toMatch(/no readable port/);
+    } finally {
+      process.env.HIVE_HOME = machineHome;
+      await rm(root, { recursive: true, force: true });
     }
   });
 
