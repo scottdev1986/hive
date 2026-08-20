@@ -19,6 +19,7 @@ import {
   ROUTE_WEIGHT_MIN,
   ROUTING_CATEGORY_CATALOG,
   ROUTING_MODE_CATALOG,
+  routeShares,
   type RoutingPolicy,
 } from "../../schemas/routing-policy";
 import type {
@@ -103,6 +104,8 @@ export interface WorkspaceRoutingCandidateState {
     | "model-disabled"
     | "awaiting-consent"
     | "unresolvable";
+  /** Configured share of this scope's spawns, 0–1, from `routeShares`. Published so the Task Router renders the daemon's arithmetic instead of its own. */
+  configuredShare: number;
 }
 
 export interface WorkspaceRoutingCatalogEntry {
@@ -638,7 +641,14 @@ function routingPresentation(
     ["global", policy.global] as const,
     ...Object.entries(policy.categories),
   ]) {
+    const shares = route === null || route === undefined ? [] : routeShares(route);
     for (const candidate of route?.candidates ?? []) {
+      const share =
+        shares.find(
+          (entry) =>
+            entry.candidate.provider === candidate.provider &&
+            entry.candidate.model === candidate.model,
+        )?.share ?? 0;
       const model = modelByKey.get(`${candidate.provider}\0${candidate.model}`);
       const status: WorkspaceRoutingCandidateState["status"] =
         model === undefined || model.rowState === "unavailable"
@@ -655,6 +665,7 @@ function routingPresentation(
         provider: candidate.provider,
         model: candidate.model,
         status,
+        configuredShare: share,
       });
     }
   }

@@ -1,8 +1,8 @@
 // ShellPolicyEditingTests.swift
 //
 // Drives the Model Control screens through their real controls in a real
-// window: the router's category/mode/membership/weight/effort controls write
-// the draft, Apply asks for the selected category, a rejected apply keeps the
+// window: the router's per-card mode/membership/weight/effort controls write
+// the draft, Apply asks for every edited category, a rejected apply keeps the
 // draft on screen beside the competing revision, a non-current projection
 // disables every control, and the enablement checkboxes ask for the provider
 // and model writes. Quota stays evidence — it offers no control at all.
@@ -76,12 +76,36 @@ final class ShellPolicyEditingTests: XCTestCase {
     }
 
     /// The fixture's `complex_coding` route: two members, weights 3 and 1.
-    private func selectComplexCoding(
+    /// Every card is editable in place, so its controls carry the category.
+    private let complexCoding = "complex_coding"
+
+    /// Joins a catalog model the way a user does: the card's "Add model…"
+    /// pull-down, one submenu per vendor.
+    private func addModel(
+        _ key: String,
+        to category: String,
         in controller: WorkspaceShellWindowController
     ) throws {
-        let categories = try view(controller, "task-router-category", as: NSPopUpButton.self)
-        categories.selectItem(withTitle: TaskCategory.complexCoding.label)
-        categories.sendAction(categories.action, to: categories.target)
+        let popup = try view(controller, "task-router-add-\(category)", as: NSPopUpButton.self)
+        XCTAssertTrue(popup.isEnabled, "add model must be offered on \(category)")
+        let item = try XCTUnwrap(
+            popup.menu?.items.compactMap(\.submenu).flatMap(\.items).first {
+                $0.representedObject as? String == key
+            },
+            "\(key) must be offered by the \(category) add menu")
+        XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
+    }
+
+    private func selectMode(
+        _ title: String,
+        on category: String,
+        in controller: WorkspaceShellWindowController
+    ) throws {
+        let mode = try view(
+            controller, "task-router-mode-\(category)", as: NSSegmentedControl.self)
+        let labels = (0..<mode.segmentCount).map { mode.label(forSegment: $0) ?? "" }
+        mode.selectedSegment = try XCTUnwrap(labels.firstIndex(of: title), "\(title) segment")
+        mode.sendAction(mode.action, to: mode.target)
     }
 
     private func draftRoute(
@@ -96,17 +120,18 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testMembershipWeightAndEffortControlsWriteTheDraftRoute() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         XCTAssertEqual(draftRoute(controller)?.candidates.count, 2)
 
         // Membership: a model the daemon's live routing catalog offers but the
-        // route does not yet contain.
-        let member = try view(
-            controller,
-            "task-router-member-grok/grok-composer-2.5-fast",
-            as: NSButton.self)
-        XCTAssertEqual(member.state, .off)
-        member.performClick(nil)
+        // route does not yet contain joins through the card's add menu.
+        XCTAssertNil(find(
+            try content(controller),
+            "task-router-member-\(complexCoding)-grok/grok-composer-2.5-fast"),
+            "a non-member is not a row on the card")
+        try addModel("grok/grok-composer-2.5-fast", to: complexCoding, in: controller)
+        XCTAssertNotNil(find(
+            try content(controller),
+            "task-router-member-\(complexCoding)-grok/grok-composer-2.5-fast"))
         let added = try XCTUnwrap(draftRoute(controller)?.candidates.first {
             $0.model == "grok-composer-2.5-fast"
         })
@@ -115,7 +140,7 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertEqual(added.weight, 1)
 
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         XCTAssertEqual(weight.stringValue, "3")
         weight.stringValue = "40"
         weight.sendAction(weight.action, to: weight.target)
@@ -124,72 +149,75 @@ final class ShellPolicyEditingTests: XCTestCase {
             40)
 
         let effort = try view(
-            controller, "task-router-effort-claude/claude-opus-4-8", as: NSPopUpButton.self)
+            controller, "task-router-effort-\(complexCoding)-claude/claude-opus-4-8", as: NSPopUpButton.self)
         effort.selectItem(withTitle: "Provider controlled")
         effort.sendAction(effort.action, to: effort.target)
         XCTAssertEqual(
             draftRoute(controller)?.candidates.first { $0.model == "claude-opus-4-8" }?.effort,
             .providerControlled)
 
-        let mode = try view(controller, "task-router-mode", as: NSPopUpButton.self)
-        mode.selectItem(withTitle: "Equal split")
-        mode.sendAction(mode.action, to: mode.target)
+        try selectMode("Equal split", on: complexCoding, in: controller)
         XCTAssertEqual(draftRoute(controller)?.mode, RouterMode.hiveEqual.rawValue)
         XCTAssertTrue(controller.currentState.router?.hasDraft ?? false)
-        // Equal split must not present the stored weight as an editable control.
+        // Equal split keeps the stored weight on view — it is preserved for a
+        // weighted split — but never as an editable control.
         let equalWeight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
-        XCTAssertTrue(equalWeight.isHidden, "hive-equal hides the inert stored weight")
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
+        XCTAssertFalse(equalWeight.isHidden, "the stored weight stays legible")
+        XCTAssertEqual(equalWeight.stringValue, "40")
         XCTAssertFalse(equalWeight.isEnabled, "hive-equal must not accept weight edits")
     }
 
     func testWeightControlIsOnlyOfferedInUserWeightedMode() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         let weighted = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         XCTAssertEqual(draftRoute(controller)?.mode, RouterMode.userWeighted.rawValue)
         XCTAssertFalse(weighted.isHidden)
         XCTAssertTrue(weighted.isEnabled)
 
-        let mode = try view(controller, "task-router-mode", as: NSPopUpButton.self)
-        mode.selectItem(withTitle: "Equal split")
-        mode.sendAction(mode.action, to: mode.target)
+        try selectMode("Equal split", on: complexCoding, in: controller)
         let equal = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
-        XCTAssertTrue(equal.isHidden)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
+        XCTAssertFalse(equal.isHidden)
         XCTAssertFalse(equal.isEnabled)
 
-        let restoredMode = try view(controller, "task-router-mode", as: NSPopUpButton.self)
-        restoredMode.selectItem(withTitle: "Weighted split")
-        restoredMode.sendAction(restoredMode.action, to: restoredMode.target)
+        try selectMode("Weighted split", on: complexCoding, in: controller)
         let restored = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         XCTAssertFalse(restored.isHidden)
         XCTAssertTrue(restored.isEnabled)
     }
 
-    func testClearingTheModeUnconfiguresTheCategoryAndClosesMembership() throws {
+    func testClearingTheRouteUnconfiguresTheCategoryAndClosesMembership() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
-        let mode = try view(controller, "task-router-mode", as: NSPopUpButton.self)
-        mode.selectItem(at: 0)
-        mode.sendAction(mode.action, to: mode.target)
+        try view(controller, "task-router-clear-\(complexCoding)", as: NSButton.self)
+            .performClick(nil)
         XCTAssertNil(draftRoute(controller), "an unconfigured category has no route")
         // With no route there is nothing to join, so membership cannot invent
-        // a router mode the user never picked.
+        // a router mode the user never picked: the card offers Configure only.
+        XCTAssertNil(find(
+            try content(controller),
+            "task-router-member-\(complexCoding)-claude/claude-opus-4-8"))
         XCTAssertFalse(try view(
-            controller, "task-router-member-claude/claude-opus-4-8", as: NSButton.self).isEnabled)
+            controller, "task-router-add-\(complexCoding)", as: NSPopUpButton.self).isEnabled)
+        XCTAssertFalse(try view(
+            controller, "task-router-mode-\(complexCoding)", as: NSSegmentedControl.self).isEnabled)
+        try view(controller, "task-router-configure-\(complexCoding)", as: NSButton.self)
+            .performClick(nil)
+        XCTAssertEqual(
+            draftRoute(controller),
+            RoutingPolicyDocument.WireRoute(mode: RouterMode.hiveEqual.rawValue, candidates: []),
+            "configuring again starts from the daemon's default mode with no members")
     }
 
     func testAModeWithNoMembersIsNotSendable() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         for model in ["claude/claude-opus-4-8", "codex/gpt-5.6-sol"] {
-            try view(controller, "task-router-member-\(model)", as: NSButton.self)
+            try view(controller, "task-router-member-\(complexCoding)-\(model)", as: NSButton.self)
                 .performClick(nil)
         }
         XCTAssertEqual(draftRoute(controller)?.candidates.count, 0)
@@ -197,22 +225,30 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertNotNil(find(try content(controller), "task-router-empty-route"))
     }
 
-    func testApplyAsksToSendTheSelectedCategoryOnly() throws {
+    func testApplyAsksToSendEveryEditedCategoryInOrder() throws {
         let controller = try makeController()
         var writes: [ShellPolicyWrite] = []
         controller.policyWriteHandler = { writes.append($0) }
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
 
         let apply = try view(controller, "task-router-apply", as: NSButton.self)
         XCTAssertFalse(apply.isEnabled, "an unedited route has nothing to send")
 
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "40"
         weight.sendAction(weight.action, to: weight.target)
         try view(controller, "task-router-apply", as: NSButton.self).performClick(nil)
         XCTAssertEqual(writes, [.route(.complexCoding)])
+
+        // A second card edited too: both go, catalog order, one write each.
+        writes.removeAll()
+        try selectMode("Weighted split", on: "light_research", in: controller)
+        try view(controller, "task-router-apply", as: NSButton.self).performClick(nil)
+        XCTAssertEqual(
+            writes,
+            [.route(TaskCategory(rawValue: "light_research", label: "Light research")),
+             .route(.complexCoding)])
     }
 
     /// The wire is `.min(1).max(100)`. Sending an out-of-range weight would
@@ -222,9 +258,8 @@ final class ShellPolicyEditingTests: XCTestCase {
         for typed in ["0", "101", "abc"] {
             let controller = try makeController()
             try show(.taskRouter, in: controller)
-            try selectComplexCoding(in: controller)
-            let weight = try view(
-                controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+                let weight = try view(
+                controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
             weight.stringValue = typed
             weight.sendAction(weight.action, to: weight.target)
 
@@ -246,13 +281,12 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testACorrectedWeightBecomesSendableAgain() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "101"
         weight.sendAction(weight.action, to: weight.target)
         let corrected = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         corrected.stringValue = "100"
         corrected.sendAction(corrected.action, to: corrected.target)
 
@@ -267,7 +301,6 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testEditFromARebuiltRouterIsRefusedVisibly() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
 #if HIVE_QA_BUILD
         let clean = QAControl.process(
             verb: "enumerate", identifier: nil, input: nil,
@@ -277,7 +310,7 @@ final class ShellPolicyEditingTests: XCTestCase {
         })
 #endif
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "40"
 
         var refreshed = try XCTUnwrap(controller.currentState.router?.observed.policy)
@@ -300,7 +333,7 @@ final class ShellPolicyEditingTests: XCTestCase {
             4)
         XCTAssertFalse(try view(controller, "task-router-apply", as: NSButton.self).isEnabled)
         XCTAssertTrue(try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self).isEnabled)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self).isEnabled)
         XCTAssertEqual(
             controller.currentState.policyWriteRefusal,
             "The route changed before this edit could be applied. Review the current route and edit again.")
@@ -328,9 +361,8 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testEditSurvivesAnUnchangedRouterRefresh() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "40"
 
         let observed = try XCTUnwrap(controller.currentState.router?.observed.policy)
@@ -353,9 +385,8 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testRejectedApplyKeepsTheDraftOnScreenAndNamesTheCompetingRevision() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "40"
         weight.sendAction(weight.action, to: weight.target)
         let draft = try XCTUnwrap(draftRoute(controller))
@@ -376,7 +407,7 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertEqual(
             try view(
                 controller,
-                "task-router-weight-claude/claude-opus-4-8",
+                "task-router-weight-\(complexCoding)-claude/claude-opus-4-8",
                 as: NSTextField.self).stringValue,
             "40",
             "the control must still show the user's edit")
@@ -391,12 +422,14 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testNonCurrentProjectionDisablesEveryRouterControl() throws {
         let controller = try makeController(scenario: .stale)
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         for identifier in [
-            "task-router-mode",
-            "task-router-member-claude/claude-opus-4-8",
-            "task-router-weight-claude/claude-opus-4-8",
-            "task-router-effort-claude/claude-opus-4-8",
+            "task-router-mode-\(complexCoding)",
+            "task-router-add-\(complexCoding)",
+            "task-router-clear-\(complexCoding)",
+            "task-router-member-\(complexCoding)-claude/claude-opus-4-8",
+            "task-router-weight-\(complexCoding)-claude/claude-opus-4-8",
+            "task-router-weight-up-\(complexCoding)-claude/claude-opus-4-8",
+            "task-router-effort-\(complexCoding)-claude/claude-opus-4-8",
             "task-router-apply",
         ] {
             XCTAssertFalse(
@@ -409,7 +442,7 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertEqual(
             try view(
                 controller,
-                "task-router-weight-claude/claude-opus-4-8",
+                "task-router-weight-\(complexCoding)-claude/claude-opus-4-8",
                 as: NSTextField.self).stringValue,
             "3")
         XCTAssertEqual(
@@ -430,9 +463,8 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testAWriteWithAnUnknownOutcomeFencesTheEditorWithoutLosingTheDraft() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "40"
         weight.sendAction(weight.action, to: weight.target)
         let draft = try XCTUnwrap(draftRoute(controller))
@@ -454,7 +486,7 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertEqual(
             try view(
                 controller,
-                "task-router-weight-claude/claude-opus-4-8",
+                "task-router-weight-\(complexCoding)-claude/claude-opus-4-8",
                 as: NSTextField.self).stringValue,
             "40")
         XCTAssertFalse(
@@ -472,9 +504,8 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testProbeSuccessfulRefreshResolvesTheFenceWithoutLosingTheUnappliedDraft() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "40"
         weight.sendAction(weight.action, to: weight.target)
         let draft = try XCTUnwrap(draftRoute(controller))
@@ -502,7 +533,7 @@ final class ShellPolicyEditingTests: XCTestCase {
         XCTAssertEqual(
             try view(
                 controller,
-                "task-router-weight-claude/claude-opus-4-8",
+                "task-router-weight-\(complexCoding)-claude/claude-opus-4-8",
                 as: NSTextField.self).stringValue,
             "40")
         XCTAssertTrue(try view(controller, "task-router-apply", as: NSButton.self).isEnabled)
@@ -533,9 +564,8 @@ final class ShellPolicyEditingTests: XCTestCase {
     func testARefreshWithNoPolicyKeepsTheEditorFencedRatherThanDroppingIt() throws {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
-        try selectComplexCoding(in: controller)
         let weight = try view(
-            controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
+            controller, "task-router-weight-\(complexCoding)-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "40"
         weight.sendAction(weight.action, to: weight.target)
         let draft = try XCTUnwrap(draftRoute(controller))

@@ -15,6 +15,8 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
 #if HIVE_QA_BUILD
     private var qaControl: QAControl?
 #endif
+    /// The tail of the policy-write queue; each new write awaits it before reading the editor.
+    private var pendingPolicyWrite: Task<Void, Never>?
     private let liveRunWorkspaceSessionID = "workspace-shell-\(UUID().uuidString)"
     private var liveRunInventoryRevision = 0
 
@@ -248,7 +250,13 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                 }
                 controller.policyWriteHandler = { [weak self, weak controller] write in
                     guard let self else { return }
-                    Task { @MainActor in
+                    // Writes queue behind one another: every set-route is a
+                    // compare-and-set against the revision the previous one
+                    // read back, so applying several routes at once must not
+                    // race the same stale revision.
+                    let previous = self.pendingPolicyWrite
+                    self.pendingPolicyWrite = Task { @MainActor in
+                        _ = await previous?.value
                         guard let controller,
                               let editor = controller.currentState.router else { return }
                         do {

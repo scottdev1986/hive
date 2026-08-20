@@ -141,6 +141,52 @@ final class QAControl {
         return !visible.isEmpty
     }
 
+    /// A segmented control is the Task Router's mode switch. Title or index, one of them, like a popup.
+    private static func select(
+        _ segmented: NSSegmentedControl,
+        itemTitle: String?,
+        itemIndex: Int?,
+        harness: QAControl,
+        window: NSWindow,
+        route: String,
+        controls: [QAControlResponse.Control],
+        requestId: String
+    ) -> QAControlResponse {
+        let refuse = { (status: String, reason: String) -> QAControlResponse in
+            QAControlResponse(
+                requestId: requestId, status: status, root: "hive-workspace-qa-root",
+                route: route, controls: controls, count: controls.count,
+                terminator: "qa-control-end:\(requestId):\(controls.count)", reason: reason)
+        }
+        guard segmented.isEnabled, segmented.action != nil else {
+            return refuse("fail", "segmented control is not actionable")
+        }
+        let labels = (0..<segmented.segmentCount).map { segmented.label(forSegment: $0) ?? "" }
+        let index: Int
+        switch (itemTitle, itemIndex) {
+        case let (.some(title), nil):
+            guard let found = labels.firstIndex(of: title) else {
+                return refuse("refused", "segment not found")
+            }
+            index = found
+        case let (nil, .some(given)) where labels.indices.contains(given):
+            index = given
+        case (.some, .some):
+            return refuse("refused", "segment selection is ambiguous")
+        default:
+            return refuse("refused", "segment not found")
+        }
+        segmented.selectedSegment = index
+        guard NSApp.sendAction(segmented.action!, to: segmented.target, from: segmented) else {
+            return refuse("fail", "segmented control is not actionable")
+        }
+        let after = harness.enumerate(window: window)
+        return QAControlResponse(
+            requestId: requestId, status: "ok", root: "hive-workspace-qa-root",
+            route: route, controls: after, count: after.count,
+            terminator: "qa-control-end:\(requestId):\(after.count)", reason: nil)
+    }
+
     static func process(
         verb: String,
         identifier: String?,
@@ -177,10 +223,18 @@ final class QAControl {
                 reason = "control is not actionable"
             }
         } else if verb == "select" {
-            guard let identifier,
-                  let popup = harness.liveViews(window: window).first(where: {
-                      $0.accessibilityIdentifier() == identifier
-                  }) as? NSPopUpButton else {
+            let selectable = identifier.flatMap { identifier in
+                harness.liveViews(window: window).first {
+                    $0.accessibilityIdentifier() == identifier
+                }
+            }
+            if let segmented = selectable as? NSSegmentedControl {
+                return Self.select(
+                    segmented, itemTitle: itemTitle, itemIndex: itemIndex,
+                    harness: harness, window: window, route: route,
+                    controls: controls, requestId: requestId)
+            }
+            guard let popup = selectable as? NSPopUpButton else {
                 return QAControlResponse(
                     requestId: requestId, status: "fail", root: "hive-workspace-qa-root",
                     route: route, controls: controls, count: controls.count,

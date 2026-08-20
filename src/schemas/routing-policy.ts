@@ -207,6 +207,24 @@ export function effectiveWeight(
   return mode === "hive-equal" ? 1 : candidate.weight;
 }
 
+/** The share of spawns each candidate is configured to receive: its effective weight over the route's total. This is the ONE place that arithmetic lives — the router's inspection and the workspace projection both publish it, and clients render what they are given rather than re-deriving it from stored weights. */
+export function routeShares(
+  route: RoutePolicy,
+): { candidate: RouteCandidate; effectiveWeight: number; share: number }[] {
+  const total = route.candidates.reduce(
+    (sum, candidate) => sum + effectiveWeight(route.mode, candidate),
+    0,
+  );
+  return route.candidates.map((candidate) => {
+    const weight = effectiveWeight(route.mode, candidate);
+    return {
+      candidate,
+      effectiveWeight: weight,
+      share: total > 0 ? weight / total : 0,
+    };
+  });
+}
+
 /** The mutations the daemon accepts — the CLI surface maps onto these 1:1. Every mutation carries `expectedRevision`; a stale revision is rejected. "unset" writes or returns to the explicit unconfigured state rather than to any invented automatic answer. */
 export const RoutingPolicyMutationSchema = z.discriminatedUnion("op", [
   z.strictObject({

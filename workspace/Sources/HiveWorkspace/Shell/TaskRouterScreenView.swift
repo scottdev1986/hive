@@ -1,51 +1,64 @@
 // TaskRouterScreenView.swift
 //
-// The Task Router is a ten-task, five-provider matrix over the observed
-// policy document. Each row is one catalogued category with its V3 mode
-// and one compact cell per vendor; members, effort, stored weight and
-// inspection shares live in those cells. The selected row is the editor —
-// the window controller still binds Apply and set-route to one category,
-// so only that row's controls write. Catalog models that are not members
-// stay available to join on the selected row; they do not flood the
-// matrix as a candidate catalog.
+// The Task Router is one card per catalogued task category, stacked down
+// the page, every card editable in place. A card is that task's current
+// route: one row per member candidate with vendor, exact model, effort,
+// stored weight, the daemon's expected share, and Remove. Models that are
+// not members stay off the card — they join through "Add model…", which
+// lists the live routing catalog by vendor. The design source is the
+// `.task-route-list` card list in docs/design/split-horizon-transition.html.
 //
-// This view is only built when a typed routing projection exists. The
-// generic availability paragraph is not a second presentation of that
-// projection; the matrix is. When availability is not current, a badge
-// keeps the observed time as a tooltip. When no typed projection
-// exists, the shell keeps ShellAvailabilityPanel as the sole screen.
+// This is a dumb view over the routing projection. Expected share is the
+// daemon's `configuredShare` for the observed route and nothing else: a
+// card whose draft differs from the last observation shows no share until
+// Apply reads the daemon back, because the view does not compute routing
+// arithmetic. Candidate status captions ("provider disabled", "not in live
+// catalog") are the daemon's candidate states, never re-derived here.
 //
-// Visual language comes from the design-system tokens and primitives.
-// Expected share, refusal, and balance stay inspection facts when the
-// projection supplied them; they are never computed here. Apply route
-// is the compare-and-set write against the document revision. There is
-// no separate Review V3 draft projection, so this screen does not
-// invent that button.
+// Every edit is a draft against one category; Apply sends one set-route
+// per edited category through the write seam, which runs them in order.
+// There is no separate Review V3 draft projection, so no such button.
 //
-// One card-owned column layout binds the header, collapsed rows, and editor
-// row to the same widths. At the window's 940pt minimum provider cells
-// compress and model names truncate without changing column ownership.
-// Nothing is dropped and full names remain on the tooltip.
+// One card-owned column layout binds the column header and every row to
+// the same widths. At the window's 940pt minimum the model column gives
+// way and names truncate with the full id on the tooltip.
 
 import AppKit
 import WorkspaceCore
 
 final class TaskRouterScreenView: NSView {
 
-    private static let unconfiguredMode = "Unconfigured — no route"
-    private static let taskColumnWidth: CGFloat = 148
-    private static let modeColumnWidth: CGFloat = 136
+    /// The draft candidate a row control edits. Control tags index into `rowRefs`.
+    private struct RowRef {
+        let category: TaskCategory
+        let provider: String
+        let model: String
+        var key: String { "\(provider)/\(model)" }
+    }
+
+    /// One rendered card row: a draft member, or a member of the last
+    /// observation that the draft removed (shown dimmed, restorable).
+    private struct CardRow {
+        let ref: RowRef
+        let candidate: RoutingPolicyDocument.WireRouteCandidate
+        let isMember: Bool
+        let unresolvable: Bool
+    }
+
+    private static let vendorWidth: CGFloat = 100
+    private static let effortWidth: CGFloat = 128
+    private static let weightWidth: CGFloat = 104
+    private static let shareWidth: CGFloat = 100
+    private static let routeWidth: CGFloat = 76
 
     private let editor: TaskRouterEditor
     private let categories: [TaskCategory]
-    private let category: TaskCategory
     private let routing: WorkspaceRoutingPresentation
     private let screen: ShellScreenProjection
     private let providers: [String]
-    private let rows: [TaskRouterRow]
-    private let onSelectCategory: (TaskCategory) -> Void
-    private let onEditRoute: (RoutingPolicyDocument.WireRoute?) -> Void
+    private let onEditRoute: (TaskCategory, RoutingPolicyDocument.WireRoute?) -> Void
     private let onApply: () -> Void
+    private var rowRefs: [RowRef] = []
     /// Live handles for the one refusal this view raises itself. A rejected weight changes no state, so nothing re-renders and these must be the views already on screen.
     private let weightRefusal = NSTextField(wrappingLabelWithString: "")
     private weak var applyButton: NSButton?
@@ -54,22 +67,17 @@ final class TaskRouterScreenView: NSView {
         screen: ShellScreenProjection,
         editor: TaskRouterEditor,
         categories: [TaskCategory],
-        category: TaskCategory,
         routing: WorkspaceRoutingPresentation,
         probeState: ShellProviderProbeRefreshState,
         onProbe: @escaping () -> Void,
-        onSelectCategory: @escaping (TaskCategory) -> Void,
-        onEditRoute: @escaping (RoutingPolicyDocument.WireRoute?) -> Void,
+        onEditRoute: @escaping (TaskCategory, RoutingPolicyDocument.WireRoute?) -> Void,
         onApply: @escaping () -> Void
     ) {
         self.editor = editor
         self.categories = categories
-        self.category = category
         self.routing = routing
         self.screen = screen
         providers = editor.matrixProviders(routing: routing)
-        rows = editor.rows(for: category, catalog: routing.catalog)
-        self.onSelectCategory = onSelectCategory
         self.onEditRoute = onEditRoute
         self.onApply = onApply
         super.init(frame: .zero)
@@ -85,8 +93,9 @@ final class TaskRouterScreenView: NSView {
         let apply = applyControl()
         let header = PageHeaderView(
             title: "Task Router",
-            subtitle: "Every catalogued task category and every known vendor. "
-                + "Inspection shares appear only when the daemon supplied them.",
+            subtitle: "All configured Hive task categories and every known vendor. "
+                + "Every candidate row shows exact model, effort, stored weight, and the "
+                + "daemon's expected share; scroll to edit any task.",
             actions: [refresh, apply])
         stack.addArrangedSubview(header)
         header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -114,13 +123,18 @@ final class TaskRouterScreenView: NSView {
         stack.addArrangedSubview(summary)
         summary.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        let matrix = matrixCard()
-        stack.addArrangedSubview(matrix)
-        matrix.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-
-        let observed = observedInspectionCard()
-        stack.addArrangedSubview(observed)
-        observed.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let list = NSStackView()
+        list.orientation = .vertical
+        list.alignment = .leading
+        list.spacing = Theme.Space.m
+        list.setAccessibilityIdentifier("task-router-routes")
+        for (index, category) in categories.enumerated() {
+            let card = routeCard(for: category, index: index)
+            list.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+        }
+        stack.addArrangedSubview(list)
+        list.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -136,6 +150,8 @@ final class TaskRouterScreenView: NSView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    // MARK: Summary
 
     private func summaryRow() -> NSView {
         let facts = editor.summaryFacts(categories: categories)
@@ -187,12 +203,6 @@ final class TaskRouterScreenView: NSView {
         badges.alignment = .centerY
         badges.spacing = Theme.Space.s
 
-        let category = labelled("Category", categoryControl())
-        let top = NSStackView(views: [badges, NSView.spacer(), category])
-        top.orientation = .horizontal
-        top.alignment = .centerY
-        top.spacing = Theme.Space.s
-
         let label = NSTextField(wrappingLabelWithString: line)
         label.font = Theme.Font.monoCaption
         label.textColor = Theme.secondaryText
@@ -200,564 +210,450 @@ final class TaskRouterScreenView: NSView {
         label.compressHorizontally(priority: 430, toolTip: line)
 
         let panel = InsetPanelView()
-        panel.contentStack.addArrangedSubview(top)
+        panel.contentStack.addArrangedSubview(badges)
         panel.contentStack.addArrangedSubview(label)
-        top.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
         label.widthAnchor.constraint(equalTo: panel.contentStack.widthAnchor).isActive = true
         return panel
     }
 
-    private func matrixCard() -> SectionCardView {
-        let card = SectionCardView(
-            title: "Task routes",
-            subtitle: "One row per task, one cell per vendor. "
-                + "The selected row is the editor.")
-        card.setAccessibilityIdentifier("task-router-matrix")
-        let columns = MatrixColumnLayout(
-            owner: card,
-            content: card.contentStack,
-            count: providers.count + 2,
-            taskWidth: Self.taskColumnWidth,
-            modeWidth: Self.modeColumnWidth)
+    // MARK: Route cards
 
-        let header = matrixHeader()
-        card.contentStack.addArrangedSubview(header)
-        card.pinToContentWidth(header)
-        columns.bind(header.columns)
+    private func routeCard(for category: TaskCategory, index: Int) -> SectionCardView {
+        let route = draftRoute(category)
+        let rows = cardRows(for: category)
+        let members = route?.candidates.count ?? 0
+        let subtitle = route == nil
+            ? "\(category.rawValue) · no route configured"
+            : "\(category.rawValue) · \(members) current candidate\(members == 1 ? "" : "s")"
 
-        for (index, item) in categories.enumerated() {
-            let row = matrixRow(item, index: index)
+        var actionViews: [NSView] = []
+        if isEdited(category) {
+            let badge = CapsuleBadge(text: "unsent edit", symbol: "pencil", style: .warning)
+            badge.setAccessibilityIdentifier("task-router-draft-\(category.rawValue)")
+            actionViews.append(badge)
+        }
+        actionViews.append(modeControl(for: category, index: index))
+        if route != nil {
+            actionViews.append(clearControl(for: category, index: index))
+        }
+        actionViews.append(addControl(for: category, index: index))
+        let actions = NSStackView(views: actionViews)
+        actions.orientation = .horizontal
+        actions.alignment = .centerY
+        actions.spacing = Theme.Space.s
+
+        let card = SectionCardView(title: category.label, subtitle: subtitle, trailingView: actions)
+        card.setAccessibilityIdentifier("task-router-card-\(category.rawValue)")
+
+        guard route != nil else {
+            let copy = NSTextField(wrappingLabelWithString:
+                "No route is configured for \(category.label); spawns in this category "
+                    + "follow the global route. Configure one to choose its candidates.")
+            copy.font = Theme.Font.callout
+            copy.textColor = Theme.secondaryText
+            copy.maximumNumberOfLines = 0
+            let configure = ActionButton(
+                title: "Configure route",
+                symbol: "plus.circle",
+                target: self,
+                action: #selector(configureTapped(_:)))
+            configure.tag = index
+            configure.isEnabled = editor.mutationsAllowed
+            configure.setAccessibilityIdentifier("task-router-configure-\(category.rawValue)")
+            let row = NSStackView(views: [copy, NSView.spacer(), configure])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = Theme.Space.m
             card.contentStack.addArrangedSubview(row)
             card.pinToContentWidth(row)
-            columns.bind(row.columns)
+            return card
+        }
+
+        guard !rows.isEmpty else {
+            let copy = NSTextField(wrappingLabelWithString:
+                "This route has no members yet. Add at least one model before sending.")
+            copy.font = Theme.Font.callout
+            copy.textColor = Theme.secondaryText
+            copy.maximumNumberOfLines = 0
+            card.contentStack.addArrangedSubview(copy)
+            card.pinToContentWidth(copy)
+            return card
+        }
+
+        let columns = CardColumnLayout(
+            owner: card,
+            content: card.contentStack,
+            fixedWidths: [
+                Self.vendorWidth, nil, Self.effortWidth,
+                Self.weightWidth, Self.shareWidth, Self.routeWidth,
+            ],
+            spacing: Theme.Space.m)
+
+        let head = DataTableRowView(
+            columns: ["Vendor", "Exact model", "Effort", "Stored weight", "Expected share", ""]
+                .map(columnHead),
+            showsSeparator: true)
+        head.setAccessibilityIdentifier("task-router-columns-\(category.rawValue)")
+        card.contentStack.addArrangedSubview(head)
+        card.pinToContentWidth(head)
+        columns.bind(head.columnStack.arrangedSubviews)
+
+        for (position, row) in rows.enumerated() {
+            let view = candidateRow(row, last: position + 1 == rows.count)
+            card.contentStack.addArrangedSubview(view)
+            card.pinToContentWidth(view)
+            columns.bind(view.columnStack.arrangedSubviews)
         }
         return card
     }
 
-    private func matrixHeader() -> MatrixRowView {
-        var columns: [NSView] = [
-            columnHead("Task category"),
-            columnHead("V3 mode"),
-        ]
-        columns += providers.map { provider in
-            matrixHeaderCell(
-                columnHead(providerColumnTitle(provider)),
-                identifier: "task-router-header-\(provider)")
+    /// Draft members, then members of the last observation the draft removed.
+    /// Vendor order follows the provider columns; models sort within a vendor.
+    private func cardRows(for category: TaskCategory) -> [CardRow] {
+        let draft = draftRoute(category)?.candidates ?? []
+        let observed = editor.observedRoute(for: category)?.candidates ?? []
+        let catalogKeys = Set(routing.catalog.map { "\($0.provider)/\($0.model)" })
+        let hasCatalog = !routing.catalog.isEmpty
+        var rows: [CardRow] = draft.map { candidate in
+            CardRow(
+                ref: RowRef(
+                    category: category, provider: candidate.provider, model: candidate.model),
+                candidate: candidate,
+                isMember: true,
+                unresolvable: hasCatalog
+                    && !catalogKeys.contains("\(candidate.provider)/\(candidate.model)"))
         }
-        return MatrixRowView(
-            columns: columns,
-            selected: false)
-    }
-
-    private func matrixRow(
-        _ item: TaskCategory,
-        index: Int
-    ) -> MatrixRowView {
-        let selected = item == category
-        let name = taskNameColumn(item: item, index: index, selected: selected)
-        let mode: NSView = selected
-            ? modeControl()
-            : modeBadge(for: item, index: index)
-        let cells = providers.map { provider in
-            providerCell(item: item, provider: provider, selected: selected)
+        for candidate in observed where !draft.contains(where: {
+            $0.provider == candidate.provider && $0.model == candidate.model
+        }) {
+            rows.append(CardRow(
+                ref: RowRef(
+                    category: category, provider: candidate.provider, model: candidate.model),
+                candidate: candidate,
+                isMember: false,
+                unresolvable: hasCatalog
+                    && !catalogKeys.contains("\(candidate.provider)/\(candidate.model)")))
         }
-        let row = MatrixRowView(
-            columns: [name, mode] + cells,
-            selected: selected)
-        row.setAccessibilityIdentifier("task-router-matrix-row-\(item.rawValue)")
-        return row
+        return rows.sorted { lhs, rhs in
+            let left = providers.firstIndex(of: lhs.ref.provider) ?? providers.count
+            let right = providers.firstIndex(of: rhs.ref.provider) ?? providers.count
+            if left != right { return left < right }
+            return lhs.ref.model < rhs.ref.model
+        }
     }
 
-    private func modeBadge(for item: TaskCategory, index: Int) -> NSView {
-        let route = editor.draft.policy.categories[item.rawValue]
-        let modeLabel = route.flatMap { routing.mode($0.mode)?.label }
-            ?? (route == nil ? Self.unconfiguredMode : route!.mode)
-        let button = NSButton(
-            title: modeLabel,
-            target: self,
-            action: #selector(categoryRowTapped(_:)))
-        button.bezelStyle = .inline
-        button.isBordered = false
-        button.font = Theme.Font.chromeControl
-        button.contentTintColor = route == nil ? Theme.secondaryText : Theme.positive
-        button.tag = index
-        button.setAccessibilityLabel("Select \(item.label)")
-        button.alignment = .left
-        button.toolTip = modeLabel
-        button.lineBreakMode = .byTruncatingTail
-        compressesHorizontally(button)
-        return button
+    private func candidateRow(_ row: CardRow, last: Bool) -> DataTableRowView {
+        let tag = rowRefs.count
+        rowRefs.append(row.ref)
+        let category = row.ref.category
+        let route = draftRoute(category)
+        let weightEditable = route.flatMap { routing.mode($0.mode) }?.weightEditable ?? false
+        let editable = editor.mutationsAllowed && row.isMember
+
+        let view = DataTableRowView(
+            columns: [
+                vendorCell(row),
+                modelCell(row),
+                effortCell(row, tag: tag, enabled: editable),
+                weightCell(row, tag: tag, enabled: editable && weightEditable,
+                           weightEditable: weightEditable),
+                shareCell(row),
+                memberControl(row, tag: tag),
+            ],
+            showsSeparator: !last)
+        view.setAccessibilityIdentifier(
+            "task-router-row-\(category.rawValue)-\(row.ref.key)")
+        if !row.isMember { view.alphaValue = 0.55 }
+        return view
     }
 
-    private func providerCell(
-        item: TaskCategory,
-        provider: String,
-        selected: Bool
-    ) -> NSView {
-        let cellRows = selected
-            ? editor.editorRows(for: item, provider: provider, catalog: routing.catalog)
-            : editor.matrixMembers(for: item, provider: provider, catalog: routing.catalog)
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
+    // MARK: Cells
+
+    private func vendorCell(_ row: CardRow) -> NSView {
+        let id = ProviderID(row.ref.provider)
+        let mark = ProviderMarkView(provider: id, size: Theme.Metric.chainMarkSize)
+        let name = truncatingLabel(
+            providerTitle(row.ref.provider),
+            font: Theme.Font.chromeControl,
+            color: Theme.primaryText,
+            priority: 440)
+        let stack = NSStackView(views: [mark, name])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
         stack.spacing = Theme.Space.xs
-        stack.setAccessibilityIdentifier(
-            "task-router-cell-\(item.rawValue)-\(provider)")
-        compressesHorizontally(stack)
-        if cellRows.isEmpty {
-            let empty = NSTextField(labelWithString: "no member")
-            empty.font = Theme.Font.caption
-            empty.textColor = Theme.secondaryText
-            empty.setContentCompressionResistancePriority(.init(430), for: .horizontal)
-            stack.addArrangedSubview(empty)
-        } else {
-            for row in cellRows {
-                stack.addArrangedSubview(
-                    selected ? editorChip(row, category: item) : memberChip(row, category: item))
-            }
+        if routing.providerState(id) != "enabled" {
+            stack.toolTip = "\(providerTitle(row.ref.provider)) is not enabled"
         }
+        compressesHorizontally(stack)
         return stack
     }
 
-    private func memberChip(_ row: TaskRouterRow, category: TaskCategory) -> NSView {
-        let model = truncatingLabel(row.model, font: Theme.Font.headline, color: Theme.primaryText)
-        let detail = truncatingLabel(
-            compactDetail(row), font: Theme.Font.monoCaption, color: Theme.accent, priority: 420)
-
-        let stack = NSStackView(views: [model, detail])
+    private func modelCell(_ row: CardRow) -> NSView {
+        let model = truncatingLabel(
+            row.ref.model, font: Theme.Font.chromeProject, color: Theme.primaryText)
+        let (captionText, captionColor) = statusCaption(row)
+        let caption = truncatingLabel(
+            captionText, font: Theme.Font.monoCaption, color: captionColor, priority: 420)
+        caption.setAccessibilityIdentifier(
+            "task-router-status-\(row.ref.category.rawValue)-\(row.ref.key)")
+        let stack = NSStackView(views: [model, caption])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 1
         compressesHorizontally(stack)
-        if let weight = storedWeightView(for: row, category: category) {
-            stack.addArrangedSubview(weight)
-            weight.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-        if let bar = shareBar(for: row, category: category) {
-            stack.addArrangedSubview(bar)
-            bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-        if row.unresolvable {
-            stack.addArrangedSubview(unresolvableBadge(row))
-        }
         return stack
     }
 
-    private func editorChip(_ row: TaskRouterRow, category: TaskCategory) -> NSView {
-        guard let index = rows.firstIndex(where: {
-            $0.provider == row.provider && $0.model == row.model
-        }) else {
-            return memberChip(row, category: category)
+    /// The daemon's word on this candidate. A row the draft added has no
+    /// daemon state yet; a row the draft removed keeps the observed one.
+    private func statusCaption(_ row: CardRow) -> (String, NSColor) {
+        if !row.isMember { return ("removed in this draft", Theme.secondaryText) }
+        if row.unresolvable { return ("not in live catalog", Theme.warning) }
+        guard let state = routing.candidate(
+            scope: row.ref.category.rawValue,
+            provider: row.ref.provider,
+            model: row.ref.model)
+        else { return ("added · pending apply", Theme.secondaryText) }
+        switch state.rendered {
+        case .effective: return ("exact enabled model", Theme.tertiaryText)
+        case .providerOff: return ("provider disabled", Theme.warning)
+        case .modelDisabled: return ("model disabled", Theme.warning)
+        case .awaitingConsent: return ("awaiting consent", Theme.warning)
+        case .unresolvable: return ("not in live catalog", Theme.warning)
         }
-        let member = membershipCheckbox(row, index: index)
-        let model = truncatingLabel(row.model, font: Theme.Font.headline, color: Theme.primaryText)
-        let title = NSStackView(views: [member, model])
-        title.orientation = .horizontal
-        title.alignment = .centerY
-        title.spacing = Theme.Space.xs
-        compressesHorizontally(title)
+    }
 
-        let effort = effortEditor(row, index: index)
-        let weight = weightControl(row, index: index)
-        var controls: [NSView] = [title, effort]
-        if let storedWeight = storedWeightView(
-            for: row, category: category, valueControl: weight
-        ) {
-            controls.append(storedWeight)
-        } else {
-            controls.append(weight)
+    private func effortCell(_ row: CardRow, tag: Int, enabled: Bool) -> NSView {
+        let key = row.ref.key
+        let category = row.ref.category
+        let popup = NSPopUpButton()
+        popup.font = Theme.Font.chromeControl
+        let entry = routing.catalog.first {
+            $0.provider == row.ref.provider && $0.model == row.ref.model
         }
-        let stack = NSStackView(views: controls)
+        let options = entry?.effortOptions ?? []
+        popup.addItems(withTitles: options.map { effortPresentation($0.effort) })
+        let selected = options.firstIndex { $0.effort == row.candidate.effort }
+        if let selected {
+            popup.selectItem(at: selected)
+        } else {
+            popup.addItem(withTitle: effortPresentation(row.candidate.effort))
+            popup.selectItem(at: options.count)
+        }
+        popup.tag = tag
+        popup.isEnabled = enabled && selected != nil
+        popup.target = self
+        popup.action = #selector(effortChanged(_:))
+        popup.setAccessibilityIdentifier("task-router-effort-\(category.rawValue)-\(key)")
+        popup.setAccessibilityLabel("Effort for \(key) on \(category.label)")
+        compressesHorizontally(popup)
+
+        guard editor.mutationsAllowed, row.isMember, entry == nil else { return popup }
+        let refusal = "Effort unavailable — \(key) is not in the live routing catalog, "
+            + "so no legal choices were published."
+        popup.toolTip = refusal
+        let reason = NSTextField(wrappingLabelWithString: refusal)
+        reason.font = Theme.Font.caption
+        reason.textColor = Theme.secondaryText
+        reason.maximumNumberOfLines = 3
+        reason.setAccessibilityIdentifier(
+            "task-router-effort-refusal-\(category.rawValue)-\(key)")
+        reason.compressHorizontally(priority: 420)
+        let stack = NSStackView(views: [popup, reason])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Space.xs
+        popup.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         compressesHorizontally(stack)
-        if let bar = shareBar(for: row, category: category) {
-            stack.addArrangedSubview(bar)
-            bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-        if row.isMember, let fact = inspectionFact(for: row, category: category) {
-            let value = NSTextField(wrappingLabelWithString: fact)
-            value.font = Theme.Font.monoCaption
-            value.textColor = Theme.primaryText
-            value.maximumNumberOfLines = 3
-            value.compressHorizontally(priority: 420, toolTip: fact)
-            stack.addArrangedSubview(value)
-        }
-        if row.unresolvable {
-            stack.addArrangedSubview(unresolvableBadge(row))
-        }
         return stack
     }
 
-    private func compactDetail(_ row: TaskRouterRow) -> String {
-        let effort = effortLabel(row)
-        return row.unresolvable ? "\(effort) · effort unavailable" : effort
-    }
-
-    private func effortLabel(_ row: TaskRouterRow) -> String {
-        guard let effort = row.candidate?.effort else { return "not a member" }
-        return effortPresentation(effort)
-    }
-
-    private func effortPresentation(
-        _ effort: RoutingPolicyDocument.CandidateEffort
-    ) -> String {
-        switch effort {
-        case .hiveDecides: return "Hive decides"
-        case .exact(let value): return value
-        case .none: return "No effort setting"
-        case .providerControlled: return "Provider controlled"
-        case .unknown(let mode): return mode
+    private func weightCell(
+        _ row: CardRow, tag: Int, enabled: Bool, weightEditable: Bool
+    ) -> NSView {
+        let key = row.ref.key
+        let category = row.ref.category
+        let stepper = WeightStepperView(
+            value: row.candidate.weight,
+            target: self,
+            down: #selector(weightStepDown(_:)),
+            up: #selector(weightStepUp(_:)),
+            typed: #selector(weightChanged(_:)))
+        stepper.tag = tag
+        stepper.isEnabled = enabled
+        stepper.setAccessibilityIdentifier(
+            "task-router-stored-weight-\(category.rawValue)-\(key)")
+        stepper.field.setAccessibilityIdentifier(
+            "task-router-weight-\(category.rawValue)-\(key)")
+        stepper.field.setAccessibilityLabel("Weight for \(key) on \(category.label)")
+        stepper.downButton.setAccessibilityIdentifier(
+            "task-router-weight-down-\(category.rawValue)-\(key)")
+        stepper.upButton.setAccessibilityIdentifier(
+            "task-router-weight-up-\(category.rawValue)-\(key)")
+        if !weightEditable {
+            let mode = draftRoute(category).flatMap { routing.mode($0.mode) }
+            stepper.toolTip = mode.map {
+                "\($0.label) ignores stored weights; this one is kept for a weighted split."
+            } ?? "Stored weight is not in use."
         }
+        compressesHorizontally(stepper)
+        return stepper
     }
 
-    private func storedWeightView(
-        for row: TaskRouterRow,
-        category: TaskCategory,
-        valueControl: NSView? = nil
-    ) -> NSView? {
-        guard row.isMember,
-              let candidate = row.candidate,
-              let route = editor.draft.policy.categories[category.rawValue],
-              routing.mode(route.mode)?.weightEditable == true else { return nil }
-        let range = routing.weightRange
-        let count = max(1, range.maximum - range.minimum + 1)
-        let position = max(1, candidate.weight - range.minimum + 1)
+    /// The daemon's configured share for the observed route. An edited card
+    /// has no share to show until Apply reads the daemon back.
+    private func shareCell(_ row: CardRow) -> NSView {
+        let category = row.ref.category
+        let observedShare = routing.candidate(
+            scope: category.rawValue, provider: row.ref.provider, model: row.ref.model
+        )?.configuredShare
+        let share: Double? = (isEdited(category) || !row.isMember) ? nil : observedShare
+
+        let value = NSTextField(labelWithString: share.map { "\(Int(($0 * 100).rounded()))%" } ?? "—")
+        value.font = Theme.Font.monoDigits
+        value.textColor = share == nil ? Theme.tertiaryText : Theme.primaryText
         let bar = MeterBarView()
-        bar.state = .fill(fraction: Double(position) / Double(count), color: Theme.accent)
-        bar.setAccessibilityLabel("Stored weight \(candidate.weight)")
-
-        let value: NSView
-        if let valueControl {
-            let label = NSTextField(labelWithString: "Stored weight")
-            label.font = Theme.Font.monoCaption
-            label.textColor = Theme.secondaryText
-            let row = NSStackView(views: [label, valueControl])
-            row.orientation = .horizontal
-            row.alignment = .centerY
-            row.spacing = Theme.Space.xs
-            value = row
-        } else {
-            let label = NSTextField(labelWithString: "Stored weight \(candidate.weight)")
-            label.font = Theme.Font.monoCaption
-            label.textColor = Theme.secondaryText
-            value = label
-        }
-
-        let stack = NSStackView(views: [bar, value])
+        bar.state = .fill(fraction: share ?? 0, color: Theme.accent)
+        let stack = NSStackView(views: [value, bar])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Space.xs
         stack.setAccessibilityIdentifier(
-            "task-router-stored-weight-\(category.rawValue)-\(row.provider)/\(row.model)")
+            "task-router-share-\(category.rawValue)-\(row.ref.key)")
+        if share == nil {
+            stack.toolTip = row.isMember
+                ? "Expected share comes from the daemon after Apply."
+                : "Not a member of this draft."
+        } else {
+            stack.toolTip = "Configured share from the daemon's last read"
+        }
         bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         compressesHorizontally(stack)
         return stack
     }
 
-    private func shareBar(for row: TaskRouterRow, category: TaskCategory) -> NSView? {
-        guard row.isMember,
-              let fact = inspectionFact(for: row, category: category),
-              let percent = configuredPercent(in: fact) else { return nil }
-        let bar = MeterBarView()
-        bar.state = .fill(fraction: Double(percent) / 100, color: Theme.accent)
-        bar.toolTip = fact
-        return bar
-    }
-
-    private func configuredPercent(in fact: String) -> Int? {
-        let marker = "configured "
-        guard let range = fact.range(of: marker) else { return nil }
-        let tail = fact[range.upperBound...]
-        var digits = ""
-        for character in tail {
-            if character.isNumber { digits.append(character) } else { break }
-        }
-        return Int(digits)
-    }
-
-    private func unresolvableBadge(_ row: TaskRouterRow) -> NSView {
-        let key = "\(row.provider)/\(row.model)"
-        // Policy names this model; the live catalog does not. Badge it so a retired or never-discovered row is not silently invisible either.
-        let badge = CapsuleBadge(
-            text: "not in live catalog",
-            symbol: "exclamationmark.triangle",
-            style: .warning)
-        badge.setAccessibilityIdentifier("task-router-unresolvable-\(key)")
-        compressesHorizontally(badge)
-        return badge
-    }
-
-    private var availabilityStyle: CapsuleBadge.Style {
-        switch screen.availability {
-        case .current: return .positive
-        case .unknown, .stale, .replaced: return .info
-        case .disconnected, .conflicting: return .warning
-        case .unauthorized: return .critical
-        }
-    }
-
-    private var availabilitySymbol: String {
-        switch screen.availability {
-        case .current: return "checkmark.circle.fill"
-        case .unknown: return "questionmark.circle.fill"
-        case .stale: return "clock.fill"
-        case .disconnected: return "bolt.horizontal.circle.fill"
-        case .unauthorized: return "lock.fill"
-        case .conflicting: return "arrow.triangle.branch"
-        case .replaced: return "arrow.uturn.right.circle.fill"
-        }
-    }
-
-    private func taskNameColumn(
-        item: TaskCategory, index: Int, selected: Bool
-    ) -> NSView {
-        let name = NSTextField(labelWithString: item.label)
-        name.font = Theme.Font.headline
-        name.textColor = selected ? Theme.accent : Theme.primaryText
-        name.compressHorizontally(priority: 450, toolTip: item.label)
-        let slug = NSTextField(labelWithString: item.rawValue)
-        slug.font = Theme.Font.monoCaption
-        slug.textColor = Theme.secondaryText
-        slug.compressHorizontally(priority: 430, toolTip: item.rawValue)
-        let copy = NSStackView(views: [name, slug])
-        copy.orientation = .vertical
-        copy.alignment = .leading
-        copy.spacing = 1
-        let select = categorySelectButton(item: item, index: index, selected: selected)
-        let stack = NSStackView(views: [copy, select])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = Theme.Space.xs
-        return stack
-    }
-
-    private func categorySelectButton(
-        item: TaskCategory, index: Int, selected: Bool
-    ) -> NSButton {
-        let select = NSButton(
-            title: selected ? "Editing" : "Edit",
+    private func memberControl(_ row: CardRow, tag: Int) -> NSView {
+        let button = ActionButton(
+            title: row.isMember ? "Remove" : "Restore",
+            style: row.isMember ? .destructive : .neutral,
             target: self,
-            action: #selector(categoryRowTapped(_:)))
-        select.bezelStyle = .inline
-        select.isBordered = false
-        select.font = Theme.Font.chromeControl
-        select.contentTintColor = selected ? Theme.accent : Theme.secondaryText
-        select.tag = index
-        select.setAccessibilityIdentifier("task-router-category-row-\(item.rawValue)")
-        select.setAccessibilityLabel("\(selected ? "Editing" : "Edit") \(item.label)")
-        select.lineBreakMode = .byTruncatingTail
-        select.toolTip = item.label
-        select.setContentCompressionResistancePriority(.init(450), for: .horizontal)
-        return select
+            action: #selector(memberTapped(_:)))
+        button.tag = tag
+        button.isEnabled = editor.mutationsAllowed && draftRoute(row.ref.category) != nil
+        button.setAccessibilityIdentifier(
+            "task-router-member-\(row.ref.category.rawValue)-\(row.ref.key)")
+        button.setAccessibilityLabel(
+            "\(row.isMember ? "Remove" : "Restore") \(row.ref.key) on \(row.ref.category.label)")
+        compressesHorizontally(button)
+        return button
     }
 
-    private func columnHead(_ text: String) -> NSView {
-        let label = NSTextField(labelWithString: text)
-        label.font = Theme.Font.sectionLabel
-        label.textColor = Theme.secondaryText
-        label.compressHorizontally(priority: 450, toolTip: text)
-        return label
-    }
+    // MARK: Card-level controls
 
-    private func matrixHeaderCell(_ content: NSView, identifier: String) -> NSView {
-        let cell = NSView()
-        cell.translatesAutoresizingMaskIntoConstraints = false
-        cell.setAccessibilityIdentifier(identifier)
-        content.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(content)
-        NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
-            content.topAnchor.constraint(equalTo: cell.topAnchor),
-            content.bottomAnchor.constraint(equalTo: cell.bottomAnchor),
-        ])
-        compressesHorizontally(cell)
-        return cell
-    }
-
-    private func providerColumnTitle(_ provider: String) -> String {
-        switch ProviderID(provider) {
-        case .claude: return "Claude"
-        case .codex: return "Codex"
-        case .grok: return "Grok"
-        case .kimi: return "Kimi"
-        case .opencode: return "OpenCode"
-        default: return ProviderBranding.title(for: ProviderID(provider))
+    private func modeControl(for category: TaskCategory, index: Int) -> NSView {
+        let segmented = NSSegmentedControl(
+            labels: routing.modes.map(\.label),
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(modeChanged(_:)))
+        segmented.segmentStyle = .rounded
+        segmented.font = Theme.Font.chromeControl
+        for (segment, mode) in routing.modes.enumerated() {
+            segmented.setToolTip(mode.caption, forSegment: segment)
         }
-    }
-
-    private func observedInspectionCard() -> SectionCardView {
-        let subtitle = screen.facts.isEmpty
-            ? "No routing-inspection facts on this projection"
-            : "Daemon-supplied facts, not client-computed shares"
-        let card = SectionCardView(title: "Observed inspection", subtitle: subtitle)
-        if screen.facts.isEmpty {
-            let empty = NSTextField(
-                wrappingLabelWithString: "Routing inspection unavailable.")
-            empty.font = Theme.Font.callout
-            empty.textColor = Theme.secondaryText
-            card.contentStack.addArrangedSubview(empty)
-            card.pinToContentWidth(empty)
-            return card
-        }
-        for (index, fact) in screen.facts.enumerated() {
-            let label = NSTextField(labelWithString: fact.label)
-            label.font = Theme.Font.callout
-            label.textColor = Theme.secondaryText
-            label.compressHorizontally(priority: 470, toolTip: fact.label)
-            label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-            let value = NSTextField(wrappingLabelWithString: fact.value)
-            value.font = Theme.Font.monoCaption
-            value.textColor = Theme.primaryText
-            value.maximumNumberOfLines = 0
-            value.compressHorizontally(priority: 460, toolTip: fact.value)
-            let row = DataTableRowView(
-                columns: [label, value],
-                showsSeparator: index + 1 < screen.facts.count)
-            label.widthAnchor.constraint(equalToConstant: 120).isActive = true
-            card.contentStack.addArrangedSubview(row)
-            card.pinToContentWidth(row)
-        }
-        return card
-    }
-
-    private func categoryControl() -> NSView {
-        let popup = NSPopUpButton()
-        popup.addItems(withTitles: categories.map(\.label))
-        popup.selectItem(at: categories.firstIndex(of: category) ?? 0)
-        popup.setAccessibilityIdentifier("task-router-category")
-        popup.setAccessibilityLabel("Task category")
-        popup.target = self
-        popup.action = #selector(categoryChanged(_:))
-        compressesHorizontally(popup)
-        return popup
-    }
-
-    private func modeControl() -> NSView {
-        let popup = NSPopUpButton()
-        popup.addItems(withTitles: [Self.unconfiguredMode] + routing.modes.map(\.label))
-        if let mode = draftRoute.flatMap({ routing.mode($0.mode) }),
-           let index = routing.modes.firstIndex(of: mode) {
-            popup.selectItem(at: index + 1)
+        let route = draftRoute(category)
+        if let mode = route.flatMap({ routing.mode($0.mode) }),
+           let selected = routing.modes.firstIndex(of: mode) {
+            segmented.selectedSegment = selected
         } else {
-            popup.selectItem(at: 0)
+            segmented.selectedSegment = -1
         }
-        popup.isEnabled = editor.mutationsAllowed && (draftRoute?.writable ?? true)
-        popup.setAccessibilityIdentifier("task-router-mode")
-        popup.setAccessibilityLabel("Router mode")
-        popup.target = self
-        popup.action = #selector(modeChanged(_:))
-        compressesHorizontally(popup)
+        segmented.tag = index
+        segmented.isEnabled = editor.mutationsAllowed && route != nil
+            && (route?.writable ?? true)
+        segmented.setAccessibilityIdentifier("task-router-mode-\(category.rawValue)")
+        segmented.setAccessibilityLabel("Router mode for \(category.label)")
+        return segmented
+    }
+
+    private func clearControl(for category: TaskCategory, index: Int) -> NSView {
+        let button = NSButton(
+            title: "Clear route",
+            target: self,
+            action: #selector(clearTapped(_:)))
+        button.bezelStyle = .inline
+        button.isBordered = false
+        button.font = Theme.Font.chromeControl
+        button.contentTintColor = Theme.secondaryText
+        button.tag = index
+        button.isEnabled = editor.mutationsAllowed
+        button.toolTip = "Unconfigure \(category.label); spawns follow the global route."
+        button.setAccessibilityIdentifier("task-router-clear-\(category.rawValue)")
+        return button
+    }
+
+    /// Pull-down of the live routing catalog, one submenu per vendor, models
+    /// already on the route left out. Joining takes the daemon's starting
+    /// effort and default weight; it changes membership, not consent.
+    private func addControl(for category: TaskCategory, index: Int) -> NSView {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: true)
+        popup.font = Theme.Font.chromeControl
+        popup.addItem(withTitle: "Add model…")
+        let members = Set((draftRoute(category)?.candidates ?? []).map { "\($0.provider)/\($0.model)" })
+        var addable = 0
+        for provider in providers {
+            let entries = routing.catalog
+                .filter { $0.provider == provider && !members.contains("\($0.provider)/\($0.model)") }
+                .sorted { $0.model < $1.model }
+            let vendor = NSMenuItem(title: providerTitle(provider), action: nil, keyEquivalent: "")
+            vendor.image = ProviderMarkView.markImage(for: ProviderID(provider))
+            let submenu = NSMenu(title: providerTitle(provider))
+            if entries.isEmpty {
+                let none = NSMenuItem(
+                    title: routing.catalog.contains { $0.provider == provider }
+                        ? "Every enabled model is on this route"
+                        : "No enabled models",
+                    action: nil, keyEquivalent: "")
+                none.isEnabled = false
+                submenu.addItem(none)
+            }
+            for entry in entries {
+                let item = NSMenuItem(
+                    title: entry.model,
+                    action: #selector(addModelChosen(_:)),
+                    keyEquivalent: "")
+                item.target = self
+                item.tag = index
+                item.representedObject = "\(entry.provider)/\(entry.model)"
+                item.toolTip = "Starts at \(effortPresentation(entry.startingEffort)) "
+                    + "with weight \(routing.weightRange.defaultValue)"
+                submenu.addItem(item)
+                addable += 1
+            }
+            vendor.submenu = submenu
+            popup.menu?.addItem(vendor)
+        }
+        popup.isEnabled = editor.mutationsAllowed && draftRoute(category) != nil && addable > 0
+        if draftRoute(category) == nil {
+            popup.toolTip = "Configure a route first."
+        } else if addable == 0 {
+            popup.toolTip = "Every enabled model is already on this route."
+        }
+        popup.setAccessibilityIdentifier("task-router-add-\(category.rawValue)")
+        popup.setAccessibilityLabel("Add model to \(category.label)")
         return popup
     }
 
-    private func membershipCheckbox(_ row: TaskRouterRow, index: Int) -> NSButton {
-        let key = "\(row.provider)/\(row.model)"
-        let member = NSButton(checkboxWithTitle: "", target: self,
-                              action: #selector(memberToggled(_:)))
-        member.state = row.isMember ? .on : .off
-        member.tag = index
-        let isInCatalog = routing.catalog.contains {
-            $0.provider == row.provider && $0.model == row.model
-        }
-        member.isEnabled = editor.mutationsAllowed && draftRoute != nil
-            && (row.isMember || isInCatalog)
-        member.setAccessibilityIdentifier("task-router-member-\(key)")
-        member.setAccessibilityLabel("Member \(key)")
-        return member
-    }
-
-    private func weightControl(_ row: TaskRouterRow, index: Int) -> NSTextField {
-        let key = "\(row.provider)/\(row.model)"
-        let weightEditable = draftRoute
-            .flatMap { routing.mode($0.mode) }?.weightEditable ?? false
-        let weight = NSTextField(string: row.candidate.map { String($0.weight) } ?? "")
-        weight.placeholderString = "weight"
-        weight.font = Theme.Font.monoBody
-        weight.textColor = Theme.primaryText
-        weight.alignment = .right
-        weight.tag = index
-        weight.isEnabled = editor.mutationsAllowed && row.isMember && weightEditable
-        weight.isHidden = !weightEditable
-        weight.target = self
-        weight.action = #selector(weightChanged(_:))
-        weight.setAccessibilityIdentifier("task-router-weight-\(key)")
-        weight.setAccessibilityLabel("Weight for \(key)")
-        weight.widthAnchor.constraint(equalToConstant: 64).isActive = true
-        return weight
-    }
-
-    private func effortEditor(_ row: TaskRouterRow, index: Int) -> NSView {
-        let key = "\(row.provider)/\(row.model)"
-        let effort = NSPopUpButton()
-        let catalogEntry = routing.catalog.first {
-            $0.provider == row.provider && $0.model == row.model
-        }
-        let options = catalogEntry?.effortOptions ?? []
-        effort.addItems(withTitles: options.map { effortPresentation($0.effort) })
-        let selectedOption = row.candidate.flatMap { candidate in
-            options.firstIndex { $0.effort == candidate.effort }
-        }
-        if let selectedOption {
-            effort.selectItem(at: selectedOption)
-        } else if let current = row.candidate?.effort {
-            effort.addItem(withTitle: effortPresentation(current))
-            effort.selectItem(at: options.count)
-        }
-        effort.tag = index
-        effort.isEnabled = editor.mutationsAllowed && row.isMember
-            && selectedOption != nil
-        effort.target = self
-        effort.action = #selector(effortChanged(_:))
-        effort.setAccessibilityIdentifier("task-router-effort-\(key)")
-        effort.setAccessibilityLabel("Effort for \(key)")
-        compressesHorizontally(effort)
-
-        guard editor.mutationsAllowed,
-              !effort.isEnabled,
-              row.isMember,
-              catalogEntry == nil else { return effort }
-        let refusal = "Effort unavailable — \(row.provider)/\(row.model) is not in the "
-            + "live routing catalog, so no legal choices were published."
-        let reason = NSTextField(wrappingLabelWithString: refusal)
-        reason.font = Theme.Font.caption
-        reason.textColor = Theme.secondaryText
-        reason.maximumNumberOfLines = 3
-        reason.setAccessibilityIdentifier("task-router-effort-refusal-\(key)")
-        reason.compressHorizontally(priority: 420)
-        let stack = NSStackView(views: [effort, reason])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = Theme.Space.xs
-        compressesHorizontally(stack)
-        return stack
-    }
-
-    private func inspectionFact(
-        for row: TaskRouterRow, category: TaskCategory
-    ) -> String? {
-        // Fixture inspection is one category. A candidate fact from another
-        // route must not paint this cell — that would be someone else's share.
-        let scoped = screen.facts.contains {
-            $0.label == "Category" && $0.value == category.rawValue
-        }
-        guard scoped else { return nil }
-        let prefix = "\(row.provider)/\(row.model)"
-        return screen.facts.first {
-            $0.label == "Candidate" && $0.value.hasPrefix(prefix)
-        }?.value
-    }
+    // MARK: Header controls and status
 
     private func applyControl() -> NSView {
         let button = ActionButton(
-            title: "Apply route",
+            title: "Apply changes",
             symbol: "checkmark.circle",
             style: .primary,
             target: self,
             action: #selector(applyTapped(_:)))
-        button.isEnabled = editor.mutationsAllowed && editor.hasDraft && sendable
+        button.isEnabled = editor.mutationsAllowed && editor.hasDraft && allSendable
         button.setAccessibilityIdentifier("task-router-apply")
         applyButton = button
         return button
@@ -818,8 +714,10 @@ final class TaskRouterScreenView: NSView {
         return panel
     }
 
-    private var sendable: Bool {
-        draftRoute.map { !$0.candidates.isEmpty } ?? true
+    private var editedCategories: [TaskCategory] { editor.editedCategories(categories) }
+
+    private var allSendable: Bool {
+        editedCategories.allSatisfy { editor.isSendable($0) }
     }
 
     private func statusLabels() -> [NSView] {
@@ -828,17 +726,21 @@ final class TaskRouterScreenView: NSView {
             labels.append(status(
                 "task-router-conflict",
                 "The daemon is at revision \(competing). Your edit was not "
-                    + "applied and is kept in the controls below.",
+                    + "applied and is kept in the cards below.",
                 color: Theme.warning))
         }
-        if editor.hasDraft {
+        let edited = editedCategories
+        if !edited.isEmpty {
+            let names = edited.map(\.label).joined(separator: ", ")
             labels.append(status(
-                "task-router-draft", "Unsent draft edit.", color: Theme.secondaryText))
+                "task-router-draft",
+                "Unsent draft edit\(edited.count == 1 ? "" : "s"): \(names).",
+                color: Theme.secondaryText))
         }
-        if !sendable {
+        for category in edited where !editor.isSendable(category) {
             labels.append(status(
                 "task-router-empty-route",
-                "This route has no members yet. Add at least one before sending.",
+                "\(category.label) has no members yet. Add at least one before sending.",
                 color: Theme.secondaryText))
         }
         if !editor.mutationsAllowed {
@@ -851,108 +753,207 @@ final class TaskRouterScreenView: NSView {
         return labels
     }
 
-    @objc private func categoryChanged(_ sender: NSPopUpButton) {
-        guard sender.indexOfSelectedItem >= 0,
-              sender.indexOfSelectedItem < categories.count else { return }
-        onSelectCategory(categories[sender.indexOfSelectedItem])
+    // MARK: Actions
+
+    @objc private func modeChanged(_ sender: NSSegmentedControl) {
+        guard let category = category(for: sender.tag),
+              routing.modes.indices.contains(sender.selectedSegment) else { return }
+        let route = draftRoute(category)
+        onEditRoute(category, RoutingPolicyDocument.WireRoute(
+            mode: routing.modes[sender.selectedSegment].id,
+            candidates: route?.candidates ?? []))
     }
 
-    @objc private func categoryRowTapped(_ sender: NSButton) {
-        guard categories.indices.contains(sender.tag) else { return }
-        onSelectCategory(categories[sender.tag])
+    @objc private func clearTapped(_ sender: NSButton) {
+        guard let category = category(for: sender.tag) else { return }
+        onEditRoute(category, nil)
     }
 
-    @objc private func modeChanged(_ sender: NSPopUpButton) {
-        let index = sender.indexOfSelectedItem - 1
-        guard routing.modes.indices.contains(index) else {
-            onEditRoute(nil)
-            return
-        }
-        onEditRoute(RoutingPolicyDocument.WireRoute(
-            mode: routing.modes[index].id,
-            candidates: draftRoute?.candidates ?? []))
+    @objc private func configureTapped(_ sender: NSButton) {
+        guard let category = category(for: sender.tag) else { return }
+        onEditRoute(category, RoutingPolicyDocument.WireRoute(
+            mode: routing.defaultMode, candidates: []))
     }
 
-    @objc private func memberToggled(_ sender: NSButton) {
-        guard let route = draftRoute, let row = row(for: sender) else { return }
+    @objc private func addModelChosen(_ sender: NSMenuItem) {
+        guard let category = category(for: sender.tag),
+              let key = sender.representedObject as? String,
+              let route = draftRoute(category),
+              let entry = routing.catalog.first(where: { "\($0.provider)/\($0.model)" == key }),
+              !route.candidates.contains(where: {
+                  $0.provider == entry.provider && $0.model == entry.model
+              }) else { return }
+        var candidates = route.candidates
+        candidates.append(RoutingPolicyDocument.WireRouteCandidate(
+            provider: entry.provider,
+            model: entry.model,
+            effort: entry.startingEffort,
+            weight: routing.weightRange.defaultValue))
+        onEditRoute(category, RoutingPolicyDocument.WireRoute(
+            mode: route.mode, candidates: candidates))
+    }
+
+    /// Remove takes the candidate out of the draft; Restore puts the observed
+    /// candidate back exactly as the daemon last had it.
+    @objc private func memberTapped(_ sender: NSButton) {
+        guard let ref = rowRef(for: sender),
+              let route = draftRoute(ref.category) else { return }
         let isMember = route.candidates.contains {
-            $0.provider == row.provider && $0.model == row.model
+            $0.provider == ref.provider && $0.model == ref.model
         }
         var candidates = route.candidates.filter {
-            !($0.provider == row.provider && $0.model == row.model)
+            !($0.provider == ref.provider && $0.model == ref.model)
         }
         if !isMember {
-            guard let catalogEntry = routing.catalog.first(where: {
-                $0.provider == row.provider && $0.model == row.model
-            }) else { return }
-            candidates.append(RoutingPolicyDocument.WireRouteCandidate(
-                provider: row.provider,
-                model: row.model,
-                effort: catalogEntry.startingEffort,
-                weight: routing.weightRange.defaultValue))
+            if let observed = editor.observedRoute(for: ref.category)?.candidates.first(where: {
+                $0.provider == ref.provider && $0.model == ref.model
+            }) {
+                candidates.append(observed)
+            } else if let entry = routing.catalog.first(where: {
+                $0.provider == ref.provider && $0.model == ref.model
+            }) {
+                candidates.append(RoutingPolicyDocument.WireRouteCandidate(
+                    provider: ref.provider,
+                    model: ref.model,
+                    effort: entry.startingEffort,
+                    weight: routing.weightRange.defaultValue))
+            } else {
+                return
+            }
         }
-        onEditRoute(RoutingPolicyDocument.WireRoute(mode: route.mode, candidates: candidates))
+        onEditRoute(ref.category, RoutingPolicyDocument.WireRoute(
+            mode: route.mode, candidates: candidates))
     }
 
     /// A weight the wire would refuse never becomes a draft. The field keeps what was typed, the reason is stated, and Apply goes dead until it is a number the daemon accepts.
     @objc private func weightChanged(_ sender: NSTextField) {
-        guard let row = row(for: sender) else { return }
+        guard let ref = rowRef(for: sender) else { return }
         let range = routing.weightRange
         guard let weight = Int(sender.stringValue),
               weight >= range.minimum, weight <= range.maximum else {
-            weightRefusal.stringValue = "\(row.provider)/\(row.model): a weight must be a "
-                + "whole number from \(range.minimum) to "
+            weightRefusal.stringValue = "\(ref.key) on \(ref.category.label): a weight must "
+                + "be a whole number from \(range.minimum) to "
                 + "\(range.maximum). “\(sender.stringValue)” was not sent."
             weightRefusal.isHidden = false
             applyButton?.isEnabled = false
             return
         }
-        edit(row) { $0.weight = weight }
+        edit(ref) { $0.weight = weight }
+    }
+
+    @objc private func weightStepDown(_ sender: NSButton) { step(sender, by: -1) }
+    @objc private func weightStepUp(_ sender: NSButton) { step(sender, by: 1) }
+
+    private func step(_ sender: NSButton, by delta: Int) {
+        guard let ref = rowRef(for: sender),
+              let current = draftRoute(ref.category)?.candidates.first(where: {
+                  $0.provider == ref.provider && $0.model == ref.model
+              })?.weight else { return }
+        let range = routing.weightRange
+        let next = min(range.maximum, max(range.minimum, current + delta))
+        guard next != current else { return }
+        edit(ref) { $0.weight = next }
     }
 
     @objc private func effortChanged(_ sender: NSPopUpButton) {
-        guard let row = row(for: sender),
+        guard let ref = rowRef(for: sender),
               let entry = routing.catalog.first(where: {
-                  $0.provider == row.provider && $0.model == row.model
+                  $0.provider == ref.provider && $0.model == ref.model
               }),
               entry.effortOptions.indices.contains(sender.indexOfSelectedItem) else { return }
-        edit(row) { $0.effort = entry.effortOptions[sender.indexOfSelectedItem].effort }
+        edit(ref) { $0.effort = entry.effortOptions[sender.indexOfSelectedItem].effort }
     }
 
     @objc private func applyTapped(_ sender: NSButton) {
         onApply()
     }
 
-    private var draftRoute: RoutingPolicyDocument.WireRoute? {
+    // MARK: Draft access
+
+    private func draftRoute(_ category: TaskCategory) -> RoutingPolicyDocument.WireRoute? {
         editor.draft.policy.categories[category.rawValue]
     }
 
-    private func row(for sender: NSControl) -> TaskRouterRow? {
-        rows.indices.contains(sender.tag) ? rows[sender.tag] : nil
+    private func isEdited(_ category: TaskCategory) -> Bool {
+        editor.draft.policy.categories[category.rawValue]
+            != editor.observed.policy.categories[category.rawValue]
+    }
+
+    private func category(for tag: Int) -> TaskCategory? {
+        categories.indices.contains(tag) ? categories[tag] : nil
+    }
+
+    private func rowRef(for sender: NSControl) -> RowRef? {
+        rowRefs.indices.contains(sender.tag) ? rowRefs[sender.tag] : nil
     }
 
     private func edit(
-        _ row: TaskRouterRow,
+        _ ref: RowRef,
         _ change: (inout RoutingPolicyDocument.WireRouteCandidate) -> Void
     ) {
-        guard let route = draftRoute else { return }
+        guard let route = draftRoute(ref.category) else { return }
         var candidates = route.candidates
         guard let index = candidates.firstIndex(where: {
-            $0.provider == row.provider && $0.model == row.model
+            $0.provider == ref.provider && $0.model == ref.model
         }) else { return }
         change(&candidates[index])
-        onEditRoute(RoutingPolicyDocument.WireRoute(mode: route.mode, candidates: candidates))
+        onEditRoute(ref.category, RoutingPolicyDocument.WireRoute(
+            mode: route.mode, candidates: candidates))
     }
 
-    private func labelled(_ text: String, _ control: NSView) -> NSView {
-        let label = NSTextField(labelWithString: text)
-        label.font = Theme.Font.callout
-        label.textColor = Theme.secondaryText
-        let stack = NSStackView(views: [label, control])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = Theme.Space.s
-        return stack
+    // MARK: Presentation helpers
+
+    private func effortPresentation(
+        _ effort: RoutingPolicyDocument.CandidateEffort
+    ) -> String {
+        switch effort {
+        case .hiveDecides: return "Hive decides"
+        case .exact(let value): return value
+        case .none: return "No effort setting"
+        case .providerControlled: return "Provider controlled"
+        case .unknown(let mode): return mode
+        }
+    }
+
+    private func providerTitle(_ provider: String) -> String {
+        switch ProviderID(provider) {
+        case .claude: return "Claude"
+        case .codex: return "Codex"
+        case .grok: return "Grok"
+        case .kimi: return "Kimi"
+        case .opencode: return "OpenCode"
+        default: return ProviderBranding.title(for: ProviderID(provider))
+        }
+    }
+
+    private var availabilityStyle: CapsuleBadge.Style {
+        switch screen.availability {
+        case .current: return .positive
+        case .unknown, .stale, .replaced: return .info
+        case .disconnected, .conflicting: return .warning
+        case .unauthorized: return .critical
+        }
+    }
+
+    private var availabilitySymbol: String {
+        switch screen.availability {
+        case .current: return "checkmark.circle.fill"
+        case .unknown: return "questionmark.circle.fill"
+        case .stale: return "clock.fill"
+        case .disconnected: return "bolt.horizontal.circle.fill"
+        case .unauthorized: return "lock.fill"
+        case .conflicting: return "arrow.triangle.branch"
+        case .replaced: return "arrow.uturn.right.circle.fill"
+        }
+    }
+
+    private func columnHead(_ text: String) -> NSView {
+        let label = NSTextField(labelWithString: text.uppercased())
+        label.font = Theme.Font.sectionLabel
+        label.textColor = Theme.tertiaryText
+        label.compressHorizontally(priority: 450, toolTip: text.isEmpty ? nil : text)
+        compressesHorizontally(label)
+        return label
     }
 
     private func status(_ identifier: String, _ text: String, color: NSColor) -> NSView {
@@ -984,108 +985,131 @@ final class TaskRouterScreenView: NSView {
     }
 }
 
-/// The card's seven column widths. Rows bind to these guides so content in one
-/// row cannot establish a different provider pitch from the rows around it.
-private final class MatrixColumnLayout {
+/// A card's column widths. The header and every candidate row bind to these
+/// guides so one long model name cannot push its row's columns out of line
+/// with the rows around it. `nil` marks the one flexible column.
+private final class CardColumnLayout {
 
     private let guides: [NSLayoutGuide]
 
     init(
         owner: NSView,
         content: NSView,
-        count: Int,
-        taskWidth: CGFloat,
-        modeWidth: CGFloat
+        fixedWidths: [CGFloat?],
+        spacing: CGFloat
     ) {
-        precondition(count >= 3)
-        guides = (0..<count).map { _ in NSLayoutGuide() }
-        for guide in guides {
+        precondition(fixedWidths.count >= 2)
+        guides = fixedWidths.map { _ in NSLayoutGuide() }
+        for (index, guide) in guides.enumerated() {
             owner.addLayoutGuide(guide)
             NSLayoutConstraint.activate([
                 guide.topAnchor.constraint(equalTo: owner.topAnchor),
                 guide.heightAnchor.constraint(equalToConstant: 0),
             ])
+            if index == 0 {
+                guide.leadingAnchor.constraint(equalTo: content.leadingAnchor).isActive = true
+            } else {
+                guide.leadingAnchor.constraint(
+                    equalTo: guides[index - 1].trailingAnchor, constant: spacing).isActive = true
+            }
+            if let width = fixedWidths[index] {
+                let fixed = guide.widthAnchor.constraint(equalToConstant: width)
+                fixed.priority = .defaultHigh
+                fixed.isActive = true
+            }
         }
-        guides[0].leadingAnchor.constraint(
-            equalTo: content.leadingAnchor, constant: Theme.Space.s).isActive = true
-        let task = guides[0].widthAnchor.constraint(equalToConstant: taskWidth)
-        task.priority = .defaultHigh
-        task.isActive = true
-        guides[1].leadingAnchor.constraint(
-            equalTo: guides[0].trailingAnchor, constant: Theme.Space.s).isActive = true
-        let mode = guides[1].widthAnchor.constraint(equalToConstant: modeWidth)
-        mode.priority = .defaultHigh
-        mode.isActive = true
-        guides[2].leadingAnchor.constraint(
-            equalTo: guides[1].trailingAnchor, constant: Theme.Space.s).isActive = true
-        for index in 3..<guides.count {
-            let guide = guides[index]
-            guide.leadingAnchor.constraint(
-                equalTo: guides[index - 1].trailingAnchor,
-                constant: Theme.Space.s).isActive = true
-            guide.widthAnchor.constraint(equalTo: guides[2].widthAnchor).isActive = true
-        }
-        guides.last!.trailingAnchor.constraint(
-            equalTo: content.trailingAnchor, constant: -Theme.Space.s).isActive = true
+        guides.last!.trailingAnchor.constraint(equalTo: content.trailingAnchor).isActive = true
     }
 
     func bind(_ columns: [NSView]) {
         precondition(columns.count == guides.count)
         for (column, guide) in zip(columns, guides) {
+            column.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+            column.setContentHuggingPriority(.init(1), for: .horizontal)
             column.widthAnchor.constraint(equalTo: guide.widthAnchor).isActive = true
         }
     }
 }
 
-/// One matrix row. Width decisions live in `MatrixColumnLayout`; this view
-/// only supplies shared padding and the selected-row background.
-private final class MatrixRowView: NSView {
+/// `− n +` for a stored weight. The field accepts typing so an exact value
+/// is one edit; the buttons move it one step. The view's `tag` is mirrored
+/// onto all three controls so one row reference serves them.
+private final class WeightStepperView: NSControl {
 
-    let columns: [NSView]
+    let field: NSTextField
+    let downButton: NSButton
+    let upButton: NSButton
 
-    init(
-        columns: [NSView],
-        selected: Bool
-    ) {
-        self.columns = columns
+    init(value: Int, target: AnyObject, down: Selector, up: Selector, typed: Selector) {
+        field = NSTextField(string: String(value))
+        downButton = NSButton(title: "−", target: target, action: down)
+        upButton = NSButton(title: "+", target: target, action: up)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        if selected {
-            layer?.backgroundColor = Theme.accentFill.cgColor
-            layer?.cornerRadius = Theme.Metric.insetCornerRadius
-            layer?.cornerCurve = .continuous
-        }
+        layer?.cornerRadius = Theme.Metric.buttonCornerRadius
+        layer?.cornerCurve = .continuous
+        layer?.borderWidth = 1
 
-        let stack = NSStackView(views: columns)
+        for button in [downButton, upButton] {
+            button.bezelStyle = .inline
+            button.isBordered = false
+            button.font = Theme.Font.chromeControl
+            button.contentTintColor = Theme.accent
+            button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        }
+        downButton.setAccessibilityLabel("Decrease weight")
+        upButton.setAccessibilityLabel("Increase weight")
+
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.alignment = .center
+        field.font = Theme.Font.monoDigits
+        field.textColor = Theme.primaryText
+        field.target = target
+        field.action = typed
+
+        let stack = NSStackView(views: [downButton, field, upButton])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .horizontal
-        stack.alignment = .top
-        stack.distribution = .fill
-        stack.spacing = Theme.Space.s
+        stack.alignment = .centerY
+        stack.spacing = 0
         addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(
-                equalTo: leadingAnchor, constant: Theme.Space.s),
-            stack.trailingAnchor.constraint(
-                equalTo: trailingAnchor, constant: -Theme.Space.s),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.s),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.s),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightAnchor.constraint(equalToConstant: Theme.Metric.controlMinHeight),
         ])
-
-        for column in columns { Self.makeHorizontallyCompressible(column) }
-        stack.setContentCompressionResistancePriority(.init(250), for: .horizontal)
-        setContentCompressionResistancePriority(.init(250), for: .horizontal)
-    }
-
-    /// Matrix content yields before the shared guide widths, so intrinsic labels
-    /// cannot turn the grid's natural fitting size into a window minimum.
-    private static func makeHorizontallyCompressible(_ view: NSView) {
-        view.setContentCompressionResistancePriority(.init(1), for: .horizontal)
-        view.setContentHuggingPriority(.init(1), for: .horizontal)
-        for subview in view.subviews { makeHorizontallyCompressible(subview) }
+        field.setContentCompressionResistancePriority(.init(250), for: .horizontal)
+        field.setContentHuggingPriority(.init(1), for: .horizontal)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var tag: Int {
+        didSet {
+            field.tag = tag
+            downButton.tag = tag
+            upButton.tag = tag
+        }
+    }
+
+    override var isEnabled: Bool {
+        didSet {
+            field.isEnabled = isEnabled
+            field.isEditable = isEnabled
+            downButton.isEnabled = isEnabled
+            upButton.isEnabled = isEnabled
+            alphaValue = isEnabled ? 1 : Theme.disabledContentAlpha
+        }
+    }
+
+    override func updateLayer() {
+        layer?.borderColor = Theme.buttonBorder.cgColor
+        layer?.backgroundColor = Theme.insetFill.cgColor
+    }
 }

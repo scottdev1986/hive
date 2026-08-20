@@ -256,4 +256,46 @@ final class TaskRouterEditorTests: XCTestCase {
         XCTAssertEqual(grok.map(\.model), ["grok-composer-2.5-fast"])
         XCTAssertFalse(grok[0].isMember)
     }
+
+    func testEditedCategoriesNameEveryDivergenceIncludingAClearedRoute() throws {
+        let initial = try policy()
+        var editor = TaskRouterEditor(snapshot: TaskRouterSnapshot(policy: initial))
+        let categories: [TaskCategory] = [
+            .complexCoding,
+            TaskCategory(rawValue: "planning", label: "Planning"),
+            TaskCategory(rawValue: "light_research", label: "Light research"),
+        ]
+        XCTAssertEqual(editor.editedCategories(categories), [])
+
+        editor.setRoute(try complexCoding(initial, weight: 40), for: .complexCoding)
+        editor.setRoute(nil, for: categories[2])
+        XCTAssertEqual(
+            editor.editedCategories(categories).map(\.rawValue),
+            ["complex_coding", "light_research"],
+            "catalog order, one entry per changed category")
+
+        // A draft the daemon already holds is not an edit.
+        editor.setRoute(initial.categories["complex_coding"], for: .complexCoding)
+        XCTAssertEqual(editor.editedCategories(categories).map(\.rawValue), ["light_research"])
+    }
+
+    func testSendableMeansAConfiguredRouteHasMembersOrTheCategoryIsCleared() throws {
+        let initial = try policy()
+        var editor = TaskRouterEditor(snapshot: TaskRouterSnapshot(policy: initial))
+        XCTAssertTrue(editor.isSendable(.complexCoding))
+        editor.setRoute(
+            RoutingPolicyDocument.WireRoute(mode: "user-weighted", candidates: []),
+            for: .complexCoding)
+        XCTAssertFalse(editor.isSendable(.complexCoding), "an empty route cannot be sent")
+        editor.setRoute(nil, for: .complexCoding)
+        XCTAssertTrue(editor.isSendable(.complexCoding), "clearing a route is a legal send")
+    }
+
+    func testObservedRouteIsTheLastObservationNotTheDraft() throws {
+        let initial = try policy()
+        var editor = TaskRouterEditor(snapshot: TaskRouterSnapshot(policy: initial))
+        editor.setRoute(try complexCoding(initial, weight: 40), for: .complexCoding)
+        XCTAssertEqual(editor.observedRoute(for: .complexCoding), initial.categories["complex_coding"])
+        XCTAssertNotEqual(editor.observedRoute(for: .complexCoding), editor.draft.policy.categories["complex_coding"])
+    }
 }

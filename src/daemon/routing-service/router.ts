@@ -15,8 +15,10 @@ import {
   type RoutingCategory,
   type RoutingPolicy,
   resolveRoute,
+  routeShares,
   routeTargetKey,
 } from "../../schemas/routing-policy";
+export { routeShares } from "../../schemas/routing-policy";
 import { AuthorizedLaunch, type LaunchGateChecks } from "./authorized-launch";
 import {
   type LaunchDecision,
@@ -527,15 +529,3 @@ export function routeDigest(route: RoutePolicy): string {
     .digest("hex");
 }
 
-export function routeShares(
-  route: RoutePolicy,
-): { candidate: RouteCandidate; effectiveWeight: number; share: number }[] {
-  const total = route.candidates.reduce(
-    (sum, candidate) => sum + effectiveWeight(route.mode, candidate),
-    0,
-  );
-  return route.candidates.map((candidate) => {
-    const weight = effectiveWeight(route.mode, candidate);
-    return { candidate, effectiveWeight: weight, share: weight / total };
-  });
-}

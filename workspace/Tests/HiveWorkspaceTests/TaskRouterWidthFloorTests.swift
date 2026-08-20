@@ -1,10 +1,8 @@
 // TaskRouterWidthFloorTests.swift
 //
-// The 1420pt floor was measured, not guessed: five equal vendor cells
-// took the selected row's widest editor-chip fitting size (~163pt) at
-// default compression 750, plus the 148/136 columns and chrome. At the
-// window's 940pt minimum those cells now compress; this pins that the
-// window can actually be 940 and the matrix still fills it.
+// The Task Router's route cards carry five fixed columns plus a flexible
+// model column. At the window's 940pt minimum the model column gives way;
+// this pins that the window can actually be 940 and the cards still fill it.
 
 import AppKit
 import XCTest
@@ -50,8 +48,9 @@ final class TaskRouterWidthFloorTests: XCTestCase {
         walk(panel, prefix: "", into: &lines)
         XCTAssertEqual(window.frame.width, 940, accuracy: 1, lines.joined(separator: "\n"))
         XCTAssertEqual(panel.frame.width, document.bounds.width, accuracy: 1)
-        XCTAssertNotNil(find(panel, "task-router-matrix"))
-        XCTAssertNotNil(find(panel, "task-router-cell-light_research-claude"))
+        XCTAssertNotNil(find(panel, "task-router-routes"))
+        XCTAssertNotNil(find(panel, "task-router-card-light_research"))
+        XCTAssertNotNil(find(panel, "task-router-row-complex_coding-claude/claude-opus-4-8"))
     }
 
     private func walk(_ view: NSView, prefix: String, into lines: inout [String]) {

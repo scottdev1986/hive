@@ -722,85 +722,99 @@
             "scope": "global",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.5
           },
           {
             "scope": "global",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.5
           },
           {
             "scope": "light_research",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "heavy_research",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "simple_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.8
           },
           {
             "scope": "simple_coding",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.2
           },
           {
             "scope": "standard_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "complex_coding",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.75
           },
           {
             "scope": "complex_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.25
           },
           {
             "scope": "code_review",
             "provider": "claude",
             "model": "claude-sonnet-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "planning",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           },
           {
             "scope": "debugging",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "summarization",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "default",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           }
         ],
         "warnings": []
@@ -1650,85 +1664,99 @@
             "scope": "global",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.5
           },
           {
             "scope": "global",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.5
           },
           {
             "scope": "light_research",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "heavy_research",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "simple_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.8
           },
           {
             "scope": "simple_coding",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.2
           },
           {
             "scope": "standard_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "complex_coding",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.75
           },
           {
             "scope": "complex_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.25
           },
           {
             "scope": "code_review",
             "provider": "claude",
             "model": "claude-sonnet-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "planning",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           },
           {
             "scope": "debugging",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "summarization",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "default",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           }
         ],
         "warnings": []
@@ -2569,85 +2597,99 @@
             "scope": "global",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.5
           },
           {
             "scope": "global",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.5
           },
           {
             "scope": "light_research",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "heavy_research",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "simple_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.8
           },
           {
             "scope": "simple_coding",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.2
           },
           {
             "scope": "standard_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "complex_coding",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.75
           },
           {
             "scope": "complex_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.25
           },
           {
             "scope": "code_review",
             "provider": "claude",
             "model": "claude-sonnet-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "planning",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           },
           {
             "scope": "debugging",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "summarization",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "default",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           }
         ],
         "warnings": []
@@ -3503,85 +3545,99 @@
             "scope": "global",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.5
           },
           {
             "scope": "global",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.5
           },
           {
             "scope": "light_research",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "heavy_research",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "simple_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.8
           },
           {
             "scope": "simple_coding",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.2
           },
           {
             "scope": "standard_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "complex_coding",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.75
           },
           {
             "scope": "complex_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.25
           },
           {
             "scope": "code_review",
             "provider": "claude",
             "model": "claude-sonnet-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "planning",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           },
           {
             "scope": "debugging",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "summarization",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "default",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           }
         ],
         "warnings": []
@@ -4425,85 +4481,99 @@
             "scope": "global",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.5
           },
           {
             "scope": "global",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.5
           },
           {
             "scope": "light_research",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "heavy_research",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "simple_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.8
           },
           {
             "scope": "simple_coding",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.2
           },
           {
             "scope": "standard_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "complex_coding",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 0.75
           },
           {
             "scope": "complex_coding",
             "provider": "codex",
             "model": "gpt-5.6-sol",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 0.25
           },
           {
             "scope": "code_review",
             "provider": "claude",
             "model": "claude-sonnet-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "planning",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           },
           {
             "scope": "debugging",
             "provider": "claude",
             "model": "claude-fable-5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "summarization",
             "provider": "grok",
             "model": "grok-4.5",
-            "status": "unresolvable"
+            "status": "unresolvable",
+            "configuredShare": 1
           },
           {
             "scope": "default",
             "provider": "claude",
             "model": "claude-opus-4-8",
-            "status": "effective"
+            "status": "effective",
+            "configuredShare": 1
           }
         ],
         "warnings": []

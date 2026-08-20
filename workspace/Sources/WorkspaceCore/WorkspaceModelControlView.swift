@@ -66,9 +66,15 @@ public struct WorkspaceRoutingPresentation: Codable, Equatable, Sendable {
     public func candidateState(
         scope: String, provider: String, model: String
     ) -> RouteCandidateStatus? {
+        candidate(scope: scope, provider: provider, model: model)?.rendered
+    }
+
+    public func candidate(
+        scope: String, provider: String, model: String
+    ) -> WorkspaceRoutingCandidateState? {
         candidates.first {
             $0.scope == scope && $0.provider == provider && $0.model == model
-        }?.rendered
+        }
     }
 
     public func mode(_ id: String) -> WorkspaceRoutingModePresentation? {
@@ -157,6 +163,8 @@ public struct WorkspaceRoutingCandidateState: Codable, Equatable, Sendable {
     public let provider: String
     public let model: String
     public let status: String
+    /// The daemon's configured share of this scope's spawns, 0–1. Optional only so older frozen projections still decode; the view never computes a substitute.
+    public let configuredShare: Double?
 
     public var rendered: RouteCandidateStatus {
         switch status {

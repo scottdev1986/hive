@@ -254,6 +254,23 @@ public struct TaskRouterEditor: Equatable, Sendable {
             enabledPolicyModels: draft.policy.models.filter { $0.state == "enabled" }.count)
     }
 
+    /// The categories whose draft differs from the last observation — each one is its own `set-route` on the wire, sent in catalog order.
+    public func editedCategories(_ categories: [TaskCategory]) -> [TaskCategory] {
+        categories.filter {
+            draft.policy.categories[$0.rawValue] != observed.policy.categories[$0.rawValue]
+        }
+    }
+
+    /// A configured route with no members cannot be sent; an unconfigured category (route cleared) can.
+    public func isSendable(_ category: TaskCategory) -> Bool {
+        draft.policy.categories[category.rawValue].map { !$0.candidates.isEmpty } ?? true
+    }
+
+    /// The last observation's route for this category — what a "removed" row restores to.
+    public func observedRoute(for category: TaskCategory) -> RoutingPolicyDocument.WireRoute? {
+        observed.policy.categories[category.rawValue]
+    }
+
     public mutating func fence() {
         mutationsAllowed = false
     }

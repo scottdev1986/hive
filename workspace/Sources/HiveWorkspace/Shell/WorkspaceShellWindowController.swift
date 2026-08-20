@@ -41,12 +41,10 @@ final class WorkspaceShellWindowController: NSWindowController {
     var memoryLibraryPageHandler: ((MemoryLibraryStep, MemoryLibraryFilter) -> Void)?
     var memoryJobHandler: ((MemoryJobKind) -> Void)?
     private var memoryActionBanner: ShellBanner?
-    private var routerCategory: TaskCategory?
     private var renderedRoute: ShellRoute?
 
     init(context: ShellSidebarView.Context, state: ShellState) {
         self.state = state
-        routerCategory = state.modelControlView?.routing.categories.first
         dispatcher = ShellDispatcher()
         sidebar = ShellSidebarView(context: context, onSelect: { _ in })
         let window = NSWindow(
@@ -87,10 +85,6 @@ final class WorkspaceShellWindowController: NSWindowController {
 
     func apply(_ mutation: (inout ShellState) -> Void) {
         mutation(&state)
-        let categories = state.modelControlView?.routing.categories ?? []
-        if routerCategory.map({ categories.contains($0) }) != true {
-            routerCategory = categories.first
-        }
         render()
     }
 
@@ -330,23 +324,16 @@ final class WorkspaceShellWindowController: NSWindowController {
                 probeState: providerProbeRefreshState,
                 onProbe: { [weak self] in self?.probeRefreshHandler?() },
                 onWrite: { [weak self] write in self?.policyWriteHandler?(write) })
-        case (.taskRouter, let editor?)
-            where routerCategory != nil && state.modelControlView != nil:
-            let category = routerCategory!
+        case (.taskRouter, let editor?) where state.modelControlView != nil:
             let routing = state.modelControlView!.routing
             panel = TaskRouterScreenView(
                 screen: screen,
                 editor: editor,
                 categories: routing.categories,
-                category: category,
                 routing: routing,
                 probeState: providerProbeRefreshState,
                 onProbe: { [weak self] in self?.probeRefreshHandler?() },
-                onSelectCategory: { [weak self] category in
-                    self?.routerCategory = category
-                    self?.render()
-                },
-                onEditRoute: { [weak self] route in
+                onEditRoute: { [weak self] category, route in
                     guard let self else { return }
                     guard self.state.router == editor else {
                         apply {
@@ -362,8 +349,12 @@ final class WorkspaceShellWindowController: NSWindowController {
                     }
                 },
                 onApply: { [weak self] in
-                    guard let self else { return }
-                    policyWriteHandler?(.route(category))
+                    // One set-route per edited category. The write seam runs
+                    // them in order against each accepted read-back.
+                    guard let self, let handler = policyWriteHandler else { return }
+                    for category in editor.editedCategories(routing.categories) {
+                        handler(.route(category))
+                    }
                 })
         case (.memoryOverview, _):
             panel = MemoryOverviewScreenView(

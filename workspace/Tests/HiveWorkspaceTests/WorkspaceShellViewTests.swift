@@ -136,17 +136,27 @@ final class WorkspaceShellViewTests: XCTestCase {
         XCTAssertTrue(text.contains("19 admitted / 19 target"), "dense hierarchy count")
     }
 
-    func testTaskRouterRendersStoredWeightsAndConfiguredVersusLiveShares() throws {
+    func testTaskRouterRendersEveryRouteCardWithTheDaemonsWeightsAndShares() throws {
         let controller = try makeController()
+        let content = try XCTUnwrap(controller.window?.contentView)
         let button = try XCTUnwrap(findView(
-            in: controller.window!.contentView!, identifier: "shell-nav-router") as? NSButton)
+            in: content, identifier: "shell-nav-router") as? NSButton)
         button.performClick(nil)
-        let text = allText(in: controller.window!.contentView!).joined(separator: "\n")
-        XCTAssertTrue(text.contains("weight 60 · configured 60% · live 80%"))
-        XCTAssertTrue(text.contains("weight 25 · configured 25% · live 0%"))
-        XCTAssertTrue(text.contains("weight 15 · configured 15% · live 20%"))
-        XCTAssertTrue(text.contains("pool-excluded"))
-        XCTAssertTrue(text.contains("user-weighted"))
+        // The fixture's complex_coding route: opus weight 3 (75%), sol weight 1 (25%),
+        // both from the daemon's projection — no inspection card, no client arithmetic.
+        XCTAssertNotNil(findView(in: content, identifier: "task-router-card-complex_coding"))
+        XCTAssertEqual(
+            (findView(
+                in: content,
+                identifier: "task-router-weight-complex_coding-claude/claude-opus-4-8")
+                as? NSTextField)?.stringValue,
+            "3")
+        let share = try XCTUnwrap(findView(
+            in: content, identifier: "task-router-share-complex_coding-claude/claude-opus-4-8"))
+        XCTAssertTrue(allText(in: share).contains("75%"))
+        let text = allText(in: content).joined(separator: "\n")
+        XCTAssertFalse(text.contains("Observed inspection"))
+        XCTAssertFalse(text.contains("configured 60%"))
     }
 
     func testModelsQuotaKeepsUsageInProviderCardsWithoutASeparateEvidenceSection() throws {
