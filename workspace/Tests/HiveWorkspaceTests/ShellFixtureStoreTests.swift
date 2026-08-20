@@ -89,18 +89,10 @@ final class ShellFixtureStoreTests: XCTestCase {
             .loadState(scenario: .current)
         let inspector = try XCTUnwrap(state.inspector)
 
-        guard case .present(let events) = inspector.events.events else {
-            return XCTFail("the event corpus must decode as present")
+        guard case .absent(let eventsReason) = inspector.events.events else {
+            return XCTFail("events have no Workspace HTTP source, so the fixture must not invent them")
         }
-        XCTAssertTrue(events.contains { $0.kind == "vendor.future-signal" })
-
-        guard case .present(let contracts) = inspector.task.declaredContracts else {
-            return XCTFail("the declared-contract corpus must decode as present")
-        }
-        XCTAssertEqual(contracts.first?.acceptedBy, [
-            "node_018f4f5e-0000-7000-8000-000000000104 / zoe / g1",
-            "node_018f4f5e-0000-7000-8000-000000000105 / amy / g1",
-        ])
+        XCTAssertTrue(eventsReason.contains("no Workspace HTTP GET"))
 
         guard case .present(let routes) = inspector.task.routeInspections else {
             return XCTFail("the route-inspection corpus must reach the inspector")
@@ -114,60 +106,18 @@ final class ShellFixtureStoreTests: XCTestCase {
                 ShellFixtureStore(directory: fixtureDirectory)
                     .loadState(scenario: scenario).inspector)
             XCTAssertNotNil(inspector.task)
-            if scenario == .unknown {
-                guard case .absent = inspector.events.events else {
-                    return XCTFail("unknown event input must be absent")
-                }
+            guard case .absent = inspector.events.events else {
+                return XCTFail("events stay absent in every fixture availability row")
             }
         }
     }
 
-    func testMissingInspectorCorpusFailsTheLoad() throws {
+    func testMissingHierarchyInspectorCorpusFailsTheLoad() throws {
         let temp = try makeTempCopy()
         defer { try? FileManager.default.removeItem(atPath: temp) }
         try FileManager.default.removeItem(atPath:
             URL(fileURLWithPath: temp)
-                .appendingPathComponent("inspector-events-corpus.json").path)
-
-        XCTAssertThrowsError(
-            try ShellFixtureStore(directory: temp).loadState(scenario: .current))
-    }
-
-    func testInspectorEventSchemaDriftFailsTheLoad() throws {
-        let temp = try makeTempCopy()
-        defer { try? FileManager.default.removeItem(atPath: temp) }
-        let url = URL(fileURLWithPath: temp)
-            .appendingPathComponent("inspector-events-corpus.json")
-        var rows = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [[String: Any]])
-        var value = try XCTUnwrap(rows[0]["value"] as? [String: Any])
-        var events = try XCTUnwrap(value["events"] as? [[String: Any]])
-        events[0]["schemaVersion"] = 3
-        value["events"] = events
-        rows[0]["value"] = value
-        try JSONSerialization.data(withJSONObject: rows).write(to: url)
-
-        XCTAssertThrowsError(
-            try ShellFixtureStore(directory: temp).loadState(scenario: .current))
-    }
-
-    func testDeclaredContractMustBindBothParticipants() throws {
-        let temp = try makeTempCopy()
-        defer { try? FileManager.default.removeItem(atPath: temp) }
-        let url = URL(fileURLWithPath: temp)
-            .appendingPathComponent("inspector-declared-contracts-corpus.json")
-        var rows = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [[String: Any]])
-        var value = try XCTUnwrap(rows[0]["value"] as? [String: Any])
-        var contracts = try XCTUnwrap(value["contracts"] as? [[String: Any]])
-        var contract = contracts[0]
-        var acceptedBy = try XCTUnwrap(contract["acceptedBy"] as? [[String: Any]])
-        acceptedBy.removeLast()
-        contract["acceptedBy"] = acceptedBy
-        contracts[0] = contract
-        value["contracts"] = contracts
-        rows[0]["value"] = value
-        try JSONSerialization.data(withJSONObject: rows).write(to: url)
+                .appendingPathComponent("hierarchy-projection-v2-corpus.json").path)
 
         XCTAssertThrowsError(
             try ShellFixtureStore(directory: temp).loadState(scenario: .current))

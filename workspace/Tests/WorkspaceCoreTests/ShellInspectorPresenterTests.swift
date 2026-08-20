@@ -8,22 +8,6 @@ import XCTest
 
 final class ShellInspectorPresenterTests: XCTestCase {
 
-    private func event(_ index: Int, kind: String = "turn-end") -> WorkspaceStatusEvent {
-        WorkspaceStatusEvent(
-            eventId: "e\(index)",
-            seq: "\(index)",
-            entity: .init(kind: "agent", id: "agent-a", generation: 1),
-            entityRevision: "\(index)",
-            occurredAt: "2026-07-30T14:\(String(format: "%02d", index % 60)):00.000Z",
-            kind: kind,
-            source: .init(
-                kind: "provider-app-server",
-                id: "codex",
-                observedAt: "2026-07-30T14:00:00.000Z",
-                confidence: "high"),
-            data: [:])
-    }
-
     private func routeRead(
         category: String,
         revision: Int
@@ -55,12 +39,10 @@ final class ShellInspectorPresenterTests: XCTestCase {
         XCTAssertTrue(projection.session.facts.contains {
             $0.label == "Snapshot" && $0.value.contains("absent")
         })
-        guard case .absent = projection.events.events else {
-            return XCTFail("events without a wire must be absent, not empty")
+        guard case .absent(let eventsReason) = projection.events.events else {
+            return XCTFail("events without a Workspace HTTP GET must be absent, not empty")
         }
-        guard case .absent = projection.task.criteria else {
-            return XCTFail("TaskDetail criteria without a wire must be absent")
-        }
+        XCTAssertTrue(eventsReason.contains("no Workspace HTTP GET"))
         guard case .absent(let reason) = projection.task.channelDelivery else {
             return XCTFail("channel delivery without a client projection must be absent")
         }
@@ -68,55 +50,28 @@ final class ShellInspectorPresenterTests: XCTestCase {
         XCTAssertTrue(reason.contains("does not expose a message ledger"))
     }
 
-    func testEmptyEventStreamIsDistinctFromAbsent() {
+    func testEventsStayAbsentBecauseNoWorkspaceHTTPServesThem() {
         let projection = ShellInspectorPresenter.present(.init(
-            events: [],
-            eventsAvailability: .current))
-        guard case .empty(let detail) = projection.events.events else {
-            return XCTFail("a current empty stream is empty, not absent")
+            snapshotAvailability: .current))
+        guard case .absent(let reason) = projection.events.events else {
+            return XCTFail("events must stay absent without an HTTP source")
         }
-        XCTAssertTrue(detail.contains("empty"))
+        XCTAssertTrue(reason.contains("StatusStore.listEvents"))
+        XCTAssertTrue(reason.contains("no Workspace HTTP GET"))
+        XCTAssertFalse(projection.banners.contains { $0.text.contains("event stream") })
     }
 
-    func testDisconnectedEmptyEventStreamDoesNotClaimCurrent() {
+    func testQueriedSnapshotFailureIsNotUnaskedUnknown() {
         let projection = ShellInspectorPresenter.present(.init(
-            events: [],
-            eventsAvailability: .disconnected,
-            eventsEvidence: .disconnected(transportLostAt: "socket closed")))
-        guard case .empty(let detail) = projection.events.events else {
-            return XCTFail("a retained empty stream is still a measured empty list")
-        }
-        XCTAssertTrue(detail.contains("disconnected"))
-        XCTAssertFalse(detail.contains("current"))
-        XCTAssertTrue(projection.banners.contains { $0.text.contains("socket closed") })
-    }
-
-    func testRefusedEventReadKeepsRetainedRowsAndAddsWarning() {
-        let projection = ShellInspectorPresenter.present(.init(
-            events: [event(1, kind: "vendor.future-signal")],
-            eventsAvailability: .unauthorized,
-            eventsEvidence: .unauthorized(refusalCode: "not-user")))
-        guard case .present(let rows) = projection.events.events else {
-            return XCTFail("a refusal must not erase the retained event projection")
-        }
-        XCTAssertEqual(rows.map(\.kind), ["vendor.future-signal"])
-        XCTAssertTrue(projection.banners.contains {
-            $0.severity == .warning && $0.text.contains("not-user")
+            snapshotAvailability: .disconnected,
+            snapshotEvidence: .disconnected(transportLostAt: "socket closed")))
+        XCTAssertTrue(projection.session.facts.contains {
+            $0.label == "Snapshot" && $0.value.contains("disconnected")
         })
-    }
-
-    func testEventsAreBoundedAndKeepUnknownKindsVerbatim() {
-        let events = (0..<45).map {
-            event($0, kind: $0 == 0 ? "vendor.future-signal" : "turn-end")
-        }
-        let projection = ShellInspectorPresenter.present(.init(
-            events: events,
-            eventsAvailability: .current))
-        guard case .present(let rows) = projection.events.events else {
-            return XCTFail("events must render")
-        }
-        XCTAssertEqual(rows.count, 40)
-        XCTAssertEqual(rows.first?.kind, "vendor.future-signal")
+        XCTAssertFalse(projection.session.facts.contains {
+            $0.label == "Snapshot" && $0.value.contains("absent — no workspace snapshot")
+        })
+        XCTAssertTrue(projection.banners.contains { $0.text.contains("socket closed") })
     }
 
     func testHeldFeedStatusIsRenderedVerbatim() {
@@ -225,53 +180,6 @@ final class ShellInspectorPresenterTests: XCTestCase {
         XCTAssertTrue(unknown.session.facts.contains {
             $0.label == "Agent feed" && $0.value == "unknown"
         })
-    }
-
-    func testDenseEventsAndDeclaredContractsRender() {
-        let event = WorkspaceStatusEvent(
-            eventId: "e1",
-            seq: "1",
-            entity: .init(kind: "agent", id: "a", generation: 1),
-            entityRevision: "1",
-            occurredAt: "14:37",
-            kind: "turn-end",
-            source: .init(
-                kind: "provider-app-server",
-                id: "codex",
-                observedAt: "14:37",
-                confidence: "high"),
-            data: [:])
-        let projection = ShellInspectorPresenter.present(.init(
-            events: [event],
-            eventsAvailability: .current,
-            declaredContracts: [
-                InspectorDeclaredContract(
-                    contractId: "contract_1",
-                    revision: "2",
-                    acceptedBy: ["zoe g1", "amy g1"]),
-            ],
-            contractsAvailability: .current))
-        guard case .present(let rows) = projection.events.events else {
-            return XCTFail("dense events must present")
-        }
-        XCTAssertEqual(rows.first?.kind, "turn-end")
-        guard case .present(let contracts) = projection.task.declaredContracts else {
-            return XCTFail("declared contracts must present")
-        }
-        XCTAssertEqual(contracts.first?.acceptedBy, ["zoe g1", "amy g1"])
-    }
-
-    func testEmptyDeclaredContractsAreDistinctFromAbsent() {
-        let empty = ShellInspectorPresenter.present(.init(
-            declaredContracts: [],
-            contractsAvailability: .current))
-        guard case .empty = empty.task.declaredContracts else {
-            return XCTFail("a measured empty declared list must stay empty")
-        }
-        let absent = ShellInspectorPresenter.present(.init())
-        guard case .absent = absent.task.declaredContracts else {
-            return XCTFail("a missing contract read must stay absent")
-        }
     }
 
     func testRouteRefusalWarnsWithoutRemovingInspectionFacts() throws {
@@ -423,9 +331,6 @@ final class ShellInspectorPresenterTests: XCTestCase {
             $0.label == "Recovery actions"
                 && $0.value.contains("no frozen Workspace client wire")
         })
-        guard case .absent = projection.task.criteria else {
-            return XCTFail("TaskDetail criteria stay absent without a client wire")
-        }
         XCTAssertTrue(projection.task.facts.contains {
             $0.label == "Phase" && $0.value == "P3"
         })

@@ -32,7 +32,6 @@ public struct ShellFixtureStore {
         case missingAvailability(String, ProjectionAvailability)
         case missingAbsentScreen(String)
         case invalidAbsentRow(String)
-        case invalidContract(String)
     }
 
     static let wiredRoutes: [ShellRoute: String] = [
@@ -141,32 +140,6 @@ public struct ShellFixtureStore {
         let stranded: HierarchyStrandedManifestProjection
     }
 
-    private struct InspectorEventsValue: Codable, Equatable {
-        let events: [WorkspaceStatusEvent]
-    }
-
-    private struct InspectorContractsValue: Codable, Equatable {
-        let contracts: [InterfaceContractWire]
-
-        struct InterfaceContractWire: Codable, Equatable {
-            struct RevisionRef: Codable, Equatable {
-                let revision: String
-                let digest: String
-            }
-
-            let contractId: String
-            let revision: String
-            let runId: String
-            let owningSpec: RevisionRef
-            let participants: [String]
-            let payloadSchema: [String: WorkspaceJSONValue]
-            let behaviorDecisions: [String]
-            let compatibilityDecisions: [String]
-            let artifactRefs: [String]
-            let acceptedBy: [HierarchyAgentBindingRef]
-        }
-    }
-
     private func loadInspector(
         scenario: ProjectionAvailability,
         snapshot: ClientProjection<WorkspaceStatusSnapshot>,
@@ -176,6 +149,7 @@ public struct ShellFixtureStore {
             snapshot: snapshot.value,
             snapshotAvailability: snapshot.availability,
             snapshotObservedAt: snapshot.observedAt,
+            snapshotEvidence: snapshot.evidence,
             routeInspectionReads: [InspectorRouteInspectionRead(
                 category: routeInspection.value?.category ?? "fixture category",
                 result: .projection(routeInspection))],
@@ -189,37 +163,6 @@ public struct ShellFixtureStore {
             inputs.incident = value.incident
             inputs.stranded = value.stranded
         }
-
-        let events: ClientProjection<InspectorEventsValue> = try loadRow(
-            named: "inspector-events-corpus", availability: scenario)
-        inputs.events = events.value?.events
-        inputs.eventsAvailability = events.availability
-        inputs.eventsEvidence = events.evidence
-
-        let contracts: ClientProjection<InspectorContractsValue> = try loadRow(
-            named: "inspector-declared-contracts-corpus", availability: scenario)
-        for contract in contracts.value?.contracts ?? [] {
-            let participantNodes = Set(contract.participants)
-            let acceptingNodes = Set(contract.acceptedBy.map(\.nodeId))
-            guard contract.participants.count == 2,
-                  participantNodes.count == 2,
-                  contract.acceptedBy.count == 2,
-                  acceptingNodes == participantNodes else {
-                throw StoreError.invalidContract(contract.contractId)
-            }
-        }
-        inputs.declaredContracts = contracts.value?.contracts.map {
-            InspectorDeclaredContract(
-                contractId: $0.contractId,
-                revision: $0.revision,
-                acceptedBy: $0.acceptedBy.map {
-                    "\($0.nodeId) / \($0.agentId) / g\($0.generation)"
-                })
-        }
-        inputs.contractsAvailability = contracts.availability
-        inputs.contractsEvidence = contracts.evidence
-
-        inputs.criteriaAvailability = .unknown
 
         let projection = ShellInspectorPresenter.present(inputs)
         var queue = AttentionQueue()

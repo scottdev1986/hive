@@ -272,13 +272,67 @@ struct ShellLiveStore {
             for: .memoryMaintenance)
         state.editMemory { $0.maintenance = memoryMaintenance.value }
 
+        let snapshotEndpoint = WorkspaceReadEndpoint<WorkspaceStatusSnapshot>(
+            path: "workspace-snapshot",
+            source: { ProjectionSource(revision: $0.seq) },
+            observedAt: { $0.createdAt })
+        let snapshotValue: WorkspaceStatusSnapshot?
+        let snapshotAvailability: ProjectionAvailability
+        let snapshotObservedAt: String?
+        let snapshotEvidence: ProjectionEvidence?
+        switch await client.fetchResult(snapshotEndpoint) {
+        case .projection(let projection):
+            snapshotValue = projection.value
+            snapshotAvailability = projection.availability
+            snapshotObservedAt = projection.observedAt
+            snapshotEvidence = projection.evidence
+        case .refused(let status, let code, _):
+            snapshotValue = nil
+            snapshotObservedAt = nil
+            if status == 401 || status == 403 {
+                snapshotAvailability = .unauthorized
+                snapshotEvidence = .unauthorized(refusalCode: code.displayValue)
+            } else {
+                snapshotAvailability = .disconnected
+                snapshotEvidence = .refused(statusCode: status)
+            }
+        case .invalid(let detail):
+            snapshotValue = nil
+            snapshotObservedAt = nil
+            snapshotAvailability = .disconnected
+            snapshotEvidence = .protocolDrift(reason: detail)
+        }
+
+        let horizon = state.outerHorizon
+        let node = horizon?.selectedNode
+        let run = node.flatMap { selected in
+            horizon?.snapshot.runs.first { $0.runID == selected.runID }
+        } ?? horizon?.snapshot.runs.first
+        let incident = run.flatMap { selected in
+            horizon?.snapshot.incidents.first { $0.runID == selected.runID }
+        }
+        let stranded = horizon?.snapshot.strandedManifests.first { manifest in
+            manifest.runID == nil || manifest.runID == run?.runID
+        }
+        let selectedAgentId: String?
+        if case .present(let binding) = node?.binding {
+            selectedAgentId = binding.agentId
+        } else {
+            selectedAgentId = nil
+        }
+
         state.apply(inspector: ShellInspectorPresenter.present(
             ShellInspectorPresenter.Inputs(
-                snapshotAvailability: .unknown,
+                snapshot: snapshotValue,
+                snapshotAvailability: snapshotAvailability,
+                snapshotObservedAt: snapshotObservedAt,
+                snapshotEvidence: snapshotEvidence,
+                node: node,
+                run: run,
+                incident: incident,
+                stranded: stranded,
                 routeInspectionReads: inspectorRouteReads,
-                eventsAvailability: .unknown,
-                contractsAvailability: .unknown,
-                criteriaAvailability: .unknown)))
+                selectedAgentId: selectedAgentId)))
 
         for route in ShellRoute.allCases where state.screens[route] == nil {
             state.apply(screen: .notFrozen(

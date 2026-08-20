@@ -597,8 +597,8 @@ final class WorkspaceShellViewTests: XCTestCase {
         })
         XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-tab-task"))
         XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-title"))
-        // Fixture mode loads hierarchy + events; criteria stay explicitly absent.
-        XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-criteria-absent"))
+        XCTAssertNil(findView(in: content, identifier: "shell-inspector-criteria-absent"))
+        XCTAssertNil(findView(in: content, identifier: "shell-inspector-criterion"))
         controller.performShellCommand(commandItem(.toggleInspector))
         XCTAssertNil(findView(in: content, identifier: "shell-inspector"))
     }
@@ -613,58 +613,35 @@ final class WorkspaceShellViewTests: XCTestCase {
         controller.apply { $0.selectInspectorTab(.events) }
         XCTAssertEqual(controller.currentState.inspectorTab, .events)
         XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-tab-events"))
-        // Dense fixture carries typed events; unknown scenarios leave absent.
-        let eventsPresent = findView(in: content, identifier: "shell-inspector-event") != nil
-        let eventsAbsent = findView(in: content, identifier: "shell-inspector-events-absent") != nil
-        let eventsEmpty = findView(in: content, identifier: "shell-inspector-events-empty") != nil
-        XCTAssertTrue(
-            eventsPresent || eventsAbsent || eventsEmpty,
-            "events pane must render present, empty, or absent — never invent content")
+        XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-events-absent"))
+        XCTAssertNil(findView(in: content, identifier: "shell-inspector-event"))
         controller.apply { $0.selectInspectorTab(.session) }
         XCTAssertEqual(controller.currentState.inspectorTab, .session)
         XCTAssertEqual(controller.currentState.activeRoute, .liveRun)
     }
 
-    func testInspectorFixtureMatrixRendersDenseEmptyUnknownAndRefusalStates() throws {
+    func testInspectorEventsTabIsHonestlyAbsent() throws {
         let dense = try makeController(scenario: .current)
         dense.performShellCommand(commandItem(.toggleInspector))
         dense.apply { $0.selectInspectorTab(.events) }
         XCTAssertNotNil(findView(
+            in: dense.window!.contentView!, identifier: "shell-inspector-events-absent"))
+        XCTAssertNil(findView(
             in: dense.window!.contentView!, identifier: "shell-inspector-event"))
-
-        let empty = try makeController(scenario: .disconnected)
-        empty.performShellCommand(commandItem(.toggleInspector))
-        empty.apply { $0.selectInspectorTab(.events) }
-        XCTAssertNotNil(findView(
-            in: empty.window!.contentView!, identifier: "shell-inspector-events-empty"))
-        XCTAssertTrue(allText(in: empty.window!.contentView!).contains {
-            $0.contains("Transport for the event stream was lost")
+        XCTAssertTrue(allText(in: dense.window!.contentView!).contains {
+            $0.contains("no Workspace HTTP GET")
         })
-
-        let unknown = try makeController(scenario: .unknown)
-        unknown.performShellCommand(commandItem(.toggleInspector))
-        unknown.apply { $0.selectInspectorTab(.events) }
-        XCTAssertNotNil(findView(
-            in: unknown.window!.contentView!, identifier: "shell-inspector-events-absent"))
-        XCTAssertTrue(allText(in: unknown.window!.contentView!).contains {
-            $0.contains("this is absent")
-        })
-
-        let refused = try makeController(scenario: .unauthorized)
-        refused.performShellCommand(commandItem(.toggleInspector))
-        let refusedText = allText(in: refused.window!.contentView!).joined(separator: "\n")
-        XCTAssertTrue(refusedText.contains("not-user"))
-        XCTAssertTrue(refusedText.contains("No prior value is available"))
     }
 
-    func testInspectorRendersWireWordsAndDeclaredParticipants() throws {
+    func testInspectorRendersHierarchyWireWordsWithoutInventedContracts() throws {
         let controller = try makeController()
         controller.performShellCommand(commandItem(.toggleInspector))
         let text = allText(in: controller.window!.contentView!).joined(separator: "\n")
         XCTAssertTrue(text.contains("P3"))
         XCTAssertTrue(text.contains("lead-coordination"))
-        XCTAssertTrue(text.contains("acceptedBy (declared)"))
-        XCTAssertTrue(text.contains("zoe"))
+        XCTAssertFalse(text.contains("acceptedBy (declared)"))
+        XCTAssertNil(findView(
+            in: controller.window!.contentView!, identifier: "shell-inspector-accepted-by"))
     }
 
     func testInspectorMenuShortcutIsOptionCommandI() throws {

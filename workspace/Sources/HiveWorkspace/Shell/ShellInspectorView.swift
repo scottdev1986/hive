@@ -181,13 +181,11 @@ final class ShellInspectorView: NSView {
                 state: projection.task.routeInspections,
                 emptyId: "shell-inspector-routes-empty",
                 absentId: "shell-inspector-routes-absent")
-            renderCriteria(projection.task.criteria)
             renderFactList(
                 title: "Run-control decisions",
                 state: projection.task.runDecisions,
                 emptyId: "shell-inspector-decisions-empty",
                 absentId: "shell-inspector-decisions-absent")
-            renderContracts(projection.task.declaredContracts)
             renderFactList(
                 title: "Channel delivery",
                 state: projection.task.channelDelivery,
@@ -217,69 +215,6 @@ final class ShellInspectorView: NSView {
         card.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
     }
 
-    private func renderCriteria(_ state: InspectorListState<InspectorCriterion>) {
-        let header = microLabel("Acceptance criteria")
-        bodyStack.addArrangedSubview(header)
-        switch state {
-        case .absent(let reason):
-            bodyStack.addArrangedSubview(paragraph(
-                reason, identifier: "shell-inspector-criteria-absent"))
-        case .empty(let detail):
-            bodyStack.addArrangedSubview(paragraph(
-                detail, identifier: "shell-inspector-criteria-empty"))
-        case .present(let items):
-            let card = CardView()
-            for item in items {
-                let mark: String
-                if let complete = item.complete {
-                    mark = complete ? "✓" : "○"
-                } else {
-                    mark = "?"
-                }
-                let row = NSTextField(wrappingLabelWithString:
-                    "\(mark) \(item.summary) · \(item.id)")
-                row.font = Theme.Font.callout
-                row.textColor = Theme.primaryText
-                row.setAccessibilityIdentifier("shell-inspector-criterion")
-                card.contentStack.addArrangedSubview(row)
-            }
-            bodyStack.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
-        }
-    }
-
-    private func renderContracts(_ state: InspectorListState<InspectorDeclaredContract>) {
-        bodyStack.addArrangedSubview(microLabel("Declared contract participants"))
-        switch state {
-        case .absent(let reason):
-            bodyStack.addArrangedSubview(paragraph(
-                reason, identifier: "shell-inspector-contracts-absent"))
-        case .empty(let detail):
-            bodyStack.addArrangedSubview(paragraph(
-                detail, identifier: "shell-inspector-contracts-empty"))
-        case .present(let contracts):
-            let card = CardView()
-            for contract in contracts {
-                let title = NSTextField(wrappingLabelWithString:
-                    "\(contract.contractId) · r\(contract.revision)")
-                title.font = Theme.Font.headline
-                title.textColor = Theme.primaryText
-                let participants = NSTextField(wrappingLabelWithString:
-                    "acceptedBy (declared): "
-                        + (contract.acceptedBy.isEmpty
-                            ? "empty list"
-                            : contract.acceptedBy.joined(separator: ", ")))
-                participants.font = Theme.Font.callout
-                participants.textColor = Theme.secondaryText
-                participants.setAccessibilityIdentifier("shell-inspector-accepted-by")
-                card.contentStack.addArrangedSubview(title)
-                card.contentStack.addArrangedSubview(participants)
-            }
-            bodyStack.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
-        }
-    }
-
     private func renderFactList(
         title: String,
         state: InspectorListState<InspectorFact>,
@@ -297,27 +232,12 @@ final class ShellInspectorView: NSView {
         }
     }
 
-    private func renderEvents(_ state: InspectorListState<InspectorEventRow>) {
-        switch state {
-        case .absent(let reason):
-            bodyStack.addArrangedSubview(paragraph(
-                reason, identifier: "shell-inspector-events-absent"))
-        case .empty(let detail):
-            bodyStack.addArrangedSubview(paragraph(
-                detail, identifier: "shell-inspector-events-empty"))
-        case .present(let rows):
-            let card = CardView()
-            for row in rows {
-                let label = NSTextField(wrappingLabelWithString:
-                    "\(row.occurredAt)  \(row.kind)  ·  \(row.summary)")
-                label.font = Theme.Font.monoCaption
-                label.textColor = Theme.primaryText
-                label.setAccessibilityIdentifier("shell-inspector-event")
-                card.contentStack.addArrangedSubview(label)
-            }
-            bodyStack.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
-        }
+    private func renderEvents(_ state: InspectorListState<InspectorFact>) {
+        renderFactList(
+            title: "Events",
+            state: state,
+            emptyId: "shell-inspector-events-empty",
+            absentId: "shell-inspector-events-absent")
     }
 
     private func factRow(

@@ -27,31 +27,6 @@ public struct InspectorFact: Equatable, Sendable {
     }
 }
 
-/// One acceptance criterion only when a TaskDetail-shaped projection supplies it. Completion is never inferred from terminal output.
-public struct InspectorCriterion: Equatable, Sendable {
-    public let id: String
-    public let summary: String
-    public let complete: Bool?
-
-    public init(id: String, summary: String, complete: Bool?) {
-        self.id = id
-        self.summary = summary
-        self.complete = complete
-    }
-}
-
-public struct InspectorDeclaredContract: Equatable, Sendable {
-    public let contractId: String
-    public let revision: String
-    public let acceptedBy: [String]
-
-    public init(contractId: String, revision: String, acceptedBy: [String]) {
-        self.contractId = contractId
-        self.revision = revision
-        self.acceptedBy = acceptedBy
-    }
-}
-
 /// One independent read of the routing inspector. A daemon refusal and an invalid payload are answers about this leg; neither is a lost transport.
 public struct InspectorRouteInspectionRead: Equatable, Sendable {
     public enum Result: Equatable, Sendable {
@@ -82,8 +57,6 @@ public struct InspectorTaskPane: Equatable, Sendable {
     public let explanation: String
     public let facts: [InspectorFact]
     public let routeInspections: InspectorListState<InspectorFact>
-    public let criteria: InspectorListState<InspectorCriterion>
-    public let declaredContracts: InspectorListState<InspectorDeclaredContract>
     public let channelDelivery: InspectorListState<InspectorFact>
     public let runDecisions: InspectorListState<InspectorFact>
     public let stranded: InspectorListState<InspectorFact>
@@ -94,8 +67,6 @@ public struct InspectorTaskPane: Equatable, Sendable {
         explanation: String,
         facts: [InspectorFact],
         routeInspections: InspectorListState<InspectorFact>,
-        criteria: InspectorListState<InspectorCriterion>,
-        declaredContracts: InspectorListState<InspectorDeclaredContract>,
         channelDelivery: InspectorListState<InspectorFact>,
         runDecisions: InspectorListState<InspectorFact>,
         stranded: InspectorListState<InspectorFact>
@@ -105,23 +76,9 @@ public struct InspectorTaskPane: Equatable, Sendable {
         self.explanation = explanation
         self.facts = facts
         self.routeInspections = routeInspections
-        self.criteria = criteria
-        self.declaredContracts = declaredContracts
         self.channelDelivery = channelDelivery
         self.runDecisions = runDecisions
         self.stranded = stranded
-    }
-}
-
-public struct InspectorEventRow: Equatable, Sendable {
-    public let occurredAt: String
-    public let kind: String
-    public let summary: String
-
-    public init(occurredAt: String, kind: String, summary: String) {
-        self.occurredAt = occurredAt
-        self.kind = kind
-        self.summary = summary
     }
 }
 
@@ -129,13 +86,13 @@ public struct InspectorEventsPane: Equatable, Sendable {
     public let microLabel: String
     public let title: String
     public let explanation: String
-    public let events: InspectorListState<InspectorEventRow>
+    public let events: InspectorListState<InspectorFact>
 
     public init(
         microLabel: String,
         title: String,
         explanation: String,
-        events: InspectorListState<InspectorEventRow>
+        events: InspectorListState<InspectorFact>
     ) {
         self.microLabel = microLabel
         self.title = title
@@ -213,56 +170,35 @@ public enum ShellInspectorPresenter {
         public var snapshot: WorkspaceStatusSnapshot?
         public var snapshotAvailability: ProjectionAvailability
         public var snapshotObservedAt: String?
+        public var snapshotEvidence: ProjectionEvidence?
         public var node: HierarchyNodeProjection?
         public var run: HierarchyRunProjection?
         public var incident: HierarchyIncidentProjection?
         public var stranded: HierarchyStrandedManifestProjection?
         public var routeInspectionReads: [InspectorRouteInspectionRead]?
-        public var events: [WorkspaceStatusEvent]?
-        public var eventsAvailability: ProjectionAvailability
-        public var eventsEvidence: ProjectionEvidence?
-        public var declaredContracts: [InspectorDeclaredContract]?
-        public var contractsAvailability: ProjectionAvailability
-        public var contractsEvidence: ProjectionEvidence?
-        public var criteria: [InspectorCriterion]?
-        public var criteriaAvailability: ProjectionAvailability
         public var selectedAgentId: String?
 
         public init(
             snapshot: WorkspaceStatusSnapshot? = nil,
             snapshotAvailability: ProjectionAvailability = .unknown,
             snapshotObservedAt: String? = nil,
+            snapshotEvidence: ProjectionEvidence? = nil,
             node: HierarchyNodeProjection? = nil,
             run: HierarchyRunProjection? = nil,
             incident: HierarchyIncidentProjection? = nil,
             stranded: HierarchyStrandedManifestProjection? = nil,
             routeInspectionReads: [InspectorRouteInspectionRead]? = nil,
-            events: [WorkspaceStatusEvent]? = nil,
-            eventsAvailability: ProjectionAvailability = .unknown,
-            eventsEvidence: ProjectionEvidence? = nil,
-            declaredContracts: [InspectorDeclaredContract]? = nil,
-            contractsAvailability: ProjectionAvailability = .unknown,
-            contractsEvidence: ProjectionEvidence? = nil,
-            criteria: [InspectorCriterion]? = nil,
-            criteriaAvailability: ProjectionAvailability = .unknown,
             selectedAgentId: String? = nil
         ) {
             self.snapshot = snapshot
             self.snapshotAvailability = snapshotAvailability
             self.snapshotObservedAt = snapshotObservedAt
+            self.snapshotEvidence = snapshotEvidence
             self.node = node
             self.run = run
             self.incident = incident
             self.stranded = stranded
             self.routeInspectionReads = routeInspectionReads
-            self.events = events
-            self.eventsAvailability = eventsAvailability
-            self.eventsEvidence = eventsEvidence
-            self.declaredContracts = declaredContracts
-            self.contractsAvailability = contractsAvailability
-            self.contractsEvidence = contractsEvidence
-            self.criteria = criteria
-            self.criteriaAvailability = criteriaAvailability
             self.selectedAgentId = selectedAgentId
         }
     }
@@ -277,7 +213,7 @@ public enum ShellInspectorPresenter {
             routeInspectionReads: inputs.routeInspectionReads,
             banners: banners(inputs),
             task: taskPane(inputs),
-            events: eventsPane(inputs),
+            events: eventsPane(),
             session: sessionPane(inputs))
     }
 
@@ -309,8 +245,6 @@ public enum ShellInspectorPresenter {
             explanation: refreshed.task.explanation,
             facts: refreshed.task.facts,
             routeInspections: routeInspectionState(mergedReads),
-            criteria: refreshed.task.criteria,
-            declaredContracts: refreshed.task.declaredContracts,
             channelDelivery: refreshed.task.channelDelivery,
             runDecisions: refreshed.task.runDecisions,
             stranded: refreshed.task.stranded)
@@ -391,8 +325,6 @@ public enum ShellInspectorPresenter {
             explanation: explanation,
             facts: facts,
             routeInspections: routeInspectionState(inputs.routeInspectionReads),
-            criteria: criteriaState(inputs),
-            declaredContracts: contractsState(inputs),
             channelDelivery: .absent(reason:
                 "receiveChannelMessage is the retained in-process read door. "
                     + "No frozen Workspace client projection exposes channel delivery, "
@@ -450,53 +382,6 @@ public enum ShellInspectorPresenter {
             }
         }
         return .present(facts)
-    }
-
-    private static func criteriaState(_ inputs: Inputs) -> InspectorListState<InspectorCriterion> {
-        switch inputs.criteriaAvailability {
-        case .unknown where inputs.criteria == nil:
-            return .absent(reason:
-                "TaskDetail criteria are not on a frozen Workspace client wire. "
-                + "The store holds TaskDetail; the inspector does not invent a checklist.")
-        case .unauthorized where inputs.criteria == nil,
-             .disconnected where inputs.criteria == nil:
-            return .absent(reason:
-                "TaskDetail criteria could not be read (\(inputs.criteriaAvailability.rawValue)).")
-        default:
-            break
-        }
-        guard let criteria = inputs.criteria else {
-            return .absent(reason:
-                "TaskDetail criteria are not on a frozen Workspace client wire.")
-        }
-        if criteria.isEmpty {
-            return .empty(detail: "TaskDetail lists no acceptance criteria.")
-        }
-        return .present(criteria)
-    }
-
-    private static func contractsState(
-        _ inputs: Inputs
-    ) -> InspectorListState<InspectorDeclaredContract> {
-        guard let contracts = inputs.declaredContracts else {
-            if inputs.contractsAvailability == .unknown {
-                return .absent(reason:
-                    "Interface-contract acceptedBy is the store's declared participant "
-                    + "list (receiveChannelMessage retains the in-process read door). "
-                    + "No Workspace shell HTTP projection for contracts is frozen yet.")
-            }
-            let detail = availabilityDetail(
-                inputs.contractsAvailability,
-                evidence: inputs.contractsEvidence)
-            return .absent(reason:
-                "No declared interface-contract participants were observed "
-                    + "(\(detail)).")
-        }
-        if contracts.isEmpty {
-            return .empty(detail:
-                "The declared contract list is \(inputs.contractsAvailability.rawValue) and empty.")
-        }
-        return .present(contracts)
     }
 
     private static func runDecisionState(
@@ -557,48 +442,17 @@ public enum ShellInspectorPresenter {
         }
     }
 
-    private static func eventsPane(_ inputs: Inputs) -> InspectorEventsPane {
-        let explanation =
-            "Typed status history only. Nothing here is scraped from a terminal."
-        guard let events = inputs.events else {
-            let detail = availabilityDetail(
-                inputs.eventsAvailability,
-                evidence: inputs.eventsEvidence)
-            let reason = inputs.eventsAvailability == .unknown
-                ? "No workspace-event observation has reached this build. "
-                    + "Empty and absent stay distinct; this is absent."
-                : "No workspace-event observation (\(detail))."
-            return InspectorEventsPane(
-                microLabel: "Typed history",
-                title: "Events",
-                explanation: explanation,
-                events: .absent(reason: reason))
-        }
-        if events.isEmpty {
-            return InspectorEventsPane(
-                microLabel: "Typed history",
-                title: "Events",
-                explanation: explanation,
-                events: .empty(detail:
-                    "The event stream is \(inputs.eventsAvailability.rawValue) and empty."))
-        }
-        let rows = events.prefix(40).map { event in
-            InspectorEventRow(
-                occurredAt: event.occurredAt,
-                kind: event.kind,
-                summary: eventSummary(event))
-        }
+    private static func eventsPane() -> InspectorEventsPane {
         return InspectorEventsPane(
             microLabel: "Typed history",
-            title: "Events, not screen scraping",
-            explanation: explanation,
-            events: .present(Array(rows)))
-    }
-
-    private static func eventSummary(_ event: WorkspaceStatusEvent) -> String {
-        let entity = "\(event.entity.kind) \(shortId(event.entity.id))"
-        let conf = event.source.confidence
-        return "\(entity) · \(event.source.kind) · \(conf)"
+            title: "Events",
+            explanation:
+                "Typed status history only. Nothing here is scraped from a terminal.",
+            events: .absent(reason:
+                "StatusStore.listEvents holds WorkspaceEventV2 rows in "
+                    + "status_workspace_events, and hive_status can name them, "
+                    + "but no Workspace HTTP GET serves that stream. "
+                    + "The inspector does not invent an event list."))
     }
 
     private static func sessionPane(_ inputs: Inputs) -> InspectorSessionPane {
@@ -700,12 +554,6 @@ public enum ShellInspectorPresenter {
 
     private static func aggregateAvailability(_ inputs: Inputs) -> ProjectionAvailability {
         var states: [ProjectionAvailability] = [inputs.snapshotAvailability]
-        if inputs.events != nil || inputs.eventsAvailability != .unknown {
-            states.append(inputs.eventsAvailability)
-        }
-        if inputs.declaredContracts != nil || inputs.contractsAvailability != .unknown {
-            states.append(inputs.contractsAvailability)
-        }
         for read in inputs.routeInspectionReads ?? [] {
             if case .projection(let projection) = read.result {
                 states.append(projection.availability)
@@ -768,17 +616,10 @@ public enum ShellInspectorPresenter {
             }
         }
         if let banner = endpointBanner(
-            name: "event stream",
-            availability: inputs.eventsAvailability,
-            evidence: inputs.eventsEvidence,
-            retained: inputs.events != nil) {
-            result.append(banner)
-        }
-        if let banner = endpointBanner(
-            name: "declared contract list",
-            availability: inputs.contractsAvailability,
-            evidence: inputs.contractsEvidence,
-            retained: inputs.declaredContracts != nil) {
+            name: "workspace snapshot",
+            availability: inputs.snapshotAvailability,
+            evidence: inputs.snapshotEvidence,
+            retained: inputs.snapshot != nil) {
             result.append(banner)
         }
         return result
