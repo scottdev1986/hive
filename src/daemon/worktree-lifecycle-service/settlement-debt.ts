@@ -131,6 +131,30 @@ export function projectSettlementDebt(
   };
 }
 
+/** Decision-relevant snapshot of settlement debt. Counts the orchestrator
+ * already saw, not the case-revision digest (that moves whenever any case
+ * revision moves) and not age (that moves every millisecond). */
+export function settlementDebtCondition(
+  aggregate: Omit<
+    SettlementDebtAggregate,
+    "noticeDigest" | "digest" | "oldestAgeMs"
+  >,
+): string {
+  return JSON.stringify({
+    total: aggregate.total,
+    active: aggregate.active,
+    settling: aggregate.settling,
+    autoSettled: aggregate.autoSettled,
+    resolving: aggregate.resolving,
+    resolvingLiveAgent: aggregate.resolvingLiveAgent,
+    blocked: aggregate.blocked,
+    ownerDecision: aggregate.ownerDecision,
+    measurementBlocked: aggregate.measurementBlocked,
+    namePoolFree: aggregate.namePoolFree,
+    namePoolTotal: aggregate.namePoolTotal,
+  });
+}
+
 /**
  * Whether the aggregate may wake the orchestrator.
  *

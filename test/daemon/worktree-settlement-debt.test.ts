@@ -12,6 +12,7 @@ import { SettlementCaseStore } from "../../src/daemon/worktree-lifecycle-service
 import {
   projectSettlementDebt,
   renderSettlementDebt,
+  settlementDebtCondition,
   settlementDebtNeedsNotice,
 } from "../../src/daemon/worktree-lifecycle-service/settlement-debt";
 import { WorktreeLifecycleService } from "../../src/daemon/worktree-lifecycle-service/worktree-lifecycle-service";
@@ -342,6 +343,9 @@ describe("settlement debt orchestrator notice", () => {
     expect(quiet.ownerDecision).toBe(0);
     expect(quiet.measurementBlocked).toBe(0);
     expect(settlementDebtNeedsNotice(quiet)).toBe(false);
+    expect(
+      settlementDebtCondition({ ...quiet, autoSettled: quiet.autoSettled + 1 }),
+    ).not.toBe(settlementDebtCondition(quiet));
 
     expect(
       settlementDebtNeedsNotice({

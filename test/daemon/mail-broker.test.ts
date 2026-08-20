@@ -111,6 +111,7 @@ describe("schema initialisation", () => {
       )
       .all() as { name: string }[];
     expect(tables.map((row) => row.name)).toEqual([
+      "mail_conditions",
       "mail_dead_letters",
       "mail_events",
       "mail_items",

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { DatabaseHost } from "../shared/database-host";
 import { canonicalOrchestratorName } from "../schemas/agent";
 import {
   type MailDeadLetter,
@@ -17,6 +16,7 @@ import {
   type MailPublishReceipt,
   MailPublishReceiptSchema,
 } from "../schemas/mail";
+import type { DatabaseHost } from "../shared/database-host";
 import { errorMessage } from "../shared/error-message";
 
 export const MAIL_CONTROL_LANE_FULL = "MAIL_CONTROL_LANE_FULL";
@@ -112,6 +112,8 @@ export type MailPublishInput = Readonly<{
   expiresAt: string | null;
   now: string;
   controlLaneCapacity: number;
+  conditionId?: string | null;
+  condition?: string | null;
 }>;
 
 export type MailClaimInput = Readonly<{
@@ -256,6 +258,19 @@ const MAIL_SCHEMA_DDL = `
         CREATE INDEX IF NOT EXISTS mail_dead_letters_recipient
           ON mail_dead_letters(recipient, quarantinedAt);
 
+        -- A standing fact the recipient has already adjudicated. Keyed by the
+        -- identity the sender asserted, not by message bytes: a restatement
+        -- that carries a new digest or timestamp is still the same fact.
+        CREATE TABLE IF NOT EXISTS mail_conditions (
+          recipient TEXT NOT NULL,
+          sender TEXT NOT NULL,
+          conditionId TEXT NOT NULL,
+          condition TEXT NOT NULL,
+          itemId TEXT NOT NULL,
+          acknowledgedAt TEXT NOT NULL,
+          PRIMARY KEY (recipient, sender, conditionId)
+        );
+
         -- The sequence a recipient's mailbox has reached. It is a durable
         -- counter rather than a MAX over live rows because settlement deletes
         -- rows: a MAX would hand the next publish a number already used, and a
@@ -293,6 +308,8 @@ export class MailStore {
         const merged = this.coalesceInTx(input, fingerprint);
         if (merged !== null) return merged;
       }
+      const restated = this.restateAcknowledgedInTx(input, fingerprint);
+      if (restated !== null) return restated;
       const itemId = `mit_${Bun.randomUUIDv7()}`;
       const seq = this.nextSeq(input.recipient);
       const receipt: MailPublishReceipt = {
@@ -319,6 +336,8 @@ export class MailStore {
           topic: input.topic,
           seq,
           recipientGeneration: input.recipientGeneration,
+          conditionId: input.conditionId ?? null,
+          condition: input.condition ?? null,
         },
       });
       const inserted = this.db.database
@@ -505,6 +524,7 @@ export class MailStore {
         },
       });
       if (input.disposition === "completed") {
+        this.acknowledgeConditionInTx(item, input.now);
         this.deleteItemInTx(input.itemId);
       } else if (input.disposition === "rejected") {
         this.deadLetterInTx(item, "rejected", input.now, input.reason);
@@ -798,6 +818,114 @@ export class MailStore {
       .object({ receipt: MailPublishReceiptSchema })
       .parse(JSON.parse(row.detailJson));
     return { fingerprint: row.fingerprint, receipt: detail.receipt };
+  }
+
+  /** Records a restatement of a standing fact the recipient already settled. No new item, no wake: the monitor is still allowed to detect and journal, but the orchestrator is not interrupted until the asserted condition changes. */
+  private restateAcknowledgedInTx(
+    input: MailPublishInput,
+    fingerprint: string,
+  ): MailPublishReceipt | null {
+    const conditionId = input.conditionId ?? null;
+    const condition = input.condition ?? null;
+    if (conditionId === null || condition === null) return null;
+    const ack = this.db.database
+      .query(
+        `SELECT itemId, condition FROM mail_conditions
+         WHERE recipient = ? AND sender = ? AND conditionId = ?`,
+      )
+      .get(input.recipient, input.sender, conditionId) as {
+      itemId: string;
+      condition: string;
+    } | null;
+    if (ack === null || ack.condition !== condition) return null;
+    const seq = this.currentSeq(input.recipient);
+    const receipt: MailPublishReceipt = {
+      itemId: ack.itemId,
+      lane: input.lane,
+      topic: input.topic,
+      outcome: "restated",
+      seq,
+      mergedCount: 0,
+      acceptedAt: input.now,
+    };
+    this.appendEventInTx({
+      itemId: ack.itemId,
+      kind: "restated",
+      actor: input.sender,
+      actorGeneration: null,
+      idempotencyKey: input.idempotencyKey,
+      fingerprint,
+      receipt,
+      at: input.now,
+      detail: { conditionId, condition },
+    });
+    return receipt;
+  }
+
+  clearStandingCondition(
+    recipient: string,
+    sender: string,
+    conditionId: string,
+  ): void {
+    this.db.database
+      .query(
+        `DELETE FROM mail_conditions
+         WHERE recipient = ? AND sender = ? AND conditionId = ?`,
+      )
+      .run(recipient, sender, conditionId);
+  }
+
+  private acknowledgeConditionInTx(item: MailItem, now: string): void {
+    const standing = this.publishedCondition(item.itemId);
+    if (standing === null) return;
+    this.db.database
+      .query(
+        `INSERT INTO mail_conditions (
+           recipient, sender, conditionId, condition, itemId, acknowledgedAt
+         ) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(recipient, sender, conditionId) DO UPDATE SET
+           condition = excluded.condition,
+           itemId = excluded.itemId,
+           acknowledgedAt = excluded.acknowledgedAt`,
+      )
+      .run(
+        item.recipient,
+        item.sender,
+        standing.conditionId,
+        standing.condition,
+        item.itemId,
+        now,
+      );
+  }
+
+  private publishedCondition(
+    itemId: string,
+  ): { conditionId: string; condition: string } | null {
+    const row = this.db.database
+      .query(
+        `SELECT detailJson FROM mail_events
+         WHERE itemId = ? AND kind = 'published'
+         ORDER BY rowid ASC LIMIT 1`,
+      )
+      .get(itemId) as { detailJson: string } | null;
+    if (row === null) return null;
+    const detail: unknown = JSON.parse(row.detailJson);
+    if (typeof detail !== "object" || detail === null) return null;
+    const record = detail as Record<string, unknown>;
+    if (
+      typeof record.conditionId !== "string" ||
+      typeof record.condition !== "string"
+    ) {
+      return null;
+    }
+    return { conditionId: record.conditionId, condition: record.condition };
+  }
+
+  private currentSeq(recipient: string): number {
+    const row = this.db.database
+      .query("SELECT lastSeq FROM mail_sequences WHERE recipient = ?")
+      .get(recipient) as { lastSeq: number } | null;
+    return row?.lastSeq ?? 0;
   }
 
   /** Folds a work update into the recipient's unread item on the same topic. `state = 'available'` is part of the UPDATE: an item claimed between the lookup and the write must not have its body swapped underneath the handler already reading it, and the zero changes that produces is what tells the caller to publish a fresh item instead. */

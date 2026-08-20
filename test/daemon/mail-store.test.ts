@@ -431,3 +431,59 @@ describe("mail_dead_letters", () => {
     expect(store.getLease(receipt.itemId)).toBeNull();
   });
 });
+
+describe("standing conditions", () => {
+  const standing = (overrides: Record<string, unknown> = {}) =>
+    envelope({
+      sender: "hive-quota",
+      lane: "work",
+      topic: "quota",
+      body: "kimi /usages answered HTTP 401",
+      conditionId: "quota:kimi:live-probe",
+      condition: "HTTP 401",
+      ...overrides,
+    });
+
+  test("an acknowledged condition does not re-enqueue; a changed one does", () => {
+    const { store } = rig();
+    const first = store.publish(standing({ idempotencyKey: "q1" }));
+    expect(first.outcome).toBe("published");
+    claim(store, first.itemId, "h1", 1);
+    settle(store, first.itemId, "h1", "completed", 2);
+    expect(store.listAvailable("ada", "work", 0, 10, at(3))).toHaveLength(0);
+
+    const repeat = store.publish(
+      standing({
+        idempotencyKey: "q2",
+        body: "kimi /usages answered HTTP 401 (again)",
+        now: at(4),
+      }),
+    );
+    expect(repeat.outcome).toBe("restated");
+    expect(repeat.itemId).toBe(first.itemId);
+    expect(store.listAvailable("ada", "work", 0, 10, at(5))).toHaveLength(0);
+
+    const changed = store.publish(
+      standing({
+        idempotencyKey: "q3",
+        condition: "HTTP 403",
+        body: "kimi /usages answered HTTP 403",
+        now: at(6),
+      }),
+    );
+    expect(changed.outcome).toBe("published");
+    expect(changed.itemId).not.toBe(first.itemId);
+    expect(store.listAvailable("ada", "work", 0, 10, at(7))).toHaveLength(1);
+  });
+
+  test("clearing an acknowledged condition lets the same fact interrupt again", () => {
+    const { store } = rig();
+    const first = store.publish(standing({ idempotencyKey: "c1" }));
+    claim(store, first.itemId, "h1", 1);
+    settle(store, first.itemId, "h1", "completed", 2);
+    store.clearStandingCondition("ada", "hive-quota", "quota:kimi:live-probe");
+    const again = store.publish(standing({ idempotencyKey: "c2", now: at(3) }));
+    expect(again.outcome).toBe("published");
+    expect(store.listAvailable("ada", "work", 0, 10, at(4))).toHaveLength(1);
+  });
+});

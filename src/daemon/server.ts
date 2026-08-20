@@ -152,7 +152,6 @@ import {
   sweepArtifacts,
 } from "./artifact-store/artifact-store";
 import { registerArtifactTools } from "./artifact-store/artifact-store-tool";
-import { WakePayloadService } from "./wake-payload-service";
 import type { MainHealthMonitorHandle } from "./landing/main-health-monitor";
 import {
   type ProjectGate,
@@ -163,6 +162,7 @@ import { repoMemoryCitesItem } from "./messaging/ruling-record";
 import { registerAgentControlTools } from "./recovery/agent-control-tools";
 import type { ModelControlSnapshot } from "./routing-service/model-control-snapshot";
 import { promoteVerificationToStandards } from "./spawn/agent-standards";
+import { WakePayloadService } from "./wake-payload-service";
 
 export type { Approval } from "./approval-service/approval-service";
 export {
@@ -761,11 +761,19 @@ export class HiveDaemon {
       options.queenVendorAvailability ?? vendorAvailabilityReader();
     this.queenRootObservation = options.queenRootObservation ?? null;
     this.graphify = options.graphify;
-    this.quota?.setAlertSink(async (body) => {
+    this.quota?.setAlertSink(async (body, standing) => {
       await this.mailService.publishSystem(
         "hive-quota",
         ORCHESTRATOR_NAME,
         body,
+        standing,
+      );
+    });
+    this.quota?.setConditionClearer(async (conditionId) => {
+      this.mailService.clearStandingCondition(
+        "hive-quota",
+        ORCHESTRATOR_NAME,
+        conditionId,
       );
     });
     this.land = options.landBranch ?? landBranch;

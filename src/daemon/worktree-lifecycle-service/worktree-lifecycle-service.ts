@@ -57,6 +57,7 @@ import {
   projectSettlementDebt,
   renderSettlementDebt,
   type SettlementDebtAggregate,
+  settlementDebtCondition,
   settlementDebtNeedsNotice,
 } from "./settlement-debt";
 import {
@@ -848,7 +849,11 @@ export class WorktreeLifecycleService {
         "hive-lifecycle",
         ORCHESTRATOR_NAME,
         `Hive settlement debt [case-revision digest ${aggregate.digest.slice(0, 12)}]: ${rendered}. Read hive_status and compare the digest before acting; a mismatch means this notice is stale.`,
-        { idempotencyKey: `settlement-debt:${aggregate.digest}` },
+        {
+          idempotencyKey: `settlement-debt:${aggregate.digest}`,
+          conditionId: "settlement-debt",
+          condition: settlementDebtCondition(aggregate),
+        },
       );
     }
     if (changed || prior === null) {

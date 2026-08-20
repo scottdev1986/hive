@@ -13,6 +13,8 @@ export const MAIL_LEASE_SECONDS = 120;
 export const MAIL_DEFERRAL_SECONDS = 120;
 export const MAIL_RETRY_AFTER_MAX_SECONDS = 60 * 60;
 export const MAIL_TTL_MAX_SECONDS = 7 * 24 * 60 * 60;
+export const MAIL_CONDITION_ID_MAX_LENGTH = 128;
+export const MAIL_CONDITION_MAX_BYTES = 4_096;
 
 export const MailLaneSchema = z.enum(["control", "work"]);
 export type MailLane = z.infer<typeof MailLaneSchema>;
@@ -29,6 +31,7 @@ export const MailItemStateSchema = z.enum(["available", "leased"]);
 export const MailEventKindSchema = z.enum([
   "published",
   "coalesced",
+  "restated",
   "claimed",
   "lease-renewed",
   "lease-expired",
@@ -106,37 +109,86 @@ const TopicSchema = z
 /** How long a control message may wait, past an observed safe point, before the mailbox says so. Long enough that an agent working through a unit of work is not reported for it. */
 export const MAIL_SLO_BREACH_SECONDS = 600;
 
-export const MailPublishRequestSchema = z.strictObject({
+const MailPublishFields = {
   from: z.string().min(1),
   to: z.string().min(1),
   lane: MailLaneSchema,
   topic: TopicSchema.default("general"),
   body: z.string().min(1),
   idempotencyKey: z.string().min(1).max(200),
-  /** The recipient incarnation this envelope is for; control lane only. Null — the default — means any generation and is the right stamp for almost everything: a generation can advance between publish and claim, so a pinned value races the recipient's restarts. A pin the daemon can already see is stale is refused at publish rather than accepted and quarantined at claim. */
-  addressedGeneration: z
-    .number()
-    .int()
-    .nonnegative()
-    .nullable()
-    .default(null)
-    .describe(
-      "The recipient mailbox incarnation, not the sender's assignment or hierarchy generation. Omit for normal delivery to any live incarnation.",
-    ),
-  ttlSeconds: z
-    .number()
-    .int()
+  /**
+   * Identity the sender asserts about the standing fact this envelope reports.
+   * Pair with `condition`. The mailbox uses this pair, not the body bytes, to
+   * decide whether an already-adjudicated fact should interrupt again.
+   */
+  conditionId: z
+    .string()
     .min(1)
-    .max(MAIL_TTL_MAX_SECONDS)
+    .max(MAIL_CONDITION_ID_MAX_LENGTH)
+    .regex(
+      /^[a-z0-9][a-z0-9._:-]*$/,
+      "a condition id is lowercase alphanumerics with . _ : -",
+    )
     .nullable()
     .default(null),
-});
+  /** Decision-relevant snapshot for `conditionId`. Incidental detail belongs in the body. */
+  condition: z
+    .string()
+    .min(1)
+    .max(MAIL_CONDITION_MAX_BYTES)
+    .nullable()
+    .default(null),
+} as const;
+
+const requirePairedCondition = (
+  value: { conditionId: string | null; condition: string | null },
+  context: z.RefinementCtx,
+): void => {
+  if ((value.conditionId === null) !== (value.condition === null)) {
+    context.addIssue({
+      code: "custom",
+      message: "conditionId and condition must be sent together",
+    });
+  }
+};
+
+export const MailPublishRequestSchema = z
+  .strictObject({
+    ...MailPublishFields,
+    /** The recipient incarnation this envelope is for; control lane only. Null — the default — means any generation and is the right stamp for almost everything: a generation can advance between publish and claim, so a pinned value races the recipient's restarts. A pin the daemon can already see is stale is refused at publish rather than accepted and quarantined at claim. */
+    addressedGeneration: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .default(null)
+      .describe(
+        "The recipient mailbox incarnation, not the sender's assignment or hierarchy generation. Omit for normal delivery to any live incarnation.",
+      ),
+    ttlSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAIL_TTL_MAX_SECONDS)
+      .nullable()
+      .default(null),
+  })
+  .superRefine(requirePairedCondition);
 
 /** Agent mail follows names across restarts. Only root callers receive the
  * exceptional generation-pinning field in their advertised tool contract. */
-export const AgentMailPublishRequestSchema = MailPublishRequestSchema.omit({
-  addressedGeneration: true,
-});
+export const AgentMailPublishRequestSchema = z
+  .strictObject({
+    ...MailPublishFields,
+    ttlSeconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(MAIL_TTL_MAX_SECONDS)
+      .nullable()
+      .default(null),
+  })
+  .superRefine(requirePairedCondition);
 
 export const MailPollRequestSchema = z.strictObject({
   recipient: z.string().min(1),
@@ -198,7 +250,7 @@ export const MailPublishReceiptSchema = z.strictObject({
   itemId: z.string(),
   lane: MailLaneSchema,
   topic: z.string(),
-  outcome: z.enum(["published", "coalesced"]),
+  outcome: z.enum(["published", "coalesced", "restated"]),
   seq: z.number().int(),
   mergedCount: z.number().int(),
   acceptedAt: isoTimestamp,

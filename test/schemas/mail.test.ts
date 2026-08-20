@@ -4,6 +4,7 @@ import {
   MAIL_REASON_MAX_LENGTH,
   MailCompleteRequestSchema,
   MailItemSchema,
+  MailPublishRequestSchema,
 } from "../../src/schemas/mail";
 
 const common = {
@@ -35,7 +36,36 @@ describe("MailCompleteRequestSchema", () => {
       retryAfterSeconds: MAIL_DEFERRAL_SECONDS,
     });
   });
+});
 
+describe("MailPublishRequestSchema", () => {
+  const base = {
+    from: "hive-quota",
+    to: "queen",
+    lane: "work" as const,
+    body: "kimi 401",
+    idempotencyKey: "q1",
+  };
+
+  test("conditionId and condition must arrive together", () => {
+    expect(MailPublishRequestSchema.parse(base).conditionId).toBe(null);
+    expect(
+      MailPublishRequestSchema.parse({
+        ...base,
+        conditionId: "quota:kimi:live-probe",
+        condition: "HTTP 401",
+      }).conditionId,
+    ).toBe("quota:kimi:live-probe");
+    expect(
+      MailPublishRequestSchema.safeParse({
+        ...base,
+        conditionId: "quota:kimi:live-probe",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("MailCompleteRequestSchema", () => {
   test("bounds a reason without blocking settlement", () => {
     const parsed = MailCompleteRequestSchema.parse({
       ...common,

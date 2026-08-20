@@ -47,7 +47,11 @@ export type SystemMailPublish = (
   from: string,
   to: string,
   body: string,
-  options?: { idempotencyKey?: string },
+  options?: {
+    idempotencyKey?: string;
+    conditionId?: string;
+    condition?: string;
+  },
 ) => Promise<void>;
 
 /** Told after a publish commits that a recipient has mail waiting. It carries a count and an id, never the body — the mailbox stays the only way a body moves, so being notified grants no read the caller did not already have. Optional because the broker's contract does not depend on anyone listening: mail that nobody was woken for is still durably accepted. */
@@ -157,7 +161,11 @@ export class MailService {
     from: string,
     to: string,
     body: string,
-    options: { idempotencyKey?: string } = {},
+    options: {
+      idempotencyKey?: string;
+      conditionId?: string;
+      condition?: string;
+    } = {},
   ): Promise<void> {
     const route = SYSTEM_MAIL_ROUTES[from];
     if (route === undefined) {
@@ -173,9 +181,23 @@ export class MailService {
         topic: route.topic,
         idempotencyKey:
           options.idempotencyKey ?? `${from}:${Bun.randomUUIDv7()}`,
+        ...(options.conditionId === undefined
+          ? {}
+          : { conditionId: options.conditionId }),
+        ...(options.condition === undefined
+          ? {}
+          : { condition: options.condition }),
       },
       new Date(),
     );
+  }
+
+  clearStandingCondition(
+    sender: string,
+    recipient: string,
+    conditionId: string,
+  ): void {
+    this.store.clearStandingCondition(recipient, sender, conditionId);
   }
 
   announceWaiting(
@@ -517,8 +539,12 @@ export function hiveMailPublish(
       input.ttlSeconds === null ? null : plusSeconds(now, input.ttlSeconds),
     now: now.toISOString(),
     controlLaneCapacity: MAIL_CONTROL_LANE_CAPACITY,
+    conditionId: input.conditionId,
+    condition: input.condition,
   });
-  announceMailWaiting(deps, recipient, receipt, now);
+  if (receipt.outcome !== "restated") {
+    announceMailWaiting(deps, recipient, receipt, now);
+  }
   return receipt;
 }
 

@@ -60,7 +60,11 @@ export interface ControlQuotaRequest extends QuotaCandidateIdentity {
   controlMessageId: string;
 }
 
-export type QuotaAlertSink = (body: string) => Promise<void>;
+export type QuotaAlertSink = (
+  body: string,
+  standing?: { conditionId: string; condition: string },
+) => Promise<void>;
+export type QuotaConditionClearer = (conditionId: string) => Promise<void>;
 export type QuotaClock = () => Date;
 
 export interface QuotaRefreshReport {
@@ -127,6 +131,7 @@ function discoveredPoolFrom(
 
 export class QuotaService {
   private alertSink: QuotaAlertSink | null = null;
+  private conditionClearer: QuotaConditionClearer | null = null;
   private readonly probes: QuotaProbe[];
   private readonly probeReads = new Map<CapabilityProvider, ActiveProbe>();
   private readonly queuedOperatorProbeReads = new Map<
@@ -171,6 +176,10 @@ export class QuotaService {
 
   setAlertSink(sink: QuotaAlertSink): void {
     this.alertSink = sink;
+  }
+
+  setConditionClearer(clearer: QuotaConditionClearer): void {
+    this.conditionClearer = clearer;
   }
 
   replaceCapabilityCatalog(
@@ -516,6 +525,7 @@ export class QuotaService {
         notifiedAt: null,
         boundaryAt: null,
       });
+      await this.conditionClearer?.(`quota:${probe.provider}:live-probe`);
       // The catalog is what binds a metered sub-pool to the models it gates, so it is stored before the pools that depend on it are resolved. Some billing surfaces carry no model catalog. That absence cannot erase a vendor claim measured by capability discovery.
       if (result.catalog.length > 0) {
         this.ledger.replaceModelCatalog(
@@ -1030,10 +1040,13 @@ export class QuotaService {
     await rememberBilling(provider, billing);
   }
 
-  private async sendAlert(body: string): Promise<void> {
+  private async sendAlert(
+    body: string,
+    standing?: { conditionId: string; condition: string },
+  ): Promise<void> {
     if (this.alertSink === null) return;
     try {
-      await this.alertSink(body);
+      await this.alertSink(body, standing);
     } catch {}
   }
 
@@ -1060,6 +1073,10 @@ export class QuotaService {
       `Hive could not read live quota limits from ${provider}: ${reason}. ` +
         "Existing readings are kept and marked stale; no capacity number is " +
         "being invented in their place.",
+      {
+        conditionId: `quota:${provider}:live-probe`,
+        condition: reason,
+      },
     );
   }
 }
