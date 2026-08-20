@@ -79,7 +79,12 @@ interface SnapshotDoc {
 
 type Drive =
   | { ok: true }
-  | { ok: false; status: "FAIL" | "NO MEASUREMENT"; reason: string };
+  | {
+      ok: false;
+      status: "FAIL" | "NO MEASUREMENT";
+      reason: string;
+      screenState?: string;
+    };
 
 const bound = (ctx: Stage1Context): number => ctx.boundMs ?? 5_000;
 
@@ -317,8 +322,11 @@ async function drivable(
   };
 }
 
-/** Apply the current draft, waiting first for Apply to come up enabled. The wait is the proof the edit produced a draft: if the field action was lost to a mid-rebuild view or the editor fenced, Apply never enables and the row reports NO MEASUREMENT instead of invoking a dead button. The failure reason describes the screen's last seen state so a flake is diagnosable from the transcript alone. */
-async function applyDraft(ctx: Stage1Context): Promise<Drive> {
+/** Apply the current draft, waiting first for Apply to come up enabled. The wait is the proof the edit produced a draft: if the field action was lost to a mid-rebuild view or the editor fenced, Apply never enables and the row reports NO MEASUREMENT instead of invoking a dead button. The failure carries the screen's last seen state (including whether the member control itself was enabled) so a lost toggle is distinguishable from a fenced editor. */
+async function applyDraft(
+  ctx: Stage1Context,
+  memberName?: string,
+): Promise<Drive> {
   let lastSeen = "no enumerate answered";
   const poll = await pollGate(ctx, (response) => {
     const controls = response.controls ?? [];
@@ -335,7 +343,16 @@ async function applyDraft(ctx: Stage1Context): Promise<Drive> {
         control.identifier === "task-router-conflict" &&
         control.functionallyPresent,
     );
-    lastSeen = `apply present=${apply?.functionallyPresent ?? false} enabled=${apply?.enabled ?? false} draft=${draft} conflict=${conflict}`;
+    const member =
+      memberName === undefined
+        ? undefined
+        : controls.find(
+            (control) =>
+              control.identifier === `task-router-member-${memberName}`,
+          );
+    lastSeen =
+      `apply present=${apply?.functionallyPresent ?? false} enabled=${apply?.enabled ?? false} draft=${draft} conflict=${conflict}` +
+      (member === undefined ? "" : ` memberEnabled=${member.enabled}`);
     return apply !== undefined && apply.enabled && apply.functionallyPresent
       ? true
       : null;
@@ -350,7 +367,32 @@ async function applyDraft(ctx: Stage1Context): Promise<Drive> {
     ok: false,
     status: "NO MEASUREMENT",
     reason: `task-router-apply never became drivable within the bound (last seen: ${lastSeen})`,
+    screenState: lastSeen,
   };
+}
+
+/** Toggle a membership checkbox and apply, retrying the toggle exactly once when the first was verifiably lost: Apply staying dead while the member control itself is enabled proves the toggle's edit never entered the draft (a dead Apply with the member control DISABLED is a fenced editor instead, and a second toggle there would only remove the member). */
+async function driveMemberToggle(
+  ctx: Stage1Context,
+  name: string,
+): Promise<Drive> {
+  const ready = await drivable(ctx, `task-router-member-${name}`);
+  if (!ready.ok) return ready;
+  const toggle = await drive(ctx, {
+    verb: "invoke",
+    identifier: `task-router-member-${name}`,
+  });
+  if (!toggle.ok) return toggle;
+  let applied = await applyDraft(ctx, name);
+  if (!applied.ok && applied.screenState?.includes("memberEnabled=true")) {
+    const retry = await drive(ctx, {
+      verb: "invoke",
+      identifier: `task-router-member-${name}`,
+    });
+    if (!retry.ok) return retry;
+    applied = await applyDraft(ctx, name);
+  }
+  return applied;
 }
 
 /** Plant a member of the category route through the membership door, creating the route (Weighted split) when the category has none. An unplantable precondition is NO MEASUREMENT by plan rule 6, whatever the door said. */
@@ -399,28 +441,12 @@ async function plantMember(
       };
     }
   }
-  const ready = await drivable(ctx, `task-router-member-${name}`);
-  if (!ready.ok) return ready;
-  const toggle = await drive(ctx, {
-    verb: "invoke",
-    identifier: `task-router-member-${name}`,
-  });
-  if (!toggle.ok) {
+  const applied = await driveMemberToggle(ctx, name);
+  if (!applied.ok) {
     return {
       ok: false,
       status: "NO MEASUREMENT",
-      reason: `could not plant member ${name}: ${toggle.reason}`,
-    };
-  }
-  const apply = await applyDraft(ctx);
-  if (!apply.ok) {
-    const reason = apply.reason.includes("not actionable")
-      ? `${apply.reason} — consistent with the known door defect: memberToggled reads sender.state, which qa-control invoke never flips (product fix dispatched to prudence)`
-      : apply.reason;
-    return {
-      ok: false,
-      status: "NO MEASUREMENT",
-      reason: `could not plant member ${name}: apply: ${reason}`,
+      reason: `could not plant member ${name}: ${applied.reason}`,
     };
   }
   const poll = await pollOracle(ctx, async () =>
@@ -448,17 +474,8 @@ async function unplantMember(
   if (!shown.ok) {
     return { ok: false, status: "FAIL", reason: shown.reason };
   }
-  const ready = await drivable(ctx, `task-router-member-${name}`);
-  if (!ready.ok) {
-    return { ok: false, status: "NO MEASUREMENT", reason: ready.reason };
-  }
-  const toggle = await drive(ctx, {
-    verb: "invoke",
-    identifier: `task-router-member-${name}`,
-  });
-  if (!toggle.ok) return toggle;
-  const apply = await applyDraft(ctx);
-  if (!apply.ok) return apply;
+  const applied = await driveMemberToggle(ctx, name);
+  if (!applied.ok) return applied;
   const poll = await pollOracle(ctx, async () =>
     candidateOf(await exportDoc(ctx), category, key) === null ? true : null,
   );
@@ -532,15 +549,10 @@ export async function rowT102MemberApplyWrites(
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
-  const ready = await drivable(ctx, `task-router-member-${name}`);
-  if (!ready.ok) return { id, status: ready.status, reason: ready.reason };
-  const toggle = await drive(ctx, {
-    verb: "invoke",
-    identifier: `task-router-member-${name}`,
-  });
-  if (!toggle.ok) return { id, status: toggle.status, reason: toggle.reason };
-  const apply = await applyDraft(ctx);
-  if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
+  const applied = await driveMemberToggle(ctx, name);
+  if (!applied.ok) {
+    return { id, status: applied.status, reason: applied.reason };
+  }
   // The poll must see the write, not the pre-write state: requiring the
   // candidate AND a revision bump in one condition is the only shape that
   // cannot pass on a snapshot from before the apply landed.
@@ -965,8 +977,10 @@ export async function rowT106ApplyIsTheOnlyWrite(
       reason: `a draft edit moved the revision ${revBefore} -> ${revDraft} without apply`,
     };
   }
-  const apply = await applyDraft(ctx);
-  if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
+  const applied = await applyDraft(ctx, name);
+  if (!applied.ok) {
+    return { id, status: applied.status, reason: applied.reason };
+  }
   const poll = await pollOracle(ctx, async () => {
     const present = candidateOf(await exportDoc(ctx), category, key) !== null;
     const revision = (await policyViaHttp(ctx)).revision;

@@ -88,6 +88,7 @@ class FakeRig {
   modeEffortNoCommit = false;
   freezeRevision = false;
   providerToggleNoop = false;
+  loseMemberToggles = 0;
   catalog = [
     { ...K0, effortOptions: EFFORTS },
     { ...K1, effortOptions: EFFORTS },
@@ -332,6 +333,11 @@ class FakeRig {
       if (!this.routeExists()) {
         return this.answer("fail", "control is not actionable");
       }
+      if (this.loseMemberToggles > 0) {
+        // The live-rig race: the invoke returns ok but the edit never enters the draft.
+        this.loseMemberToggles -= 1;
+        return this.answer("ok");
+      }
       const key = identifier.slice("task-router-member-".length);
       this.draft.members.set(key, !this.isMember(key));
       this.applyEnabled = true;
@@ -567,6 +573,33 @@ describe("T1-02 member apply writes", () => {
     );
     expect(row.status).toBe("FAIL");
     expect(row.reason).toContain("revision stayed");
+  });
+
+  test("a verifiably lost toggle is retried once and still passes", async () => {
+    const rig = new FakeRig();
+    rig.seedK0();
+    rig.loseMemberToggles = 1;
+    const row = await rowT102MemberApplyWrites(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
+    expect(row.status).toBe("PASS");
+    expect(rig.loseMemberToggles).toBe(0);
+  });
+
+  test("two lost toggles exhaust the single retry and measure nothing", async () => {
+    const rig = new FakeRig();
+    rig.seedK0();
+    rig.loseMemberToggles = 2;
+    const row = await rowT102MemberApplyWrites(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
+    expect(row.status).toBe("NO MEASUREMENT");
   });
 
   test("NO MEASUREMENT when the policy oracle refuses", async () => {
