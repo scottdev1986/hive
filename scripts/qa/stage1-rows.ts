@@ -4,10 +4,16 @@
 // GET /model-control/snapshot over the observe clients, or `hive routing
 // export` as a second process. Driving and reading never share a code path.
 //
+// The Task Router edits one CATEGORY route: the membership, weight and effort
+// controls act on the route of the category the screen shows, and Apply POSTs
+// that category's route. A category with no configured route has its member
+// checkboxes disabled, so every mutating row first ensures the category route
+// exists (mode select creates the draft) — an unplantable precondition is NO
+// MEASUREMENT by plan rule 6.
+//
 // Three disciplines hold the stage together:
-// - A precondition the row cannot plant through a product door is NO
-//   MEASUREMENT (plan rule 6), never a FAIL; only the row's own assertion leg
-//   can FAIL.
+// - A row that cannot reach its oracle is NO MEASUREMENT, never FAIL; only the
+//   row's own assertion leg can FAIL.
 // - The negative rows (T1-04, T1-08) are meaningless unless the revision is
 //   proven to move in the same run, so each names its positive control.
 // - Every mutating row restores what it changed, so the suite is convergent:
@@ -30,7 +36,11 @@ export interface Stage1Context {
   observe: ObserveClients | null;
   sleep: (ms: number) => Promise<void>;
   baselinePath: string;
+  /** The rig daemon's instance home: `hive routing export` resolves its daemon port from HIVE_HOME, so the runner points it here. */
+  instanceHome: string;
   boundMs?: number;
+  /** How long a drive waits for the app to answer the gate at all. The router screen's first render blocks the app's main thread far longer than the gate's own 5s request timeout, so "did not answer" is retried, not reported. */
+  gatePatienceMs?: number;
 }
 
 interface Candidate {
@@ -40,10 +50,15 @@ interface Candidate {
   effort: unknown;
 }
 
+interface RouteDoc {
+  mode: string;
+  candidates: Candidate[];
+}
+
 interface PolicyDoc {
   revision: number;
   providers: Record<string, string>;
-  global: { mode: string; candidates: Candidate[] } | null;
+  categories: Record<string, RouteDoc>;
 }
 
 interface CatalogEntry {
@@ -57,6 +72,8 @@ interface SnapshotDoc {
   routing: {
     catalog: CatalogEntry[];
     modes: Array<{ id: string; label: string; weightEditable: boolean }>;
+    categories: Array<{ id: string; label: string }>;
+    providers: Record<string, { state: string }>;
   };
 }
 
@@ -71,9 +88,10 @@ const keyOf = (entry: { provider: string; model: string }): string =>
 
 const candidateOf = (
   policy: PolicyDoc,
+  category: string,
   key: { provider: string; model: string },
 ): Candidate | null =>
-  policy.global?.candidates.find(
+  policy.categories[category]?.candidates.find(
     (candidate) =>
       candidate.provider === key.provider && candidate.model === key.model,
   ) ?? null;
@@ -126,7 +144,9 @@ async function snapshotViaHttp(ctx: Stage1Context): Promise<SnapshotDoc> {
 }
 
 async function exportViaCli(ctx: Stage1Context): Promise<string> {
-  const result = await ctx.exec([ctx.qaBin, "routing", "export"]);
+  const result = await ctx.exec([ctx.qaBin, "routing", "export"], {
+    env: { ...process.env, HIVE_HOME: ctx.instanceHome },
+  });
   if (result.exitCode !== 0) {
     throw new Error(
       `hive routing export exited ${result.exitCode}: ${result.stderr.trim()}`,
@@ -140,23 +160,36 @@ async function exportDoc(ctx: Stage1Context): Promise<PolicyDoc> {
 }
 
 /** One qa-control drive. Exit 1 with the app's reason is a measured door failure (FAIL); exit 2 or garbage is a rig fact (NO MEASUREMENT). */
+/** One qa-control drive. Exit 1 with the app's reason is a measured door failure (FAIL); exit 2 or garbage is a rig fact (NO MEASUREMENT). A "did not answer" is the app being busy, not absent — it is retried within the gate patience, and only outlasting the patience is reported. */
 async function drive(ctx: Stage1Context, command: GateCommand): Promise<Drive> {
-  const answer = await gate(ctx.exec, ctx.qaBin, command);
-  if (answer.outcome === "no-measurement") {
-    return { ok: false, status: "NO MEASUREMENT", reason: answer.reason };
+  const patience = ctx.gatePatienceMs ?? 60_000;
+  const deadline = Date.now() + patience;
+  for (;;) {
+    const answer = await gate(ctx.exec, ctx.qaBin, command);
+    if (
+      answer.outcome === "no-measurement" &&
+      answer.reason.includes("did not answer") &&
+      Date.now() < deadline
+    ) {
+      await ctx.sleep(Math.min(500, Math.max(0, deadline - Date.now())));
+      continue;
+    }
+    if (answer.outcome === "no-measurement") {
+      return { ok: false, status: "NO MEASUREMENT", reason: answer.reason };
+    }
+    if (answer.exitCode !== 0) {
+      const name =
+        command.verb === "enumerate"
+          ? "enumerate"
+          : `${command.verb} ${command.identifier}`;
+      return {
+        ok: false,
+        status: "FAIL",
+        reason: answer.response.reason ?? `${name} reported a failure`,
+      };
+    }
+    return { ok: true };
   }
-  if (answer.exitCode !== 0) {
-    const name =
-      command.verb === "enumerate"
-        ? "enumerate"
-        : `${command.verb} ${command.identifier}`;
-    return {
-      ok: false,
-      status: "FAIL",
-      reason: answer.response.reason ?? `${name} reported a failure`,
-    };
-  }
-  return { ok: true };
 }
 
 type Poll<T> =
@@ -188,7 +221,7 @@ async function pollOracle<T>(
   return answered ? { kind: "fail" } : { kind: "unreachable" };
 }
 
-/** Poll the gate's enumerate until the predicate holds; "dead" means the app stopped answering. */
+/** Poll the gate's enumerate until the predicate holds; "dead" means the app stayed silent past the gate patience. */
 async function pollGate<T>(
   ctx: Stage1Context,
   pick: (response: GateResponse) => T | null,
@@ -204,7 +237,7 @@ async function pollGate<T>(
       alive = true;
       return pick(answer.response);
     },
-    bound(ctx),
+    ctx.gatePatienceMs ?? bound(ctx),
     ctx.sleep,
     250,
   );
@@ -223,12 +256,11 @@ const pollOutcome = <T>(
       ? { ok: false, status: "FAIL", reason: failReason }
       : { ok: false, status: "NO MEASUREMENT", reason: unreachableReason };
 
-/** Plant a member through the membership door. An unplantable precondition is NO MEASUREMENT by plan rule 6, whatever the door said. */
-async function plantMember(
+/** Show the router screen on the suite's category. Setup failure is NO MEASUREMENT (unplantable precondition), not a row failure. */
+async function showRouterCategory(
   ctx: Stage1Context,
-  key: { provider: string; model: string },
+  categoryLabel: string,
 ): Promise<Drive> {
-  const name = keyOf(key);
   const nav = await drive(ctx, {
     verb: "invoke",
     identifier: "shell-nav-router",
@@ -237,8 +269,69 @@ async function plantMember(
     return {
       ok: false,
       status: "NO MEASUREMENT",
-      reason: `could not plant member ${name}: nav: ${nav.reason}`,
+      reason: `could not reach the router screen: ${nav.reason}`,
     };
+  }
+  const select = await drive(ctx, {
+    verb: "select",
+    identifier: "task-router-category",
+    title: categoryLabel,
+  });
+  if (!select.ok) {
+    return {
+      ok: false,
+      status: "NO MEASUREMENT",
+      reason: `could not select category ${categoryLabel}: ${select.reason}`,
+    };
+  }
+  return { ok: true };
+}
+
+/** Plant a member of the category route through the membership door, creating the route (Weighted split) when the category has none. An unplantable precondition is NO MEASUREMENT by plan rule 6, whatever the door said. */
+async function plantMember(
+  ctx: Stage1Context,
+  category: string,
+  categoryLabel: string,
+  key: { provider: string; model: string },
+): Promise<Drive> {
+  const name = keyOf(key);
+  const shown = await showRouterCategory(ctx, categoryLabel);
+  if (!shown.ok) return shown;
+  // Idempotent: an already-present member is the planted state, not a toggle.
+  try {
+    if (candidateOf(await exportDoc(ctx), category, key) !== null) {
+      return { ok: true };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: "NO MEASUREMENT",
+      reason: (error as Error).message,
+    };
+  }
+  let routeExists: boolean;
+  try {
+    routeExists = (await exportDoc(ctx)).categories[category] !== undefined;
+  } catch (error) {
+    return {
+      ok: false,
+      status: "NO MEASUREMENT",
+      reason: (error as Error).message,
+    };
+  }
+  if (!routeExists) {
+    const mode = await drive(ctx, {
+      verb: "select",
+      identifier: "task-router-mode",
+      title: "Weighted split",
+    });
+    if (!mode.ok) {
+      return {
+        ok: false,
+        status: "NO MEASUREMENT",
+        reason: `could not create the ${category} route: ${mode.reason}`,
+      };
+    }
   }
   const toggle = await drive(ctx, {
     verb: "invoke",
@@ -263,7 +356,7 @@ async function plantMember(
     };
   }
   const poll = await pollOracle(ctx, async () =>
-    candidateOf(await exportDoc(ctx), key) !== null ? true : null,
+    candidateOf(await exportDoc(ctx), category, key) !== null ? true : null,
   );
   if (poll.kind !== "met") {
     return {
@@ -278,14 +371,15 @@ async function plantMember(
 /** Remove a planted member and prove the export converged. A restore that does not converge is a FAIL: it leaves the rig dirty and breaks T1-09's repeatability promise. */
 async function unplantMember(
   ctx: Stage1Context,
+  category: string,
+  categoryLabel: string,
   key: { provider: string; model: string },
 ): Promise<Drive> {
   const name = keyOf(key);
-  const nav = await drive(ctx, {
-    verb: "invoke",
-    identifier: "shell-nav-router",
-  });
-  if (!nav.ok) return nav;
+  const shown = await showRouterCategory(ctx, categoryLabel);
+  if (!shown.ok) {
+    return { ok: false, status: "FAIL", reason: shown.reason };
+  }
   const toggle = await drive(ctx, {
     verb: "invoke",
     identifier: `task-router-member-${name}`,
@@ -297,7 +391,7 @@ async function unplantMember(
   });
   if (!apply.ok) return apply;
   const poll = await pollOracle(ctx, async () =>
-    candidateOf(await exportDoc(ctx), key) === null ? true : null,
+    candidateOf(await exportDoc(ctx), category, key) === null ? true : null,
   );
   return pollOutcome(
     poll,
@@ -341,6 +435,8 @@ export async function rowT101RouterReachable(
 
 export async function rowT102MemberApplyWrites(
   ctx: Stage1Context,
+  category: string,
+  categoryLabel: string,
   key: { provider: string; model: string },
 ): Promise<RowResult> {
   const id = "T1-02";
@@ -351,16 +447,21 @@ export async function rowT102MemberApplyWrites(
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
-  const nav = await drive(ctx, {
-    verb: "invoke",
-    identifier: "shell-nav-router",
-  });
-  if (!nav.ok) {
-    return {
-      id,
-      status: "NO MEASUREMENT",
-      reason: `could not reach the router screen: ${nav.reason}`,
-    };
+  const shown = await showRouterCategory(ctx, categoryLabel);
+  if (!shown.ok) return { id, status: "NO MEASUREMENT", reason: shown.reason };
+  // The suite plants k0 into this route before T1-02 runs (the screen refuses
+  // to apply an empty route, so the route must already stand for the restore
+  // to be possible); its absence here is an unplantable precondition.
+  try {
+    if ((await exportDoc(ctx)).categories[category] === undefined) {
+      return {
+        id,
+        status: "NO MEASUREMENT",
+        reason: `the ${category} route does not exist (k0 was not planted)`,
+      };
+    }
+  } catch (error) {
+    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
   const toggle = await drive(ctx, {
     verb: "invoke",
@@ -373,7 +474,7 @@ export async function rowT102MemberApplyWrites(
   });
   if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
   const poll = await pollOracle(ctx, async () =>
-    candidateOf(await exportDoc(ctx), key) !== null ? true : null,
+    candidateOf(await exportDoc(ctx), category, key) !== null ? true : null,
   );
   const written = pollOutcome(
     poll,
@@ -396,31 +497,33 @@ export async function rowT102MemberApplyWrites(
       reason: `apply wrote ${name} but the revision stayed ${revBefore}`,
     };
   }
-  const restored = await unplantMember(ctx, key);
+  const restored = await unplantMember(ctx, category, categoryLabel, key);
   if (!restored.ok) {
     return { id, status: restored.status, reason: restored.reason };
   }
   return {
     id,
     status: "PASS",
-    reason: `candidate ${name} added through apply (rev ${revBefore} -> ${revAfter}) and removed again`,
+    reason: `candidate ${name} added through apply in ${category} (rev ${revBefore} -> ${revAfter}) and removed again`,
   };
 }
 
 export async function rowT103WeightWritesThrough(
   ctx: Stage1Context,
+  category: string,
+  categoryLabel: string,
   key: { provider: string; model: string },
 ): Promise<RowResult> {
   const id = "T1-03";
   const name = keyOf(key);
-  const planted = await plantMember(ctx, key);
+  const planted = await plantMember(ctx, category, categoryLabel, key);
   if (!planted.ok) {
     return { id, status: planted.status, reason: planted.reason };
   }
   let weightBefore: number;
   let revBefore: number;
   try {
-    const candidate = candidateOf(await exportDoc(ctx), key);
+    const candidate = candidateOf(await exportDoc(ctx), category, key);
     if (candidate === null) throw new Error(`export lost ${name} after plant`);
     weightBefore = candidate.weight;
     revBefore = (await policyViaHttp(ctx)).revision;
@@ -440,7 +543,7 @@ export async function rowT103WeightWritesThrough(
   });
   if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
   const poll = await pollOracle(ctx, async () => {
-    const candidate = candidateOf(await exportDoc(ctx), key);
+    const candidate = candidateOf(await exportDoc(ctx), category, key);
     return candidate?.weight === target ? true : null;
   });
   const written = pollOutcome(
@@ -478,7 +581,7 @@ export async function rowT103WeightWritesThrough(
     return { id, status: reapply.status, reason: reapply.reason };
   }
   const restored = await pollOracle(ctx, async () => {
-    const candidate = candidateOf(await exportDoc(ctx), key);
+    const candidate = candidateOf(await exportDoc(ctx), category, key);
     return candidate?.weight === weightBefore ? true : null;
   });
   const converged = pollOutcome(
@@ -489,7 +592,7 @@ export async function rowT103WeightWritesThrough(
   if (!converged.ok) {
     return { id, status: converged.status, reason: converged.reason };
   }
-  const unplanted = await unplantMember(ctx, key);
+  const unplanted = await unplantMember(ctx, category, categoryLabel, key);
   if (!unplanted.ok) {
     return { id, status: unplanted.status, reason: unplanted.reason };
   }
@@ -502,6 +605,8 @@ export async function rowT103WeightWritesThrough(
 
 export async function rowT104IllegalWeightRefused(
   ctx: Stage1Context,
+  category: string,
+  categoryLabel: string,
   key: { provider: string; model: string },
 ): Promise<RowResult> {
   const id = "T1-04";
@@ -514,7 +619,7 @@ export async function rowT104IllegalWeightRefused(
   }
   // The positive control: planting the member must move the revision, or the
   // unchanged-revision assertion below measures nothing.
-  const planted = await plantMember(ctx, key);
+  const planted = await plantMember(ctx, category, categoryLabel, key);
   if (!planted.ok) {
     return { id, status: planted.status, reason: planted.reason };
   }
@@ -576,7 +681,7 @@ export async function rowT104IllegalWeightRefused(
     identifier: `task-router-weight-${name}`,
     input: "1",
   });
-  const unplanted = await unplantMember(ctx, key);
+  const unplanted = await unplantMember(ctx, category, categoryLabel, key);
   if (!unplanted.ok) {
     return { id, status: unplanted.status, reason: unplanted.reason };
   }
@@ -589,11 +694,13 @@ export async function rowT104IllegalWeightRefused(
 
 export async function rowT105ModeEffortWriteThrough(
   ctx: Stage1Context,
+  category: string,
+  categoryLabel: string,
   key: { provider: string; model: string },
 ): Promise<RowResult> {
   const id = "T1-05";
   const name = keyOf(key);
-  const planted = await plantMember(ctx, key);
+  const planted = await plantMember(ctx, category, categoryLabel, key);
   if (!planted.ok) {
     return { id, status: planted.status, reason: planted.reason };
   }
@@ -607,7 +714,14 @@ export async function rowT105ModeEffortWriteThrough(
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
-  const modeBefore = exported.global?.mode ?? null;
+  const modeBefore = exported.categories[category]?.mode ?? null;
+  if (modeBefore === null) {
+    return {
+      id,
+      status: "NO MEASUREMENT",
+      reason: `the ${category} route has no mode after planting`,
+    };
+  }
   const modeTarget = snapshot.routing.modes.find(
     (mode) => mode.id !== modeBefore,
   );
@@ -618,7 +732,7 @@ export async function rowT105ModeEffortWriteThrough(
       reason: "the snapshot offers no second mode to select",
     };
   }
-  const candidateBefore = candidateOf(exported, key);
+  const candidateBefore = candidateOf(exported, category, key);
   const entry = snapshot.routing.catalog.find(
     (catalogEntry) =>
       catalogEntry.provider === key.provider &&
@@ -659,8 +773,8 @@ export async function rowT105ModeEffortWriteThrough(
   if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
   const poll = await pollOracle(ctx, async () => {
     const doc = await exportDoc(ctx);
-    const candidate = candidateOf(doc, key);
-    return doc.global?.mode === modeTarget.id &&
+    const candidate = candidateOf(doc, category, key);
+    return doc.categories[category]?.mode === modeTarget.id &&
       sameJson(candidate?.effort, options[effortIndexTarget]?.effort)
       ? true
       : null;
@@ -668,7 +782,7 @@ export async function rowT105ModeEffortWriteThrough(
   const written = pollOutcome(
     poll,
     `apply reported ok but export shows neither mode ${modeTarget.id} nor the selected effort on ${name}`,
-    `export unreadable after mode/effort apply`,
+    "export unreadable after mode/effort apply",
   );
   if (!written.ok) {
     return { id, status: written.status, reason: written.reason };
@@ -687,29 +801,21 @@ export async function rowT105ModeEffortWriteThrough(
     };
   }
   // Restore mode and effort so the run converges, then unplant.
-  const modeRestore =
-    modeBefore === null
-      ? await drive(ctx, {
-          verb: "select",
-          identifier: "task-router-mode",
-          index: 0,
-        })
-      : await (async () => {
-          const label = snapshot.routing.modes.find(
-            (mode) => mode.id === modeBefore,
-          )?.label;
-          return label === undefined
-            ? {
-                ok: false as const,
-                status: "NO MEASUREMENT" as const,
-                reason: `no label for the pre-row mode ${modeBefore}`,
-              }
-            : await drive(ctx, {
-                verb: "select",
-                identifier: "task-router-mode",
-                title: label,
-              });
-        })();
+  const modeLabel = snapshot.routing.modes.find(
+    (mode) => mode.id === modeBefore,
+  )?.label;
+  if (modeLabel === undefined) {
+    return {
+      id,
+      status: "NO MEASUREMENT",
+      reason: `no label for the pre-row mode ${modeBefore}`,
+    };
+  }
+  const modeRestore = await drive(ctx, {
+    verb: "select",
+    identifier: "task-router-mode",
+    title: modeLabel,
+  });
   if (!modeRestore.ok) {
     return { id, status: modeRestore.status, reason: modeRestore.reason };
   }
@@ -732,49 +838,42 @@ export async function rowT105ModeEffortWriteThrough(
   }
   const restored = await pollOracle(ctx, async () => {
     const doc = await exportDoc(ctx);
-    return (doc.global?.mode ?? null) === modeBefore ? true : null;
+    return doc.categories[category]?.mode === modeBefore ? true : null;
   });
   const converged = pollOutcome(
     restored,
-    `mode restore to ${modeBefore ?? "unconfigured"} did not converge; rig left dirty`,
+    `mode restore to ${modeBefore} did not converge; rig left dirty`,
     "mode restore could not be read back",
   );
   if (!converged.ok) {
     return { id, status: converged.status, reason: converged.reason };
   }
-  const unplanted = await unplantMember(ctx, key);
+  const unplanted = await unplantMember(ctx, category, categoryLabel, key);
   if (!unplanted.ok) {
     return { id, status: unplanted.status, reason: unplanted.reason };
   }
   return {
     id,
     status: "PASS",
-    reason: `mode ${modeBefore ?? "none"} -> ${modeTarget.id} and effort option ${effortIndexTarget} wrote through apply (rev ${revBefore} -> ${revAfter}), then restored`,
+    reason: `mode ${modeBefore} -> ${modeTarget.id} and effort option ${effortIndexTarget} wrote through apply (rev ${revBefore} -> ${revAfter}), then restored`,
   };
 }
 
 export async function rowT106ApplyIsTheOnlyWrite(
   ctx: Stage1Context,
+  category: string,
+  categoryLabel: string,
   key: { provider: string; model: string },
 ): Promise<RowResult> {
   const id = "T1-06";
   const name = keyOf(key);
+  const shown = await showRouterCategory(ctx, categoryLabel);
+  if (!shown.ok) return { id, status: "NO MEASUREMENT", reason: shown.reason };
   let revBefore: number;
   try {
     revBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
-  }
-  const nav = await drive(ctx, {
-    verb: "invoke",
-    identifier: "shell-nav-router",
-  });
-  if (!nav.ok) {
-    return {
-      id,
-      status: "NO MEASUREMENT",
-      reason: `could not reach the router screen: ${nav.reason}`,
-    };
   }
   const toggle = await drive(ctx, {
     verb: "invoke",
@@ -800,7 +899,7 @@ export async function rowT106ApplyIsTheOnlyWrite(
   });
   if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
   const poll = await pollOracle(ctx, async () => {
-    const present = candidateOf(await exportDoc(ctx), key) !== null;
+    const present = candidateOf(await exportDoc(ctx), category, key) !== null;
     const revision = (await policyViaHttp(ctx)).revision;
     return present && revision > revBefore ? true : null;
   });
@@ -812,7 +911,7 @@ export async function rowT106ApplyIsTheOnlyWrite(
   if (!written.ok) {
     return { id, status: written.status, reason: written.reason };
   }
-  const unplanted = await unplantMember(ctx, key);
+  const unplanted = await unplantMember(ctx, category, categoryLabel, key);
   if (!unplanted.ok) {
     return { id, status: unplanted.status, reason: unplanted.reason };
   }
@@ -849,13 +948,13 @@ export async function rowT107ProviderToggleIsSpendConsent(
   let stateBefore: string;
   let revBefore: number;
   try {
-    const exported = await exportDoc(ctx);
-    const state = exported.providers[provider];
+    const state = (await snapshotViaHttp(ctx)).routing.providers[provider]
+      ?.state;
     if (state === undefined) {
       return {
         id,
         status: "NO MEASUREMENT",
-        reason: `provider ${provider} is not configured in the exported policy`,
+        reason: `provider ${provider} is absent from the snapshot`,
       };
     }
     stateBefore = state;
@@ -863,7 +962,12 @@ export async function rowT107ProviderToggleIsSpendConsent(
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
+  // The export lists only configured providers: an unconfigured provider's
+  // first flip configures it enabled, and its restore lands on disabled —
+  // which is the state the next run starts from, so it is the state the row
+  // must restore to for the suite to converge.
   const wanted = stateBefore === "enabled" ? "disabled" : "enabled";
+  const restoreTo = stateBefore === "unconfigured" ? "disabled" : stateBefore;
   const toggle = await drive(ctx, {
     verb: "invoke",
     identifier: `models-quota-provider-${provider}`,
@@ -896,11 +1000,11 @@ export async function rowT107ProviderToggleIsSpendConsent(
   });
   if (!back.ok) return { id, status: back.status, reason: back.reason };
   const restored = await pollOracle(ctx, async () =>
-    (await exportDoc(ctx)).providers[provider] === stateBefore ? true : null,
+    (await exportDoc(ctx)).providers[provider] === restoreTo ? true : null,
   );
   const converged = pollOutcome(
     restored,
-    `provider restore to ${stateBefore} did not converge; rig left dirty`,
+    `provider restore to ${restoreTo} did not converge; rig left dirty`,
     "provider restore could not be read back",
   );
   if (!converged.ok) {
@@ -909,7 +1013,7 @@ export async function rowT107ProviderToggleIsSpendConsent(
   return {
     id,
     status: "PASS",
-    reason: `${provider} ${stateBefore} -> ${wanted} -> ${stateBefore} with revision ${revBefore} -> ${revFlipped} on the flip`,
+    reason: `${provider} ${stateBefore} -> ${wanted} -> ${restoreTo} with revision ${revBefore} -> ${revFlipped} on the flip`,
   };
 }
 
@@ -990,13 +1094,15 @@ export async function rowT108ProbeRefreshIsARead(
 
 export async function rowT109RigBaseline(
   ctx: Stage1Context,
+  category: string,
+  categoryLabel: string,
   key: { provider: string; model: string },
 ): Promise<RowResult> {
   const id = "T1-09";
   const name = keyOf(key);
   try {
-    if (candidateOf(await exportDoc(ctx), key) === null) {
-      const planted = await plantMember(ctx, key);
+    if (candidateOf(await exportDoc(ctx), category, key) === null) {
+      const planted = await plantMember(ctx, category, categoryLabel, key);
       if (!planted.ok) {
         return { id, status: planted.status, reason: planted.reason };
       }
@@ -1016,7 +1122,7 @@ export async function rowT109RigBaseline(
     return {
       id,
       status: "PASS",
-      reason: `rig baseline recorded at ${ctx.baselinePath} with ${name} selected (the rig's deterministic catalog-first provider)`,
+      reason: `rig baseline recorded at ${ctx.baselinePath} with ${name} selected in ${category} (the rig's deterministic catalog-first provider)`,
     };
   }
   const baseline = readFileSync(ctx.baselinePath, "utf8").trim();
@@ -1041,30 +1147,38 @@ const noMeasurement = (id: string, reason: string): RowResult => ({
   reason,
 });
 
-/** The stage, in plan order, against a shared rig. k0 is the deterministic catalog-first provider/model the suite leaves selected (T1-09); k1 is the throwaway every mutating row plants and restores. */
+/** The stage, in plan order, against a shared rig. The suite works one category route (the catalog's first): k0 is the deterministic catalog-first provider/model the suite leaves selected there (T1-09); k1 is the throwaway every mutating row plants and restores. */
 export async function runStage1Rows(ctx: Stage1Context): Promise<RowResult[]> {
+  const ids = [
+    "T1-01",
+    "T1-02",
+    "T1-03",
+    "T1-04",
+    "T1-05",
+    "T1-06",
+    "T1-07",
+    "T1-08",
+    "T1-09",
+  ];
   if (ctx.observe === null) {
-    return [
-      "T1-01",
-      "T1-02",
-      "T1-03",
-      "T1-04",
-      "T1-05",
-      "T1-06",
-      "T1-07",
-      "T1-08",
-      "T1-09",
-    ].map((id) =>
+    return ids.map((id) =>
       noMeasurement(id, "no daemon port or user credential readable"),
     );
   }
   const rows: RowResult[] = [await rowT101RouterReachable(ctx)];
   let k0: CatalogEntry | undefined;
   let k1: CatalogEntry | undefined;
+  let category = "light_research";
+  let categoryLabel = "Light research";
   try {
-    const catalog = (await snapshotViaHttp(ctx)).routing.catalog;
-    k0 = catalog[0];
-    k1 = catalog[1];
+    const snapshot = await snapshotViaHttp(ctx);
+    k0 = snapshot.routing.catalog[0];
+    k1 = snapshot.routing.catalog[1];
+    const first = snapshot.routing.categories[0];
+    if (first !== undefined) {
+      category = first.id;
+      categoryLabel = first.label;
+    }
   } catch {
     // k0/k1 stay undefined; the rows that need them report NO MEASUREMENT.
   }
@@ -1078,15 +1192,39 @@ export async function runStage1Rows(ctx: Stage1Context): Promise<RowResult[]> {
       ),
     );
   } else {
-    rows.push(await rowT102MemberApplyWrites(ctx, k1));
-    rows.push(await rowT103WeightWritesThrough(ctx, k1));
-    rows.push(await rowT104IllegalWeightRefused(ctx, k1));
-    rows.push(await rowT105ModeEffortWriteThrough(ctx, k1));
-    rows.push(await rowT106ApplyIsTheOnlyWrite(ctx, k1));
+    // The suite's standing precondition: k0 sits in the category route for the
+    // whole stage. The screen refuses to apply an empty route, so without k0
+    // already there, T1-02's restore could never remove k1 again.
+    const standing = await plantMember(ctx, category, categoryLabel, k0);
+    if (!standing.ok) {
+      rows.push(
+        ...["T1-02", "T1-03", "T1-04", "T1-05", "T1-06"].map((id) =>
+          noMeasurement(id, standing.reason),
+        ),
+      );
+    } else {
+      rows.push(
+        await rowT102MemberApplyWrites(ctx, category, categoryLabel, k1),
+      );
+      rows.push(
+        await rowT103WeightWritesThrough(ctx, category, categoryLabel, k1),
+      );
+      rows.push(
+        await rowT104IllegalWeightRefused(ctx, category, categoryLabel, k1),
+      );
+      rows.push(
+        await rowT105ModeEffortWriteThrough(ctx, category, categoryLabel, k1),
+      );
+      rows.push(
+        await rowT106ApplyIsTheOnlyWrite(ctx, category, categoryLabel, k1),
+      );
+    }
   }
   let flipProvider: string | null = null;
   try {
-    const providers = Object.keys((await exportDoc(ctx)).providers);
+    const providers = Object.keys(
+      (await snapshotViaHttp(ctx)).routing.providers,
+    );
     flipProvider =
       providers.find((provider) => provider !== k0?.provider) ??
       providers[0] ??
@@ -1096,7 +1234,7 @@ export async function runStage1Rows(ctx: Stage1Context): Promise<RowResult[]> {
   }
   const t107 =
     flipProvider === null
-      ? noMeasurement("T1-07", "no configured provider to toggle")
+      ? noMeasurement("T1-07", "no provider in the snapshot to toggle")
       : await rowT107ProviderToggleIsSpendConsent(ctx, flipProvider);
   rows.push(t107);
   const control =
@@ -1108,7 +1246,7 @@ export async function runStage1Rows(ctx: Stage1Context): Promise<RowResult[]> {
           "T1-09",
           "the routing catalog offers fewer than two probed models",
         )
-      : await rowT109RigBaseline(ctx, k0),
+      : await rowT109RigBaseline(ctx, category, categoryLabel, k0),
   );
   return rows;
 }

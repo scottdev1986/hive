@@ -1,9 +1,12 @@
 // Tests for the Stage-1 rows (scripts/qa/stage1-rows.ts). No rig: a fake-rig
 // simulator plays the app side of the qa-control mailbox and the daemon side
 // of the oracles, with switches that construct each failing condition — a
-// broken apply commit, a frozen revision, a dying gate, a snapshot that never
-// advances. The suite-level idempotency property (T1-09) is proven by running
-// the whole stage twice against the same simulator.
+// broken apply commit, a frozen revision, a dying gate, a static snapshot.
+// The simulator is faithful to the two product facts the rows depend on: the
+// Task Router edits one CATEGORY route (no route means the member checkboxes
+// are dead), and Apply refuses a route with zero candidates (so k0 must stand
+// in the route for k1 to be removable). The T1-09 property is proven by
+// running the whole stage twice against the same simulator.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -31,6 +34,12 @@ import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 const QA_BIN = "/qa/hive";
 const K0 = { provider: "alpha", model: "a1" };
 const K1 = { provider: "beta", model: "b1" };
+const CATEGORY = "light_research";
+const CATEGORY_LABEL = "Light research";
+const CATEGORIES = [
+  { id: CATEGORY, label: CATEGORY_LABEL },
+  { id: "simple_coding", label: "Simple coding" },
+];
 const MODES = [
   { id: "user-weighted", label: "Weighted split", weightEditable: true },
   { id: "hive-equal", label: "Equal split", weightEditable: false },
@@ -40,6 +49,13 @@ const EFFORTS = [
   { argument: "high", label: "High", effort: { mode: "exact", value: "high" } },
 ];
 
+interface Candidate {
+  provider: string;
+  model: string;
+  weight: number;
+  effort: unknown;
+}
+
 interface Draft {
   members: Map<string, boolean>;
   weights: Map<string, number>;
@@ -47,24 +63,27 @@ interface Draft {
   efforts: Map<string, unknown>;
 }
 
+const emptyDraft = (): Draft => ({
+  members: new Map(),
+  weights: new Map(),
+  mode: undefined,
+  efforts: new Map(),
+});
+
 class FakeRig {
   route = "shell";
   revision = 1;
   updatedAtTick = 0;
-  providers: Record<string, string> = { alpha: "enabled", beta: "enabled" };
-  global: {
-    mode: string;
-    candidates: Array<{
-      provider: string;
-      model: string;
-      weight: number;
-      effort: unknown;
-    }>;
-  } | null = { mode: "user-weighted", candidates: [] };
   observedTick = 0;
+  providers: Record<string, string> = { alpha: "enabled", beta: "enabled" };
+  knownProviders: string[] = ["alpha", "beta"];
+  categoriesPolicy: Record<string, { mode: string; candidates: Candidate[] }> =
+    {};
+  currentCategory = CATEGORY;
   applyEnabled = false;
   hideApply = false;
   gateDown = false;
+  deafCount = 0;
   applyNoCommit = false;
   modeEffortNoCommit = false;
   freezeRevision = false;
@@ -73,30 +92,40 @@ class FakeRig {
     { ...K0, effortOptions: EFFORTS },
     { ...K1, effortOptions: EFFORTS },
   ];
-  private draft: Draft = {
-    members: new Map(),
-    weights: new Map(),
-    mode: undefined,
-    efforts: new Map(),
-  };
+  private draft: Draft = emptyDraft();
 
   key(provider: string, model: string): string {
     return `${provider}/${model}`;
+  }
+
+  /** k0 standing in the suite's category route, as the suite precondition plants it. */
+  seedK0(): void {
+    this.categoriesPolicy[CATEGORY] = {
+      mode: "user-weighted",
+      candidates: [{ ...K0, weight: 1, effort: EFFORTS[0]?.effort as unknown }],
+    };
+  }
+
+  private routeExists(): boolean {
+    return (
+      this.categoriesPolicy[this.currentCategory] !== undefined ||
+      this.draft.mode !== undefined
+    );
+  }
+
+  private workingMode(): string | null {
+    if (this.draft.mode !== undefined) return this.draft.mode;
+    return this.categoriesPolicy[this.currentCategory]?.mode ?? null;
   }
 
   isMember(key: string): boolean {
     const staged = this.draft.members.get(key);
     if (staged !== undefined) return staged;
     return (
-      this.global?.candidates.some(
+      this.categoriesPolicy[this.currentCategory]?.candidates.some(
         (candidate) => this.key(candidate.provider, candidate.model) === key,
       ) ?? false
     );
-  }
-
-  currentMode(): string | null {
-    if (this.draft.mode !== undefined) return this.draft.mode;
-    return this.global?.mode ?? null;
   }
 
   private bump(): void {
@@ -104,52 +133,59 @@ class FakeRig {
     this.updatedAtTick += 1;
   }
 
+  private resultingCandidates(): Candidate[] {
+    const base = [
+      ...(this.categoriesPolicy[this.currentCategory]?.candidates ?? []),
+    ];
+    for (const [key, on] of this.draft.members) {
+      const [provider, model] = key.split("/") as [string, string];
+      const index = base.findIndex(
+        (candidate) => this.key(candidate.provider, candidate.model) === key,
+      );
+      if (on && index === -1) {
+        base.push({
+          provider,
+          model,
+          weight: 1,
+          effort: EFFORTS[0]?.effort as unknown,
+        });
+      }
+      if (!on && index !== -1) base.splice(index, 1);
+    }
+    return base;
+  }
+
   private commit(): void {
+    const candidates = this.resultingCandidates();
     if (!this.applyNoCommit) {
-      for (const [key, on] of this.draft.members) {
-        const [provider, model] = key.split("/") as [string, string];
-        const candidates = this.global?.candidates ?? [];
-        const index = candidates.findIndex(
-          (candidate) => this.key(candidate.provider, candidate.model) === key,
-        );
-        if (on && index === -1) {
-          candidates.push({
-            provider,
-            model,
-            weight: 1,
-            effort: EFFORTS[0]?.effort,
-          });
+      const mode = this.workingMode();
+      if (mode === null) {
+        delete this.categoriesPolicy[this.currentCategory];
+      } else {
+        for (const [key, weight] of this.draft.weights) {
+          const candidate = candidates.find(
+            (entry) => this.key(entry.provider, entry.model) === key,
+          );
+          if (candidate !== undefined) candidate.weight = weight;
         }
-        if (!on && index !== -1) candidates.splice(index, 1);
-      }
-      if (this.global === null && this.draft.mode !== undefined) {
-        this.global = { mode: "user-weighted", candidates: [] };
-      }
-      for (const [key, weight] of this.draft.weights) {
-        const candidate = this.global?.candidates.find(
-          (entry) => this.key(entry.provider, entry.model) === key,
-        );
-        if (candidate !== undefined) candidate.weight = weight;
-      }
-      if (this.draft.mode !== undefined && this.draft.mode !== null) {
-        if (this.global !== null && !this.modeEffortNoCommit)
-          this.global.mode = this.draft.mode;
-      }
-      for (const [key, effort] of this.draft.efforts) {
-        const candidate = this.global?.candidates.find(
-          (entry) => this.key(entry.provider, entry.model) === key,
-        );
-        if (candidate !== undefined && !this.modeEffortNoCommit)
-          candidate.effort = effort;
+        if (!this.modeEffortNoCommit) {
+          for (const [key, effort] of this.draft.efforts) {
+            const candidate = candidates.find(
+              (entry) => this.key(entry.provider, entry.model) === key,
+            );
+            if (candidate !== undefined) candidate.effort = effort;
+          }
+          this.categoriesPolicy[this.currentCategory] = { mode, candidates };
+        } else {
+          this.categoriesPolicy[this.currentCategory] = {
+            mode: this.categoriesPolicy[this.currentCategory]?.mode ?? mode,
+            candidates,
+          };
+        }
       }
     }
     this.bump();
-    this.draft = {
-      members: new Map(),
-      weights: new Map(),
-      mode: undefined,
-      efforts: new Map(),
-    };
+    this.draft = emptyDraft();
     this.applyEnabled = false;
   }
 
@@ -161,8 +197,18 @@ class FakeRig {
       provisional: false,
       providers: this.providers,
       models: [],
-      global: this.global,
-      categories: {},
+      global: {
+        mode: "hive-equal",
+        candidates: [
+          {
+            provider: "grok",
+            model: "g1",
+            weight: 1,
+            effort: { mode: "provider-controlled" },
+          },
+        ],
+      },
+      categories: this.categoriesPolicy,
     };
   }
 
@@ -177,7 +223,14 @@ class FakeRig {
       routing: {
         catalog: this.catalog,
         modes: MODES,
+        categories: CATEGORIES,
         weightRange: { minimum: 1, maximum: 100, defaultValue: 1 },
+        providers: Object.fromEntries(
+          this.knownProviders.map((provider) => [
+            provider,
+            { state: this.providers[provider] ?? "unconfigured" },
+          ]),
+        ),
       },
     };
   }
@@ -206,14 +259,15 @@ class FakeRig {
       if (!this.hideApply) add("task-router-apply", this.applyEnabled);
       for (const entry of this.catalog) {
         const key = this.key(entry.provider, entry.model);
-        add(`task-router-member-${key}`, true);
+        add(`task-router-member-${key}`, this.routeExists());
         add(`task-router-weight-${key}`, true);
         add(`task-router-effort-${key}`, true);
       }
       add("task-router-mode", true);
+      add("task-router-category", true);
     }
     if (this.route === "models") {
-      for (const provider of Object.keys(this.providers)) {
+      for (const provider of this.knownProviders) {
         add(`models-quota-provider-${provider}`, true);
       }
       add("models-quota-probe-refresh", true);
@@ -240,8 +294,13 @@ class FakeRig {
   }
 
   qaControl(argv: readonly string[]): ExecResult {
-    if (this.gateDown) {
-      return { exitCode: 2, stdout: "", stderr: "NO MEASUREMENT: gone" };
+    if (this.gateDown || this.deafCount > 0) {
+      if (this.deafCount > 0) this.deafCount -= 1;
+      return {
+        exitCode: 2,
+        stdout: "",
+        stderr: "NO MEASUREMENT: Workspace did not answer qa-control",
+      };
     }
     const verb = argv[2];
     const identifier = argv[3];
@@ -263,20 +322,24 @@ class FakeRig {
       return this.answer("ok");
     }
     if (verb === "invoke" && identifier === "task-router-apply") {
-      if (!this.applyEnabled)
+      if (!this.applyEnabled || this.resultingCandidates().length === 0) {
         return this.answer("fail", "control is not actionable");
+      }
       this.commit();
       return this.answer("ok");
     }
-    if (verb === "invoke" && identifier?.startsWith("task-router-member-")) {
+    if (verb === "invoke" && identifier.startsWith("task-router-member-")) {
+      if (!this.routeExists()) {
+        return this.answer("fail", "control is not actionable");
+      }
       const key = identifier.slice("task-router-member-".length);
       this.draft.members.set(key, !this.isMember(key));
       this.applyEnabled = true;
       return this.answer("ok");
     }
-    if (verb === "invoke" && identifier?.startsWith("task-router-weight-")) {
+    if (verb === "invoke" && identifier.startsWith("task-router-weight-")) {
       const key = identifier.slice("task-router-weight-".length);
-      if (!this.isMember(key) || this.currentMode() !== "user-weighted") {
+      if (!this.isMember(key) || this.workingMode() !== "user-weighted") {
         return this.answer("fail", "control is not actionable");
       }
       const input = argv[argv.indexOf("--input") + 1] ?? "";
@@ -289,6 +352,16 @@ class FakeRig {
       this.applyEnabled = true;
       return this.answer("ok");
     }
+    if (verb === "select" && identifier === "task-router-category") {
+      const title = argv[argv.indexOf("--title") + 1];
+      const category = CATEGORIES.find((entry) => entry.label === title);
+      if (category === undefined) {
+        return this.answer("fail", "popup item not found");
+      }
+      this.currentCategory = category.id;
+      this.draft = emptyDraft();
+      return this.answer("ok");
+    }
     if (verb === "select" && identifier === "task-router-mode") {
       const titleIndex = argv.indexOf("--title");
       const indexIndex = argv.indexOf("--index");
@@ -296,39 +369,45 @@ class FakeRig {
         const mode = MODES.find(
           (entry) => entry.label === argv[titleIndex + 1],
         );
-        if (mode === undefined)
+        if (mode === undefined) {
           return this.answer("fail", "popup item not found");
+        }
         this.draft.mode = mode.id;
       } else if (indexIndex !== -1) {
         const index = Number(argv[indexIndex + 1]);
         if (index === 0) this.draft.mode = null;
         else {
           const mode = MODES[index - 1];
-          if (mode === undefined)
+          if (mode === undefined) {
             return this.answer("fail", "popup item not found");
+          }
           this.draft.mode = mode.id;
         }
       }
       this.applyEnabled = true;
       return this.answer("ok");
     }
-    if (verb === "select" && identifier?.startsWith("task-router-effort-")) {
+    if (verb === "select" && identifier.startsWith("task-router-effort-")) {
       const key = identifier.slice("task-router-effort-".length);
-      if (!this.isMember(key))
+      if (!this.isMember(key)) {
         return this.answer("fail", "control is not actionable");
+      }
       const index = Number(argv[argv.indexOf("--index") + 1]);
       const option = EFFORTS[index];
-      if (option === undefined)
+      if (option === undefined) {
         return this.answer("fail", "popup item not found");
+      }
       this.draft.efforts.set(key, option.effort);
       this.applyEnabled = true;
       return this.answer("ok");
     }
-    if (verb === "invoke" && identifier?.startsWith("models-quota-provider-")) {
+    if (verb === "invoke" && identifier.startsWith("models-quota-provider-")) {
       const provider = identifier.slice("models-quota-provider-".length);
-      const state = this.providers[provider];
-      if (state === undefined) return this.answer("fail", "control not found");
+      if (!this.knownProviders.includes(provider)) {
+        return this.answer("fail", "control not found");
+      }
       if (!this.providerToggleNoop) {
+        const state = this.providers[provider] ?? "unconfigured";
         this.providers[provider] = state === "enabled" ? "disabled" : "enabled";
         this.bump();
       }
@@ -344,8 +423,9 @@ class FakeRig {
 
 function rigExec(rig: FakeRig): Exec {
   return async (argv) => {
-    if (argv[0] === QA_BIN && argv[1] === "qa-control")
+    if (argv[0] === QA_BIN && argv[1] === "qa-control") {
       return rig.qaControl(argv);
+    }
     if (argv[0] === QA_BIN && argv[1] === "routing" && argv[2] === "export") {
       return { exitCode: 0, stdout: rig.exportText(), stderr: "" };
     }
@@ -396,7 +476,9 @@ function ctx(rig: FakeRig, observe?: ObserveClients | null): Stage1Context {
     observe: observe === undefined ? rigObserve(rig) : observe,
     sleep,
     baselinePath: join(fixture, "state", "qa-rig-baseline.json"),
+    instanceHome: "/qa/instance-home",
     boundMs: 300,
+    gatePatienceMs: 300,
   };
 }
 
@@ -419,34 +501,77 @@ describe("T1-01 router reachable", () => {
     const row = await rowT101RouterReachable(ctx(rig));
     expect(row.status).toBe("NO MEASUREMENT");
   });
+
+  test("a busy gate is retried within the patience, then answered", async () => {
+    const rig = new FakeRig();
+    rig.deafCount = 1;
+    const context = ctx(rig);
+    context.gatePatienceMs = 1_200;
+    const row = await rowT101RouterReachable(context);
+    expect(row.status).toBe("PASS");
+  });
 });
 
 describe("T1-02 member apply writes", () => {
   test("passes the full plant-verify-restore cycle", async () => {
     const rig = new FakeRig();
-    const row = await rowT102MemberApplyWrites(ctx(rig), K1);
+    rig.seedK0();
+    const row = await rowT102MemberApplyWrites(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("PASS");
-    expect(rig.global?.candidates).toEqual([]);
+    expect(
+      rig.categoriesPolicy[CATEGORY]?.candidates.map(
+        (candidate) => candidate.model,
+      ),
+    ).toEqual([K0.model]);
+  });
+
+  test("NO MEASUREMENT when the category route does not stand", async () => {
+    const row = await rowT102MemberApplyWrites(
+      ctx(new FakeRig()),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
+    expect(row.status).toBe("NO MEASUREMENT");
+    expect(row.reason).toContain("route does not exist");
   });
 
   test("fails when apply reports ok but the export never shows the candidate", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     rig.applyNoCommit = true;
-    const row = await rowT102MemberApplyWrites(ctx(rig), K1);
+    const row = await rowT102MemberApplyWrites(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("FAIL");
     expect(row.reason).toContain("no candidate");
   });
 
   test("fails when the write lands but the revision does not move", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     rig.freezeRevision = true;
-    const row = await rowT102MemberApplyWrites(ctx(rig), K1);
+    const row = await rowT102MemberApplyWrites(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("FAIL");
     expect(row.reason).toContain("revision stayed");
   });
 
   test("NO MEASUREMENT when the policy oracle refuses", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     const row = await rowT102MemberApplyWrites(
       ctx(
         rig,
@@ -454,6 +579,8 @@ describe("T1-02 member apply writes", () => {
           httpJson: async () => ({ status: 500, body: {} }),
         }),
       ),
+      CATEGORY,
+      CATEGORY_LABEL,
       K1,
     );
     expect(row.status).toBe("NO MEASUREMENT");
@@ -463,7 +590,13 @@ describe("T1-02 member apply writes", () => {
 describe("T1-03 weight writes through", () => {
   test("passes weight 1 -> 3 -> 1 with the revision moving", async () => {
     const rig = new FakeRig();
-    const row = await rowT103WeightWritesThrough(ctx(rig), K1);
+    rig.seedK0();
+    const row = await rowT103WeightWritesThrough(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("PASS");
     expect(row.reason).toContain("1 -> 3 -> 1");
   });
@@ -472,7 +605,12 @@ describe("T1-03 weight writes through", () => {
     const rig = new FakeRig();
     // No catalog rows means no member control for k1: the door refuses.
     rig.catalog = [];
-    const row = await rowT103WeightWritesThrough(ctx(rig), K1);
+    const row = await rowT103WeightWritesThrough(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("NO MEASUREMENT");
     expect(row.reason).toContain("could not plant");
   });
@@ -480,13 +618,21 @@ describe("T1-03 weight writes through", () => {
 
 describe("T1-04 an illegal weight refuses locally", () => {
   test("passes: apply disabled, revision unchanged, control moved", async () => {
-    const row = await rowT104IllegalWeightRefused(ctx(new FakeRig()), K1);
+    const rig = new FakeRig();
+    rig.seedK0();
+    const row = await rowT104IllegalWeightRefused(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("PASS");
     expect(row.reason).toContain("control: plant moved");
   });
 
   test("fails when apply stays enabled with an illegal weight", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     const realQaControl = rig.qaControl.bind(rig);
     rig.qaControl = (argv) => {
       const result = realQaControl(argv);
@@ -494,13 +640,19 @@ describe("T1-04 an illegal weight refuses locally", () => {
       if (argv[3]?.startsWith("task-router-weight-")) rig.applyEnabled = true;
       return result;
     };
-    const row = await rowT104IllegalWeightRefused(ctx(rig), K1);
+    const row = await rowT104IllegalWeightRefused(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("FAIL");
     expect(row.reason).toContain("stayed enabled");
   });
 
   test("fails when the revision moves on a refused weight", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     const realQaControl = rig.qaControl.bind(rig);
     rig.qaControl = (argv) => {
       const result = realQaControl(argv);
@@ -510,15 +662,26 @@ describe("T1-04 an illegal weight refuses locally", () => {
       }
       return result;
     };
-    const row = await rowT104IllegalWeightRefused(ctx(rig), K1);
+    const row = await rowT104IllegalWeightRefused(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("FAIL");
     expect(row.reason).toContain("refused weight");
   });
 
   test("NO MEASUREMENT when the positive control does not move the revision", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     rig.freezeRevision = true;
-    const row = await rowT104IllegalWeightRefused(ctx(rig), K1);
+    const row = await rowT104IllegalWeightRefused(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("NO MEASUREMENT");
     expect(row.reason).toContain("positive control failed");
   });
@@ -527,47 +690,82 @@ describe("T1-04 an illegal weight refuses locally", () => {
 describe("T1-05 mode and effort write through", () => {
   test("passes with a mode switch and an effort change, then restores", async () => {
     const rig = new FakeRig();
-    const row = await rowT105ModeEffortWriteThrough(ctx(rig), K1);
+    rig.seedK0();
+    const row = await rowT105ModeEffortWriteThrough(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("PASS");
     expect(row.reason).toContain("hive-equal");
-    expect(rig.global?.mode).toBe("user-weighted");
-    expect(rig.global?.candidates).toEqual([]);
+    expect(rig.categoriesPolicy[CATEGORY]?.mode).toBe("user-weighted");
+    expect(
+      rig.categoriesPolicy[CATEGORY]?.candidates.map(
+        (candidate) => candidate.model,
+      ),
+    ).toEqual([K0.model]);
   });
 
   test("NO MEASUREMENT with fewer than two effort options", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     rig.catalog = [
       rig.catalog[0] as (typeof rig.catalog)[number],
       { ...K1, effortOptions: [EFFORTS[0] as (typeof EFFORTS)[number]] },
     ];
-    const row = await rowT105ModeEffortWriteThrough(ctx(rig), K1);
+    const row = await rowT105ModeEffortWriteThrough(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("NO MEASUREMENT");
     expect(row.reason).toContain("effort options");
   });
 
   test("fails when apply reports ok but the export never shows the mode", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     rig.modeEffortNoCommit = true;
-    const row = await rowT105ModeEffortWriteThrough(ctx(rig), K1);
+    const row = await rowT105ModeEffortWriteThrough(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("FAIL");
   });
 });
 
 describe("T1-06 apply is the only write", () => {
   test("passes: draft leaves the revision, apply moves it", async () => {
-    const row = await rowT106ApplyIsTheOnlyWrite(ctx(new FakeRig()), K1);
+    const rig = new FakeRig();
+    rig.seedK0();
+    const row = await rowT106ApplyIsTheOnlyWrite(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("PASS");
   });
 
   test("fails when a draft edit moves the revision", async () => {
     const rig = new FakeRig();
+    rig.seedK0();
     const realQaControl = rig.qaControl.bind(rig);
     rig.qaControl = (argv) => {
       const result = realQaControl(argv);
       if (argv[3]?.startsWith("task-router-member-")) rig.revision += 1;
       return result;
     };
-    const row = await rowT106ApplyIsTheOnlyWrite(ctx(rig), K1);
+    const row = await rowT106ApplyIsTheOnlyWrite(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
     expect(row.status).toBe("FAIL");
     expect(row.reason).toContain("without apply");
   });
@@ -581,10 +779,19 @@ describe("T1-07 provider toggle is spend-consent", () => {
     expect(rig.providers.beta).toBe("enabled");
   });
 
-  test("NO MEASUREMENT for an unconfigured provider", async () => {
+  test("an unconfigured provider flips to enabled and restores to disabled", async () => {
+    const rig = new FakeRig();
+    rig.knownProviders.push("gamma");
+    const row = await rowT107ProviderToggleIsSpendConsent(ctx(rig), "gamma");
+    expect(row.status).toBe("PASS");
+    expect(row.reason).toContain("unconfigured -> enabled -> disabled");
+    expect(rig.providers.gamma).toBe("disabled");
+  });
+
+  test("NO MEASUREMENT for a provider absent from the snapshot", async () => {
     const row = await rowT107ProviderToggleIsSpendConsent(
       ctx(new FakeRig()),
-      "gamma",
+      "delta",
     );
     expect(row.status).toBe("NO MEASUREMENT");
   });
@@ -633,13 +840,25 @@ describe("T1-08 probe refresh is a read", () => {
 });
 
 describe("T1-09 the rig baseline", () => {
-  test("first run records the baseline, second diffs empty", async () => {
+  test("first run plants k0 and records, second diffs empty", async () => {
     const rig = new FakeRig();
     const context = ctx(rig);
-    const first = await rowT109RigBaseline(context, K0);
+    const first = await rowT109RigBaseline(
+      context,
+      CATEGORY,
+      CATEGORY_LABEL,
+      K0,
+    );
     expect(first.status).toBe("PASS");
     expect(first.reason).toContain("recorded");
-    const second = await rowT109RigBaseline(context, K0);
+    // The plant created the category route through the mode-select door.
+    expect(rig.categoriesPolicy[CATEGORY]?.mode).toBe("user-weighted");
+    const second = await rowT109RigBaseline(
+      context,
+      CATEGORY,
+      CATEGORY_LABEL,
+      K0,
+    );
     expect(second.status).toBe("PASS");
     expect(second.reason).toContain("diffs empty");
   });
@@ -647,9 +866,9 @@ describe("T1-09 the rig baseline", () => {
   test("fails when the run's export differs from the baseline", async () => {
     const rig = new FakeRig();
     const context = ctx(rig);
-    await rowT109RigBaseline(context, K0);
+    await rowT109RigBaseline(context, CATEGORY, CATEGORY_LABEL, K0);
     rig.providers.alpha = "disabled";
-    const row = await rowT109RigBaseline(context, K0);
+    const row = await rowT109RigBaseline(context, CATEGORY, CATEGORY_LABEL, K0);
     expect(row.status).toBe("FAIL");
     expect(row.reason).toContain("not repeatable");
   });

@@ -18,7 +18,10 @@ export interface ExecResult {
   stderr: string;
 }
 
-export type Exec = (argv: readonly string[]) => Promise<ExecResult>;
+export type Exec = (
+  argv: readonly string[],
+  options?: { cwd?: string; env?: Record<string, string | undefined> },
+) => Promise<ExecResult>;
 
 export type RowStatus = "PASS" | "FAIL" | "NO MEASUREMENT";
 
@@ -489,7 +492,10 @@ export async function rowObserveClients(
 }
 
 export interface RunDeps extends PreflightDeps {
-  buildObserve: (qaBin: string) => Promise<ObserveClients | null>;
+  buildObserve: (
+    qaBin: string,
+    project: string,
+  ) => Promise<{ observe: ObserveClients; instanceHome: string } | null>;
   sleep: (ms: number) => Promise<void>;
   out: (line: string) => void;
   err: (line: string) => void;
@@ -500,6 +506,7 @@ export interface RunDeps extends PreflightDeps {
     observe: ObserveClients | null;
     sleep: (ms: number) => Promise<void>;
     baselinePath: string;
+    instanceHome: string;
   }) => Promise<RowResult[]>;
 }
 
@@ -513,7 +520,8 @@ export async function runQA(deps: RunDeps): Promise<number> {
   deps.err(
     `qa-runner: build identity tree=${fence.treeCommit} app=${fence.appVersion} (cli and app proved to correspond)`,
   );
-  const observe = await deps.buildObserve(fence.qaBin);
+  const built = await deps.buildObserve(fence.qaBin, deps.rig.project);
+  const observe = built?.observe ?? null;
   const rows = [
     await rowRouteTransition(deps.exec, fence.qaBin, deps.sleep),
     await rowObserveClients(observe, deps.sleep),
@@ -525,6 +533,7 @@ export async function runQA(deps: RunDeps): Promise<number> {
       observe,
       sleep: deps.sleep,
       baselinePath: join(deps.rig.stagingRoot, "state", "qa-rig-baseline.json"),
+      instanceHome: built?.instanceHome ?? "",
     })),
   );
   if (observe !== null) {

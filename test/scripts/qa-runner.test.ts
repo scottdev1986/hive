@@ -554,7 +554,10 @@ describe("runQA end to end with fakes", () => {
       exec: rigExec(rig),
       rig: rig.rig,
       validateIsolation,
-      buildObserve: async () => observe({}),
+      buildObserve: async () => ({
+        observe: observe({}),
+        instanceHome: "/qa/instance-home",
+      }),
       sleep,
       out: (line) => out.push(line),
       err: (line) => err.push(line),
@@ -580,7 +583,10 @@ describe("runQA end to end with fakes", () => {
       exec,
       rig: rig.rig,
       validateIsolation,
-      buildObserve: async () => observe({}),
+      buildObserve: async () => ({
+        observe: observe({}),
+        instanceHome: "/qa/instance-home",
+      }),
       sleep,
       out: (line) => out.push(line),
       err: (line) => err.push(line),

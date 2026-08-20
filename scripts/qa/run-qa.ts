@@ -3,10 +3,15 @@
 // it against a live rig with `make qa-run` after `make qa`; it refuses any
 // environment whose fences do not hold. Exit 0 = every row passed, 1 = a row
 // measured a product failure, 2 = something could not be measured.
+import { realpathSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HiveMcpSession } from "../../src/cli/mcp";
 import { UserDaemonClient } from "../../src/cli/user-daemon-client";
 import { readDaemonPort } from "../../src/daemon/lifecycle/daemon-lifecycle";
+import { repoInstanceName } from "../../src/daemon/lifecycle/instances";
+import { projectKey } from "../../src/daemon/project-identity-core/state";
+import { hiveInstanceSuffix, instancesRoot } from "../../src/hive-home/home";
 import {
   type Exec,
   type ExecResult,
@@ -15,8 +20,13 @@ import {
   runQA,
 } from "./qa-runner";
 
-const exec: Exec = async (argv): Promise<ExecResult> => {
-  const proc = Bun.spawn([...argv], { stdout: "pipe", stderr: "pipe" });
+const exec: Exec = async (argv, options): Promise<ExecResult> => {
+  const proc = Bun.spawn([...argv], {
+    stdout: "pipe",
+    stderr: "pipe",
+    ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options?.env === undefined ? {} : { env: options.env }),
+  });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -37,10 +47,25 @@ function authedFetch(
   };
 }
 
-async function buildObserve(qaBin: string): Promise<ObserveClients | null> {
-  const port = readDaemonPort();
+// The rig's daemon serves the QA project's per-repo instance, so its port and
+// identity live under the instance home, not the machine home the pins name.
+// Resolve the instance the same way the product resolves it for any repo:
+// project key from the registry, then the repo-<key> instance.
+async function buildObserve(
+  qaBin: string,
+  project: string,
+): Promise<{ observe: ObserveClients; instanceHome: string } | null> {
+  const instanceHome = join(
+    instancesRoot(),
+    repoInstanceName(projectKey(realpathSync(project))),
+  );
+  const port = readDaemonPort(instanceHome);
   if (port === null) return null;
-  const credential = await exec([qaBin, "credential", "--agent", "user"]);
+  // The instance daemon mints its own user credential into the instance home;
+  // the machine-home one is a different token and earns a 401.
+  const credential = await exec([qaBin, "credential", "--agent", "user"], {
+    env: { ...process.env, HIVE_HOME: instanceHome },
+  });
   if (credential.exitCode !== 0) return null;
   let headers: Record<string, string>;
   try {
@@ -50,15 +75,22 @@ async function buildObserve(qaBin: string): Promise<ObserveClients | null> {
   }
   const fetcher = authedFetch(headers);
   const mcp = new HiveMcpSession(port, fetcher);
-  const http = new UserDaemonClient({ port, fetch: fetcher });
+  const http = new UserDaemonClient({
+    port,
+    fetch: fetcher,
+    instanceId: hiveInstanceSuffix(instanceHome),
+  });
   return {
-    httpStatus: async (path) => (await http.request(path)).status,
-    httpJson: async (path) => {
-      const response = await http.request(path);
-      return { status: response.status, body: await response.json() };
+    instanceHome,
+    observe: {
+      httpStatus: async (path) => (await http.request(path)).status,
+      httpJson: async (path) => {
+        const response = await http.request(path);
+        return { status: response.status, body: await response.json() };
+      },
+      mcpCall: async (name, args, key) => await mcp.call(name, args, key),
+      close: async () => await mcp.close(),
     },
-    mcpCall: async (name, args, key) => await mcp.call(name, args, key),
-    close: async () => await mcp.close(),
   };
 }
 
