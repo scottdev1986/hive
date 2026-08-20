@@ -5,7 +5,7 @@ This directory contains executable tooling and the committed inputs those tools 
 - `dev/` prepares and verifies the isolated local runtime used by `make run`.
 - `graphify/` builds and publishes the pinned Graphify runtime.
 - `native/` provisions, builds, verifies, and publishes the Zig/Ghostty toolchain artifacts.
-- `qa/` contains opt-in end-to-end and live terminal proof harnesses.
+- `qa/` contains isolation, process-ownership, and inventory for the Makefile QA lifecycle. The harness itself lives at the checkout-root `qa/` directory.
 - `release/` adapts tested release policy to CI and acceptance workflows.
 - `signing/` signs and verifies macOS artifacts and update manifests.
 

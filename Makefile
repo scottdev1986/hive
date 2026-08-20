@@ -12,9 +12,10 @@
 #
 # QA lifecycle (separate from the five; they keep their meaning):
 #
-#   make build-qa     build a standalone qa release without changing .dev/
-#   make qa           install the qa release, init the test project, run it
 #   make qa-clean     uninstall from the test project and remove qa
+#   make build-qa     build a standalone qa release without changing .dev/
+#   make qa           install the qa release, init the test project, bring the rig up
+#   make qa-run       run the harness in qa/ against the rig `make qa` left up
 #
 # Everything else here is internal structure, never a command to run by hand:
 # heals and remediation run inside these five. build is complete every time;
@@ -182,11 +183,10 @@ DEV_ENV := \
 	OTUI_ASSET_ROOT=$(ROOT)/node_modules \
 	TMPDIR=$(DEV)/tmp
 
-# Isolated qa variant. Staging sits outside the checkout entirely, under the
-# same /tmp/hvqa-<tag> family docs/qa/rig.sh already uses for its own isolated
-# QA home (see docs/qa/qa-home.sh's qa_home_is_isolated) — not a third
-# location, and reusing DEV_HOME_TAG rather than a fresh hash. A build must
-# not write its staging root inside the source checkout it is staging from.
+# Isolated qa variant. Staging sits outside the checkout entirely, under
+# /tmp/hvqa-<tag> — not a third location, and reusing DEV_HOME_TAG rather than
+# a fresh hash. A build must not write its staging root inside the source
+# checkout it is staging from.
 # Home is also NOT a named instance under ~/.hive: uninstall resolves
 # getHiveHome() (HIVE_HOME, else ~/.hive) and listInstances() walks
 # defaultHiveHome()/instances (HIVE_DEFAULT_HOME, else ~/.hive). Both must
@@ -293,8 +293,8 @@ stage-ghosttykit:
 $(GHOSTTYKIT_INFO): stage-ghosttykit
 	@test -f "$@" || { echo "make: GhosttyKit staging failed; run 'make stage-ghosttykit'" >&2; exit 1; }
 
-# Not reached by the four: release builds its own. This is for the attach/smoke
-# harness (scripts/qa/b22-live-attach-proof.ts), which builds it by absolute path.
+# Not reached by the four: release builds its own. Agents that need a Workspace
+# Swift executable for a local proof build it by this absolute path.
 $(WORKSPACE_BIN): $(WORKSPACE_INPUTS) $(GHOSTTYKIT_INFO)
 	@echo "building Workspace Swift executable"
 	@swift build --package-path "$(ROOT)/workspace"
@@ -410,10 +410,10 @@ run:
 	  exit 1; \
 	fi
 
-# Isolated qa install + run, mirroring `run`. Does not share memory with
-# ~/.hive because it never calls dev-memory-setup. Records the user's Hive
-# isolation state before init so
-# qa-clean can check that the isolated QA lifecycle did not reach it.
+# Isolated qa install + bring-up, mirroring `run` without sharing ~/.hive
+# memory. Records the user's Hive isolation state before init so qa-clean can
+# check that the isolated QA lifecycle did not reach it. After the daemon
+# announces, wait-ready requires daemon.port before anything else proceeds.
 qa:
 	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
@@ -449,13 +449,14 @@ qa:
 	if ! bun run "$(ROOT)/scripts/dev/verify-dev-run.ts" "$(QA_DAEMON_STARTUP_LOG)" "$(QA_BIN)" "$(ROOT)" "$$daemon_pid"; then \
 	  exit 1; \
 	fi; \
+	qa_daemon_home=$$(env $(QA_ENV) bun run "$(ROOT)/qa/wait-ready.ts" "$(QA_HOME)" "$(QA_PROJECT)" "$$daemon_pid") || exit 1; \
 	if env $(QA_ENV) "$(QA_BIN)"; then \
 	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" workspace orchestrator; \
 	else \
 	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" || true; \
 	  exit 1; \
 	fi; \
-	if ! bun run "$(ROOT)/scripts/dev/verify-dev-run.ts" --memory "$(QA_HOME)"; then \
+	if ! bun run "$(ROOT)/scripts/dev/verify-dev-run.ts" --memory "$$qa_daemon_home"; then \
 	  exit 1; \
 	fi; \
 	bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)"; \
@@ -475,7 +476,7 @@ qa-run:
 	  HIVE_QA_RUNNER_DEV_HOME="$(DEV_HOME)" \
 	  HIVE_QA_RUNNER_USER_HIVE="$(USER_HIVE)" \
 	  HIVE_QA_RUNNER_PROJECT="$(QA_PROJECT)" \
-	  bun run "$(ROOT)/scripts/qa/run-qa.ts"
+	  bun run "$(ROOT)/qa/run.ts"
 
 # Product uninstall runs only after exact teardown; isolation checks follow it.
 # A registry-free old fixture may use product stop only after proving no

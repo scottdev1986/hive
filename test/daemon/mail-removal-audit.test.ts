@@ -21,7 +21,7 @@ const REPO = join(import.meta.dir, "..", "..");
 // `.hive/skills` is not a copy nobody reads: it is what an agent's own
 // `.claude/skills` symlinks into, so it is the text a model actually gets. A
 // stale tool name there reaches a mind; one in `skills/` only reaches a build.
-const SCANNED_ROOTS = [".hive/skills", "src", "test", "docs/qa", "skills"];
+const SCANNED_ROOTS = [".hive/skills", "src", "test", "qa", "skills"];
 
 /** This file names every banned pattern, so it cannot scan itself. */
 const SELF = relative(REPO, import.meta.path);
@@ -139,7 +139,7 @@ describe("the legacy message path stays deleted", () => {
       expect(new RegExp(escaped(symbol)).test(`x ${symbol} y`)).toBe(true);
     }
     expect(FILES.length).toBeGreaterThan(100);
-    expect(FILES.some((file) => file.path.startsWith("docs/qa/"))).toBe(true);
+    expect(FILES.some((file) => file.path.startsWith("qa/"))).toBe(true);
     // The mirror is the newest root and the one an agent actually reads, so it
     // gets the same proof-of-coverage as the rest: a root that silently stopped
     // being walked would otherwise report "clean" forever.

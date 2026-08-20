@@ -1,4 +1,4 @@
-// The Hive QA runner's testable core. run-qa.ts is the thin entrypoint that
+// The Hive QA runner's testable core. run.ts is the thin entrypoint that
 // wires real dependencies; everything here takes its environment, process
 // execution, oracle clients and sleep as parameters so the suite can construct
 // each failing condition itself — no QA rig required.
@@ -10,7 +10,7 @@
 // product failure, so it always lands on NO MEASUREMENT.
 import { realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { runStage1Rows } from "./stage1-rows";
+import { runStage1Rows } from "./rows/stage1";
 
 export interface ExecResult {
   exitCode: number;

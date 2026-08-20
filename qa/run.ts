@@ -2,23 +2,24 @@
 // qa-control gate and verifies on the daemon's own MCP and HTTP clients. Run
 // it against a live rig with `make qa-run` after `make qa`; it refuses any
 // environment whose fences do not hold. Exit 0 = every row passed, 1 = a row
-// measured a product failure, 2 = something could not be measured.
+// measured a product failure, 2 = something could not be measured. Lives in
+// qa/ with the rows and the unit tests; isolation fences stay in scripts/qa/.
 import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HiveMcpSession } from "../../src/cli/mcp";
-import { UserDaemonClient } from "../../src/cli/user-daemon-client";
-import { readDaemonPort } from "../../src/daemon/lifecycle/daemon-lifecycle";
-import { repoInstanceName } from "../../src/daemon/lifecycle/instances";
-import { projectKey } from "../../src/daemon/project-identity-core/state";
-import { hiveInstanceSuffix, instancesRoot } from "../../src/hive-home/home";
+import { HiveMcpSession } from "../src/cli/mcp";
+import { UserDaemonClient } from "../src/cli/user-daemon-client";
+import { readDaemonPort } from "../src/daemon/lifecycle/daemon-lifecycle";
+import { repoInstanceName } from "../src/daemon/lifecycle/instances";
+import { projectKey } from "../src/daemon/project-identity-core/state";
+import { hiveInstanceSuffix, instancesRoot } from "../src/hive-home/home";
 import {
   type Exec,
   type ExecResult,
   type ObserveClients,
   parseCredentialHeaders,
   runQA,
-} from "./qa-runner";
+} from "./runner";
 
 const exec: Exec = async (argv, options): Promise<ExecResult> => {
   const proc = Bun.spawn([...argv], {
@@ -116,7 +117,7 @@ const exitCode = await runQA({
     project: required("HIVE_QA_RUNNER_PROJECT"),
   },
   validateIsolation: fileURLToPath(
-    new URL("./validate-isolation.sh", import.meta.url),
+    new URL("../scripts/qa/validate-isolation.sh", import.meta.url),
   ),
   buildObserve,
   sleep: Bun.sleep,

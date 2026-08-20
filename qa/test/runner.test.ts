@@ -1,4 +1,4 @@
-// Unit tests for the QA runner core (scripts/qa/qa-runner.ts). No QA rig is
+// Unit tests for the QA runner core (qa/runner.ts). No QA rig is
 // involved: each test constructs its own failing condition — a missing pin, a
 // pin resolving into the real home, a staging root inside the checkout, a
 // stale binary, a predicate that never holds, an oracle that refuses — and the
@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 import {
   type Exec,
   type ExecResult,
@@ -24,8 +25,7 @@ import {
   runnerExitCode,
   runQA,
   waitFor,
-} from "../../scripts/qa/qa-runner";
-import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
+} from "../runner";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const validateIsolation = join(

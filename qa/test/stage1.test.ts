@@ -1,4 +1,4 @@
-// Tests for the Stage-1 rows (scripts/qa/stage1-rows.ts). No rig: a fake-rig
+// Tests for the Stage-1 rows (qa/rows/stage1.ts). No rig: a fake-rig
 // simulator plays the app side of the qa-control mailbox and the daemon side
 // of the oracles, with switches that construct each failing condition — a
 // broken apply commit, a frozen revision, a dying gate, a static snapshot.
@@ -10,6 +10,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 import {
   normalizePolicyExport,
   rowT101RouterReachable,
@@ -23,13 +24,8 @@ import {
   rowT109RigBaseline,
   runStage1Rows,
   type Stage1Context,
-} from "../../scripts/qa/stage1-rows";
-import type {
-  Exec,
-  ExecResult,
-  ObserveClients,
-} from "../../scripts/qa/qa-runner";
-import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
+} from "../rows/stage1";
+import type { Exec, ExecResult, ObserveClients } from "../runner";
 
 const QA_BIN = "/qa/hive";
 const K0 = { provider: "alpha", model: "a1" };
@@ -88,7 +84,10 @@ class FakeRig {
   modeEffortNoCommit = false;
   freezeRevision = false;
   providerToggleNoop = false;
+  refuseMemberToggles = 0;
   loseMemberToggles = 0;
+  policyWriteRefusal = false;
+  policyWriteRefusalFunctionallyPresent = true;
   catalog = [
     { ...K0, effortOptions: EFFORTS },
     { ...K1, effortOptions: EFFORTS },
@@ -248,16 +247,31 @@ class FakeRig {
       actionable: boolean;
       functionallyPresent: boolean;
     }> = [];
-    const add = (identifier: string, enabled: boolean) =>
+    const add = (
+      identifier: string,
+      enabled: boolean,
+      role = "control",
+      actionable = true,
+      functionallyPresent = true,
+    ) =>
       controls.push({
         identifier,
-        role: "control",
+        role,
         enabled,
-        actionable: true,
-        functionallyPresent: true,
+        actionable,
+        functionallyPresent,
       });
     if (this.route === "router") {
       if (!this.hideApply) add("task-router-apply", this.applyEnabled);
+      if (this.policyWriteRefusal) {
+        add(
+          "shell-banner-policy-write-refusal",
+          true,
+          "view",
+          false,
+          this.policyWriteRefusalFunctionallyPresent,
+        );
+      }
       for (const entry of this.catalog) {
         const key = this.key(entry.provider, entry.model);
         add(`task-router-member-${key}`, this.routeExists());
@@ -333,8 +347,13 @@ class FakeRig {
       if (!this.routeExists()) {
         return this.answer("fail", "control is not actionable");
       }
+      if (this.refuseMemberToggles > 0) {
+        this.refuseMemberToggles -= 1;
+        this.policyWriteRefusal = true;
+        return this.answer("ok");
+      }
       if (this.loseMemberToggles > 0) {
-        // The live-rig race: the invoke returns ok but the edit never enters the draft.
+        // This simulates a silent edit loss so the row can prove it reports a regression.
         this.loseMemberToggles -= 1;
         return this.answer("ok");
       }
@@ -575,7 +594,22 @@ describe("T1-02 member apply writes", () => {
     expect(row.reason).toContain("revision stayed");
   });
 
-  test("a verifiably lost toggle is retried once and the row says so", async () => {
+  test("NO MEASUREMENT names a policy refusal instead of retrying around it", async () => {
+    const rig = new FakeRig();
+    rig.seedK0();
+    rig.refuseMemberToggles = 1;
+    const row = await rowT102MemberApplyWrites(
+      ctx(rig),
+      CATEGORY,
+      CATEGORY_LABEL,
+      K1,
+    );
+    expect(row.status).toBe("NO MEASUREMENT");
+    expect(row.reason).toContain("shell-banner-policy-write-refusal");
+    expect(rig.refuseMemberToggles).toBe(0);
+  });
+
+  test("fails a silent lost edit when no policy-refusal banner is present", async () => {
     const rig = new FakeRig();
     rig.seedK0();
     rig.loseMemberToggles = 1;
@@ -585,22 +619,25 @@ describe("T1-02 member apply writes", () => {
       CATEGORY_LABEL,
       K1,
     );
-    expect(row.status).toBe("PASS");
-    expect(row.reason).toContain("recovered one lost edit");
+    expect(row.status).toBe("FAIL");
+    expect(row.reason).toContain("without shell-banner-policy-write-refusal");
     expect(rig.loseMemberToggles).toBe(0);
   });
 
-  test("two lost toggles exhaust the single retry and measure nothing", async () => {
+  test("fails when the policy-refusal banner is present but hidden", async () => {
     const rig = new FakeRig();
     rig.seedK0();
-    rig.loseMemberToggles = 2;
+    rig.refuseMemberToggles = 1;
+    rig.policyWriteRefusalFunctionallyPresent = false;
     const row = await rowT102MemberApplyWrites(
       ctx(rig),
       CATEGORY,
       CATEGORY_LABEL,
       K1,
     );
-    expect(row.status).toBe("NO MEASUREMENT");
+    expect(row.status).toBe("FAIL");
+    expect(row.reason).toContain("without shell-banner-policy-write-refusal");
+    expect(rig.policyWriteRefusal).toBe(true);
   });
 
   test("NO MEASUREMENT when the policy oracle refuses", async () => {

@@ -13,8 +13,8 @@
 # milliseconds and looks exactly like a logic failure in the log.
 #
 # --check exists for callers that must not build the tree they are pointed at:
-# docs/qa/rig.sh runs against a source root that may be a frozen build or
-# another agent's checkout, so it refuses by name instead of repairing it.
+# a frozen build or another agent's checkout must refuse by name instead of
+# repairing it.
 #
 # FRESHNESS, NOT PRESENCE. `make -q` answers "is this file up to date?" against
 # the Makefile's own SESSIOND_INPUTS prerequisite list without building

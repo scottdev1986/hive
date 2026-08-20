@@ -11,7 +11,7 @@
       "test/**/*.ts",
       "scripts/**/*.ts",
       "native/**/*.ts",
-      "docs/qa/**/*.ts",
+      "qa/**/*.ts",
       "!workspace/Sources/HiveGhosttyC/include/ghostty.h"
     ]
   },

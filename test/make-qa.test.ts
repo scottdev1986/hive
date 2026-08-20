@@ -78,6 +78,8 @@ test("the dev commands stay unchanged and the independent QA lifecycle is declar
   );
   expect(makefile).toContain(".PHONY: build-qa qa qa-run qa-clean graphify-qa");
   expect(makefile).toContain("HIVE_DEFAULT_HOME=$(QA_HOME)");
+  expect(makefile).toContain('bun run "$(ROOT)/qa/run.ts"');
+  expect(makefile).toContain('bun run "$(ROOT)/qa/wait-ready.ts"');
 });
 
 test("build-qa creates a complete QA candidate without consuming dev output", () => {
@@ -216,7 +218,7 @@ test("make -n qa resolves the default staging root outside the checkout", () => 
   expect(result.exitCode, output).toBe(0);
   // Positive proof staging resolves somewhere real, not just an absence of
   // the old path: the default names a concrete /tmp/hvqa-<tag> location, the
-  // same isolated-QA-home family docs/qa/rig.sh already uses.
+  // same isolated-QA-home family the QA lifecycle already uses.
   expect(output).toMatch(/\/tmp\/hvqa-[0-9a-f]+/);
   expect(output).not.toContain(`mkdir -p "${join(root, ".qa")}`);
 });

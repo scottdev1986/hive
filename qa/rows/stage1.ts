@@ -24,11 +24,11 @@ import {
   type Exec,
   type GateCommand,
   type GateResponse,
+  gate,
   type ObserveClients,
   type RowResult,
-  gate,
   waitFor,
-} from "./qa-runner";
+} from "../runner";
 
 export interface Stage1Context {
   exec: Exec;
@@ -78,23 +78,12 @@ interface SnapshotDoc {
 }
 
 type Drive =
-  | { ok: true; recovered?: string }
+  | { ok: true }
   | {
       ok: false;
       status: "FAIL" | "NO MEASUREMENT";
       reason: string;
-      screenState?: string;
     };
-
-/** One-line disclosure for the row reason when a retry recovered a lost edit. A suite that retries silently reports a green product that is not green; a row that needed a recovery says so. */
-function recoveredNote(drives: readonly Drive[]): string {
-  const recovered = drives
-    .map((drive) => (drive.ok ? drive.recovered : undefined))
-    .filter((name): name is string => name !== undefined);
-  return recovered.length === 0
-    ? ""
-    : ` (recovered one lost edit: ${recovered.join(", ")})`;
-}
 
 const bound = (ctx: Stage1Context): number => ctx.boundMs ?? 5_000;
 
@@ -328,14 +317,16 @@ async function drivable(
   };
 }
 
-/** Apply the current draft, waiting first for Apply to come up enabled. The wait is the proof the edit produced a draft: if the field action was lost to a mid-rebuild view or the editor fenced, Apply never enables and the row reports NO MEASUREMENT instead of invoking a dead button. The failure carries the screen's last seen state (including whether the member control itself was enabled) so a lost toggle is distinguishable from a fenced editor. */
-async function applyDraft(
-  ctx: Stage1Context,
-  memberName?: string,
-): Promise<Drive> {
+/** Apply the current draft, waiting first for Apply to come up enabled. A policy-refusal banner means the product gave a definite answer before the row reached its oracle, so it is NO MEASUREMENT. An enabled edit control with no refusal banner is a product regression, not a condition the runner may retry. */
+async function applyDraft(ctx: Stage1Context): Promise<Drive> {
   let lastSeen = "no enumerate answered";
-  const poll = await pollGate(ctx, (response) => {
+  const poll = await pollGate<"ready" | "refusal">(ctx, (response) => {
     const controls = response.controls ?? [];
+    const refusal = controls.some(
+      (control) =>
+        control.identifier === "shell-banner-policy-write-refusal" &&
+        control.functionallyPresent,
+    );
     const apply = controls.find(
       (control) => control.identifier === "task-router-apply",
     );
@@ -349,33 +340,41 @@ async function applyDraft(
         control.identifier === "task-router-conflict" &&
         control.functionallyPresent,
     );
-    const member =
-      memberName === undefined
-        ? undefined
-        : controls.find(
-            (control) =>
-              control.identifier === `task-router-member-${memberName}`,
-          );
-    lastSeen =
-      `apply present=${apply?.functionallyPresent ?? false} enabled=${apply?.enabled ?? false} draft=${draft} conflict=${conflict}` +
-      (member === undefined ? "" : ` memberEnabled=${member.enabled}`);
-    return apply?.enabled && apply.functionallyPresent ? true : null;
+    lastSeen = `apply present=${apply?.functionallyPresent ?? false} enabled=${apply?.enabled ?? false} draft=${draft} conflict=${conflict} refusal=${refusal}`;
+    if (refusal) return "refusal";
+    return apply?.enabled && apply.functionallyPresent ? "ready" : null;
   });
+  if (poll.kind === "met" && poll.value === "refusal") {
+    return {
+      ok: false,
+      status: "NO MEASUREMENT",
+      reason:
+        "shell-banner-policy-write-refusal observed before task-router-apply became drivable",
+    };
+  }
   if (poll.kind === "met") {
     return await drive(ctx, {
       verb: "invoke",
       identifier: "task-router-apply",
     });
   }
+  if (poll.kind === "fail") {
+    return {
+      ok: false,
+      status: "FAIL",
+      reason:
+        "task-router-apply stayed disabled without shell-banner-policy-write-refusal " +
+        `(last seen: ${lastSeen})`,
+    };
+  }
   return {
     ok: false,
     status: "NO MEASUREMENT",
     reason: `task-router-apply never became drivable within the bound (last seen: ${lastSeen})`,
-    screenState: lastSeen,
   };
 }
 
-/** Set a weight field and apply, retrying the input exactly once when the first was verifiably lost (dead Apply with the member control enabled). Unlike a toggle, re-entering the same value is idempotent, so the retry can never change the outcome it is recovering. */
+/** Set a weight field and apply. */
 async function driveWeightInput(
   ctx: Stage1Context,
   name: string,
@@ -388,19 +387,10 @@ async function driveWeightInput(
   };
   const set = await drive(ctx, command);
   if (!set.ok) return set;
-  let applied = await applyDraft(ctx, name);
-  if (!applied.ok && applied.screenState?.includes("memberEnabled=true")) {
-    const retry = await drive(ctx, command);
-    if (!retry.ok) return retry;
-    applied = await applyDraft(ctx, name);
-    if (applied.ok) {
-      return { ok: true, recovered: `task-router-weight-${name}` };
-    }
-  }
-  return applied;
+  return await applyDraft(ctx);
 }
 
-/** Toggle a membership checkbox and apply, retrying the toggle exactly once when the first was verifiably lost: Apply staying dead while the member control itself is enabled proves the toggle's edit never entered the draft (a dead Apply with the member control DISABLED is a fenced editor instead, and a second toggle there would only remove the member). */
+/** Toggle a membership checkbox and apply. */
 async function driveMemberToggle(
   ctx: Stage1Context,
   name: string,
@@ -412,19 +402,7 @@ async function driveMemberToggle(
     identifier: `task-router-member-${name}`,
   });
   if (!toggle.ok) return toggle;
-  let applied = await applyDraft(ctx, name);
-  if (!applied.ok && applied.screenState?.includes("memberEnabled=true")) {
-    const retry = await drive(ctx, {
-      verb: "invoke",
-      identifier: `task-router-member-${name}`,
-    });
-    if (!retry.ok) return retry;
-    applied = await applyDraft(ctx, name);
-    if (applied.ok) {
-      return { ok: true, recovered: `task-router-member-${name}` };
-    }
-  }
-  return applied;
+  return await applyDraft(ctx);
 }
 
 /** Plant a member of the category route through the membership door, creating the route (Weighted split) when the category has none. An unplantable precondition is NO MEASUREMENT by plan rule 6, whatever the door said. */
@@ -618,7 +596,7 @@ export async function rowT102MemberApplyWrites(
   return {
     id,
     status: "PASS",
-    reason: `candidate ${name} added through apply in ${category} (rev ${revBefore} -> ${revAfter}) and removed again${recoveredNote([applied, restored])}`,
+    reason: `candidate ${name} added through apply in ${category} (rev ${revBefore} -> ${revAfter}) and removed again`,
   };
 }
 
@@ -697,7 +675,7 @@ export async function rowT103WeightWritesThrough(
   return {
     id,
     status: "PASS",
-    reason: `weight ${weightBefore} -> ${target} -> ${weightBefore} through apply (rev ${revBefore} -> ${revAfter})${recoveredNote([planted, set, reset, unplanted])}`,
+    reason: `weight ${weightBefore} -> ${target} -> ${weightBefore} through apply (rev ${revBefore} -> ${revAfter})`,
   };
 }
 
@@ -790,7 +768,7 @@ export async function rowT104IllegalWeightRefused(
   return {
     id,
     status: "PASS",
-    reason: `apply disabled and revision unchanged at ${revBefore} with weight 0 (control: plant moved ${revControlBefore} -> ${revBefore})${recoveredNote([planted, unplanted])}`,
+    reason: `apply disabled and revision unchanged at ${revBefore} with weight 0 (control: plant moved ${revControlBefore} -> ${revBefore})`,
   };
 }
 
@@ -955,7 +933,7 @@ export async function rowT105ModeEffortWriteThrough(
   return {
     id,
     status: "PASS",
-    reason: `mode ${modeBefore} -> ${modeTarget.id} and effort option ${effortIndexTarget} wrote through apply (rev ${revBefore} -> ${revAfter}), then restored${recoveredNote([planted, unplanted])}`,
+    reason: `mode ${modeBefore} -> ${modeTarget.id} and effort option ${effortIndexTarget} wrote through apply (rev ${revBefore} -> ${revAfter}), then restored`,
   };
 }
 
@@ -995,7 +973,7 @@ export async function rowT106ApplyIsTheOnlyWrite(
       reason: `a draft edit moved the revision ${revBefore} -> ${revDraft} without apply`,
     };
   }
-  const applied = await applyDraft(ctx, name);
+  const applied = await applyDraft(ctx);
   if (!applied.ok) {
     return { id, status: applied.status, reason: applied.reason };
   }
@@ -1019,7 +997,7 @@ export async function rowT106ApplyIsTheOnlyWrite(
   return {
     id,
     status: "PASS",
-    reason: `draft edit left revision ${revBefore} untouched; apply moved it and wrote ${name}${recoveredNote([unplanted])}`,
+    reason: `draft edit left revision ${revBefore} untouched; apply moved it and wrote ${name}`,
   };
 }
 
@@ -1232,7 +1210,7 @@ export async function rowT109RigBaseline(
     return {
       id,
       status: "PASS",
-      reason: `rig baseline recorded at ${ctx.baselinePath} with ${name} selected in ${category} (the rig's deterministic catalog-first provider)${recoveredNote([planted])}`,
+      reason: `rig baseline recorded at ${ctx.baselinePath} with ${name} selected in ${category} (the rig's deterministic catalog-first provider)`,
     };
   }
   const baseline = readFileSync(ctx.baselinePath, "utf8").trim();
@@ -1247,7 +1225,7 @@ export async function rowT109RigBaseline(
   return {
     id,
     status: "PASS",
-    reason: `second consecutive run diffs empty against the rig baseline${recoveredNote([planted])}`,
+    reason: "second consecutive run diffs empty against the rig baseline",
   };
 }
 
