@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { definedFields } from "../../shared/defined-fields";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -125,14 +126,15 @@ export function agentUiSessionStart(
     options.provider === "kimi"
       ? kimiSessionMode(options.readOnly === true)
       : undefined;
-  return {
-    ...(options.model === undefined || options.model === "default"
-      ? {}
-      : { model: options.model }),
-    ...(options.effort === undefined ? {} : { effort: options.effort }),
-    ...(mode === undefined ? {} : { mode }),
-    ...(instruction === undefined ? {} : { instruction }),
-  };
+  return definedFields({
+    model:
+      options.model === undefined || options.model === "default"
+        ? undefined
+        : options.model,
+    effort: options.effort,
+    mode,
+    instruction,
+  });
 }
 
 /** Root subjects always open a fresh vendor conversation. Workers may resume a durable session ref beside the journal. The queen boot capsule is the only trusted continuity source for a root; a stored vendor session is never authority for her. */
@@ -275,7 +277,7 @@ export async function runAgentUi(options: AgentUiOptions): Promise<number> {
         options.model === undefined || options.model === "default"
           ? "—"
           : options.model,
-      ...(options.effort === undefined ? {} : { effort: options.effort }),
+      ...definedFields({ effort: options.effort }),
     };
     renderer = await createCliRenderer({
       stdin: process.stdin,
@@ -328,17 +330,16 @@ export async function runAgentUi(options: AgentUiOptions): Promise<number> {
       session,
       journal,
       vendorSessionId: opened.vendorSession.vendorSessionId,
-      ...(options.daemonPort === undefined
-        ? {}
-        : { daemonPort: options.daemonPort }),
-      ...(reporter === null ? {} : { reportReceipt: reporter.reportReceipt }),
-      ...(reportWake === undefined ? {} : { reportWake }),
       reportDiagnostic,
-      ...(paneDaemon === null || !isAgentUiRootSubject(options.subject)
-        ? {}
-        : {
-            loadCompactReload: () => fetchQueenCompactReload(paneDaemon),
-          }),
+      ...definedFields({
+        daemonPort: options.daemonPort,
+        reportReceipt: reporter === null ? undefined : reporter.reportReceipt,
+        reportWake,
+        loadCompactReload:
+          paneDaemon === null || !isAgentUiRootSubject(options.subject)
+            ? undefined
+            : () => fetchQueenCompactReload(paneDaemon),
+      }),
     });
     const activeUi = ui;
     activeUi.replaceCommandCatalog(await session.listCommands());

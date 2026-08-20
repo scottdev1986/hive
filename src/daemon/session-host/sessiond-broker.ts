@@ -81,18 +81,30 @@ let libcSingleton: Libc | null = null;
 
 function libc(): Libc {
   if (libcSingleton !== null) return libcSingleton;
-  libcSingleton = dlopen(`libc.${suffix}`, {
+  const loaded = dlopen(`libc.${suffix}`, {
     getsockopt: {
       args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr],
       returns: FFIType.i32,
     },
-  }) as unknown as Libc;
+  });
+  libcSingleton = {
+    symbols: {
+      getsockopt: (fd, level, optname, optval, optlen) =>
+        loaded.symbols.getsockopt(fd, level, optname, optval, optlen),
+    },
+  };
   return libcSingleton;
 }
 
 export function socketFileDescriptor(socket: Socket): number {
-  const handle = (socket as unknown as { _handle?: { fd?: number } })._handle;
-  const fd = handle?.fd;
+  const handle = "_handle" in socket ? socket._handle : undefined;
+  const fd =
+    handle !== null &&
+    handle !== undefined &&
+    typeof handle === "object" &&
+    "fd" in handle
+      ? handle.fd
+      : undefined;
   if (typeof fd !== "number" || fd < 0) {
     throw new Error(
       "connected socket has no usable file descriptor for LOCAL_PEERPID",

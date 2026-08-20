@@ -1,4 +1,5 @@
 /** The one way Hive drives the `git` binary. Every git invocation goes through here so the facts that make a git call safe are written once: argv is always an array, so no shell ever sees a branch name or a path and interpolation attacks have no interpreter to attack; the child runs with the sanitized environment from git-env, because an inherited GIT_DIR silently redirects any git command at another repository; and a timeout is reported by an explicit flag the runner sets itself — never inferred from `Subprocess.killed`, which Bun sets on any exited process and which therefore cannot tell "we killed it" from "it failed instantly". Stdout and stderr come back untrimmed: trimming and error mapping are the caller's policy, not the mechanism's. Lives beside git-env for the same reason git-env does — driving the binary is a fact about the vendor tool, and every layer that shells out to git can reach adapters without a new import edge. */
+import { definedFields } from "../shared/defined-fields";
 import { sanitizedGitEnv } from "./git-env";
 
 /** A stuck git — a stale `index.lock`, a stalled filesystem — must fail its caller rather than wedge it forever. A local operation that has not finished in this long is not going to. */
@@ -68,10 +69,10 @@ export function runGitSync(
     stdout: "pipe",
     stderr: "pipe",
     env: sanitizedGitEnv(),
-    ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
-    ...(options.killSignal === undefined
-      ? {}
-      : { killSignal: options.killSignal }),
+    ...definedFields({
+      timeout: options.timeoutMs,
+      killSignal: options.killSignal,
+    }),
   });
   return {
     exitCode: result.exitCode,

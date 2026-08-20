@@ -4,6 +4,7 @@ import {
   writeKimiInstructionFile,
   writeKimiTurnHook,
 } from "./kimi-cli";
+import { definedFields } from "../../shared/defined-fields";
 import type { AgentAdapter } from "./provider-adapter";
 
 export const kimiAgentAdapter: AgentAdapter = {
@@ -22,9 +23,7 @@ export const kimiAgentAdapter: AgentAdapter = {
   async prepareRuntime(context) {
     await writeKimiAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,
-      ...(context.graphifyUrl === undefined
-        ? {}
-        : { graphifyUrl: context.graphifyUrl }),
+      ...definedFields({ graphifyUrl: context.graphifyUrl }),
     });
     if (context.instructionPath !== undefined) {
       await writeKimiInstructionFile(

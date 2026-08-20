@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { definedFields } from "../shared/defined-fields";
 import { type HookEvent, HookEventSchema } from "../schemas/event";
 import { PaneDaemonClient } from "./agent-ui/pane-daemon-client";
 import { agentFetch } from "./credential";
@@ -15,7 +16,6 @@ export interface HookEventOptions {
   inputDigest?: string;
   timestamp?: string;
   ignore?: boolean;
-  /** Claude's `notification_type`, read off the Notification hook's stdin. Never a CLI flag: only the vendor can say why it raised the notification. */
   notificationType?: string;
 }
 
@@ -33,22 +33,18 @@ export function buildHookEvent(
     kind,
     agentName: options.agent,
     timestamp,
-    ...(options.toolSessionId === undefined
-      ? {}
-      : { toolSessionId: options.toolSessionId }),
-    ...(options.providerRunId === undefined
-      ? {}
-      : { providerRunId: options.providerRunId }),
+    ...definedFields({
+      toolSessionId: options.toolSessionId,
+      providerRunId: options.providerRunId,
+    }),
   };
   if (kind === "turn-end") {
     return HookEventSchema.parse({
       ...base,
-      ...(options.usageUnits === undefined
-        ? {}
-        : { usageUnits: options.usageUnits }),
-      ...(options.usageSource === undefined
-        ? {}
-        : { usageSource: options.usageSource }),
+      ...definedFields({
+        usageUnits: options.usageUnits,
+        usageSource: options.usageSource,
+      }),
     });
   }
   if (kind === "approval-request") {
@@ -60,18 +56,16 @@ export function buildHookEvent(
   if (kind === "notification") {
     return HookEventSchema.parse({
       ...base,
-      ...(options.notificationType === undefined
-        ? {}
-        : { notificationType: options.notificationType }),
+      ...definedFields({ notificationType: options.notificationType }),
     });
   }
   if (kind === "tool-start" || kind === "tool-boundary") {
     return HookEventSchema.parse({
       ...base,
-      ...(options.toolName === undefined ? {} : { toolName: options.toolName }),
-      ...(options.inputDigest === undefined
-        ? {}
-        : { inputDigest: options.inputDigest }),
+      ...definedFields({
+        toolName: options.toolName,
+        inputDigest: options.inputDigest,
+      }),
     });
   }
   return HookEventSchema.parse(base);
@@ -112,20 +106,20 @@ export type CapturedHookStdin = Pick<
   | "ignore"
 >;
 
-function approvalDescription(parsed: object): string | undefined {
-  if (!("tool_name" in parsed) || typeof parsed.tool_name !== "string") {
-    return undefined;
-  }
-  const input =
-    "tool_input" in parsed &&
-    typeof parsed.tool_input === "object" &&
-    parsed.tool_input !== null
-      ? (parsed.tool_input as Record<string, unknown>)
-      : {};
+type HookPermissionRequest = {
+  readonly tool_name: string;
+  readonly tool_input?: {
+    readonly command?: string;
+    readonly description?: string;
+  };
+};
+
+function approvalDescription(parsed: HookPermissionRequest): string {
+  const input = parsed.tool_input;
   const detail =
-    typeof input.command === "string"
+    input?.command !== undefined
       ? input.command
-      : typeof input.description === "string"
+      : input?.description !== undefined
         ? input.description
         : null;
   return detail === null ? parsed.tool_name : `${parsed.tool_name}: ${detail}`;
@@ -192,12 +186,36 @@ export function parseHookStdin(text: string): CapturedHookStdin {
     ) {
       captured.notificationType = parsed.notification_type;
     }
-    const description =
+    if (
       "hook_event_name" in parsed &&
-      parsed.hook_event_name === "PermissionRequest"
-        ? approvalDescription(parsed)
-        : undefined;
-    if (description !== undefined) captured.description = description;
+      parsed.hook_event_name === "PermissionRequest" &&
+      "tool_name" in parsed &&
+      typeof parsed.tool_name === "string"
+    ) {
+      const rawInput =
+        "tool_input" in parsed &&
+        typeof parsed.tool_input === "object" &&
+        parsed.tool_input !== null
+          ? parsed.tool_input
+          : undefined;
+      captured.description = approvalDescription({
+        tool_name: parsed.tool_name,
+        tool_input: {
+          command:
+            rawInput !== undefined &&
+            "command" in rawInput &&
+            typeof rawInput.command === "string"
+              ? rawInput.command
+              : undefined,
+          description:
+            rawInput !== undefined &&
+            "description" in rawInput &&
+            typeof rawInput.description === "string"
+              ? rawInput.description
+              : undefined,
+        },
+      });
+    }
   } catch {}
   return captured;
 }

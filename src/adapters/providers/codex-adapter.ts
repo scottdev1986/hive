@@ -3,6 +3,7 @@ import {
   type CodexSpawnOptions,
   writeCodexAgentConfig,
 } from "./codex-cli";
+import { definedFields } from "../../shared/defined-fields";
 import type { AgentAdapter } from "./provider-adapter";
 
 export const codexAgentAdapter: AgentAdapter = {
@@ -22,12 +23,10 @@ export const codexAgentAdapter: AgentAdapter = {
       daemonPort: context.daemonPort,
       name: context.name,
       readOnly: context.readOnly,
-      ...(context.hiveCommand === undefined
-        ? {}
-        : { hiveCommand: context.hiveCommand }),
-      ...(context.graphifyUrl === undefined
-        ? {}
-        : { graphifyUrl: context.graphifyUrl }),
+      ...definedFields({
+        hiveCommand: context.hiveCommand,
+        graphifyUrl: context.graphifyUrl,
+      }),
     });
     const options: CodexSpawnOptions = {
       daemonPort: context.daemonPort,
@@ -37,14 +36,12 @@ export const codexAgentAdapter: AgentAdapter = {
       readOnly: context.readOnly,
       dangerous: context.dangerous,
       worktreePath: context.worktreePath,
-      ...(context.executable === undefined
-        ? {}
-        : { executable: context.executable }),
       excludeMcpServers: context.excludeMcpServers ?? [],
       withCapabilityToken: context.withCapability === true,
-      ...(context.graphifyUrl === undefined
-        ? {}
-        : { graphifyUrl: context.graphifyUrl }),
+      ...definedFields({
+        executable: context.executable,
+        graphifyUrl: context.graphifyUrl,
+      }),
     };
     const argv = buildCodexSpawnCommand(options);
     return { argv };

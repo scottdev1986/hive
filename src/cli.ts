@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command, CommanderError } from "commander";
+import { definedFields } from "./shared/defined-fields";
 import { runAgentUi } from "./cli/agent-ui/run";
 import {
   bindCliHiveHome,
@@ -63,7 +64,7 @@ import { runWorkspaceFeedCli } from "./cli/workspace-feed";
 import {
   verifyDaemonInstance,
   verifyDaemonInstanceWhenReady,
-} from "./daemon/lifecycle/daemon-lifecycle";
+} from "./daemon/lifecycle/handshake";
 import {
   printInstances,
   selectInstanceFromArgv,
@@ -72,7 +73,7 @@ import { projectRootOrCwd } from "./daemon/project-identity-core/project-root";
 import {
   type CapabilityProvider,
   CapabilityProviderSchema,
-} from "./schemas/capability";
+} from "./schemas/provider";
 import {
   type MemoryScope,
   type MemorySource,
@@ -216,19 +217,16 @@ export function buildEventOptions(options: EventCliOptions): HookEventOptions {
   const payload = parseEventPayload(options.payload);
   return {
     ...payload,
-    ...(options.agent === undefined ? {} : { agent: options.agent }),
-    ...(options.providerRunId === undefined
-      ? {}
-      : { providerRunId: options.providerRunId }),
-    ...(options.description === undefined
-      ? {}
-      : { description: options.description }),
-    ...(options.usageUnits === undefined
-      ? {}
-      : { usageUnits: parseNonnegative(options.usageUnits, "usage-units") }),
-    ...(options.usageSource === undefined
-      ? {}
-      : { usageSource: options.usageSource }),
+    ...definedFields({
+      agent: options.agent,
+      providerRunId: options.providerRunId,
+      description: options.description,
+      usageUnits:
+        options.usageUnits === undefined
+          ? undefined
+          : parseNonnegative(options.usageUnits, "usage-units"),
+      usageSource: options.usageSource,
+    }),
   };
 }
 
@@ -288,13 +286,11 @@ export function createProgram(): Command {
         const root = projectRootOrCwd();
         await runInitCli({
           cwd: root,
-          ...(options.scaffoldAgents === undefined
-            ? {}
-            : { scaffoldAgents: options.scaffoldAgents }),
-          ...(options.seedFacts === undefined
-            ? {}
-            : { seedFacts: options.seedFacts }),
-          ...(options.force === undefined ? {} : { force: options.force }),
+          ...definedFields({
+            scaffoldAgents: options.scaffoldAgents,
+            seedFacts: options.seedFacts,
+            force: options.force,
+          }),
         });
       },
     );
@@ -319,9 +315,11 @@ export function createProgram(): Command {
     .action(
       async (options: { repo?: boolean; yes?: boolean; purge?: boolean }) => {
         process.exitCode = await runUninstall(projectRootOrCwd(), {
-          ...(options.repo === undefined ? {} : { repo: options.repo }),
-          ...(options.yes === undefined ? {} : { yes: options.yes }),
-          ...(options.purge === undefined ? {} : { purge: options.purge }),
+          ...definedFields({
+            repo: options.repo,
+            yes: options.yes,
+            purge: options.purge,
+          }),
         });
       },
     );
@@ -396,7 +394,9 @@ export function createProgram(): Command {
         const { port, ...filters } = options;
         return printErrors({
           ...filters,
-          ...(port === undefined ? {} : { port: parsePort(port) }),
+          ...definedFields({
+            port: port === undefined ? undefined : parsePort(port),
+          }),
         });
       },
     );
@@ -689,12 +689,16 @@ export function createProgram(): Command {
     .action(
       async (query: string, options: { scope?: string; limit?: string }) => {
         await searchMemoryCli(query, {
-          ...(options.scope === undefined
-            ? {}
-            : { scope: parseMemoryScope(options.scope) }),
-          ...(options.limit === undefined
-            ? {}
-            : { limit: parseNonnegative(options.limit, "limit") }),
+          ...definedFields({
+            scope:
+              options.scope === undefined
+                ? undefined
+                : parseMemoryScope(options.scope),
+            limit:
+              options.limit === undefined
+                ? undefined
+                : parseNonnegative(options.limit, "limit"),
+          }),
         });
       },
     );
@@ -756,19 +760,18 @@ export function createProgram(): Command {
             .split(",")
             .map((id) => id.trim())
             .filter(Boolean),
-          ...(options.id === undefined ? {} : { id: options.id }),
-          ...(options.tags === undefined
-            ? {}
-            : {
-                tags: options.tags
-                  .split(",")
-                  .map((tag) => tag.trim())
-                  .filter((tag) => tag.length > 0),
-              }),
-          ...(options.date === undefined ? {} : { date: options.date }),
-          ...(options.verified === undefined
-            ? {}
-            : { verified: options.verified }),
+          ...definedFields({
+            id: options.id,
+            tags:
+              options.tags === undefined
+                ? undefined
+                : options.tags
+                    .split(",")
+                    .map((tag) => tag.trim())
+                    .filter((tag) => tag.length > 0),
+            date: options.date,
+            verified: options.verified,
+          }),
         });
       },
     );
@@ -922,25 +925,22 @@ export function createProgram(): Command {
         process.exitCode = await runAgentUi({
           subject: options.subject,
           provider: options.provider,
-          ...(options.executable === undefined
-            ? {}
-            : { executable: options.executable }),
           daemonPort: parsePort(options.port),
           providerRunId: options.providerRunId,
-          ...(options.model === undefined ? {} : { model: options.model }),
-          ...(options.effort === undefined ? {} : { effort: options.effort }),
           readOnly: options.readOnly === true,
-          ...(options.instruction === undefined
-            ? {}
-            : { instructionPath: options.instruction }),
-          ...(options.providerArgv === undefined
-            ? {}
-            : { providerArgv: JSON.parse(options.providerArgv) as string[] }),
-          ...(options.kickoff === undefined
-            ? {}
-            : { kickoff: options.kickoff }),
           worktreePath: options.worktree,
           journalPath: options.journal,
+          ...definedFields({
+            executable: options.executable,
+            model: options.model,
+            effort: options.effort,
+            instructionPath: options.instruction,
+            providerArgv:
+              options.providerArgv === undefined
+                ? undefined
+                : (JSON.parse(options.providerArgv) as string[]),
+            kickoff: options.kickoff,
+          }),
         });
       },
     );
@@ -973,7 +973,7 @@ export function createProgram(): Command {
             process.exitCode = await runQAControl({
               verb,
               identifier,
-              ...(options.input === undefined ? {} : { input: options.input }),
+              ...definedFields({ input: options.input }),
             });
             return;
           }

@@ -4,6 +4,7 @@ import { unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { type GitResult, runGit } from "../../adapters/git";
 import { probeProcessLiveness } from "../../adapters/process-liveness";
+import type { AuditEntry } from "../authorization/authorization-service";
 import type { AgentRecord } from "../../schemas/agent";
 import type { MainHealthMonitorHandle } from "./main-health-monitor";
 
@@ -66,7 +67,10 @@ function readLandingLease(path: string): LandingLeaseEvidence {
       lease.token === ""
     )
       return { state: "unknown" };
-    return { state: "valid", lease: lease as unknown as LandingLease };
+    return {
+      state: "valid",
+      lease: { pid: lease.pid, token: lease.token },
+    };
   } catch {
     return { state: "unknown" };
   }
@@ -647,7 +651,7 @@ export interface LandAgentDependencies {
   } | null;
   readonly repoRoot: string;
   readonly land: LandBranch;
-  readonly capabilities: { audit(entry: object): void };
+  readonly capabilities: { audit(entry: Omit<AuditEntry, "at">): void };
   readonly worktrees: {
     onLanded(agent: AgentRecord, landedCommit: string): Promise<void>;
   };

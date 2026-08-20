@@ -2448,7 +2448,8 @@ test("a failed launch leaves the hierarchy task and identity dispatchable for re
             throw new Error("agent row insert failed");
           };
         }
-        const value = Reflect.get(target, property) as unknown;
+        if (!(property in target)) return undefined;
+        const value = target[property as keyof HiveDatabase];
         return typeof value === "function" ? value.bind(target) : value;
       },
     });

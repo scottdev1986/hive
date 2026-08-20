@@ -5,6 +5,7 @@ import {
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
 } from "./claude-cli";
+import { definedFields } from "../../shared/defined-fields";
 import type { AgentAdapter } from "./provider-adapter";
 
 export const claudeAgentAdapter: AgentAdapter = {
@@ -27,34 +28,26 @@ export const claudeAgentAdapter: AgentAdapter = {
       name: context.name,
       readOnly: context.readOnly,
       dangerous: context.dangerous,
-      ...(context.providerRunId === undefined
-        ? {}
-        : { providerRunId: context.providerRunId }),
-      ...(context.boardTools === undefined
-        ? {}
-        : { boardTools: context.boardTools }),
-      ...(context.graphifyUrl === undefined
-        ? {}
-        : { graphifyUrl: context.graphifyUrl }),
-      ...(context.hiveCommand === undefined
-        ? {}
-        : { hiveCommand: context.hiveCommand }),
+      ...definedFields({
+        providerRunId: context.providerRunId,
+        boardTools: context.boardTools,
+        graphifyUrl: context.graphifyUrl,
+        hiveCommand: context.hiveCommand,
+      }),
     });
     const options: ClaudeSpawnOptions = {
       daemonPort: context.daemonPort,
       model: context.model,
-      ...(context.effort === undefined ? {} : { effort: context.effort }),
       name: context.name,
       readOnly: context.readOnly,
       dangerous: context.dangerous,
       worktreePath: context.worktreePath,
-      ...(context.executable === undefined
-        ? {}
-        : { executable: context.executable }),
       scopedMcpConfigPath: join(context.worktreePath, ".mcp.json"),
-      ...(context.instructionPath === undefined
-        ? {}
-        : { appendSystemPromptFile: context.instructionPath }),
+      ...definedFields({
+        effort: context.effort,
+        executable: context.executable,
+        appendSystemPromptFile: context.instructionPath,
+      }),
     };
     const argv = buildClaudeSpawnCommand(options);
     return { argv };

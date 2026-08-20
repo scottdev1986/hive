@@ -25,8 +25,20 @@ const CONTROL_REQUEST_ID = 2n;
 
 const GRANT_LIFETIME_MS = 30_000;
 
+type BrokerHelloPayload = {
+  readonly schemaVersion: 1;
+  readonly buildId: string;
+  readonly instanceId: string;
+  readonly protocol: {
+    readonly major: number;
+    readonly minMinor: number;
+    readonly maxMinor: number;
+  };
+  readonly clientRole: "broker";
+};
+
 /** The connection handshake a host requires before any verb. The host compares the build id it is told here against the one carried by adoption, so a mismatched executable is refused rather than adopted. Request id 1 is the handshake's; every verb that follows uses id 2. */
-function helloPayload(instanceId: string, buildId: string): unknown {
+function helloPayload(instanceId: string, buildId: string): BrokerHelloPayload {
   return {
     schemaVersion: 1,
     buildId,

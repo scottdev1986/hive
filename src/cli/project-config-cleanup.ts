@@ -66,7 +66,7 @@ async function cleanClaudeMcp(
     changed = true;
   }
   if (!changed) return false;
-  const next = { ...parsed };
+  const next: Record<string, unknown> = { ...parsed };
   if (Object.keys(servers).length === 0) delete next.mcpServers;
   else next.mcpServers = servers;
   await writeJsonOrRemove(path, next);
@@ -156,7 +156,7 @@ async function cleanClaudeSettings(
   const parsed = safeJsonParse(text);
   if (parsed === undefined) return false;
   if (!isRecord(parsed)) return false;
-  const next = { ...parsed };
+  const next: Record<string, unknown> = { ...parsed };
   let changed = false;
   if (
     isRecord(next.statusLine) &&

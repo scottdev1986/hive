@@ -121,7 +121,20 @@ function readDaemonLock(hiveHome = getHiveHome()): FileEvidence<DaemonLock> {
       (lock.startToken === undefined) !== (lock.executablePath === undefined)
     )
       return { state: "unknown" };
-    return { state: "valid", value: lock as unknown as DaemonLock };
+    return {
+      state: "valid",
+      value: {
+        pid: lock.pid,
+        instanceId: lock.instanceId,
+        startedAt: lock.startedAt,
+        ...(lock.startToken === undefined
+          ? undefined
+          : { startToken: lock.startToken }),
+        ...(lock.executablePath === undefined
+          ? undefined
+          : { executablePath: lock.executablePath }),
+      },
+    };
   } catch {
     return { state: "unknown" };
   }

@@ -5,6 +5,7 @@ import {
   seedGrokRepositoryTrust,
   writeGrokAgentConfig,
 } from "./grok-cli";
+import { definedFields } from "../../shared/defined-fields";
 import type { AgentAdapter } from "./provider-adapter";
 
 export const grokAgentAdapter: AgentAdapter = {
@@ -50,12 +51,10 @@ export const grokAgentAdapter: AgentAdapter = {
       daemonPort: context.daemonPort,
       name: context.name,
       providerRunId: context.providerRunId,
-      ...(context.hiveCommand === undefined
-        ? {}
-        : { hiveCommand: context.hiveCommand }),
-      ...(context.graphifyUrl === undefined
-        ? {}
-        : { graphifyUrl: context.graphifyUrl }),
+      ...definedFields({
+        hiveCommand: context.hiveCommand,
+        graphifyUrl: context.graphifyUrl,
+      }),
     });
     if (context.executable !== undefined) {
       // AFTER the config write, deliberately. The write is what puts a repo-local MCP table in the folder, and that is the capability grok's trust decision governs: a fresh worktree reads `trusted` before it and `untrusted` after, unless an ancestor already carries a decision. Inspecting first would always answer `trusted` and prove nothing.

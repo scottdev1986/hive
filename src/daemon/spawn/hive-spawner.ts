@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { definedFields } from "../../shared/defined-fields";
 import { runGit } from "../../adapters/git";
 import { resolveWorkingClaudeExecutable } from "../../adapters/providers/claude-cli";
 import {
@@ -200,20 +201,27 @@ export class HiveSpawner implements Spawner {
           }
           return this.dependencies.readRoutingPolicy();
         },
-        ...(quota === undefined
-          ? {}
-          : {
-              launchCooldown: (candidate: AuthorizedLaunch) =>
-                quota.launchCooldown(candidate),
-              drainedPool: (candidate: AuthorizedLaunch) => {
-                const drained = quota.drainFor(candidate);
-                return drained === null
-                  ? null
-                  : { pool: drained.pool, resetsAt: drained.resetsAt };
-              },
-              poolsGoverning: (candidate: AuthorizedLaunch) =>
-                quota.poolsGoverning(candidate).map((status) => status.pool),
-            }),
+        ...definedFields({
+          launchCooldown:
+            quota === undefined
+              ? undefined
+              : (candidate: AuthorizedLaunch) =>
+                  quota.launchCooldown(candidate),
+          drainedPool:
+            quota === undefined
+              ? undefined
+              : (candidate: AuthorizedLaunch) => {
+                  const drained = quota.drainFor(candidate);
+                  return drained === null
+                    ? null
+                    : { pool: drained.pool, resetsAt: drained.resetsAt };
+                },
+          poolsGoverning:
+            quota === undefined
+              ? undefined
+              : (candidate: AuthorizedLaunch) =>
+                  quota.poolsGoverning(candidate).map((status) => status.pool),
+        }),
       });
     }
     return this.routerInstance;
@@ -896,9 +904,7 @@ export class HiveSpawner implements Spawner {
                 console.warn(validated.warning);
               return {
                 refusal: null,
-                ...(validated.effort === undefined
-                  ? {}
-                  : { effort: validated.effort }),
+                ...definedFields({ effort: validated.effort }),
               };
             }
             const discoveredDefault =
@@ -919,9 +925,7 @@ export class HiveSpawner implements Spawner {
                 );
                 return {
                   refusal: null,
-                  ...(validated.effort === undefined
-                    ? {}
-                    : { effort: validated.effort }),
+                  ...definedFields({ effort: validated.effort }),
                 };
               }
               case "codex": {
@@ -934,9 +938,7 @@ export class HiveSpawner implements Spawner {
                   console.warn(validated.warning);
                 return {
                   refusal: null,
-                  ...(validated.effort === undefined
-                    ? {}
-                    : { effort: validated.effort }),
+                  ...definedFields({ effort: validated.effort }),
                 };
               }
               default:
@@ -987,7 +989,7 @@ export class HiveSpawner implements Spawner {
       const gate = await authorizeCandidate({
         tool: candidate.provider,
         model: candidate.model,
-        ...(effortValue === undefined ? {} : { effort: effortValue }),
+        ...definedFields({ effort: effortValue }),
       });
       return gate.refusal !== undefined
         ? {
@@ -1005,7 +1007,7 @@ export class HiveSpawner implements Spawner {
       authorized = await requireGate({
         tool,
         model: explicitModel,
-        ...(request.effort === undefined ? {} : { effort: request.effort }),
+        ...definedFields({ effort: request.effort }),
       });
       decision = this.router().recordExplicitDecision(
         agentId,
@@ -1059,7 +1061,7 @@ export class HiveSpawner implements Spawner {
           executionIdentity = {
             tool,
             model,
-            ...(effort === undefined ? {} : { effort }),
+            ...definedFields({ effort }),
           };
           break;
         case "codex":
@@ -1075,7 +1077,7 @@ export class HiveSpawner implements Spawner {
           executionIdentity = {
             tool,
             model,
-            ...(effort === undefined ? {} : { effort }),
+            ...definedFields({ effort }),
             cliVersion: identity.version ?? "unknown",
             cliBuildHash: identity.buildHash ?? "unknown",
           };
@@ -1140,7 +1142,7 @@ export class HiveSpawner implements Spawner {
       // A fresh flat UUID or the hierarchy grant's never-before-used subject. Reusing either would overwrite the closure record that distinguishes two generations.
       id: agentId,
       sessionLocator,
-      ...(grokSessionId === undefined ? {} : { toolSessionId: grokSessionId }),
+      ...definedFields({ toolSessionId: grokSessionId }),
       name,
       tool,
       model,
@@ -1158,8 +1160,7 @@ export class HiveSpawner implements Spawner {
       contextPct: null,
       createdAt: timestamp,
       lastEventAt: timestamp,
-      ...(quotaReservationId === undefined ? {} : { quotaReservationId }),
-      ...(executionIdentity === undefined ? {} : { executionIdentity }),
+      ...definedFields({ quotaReservationId, executionIdentity }),
       capabilityEpoch: hierarchyIdentity?.capabilityEpoch ?? 0,
       readOnly,
       writeRevoked: false,
@@ -1332,22 +1333,21 @@ export class HiveSpawner implements Spawner {
             tool,
             readOnly,
             category: request.category,
-            ...(graphBrief === null ? {} : { graphBrief }),
-            ...(graphifyUrl === null ? {} : { graphifyTools: true }),
-            ...(assignment === undefined ? {} : { assignment }),
-            ...(request.handoffId === undefined
-              ? {}
-              : { handoffId: request.handoffId }),
-            ...(spawnBrief === undefined ? {} : { spawnBrief }),
-            ...(boardTaskId === undefined ? {} : { boardTaskId }),
-            ...(learnedCommand === null || verificationFact === null
-              ? {}
-              : {
-                  learnedVerification: {
-                    command: learnedCommand,
-                    status: verificationFact.status,
-                  },
-                }),
+            ...definedFields({
+              graphBrief: graphBrief === null ? undefined : graphBrief,
+              graphifyTools: graphifyUrl === null ? undefined : true,
+              assignment,
+              handoffId: request.handoffId,
+              spawnBrief,
+              boardTaskId,
+              learnedVerification:
+                learnedCommand === null || verificationFact === null
+                  ? undefined
+                  : {
+                      command: learnedCommand,
+                      status: verificationFact.status,
+                    },
+            }),
           },
         );
         const instructionPath = await writeLaunchPrompt(
@@ -1395,15 +1395,17 @@ export class HiveSpawner implements Spawner {
           preparedLaunch = await adapter.prepareRuntime({
             daemonPort: this.daemonPort(),
             model,
-            ...(effort === undefined ? {} : { effort }),
+            ...definedFields({ effort }),
             name,
             readOnly,
             dangerous,
             worktreePath: worktree.path,
             executable: this.executableFor(tool),
             hiveCommand,
-            ...(capabilityToken === undefined ? {} : { withCapability: true }),
-            ...(graphifyUrl === null ? {} : { graphifyUrl }),
+            ...definedFields({
+              withCapability: capabilityToken === undefined ? undefined : true,
+              graphifyUrl: graphifyUrl === null ? undefined : graphifyUrl,
+            }),
             instructionPath,
             providerRunId,
             excludeMcpServers,
@@ -1433,7 +1435,7 @@ export class HiveSpawner implements Spawner {
             "outbound.jsonl",
           ),
           model,
-          ...(effort === undefined ? {} : { effort }),
+          ...definedFields({ effort }),
           readOnly,
           instructionPath,
           kickoff,
@@ -1465,9 +1467,7 @@ export class HiveSpawner implements Spawner {
           const revalidated = await requireGate({
             tool: authorized.tool,
             model: authorized.model,
-            ...(authorized.effort === undefined
-              ? {}
-              : { effort: authorized.effort }),
+            ...definedFields({ effort: authorized.effort }),
           });
           if (
             revalidated.tool !== authorized.tool ||

@@ -35,7 +35,7 @@ export class MailReadyClient {
     this.daemon = new PaneDaemonClient({
       port: options.port,
       subject: options.recipient,
-      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+      fetch: options.fetch,
     });
   }
 

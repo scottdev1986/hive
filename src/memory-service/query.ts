@@ -240,10 +240,14 @@ function fleetAgents(
   return [...agents].sort();
 }
 
+interface QueryRow {
+  readonly asOf?: string;
+}
+
 interface ClassOutcome {
   state: "ok" | "empty" | "absent";
   detail: string | null;
-  rows: unknown[];
+  rows: QueryRow[];
   asOf: string | null;
   source: string[];
 }
@@ -257,7 +261,7 @@ const absent = (detail: string, source: string[]): ClassOutcome => ({
 });
 
 const finish = (
-  rows: Array<Record<string, unknown>>,
+  rows: QueryRow[],
   emptyDetail: string,
   source: string[],
 ): ClassOutcome => ({
@@ -265,8 +269,10 @@ const finish = (
   detail: rows.length === 0 ? emptyDetail : null,
   rows,
   asOf: rows.reduce<string | null>((latest, row) => {
-    const asOf = typeof row.asOf === "string" ? row.asOf : null;
-    return asOf !== null && (latest === null || asOf > latest) ? asOf : latest;
+    const asOf = row.asOf;
+    return asOf !== undefined && (latest === null || asOf > latest)
+      ? asOf
+      : latest;
   }, null),
   source,
 });
@@ -292,7 +298,7 @@ async function runClass(
       const agentId = deps.resolveAgentId(input.agent) ?? input.agent;
       const now2 = agentNow(deps, agentId, now);
       return finish(
-        now2 === null ? [] : [now2.row as unknown as Record<string, unknown>],
+        now2 === null ? [] : [now2.row],
         `no status or episodic rows for agent ${input.agent}`,
         [...episodicSurface],
       );
@@ -355,26 +361,23 @@ async function runClass(
         );
       }
       const agents = fleetAgents(deps);
-      const rows: Array<Record<string, unknown>> = [];
+      const rows: AgentNowRow[] = [];
       let blockedCount = 0;
       for (const agentId of agents) {
         const now2 = agentNow(deps, agentId, now);
         if (now2 === null) continue;
         if (now2.blocked) blockedCount += 1;
-        rows.push(now2.row as unknown as Record<string, unknown>);
+        rows.push(now2.row);
       }
+      const summary = {
+        agents: rows.length,
+        blocked: blockedCount,
+        rows,
+        source: "status+episodic",
+        asOf: now.toISOString(),
+      };
       return finish(
-        rows.length === 0
-          ? []
-          : [
-              {
-                agents: rows.length,
-                blocked: blockedCount,
-                rows,
-                source: "status+episodic",
-                asOf: now.toISOString(),
-              },
-            ],
+        rows.length === 0 ? [] : [summary],
         "no agents have reported anything yet",
         [...episodicSurface],
       );
@@ -410,11 +413,11 @@ async function runClass(
           [...episodicSurface],
         );
       }
-      const rows: Array<Record<string, unknown>> = [];
+      const rows: AgentNowRow[] = [];
       for (const agentId of fleetAgents(deps)) {
         const now2 = agentNow(deps, agentId, now);
         if (now2?.blocked === true) {
-          rows.push(now2.row as unknown as Record<string, unknown>);
+          rows.push(now2.row);
         }
       }
       return finish(rows, "no agent's latest state is blocked or waiting", [

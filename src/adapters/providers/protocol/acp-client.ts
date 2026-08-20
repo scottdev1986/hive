@@ -11,6 +11,23 @@ import {
 } from "@agentclientprotocol/sdk";
 import { terminateProcessGroup } from "./process-group";
 
+function uint8ReadableStream(source: Readable): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      source.on("data", (chunk: Buffer) => {
+        controller.enqueue(
+          chunk instanceof Uint8Array ? chunk : Buffer.from(chunk),
+        );
+      });
+      source.on("end", () => controller.close());
+      source.on("error", (error: Error) => controller.error(error));
+    },
+    cancel() {
+      source.destroy();
+    },
+  });
+}
+
 export type AcpRequestHandler = (
   method: string,
   params: unknown,
@@ -101,7 +118,7 @@ export class AcpClient {
     this.connection = app.connect(
       ndJsonStream(
         Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-        Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>,
+        uint8ReadableStream(child.stdout),
       ),
     );
 

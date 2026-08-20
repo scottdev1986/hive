@@ -1,7 +1,14 @@
 // Credential-free decoding shared by the user and pane HTTP clients. Keeping this module pure lets both clients agree on daemon error vocabulary without making either authentication path reachable from the other.
 
-export async function decodeJson(response: Response): Promise<unknown | null> {
-  return await response.json().catch(() => null);
+import type { JsonValue } from "../shared/json";
+
+export async function decodeJson(
+  response: Response,
+): Promise<JsonValue | null> {
+  return await response.json().then(
+    (value) => value as JsonValue,
+    () => null,
+  );
 }
 
 export interface DaemonErrorDetail {
@@ -15,10 +22,11 @@ export function daemonErrorDetail(
 ): DaemonErrorDetail {
   if (typeof body !== "object" || body === null) return { message: fallback };
   const value = body as Record<string, unknown>;
-  return {
+  const detail: DaemonErrorDetail = {
     message: typeof value.error === "string" ? value.error : fallback,
-    ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
   };
+  if (typeof value.reason === "string") detail.reason = value.reason;
+  return detail;
 }
 
 export async function responseErrorDetail(response: Response): Promise<string> {

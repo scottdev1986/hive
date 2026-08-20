@@ -72,15 +72,19 @@ export function validateHandshake(value: unknown): InitializeResponse {
     );
   }
   const userAgent = requiredString(value, "userAgent", "initialize result");
-  requiredString(value, "codexHome", "initialize result");
-  requiredString(value, "platformFamily", "initialize result");
-  requiredString(value, "platformOs", "initialize result");
+  const codexHome = requiredString(value, "codexHome", "initialize result");
+  const platformFamily = requiredString(
+    value,
+    "platformFamily",
+    "initialize result",
+  );
+  const platformOs = requiredString(value, "platformOs", "initialize result");
   if (!userAgent.startsWith(`${CLIENT_NAME}/`)) {
     throw new CodexAppServerIncompatibleError(
       `initialize userAgent does not report ${CLIENT_NAME}`,
     );
   }
-  return value as unknown as InitializeResponse;
+  return { userAgent, codexHome, platformFamily, platformOs };
 }
 
 export async function initializeWire(

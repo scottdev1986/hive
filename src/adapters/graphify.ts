@@ -16,6 +16,7 @@ import graphifyLock from "../../graphify.lock" with { type: "text" };
 import { projectStateDir } from "../daemon/project-identity-core/state";
 import { machineHiveHome } from "../hive-home/home";
 import { fetchGraphifyRelease, type GraphifyRelease } from "./graphify-channel";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 import { withFileLock } from "./file-lock";
 
@@ -82,8 +83,7 @@ export type CommandRunner = (
 
 export const runCommand: CommandRunner = async (argv, options) => {
   const proc = Bun.spawn(argv, {
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-    ...(options.env === undefined ? {} : { env: options.env }),
+    ...definedFields({ cwd: options.cwd, env: options.env }),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

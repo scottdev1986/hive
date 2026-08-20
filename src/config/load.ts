@@ -8,17 +8,12 @@ import {
 import { type HiveConfig, HiveConfigSchema } from "../schemas/config-schema";
 import { errorMessage } from "../shared/error-message";
 
-async function readToml(path: string): Promise<unknown | undefined> {
+async function readToml(path: string): Promise<string | undefined> {
   const file = Bun.file(path);
   if (!(await file.exists())) {
     return undefined;
   }
-
-  try {
-    return Bun.TOML.parse(await file.text());
-  } catch (error) {
-    throw new Error(`Invalid TOML in ${path}: ${errorMessage(error)}`);
-  }
+  return await file.text();
 }
 
 /** The file `loadHiveConfig` reads. A writer must target this exact path, not its own reconstruction of it, or a compare-and-set would fence a file nobody loads. */
@@ -28,10 +23,17 @@ export function hiveConfigPath(): string {
 
 export async function loadHiveConfig(): Promise<HiveConfig> {
   const path = hiveConfigPath();
-  const raw = await readToml(path);
-
+  const text = await readToml(path);
+  let parsed: unknown = {};
+  if (text !== undefined) {
+    try {
+      parsed = Bun.TOML.parse(text);
+    } catch (error) {
+      throw new Error(`Invalid TOML in ${path}: ${errorMessage(error)}`);
+    }
+  }
   try {
-    return HiveConfigSchema.parse(raw ?? {});
+    return HiveConfigSchema.parse(parsed);
   } catch (error) {
     throw new Error(`Invalid hive config at ${path}: ${errorMessage(error)}`);
   }
@@ -39,10 +41,17 @@ export async function loadHiveConfig(): Promise<HiveConfig> {
 
 export async function loadQuotaConfig(): Promise<QuotaConfig> {
   const path = join(getHiveHome(), "quota.toml");
-  const raw = await readToml(path);
-
+  const text = await readToml(path);
+  let parsed: unknown = DEFAULT_QUOTA_CONFIG;
+  if (text !== undefined) {
+    try {
+      parsed = Bun.TOML.parse(text);
+    } catch (error) {
+      throw new Error(`Invalid TOML in ${path}: ${errorMessage(error)}`);
+    }
+  }
   try {
-    const config = QuotaConfigSchema.parse(raw ?? DEFAULT_QUOTA_CONFIG);
+    const config = QuotaConfigSchema.parse(parsed);
     for (const limit of config.limits) {
       try {
         new Intl.DateTimeFormat("en-US", { timeZone: limit.timezone }).format();

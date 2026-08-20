@@ -2,6 +2,7 @@ import {
   writeOpencodeAgentConfig,
   writeOpencodeTurnPlugin,
 } from "./opencode-cli";
+import { definedFields } from "../../shared/defined-fields";
 import type { AgentAdapter } from "./provider-adapter";
 
 export const opencodeAgentAdapter: AgentAdapter = {
@@ -22,12 +23,10 @@ export const opencodeAgentAdapter: AgentAdapter = {
       daemonPort: context.daemonPort,
       readOnly: context.readOnly,
       dangerous: context.dangerous,
-      ...(context.graphifyUrl === undefined
-        ? {}
-        : { graphifyUrl: context.graphifyUrl }),
-      ...(context.instructionPath === undefined
-        ? {}
-        : { instructionPath: context.instructionPath }),
+      ...definedFields({
+        graphifyUrl: context.graphifyUrl,
+        instructionPath: context.instructionPath,
+      }),
     });
     if (context.providerRunId !== undefined) {
       await writeOpencodeTurnPlugin(context.worktreePath, {
