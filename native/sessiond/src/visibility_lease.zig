@@ -20,22 +20,6 @@ pub const VisibilityLease = struct {
         };
     }
 
-    pub fn renew(
-        self: *VisibilityLease,
-        workspace_session_id: []const u8,
-        revision: u64,
-        now_ns: u64,
-    ) !void {
-        if (self.expired(now_ns)) return error.VisibilityExpired;
-        if (!std.mem.eql(u8, self.workspace_session_id, workspace_session_id))
-            return error.VisibilityForbidden;
-        if (revision < self.open_terminal_revision)
-            return error.StaleVisibilityRevision;
-        self.open_terminal_revision = revision;
-        self.expires_mono_ns = try expiryFrom(now_ns);
-        self.state = .visible;
-    }
-
     /// A running host holds its own lease open. Liveness is observed — the host watches its supervisor's process — so the deadline only bounds the wire's `expiresAt` and the input-claim window; it does not decide whether the terminal may live. Nothing has to arrive for the host to stay open: reading an unrenewed lease as death kills working agents whose vendor TUI is rendered and running.
     pub fn touch(self: *VisibilityLease, now_ns: u64) void {
         if (self.state == .expired) return;
