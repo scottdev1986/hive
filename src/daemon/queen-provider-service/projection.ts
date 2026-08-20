@@ -102,7 +102,7 @@ export function buildQueenProviderProjection(
     health:
       providerStatus ??
       legacyStatus ??
-      (inputs.observedLiveProvider === null ? "disconnected" : "connecting"),
+      (inputs.observedLiveProvider === null ? null : "connecting"),
     contradicted:
       providerStatus === null &&
       newest === "turn-end" &&

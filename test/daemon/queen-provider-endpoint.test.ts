@@ -57,7 +57,7 @@ const request = (
 };
 
 describe("GET /queen-provider", () => {
-  test("a fresh daemon projects idle, no live provider, all vendors", async () => {
+  test("a fresh daemon has no health because no queen provider was ever observed", async () => {
     const daemon = harness();
     const { token } = daemon.capabilities.mint("user", "user");
     const response = await request(daemon, token, "GET");

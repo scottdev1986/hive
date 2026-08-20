@@ -17,9 +17,8 @@ export const QueenRootIdentitySchema = z.strictObject({
 });
 export type QueenRootIdentity = z.infer<typeof QueenRootIdentitySchema>;
 
-/** What the root is doing. Current projections preserve provider-native turn
- * state and use lifecycle states outside a turn. Nullable remains a v1 wire
- * compatibility allowance for projections written by older daemons. */
+/** What the root is doing. Provider-native turn and lifecycle states win;
+ * legacy boundaries support older sources. Null means no status was measured. */
 export const QueenRootHealthSchema = OrchestratorStatusSchema;
 export type QueenRootHealth = z.infer<typeof QueenRootHealthSchema>;
 

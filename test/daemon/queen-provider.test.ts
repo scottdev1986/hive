@@ -206,7 +206,7 @@ describe("queen provider projection", () => {
     expect(projection.root).toEqual({ name: "queen", instanceId: "inst-1" });
   });
 
-  test("prefers exact provider health and retains conservative legacy fallback", () => {
+  test("prefers measured provider health and retains conservative legacy fallback", () => {
     const asking = buildQueenProviderProjection({
       ...base,
       signals: ["turn-end", "turn-end"],
@@ -225,18 +225,40 @@ describe("queen provider projection", () => {
     expect(working.contradicted).toEqual(false);
 
     // A legacy turn that ended without starting is named as a contradiction;
-    // disconnected is the concrete lifecycle state when no root is observed.
+    // it cannot supply a trustworthy health reading.
     const lying = buildQueenProviderProjection({
       ...base,
       signals: ["turn-end", "turn-end"],
     });
-    expect(lying.health).toEqual("disconnected");
+    expect(lying.health).toBeNull();
     expect(lying.contradicted).toEqual(true);
 
-    // No signals and no live root is disconnected, never unknown.
+    // A fresh daemon has never observed a root lifecycle, so it has no health
+    // reading rather than a fabricated disconnection.
     const silent = buildQueenProviderProjection(base);
-    expect(silent.health).toEqual("disconnected");
+    expect(silent.health).toBeNull();
     expect(silent.contradicted).toEqual(false);
+  });
+
+  test("keeps observed lifecycle states concrete", () => {
+    const connecting = buildQueenProviderProjection({
+      ...base,
+      observedLiveProvider: "claude",
+    });
+    expect(connecting.health).toEqual("connecting");
+
+    const ready = buildQueenProviderProjection({
+      ...base,
+      providerStatus: "ready",
+      observedLiveProvider: "claude",
+    });
+    expect(ready.health).toEqual("ready");
+
+    const disconnected = buildQueenProviderProjection({
+      ...base,
+      providerStatus: "disconnected",
+    });
+    expect(disconnected.health).toEqual("disconnected");
   });
 
   test("always carries all five vendors", () => {
