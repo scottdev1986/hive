@@ -2,7 +2,20 @@
 // daemon.port (or withholds it) and a fake liveness probe so the wait can
 // prove the three outcomes — ready, daemon died, bound expired — without a rig.
 import { describe, expect, test } from "bun:test";
-import { waitForDaemonPort } from "../wait-ready";
+import { daemonHomesToWatch, waitForDaemonPort } from "../wait-ready";
+
+describe("daemonHomesToWatch", () => {
+  test("names the instance home under the canonical QA home, not the caller's /tmp spelling", () => {
+    const qaHome = "/tmp";
+    const homes = daemonHomesToWatch(qaHome, process.cwd());
+    expect(homes.length).toBeGreaterThanOrEqual(1);
+    const root = homes[homes.length - 1];
+    expect(root).toBeDefined();
+    for (const home of homes) {
+      expect(home === root || home.startsWith(`${root}/`)).toBe(true);
+    }
+  });
+});
 
 describe("waitForDaemonPort", () => {
   test("returns the home that first presents a usable port", async () => {

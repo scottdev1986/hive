@@ -8,7 +8,6 @@ import { join, resolve } from "node:path";
 import { readDaemonPort } from "../src/daemon/lifecycle/daemon-lifecycle";
 import { repoInstanceName } from "../src/daemon/lifecycle/instances";
 import { projectKey } from "../src/daemon/project-identity-core/state";
-import { instancesRoot } from "../src/hive-home/home";
 
 export function processIsAlive(pid: number): boolean {
   try {
@@ -30,24 +29,15 @@ function canonical(path: string): string {
   }
 }
 
-/** Homes the QA daemon may write daemon.port into. The product rebinds `hive daemon` to the repo instance when HIVE_HOME equals HIVE_DEFAULT_HOME and cwd is a project; it stays on the machine home otherwise. Watch both, provided each resolves inside the QA home. */
+/** Homes the QA daemon may write daemon.port into. Derived from the canonical QA home so /tmp vs /private/tmp cannot look like an escape. The product rebinds `hive daemon` to the repo instance when HIVE_HOME equals HIVE_DEFAULT_HOME and cwd is a project; it stays on the machine home otherwise. Watch both. */
 export function daemonHomesToWatch(qaHome: string, project: string): string[] {
   const root = canonical(qaHome);
   const instanceHome = join(
-    instancesRoot(),
+    root,
+    "instances",
     repoInstanceName(projectKey(realpathSync(project))),
   );
-  const homes: string[] = [];
-  for (const home of [instanceHome, qaHome]) {
-    const resolved = canonical(home);
-    if (resolved !== root && !resolved.startsWith(`${root}/`)) {
-      throw new Error(
-        `refusing: daemon home ${home} resolves outside QA_HOME ${qaHome}`,
-      );
-    }
-    if (!homes.includes(resolved)) homes.push(resolved);
-  }
-  return homes;
+  return instanceHome === root ? [root] : [instanceHome, root];
 }
 
 export async function waitForDaemonPort(deps: {
