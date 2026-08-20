@@ -76,6 +76,7 @@ interface Probe {
   deps: UninstallDeps;
   lines: string[];
   stops: number[];
+  stopRoots: Array<string | undefined>;
   leaseEvents: string[];
 }
 
@@ -85,13 +86,15 @@ function probe(
 ): Probe {
   const lines: string[] = [];
   const stops: number[] = [];
+  const stopRoots: Array<string | undefined> = [];
   const leaseEvents: string[] = [];
   const deps: UninstallDeps = {
     run: runCommand,
     confirm: async () => confirm,
     log: (line) => lines.push(line),
-    stopCurrentInstance: async () => {
+    stopCurrentInstance: async (root?: string) => {
       stops.push(1);
+      stopRoots.push(root);
     },
     currentInstanceOwnsProject: async () => true,
     settleCurrentProject: async () => ({}),
@@ -103,7 +106,7 @@ function probe(
     },
     ...overrides,
   };
-  return { deps, lines, stops, leaseEvents };
+  return { deps, lines, stops, stopRoots, leaseEvents };
 }
 
 describe("hive uninstall --repo", () => {
@@ -161,6 +164,18 @@ describe("hive uninstall --repo", () => {
       expect(await runUninstallRepo(root, {}, deps)).toBe(0);
       expect(stops).toEqual([]);
       expect(existsSync(join(root, "graphify-out"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("repo uninstall stops the project root's instance, not the process home", async () => {
+    const root = await gitRepo();
+    try {
+      const { deps, stops, stopRoots } = probe(true);
+      expect(await runUninstallRepo(root, {}, deps)).toBe(0);
+      expect(stops).toEqual([1]);
+      expect(stopRoots).toEqual([root]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

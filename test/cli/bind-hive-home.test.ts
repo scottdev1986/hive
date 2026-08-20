@@ -123,6 +123,16 @@ describe("CLI Hive-home resolution", () => {
       }
       expect(thrown).toBeInstanceOf(Error);
       expect((thrown as Error).message).not.toMatch(/no readable port/);
+      expect(process.env.HIVE_HOME).toBe(machineHome);
+      const previousCwd = process.cwd();
+      try {
+        process.chdir(root);
+        await defaultUninstallDeps.stopCurrentInstance(root);
+      } finally {
+        process.chdir(previousCwd);
+      }
+      expect(process.env.HIVE_HOME).toBe(machineHome);
+      expect(getHiveHome()).toBe(machineHome);
     } finally {
       process.env.HIVE_HOME = machineHome;
       await rm(root, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 /** `hive uninstall` removes Hive-owned integration without treating the command as authority to discard unsettled work. Repo uninstall asks the live settlement service to close exact-safe cases before stopping it, then removes byte-identical skills and standards, Hive's marked `.gitignore` entries, leaked runtime config, graph output, and derived project state. Any remaining worktree, branch, edited Hive file, or user file stays and is named. Machine uninstall removes the shared Hive home and managed install only after its separate live-team and mutation-lease checks. */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -10,6 +10,10 @@ import {
 } from "../adapters/graphify";
 import { nativeSkillDirectory, type SkillTool } from "../adapters/skills";
 import { listHiveBranches, listWorktrees } from "../adapters/worktrees";
+import {
+  readCredential,
+  USER_SUBJECT,
+} from "../daemon/authorization/credentials";
 import {
   daemonInstanceLiveness,
   expectedDaemonHandshake,
@@ -31,7 +35,12 @@ import {
   AGENT_STANDARDS_FILE,
   scaffoldAgentStandardsMd,
 } from "../daemon/spawn/agent-standards";
-import { resolveHiveHome, userHiveHome } from "../hive-home/home";
+import {
+  getHiveHome,
+  hiveInstanceSuffix,
+  resolveHiveHome,
+  userHiveHome,
+} from "../hive-home/home";
 import { resolveVariant, type VariantConfig } from "../hive-home/variant";
 import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 import { errorMessage } from "../shared/error-message";
@@ -42,17 +51,18 @@ import {
   installRoot,
 } from "../update-service/paths";
 import { resolveCliHiveHome } from "./bind-hive-home";
-import { stopHive } from "./control";
+import { requestDaemonStop, stopHive } from "./control";
 import { fetchAgentStatus, requestSettlementSweep } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { type ConfirmFn, confirmOnTty } from "./prompt";
 import { stripHiveGitignoreEntries } from "./repo-gitignore";
+import type { AuthorizedFetch } from "./user-daemon-client";
 
 export interface UninstallDeps {
   run: CommandRunner;
   confirm: ConfirmFn;
   log: (line: string) => void;
-  stopCurrentInstance: () => Promise<void>;
+  stopCurrentInstance: (root?: string) => Promise<void>;
   /** Whether the selected instance's live daemon serves the repo being uninstalled. A foreign daemon must never be signaled. */
   currentInstanceOwnsProject: (root: string) => Promise<boolean>;
   settleCurrentProject: (root: string) => Promise<unknown>;
@@ -84,11 +94,67 @@ async function stopInstances(): Promise<void> {
   throw new Error("one or more Hive instances did not stop");
 }
 
+function readPidAtHome(home: string): number | null {
+  try {
+    const pid = Number.parseInt(
+      readFileSync(join(home, "daemon.pid"), "utf8"),
+      10,
+    );
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function fetchWithCredentialFromHome(home: string): AuthorizedFetch {
+  const previous = process.env.HIVE_HOME;
+  process.env.HIVE_HOME = home;
+  let token: string | null;
+  try {
+    token = readCredential(USER_SUBJECT);
+  } finally {
+    if (previous === undefined) delete process.env.HIVE_HOME;
+    else process.env.HIVE_HOME = previous;
+  }
+  return (input, init) => {
+    const headers = new Headers(init?.headers);
+    if (token !== null) headers.set("Authorization", `Bearer ${token}`);
+    return fetch(input, { ...init, headers });
+  };
+}
+
+function stopHiveAtHome(home: string): Promise<void> {
+  return stopHive({
+    readPid: () => readPidAtHome(home),
+    liveness: () => daemonInstanceLiveness(home, hiveInstanceSuffix(home)),
+    cleanup: () => {
+      rmSync(join(home, "daemon.port"), { force: true });
+      rmSync(join(home, "daemon.pid"), { force: true });
+    },
+    requestStop: (body) => {
+      const port = readDaemonPort(home);
+      if (port === null) {
+        throw new Error(
+          "no daemon is running\nFix: run `hive` in the project first",
+        );
+      }
+      return requestDaemonStop(port, body, {
+        instanceId: hiveInstanceSuffix(home),
+        fetch: fetchWithCredentialFromHome(home),
+      });
+    },
+  });
+}
+
 export const defaultUninstallDeps: UninstallDeps = {
   run: runCommand,
   confirm: confirmOnTty,
   log: console.log,
-  stopCurrentInstance: stopHive,
+  stopCurrentInstance: async (root?: string) => {
+    await stopHiveAtHome(
+      root === undefined ? getHiveHome() : resolveCliHiveHome(root),
+    );
+  },
   currentInstanceOwnsProject: async (root) => {
     const port = readDaemonPort(resolveCliHiveHome(root));
     if (port === null) return false;
@@ -345,7 +411,7 @@ export async function runUninstallRepo(
   if (await deps.currentInstanceOwnsProject(root)) {
     try {
       await deps.settleCurrentProject(root);
-      await deps.stopCurrentInstance();
+      await deps.stopCurrentInstance(root);
     } catch (error) {
       deps.log(
         `Refusing repo uninstall because this project's instance did not stop: ${errorMessage(error)}\n` +

@@ -36,6 +36,7 @@ import {
 import { type ConfirmFn, confirmOnTty } from "./prompt";
 import { formatQuotaStatus, formatStatusTable } from "./status";
 import {
+  type AuthorizedFetch,
   daemonErrorDetail,
   decodeJson,
   UserDaemonClient,
@@ -406,11 +407,20 @@ export type StopResponseBody =
 const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 30_000;
 
 /** POST /stop — the daemon's own atomic-or-abortive shutdown. One request; every gate (agent-worktree invoker and unlanded work) is evaluated daemon-side before anything dies, and past the commit point the daemon drives kills and its own exit to completion whether or not this client survives to see the answer. */
-async function defaultRequestStop(
+export async function requestDaemonStop(
+  port: number,
   body: StopRequestBody,
+  options: {
+    readonly instanceId?: string;
+    readonly fetch?: AuthorizedFetch;
+  } = {},
 ): Promise<StopResponseBody> {
   const response = await new UserDaemonClient({
-    port: requireDaemonPort(),
+    port,
+    ...(options.instanceId === undefined
+      ? {}
+      : { instanceId: options.instanceId }),
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     verifyIdentity: !isTestRunnerEnv(),
   }).request("/stop", {
     method: "POST",
@@ -426,6 +436,12 @@ async function defaultRequestStop(
     );
   }
   return parsed as StopResponseBody;
+}
+
+async function defaultRequestStop(
+  body: StopRequestBody,
+): Promise<StopResponseBody> {
+  return requestDaemonStop(requireDaemonPort(), body);
 }
 
 export interface StopHiveDependencies {
