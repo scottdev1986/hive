@@ -318,9 +318,7 @@ async function drivable(
     const control = response.controls?.find(
       (candidate) => candidate.identifier === identifier,
     );
-    return control?.enabled && control.functionallyPresent
-      ? true
-      : null;
+    return control?.enabled && control.functionallyPresent ? true : null;
   });
   if (poll.kind === "met") return { ok: true };
   return {
@@ -361,9 +359,7 @@ async function applyDraft(
     lastSeen =
       `apply present=${apply?.functionallyPresent ?? false} enabled=${apply?.enabled ?? false} draft=${draft} conflict=${conflict}` +
       (member === undefined ? "" : ` memberEnabled=${member.enabled}`);
-    return apply?.enabled && apply.functionallyPresent
-      ? true
-      : null;
+    return apply?.enabled && apply.functionallyPresent ? true : null;
   });
   if (poll.kind === "met") {
     return await drive(ctx, {
