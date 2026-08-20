@@ -349,10 +349,13 @@ async function plantMember(
     identifier: "task-router-apply",
   });
   if (!apply.ok) {
+    const reason = apply.reason.includes("not actionable")
+      ? `${apply.reason} — consistent with the known door defect: memberToggled reads sender.state, which qa-control invoke never flips (product fix dispatched to prudence)`
+      : apply.reason;
     return {
       ok: false,
       status: "NO MEASUREMENT",
-      reason: `could not plant member ${name}: apply: ${apply.reason}`,
+      reason: `could not plant member ${name}: apply: ${reason}`,
     };
   }
   const poll = await pollOracle(ctx, async () =>
