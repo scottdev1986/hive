@@ -287,6 +287,29 @@ async function showRouterCategory(
   return { ok: true };
 }
 
+/** Wait until a control is on screen and enabled before driving it. After a mode select or an apply the screen rebuilds, and a control invoked mid-rebuild reads as disabled ("control is not actionable") or absent — a rig-timing fact, so outlasting the bound is NO MEASUREMENT, never a FAIL. */
+async function drivable(
+  ctx: Stage1Context,
+  identifier: string,
+): Promise<Drive> {
+  const poll = await pollGate(ctx, (response) => {
+    const control = response.controls?.find(
+      (candidate) => candidate.identifier === identifier,
+    );
+    return control !== undefined &&
+      control.enabled &&
+      control.functionallyPresent
+      ? true
+      : null;
+  });
+  if (poll.kind === "met") return { ok: true };
+  return {
+    ok: false,
+    status: "NO MEASUREMENT",
+    reason: `control ${identifier} never became drivable within the bound`,
+  };
+}
+
 /** Plant a member of the category route through the membership door, creating the route (Weighted split) when the category has none. An unplantable precondition is NO MEASUREMENT by plan rule 6, whatever the door said. */
 async function plantMember(
   ctx: Stage1Context,
@@ -333,6 +356,8 @@ async function plantMember(
       };
     }
   }
+  const ready = await drivable(ctx, `task-router-member-${name}`);
+  if (!ready.ok) return ready;
   const toggle = await drive(ctx, {
     verb: "invoke",
     identifier: `task-router-member-${name}`,
@@ -382,6 +407,10 @@ async function unplantMember(
   const shown = await showRouterCategory(ctx, categoryLabel);
   if (!shown.ok) {
     return { ok: false, status: "FAIL", reason: shown.reason };
+  }
+  const ready = await drivable(ctx, `task-router-member-${name}`);
+  if (!ready.ok) {
+    return { ok: false, status: "NO MEASUREMENT", reason: ready.reason };
   }
   const toggle = await drive(ctx, {
     verb: "invoke",
@@ -466,6 +495,8 @@ export async function rowT102MemberApplyWrites(
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
+  const ready = await drivable(ctx, `task-router-member-${name}`);
+  if (!ready.ok) return { id, status: ready.status, reason: ready.reason };
   const toggle = await drive(ctx, {
     verb: "invoke",
     identifier: `task-router-member-${name}`,
@@ -534,6 +565,10 @@ export async function rowT103WeightWritesThrough(
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
   const target = weightBefore === 3 ? 4 : 3;
+  const fieldReady = await drivable(ctx, `task-router-weight-${name}`);
+  if (!fieldReady.ok) {
+    return { id, status: fieldReady.status, reason: fieldReady.reason };
+  }
   const set = await drive(ctx, {
     verb: "invoke",
     identifier: `task-router-weight-${name}`,
@@ -638,6 +673,10 @@ export async function rowT104IllegalWeightRefused(
       status: "NO MEASUREMENT",
       reason: `positive control failed: planting ${name} did not move the revision past ${revControlBefore}`,
     };
+  }
+  const fieldReady = await drivable(ctx, `task-router-weight-${name}`);
+  if (!fieldReady.ok) {
+    return { id, status: fieldReady.status, reason: fieldReady.reason };
   }
   const set = await drive(ctx, {
     verb: "invoke",
@@ -761,6 +800,10 @@ export async function rowT105ModeEffortWriteThrough(
   if (!selectMode.ok) {
     return { id, status: selectMode.status, reason: selectMode.reason };
   }
+  const effortReady = await drivable(ctx, `task-router-effort-${name}`);
+  if (!effortReady.ok) {
+    return { id, status: effortReady.status, reason: effortReady.reason };
+  }
   const selectEffort = await drive(ctx, {
     verb: "select",
     identifier: `task-router-effort-${name}`,
@@ -878,6 +921,8 @@ export async function rowT106ApplyIsTheOnlyWrite(
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
+  const ready = await drivable(ctx, `task-router-member-${name}`);
+  if (!ready.ok) return { id, status: ready.status, reason: ready.reason };
   const toggle = await drive(ctx, {
     verb: "invoke",
     identifier: `task-router-member-${name}`,
@@ -971,6 +1016,8 @@ export async function rowT107ProviderToggleIsSpendConsent(
   // must restore to for the suite to converge.
   const wanted = stateBefore === "enabled" ? "disabled" : "enabled";
   const restoreTo = stateBefore === "unconfigured" ? "disabled" : stateBefore;
+  const ready = await drivable(ctx, `models-quota-provider-${provider}`);
+  if (!ready.ok) return { id, status: ready.status, reason: ready.reason };
   const toggle = await drive(ctx, {
     verb: "invoke",
     identifier: `models-quota-provider-${provider}`,
@@ -996,6 +1043,10 @@ export async function rowT107ProviderToggleIsSpendConsent(
     revFlipped = (await policyViaHttp(ctx)).revision;
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+  }
+  const backReady = await drivable(ctx, `models-quota-provider-${provider}`);
+  if (!backReady.ok) {
+    return { id, status: backReady.status, reason: backReady.reason };
   }
   const back = await drive(ctx, {
     verb: "invoke",
@@ -1051,6 +1102,8 @@ export async function rowT108ProbeRefreshIsARead(
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
   }
+  const ready = await drivable(ctx, "models-quota-probe-refresh");
+  if (!ready.ok) return { id, status: ready.status, reason: ready.reason };
   const refresh = await drive(ctx, {
     verb: "invoke",
     identifier: "models-quota-probe-refresh",

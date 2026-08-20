@@ -612,7 +612,7 @@ describe("T1-03 weight writes through", () => {
       K1,
     );
     expect(row.status).toBe("NO MEASUREMENT");
-    expect(row.reason).toContain("could not plant");
+    expect(row.reason).toContain("never became drivable");
   });
 });
 
