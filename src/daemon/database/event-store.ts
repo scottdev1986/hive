@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { definedFields } from "../../shared/defined-fields";
 import type { DatabaseHost } from "../../shared/database-host";
 import { type HookEvent, HookEventSchema } from "../../schemas/event";
 import type { OrchestratorSignalKind } from "../status-service/status-service";
@@ -21,9 +22,11 @@ function parseEventRow(row: unknown): HookEvent {
       kind: value.kind,
       agentName: value.agentName,
       timestamp: value.timestamp,
-      ...(value.contextPct === null ? {} : { contextPct: value.contextPct }),
-      ...(value.usageUnits === null ? {} : { usageUnits: value.usageUnits }),
-      ...(value.usageSource === null ? {} : { usageSource: value.usageSource }),
+      ...definedFields({
+        contextPct: value.contextPct === null ? undefined : value.contextPct,
+        usageUnits: value.usageUnits === null ? undefined : value.usageUnits,
+        usageSource: value.usageSource === null ? undefined : value.usageSource,
+      }),
     });
   }
   if (value.kind === "approval-request" || value.kind === "effort-drift") {

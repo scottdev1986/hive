@@ -7,6 +7,7 @@ import {
   Hv1CapabilityRecordSchema,
 } from "../../schemas/capability";
 import { systemClock } from "../../shared/clock";
+import { definedFields } from "../../shared/defined-fields";
 import type { HiveDatabase } from "../database/hive-database";
 
 export type { Action, Capability, Role };
@@ -320,10 +321,10 @@ export class CapabilityStore {
       subject,
       role,
       epoch: options.epoch ?? 0,
-      ...(options.constraints === undefined
-        ? {}
-        : { constraints: options.constraints }),
-      ...(options.subjects === undefined ? {} : { subjects: options.subjects }),
+      ...definedFields({
+        constraints: options.constraints,
+        subjects: options.subjects,
+      }),
       issuedAt: issued.toISOString(),
       expiresAt: new Date(
         issued.getTime() + (options.ttlMs ?? DEFAULT_TTL_MS),

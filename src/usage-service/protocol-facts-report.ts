@@ -1,4 +1,5 @@
 import type { NormalizedProviderEvent } from "../adapters/providers/protocol/types";
+import { definedFields } from "../shared/defined-fields";
 import type { ProtocolSessionFactsReport } from "../schemas/token-usage-schema";
 import {
   agentFactsFromProtocolEvent,
@@ -28,28 +29,27 @@ export function protocolSessionFactsReport(
   return {
     agent,
     observedAt: event.occurredAt,
-    ...(facts.liveModel === undefined ? {} : { model: facts.liveModel }),
-    ...(facts.effort === undefined ? {} : { effort: facts.effort }),
-    ...(facts.contextWindow === undefined
-      ? {}
-      : { contextWindow: facts.contextWindow }),
-    ...(facts.contextPct === undefined
-      ? {}
-      : { contextPercent: facts.contextPct }),
-    ...(usage === undefined
-      ? {}
-      : {
-          usage: {
-            usageKey: usage.key,
-            inputTokens: usage.counts.inputTokens,
-            outputTokens: usage.counts.outputTokens,
-            cachedInputTokens: usage.counts.cachedInputTokens,
-            cacheCreationInputTokens: usage.counts.cacheCreationInputTokens,
-            reasoningTokens: usage.counts.reasoningTokens,
-            ...(usage.cumulative === true ? { cumulative: true } : {}),
-            source: usage.source,
-          },
-        }),
+    ...definedFields({
+      model: facts.liveModel,
+      effort: facts.effort,
+      contextWindow: facts.contextWindow,
+      contextPercent: facts.contextPct,
+      usage:
+        usage === undefined
+          ? undefined
+          : {
+              usageKey: usage.key,
+              inputTokens: usage.counts.inputTokens,
+              outputTokens: usage.counts.outputTokens,
+              cachedInputTokens: usage.counts.cachedInputTokens,
+              cacheCreationInputTokens: usage.counts.cacheCreationInputTokens,
+              reasoningTokens: usage.counts.reasoningTokens,
+              ...definedFields({
+                cumulative: usage.cumulative === true ? true : undefined,
+              }),
+              source: usage.source,
+            },
+    }),
   };
 }
 

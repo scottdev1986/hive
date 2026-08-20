@@ -16,6 +16,7 @@ import type { MemoryScope, MemoryWriteInput } from "../schemas/memory";
 import type { QuotaObservationInput } from "../schemas/quota";
 import type { SessionLocator } from "../schemas/session-protocol";
 import { isDaemonPort } from "../shared/daemon-port";
+import { definedFields } from "../shared/defined-fields";
 import { bindCliHiveHome } from "./bind-hive-home";
 import {
   captureInvokerIdentity,
@@ -140,7 +141,7 @@ export async function killAgentCli(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       sessionLocator: locator,
-      ...(origin === undefined ? {} : { origin }),
+      ...definedFields({ origin }),
     }),
   });
   const body = (await response.json().catch(() => null)) as {
@@ -418,10 +419,10 @@ export async function requestDaemonStop(
 ): Promise<StopResponseBody> {
   const response = await new UserDaemonClient({
     port,
-    ...(options.instanceId === undefined
-      ? {}
-      : { instanceId: options.instanceId }),
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    ...definedFields({
+      instanceId: options.instanceId,
+      fetch: options.fetch,
+    }),
     verifyIdentity: !isTestRunnerEnv(),
   }).request("/stop", {
     method: "POST",

@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { definedFields } from "../shared/defined-fields";
 import { logAlertDeliveryFailure } from "../daemon/observability/daemon-log";
 import { ORCHESTRATOR_NAME } from "../schemas/agent";
 import {
@@ -183,12 +184,10 @@ export class MailService {
         topic: route.topic,
         idempotencyKey:
           options.idempotencyKey ?? `${from}:${Bun.randomUUIDv7()}`,
-        ...(options.conditionId === undefined
-          ? {}
-          : { conditionId: options.conditionId }),
-        ...(options.condition === undefined
-          ? {}
-          : { condition: options.condition }),
+        ...definedFields({
+          conditionId: options.conditionId,
+          condition: options.condition,
+        }),
       },
       new Date(),
     );

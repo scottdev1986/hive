@@ -11,6 +11,7 @@ import {
   type MemoryConfigProjection,
   MemoryConfigProjectionSchema,
 } from "../schemas/memory-projections";
+import { definedFields } from "../shared/defined-fields";
 import { revisionOf } from "./projections";
 
 async function readDocument(path: string): Promise<string> {
@@ -92,18 +93,12 @@ export async function casWriteMemoryConfig(
 
     const next: MemoryConfigProjection = {
       ...current,
-      ...(request.patch.eventsHotDays === undefined
-        ? {}
-        : { eventsHotDays: request.patch.eventsHotDays }),
-      ...(request.patch.staleAfterDays === undefined
-        ? {}
-        : { staleAfterDays: request.patch.staleAfterDays }),
-      ...(request.patch.sweepIntervalHours === undefined
-        ? {}
-        : { sweepIntervalHours: request.patch.sweepIntervalHours }),
-      ...(request.patch.wakeBudgetTokens === undefined
-        ? {}
-        : { wakeBudgetTokens: request.patch.wakeBudgetTokens }),
+      ...definedFields({
+        eventsHotDays: request.patch.eventsHotDays,
+        staleAfterDays: request.patch.staleAfterDays,
+        sweepIntervalHours: request.patch.sweepIntervalHours,
+        wakeBudgetTokens: request.patch.wakeBudgetTokens,
+      }),
     };
     const rewritten =
       `${withoutMemoryTables(document).trimEnd()}\n\n${renderMemoryTables(next)}`.trimStart();

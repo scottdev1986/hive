@@ -3,6 +3,7 @@ import {
   TaskDetailSchema,
   TaskStateSchema,
 } from "../../schemas/task-detail";
+import { definedFields } from "../../shared/defined-fields";
 import {
   HierarchyValidationError,
   nextRevision,
@@ -77,6 +78,6 @@ export function applyTaskUpdate(
     blockers: input.blockers ?? current.blockers,
     evidence: input.evidence ?? current.evidence,
     assigneeNodeId: input.assigneeNodeId ?? current.assigneeNodeId,
-    ...(input.correction === undefined ? {} : { correction: input.correction }),
+    ...definedFields({ correction: input.correction }),
   });
 }

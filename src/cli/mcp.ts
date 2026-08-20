@@ -4,6 +4,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { daemonMcpUrl } from "../adapters/providers/shared/mcp-scope";
+import { definedFields } from "../shared/defined-fields";
 import { HIVE_MCP_VERSION_NEGOTIATION } from "../shared/mcp-protocol";
 import {
   type AgentRecord,
@@ -195,7 +196,9 @@ async function postDaemonJson(
   const response = await new UserDaemonClient({
     port: fetcher === undefined ? port : 1,
     fetch: authorizedFetch,
-    ...(fetcher === undefined ? {} : { verifyIdentity: false }),
+    ...definedFields({
+      verifyIdentity: fetcher === undefined ? undefined : false,
+    }),
   }).request(path, {
     method: "POST",
     headers: { "content-type": "application/json" },

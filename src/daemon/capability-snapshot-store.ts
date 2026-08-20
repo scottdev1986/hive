@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { definedFields } from "../shared/defined-fields";
 import { z } from "zod";
 import type { ProviderCapabilitySnapshot } from "../adapters/providers/protocol/types";
 import {
@@ -34,7 +35,7 @@ export function snapshotValue(
     observedAt: snapshot.observedAt,
     catalog: snapshot.catalog,
     measurements: snapshot.measurements,
-    ...(snapshot.absences === undefined ? {} : { absences: snapshot.absences }),
+    ...definedFields({ absences: snapshot.absences }),
     commands: snapshot.commands,
   });
 }

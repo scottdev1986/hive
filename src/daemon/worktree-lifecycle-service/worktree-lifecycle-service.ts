@@ -3,6 +3,7 @@
 // cannot authorize deletion with a teardown option.
 
 import { createHash } from "node:crypto";
+import { definedFields } from "../../shared/defined-fields";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
@@ -229,8 +230,7 @@ export function describeWorktreeKill(
       branch,
       unmergedCommits,
       dirtyFiles,
-      ...(preservedRef === undefined ? {} : { preservedRef }),
-      ...(salvageRef === undefined ? {} : { salvageRef }),
+      ...definedFields({ preservedRef, salvageRef }),
       resolve:
         branch === null
           ? `spawn integrator to inspect ${path ?? "the worktree"}${salvageClause}; only a user-bound settlement decision can discard it`

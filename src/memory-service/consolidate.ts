@@ -1,6 +1,7 @@
 // The consolidation pass compares vectors pairwise. Similarity at or above `CONSOLIDATION_IDENTICAL_THRESHOLD` is an identical duplicate; similarity at or above `CONSOLIDATION_SIMILAR_THRESHOLD` recommends user review. This runs only as an explicit maintenance pass, never inline in the write path. Report-first posture: without `apply` the pass changes nothing and exits successfully even with findings — it is a report, not a gate. With `apply`, ONLY the identical bucket is acted on, through the memory system's own write paths: wiki articles supersede the older into the newer via writeMemoryFact (supersedes chain, raw observations preserved, scope index and log stay consistent — append + superseded_by semantics, never merged bodies), episodic facts invalidate with a supersededBy pointer (the row stays; bi-temporal history is never destroyed). The similar bucket is NEVER auto-applied: false merges destroy information irreversibly, so the bias is toward duplicate bloat. The pass needs the real semantic surface. Report mode scans only stored vectors; apply mode may embed missing rows before it acts. When the service is UNAVAILABLE the pass fails with an honest error rather than silently reporting an empty scan.
 
 import type { MemoryFact, MemoryWriteInput } from "../schemas/memory";
+import { definedFields } from "../shared/defined-fields";
 import {
   cosineSimilarity,
   MemoryEmbeddingIndex,
@@ -115,7 +116,7 @@ async function applyArticlePair(
     status: newer.status,
     kind: newer.kind,
     supersedes: [candidate.olderId],
-    ...(newer.verified === undefined ? {} : { verified: newer.verified }),
+    ...definedFields({ verified: newer.verified }),
   });
 }
 

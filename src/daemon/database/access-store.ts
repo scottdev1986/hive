@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { definedFields } from "../../shared/defined-fields";
 import type { DatabaseHost } from "../../shared/database-host";
 import { type Approval, ApprovalSchema } from "../../schemas/approval";
 import type { AuditRow } from "../../schemas/audit";
@@ -37,12 +38,13 @@ function parseCapabilityRow(row: unknown): {
       content?: true;
       scope?: string;
     };
-    constraints = {
-      ...(parsed.content === true ? { content: true as const } : {}),
-      ...(parsed.scope === "user" || parsed.scope === "operator"
-        ? { scope: "user" as const }
-        : {}),
-    };
+    constraints = definedFields({
+      content: parsed.content === true ? (true as const) : undefined,
+      scope:
+        parsed.scope === "user" || parsed.scope === "operator"
+          ? ("user" as const)
+          : undefined,
+    });
     if (Object.keys(constraints).length === 0) constraints = undefined;
   }
   return {
@@ -51,10 +53,11 @@ function parseCapabilityRow(row: unknown): {
       subject: stored.subject,
       role: stored.role,
       epoch: stored.epoch,
-      ...(constraints === undefined ? {} : { constraints }),
-      ...(stored.subjects === null
-        ? {}
-        : { subjects: JSON.parse(stored.subjects) }),
+      ...definedFields({
+        constraints,
+        subjects:
+          stored.subjects === null ? undefined : JSON.parse(stored.subjects),
+      }),
       issuedAt: stored.issuedAt,
       expiresAt: stored.expiresAt,
       revokedAt: stored.revokedAt,

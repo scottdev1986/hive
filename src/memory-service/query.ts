@@ -1,5 +1,6 @@
 // The read side of the per-project episodic store: L0 typed projections over the daemon's status/token/episodic stores, an L1 bounded-excerpt FTS index over episodic events, and the class dispatcher internal callers go through. Every projection is a maintained query — SQL or a left-fold over rows the stores already hold; no LLM, no ranking, no journal scans. Each row carries its own source/freshness labels and an `asOf` anchor. Two disciplines are enforced here, not in the transport: - Token ceilings: every class has a server-side default budget; a caller `budget` can only lower it. Over-budget results are cut with loud in-band markers (`truncated: true, omitted: N`). - Absent-vs-empty: every class distinguishes "the surface is not built" (no episodic store, no wiki) from "the surface exists and has no matches" via the envelope `state` discriminator.
 import { Database } from "bun:sqlite";
+import { definedFields } from "../shared/defined-fields";
 import { z } from "zod";
 import type {
   StatusFreshness,
@@ -315,7 +316,7 @@ async function runClass(
       const agentId = deps.resolveAgentId(input.agent) ?? input.agent;
       const events = deps.episodic.eventsFor({
         agent: agentId,
-        ...(input.since === undefined ? {} : { since: input.since }),
+        ...definedFields({ since: input.since }),
       });
       const rows = [...events].reverse().map((event) => ({
         ts: event.ts,
@@ -339,7 +340,7 @@ async function runClass(
       const agentId = deps.resolveAgentId(caller.subject) ?? caller.subject;
       const events = deps.episodic.eventsFor({
         agent: agentId,
-        ...(input.since === undefined ? {} : { since: input.since }),
+        ...definedFields({ since: input.since }),
       });
       const rows = [...events].reverse().map((event) => ({
         ts: event.ts,
@@ -389,7 +390,7 @@ async function runClass(
         ]);
       }
       const events = deps.episodic.eventsFor(
-        input.since === undefined ? {} : { since: input.since },
+        definedFields({ since: input.since }),
       );
       const rows = events
         .filter((event) => LANDED_PATTERN.test(event.type))
@@ -436,8 +437,7 @@ async function runClass(
           : (deps.resolveAgentId(input.agent) ?? input.agent);
       const rows = deps.tokenUsage
         .spendTotals({
-          ...(agentId === undefined ? {} : { agentId }),
-          ...(input.since === undefined ? {} : { since: input.since }),
+          ...definedFields({ agentId, since: input.since }),
         })
         .map((row) => ({
           ...row,
@@ -458,10 +458,13 @@ async function runClass(
       const index = indexFor(deps.episodic);
       index.sync(deps.episodic);
       const rows = index.search(input.query, {
-        ...(input.agent === undefined
-          ? {}
-          : { agent: deps.resolveAgentId(input.agent) ?? input.agent }),
-        ...(input.since === undefined ? {} : { since: input.since }),
+        ...definedFields({
+          agent:
+            input.agent === undefined
+              ? undefined
+              : (deps.resolveAgentId(input.agent) ?? input.agent),
+          since: input.since,
+        }),
       });
       return finish(
         rows.map((row) => ({ ...row }) as Record<string, unknown>),
