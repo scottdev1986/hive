@@ -575,7 +575,7 @@ describe("T1-02 member apply writes", () => {
     expect(row.reason).toContain("revision stayed");
   });
 
-  test("a verifiably lost toggle is retried once and still passes", async () => {
+  test("a verifiably lost toggle is retried once and the row says so", async () => {
     const rig = new FakeRig();
     rig.seedK0();
     rig.loseMemberToggles = 1;
@@ -586,6 +586,7 @@ describe("T1-02 member apply writes", () => {
       K1,
     );
     expect(row.status).toBe("PASS");
+    expect(row.reason).toContain("recovered one lost edit");
     expect(rig.loseMemberToggles).toBe(0);
   });
 

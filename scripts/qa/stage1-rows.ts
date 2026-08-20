@@ -78,13 +78,23 @@ interface SnapshotDoc {
 }
 
 type Drive =
-  | { ok: true }
+  | { ok: true; recovered?: string }
   | {
       ok: false;
       status: "FAIL" | "NO MEASUREMENT";
       reason: string;
       screenState?: string;
     };
+
+/** One-line disclosure for the row reason when a retry recovered a lost edit. A suite that retries silently reports a green product that is not green; a row that needed a recovery says so. */
+function recoveredNote(drives: readonly Drive[]): string {
+  const recovered = drives
+    .map((drive) => (drive.ok ? drive.recovered : undefined))
+    .filter((name): name is string => name !== undefined);
+  return recovered.length === 0
+    ? ""
+    : ` (recovered one lost edit: ${recovered.join(", ")})`;
+}
 
 const bound = (ctx: Stage1Context): number => ctx.boundMs ?? 5_000;
 
@@ -389,6 +399,9 @@ async function driveWeightInput(
     const retry = await drive(ctx, command);
     if (!retry.ok) return retry;
     applied = await applyDraft(ctx, name);
+    if (applied.ok) {
+      return { ok: true, recovered: `task-router-weight-${name}` };
+    }
   }
   return applied;
 }
@@ -413,6 +426,9 @@ async function driveMemberToggle(
     });
     if (!retry.ok) return retry;
     applied = await applyDraft(ctx, name);
+    if (applied.ok) {
+      return { ok: true, recovered: `task-router-member-${name}` };
+    }
   }
   return applied;
 }
@@ -608,7 +624,7 @@ export async function rowT102MemberApplyWrites(
   return {
     id,
     status: "PASS",
-    reason: `candidate ${name} added through apply in ${category} (rev ${revBefore} -> ${revAfter}) and removed again`,
+    reason: `candidate ${name} added through apply in ${category} (rev ${revBefore} -> ${revAfter}) and removed again${recoveredNote([applied, restored])}`,
   };
 }
 
@@ -687,7 +703,7 @@ export async function rowT103WeightWritesThrough(
   return {
     id,
     status: "PASS",
-    reason: `weight ${weightBefore} -> ${target} -> ${weightBefore} through apply (rev ${revBefore} -> ${revAfter})`,
+    reason: `weight ${weightBefore} -> ${target} -> ${weightBefore} through apply (rev ${revBefore} -> ${revAfter})${recoveredNote([planted, set, reset, unplanted])}`,
   };
 }
 
@@ -780,7 +796,7 @@ export async function rowT104IllegalWeightRefused(
   return {
     id,
     status: "PASS",
-    reason: `apply disabled and revision unchanged at ${revBefore} with weight 0 (control: plant moved ${revControlBefore} -> ${revBefore})`,
+    reason: `apply disabled and revision unchanged at ${revBefore} with weight 0 (control: plant moved ${revControlBefore} -> ${revBefore})${recoveredNote([planted, unplanted])}`,
   };
 }
 
@@ -945,7 +961,7 @@ export async function rowT105ModeEffortWriteThrough(
   return {
     id,
     status: "PASS",
-    reason: `mode ${modeBefore} -> ${modeTarget.id} and effort option ${effortIndexTarget} wrote through apply (rev ${revBefore} -> ${revAfter}), then restored`,
+    reason: `mode ${modeBefore} -> ${modeTarget.id} and effort option ${effortIndexTarget} wrote through apply (rev ${revBefore} -> ${revAfter}), then restored${recoveredNote([planted, unplanted])}`,
   };
 }
 
@@ -1009,7 +1025,7 @@ export async function rowT106ApplyIsTheOnlyWrite(
   return {
     id,
     status: "PASS",
-    reason: `draft edit left revision ${revBefore} untouched; apply moved it and wrote ${name}`,
+    reason: `draft edit left revision ${revBefore} untouched; apply moved it and wrote ${name}${recoveredNote([unplanted])}`,
   };
 }
 
@@ -1199,9 +1215,10 @@ export async function rowT109RigBaseline(
 ): Promise<RowResult> {
   const id = "T1-09";
   const name = keyOf(key);
+  let planted: Drive = { ok: true };
   try {
     if (candidateOf(await exportDoc(ctx), category, key) === null) {
-      const planted = await plantMember(ctx, category, categoryLabel, key);
+      planted = await plantMember(ctx, category, categoryLabel, key);
       if (!planted.ok) {
         return { id, status: planted.status, reason: planted.reason };
       }
@@ -1221,7 +1238,7 @@ export async function rowT109RigBaseline(
     return {
       id,
       status: "PASS",
-      reason: `rig baseline recorded at ${ctx.baselinePath} with ${name} selected in ${category} (the rig's deterministic catalog-first provider)`,
+      reason: `rig baseline recorded at ${ctx.baselinePath} with ${name} selected in ${category} (the rig's deterministic catalog-first provider)${recoveredNote([planted])}`,
     };
   }
   const baseline = readFileSync(ctx.baselinePath, "utf8").trim();
@@ -1236,7 +1253,7 @@ export async function rowT109RigBaseline(
   return {
     id,
     status: "PASS",
-    reason: "second consecutive run diffs empty against the rig baseline",
+    reason: `second consecutive run diffs empty against the rig baseline${recoveredNote([planted])}`,
   };
 }
 
