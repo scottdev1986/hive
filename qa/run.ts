@@ -4,15 +4,11 @@
 // environment whose fences do not hold. Exit 0 = every row passed, 1 = a row
 // measured a product failure, 2 = something could not be measured. Lives in
 // qa/ with the rows and the unit tests; isolation fences stay in scripts/qa/.
-import { realpathSync } from "node:fs";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HiveMcpSession } from "../src/cli/mcp";
 import { UserDaemonClient } from "../src/cli/user-daemon-client";
 import { readDaemonPort } from "../src/daemon/lifecycle/daemon-lifecycle";
-import { repoInstanceName } from "../src/daemon/lifecycle/instances";
-import { projectKey } from "../src/daemon/project-identity-core/state";
-import { hiveInstanceSuffix, instancesRoot } from "../src/hive-home/home";
+import { hiveInstanceSuffix } from "../src/hive-home/home";
 import {
   type Exec,
   type ExecResult,
@@ -48,24 +44,20 @@ function authedFetch(
   };
 }
 
-// The rig's daemon serves the QA project's per-repo instance, so its port and
-// identity live under the instance home, not the machine home the pins name.
-// Resolve the instance the same way the product resolves it for any repo:
-// project key from the registry, then the repo-<key> instance.
+// The rig starts `hive daemon` from the staging root, which is not a git
+// repo, so the product leaves HIVE_HOME on the QA machine home and writes
+// daemon.port there. Observe through that pin; deriving a repo-instance home
+// talks to a daemon that is not the one `make qa` brought up.
 async function buildObserve(
   qaBin: string,
-  project: string,
+  _project: string,
 ): Promise<{ observe: ObserveClients; instanceHome: string } | null> {
-  const instanceHome = join(
-    instancesRoot(),
-    repoInstanceName(projectKey(realpathSync(project))),
-  );
-  const port = readDaemonPort(instanceHome);
+  const daemonHome = process.env.HIVE_HOME;
+  if (daemonHome === undefined || daemonHome.length === 0) return null;
+  const port = readDaemonPort(daemonHome);
   if (port === null) return null;
-  // The instance daemon mints its own user credential into the instance home;
-  // the machine-home one is a different token and earns a 401.
   const credential = await exec([qaBin, "credential", "--agent", "user"], {
-    env: { ...process.env, HIVE_HOME: instanceHome },
+    env: { ...process.env, HIVE_HOME: daemonHome },
   });
   if (credential.exitCode !== 0) return null;
   let headers: Record<string, string>;
@@ -79,10 +71,10 @@ async function buildObserve(
   const http = new UserDaemonClient({
     port,
     fetch: fetcher,
-    instanceId: hiveInstanceSuffix(instanceHome),
+    instanceId: hiveInstanceSuffix(daemonHome),
   });
   return {
-    instanceHome,
+    instanceHome: daemonHome,
     observe: {
       httpStatus: async (path) => (await http.request(path)).status,
       httpJson: async (path) => {

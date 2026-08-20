@@ -30,7 +30,10 @@ Four verbs, one job each. Do not collapse them.
     make qa           install that candidate, init the test project, bring the daemon up
     make qa-run       run this harness against the rig `make qa` left running
 
-`make qa` does not report results. `make qa-run` does: one
+`make qa` does not report results. It starts the daemon from the staging
+root (not a git repo) so the product leaves `HIVE_HOME` on the QA machine
+home; starting it from the test project rebinds to a repo instance and
+bare `hive` then refuses the handshake. `make qa-run` reports: one
 `PASS|FAIL|NO MEASUREMENT <row-id> <reason>` line per row, then exit 0 / 1 / 2.
 
 `PROJECT` defaults to `/Users/scottkellar/Projects/hive-test-project`. QA

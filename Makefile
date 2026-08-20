@@ -412,8 +412,9 @@ run:
 
 # Isolated qa install + bring-up, mirroring `run` without sharing ~/.hive
 # memory. Records the user's Hive isolation state before init so qa-clean can
-# check that the isolated QA lifecycle did not reach it. After the daemon
-# announces, wait-ready requires daemon.port before anything else proceeds.
+# check that the isolated QA lifecycle did not reach it. The daemon is started
+# from the staging root so it stays on QA_HOME; after it announces, wait-ready
+# requires daemon.port before anything else proceeds.
 qa:
 	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
@@ -436,7 +437,7 @@ qa:
 	trap 'exit 130' INT; \
 	trap 'exit 143' TERM; \
 	trap cleanup_qa EXIT; \
-	mkdir -p "$(QA)/bin" "$(QA)/tmp"; \
+	mkdir -p "$(QA)/bin" "$(QA)/tmp" "$(QA)/sessiond"; \
 	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_STATE)/hive-before"; \
 	env $(QA_ENV) sh "$(ROOT)/install.sh" --variant qa --from-build "$(QA_DIST)" "$(DEV_VERSION)"; \
 	[ -x "$(QA_BIN)" ] || { echo "qa install produced no binary at $(QA_BIN)" >&2; exit 2; }; \
@@ -444,12 +445,14 @@ qa:
 	cd "$(QA_PROJECT)"; \
 	env $(QA_ENV) "$(QA_BIN)" init; \
 	/bin/rm -f "$(QA_DAEMON_STARTUP_LOG)"; \
+	cd "$(QA)"; \
 	env $(QA_ENV) "$(QA_BIN)" daemon >"$(QA_DAEMON_STARTUP_LOG)" 2>&1 & daemon_pid=$$!; \
 	bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" daemon; \
 	if ! bun run "$(ROOT)/scripts/dev/verify-dev-run.ts" "$(QA_DAEMON_STARTUP_LOG)" "$(QA_BIN)" "$(ROOT)" "$$daemon_pid"; then \
 	  exit 1; \
 	fi; \
 	qa_daemon_home=$$(env $(QA_ENV) bun run "$(ROOT)/qa/wait-ready.ts" "$(QA_HOME)" "$(QA_PROJECT)" "$$daemon_pid") || exit 1; \
+	cd "$(QA_PROJECT)"; \
 	if env $(QA_ENV) "$(QA_BIN)"; then \
 	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" workspace orchestrator; \
 	else \
