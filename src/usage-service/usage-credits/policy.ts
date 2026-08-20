@@ -81,8 +81,7 @@ export function spendRisk(
 }
 
 export type PoolAvailability =
-  | { state: "available" }
-  | { state: "exhausted"; detail: string };
+  { state: "available" } | { state: "exhausted"; detail: string };
 
 /** Can this model run? This differs from whether it would cost anything. `spendRisk` answers the money question. An exhausted pool with credits off cannot charge, but the vendor also refuses it. Such a model is unavailable, not free. The rule keys on MONEY and METERING, never on a model's name: a model the vendor meters separately, whose own pool is spent, with nothing that can pay the overflow, cannot run. Any model, any vendor, no date, no list. When the pool has headroom it is available; when it is spent but credits could pay, it is not an availability question at all — it is a spend question, and `spendRisk` asks him. */
 export function poolAvailability(

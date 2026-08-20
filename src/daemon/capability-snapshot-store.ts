@@ -66,13 +66,15 @@ export class CapabilitySnapshotStore {
       throw new Error("only runtime probe snapshots are durable");
     }
     this.database
-      .query(`
+      .query(
+        `
         INSERT INTO provider_capability_snapshots (provider, observedAt, snapshot)
         VALUES (?, ?, ?)
         ON CONFLICT(provider) DO UPDATE SET
           observedAt = excluded.observedAt,
           snapshot = excluded.snapshot
-      `)
+      `,
+      )
       .run(value.provider, value.observedAt, JSON.stringify(value));
   }
 }

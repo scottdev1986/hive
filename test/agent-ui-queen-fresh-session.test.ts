@@ -296,8 +296,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
           processes.length + 10,
           (message, child) => {
             const request = message.request as
-              | Record<string, unknown>
-              | undefined;
+              Record<string, unknown> | undefined;
             const requestId = message.request_id;
             if (
               request?.subtype === "initialize" &&

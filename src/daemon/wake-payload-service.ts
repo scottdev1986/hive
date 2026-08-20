@@ -60,19 +60,17 @@ export class WakePayloadService {
       rows = [];
     } else {
       state = "ok";
-      rows = recent.map(
-        (fact): MemoryRecallRow => ({
-          scope: fact.scope,
-          topic: fact.topic,
-          id: fact.id,
-          date: fact.date,
-          title: fact.title,
-          snippet: oneLine(fact.body).slice(0, 160),
-          status: fact.status,
-          flag: factVerificationFlag(fact),
-          pitfall: fact.kind === "pitfall",
-        }),
-      );
+      rows = recent.map((fact): MemoryRecallRow => ({
+        scope: fact.scope,
+        topic: fact.topic,
+        id: fact.id,
+        date: fact.date,
+        title: fact.title,
+        snippet: oneLine(fact.body).slice(0, 160),
+        status: fact.status,
+        flag: factVerificationFlag(fact),
+        pitfall: fact.kind === "pitfall",
+      }));
     }
 
     // Partition into pitfalls and articles, clamped to budget

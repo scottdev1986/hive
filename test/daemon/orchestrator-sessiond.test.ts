@@ -230,8 +230,7 @@ function terminalWaitHarness(): Readonly<{
 }> {
   const bindings = new MemoryBindings();
   let exit:
-    | ((value: { kind: "managed-exit"; exitCode: number }) => void)
-    | null = null;
+    ((value: { kind: "managed-exit"; exitCode: number }) => void) | null = null;
   let inspections = 0;
   const controller = new OrchestratorSessiondController({
     bindings,
@@ -886,8 +885,7 @@ function headlessHarness(): Readonly<{
 }> {
   const db = new HiveDatabase(":memory:");
   let exit:
-    | ((value: { kind: "managed-exit"; exitCode: number }) => void)
-    | null = null;
+    ((value: { kind: "managed-exit"; exitCode: number }) => void) | null = null;
   const controller = new OrchestratorSessiondController({
     bindings: db,
     instanceId: "instance-a",

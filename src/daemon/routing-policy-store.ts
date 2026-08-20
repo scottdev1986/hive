@@ -291,10 +291,12 @@ export function readRoutingPolicyDatabase(
   now: Date = new Date(),
 ): RoutingPolicy {
   const table = db.database
-    .query(`
+    .query(
+      `
     SELECT 1 AS present FROM sqlite_master
     WHERE type = 'table' AND name = 'routing_policy'
-  `)
+  `,
+    )
     .get();
   if (table === null) return emptyRoutingPolicy(now.toISOString());
   const row = db.database

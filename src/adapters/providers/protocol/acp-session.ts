@@ -54,9 +54,10 @@ const ANSI_ESCAPE = new RegExp(
   `${ESC}(?:\\[[0-?]*[ -/]*[@-~]|\\][^${BEL}]*(?:${BEL}|${ESC}\\\\))`,
   "g",
 );
-const CONTROL_CHARACTER =
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: These ranges deliberately strip C0/C1 control bytes from provider stderr before it reaches the terminal.
-  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+const CONTROL_CHARACTER = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(8)}${String.fromCharCode(11)}${String.fromCharCode(12)}${String.fromCharCode(14)}-${String.fromCharCode(31)}${String.fromCharCode(127)}-${String.fromCharCode(159)}]`,
+  "g",
+);
 const SENSITIVE_VALUE =
   /((?:authorization|api[-_ ]?key|token|secret|password|credentials?)\s*(?:[:=]|\bis\b)\s*)(?:Bearer\s+\S+|"[^"]*"|'[^']*'|\S+)/gi;
 const OPAQUE_VALUE = /[A-Za-z0-9_+/=-]{32,}/g;
@@ -753,11 +754,6 @@ export class AcpProviderSession implements ProviderSession {
     this.mark("fork", "supported");
     return { vendorSessionId: forked, replayedHistory: true };
   }
-
-  async listSessions(): Promise<unknown> {
-    return this.client.acp.request(acpMethods.agent.session.list, {});
-  }
-
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -790,11 +786,6 @@ export class AcpProviderSession implements ProviderSession {
     this.emit({ kind: "run-ended", exitCode: null, raw: { closed: true } });
     this.queue.end();
   }
-
-  get rawClient(): AcpClient {
-    return this.client;
-  }
-
   private handleReverseRpc(method: string, params: unknown): Promise<unknown> {
     if (method === "session/request_permission") {
       this.permissionSeq += 1;

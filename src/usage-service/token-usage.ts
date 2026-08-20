@@ -191,16 +191,20 @@ export class TokenUsageStore {
     const row =
       repoRoot === undefined
         ? this.database
-            .query(`
+            .query(
+              `
           SELECT id, repoRoot, startedAt FROM token_usage_sessions
           WHERE endedAt IS NULL ORDER BY startedAt DESC LIMIT 1
-        `)
+        `,
+            )
             .get()
         : this.database
-            .query(`
+            .query(
+              `
           SELECT id, repoRoot, startedAt FROM token_usage_sessions
           WHERE repoRoot = ? AND endedAt IS NULL LIMIT 1
-        `)
+        `,
+            )
             .get(repoRoot);
     return z
       .object({ id: z.string(), repoRoot: z.string(), startedAt: z.string() })
@@ -218,10 +222,12 @@ export class TokenUsageStore {
     if (active !== null) await this.endSession(active.id, at);
     const id = crypto.randomUUID();
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_sessions (id, repoRoot, startedAt, endedAt)
       VALUES (?, ?, ?, NULL)
-    `)
+    `,
+      )
       .run(id, repoRoot, at);
     await this.syncWorkers(id);
     return id;
@@ -230,10 +236,12 @@ export class TokenUsageStore {
   async endSession(id: string, at = new Date().toISOString()): Promise<void> {
     await this.refreshSession(id);
     this.database
-      .query(`
+      .query(
+        `
       UPDATE token_usage_sessions SET endedAt = COALESCE(endedAt, ?)
       WHERE id = ?
-    `)
+    `,
+      )
       .run(at, id);
   }
 
@@ -245,12 +253,14 @@ export class TokenUsageStore {
   ): string {
     const id = crypto.randomUUID();
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
         providerSessionId, startedAt, endedAt, unknownReason
       ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', ?, NULL, ?, NULL, ?, NULL, NULL)
-    `)
+    `,
+      )
       .run(id, sessionId, provider, cwd, at);
     return id;
   }
@@ -258,9 +268,11 @@ export class TokenUsageStore {
   async endSubject(id: string, at = new Date().toISOString()): Promise<void> {
     await this.refreshSubject(id);
     this.database
-      .query(`
+      .query(
+        `
       UPDATE token_usage_subjects SET endedAt = COALESCE(endedAt, ?) WHERE id = ?
-    `)
+    `,
+      )
       .run(at, id);
   }
 
@@ -271,14 +283,16 @@ export class TokenUsageStore {
     const active = this.activeSession(repoRoot);
     if (active === null) return;
     this.database
-      .query(`
+      .query(
+        `
       UPDATE token_usage_subjects SET providerSessionId = ?
       WHERE id = (
         SELECT id FROM token_usage_subjects
         WHERE sessionId = ? AND role = 'orchestrator' AND endedAt IS NULL
         ORDER BY startedAt DESC LIMIT 1
       )
-    `)
+    `,
+      )
       .run(providerSessionId, active.id);
   }
 
@@ -295,12 +309,14 @@ export class TokenUsageStore {
       const cwd = agent.worktreePath;
       if (cwd === null) continue;
       this.database
-        .query(`
+        .query(
+          `
         INSERT OR IGNORE INTO token_usage_subjects (
           id, sessionId, agentId, name, role, provider, model, cwd,
           providerSessionId, startedAt, endedAt, unknownReason
         ) VALUES (?, ?, ?, ?, 'worker', ?, ?, ?, ?, ?, ?, NULL)
-      `)
+      `,
+        )
         .run(
           crypto.randomUUID(),
           sessionId,
@@ -314,13 +330,15 @@ export class TokenUsageStore {
           agent.closedAt ?? null,
         );
       this.database
-        .query(`
+        .query(
+          `
         UPDATE token_usage_subjects SET
           providerSessionId = COALESCE(?, providerSessionId),
           model = COALESCE(?, model),
           endedAt = COALESCE(?, endedAt)
         WHERE sessionId = ? AND agentId = ?
-      `)
+      `,
+        )
         .run(
           agent.toolSessionId ?? null,
           agent.liveModel ?? agent.model,
@@ -364,11 +382,13 @@ export class TokenUsageStore {
       .nullable()
       .parse(
         this.database
-          .query(`
+          .query(
+            `
           SELECT id FROM token_usage_subjects
           WHERE sessionId = ? AND agentId = ? AND endedAt IS NULL
           ORDER BY startedAt DESC LIMIT 1
-        `)
+        `,
+          )
           .get(active.id, agentId),
       );
     return row?.id ?? null;
@@ -432,7 +452,8 @@ export class TokenUsageStore {
     ];
     if (event.cumulative === true) {
       this.database
-        .query(`
+        .query(
+          `
         INSERT INTO token_usage_events (
           subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
           cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
@@ -451,12 +472,14 @@ export class TokenUsageStore {
             ELSE MAX(reasoningTokens, excluded.reasoningTokens) END,
           observedAt = MAX(observedAt, excluded.observedAt),
           source = excluded.source
-      `)
+      `,
+        )
         .run(...values);
       return;
     }
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
@@ -475,18 +498,21 @@ export class TokenUsageStore {
           ELSE MAX(reasoningTokens, excluded.reasoningTokens) END,
         observedAt = MAX(observedAt, excluded.observedAt),
         source = excluded.source
-    `)
+    `,
+      )
       .run(...values);
   }
 
   private subjectReading(subject: SubjectRow): TokenUsageSubject {
     const rows = EventRowSchema.array().parse(
       this.database
-        .query(`
+        .query(
+          `
         SELECT inputTokens, cachedInputTokens, cacheCreationInputTokens,
           outputTokens, reasoningTokens, observedAt, source
         FROM token_usage_events WHERE subjectId = ?
-      `)
+      `,
+        )
         .all(subject.id),
     );
     if (rows.length === 0 || subject.unknownReason !== null) {
@@ -619,9 +645,11 @@ export class TokenUsageStore {
     const subjects = SubjectRowSchema.array()
       .parse(
         this.database
-          .query(`
+          .query(
+            `
         SELECT * FROM token_usage_subjects WHERE sessionId = ? ORDER BY startedAt
-      `)
+      `,
+          )
           .all(id),
       )
       .map((subject) => this.subjectReading(subject));
@@ -666,7 +694,8 @@ export class TokenUsageStore {
     }
     const where = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
     const rows = this.database
-      .query(`
+      .query(
+        `
       SELECT subject.agentId AS agentId, subject.name AS name,
         subject.role AS role, subject.provider AS provider,
         COALESCE(SUM(event.inputTokens), 0) AS inputTokens,
@@ -678,7 +707,8 @@ export class TokenUsageStore {
       ${where}
       GROUP BY subject.id
       ORDER BY inputTokens + outputTokens DESC, subject.startedAt
-    `)
+    `,
+      )
       .all(...params);
     return z
       .object({
@@ -708,15 +738,19 @@ export class TokenUsageStore {
       .parse(
         repoRoot === undefined
           ? this.database
-              .query(`
+              .query(
+                `
             SELECT id FROM token_usage_sessions ORDER BY startedAt DESC LIMIT ?
-          `)
+          `,
+              )
               .all(limit)
           : this.database
-              .query(`
+              .query(
+                `
             SELECT id FROM token_usage_sessions WHERE repoRoot = ?
             ORDER BY startedAt DESC LIMIT ?
-          `)
+          `,
+              )
               .all(repoRoot, limit),
       );
     return TokenUsageSnapshotSchema.parse({

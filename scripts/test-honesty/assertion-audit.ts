@@ -207,7 +207,7 @@ function helperBrace(
 
 // A helper counts as asserting if its own body asserts, or if it calls a helper
 // already known to assert; repeat until the set stops growing.
-for (let grew = true; grew; ) {
+for (let grew = true; grew;) {
   grew = false;
   for (const { text, mask } of sources.values()) {
     HELPER_DEF.lastIndex = 0;

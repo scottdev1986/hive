@@ -169,10 +169,7 @@ export interface TeardownWorktreeSettlement {
 
 /** Pin the outcome strings: hive_kill's structured worktree field uses only these. */
 export type WorktreeKillOutcome =
-  | "removed"
-  | "preserved-stranded"
-  | "kept-clean"
-  | "absent";
+  "removed" | "preserved-stranded" | "kept-clean" | "absent";
 
 /**
  * Honest account of what happened to the agent's worktree on kill.
@@ -285,10 +282,7 @@ export interface SettledCaseEvidence {
 }
 
 type SettlementMeasurementStatus =
-  | "current"
-  | "unmeasured"
-  | "target-moved"
-  | "subject-moved";
+  "current" | "unmeasured" | "target-moved" | "subject-moved";
 
 /** Classify cached evidence against the one target read for this reconciliation pass. */
 function settlementMeasurementStatus(
@@ -340,8 +334,7 @@ function retainedRemeasurementReason(
   return `${finding}; ${state.replaceAll("-", " ")} retained after ${subject} remeasurement`;
 }
 
-export interface SettlementReconciliationReport
-  extends WorktreeReconciliationReport {
+export interface SettlementReconciliationReport extends WorktreeReconciliationReport {
   settledCases: SettledCaseEvidence[];
 }
 
@@ -414,7 +407,7 @@ export class WorktreeLifecycleService {
   /** Refuse new writes and wait until every write already admitted has settled. */
   async stop(): Promise<void> {
     this.stopped = true;
-    await Promise.allSettled([...this.activeWrites]);
+    await Promise.allSettled(this.activeWrites);
   }
 
   private assertWritesAccepted(): void {

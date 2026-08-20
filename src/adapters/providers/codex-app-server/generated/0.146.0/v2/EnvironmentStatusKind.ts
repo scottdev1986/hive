@@ -9,7 +9,4 @@
  * exec-server connection for `environment/status` without allowing recovery.
  */
 export type EnvironmentStatusKind =
-  | "ready"
-  | "pending"
-  | "disconnected"
-  | "unknown";
+  "ready" | "pending" | "disconnected" | "unknown";

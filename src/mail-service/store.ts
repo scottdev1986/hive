@@ -343,7 +343,8 @@ export class MailStore {
         },
       });
       const inserted = this.db.database
-        .query(`
+        .query(
+          `
         INSERT INTO mail_items (${ITEM_COLUMNS})
         SELECT $itemId, $recipient, $sender, $lane, $topic, $body, $seq,
                'available', 0, 0, $generation, $now, $now, $expiresAt, NULL
@@ -351,7 +352,8 @@ export class MailStore {
            OR (SELECT COUNT(*) FROM mail_items
                  WHERE recipient = $recipient AND lane = 'control'
                    AND state = 'available') < $capacity
-      `)
+      `,
+        )
         .run({
           $itemId: itemId,
           $recipient: input.recipient,
@@ -432,7 +434,8 @@ export class MailStore {
         }
       }
       const taken = this.db.database
-        .query(`
+        .query(
+          `
         UPDATE mail_items SET state = 'leased', attempts = attempts + 1, updatedAt = ?
         WHERE itemId = ? AND recipient = ? AND state = 'available'
           AND (recipientGeneration IS NULL OR recipientGeneration = ?)
@@ -443,7 +446,8 @@ export class MailStore {
               AND mail_items.lane = 'control'
               AND busy.lane = 'control' AND busy.state = 'leased'
           )
-      `)
+      `,
+        )
         .run(
           input.now,
           input.itemId,
@@ -493,11 +497,13 @@ export class MailStore {
   settle(input: MailSettleInput): MailSettleResult {
     return this.db.transaction(() => {
       const released = this.db.database
-        .query(`
+        .query(
+          `
         DELETE FROM mail_leases
         WHERE itemId = ? AND owner = ? AND ownerGeneration = ? AND handlerId = ?
           AND leaseUntil > ?
-      `)
+      `,
+        )
         .run(
           input.itemId,
           input.recipient,
@@ -746,7 +752,8 @@ export class MailStore {
       )
       .parse(
         this.db.database
-          .query(`
+          .query(
+            `
         SELECT recipient, itemId, createdAt AS waitingSince FROM mail_items
         WHERE lane = 'control' AND state = 'available' AND createdAt <= ?
           AND seq = (
@@ -755,7 +762,8 @@ export class MailStore {
               AND oldest.lane = 'control' AND oldest.state = 'available'
           )
         ORDER BY recipient
-      `)
+      `,
+          )
           .all(cutoff),
       );
   }
@@ -1250,13 +1258,15 @@ export function migrateLegacyMessagesToMail(
     db.database.exec(MAIL_SCHEMA_DDL);
     const rows = LegacyMessageRowsSchema.parse(
       db.database
-        .query(`
+        .query(
+          `
         SELECT rowid AS rowid, id, "from" AS sender, "to" AS recipient, body,
                createdAt, sequence, idempotencyKey
         FROM messages
         WHERE state <> 'acknowledged'
         ORDER BY createdAt, sequence, rowid
-      `)
+      `,
+        )
         .all(),
     );
 

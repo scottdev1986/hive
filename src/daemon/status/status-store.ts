@@ -248,11 +248,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
 
     this.db.transaction(() => {
       const metadataRows = this.db.database
-        .query(`
+        .query(
+          `
           SELECT eventId, seq, payload FROM status_workspace_events
           WHERE seqKey IS NULL OR subjectAgentId IS NULL
           ORDER BY length(seq), seq
-        `)
+        `,
+        )
         .all() as Array<{ eventId: string; seq: string; payload: string }>;
       const updateMetadata = this.db.database.query(`
         UPDATE status_workspace_events
@@ -328,11 +330,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
         );
       }
       this.db.database
-        .query(`
+        .query(
+          `
           INSERT INTO status_projection_metadata (key, value)
           VALUES ('version', ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        `)
+        `,
+        )
         .run(STATUS_PROJECTION_VERSION);
     });
   }
@@ -355,12 +359,14 @@ export class StatusStore implements WorkspaceStatusEventSource {
       const open = this.currentAssignment(agentId);
       if (open !== null) return open;
       const prior = this.db.database
-        .query(`
+        .query(
+          `
         SELECT assignmentGeneration FROM status_assignments
         WHERE agentId = ?
         ORDER BY length(assignmentGeneration) DESC, assignmentGeneration DESC
         LIMIT 1
-      `)
+      `,
+        )
         .get(agentId) as { assignmentGeneration: string } | null;
       const assignment = FlatAssignmentSchema.parse({
         assignmentId: uuidV7("asg"),
@@ -371,11 +377,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
         closedAt: null,
       });
       this.db.database
-        .query(`
+        .query(
+          `
         INSERT INTO status_assignments (
           assignmentId, agentId, assignmentGeneration, state, openedAt, closedAt
         ) VALUES (?, ?, ?, ?, ?, ?)
-      `)
+      `,
+        )
         .run(
           assignment.assignmentId,
           assignment.agentId,
@@ -393,10 +401,12 @@ export class StatusStore implements WorkspaceStatusEventSource {
       const open = this.currentAssignment(agentId);
       if (open === null) return null;
       this.db.database
-        .query(`
+        .query(
+          `
         UPDATE status_assignments SET state = 'closed', closedAt = ?
         WHERE assignmentId = ? AND state = 'open'
-      `)
+      `,
+        )
         .run(closedAt, open.assignmentId);
       return FlatAssignmentSchema.parse({ ...open, state: "closed", closedAt });
     });
@@ -404,10 +414,12 @@ export class StatusStore implements WorkspaceStatusEventSource {
 
   currentAssignment(agentId: string): FlatAssignment | null {
     const row = this.db.database
-      .query(`
+      .query(
+        `
       SELECT assignmentId, agentId, assignmentGeneration, state, openedAt, closedAt
       FROM status_assignments WHERE agentId = ? AND state = 'open'
-    `)
+    `,
+      )
       .get(agentId);
     return row === null ? null : FlatAssignmentSchema.parse(row);
   }
@@ -438,9 +450,11 @@ export class StatusStore implements WorkspaceStatusEventSource {
       .digest("hex");
     const result = this.db.transaction(() => {
       const priorValue = this.db.database
-        .query(`
+        .query(
+          `
         SELECT digest, result FROM status_requests WHERE caller = ? AND requestId = ?
-      `)
+      `,
+        )
         .get(actor.subject, input.requestId);
       if (priorValue !== null) {
         const prior = RequestRowSchema.parse(priorValue);
@@ -518,10 +532,12 @@ export class StatusStore implements WorkspaceStatusEventSource {
         currentConflicts,
       };
       this.db.database
-        .query(`
+        .query(
+          `
         INSERT INTO status_requests (caller, requestId, digest, result)
         VALUES (?, ?, ?, ?)
-      `)
+      `,
+        )
         .run(actor.subject, input.requestId, digest, JSON.stringify(value));
       return value;
     });
@@ -559,10 +575,12 @@ export class StatusStore implements WorkspaceStatusEventSource {
   ): ProviderReportAcceptance {
     const result = this.db.transaction((): ProviderReportAcceptance => {
       const priorValue = this.db.database
-        .query(`
+        .query(
+          `
           SELECT projection FROM status_provider_reports
           WHERE sourceId = ? AND providerSequence = ?
-        `)
+        `,
+        )
         .get(input.sourceId, input.providerSequence);
       if (priorValue !== null) {
         const prior = ProviderReceiptRowSchema.parse(priorValue);
@@ -572,11 +590,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
       }
 
       const newest = this.db.database
-        .query(`
+        .query(
+          `
           SELECT providerSequence FROM status_provider_reports
           WHERE sourceId = ?
           ORDER BY providerSequence DESC LIMIT 1
-        `)
+        `,
+        )
         .get(input.sourceId) as { providerSequence: number } | null;
       if (newest !== null && input.providerSequence < newest.providerSequence) {
         return { kind: "stale", newestSequence: newest.providerSequence };
@@ -586,11 +606,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
         this.appendEventInTransaction(event),
       );
       this.db.database
-        .query(`
+        .query(
+          `
           INSERT INTO status_provider_reports (
             sourceId, providerSequence, projection
           ) VALUES (?, ?, ?)
-        `)
+        `,
+        )
         .run(input.sourceId, input.providerSequence, input.projection);
       input.onAppend?.();
       return { kind: "appended", events };
@@ -647,11 +669,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
 
   listEvents(afterSeq = "0"): WorkspaceEventV2[] {
     const rows = this.db.database
-      .query(`
+      .query(
+        `
       SELECT payload FROM status_workspace_events
       WHERE seqKey > ?
       ORDER BY seqKey
-    `)
+    `,
+      )
       .all(sequenceKey(afterSeq));
     return rows.map((row) =>
       WorkspaceEventV2Schema.parse(
@@ -662,11 +686,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
 
   listEventsForAgent(agentId: string): WorkspaceEventV2[] {
     const rows = this.db.database
-      .query(`
+      .query(
+        `
         SELECT payload FROM status_workspace_events
         WHERE subjectAgentId = ?
         ORDER BY seqKey
-      `)
+      `,
+      )
       .all(agentId);
     return rows.map((row) =>
       WorkspaceEventV2Schema.parse(
@@ -684,11 +710,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
     if (revisionValue === null) return null;
     const revision = ProjectionRevisionRowSchema.parse(revisionValue).revision;
     const rows = this.db.database
-      .query(`
+      .query(
+        `
         SELECT payload FROM status_agent_current_events
         WHERE agentId = ?
         ORDER BY seqKey
-      `)
+      `,
+      )
       .all(agentId);
     const unique = new Map<string, WorkspaceEventV2>();
     for (const row of rows) {
@@ -709,14 +737,16 @@ export class StatusStore implements WorkspaceStatusEventSource {
     kind: "status.runtime" | "status.turn",
   ): WorkspaceEventV2 | null {
     const row = this.db.database
-      .query(`
+      .query(
+        `
         SELECT payload FROM status_workspace_events
         WHERE entityKey = ?
           AND json_extract(payload, '$.source.kind') = 'provider-protocol'
           AND json_extract(payload, '$.data.providerRunId') = ?
           AND json_extract(payload, '$.kind') = ?
         ORDER BY seqKey DESC LIMIT 1
-      `)
+      `,
+      )
       .get(statusEntityKey(entity), providerRunId, kind);
     if (row === null) return null;
     return WorkspaceEventV2Schema.parse(
@@ -727,11 +757,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
   /** The newest sequence this agent's own entity has produced, or null when it has produced nothing. A monotonic identity rather than a timestamp. A watcher that samples this before an action and again after can tell that the stream genuinely advanced; a wall clock only tells it that some clock moved, and every writer of a shared clock moves it. */
   newestAgentEventSeq(agentId: string): string | null {
     const row = this.db.database
-      .query(`
+      .query(
+        `
       SELECT seq FROM status_workspace_events
       WHERE entityKey = ?
       ORDER BY seqKey DESC LIMIT 1
-    `)
+    `,
+      )
       .get(statusEntityKey({ kind: "agent", id: agentId })) as {
       seq: string;
     } | null;
@@ -900,11 +932,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
       entityRevision,
     });
     this.db.database
-      .query(`
+      .query(
+        `
       INSERT INTO status_workspace_events (
         eventId, seq, seqKey, entityKey, subjectAgentId, entityRevision, payload
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         value.eventId,
         value.seq,
@@ -936,11 +970,13 @@ export class StatusStore implements WorkspaceStatusEventSource {
       BigInt(event.entityRevision) > BigInt(revision)
     ) {
       this.db.database
-        .query(`
+        .query(
+          `
           INSERT INTO status_agent_current_revisions (agentId, revision)
           VALUES (?, ?)
           ON CONFLICT(agentId) DO UPDATE SET revision = excluded.revision
-        `)
+        `,
+        )
         .run(agentId, event.entityRevision);
     }
 
@@ -953,10 +989,12 @@ export class StatusStore implements WorkspaceStatusEventSource {
     if (event.kind === "status.attention-resolved") {
       if (typeof event.data.causeEventId === "string") {
         this.db.database
-          .query(`
+          .query(
+            `
             DELETE FROM status_agent_current_events
             WHERE agentId = ? AND slot = ?
-          `)
+          `,
+          )
           .run(agentId, `attention:${event.data.causeEventId}`);
       }
       return;
@@ -993,10 +1031,12 @@ export class StatusStore implements WorkspaceStatusEventSource {
   ): void {
     if (preferNewestObservation) {
       const priorValue = this.db.database
-        .query(`
+        .query(
+          `
           SELECT payload FROM status_agent_current_events
           WHERE agentId = ? AND slot = ?
-        `)
+        `,
+        )
         .get(agentId, slot);
       if (priorValue !== null) {
         const prior = WorkspaceEventV2Schema.parse(
@@ -1011,7 +1051,8 @@ export class StatusStore implements WorkspaceStatusEventSource {
       }
     }
     this.db.database
-      .query(`
+      .query(
+        `
         INSERT INTO status_agent_current_events (
           agentId, slot, eventId, seqKey, payload
         ) VALUES (?, ?, ?, ?, ?)
@@ -1019,7 +1060,8 @@ export class StatusStore implements WorkspaceStatusEventSource {
           eventId = excluded.eventId,
           seqKey = excluded.seqKey,
           payload = excluded.payload
-      `)
+      `,
+      )
       .run(
         agentId,
         slot,
@@ -1035,10 +1077,12 @@ export class StatusStore implements WorkspaceStatusEventSource {
       .get(key) as { value: string } | null;
     const value = nextDecimal(row?.value ?? null);
     this.db.database
-      .query(`
+      .query(
+        `
       INSERT INTO status_counters (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `)
+    `,
+      )
       .run(key, value);
     return value;
   }

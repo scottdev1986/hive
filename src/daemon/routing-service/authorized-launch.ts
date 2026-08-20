@@ -7,10 +7,7 @@ export interface RawLaunchCandidate {
 }
 
 export type LaunchRefusalReason =
-  | "resolution"
-  | "enablement"
-  | "availability"
-  | "effort";
+  "resolution" | "enablement" | "availability" | "effort";
 
 export interface LaunchRefusal {
   reason: LaunchRefusalReason;

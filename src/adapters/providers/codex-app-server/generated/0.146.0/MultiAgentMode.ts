@@ -7,6 +7,4 @@
  * configured mode hint defines the policy instead of a built-in policy.
  */
 export type MultiAgentMode =
-  | { custom: string }
-  | "explicitRequestOnly"
-  | "proactive";
+  { custom: string } | "explicitRequestOnly" | "proactive";

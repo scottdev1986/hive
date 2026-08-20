@@ -193,18 +193,15 @@ describe("proven absences on vendor profiles", () => {
   });
 
   test("grok and opencode profiles leave no steady-state unknowns", async () => {
-    const { steadyStateUnknowns } = await import(
-      "../src/adapters/providers/protocol/types"
-    );
+    const { steadyStateUnknowns } =
+      await import("../src/adapters/providers/protocol/types");
     // Build the post-connect capability shape the same way sessions do: empty
     // measured + profile absences. Baseline rows still unproven until live work,
     // but optional researched gaps must not render as ignorance.
-    const { GrokAcpAdapter } = await import(
-      "../src/adapters/providers/protocol/grok-acp-adapter"
-    );
-    const { OpenCodeAcpAdapter } = await import(
-      "../src/adapters/providers/protocol/opencode-acp-adapter"
-    );
+    const { GrokAcpAdapter } =
+      await import("../src/adapters/providers/protocol/grok-acp-adapter");
+    const { OpenCodeAcpAdapter } =
+      await import("../src/adapters/providers/protocol/opencode-acp-adapter");
     // Read absences off the private profile via a connect is too heavy; assert
     // the module-level contracts by constructing MeasuredProviderCapabilities
     // with the same absence maps the adapters embed.

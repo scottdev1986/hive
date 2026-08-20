@@ -392,9 +392,8 @@ describe("MemoryIndex (SQLite FTS over Markdown facts)", () => {
     await index.rebuild(root);
     expect(index.search("temporary").length).toEqual(1);
 
-    const { deleteMemoryFact } = await import(
-      "../../src/memory-service/memory-store"
-    );
+    const { deleteMemoryFact } =
+      await import("../../src/memory-service/memory-store");
     await deleteMemoryFact(root, "repo", "will-be-deleted");
     await index.rebuild(root);
     expect(index.search("temporary")).toEqual([]);

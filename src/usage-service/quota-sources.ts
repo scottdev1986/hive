@@ -288,9 +288,7 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
 }
 
 type Correlated =
-  | { id: string; result: unknown }
-  | { id: string; error: string }
-  | null;
+  { id: string; result: unknown } | { id: string; error: string } | null;
 
 /** Correlate replies off a line-delimited stdout stream. Both CLIs interleave their replies with notifications and log noise, so anything the extractor does not recognise as a reply to one of our requests is skipped rather than parsed. */
 function responseCollector(

@@ -393,8 +393,7 @@ export class SessiondViewerAttachClient {
       const timeout = setTimeout(() => {
         this.pending.delete(requestId);
         reject(new Error(`sessiond ${requestType} request timed out`));
-      }, this.deps.handshakeTimeoutMs ??
-        TERMINAL_LIMITS.controlRpcTimeoutMilliseconds);
+      }, this.deps.handshakeTimeoutMs ?? TERMINAL_LIMITS.controlRpcTimeoutMilliseconds);
       timeout.unref?.();
       this.pending.set(requestId, { responseType, resolve, reject, timeout });
       try {

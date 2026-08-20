@@ -49,10 +49,7 @@ export interface SettlementSnapshot {
     readonly oid: string | null;
   }[];
   readonly missing: readonly (
-    | "branch"
-    | "worktree"
-    | "preserved-ref"
-    | "salvage-ref"
+    "branch" | "worktree" | "preserved-ref" | "salvage-ref"
   )[];
   readonly accountedBy:
     | "unlanded-count"

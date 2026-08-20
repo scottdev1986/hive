@@ -678,14 +678,12 @@ async function backupLegacyMemory(
       });
       return destination;
     } catch (error) {
-      if (
-        !(
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code === "ERR_FS_CP_EEXIST"
-        )
-      )
+      if (!(
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ERR_FS_CP_EEXIST"
+      ))
         throw error;
       destination = join(backupRoot, `legacy-v1-${timestamp}-${suffix}`);
       suffix += 1;
@@ -767,14 +765,12 @@ async function migrateLegacyScope(
       try {
         await writeFile(destination, old.contents, { flag: "wx" });
       } catch (error) {
-        if (
-          !(
-            typeof error === "object" &&
-            error !== null &&
-            "code" in error &&
-            error.code === "EEXIST"
-          )
-        )
+        if (!(
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "EEXIST"
+        ))
           throw error;
         if ((await readFile(destination, "utf8")) !== old.contents) {
           throw new Error(

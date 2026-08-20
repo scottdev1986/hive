@@ -504,8 +504,7 @@ export class HiveDaemon {
     { available: boolean }
   >;
   private readonly queenRootObservation:
-    | (() => CapabilityProvider | null)
-    | null;
+    (() => CapabilityProvider | null) | null;
   private readonly approvalService: ApprovalService;
   private readonly workspaceOwnerService: WorkspaceOwnerService;
   private readonly memoryRetentionService: MemoryRetentionService;
@@ -3451,9 +3450,8 @@ export class HiveDaemon {
     });
     if (!authorized.ok) return authorized.response;
     const subject = authorized.capability.subject;
-    const { WakePayloadRequestSchema } = await import(
-      "../schemas/wake-payload"
-    );
+    const { WakePayloadRequestSchema } =
+      await import("../schemas/wake-payload");
     const parsed = WakePayloadRequestSchema.safeParse(
       await request.json().catch(() => null),
     );

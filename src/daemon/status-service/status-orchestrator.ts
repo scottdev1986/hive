@@ -8,10 +8,7 @@ import type { OrchestratorStatus } from "../../schemas/status-envelope";
 
 export type TurnBoundaryKind = "turn-start" | "turn-end";
 export type OrchestratorSignalKind =
-  | "session-launch"
-  | "session-start"
-  | "session-end"
-  | TurnBoundaryKind;
+  "session-launch" | "session-start" | "session-end" | TurnBoundaryKind;
 
 /** The root's wire vocabulary is owned by schemas/status-envelope.ts; this
  * re-export keeps the status service's import surface unchanged. */

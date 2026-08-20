@@ -6,12 +6,7 @@ export const GRAPHIFY_HOOK_SCRIPT = "hive-graphify-hook.sh";
 
 /** The hook kinds the generated script knows, one per harness tool event Hive wires. This is the vendor dispatch: the adapters pass one of these as `$1`, and the script's `case` arms are generated from the record below, so a new vendor's kind cannot be added without stating what its hook filters on. */
 export type GraphifyHookKind =
-  | "claude-search"
-  | "claude-read"
-  | "codex"
-  | "grok"
-  | "kimi"
-  | "opencode";
+  "claude-search" | "claude-read" | "codex" | "grok" | "kimi" | "opencode";
 
 /** Total over known hook kinds at compile time: `filter` is what the vendor's hook fires on, `gate` is whether that vendor spends the one decline. The generated hook stays fail-open everywhere else, because a nudge failure must never block an agent tool call. Only the vendors measured at zero graph calls are gated. Codex already works graph-first on its own and gets the advisory nudge it has always had. */
 const GRAPHIFY_HOOK_FILTERS: Record<

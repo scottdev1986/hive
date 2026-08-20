@@ -374,36 +374,44 @@ describe("TokenUsageStore", () => {
       )
       .run(sessionId, repo, at);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
         providerSessionId, profileRunId, startedAt, endedAt, unknownReason
       ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', 'claude', NULL, ?, NULL, NULL, ?, NULL, NULL)
-    `)
+    `,
+      )
       .run(legacyId, sessionId, repo, at);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
         providerSessionId, profileRunId, startedAt, endedAt, unknownReason
       ) VALUES (?, ?, NULL, 'Profiler', 'profiler', 'claude', NULL, ?, NULL, 'run-1', ?, NULL, NULL)
-    `)
+    `,
+      )
       .run(profilerId, sessionId, repo, at);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
       ) VALUES (?, 'legacy', 0, 10, NULL, NULL, 2, NULL, ?, 'legacy')
-    `)
+    `,
+      )
       .run(legacyId, at);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
       ) VALUES (?, 'profiler', 0, 99, NULL, NULL, 1, NULL, ?, 'profiler')
-    `)
+    `,
+      )
       .run(profilerId, at);
 
     new TokenUsageStore(db);

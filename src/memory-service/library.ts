@@ -141,8 +141,7 @@ export interface MemoryMutationDeps {
 }
 
 type Fence =
-  | { ok: true; fact: MemoryFact }
-  | { ok: false; result: MemoryMutationResult };
+  { ok: true; fact: MemoryFact } | { ok: false; result: MemoryMutationResult };
 
 async function fence(
   repoRoot: string,

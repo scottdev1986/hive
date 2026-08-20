@@ -371,7 +371,7 @@ export class QuotaService {
       estimatedUnits: UNCONFIGURED_ESTIMATE_UNITS,
       now: iso(now),
       expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
-      ...(purpose ?? {}),
+      ...purpose,
     };
   }
 
@@ -398,7 +398,7 @@ export class QuotaService {
         estimatedWeeklyUnits: estimate.weekly,
         now: iso(now),
         expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
-        ...(purpose ?? {}),
+        ...purpose,
       };
     });
   }
@@ -628,14 +628,12 @@ export class QuotaService {
     let active!: ActiveProbe;
     const completion = Promise.resolve()
       .then(() => probe.read())
-      .then(
-        (result): CompletedProbe => ({
-          status: "probed",
-          result,
-          startedAt: iso(startedAt),
-          completedAt: iso(this.clock()),
-        }),
-      )
+      .then((result): CompletedProbe => ({
+        status: "probed",
+        result,
+        startedAt: iso(startedAt),
+        completedAt: iso(this.clock()),
+      }))
       .finally(() => {
         if (this.probeReads.get(probe.provider) === active) {
           this.probeReads.delete(probe.provider);

@@ -525,10 +525,12 @@ export class QuotaLedger {
   private requireIntegrity(): void {
     const expected = LedgerIntegritySchema.safeParse(
       this.db.database
-        .query(`
+        .query(
+          `
         SELECT usageRows, reservationRows, nextUsageSeq
         FROM quota_ledger_integrity WHERE id = 0
-      `)
+      `,
+        )
         .get(),
     );
     if (!expected.success) {
@@ -538,12 +540,14 @@ export class QuotaLedger {
     }
     const actual = LedgerIntegritySchema.safeParse(
       this.db.database
-        .query(`
+        .query(
+          `
         SELECT
           (SELECT COUNT(*) FROM quota_usage) AS usageRows,
           (SELECT COUNT(*) FROM quota_reservations) AS reservationRows,
           (SELECT next FROM quota_usage_sequence WHERE id = 0) AS nextUsageSeq
-      `)
+      `,
+        )
         .get(),
     );
     if (!actual.success) {
@@ -580,7 +584,8 @@ export class QuotaLedger {
       })
       .safeParse(
         this.db.database
-          .query(`
+          .query(
+            `
       SELECT
         integrity.usageRows AS expectedUsageRows,
         integrity.reservationRows AS expectedReservationRows,
@@ -595,7 +600,8 @@ export class QuotaLedger {
       FROM quota_ledger_integrity AS integrity
       JOIN quota_usage_sequence AS sequence ON sequence.id = 0
       WHERE integrity.id = 0
-    `)
+    `,
+          )
           .get(),
       );
     if (!state.success) return;
@@ -618,11 +624,13 @@ export class QuotaLedger {
       return;
 
     this.db.database
-      .query(`
+      .query(
+        `
       UPDATE quota_ledger_integrity
       SET usageRows = ?, nextUsageSeq = ?
       WHERE id = 0 AND usageRows = ? AND reservationRows = ? AND nextUsageSeq = ?
-    `)
+    `,
+      )
       .run(
         value.actualUsageRows,
         value.actualNextUsageSeq,
@@ -646,24 +654,28 @@ export class QuotaLedger {
       )
       .parse(
         this.db.database
-          .query(`
+          .query(
+            `
       SELECT
         provider, account, pool,
         COALESCE(fiveHourObservedAt, observedAt) AS fiveHourObservedAt,
         COALESCE(weeklyObservedAt, observedAt) AS weeklyObservedAt
       FROM quota_observations
       WHERE fiveHourUsageSeq IS NULL OR weeklyUsageSeq IS NULL
-    `)
+    `,
+          )
           .all(),
       );
     for (const row of stale) {
       this.db.database
-        .query(`
+        .query(
+          `
         UPDATE quota_observations
         SET fiveHourUsageSeq = COALESCE(fiveHourUsageSeq, ?),
             weeklyUsageSeq = COALESCE(weeklyUsageSeq, ?)
         WHERE provider = ? AND account = ? AND pool = ?
-      `)
+      `,
+        )
         .run(
           this.usageWatermark(row, row.fiveHourObservedAt),
           this.usageWatermark(row, row.weeklyObservedAt),
@@ -695,14 +707,16 @@ export class QuotaLedger {
     if (observedAt === null) return null;
     return z.object({ watermark: z.number() }).parse(
       this.db.database
-        .query(`
+        .query(
+          `
         SELECT COALESCE(MAX(seq), 0) AS watermark FROM quota_usage
         WHERE provider = ? AND account = ? AND pool = ?
           AND seq < COALESCE((
             SELECT MIN(seq) FROM quota_usage
             WHERE provider = ? AND account = ? AND pool = ? AND occurredAt >= ?
           ), 9223372036854775807)
-      `)
+      `,
+        )
         .get(
           scope.provider,
           scope.account,
@@ -717,10 +731,12 @@ export class QuotaLedger {
 
   private watermarks(scope: QuotaScope): ObservationWatermarks {
     const row = this.db.database
-      .query(`
+      .query(
+        `
       SELECT fiveHourUsageSeq, weeklyUsageSeq FROM quota_observations
       WHERE provider = ? AND account = ? AND pool = ?
-    `)
+    `,
+      )
       .get(scope.provider, scope.account, scope.pool);
     if (row === null) return { fiveHour: null, weekly: null };
     const parsed = z
@@ -756,7 +772,8 @@ export class QuotaLedger {
       })
       .parse(
         this.db.database
-          .query(`
+          .query(
+            `
       SELECT
         COALESCE(SUM(CASE WHEN occurredAt >= ? THEN units ELSE 0 END), 0) AS fiveHour,
         COALESCE(SUM(CASE WHEN occurredAt >= ? THEN COALESCE(weeklyUnits, units) ELSE 0 END), 0) AS weekly,
@@ -764,7 +781,8 @@ export class QuotaLedger {
         COALESCE(SUM(CASE WHEN ? IS NOT NULL AND seq > ? THEN COALESCE(weeklyUnits, units) ELSE 0 END), 0) AS afterWeeklyObservation
       FROM quota_usage
       WHERE provider = ? AND account = ? AND pool = ?
-    `)
+    `,
+          )
           .get(
             fiveHourStart,
             weeklyStart,
@@ -785,13 +803,15 @@ export class QuotaLedger {
       .parse(
         // One reservation row carries both window estimates. Retire each estimate at its own boundary while keeping the row active for the other window and for eventual reconciliation.
         this.db.database
-          .query(`
+          .query(
+            `
         SELECT
           COALESCE(SUM(CASE WHEN createdAt >= ? THEN estimatedUnits ELSE 0 END), 0) AS reserved,
           COALESCE(SUM(CASE WHEN createdAt >= ? THEN COALESCE(estimatedWeeklyUnits, estimatedUnits) ELSE 0 END), 0) AS reservedWeekly
         FROM quota_reservations
         WHERE provider = ? AND account = ? AND pool = ? AND status = 'active'
-      `)
+      `,
+          )
           .get(
             fiveHourStart,
             weeklyStart,
@@ -810,10 +830,12 @@ export class QuotaLedger {
   earliestUsageAt(scope: QuotaScope, since: string): string | null {
     const row = z.object({ occurredAt: z.string().nullable() }).parse(
       this.db.database
-        .query(`
+        .query(
+          `
         SELECT MIN(occurredAt) AS occurredAt FROM quota_usage
         WHERE provider = ? AND account = ? AND pool = ? AND occurredAt >= ?
-      `)
+      `,
+        )
         .get(scope.provider, scope.account, scope.pool, since),
     );
     return row.occurredAt;
@@ -821,14 +843,16 @@ export class QuotaLedger {
 
   unconfiguredScopes(): UnconfiguredQuotaScope[] {
     return this.db.database
-      .query(`
+      .query(
+        `
       SELECT provider, account, pool, model FROM quota_reservations
       WHERE pool LIKE 'unconfigured:%'
       UNION
       SELECT provider, account, pool, model FROM quota_usage
       WHERE pool LIKE 'unconfigured:%'
       ORDER BY provider, account, pool, model
-    `)
+    `,
+      )
       .all()
       .map((row) =>
         z
@@ -912,14 +936,16 @@ export class QuotaLedger {
     this.requireIntegrity();
     this.requireCoherent(input.provider, input.model);
     this.db.database
-      .query(`
+      .query(
+        `
       INSERT INTO quota_reservations (
         id, groupId, instanceId, instanceHome, agentName, provider, account, pool, model, effort, category,
         estimatedUnits, estimatedWeeklyUnits, status, createdAt, expiresAt,
         startedAt, reconciledAt, actualUnits, source, purpose,
         controlMessageId
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
-    `)
+    `,
+      )
       .run(
         input.id,
         groupId,
@@ -971,13 +997,15 @@ export class QuotaLedger {
           );
         }
         this.db.database
-          .query(`
+          .query(
+            `
           INSERT INTO quota_model_catalog (
             provider, modelId, displayName, discoveredAt
           ) VALUES (?, ?, ?, ?)
           ON CONFLICT(provider, modelId, displayName) DO UPDATE SET
             discoveredAt = excluded.discoveredAt
-        `)
+        `,
+          )
           .run(
             value.provider,
             value.modelId,
@@ -997,7 +1025,8 @@ export class QuotaLedger {
     at: string,
   ): void {
     this.db.database
-      .query(`
+      .query(
+        `
       INSERT INTO quota_route_health (
         provider, model, effort, consecutiveFailures, lastFailureAt, lastFailureReason,
         lastSuccessAt
@@ -1006,7 +1035,8 @@ export class QuotaLedger {
         consecutiveFailures = quota_route_health.consecutiveFailures + 1,
         lastFailureAt = excluded.lastFailureAt,
         lastFailureReason = excluded.lastFailureReason
-    `)
+    `,
+      )
       .run(provider, model, effort ?? "", at, reason);
   }
 
@@ -1017,7 +1047,8 @@ export class QuotaLedger {
     at: string,
   ): void {
     this.db.database
-      .query(`
+      .query(
+        `
       INSERT INTO quota_route_health (
         provider, model, effort, consecutiveFailures, lastFailureAt, lastFailureReason,
         lastSuccessAt
@@ -1027,7 +1058,8 @@ export class QuotaLedger {
         lastFailureAt = NULL,
         lastFailureReason = NULL,
         lastSuccessAt = excluded.lastSuccessAt
-    `)
+    `,
+      )
       .run(provider, model, effort ?? "", at);
   }
 
@@ -1067,7 +1099,8 @@ export class QuotaLedger {
   upsertDiscoveredPool(pool: DiscoveredQuotaPool): DiscoveredQuotaPool {
     const value = DiscoveredPoolSchema.parse(pool);
     this.db.database
-      .query(`
+      .query(
+        `
       INSERT INTO quota_pools (
         provider, account, pool, models, label, fiveHourWindowMinutes,
         weeklyWindowMinutes, fiveHourMeterState, weeklyMeterState,
@@ -1090,7 +1123,8 @@ export class QuotaLedger {
         weeklyMeterState = excluded.weeklyMeterState,
         discoveredAt = excluded.discoveredAt,
         source = excluded.source
-    `)
+    `,
+      )
       .run(
         value.provider,
         value.account,
@@ -1137,12 +1171,14 @@ export class QuotaLedger {
 
   getActiveReservationForAgent(agentName: string): QuotaReservation | null {
     const row = this.db.database
-      .query(`
+      .query(
+        `
       SELECT * FROM quota_reservations
       WHERE instanceId = ? AND agentName = ? AND status = 'active'
       ORDER BY CASE WHEN id = groupId THEN 0 ELSE 1 END, createdAt DESC, id
       LIMIT 1
-    `)
+    `,
+      )
       .get(this.instanceId, agentName);
     return row === null ? null : ReservationSchema.parse(row);
   }
@@ -1170,11 +1206,13 @@ export class QuotaLedger {
     controlMessageId: string,
   ): QuotaReservation | null {
     const row = this.db.database
-      .query(`
+      .query(
+        `
       SELECT * FROM quota_reservations
       WHERE controlMessageId = ? AND status = 'active'
       ORDER BY createdAt DESC LIMIT 1
-    `)
+    `,
+      )
       .get(controlMessageId);
     return row === null ? null : ReservationSchema.parse(row);
   }
@@ -1182,21 +1220,25 @@ export class QuotaLedger {
   /** Every row a run holds. A run gated by two pools settles both together; settling only the row whose id the caller happens to hold would strand the other pool's reservation until its TTL expired, quietly withholding headroom from every spawn in between. */
   private group(id: string): QuotaReservation[] {
     return this.db.database
-      .query(`
+      .query(
+        `
       SELECT * FROM quota_reservations
       WHERE ${RESERVATION_GROUP_MATCH} OR id = ?
       ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, pool
-    `)
+    `,
+      )
       .all(id, id, id, id)
       .map((row) => ReservationSchema.parse(row));
   }
 
   markStarted(id: string, startedAt: string): QuotaReservation | null {
     this.db.database
-      .query(`
+      .query(
+        `
       UPDATE quota_reservations SET startedAt = COALESCE(startedAt, ?)
       WHERE ${RESERVATION_GROUP_MATCH} AND status = 'active'
-    `)
+    `,
+      )
       .run(startedAt, id, id);
     return this.getReservation(id);
   }
@@ -1213,21 +1255,25 @@ export class QuotaLedger {
       for (const reservation of this.group(id)) {
         if (reservation.status !== "active") continue;
         this.db.database
-          .query(`
+          .query(
+            `
           UPDATE quota_reservations
           SET status = 'reconciled', reconciledAt = ?, actualUnits = ?, source = ?
           WHERE id = ? AND status = 'active'
-        `)
+        `,
+          )
           .run(occurredAt, units, source, reservation.id);
         const seq = this.nextUsageSeq();
         const inserted = this.db.database
-          .query(`
+          .query(
+            `
           INSERT OR IGNORE INTO quota_usage (
             id, reservationId, provider, account, pool, model,
             units, weeklyUnits, occurredAt, source, confidence, seq
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           RETURNING id
-        `)
+        `,
+          )
           .get(
             crypto.randomUUID(),
             reservation.id,
@@ -1254,11 +1300,13 @@ export class QuotaLedger {
 
   release(id: string, releasedAt: string): QuotaReservation | null {
     this.db.database
-      .query(`
+      .query(
+        `
       UPDATE quota_reservations
       SET status = 'released', reconciledAt = ?, actualUnits = 0, source = 'released'
       WHERE ${RESERVATION_GROUP_MATCH} AND status = 'active'
-    `)
+    `,
+      )
       .run(releasedAt, id, id);
     return this.getReservation(id);
   }
@@ -1274,11 +1322,13 @@ export class QuotaLedger {
 
   async expired(_now: string): Promise<QuotaReservation[]> {
     const rows = this.db.database
-      .query(`
+      .query(
+        `
       SELECT * FROM quota_reservations
       WHERE status = 'active'
       ORDER BY expiresAt, id
-    `)
+    `,
+      )
       .all()
       .map((row) => ReservationSchema.parse(row));
     const reclaimable: QuotaReservation[] = [];
@@ -1315,7 +1365,8 @@ export class QuotaLedger {
         return priorSeq ?? this.usageWatermark(value, mergedAt);
       };
       this.db.database
-        .query(`
+        .query(
+          `
         INSERT INTO quota_observations (
           provider, account, pool, fiveHourUsed, weeklyUsed, observedAt,
           fiveHourResetAt, weeklyResetAt, source, confidence,
@@ -1339,7 +1390,8 @@ export class QuotaLedger {
           weeklyConfidence = excluded.weeklyConfidence,
           fiveHourUsageSeq = excluded.fiveHourUsageSeq,
           weeklyUsageSeq = excluded.weeklyUsageSeq
-      `)
+      `,
+        )
         .run(
           merged.provider,
           merged.account,
@@ -1382,7 +1434,8 @@ export class QuotaLedger {
 
   getObservation(scope: QuotaScope): QuotaObservation | null {
     const row = this.db.database
-      .query(`
+      .query(
+        `
       SELECT
         provider, account, pool, fiveHourUsed, weeklyUsed, observedAt,
         fiveHourResetAt, weeklyResetAt, source, confidence,
@@ -1390,7 +1443,8 @@ export class QuotaLedger {
         weeklyObservedAt, weeklySource, weeklyConfidence
       FROM quota_observations
       WHERE provider = ? AND account = ? AND pool = ?
-    `)
+    `,
+      )
       .get(scope.provider, scope.account, scope.pool);
     if (row === null) return null;
     try {
@@ -1416,10 +1470,12 @@ export class QuotaLedger {
     window: QuotaAlertState["window"],
   ): QuotaAlertState | null {
     const row = this.db.database
-      .query(`
+      .query(
+        `
       SELECT * FROM quota_alerts
       WHERE provider = ? AND account = ? AND pool = ? AND window = ?
-    `)
+    `,
+      )
       .get(scope.provider, scope.account, scope.pool, window);
     return row === null ? null : AlertStateSchema.parse(row);
   }
@@ -1427,7 +1483,8 @@ export class QuotaLedger {
   setAlertState(state: QuotaAlertState): QuotaAlertState {
     const value = AlertStateSchema.parse(state);
     this.db.database
-      .query(`
+      .query(
+        `
       INSERT INTO quota_alerts (
         provider, account, pool, window, level, notifiedAt, boundaryAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1435,7 +1492,8 @@ export class QuotaLedger {
         level = excluded.level,
         notifiedAt = excluded.notifiedAt,
         boundaryAt = excluded.boundaryAt
-    `)
+    `,
+      )
       .run(
         value.provider,
         value.account,

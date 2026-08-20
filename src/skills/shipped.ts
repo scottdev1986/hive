@@ -1,53 +1,21 @@
 /** The skills Hive ships to a user's machine. Ship-vs-dev is decided by directory, and this file is the whole seam: `skills/` ships, everything under `.hive/skills/` and `.claude/skills/` is Hive's own development kit and must never reach a stranger's disk. The rule is enforceable rather than aspirational because Hive is distributed as a `bun build --compile` binary (src/release/build.ts) — only what `src/cli.ts` imports exists on a user's machine. There is no repo out there to read from. So a shipped skill has to be *inside* the binary, and the import attribute below is what puts it there: `with { type: "text" }` inlines the file's contents into the bundle as a string literal. Adding a skill means adding an import here — a skill that nobody imports is a skill nobody ships, and `shipped.test.ts` fails when this list and `skills/` disagree. */
 
-import hiveClaude from "../../skills/agent/claude/hive-claude/SKILL.md" with {
-  type: "text",
-};
-import codeReview from "../../skills/agent/code_review/code-review/SKILL.md" with {
-  type: "text",
-};
-import hiveCodex from "../../skills/agent/codex/hive-codex/SKILL.md" with {
-  type: "text",
-};
-import hiveGrok from "../../skills/agent/grok/hive-grok/SKILL.md" with {
-  type: "text",
-};
-import hiveMemory from "../../skills/agent/hive-memory/SKILL.md" with {
-  type: "text",
-};
-import karpathyGuidelines from "../../skills/agent/karpathy-guidelines/SKILL.md" with {
-  type: "text",
-};
-import hiveKimi from "../../skills/agent/kimi/hive-kimi/SKILL.md" with {
-  type: "text",
-};
-import hiveOpencode from "../../skills/agent/opencode/hive-opencode/SKILL.md" with {
-  type: "text",
-};
-import hiveAlignment from "../../skills/queen/hive-alignment/SKILL.md" with {
-  type: "text",
-};
-import hiveBoardConventions from "../../skills/queen/hive-board-conventions/SKILL.md" with {
-  type: "text",
-};
-import hiveDispatch from "../../skills/queen/hive-dispatch/SKILL.md" with {
-  type: "text",
-};
-import hiveEscalation from "../../skills/queen/hive-escalation/SKILL.md" with {
-  type: "text",
-};
-import hiveLanding from "../../skills/queen/hive-landing/SKILL.md" with {
-  type: "text",
-};
-import hiveMailDiscipline from "../../skills/queen/hive-mail-discipline/SKILL.md" with {
-  type: "text",
-};
-import hiveSuccession from "../../skills/queen/hive-succession/SKILL.md" with {
-  type: "text",
-};
-import hiveWorktreeLifecycle from "../../skills/queen/hive-worktree-lifecycle/SKILL.md" with {
-  type: "text",
-};
+import hiveClaude from "../../skills/agent/claude/hive-claude/SKILL.md" with { type: "text" };
+import codeReview from "../../skills/agent/code_review/code-review/SKILL.md" with { type: "text" };
+import hiveCodex from "../../skills/agent/codex/hive-codex/SKILL.md" with { type: "text" };
+import hiveGrok from "../../skills/agent/grok/hive-grok/SKILL.md" with { type: "text" };
+import hiveMemory from "../../skills/agent/hive-memory/SKILL.md" with { type: "text" };
+import karpathyGuidelines from "../../skills/agent/karpathy-guidelines/SKILL.md" with { type: "text" };
+import hiveKimi from "../../skills/agent/kimi/hive-kimi/SKILL.md" with { type: "text" };
+import hiveOpencode from "../../skills/agent/opencode/hive-opencode/SKILL.md" with { type: "text" };
+import hiveAlignment from "../../skills/queen/hive-alignment/SKILL.md" with { type: "text" };
+import hiveBoardConventions from "../../skills/queen/hive-board-conventions/SKILL.md" with { type: "text" };
+import hiveDispatch from "../../skills/queen/hive-dispatch/SKILL.md" with { type: "text" };
+import hiveEscalation from "../../skills/queen/hive-escalation/SKILL.md" with { type: "text" };
+import hiveLanding from "../../skills/queen/hive-landing/SKILL.md" with { type: "text" };
+import hiveMailDiscipline from "../../skills/queen/hive-mail-discipline/SKILL.md" with { type: "text" };
+import hiveSuccession from "../../skills/queen/hive-succession/SKILL.md" with { type: "text" };
+import hiveWorktreeLifecycle from "../../skills/queen/hive-worktree-lifecycle/SKILL.md" with { type: "text" };
 import type { SkillAudience, SkillTool } from "../adapters/skills";
 import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 import type { RoutingCategory } from "../schemas/routing-policy";

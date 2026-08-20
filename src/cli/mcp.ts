@@ -97,7 +97,9 @@ export class HiveMcpSession {
     } catch (error) {
       if (!reused) throw error;
       await this.close();
-      result = await (await this.connected()).callTool({
+      result = await (
+        await this.connected()
+      ).callTool({
         name,
         arguments: args,
       });

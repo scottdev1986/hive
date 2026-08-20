@@ -421,10 +421,12 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         ]);
         expect(
           db.database
-            .query(`
+            .query(
+              `
             SELECT locatorInstanceId, locatorSessionId, locatorGeneration
             FROM terminal_host_bindings
-          `)
+          `,
+            )
             .all(),
         ).toEqual([
           {

@@ -547,10 +547,8 @@ type Equals<Left, Right> =
     ? true
     : false;
 
-// The envelope above and its wire schema in ../schemas/memory-projections.ts are two names for one shape; the schemas layer is the import leaf, so this alias lives here and fails typechecking when either side moves without the other.
+// The envelope above and its wire schema in ../schemas/memory-projections.ts are two names for one shape; the schemas layer is the import leaf, so this check lives here and fails typechecking when either side moves without the other.
 
-// biome-ignore-start lint/correctness/noUnusedVariables: These aliases fail typechecking when schemas drift from their contracts.
-type MemoryQueryEnvelopeSchemaMatchesDomain = Assert<
+true satisfies Assert<
   Equals<z.infer<typeof MemoryQueryEnvelopeSchema>, MemoryQueryEnvelope>
 >;
-// biome-ignore-end lint/correctness/noUnusedVariables: These aliases fail typechecking when schemas drift from their contracts.

@@ -1,15 +1,12 @@
 // Owns Claude's stream-json session state machine, preserving wire-event order,
 // partial tool input, permission timing, and process lifecycle as one boundary.
 
-import { randomUUID } from "node:crypto";
-import {
-  claudeEffectiveDefault,
-  recordsFromClaudeInitialize,
-} from "../../../daemon/provider-capabilities/discovery";
-import type { MeasuredProviderCapabilities } from "../../../schemas/capability";
-import { errorMessage } from "../../../shared/error-message";
-import { isRecord } from "../../../shared/is-record";
-import { safeJsonParse } from "../../../shared/json";
+import {randomUUID} from "node:crypto";
+import {claudeEffectiveDefault, recordsFromClaudeInitialize,} from "../../../daemon/provider-capabilities/discovery";
+import type {MeasuredProviderCapabilities} from "../../../schemas/capability";
+import {errorMessage} from "../../../shared/error-message";
+import {isRecord} from "../../../shared/is-record";
+import {safeJsonParse} from "../../../shared/json";
 import {
   CLAUDE_CHANNELS_ENABLEMENT,
   CLAUDE_CHANNELS_WARNING,
@@ -17,24 +14,9 @@ import {
   type ClaudeProcessFactory,
   signalClaudeProcessGroup,
 } from "./claude-stream-process";
-import {
-  ASK_USER_QUESTION,
-  answersInput,
-  claudeQuestions,
-} from "./claude-stream-questions";
-import {
-  accountFingerprint,
-  asNumber,
-  asString,
-  commandFrom,
-  type JsonObject,
-} from "./claude-stream-wire";
-import {
-  claudeToolChanges,
-  claudeToolDetail,
-  claudeToolKind,
-  claudeToolLocations,
-} from "./claude-tool-calls";
+import {answersInput, ASK_USER_QUESTION, claudeQuestions,} from "./claude-stream-questions";
+import {accountFingerprint, asNumber, asString, commandFrom, type JsonObject,} from "./claude-stream-wire";
+import {claudeToolChanges, claudeToolDetail, claudeToolKind, claudeToolLocations,} from "./claude-tool-calls";
 import type {
   NormalizedProviderEvent,
   PermissionDecision,
@@ -533,9 +515,11 @@ export class ClaudeStreamJsonSession implements ProviderSession {
       : [];
     this.commands = commands;
     const account = accountFingerprint(initialization.account);
-    Object.assign(this.capabilities.runtime, {
-      ...(account === undefined ? {} : { accountFingerprint: account }),
-    });
+    if (account !== undefined) {
+      Object.assign(this.capabilities.runtime, {
+        accountFingerprint: account,
+      });
+    }
     Object.assign(this.capabilities, { handshake: initialization });
     this.emit({ kind: "commands-updated", commands }, initialization);
 
@@ -1173,21 +1157,20 @@ export class ClaudeStreamJsonSession implements ProviderSession {
 
   private sendControl(request: JsonObject): Promise<unknown> {
     const requestId = randomUUID();
-    const promise = new Promise<unknown>((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.controls.delete(requestId);
         reject(new Error(`Claude ${String(request.subtype)} timed out`));
       }, CONTROL_TIMEOUT_MS);
-      this.controls.set(requestId, { resolve, reject, timer });
+      this.controls.set(requestId, {resolve, reject, timer});
       try {
-        this.write({ type: "control_request", request_id: requestId, request });
+        this.write({type: "control_request", request_id: requestId, request});
       } catch (error) {
         clearTimeout(timer);
         this.controls.delete(requestId);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
-    return promise;
   }
 
   private writeControlResponse(requestId: string, response: JsonObject): void {

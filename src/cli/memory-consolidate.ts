@@ -24,8 +24,7 @@ import { bindCliHiveHome } from "./bind-hive-home";
 import { UserDaemonClient } from "./user-daemon-client";
 
 export type ConsolidationApplyTarget =
-  | { state: "offline" }
-  | { state: "daemon"; port: number };
+  { state: "offline" } | { state: "daemon"; port: number };
 
 export interface ConsolidationOwnershipDependencies {
   hiveHome?: () => string;

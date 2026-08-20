@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../../src/daemon/database/hive-database";
@@ -21,6 +22,10 @@ import {
   SessiondProtocolError,
   SessiondWireNotReadyError,
 } from "../../../src/daemon/session-host/sessiond-host";
+import type {
+  HostLaunchRequest,
+  LaunchedHost,
+} from "../../../src/daemon/session-host/host-launcher";
 import type { TerminalHostBindingStore } from "../../../src/daemon/session-host/terminal-host-binding";
 import type {
   CreateRequest,
@@ -245,17 +250,15 @@ function recordingLauncher(
   const requests: Array<{ specJson: string }> = [];
   return {
     requests,
-    launch: (async (request: { specJson: string }) => {
+    launch: async (request: HostLaunchRequest): Promise<LaunchedHost> => {
       requests.push({ specJson: request.specJson });
-      const record = outcome();
       return {
-        record,
+        record: outcome() as LaunchedHost["record"],
         hostPid: launchedRecord.hostPid,
-        control: { destroy: () => {} },
-        process,
+        control: { destroy() {} } as Socket,
+        process: process as LaunchedHost["process"],
       };
-      // biome-ignore lint/suspicious/noExplicitAny: the seam only needs these fields.
-    }) as any,
+    },
   };
 }
 
@@ -427,7 +430,9 @@ describe("sessiond wire framing", () => {
       encoded.byteOffset,
       encoded.byteLength,
     );
-    expect([...encoded.slice(0, 4)]).toEqual([...FRAME_HEADER.magicBytes]);
+    expect(Array.from(encoded.subarray(0, 4))).toEqual(
+      Array.from(FRAME_HEADER.magicBytes),
+    );
     expect(view.getUint16(FRAME_HEADER.offsets.type)).toBe(0x0004);
     expect(view.getUint32(FRAME_HEADER.offsets.payloadLength)).toBe(
       payload.byteLength,
@@ -744,10 +749,12 @@ describe("sessiond wire framing", () => {
       });
       expect(
         db.database
-          .query(`
+          .query(
+            `
         SELECT locatorInstanceId, locatorSessionId, locatorGeneration
         FROM terminal_host_bindings
-      `)
+      `,
+          )
           .all(),
       ).toEqual([
         {

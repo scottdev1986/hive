@@ -214,15 +214,13 @@ export async function autonomyCli(
     verifyIdentity: !isTestRunnerEnv(),
   }).json(
     "/autonomy",
-    {
-      ...(mode === undefined
-        ? {}
-        : {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ autonomy: mode }),
-          }),
-    },
+    mode === undefined
+      ? {}
+      : {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ autonomy: mode }),
+        },
     "throw",
   )) as unknown;
   const parsed = AutonomyEnvelopeSchema.safeParse(body);
@@ -431,8 +429,7 @@ export async function requestDaemonStop(
     body: JSON.stringify(body),
   });
   const parsed = (await response.json().catch(() => null)) as
-    | (Partial<StopResponseBody> & { error?: string })
-    | null;
+    (Partial<StopResponseBody> & { error?: string }) | null;
   if (parsed === null || typeof parsed.state !== "string") {
     throw new Error(
       `hive stop failed (HTTP ${response.status}): the daemon returned no stop state`,

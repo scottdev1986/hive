@@ -141,8 +141,7 @@ export function isAgentUiRootSubject(subject: string): boolean {
 }
 
 export type AgentUiSessionDecision =
-  | { readonly outcome: "fresh" }
-  | ResumeDecision;
+  { readonly outcome: "fresh" } | ResumeDecision;
 
 export async function openAgentUiProviderSession(input: {
   readonly subject: string;

@@ -261,8 +261,15 @@ async function makeDaemon(
   return { daemon, repoRoot };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: MCP JSON is intentionally decoded loosely in this test.
-type ToolValue = any;
+type WriteToolValue = { embedding: string };
+type EmbeddingStatusValue = {
+  provider: string;
+  model: string;
+  state: string;
+  vectors: { articles: number; facts: number; total: number };
+  runtimeDir?: string;
+  detail?: string;
+};
 
 async function connectedClient(
   daemon: HiveDaemon,
@@ -278,7 +285,9 @@ async function connectedClient(
   return client;
 }
 
-function textValue(result: Awaited<ReturnType<Client["callTool"]>>): ToolValue {
+function textValue(
+  result: Awaited<ReturnType<Client["callTool"]>>,
+): WriteToolValue {
   const content = (
     result as {
       content: Array<{ type: string; text?: string }>;
@@ -287,10 +296,13 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): ToolValue {
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
-  return JSON.parse(content.text) as ToolValue;
+  return JSON.parse(content.text) as WriteToolValue;
 }
 
-async function seedArticle(client: Client, title: string): Promise<ToolValue> {
+async function seedArticle(
+  client: Client,
+  title: string,
+): Promise<WriteToolValue> {
   return textValue(
     await client.callTool({
       name: "memory_write",
@@ -409,7 +421,7 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
     });
     const structured = (
       result as unknown as {
-        structuredContent: { memory: { embeddings: ToolValue } };
+        structuredContent: { memory: { embeddings: EmbeddingStatusValue } };
       }
     ).structuredContent;
     const embeddings = structured.memory.embeddings;
@@ -431,7 +443,7 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
       name: "hive_status",
       arguments: {},
     })) as unknown as {
-      structuredContent: { memory: { embeddings: ToolValue } };
+      structuredContent: { memory: { embeddings: EmbeddingStatusValue } };
     };
     expect(down.structuredContent.memory.embeddings.state).toBe(
       "embedding-runtime-missing",
@@ -448,7 +460,7 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
       name: "hive_status",
       arguments: {},
     })) as unknown as {
-      structuredContent: { memory: { embeddings: ToolValue } };
+      structuredContent: { memory: { embeddings: EmbeddingStatusValue } };
     };
     expect(disabled.structuredContent.memory.embeddings.state).toBe("disabled");
   });

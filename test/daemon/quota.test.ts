@@ -188,10 +188,12 @@ describe("quota persistence and reservations", () => {
     expect(() => new QuotaLedger(db)).not.toThrow();
     expect(
       db.database
-        .query(`
+        .query(
+          `
       SELECT usageRows, reservationRows, nextUsageSeq
       FROM quota_ledger_integrity WHERE id = 0
-    `)
+    `,
+        )
         .get(),
     ).toEqual({
       usageRows: 1,
@@ -221,10 +223,12 @@ describe("quota persistence and reservations", () => {
     `);
     expect(
       db.database
-        .query(`
+        .query(
+          `
       SELECT usageRows, reservationRows, nextUsageSeq
       FROM quota_ledger_integrity WHERE id = 0
-    `)
+    `,
+        )
         .get(),
     ).toEqual({
       usageRows: 2,
@@ -835,13 +839,15 @@ describe("quota telemetry and alerts", () => {
     const { db } = await fileDatabase("corrupt");
     const ledger = new QuotaLedger(db);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO quota_observations (
         provider, account, pool, fiveHourUsed, weeklyUsed, observedAt,
         fiveHourResetAt, weeklyResetAt, source, confidence
       ) VALUES ('claude', 'personal', 'claude-premium', 10, 10,
         'not-a-date', NULL, NULL, 'manual', 'reported')
-    `)
+    `,
+      )
       .run();
     const service = new QuotaService(
       ledger,

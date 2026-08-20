@@ -220,19 +220,20 @@ export class MachineMutationCoordinator {
       const acquiredAt = new Date().toISOString();
       const result = this.immediate(
         ():
-          | { acquired: true }
-          | { acquired: false; lease: LeaseRow | null } => {
+          { acquired: true } | { acquired: false; lease: LeaseRow | null } => {
           const lease = this.readLease();
           if (lease !== null) return { acquired: false, lease };
           if (this.readOperations().length > 0) {
             return { acquired: false, lease: null };
           }
           this.database
-            .query(`
+            .query(
+              `
           INSERT INTO machine_mutation_lease (
             id, token, purpose, holderPid, holderStartedAt, acquiredAt
           ) VALUES (1, ?, ?, ?, ?, ?)
-        `)
+        `,
+            )
             .run(
               token,
               parsedPurpose,
@@ -278,12 +279,14 @@ export class MachineMutationCoordinator {
         const current = this.readLease();
         if (current !== null) return current;
         this.database
-          .query(`
+          .query(
+            `
           INSERT INTO machine_operations (
             token, kind, instanceId, instanceHome, holderPid,
             holderStartedAt, startedAt
           ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `)
+        `,
+          )
           .run(
             token,
             kind,
@@ -323,10 +326,12 @@ export class MachineMutationCoordinator {
 
   private readLease(): LeaseRow | null {
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT token, purpose, holderPid, holderStartedAt, acquiredAt
       FROM machine_mutation_lease WHERE id = 1
-    `)
+    `,
+      )
       .get();
     if (row === null) return null;
     const parsed = LeaseRowSchema.safeParse(row);
@@ -340,11 +345,13 @@ export class MachineMutationCoordinator {
 
   private readOperations(): OperationRow[] {
     const rows = this.database
-      .query(`
+      .query(
+        `
       SELECT token, kind, instanceId, instanceHome, holderPid, holderStartedAt,
              startedAt
       FROM machine_operations ORDER BY startedAt, token
-    `)
+    `,
+      )
       .all();
     const parsed = z.array(OperationRowSchema).safeParse(rows);
     if (!parsed.success) {

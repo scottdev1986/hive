@@ -74,8 +74,7 @@ export function checkpointRequestKind(
 }
 
 export type AdmissionDecision =
-  | { admit: true }
-  | { admit: false; reason: string };
+  { admit: true } | { admit: false; reason: string };
 
 /** New work is admitted only when the resident context, the estimated cost of the remaining control work, and the handoff reserve together fit under the per-model absolute ceiling. Unknown usage is not free: it refuses until the usage is measured or the state is checkpointed — a verified checkpoint is what makes a forced handoff survivable. Absent usage data cannot reach here: the ContextUsage schema makes "unknown" explicit at the door, and the input carries the ceiling numbers only when there is a measurement to check them against. */
 export type UnknownAdmissionInput = {
@@ -278,9 +277,9 @@ export class SuccessionService {
           })),
       },
       artifacts: [
-        ...new Set([
-          ...tasks.flatMap((task) => [...task.artifactRefs, ...task.evidence]),
-        ]),
+        ...new Set(
+          tasks.flatMap((task) => [...task.artifactRefs, ...task.evidence]),
+        ),
       ],
     };
   }

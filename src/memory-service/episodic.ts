@@ -182,15 +182,19 @@ export class EpisodicStore {
     const ts = input.ts ?? new Date().toISOString();
     const provenance = JSON.stringify(input.provenance);
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO events (ts, agent, type, summary, provenance)
       VALUES (?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(ts, input.agent, input.type, input.summary, provenance);
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT * FROM events WHERE id = last_insert_rowid()
-    `)
+    `,
+      )
       .get();
     return EpisodicEventSchema.parse(EventRowSchema.parse(row));
   }
@@ -233,10 +237,12 @@ export class EpisodicStore {
 
   writeMeta(key: string, value: string): void {
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO meta (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `)
+    `,
+      )
       .run(key, value);
   }
 
@@ -333,7 +339,8 @@ export class EpisodicStore {
     const embeddedAt = input.embeddedAt ?? new Date().toISOString();
     IsoTimestampSchema.parse(embeddedAt);
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO memory_embeddings (
         kind, scope, source_id, model, dimensions, vector, embedded_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -342,7 +349,8 @@ export class EpisodicStore {
         dimensions = excluded.dimensions,
         vector = excluded.vector,
         embedded_at = excluded.embedded_at
-    `)
+    `,
+      )
       .run(
         input.kind,
         input.scope,
@@ -364,10 +372,12 @@ export class EpisodicStore {
     sourceId: string,
   ): void {
     this.database
-      .query(`
+      .query(
+        `
       DELETE FROM memory_embeddings
       WHERE kind = ? AND scope = ? AND source_id = ?
-    `)
+    `,
+      )
       .run(kind, scope, sourceId);
   }
 

@@ -229,7 +229,7 @@ function parseDeclarations(
 ): Map<string, StandardsAudience> {
   const lines = source.split("\n");
   const opened = lines.findIndex((line) => line.trim() === DECLARATION_FENCE);
-  const firstHeading = lines.findIndex((line) => /^## /.test(line));
+  const firstHeading = lines.findIndex((line) => line.startsWith("## "));
   if (opened === -1 || (firstHeading !== -1 && opened > firstHeading)) {
     throw new Error(
       `Cannot spawn: ${path} declares no sections. Above the first "##" heading it needs a ${DECLARATION_FENCE} block with one "Section heading: audience" line per section; ${AUDIENCE_SYNTAX}`,

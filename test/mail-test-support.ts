@@ -24,7 +24,7 @@ export function drainMailbox(
   recipient: string,
   generation = 0,
 ): void {
-  for (let item = mailbox(store, recipient)[0]; item !== undefined; ) {
+  for (let item = mailbox(store, recipient)[0]; item !== undefined;) {
     const now = new Date();
     store.claim({
       itemId: item.itemId,

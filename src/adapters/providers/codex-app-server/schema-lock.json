@@ -8,7 +8,7 @@
     "sha256": "ae1d3ffe6d48aec6a4dc3f50e7eb8e0d11962485a6a9406c5a7012139383da02"
   },
   "output": "generated/0.146.0",
-  "formatter": "@biomejs/biome 2.5.5",
+  "formatter": "prettier 3.9.6",
   "fileCount": 701,
-  "sha256OfSortedFileHashes": "0d4ab6ca2de34026d5e0a2d2766ef8cdc696866fdde3584d4104ab2c34eacf0f"
+  "sha256OfSortedFileHashes": "c7b1eb605e0faed780aaf38461a6b9c07f5b6f416c6bd2820b1591404ebb5f5c"
 }

@@ -8,11 +8,7 @@ export interface DraftSnapshot {
 
 /** `delivery_unknown` is the transport dying between submit and acknowledgement: Hive cannot tell "never accepted" from "accepted, reply lost". It is terminal for a user row, because replaying a prompt the agent may already be working on is interference of its own. A person can retry it explicitly. */
 export type DeliveryState =
-  | "pending"
-  | "submitted"
-  | "observed"
-  | "rejected"
-  | "delivery_unknown";
+  "pending" | "submitted" | "observed" | "rejected" | "delivery_unknown";
 
 export interface OutboundRow {
   readonly clientInputId: string;

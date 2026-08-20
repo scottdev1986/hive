@@ -29,18 +29,7 @@ import { required } from "../required";
 
 export const NEUTRAL_FIXTURE_VERSION = "1.0.0" as const;
 export type FreezeCase =
-  | "A"
-  | "B"
-  | "C"
-  | "D"
-  | "E"
-  | "F"
-  | "G"
-  | "H"
-  | "I"
-  | "J"
-  | "K"
-  | "U";
+  "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "U";
 
 const AT = "2026-07-17T12:00:00.000Z";
 export const fixtureLimits: HostLimits = {

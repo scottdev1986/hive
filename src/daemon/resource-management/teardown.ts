@@ -207,13 +207,11 @@ export async function stopSessiondAgentSession(
       }
     } catch (error) {
       // The broker positively has no such session and the root pid is positively absent from the process table: two independent absences are a completed teardown, not an unverifiable one. NOT_FOUND against a root that is still in the process table stays a failure.
-      if (
-        !(
-          rootAbsent &&
-          error instanceof SessiondWireError &&
-          error.code === "NOT_FOUND"
-        )
-      ) {
+      if (!(
+        rootAbsent &&
+        error instanceof SessiondWireError &&
+        error.code === "NOT_FOUND"
+      )) {
         terminalError = error;
       }
     }

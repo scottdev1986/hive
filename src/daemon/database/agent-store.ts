@@ -90,7 +90,8 @@ export class AgentStore {
         : parsed;
     const closedAt = this.resolveClosedAt(value);
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO agents (
         id, name, tool, model, liveModel, category, status, taskDescription,
         worktreePath, branch, sessionLocator, contextPct,
@@ -129,7 +130,8 @@ export class AgentStore {
         holdReason = excluded.holdReason,
         holdResetAt = excluded.holdResetAt,
         holdProviderRunId = excluded.holdProviderRunId
-    `)
+    `,
+      )
       .run(
         value.id,
         value.name,
@@ -204,10 +206,12 @@ export class AgentStore {
           return false;
         }
         this.database
-          .query(`
+          .query(
+            `
           DELETE FROM terminal_host_bindings
           WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-        `)
+        `,
+          )
           .run(locator.instanceId, locator.sessionId, locator.generation);
       }
       return (
@@ -238,22 +242,26 @@ export class AgentStore {
 
   getAgentByName(name: string): AgentRecord | null {
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT * FROM agents WHERE name = ?
       ORDER BY (status IN ('done', 'dead')) ASC, createdAt DESC
       LIMIT 1
-    `)
+    `,
+      )
       .get(name);
     return row === null ? null : parseAgentRow(row);
   }
 
   getLiveAgentByName(name: string): AgentRecord | null {
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT * FROM agents
       WHERE name = ? AND status NOT IN ('done', 'dead')
       LIMIT 1
-    `)
+    `,
+      )
       .get(name);
     return row === null ? null : parseAgentRow(row);
   }
@@ -271,10 +279,12 @@ export class AgentStore {
   ): boolean {
     return (
       this.database
-        .query(`
+        .query(
+          `
       INSERT OR IGNORE INTO agent_name_reservations (name, createdAt)
       VALUES (?, ?)
-    `)
+    `,
+        )
         .run(name, createdAt).changes === 1
     );
   }
@@ -303,17 +313,21 @@ export class AgentStore {
   revokeAgentCapabilities(name: string, timestamp: string): AgentRecord | null {
     return this.transaction(() => {
       this.database
-        .query(`
+        .query(
+          `
         UPDATE agents SET capabilityEpoch = capabilityEpoch + 1,
           writeRevoked = 1, status = 'control-paused', lastEventAt = ?
         WHERE name = ? AND status NOT IN ('dead', 'done', 'failed')
-      `)
+      `,
+        )
         .run(timestamp, name);
       this.database
-        .query(`
+        .query(
+          `
         UPDATE approvals SET status = 'denied', resolvedAt = ?
         WHERE agentName = ? AND status = 'pending'
-      `)
+      `,
+        )
         .run(timestamp, name);
       return this.getAgentByName(name);
     });

@@ -240,8 +240,7 @@ export interface Denial {
 }
 
 export type Decision =
-  | { readonly ok: true; readonly capability: Capability }
-  | Denial;
+  { readonly ok: true; readonly capability: Capability } | Denial;
 
 export type RouteAuthorization =
   | { readonly ok: true; readonly capability: Capability }

@@ -37,12 +37,7 @@ interface ViewCommand extends VendorCommand {
 }
 
 export type RuntimePhase =
-  | "starting"
-  | "connecting"
-  | "ready"
-  | "degraded"
-  | "disconnected"
-  | "exited";
+  "starting" | "connecting" | "ready" | "degraded" | "disconnected" | "exited";
 
 export type TurnPhase =
   | "unknown"
@@ -61,19 +56,11 @@ export type MailPhase = "none" | "waiting" | "waking" | "retrying";
 export type AttentionLevel = "none" | "info" | "approval" | "failure";
 
 export type HumanDelivery =
-  | "queued"
-  | "submitting"
-  | "accepted"
-  | "rejected"
-  | "unknown";
+  "queued" | "submitting" | "accepted" | "rejected" | "unknown";
 
 type ActiveCompactionStatus = "queued" | "starting" | "running";
 type SettledCompactionStatus =
-  | "ok"
-  | "error"
-  | "unknown"
-  | "cancelled"
-  | "unavailable";
+  "ok" | "error" | "unknown" | "cancelled" | "unavailable";
 
 interface CompactionBase {
   readonly kind: "compaction";

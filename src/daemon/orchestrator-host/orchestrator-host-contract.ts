@@ -62,8 +62,7 @@ type Equals<Left, Right> =
   (<T>() => T extends Left ? 1 : 2) extends <T>() => T extends Right ? 1 : 2
     ? true
     : false;
-// biome-ignore lint/correctness/noUnusedVariables: This alias fails typechecking when the wire status drifts from the status service's vocabulary.
-type OrchestratorStatusSchemaMatchesService = Assert<
+true satisfies Assert<
   Equals<z.infer<typeof OrchestratorStatusSchema>, OrchestratorStatus>
 >;
 

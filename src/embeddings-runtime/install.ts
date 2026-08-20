@@ -20,8 +20,7 @@ import {
 import { errorMessage } from "../shared/error-message";
 
 export type EmbeddingsInstallOutcome =
-  | { ok: true; detail: string }
-  | { ok: false; reason: string };
+  { ok: true; detail: string } | { ok: false; reason: string };
 
 export interface EmbeddingsProbeResult {
   model: string;

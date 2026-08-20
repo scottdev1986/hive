@@ -500,13 +500,15 @@ describe("HiveDatabase", () => {
       openTerminalRevision: "9",
     };
     legacy
-      .query(`
+      .query(
+        `
       INSERT INTO terminal_host_bindings (
         sessionKey, sessionIncarnation,
         locatorInstanceId, locatorSessionId, locatorGeneration,
         locatorJson, visibilityJson
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         "neutral-key",
         "neutral-incarnation",
@@ -855,9 +857,11 @@ describe("HiveDatabase", () => {
     `);
     const value = agent();
     legacy
-      .query(`
+      .query(
+        `
       INSERT INTO agents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         value.id,
         value.name,
@@ -957,10 +961,12 @@ describe("HiveDatabase", () => {
       )
     `);
     legacy.database
-      .query(`
+      .query(
+        `
         INSERT INTO hierarchy_records (kind, id, runId, revision, document)
         VALUES ('task', 'task-legacy', 'run-legacy', '2', ?)
-      `)
+      `,
+      )
       .run(
         JSON.stringify({
           taskId: "task-legacy",
@@ -1139,10 +1145,12 @@ describe("HiveDatabase", () => {
       );
     `);
     legacy
-      .query(`
+      .query(
+        `
       INSERT INTO approvals (id, agentName, description, status, createdAt, resolvedAt)
       VALUES (?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         "legacy-approval",
         "maya",

@@ -19,10 +19,7 @@ export {
 } from "./generation";
 export type { StatusFreshness } from "./fusion";
 export { canonicalJson } from "./status-canonical";
-export {
-  type RedactedText,
-  redactTerminalEvidence,
-} from "./activity-snapshot";
+export { type RedactedText, redactTerminalEvidence } from "./activity-snapshot";
 export {
   postProviderStatus,
   type ProviderStatusForwarder,

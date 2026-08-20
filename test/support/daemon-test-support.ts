@@ -39,11 +39,13 @@ export function listAgentsNamed(db: HiveDatabase, name: string): AgentRecord[] {
 
 export function listAuditEntries(db: HiveDatabase, limit = 100): AuditRow[] {
   return db.database
-    .query(`
+    .query(
+      `
     SELECT at, route, action, callerSubject, callerRole, capabilityId,
            requestedSubject, epoch, decision, reason
     FROM audit_log ORDER BY id DESC LIMIT ?
-  `)
+  `,
+    )
     .all(limit)
     .map((row) => AuditRowSchema.parse(row));
 }

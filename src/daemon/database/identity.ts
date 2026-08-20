@@ -41,10 +41,12 @@ export function verifyDatabaseIdentity(
 ): void {
   const metaExists =
     database
-      .query(`
+      .query(
+        `
         SELECT 1 AS present FROM sqlite_master
         WHERE type = 'table' AND name = 'meta'
-      `)
+      `,
+      )
       .get() !== null;
   const storedIdentity = metaExists
     ? (z
@@ -85,9 +87,11 @@ export function establishDatabaseIdentity(database: Database): void {
       mode: 0o600,
     });
   } catch (error) {
-    if (
-      !(error instanceof Error && "code" in error && error.code === "EEXIST")
-    ) {
+    if (!(
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "EEXIST"
+    )) {
       throw error;
     }
     if (readDatabaseIdentityMarker() !== identity) {

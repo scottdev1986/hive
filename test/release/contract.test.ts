@@ -217,8 +217,7 @@ describe("the Graphify runtime workflow", () => {
   test("a combined release waits for the signed runtime channel", () => {
     expect(release).toContain("scripts/graphify/wait-channel.ts");
     // The wait polls faster than the anonymous API budget allows.
-    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions syntax is asserted verbatim.
-    expect(release).toContain("GITHUB_TOKEN: ${{ github.token }}");
+    expect(release).toContain(`GITHUB_TOKEN: \${{ github.token }}`);
   });
 });
 

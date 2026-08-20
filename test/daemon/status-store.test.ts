@@ -362,11 +362,13 @@ describe("StatusStore", () => {
       },
     };
     db.database
-      .query(`
+      .query(
+        `
         INSERT INTO status_workspace_events (
           eventId, seq, entityKey, entityRevision, payload
         ) VALUES (?, ?, ?, ?, ?)
-      `)
+      `,
+      )
       .run(
         legacyEvent.eventId,
         legacyEvent.seq,
@@ -391,11 +393,13 @@ describe("StatusStore", () => {
       }),
     ).toEqual({ kind: "duplicate" });
     const plan = db.database
-      .query(`
+      .query(
+        `
         EXPLAIN QUERY PLAN
         SELECT payload FROM status_workspace_events
         WHERE subjectAgentId = ? ORDER BY seqKey
-      `)
+      `,
+      )
       .all("agent-fixture") as Array<{ detail: string }>;
     expect(
       plan.some((row) =>

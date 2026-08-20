@@ -82,8 +82,7 @@ export interface ObservabilityServiceOptions {
 }
 
 export type ObservabilitySubjectDecision =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly response: Response };
+  { readonly ok: true } | { readonly ok: false; readonly response: Response };
 
 function safeReason(value: string): string {
   const clipped = redactTerminalEvidence(value)
@@ -118,8 +117,7 @@ export class ObservabilityService {
   private readonly clock: Clock;
   private readonly log: (line: string) => void;
   private readonly correlateSubject:
-    | NonNullable<ObservabilityServiceOptions["correlateSubject"]>
-    | undefined;
+    NonNullable<ObservabilityServiceOptions["correlateSubject"]> | undefined;
   private readonly store: ObservabilityStore;
 
   constructor(

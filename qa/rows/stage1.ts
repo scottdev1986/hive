@@ -204,9 +204,7 @@ async function drive(ctx: Stage1Context, command: GateCommand): Promise<Drive> {
 }
 
 type Poll<T> =
-  | { kind: "met"; value: T }
-  | { kind: "fail" }
-  | { kind: "unreachable" };
+  { kind: "met"; value: T } | { kind: "fail" } | { kind: "unreachable" };
 
 /** Poll a wire oracle until the predicate holds. Distinguishes "answered but never true" (a measured FAIL) from "never answered" (NO MEASUREMENT). */
 async function pollOracle<T>(

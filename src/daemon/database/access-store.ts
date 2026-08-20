@@ -72,12 +72,14 @@ export class AccessStore {
 
   insertCapability(capability: CapabilityRow, secretHash: string): void {
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO capabilities (
         id, subject, role, epoch, constraints, subjects, secretHash,
         issuedAt, expiresAt, revokedAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         capability.id,
         capability.subject,
@@ -111,63 +113,75 @@ export class AccessStore {
     consumedAt: string,
   ): boolean {
     const result = this.database
-      .query(`
+      .query(
+        `
       INSERT OR IGNORE INTO capability_consumptions (
         capabilityId, action, consumedAt
       ) VALUES (?, ?, ?)
-    `)
+    `,
+      )
       .run(capabilityId, action, consumedAt);
     return result.changes === 1;
   }
 
   releaseOneShot(capabilityId: string, action: string): void {
     this.database
-      .query(`
+      .query(
+        `
       DELETE FROM capability_consumptions
       WHERE capabilityId = ? AND action = ?
-    `)
+    `,
+      )
       .run(capabilityId, action);
   }
 
   releaseOneShotForSubject(subject: string, action: string): number {
     return this.database
-      .query(`
+      .query(
+        `
       DELETE FROM capability_consumptions
       WHERE action = ? AND capabilityId IN (
         SELECT id FROM capabilities WHERE subject = ? AND revokedAt IS NULL
       )
-    `)
+    `,
+      )
       .run(action, subject).changes;
   }
 
   isOneShotConsumed(capabilityId: string, action: string): boolean {
     return (
       this.database
-        .query(`
+        .query(
+          `
       SELECT 1 AS present FROM capability_consumptions
       WHERE capabilityId = ? AND action = ?
-    `)
+    `,
+        )
         .get(capabilityId, action) !== null
     );
   }
 
   revokeCapabilitiesForSubject(subject: string, timestamp: string): number {
     return this.database
-      .query(`
+      .query(
+        `
       UPDATE capabilities SET revokedAt = ?
       WHERE subject = ? AND revokedAt IS NULL
-    `)
+    `,
+      )
       .run(timestamp, subject).changes;
   }
 
   insertAuditEntry(entry: AuditRow): void {
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO audit_log (
         at, route, action, callerSubject, callerRole, capabilityId,
         requestedSubject, epoch, decision, reason
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         entry.at,
         entry.route,
@@ -189,10 +203,12 @@ export class AccessStore {
   ): number {
     const row = z.object({ total: z.number() }).parse(
       this.database
-        .query(`
+        .query(
+          `
         SELECT COUNT(*) AS total FROM audit_log
         WHERE callerSubject = ? AND action = ? AND reason = ?
-      `)
+      `,
+        )
         .get(callerSubject, action, reason),
     );
     return row.total;
@@ -201,11 +217,13 @@ export class AccessStore {
   insertApproval(approval: z.input<typeof ApprovalSchema>): Approval {
     const value = ApprovalSchema.parse(approval);
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO approvals (
         id, agentName, kind, description, status, createdAt, resolvedAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         value.id,
         value.agentName,
@@ -246,11 +264,13 @@ export class AccessStore {
   insertEscalation(escalation: Escalation): Escalation {
     const value = EscalationSchema.parse(escalation);
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO escalations (
         id, agentId, agentName, model, category, reason, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         value.id,
         value.agentId,
@@ -283,30 +303,36 @@ export class AccessStore {
     resolvedAt: string,
   ): Approval | null {
     const result = this.database
-      .query(`
+      .query(
+        `
       UPDATE approvals SET status = ?, resolvedAt = ?
       WHERE id = ? AND status = 'pending'
-    `)
+    `,
+      )
       .run(status, resolvedAt, id);
     return result.changes === 0 ? null : this.getApproval(id);
   }
 
   staleApproval(id: string, resolvedAt: string): Approval | null {
     const result = this.database
-      .query(`
+      .query(
+        `
       UPDATE approvals SET status = 'stale', resolvedAt = ?
       WHERE id = ? AND status = 'pending'
-    `)
+    `,
+      )
       .run(resolvedAt, id);
     return result.changes === 0 ? null : this.getApproval(id);
   }
 
   stalePendingToolApprovals(agentName: string, resolvedAt: string): number {
     return this.database
-      .query(`
+      .query(
+        `
       UPDATE approvals SET status = 'stale', resolvedAt = ?
       WHERE agentName = ? AND kind = 'tool-permission' AND status = 'pending'
-    `)
+    `,
+      )
       .run(resolvedAt, agentName).changes;
   }
 }

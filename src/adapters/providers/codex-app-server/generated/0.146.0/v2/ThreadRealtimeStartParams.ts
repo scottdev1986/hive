@@ -41,8 +41,7 @@ export type ThreadRealtimeStartParams = {
    * Omitted channels retain their default uppercase bracketed prefixes.
    */
   codexResponseHandoffChannelPrefixes?:
-    | { [key in string]?: Array<string> }
-    | null;
+    { [key in string]?: Array<string> } | null;
   /**
    * Overrides the configured realtime model for this session only.
    */

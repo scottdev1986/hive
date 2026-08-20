@@ -49,8 +49,7 @@ export function reduceStatusEvent(
   const seen = { ...state.seen, [event.eventId]: encoded };
   const key = statusEntityKey(event.entity);
   const existing = state.entities[key] as
-    | { entityRevision?: string }
-    | undefined;
+    { entityRevision?: string } | undefined;
   const entities =
     existing !== undefined &&
     BigInt(event.entityRevision) < BigInt(existing.entityRevision ?? "0")

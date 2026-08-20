@@ -39,8 +39,7 @@ export interface ProofOfLifeDeps<Target = string> {
 }
 
 export type ProofOfLife =
-  | { alive: true; signal: string }
-  | { alive: false; reason: string };
+  { alive: true; signal: string } | { alive: false; reason: string };
 
 function tailLines(value: string, count: number): string {
   const trimmed = value.trimEnd();

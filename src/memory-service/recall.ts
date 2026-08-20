@@ -545,11 +545,9 @@ type Equals<Left, Right> =
     ? true
     : false;
 
-// biome-ignore-start lint/correctness/noUnusedVariables: These aliases fail typechecking when schemas drift from their contracts.
-type MemoryRecallRowSchemaMatchesDomain = Assert<
+true satisfies Assert<
   Equals<z.infer<typeof MemoryRecallRowSchema>, MemoryRecallRow>
 >;
-type MemoryRecallSemanticSchemaMatchesDomain = Assert<
+true satisfies Assert<
   Equals<z.infer<typeof MemoryRecallSemanticSchema>, MemoryRecallSemantic>
 >;
-// biome-ignore-end lint/correctness/noUnusedVariables: These aliases fail typechecking when schemas drift from their contracts.

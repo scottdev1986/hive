@@ -50,7 +50,7 @@ export class PaneObservabilityReporter {
   }
 
   async flush(): Promise<void> {
-    await Promise.allSettled([...this.pending]);
+    await Promise.allSettled(this.pending);
   }
 
   /** Records provider-runtime failures. Individual tool outcomes stay in the

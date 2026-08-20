@@ -8,7 +8,7 @@
 // without breaking the real one.
 //
 // The rules read the import graph as text rather than through a linter. This
-// repo has biome and tsc and no ESLint, and three rules do not justify adding a
+// repo has oxlint and tsc and no ESLint, and three rules do not justify adding a
 // toolchain and its configuration to the tree.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";

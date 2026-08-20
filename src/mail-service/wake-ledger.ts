@@ -55,9 +55,7 @@ export type MailLatency = Readonly<{
 }>;
 
 export type MailSloBreachKind =
-  | "no-live-frontend"
-  | "control-claim-slo"
-  | "mail-incident";
+  "no-live-frontend" | "control-claim-slo" | "mail-incident";
 
 export type MailSloBreach = Readonly<{
   kind: MailSloBreachKind;

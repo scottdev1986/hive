@@ -364,11 +364,13 @@ class HiveSchemaMigrator {
           row.id,
         );
         this.database
-          .query(`
+          .query(
+            `
             UPDATE agents
             SET status = 'dead'
             WHERE id = ?
-          `)
+          `,
+          )
           .run(row.id);
       }
     })();
@@ -449,7 +451,8 @@ class HiveSchemaMigrator {
     // supersession is per agentId and ordered by rowid, which is the same
     // recency signal getActiveProviderRunForAgent already reads.
     const superseded = this.database
-      .query(`
+      .query(
+        `
       SELECT p.runId AS runId, p.recordJson AS recordJson,
              (SELECT json_extract(q.recordJson, '$.startedAt')
                 FROM provider_runs q
@@ -473,7 +476,8 @@ class HiveSchemaMigrator {
                    OR (p.agentId IS NOT NULL
                          AND q.agentId = p.agentId
                          AND q.rowid > p.rowid))
-    `)
+    `,
+      )
       .all() as { runId: string; recordJson: string; supersededAt: string }[];
     if (superseded.length === 0) return;
     this.database.transaction(() => {
@@ -499,14 +503,17 @@ class HiveSchemaMigrator {
   private recoverLegacyNotificationApprovals(recoveredAt: string): void {
     this.database.transaction(() => {
       this.database
-        .query(`
+        .query(
+          `
         UPDATE approvals SET status = 'approved', resolvedAt = ?
         WHERE status = 'pending'
           AND description = 'Notification from ' || agentName
-      `)
+      `,
+        )
         .run(recoveredAt);
       this.database
-        .query(`
+        .query(
+          `
         UPDATE agents SET status = 'idle', lastEventAt = ?
         WHERE status = 'awaiting-approval' AND writeRevoked = 0
           AND NOT EXISTS (
@@ -514,7 +521,8 @@ class HiveSchemaMigrator {
             WHERE approvals.agentName = agents.name
               AND approvals.status = 'pending'
           )
-      `)
+      `,
+        )
         .run(recoveredAt);
     })();
   }

@@ -266,47 +266,59 @@ describe("L0 projections", () => {
     const { db, deps } = harness();
     const sessionId = crypto.randomUUID();
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_sessions (id, repoRoot, startedAt)
       VALUES (?, '/repo', ?)
-    `)
+    `,
+      )
       .run(sessionId, T0);
     const subjectA = crypto.randomUUID();
     const subjectB = crypto.randomUUID();
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, cwd, startedAt
       ) VALUES (?, ?, 'agent-maya', 'maya', 'worker', 'claude', '/repo', ?)
-    `)
+    `,
+      )
       .run(subjectA, sessionId, T0);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, cwd, startedAt
       ) VALUES (?, ?, 'agent-lena', 'lena', 'worker', 'codex', '/repo', ?)
-    `)
+    `,
+      )
       .run(subjectB, sessionId, T0);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_events (
         subjectId, eventKey, inputTokens, outputTokens, observedAt, source
       ) VALUES (?, 'm1', 1000, 250, ?, 'claude-transcript')
-    `)
+    `,
+      )
       .run(subjectA, T1);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_events (
         subjectId, eventKey, inputTokens, outputTokens, observedAt, source
       ) VALUES (?, 'm2', 2000, 500, ?, 'claude-transcript')
-    `)
+    `,
+      )
       .run(subjectA, T2);
     db.database
-      .query(`
+      .query(
+        `
       INSERT INTO token_usage_events (
         subjectId, eventKey, inputTokens, outputTokens, observedAt, source
       ) VALUES (?, 'm1', 5000, 100, ?, 'codex-rollout')
-    `)
+    `,
+      )
       .run(subjectB, T2);
 
     const all = await runMemoryQuery(

@@ -53,9 +53,7 @@ export function embeddingStateLabelFromDetail(
 
 /** What actually happened to a write's vector projection: "indexed" — the vector is stored; "queued" — the first-ever embed is loading the model, so the projection runs in the background rather than blocking the write inside the memory lock; "unavailable:<state>" — the semantic leg is down and the write is keyword-searchable only. */
 export type MemoryEmbeddingWriteOutcome =
-  | "indexed"
-  | "queued"
-  | `unavailable:${MemoryEmbeddingStateLabel}`;
+  "indexed" | "queued" | `unavailable:${MemoryEmbeddingStateLabel}`;
 
 export interface MemoryEmbeddingConfig {
   provider: "local" | "api";
@@ -401,7 +399,7 @@ export class MemoryEmbeddingIndex {
   }
 
   async settle(): Promise<void> {
-    await Promise.all([...this.inflight]);
+    await Promise.all(this.inflight);
   }
 
   /** The text an article embeds as: title plus body — the same fields the FTS index feeds its porter tokenizer. */

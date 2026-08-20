@@ -344,16 +344,13 @@ export class AgentUi {
   private readonly daemonPort: number | undefined;
   private readonly paneClient: Pick<PaneDaemonClient, "request"> | undefined;
   private readonly reportReceipt:
-    | ((receipt: SubmissionReceipt) => Promise<void>)
-    | undefined;
+    ((receipt: SubmissionReceipt) => Promise<void>) | undefined;
   private readonly now: () => string;
   private readonly writeLocalClipboard: (text: string) => boolean;
   private readonly reportWake:
-    | ((report: FrontendWakeReport) => Promise<void>)
-    | undefined;
+    ((report: FrontendWakeReport) => Promise<void>) | undefined;
   private readonly reportDiagnostic:
-    | ((report: UiDiagnosticReport) => void)
-    | undefined;
+    ((report: UiDiagnosticReport) => void) | undefined;
   private readonly loadCompactReload: (() => Promise<string>) | undefined;
 
   constructor(options: AgentUiConstructorOptions) {

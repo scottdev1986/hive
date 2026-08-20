@@ -50,20 +50,24 @@ export class EventStore {
 
   latestSafePointAt(agentName: string): string | null {
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT MAX(timestamp) AS value FROM events
       WHERE agentName = ? AND kind IN ('turn-end', 'session-start')
-    `)
+    `,
+      )
       .get(agentName) as { value: string | null };
     return row.value;
   }
 
   latestTurnBoundaryAt(agentName: string): string | null {
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT MAX(timestamp) AS value FROM events
       WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
-    `)
+    `,
+      )
       .get(agentName) as { value: string | null };
     return row.value;
   }
@@ -72,11 +76,13 @@ export class EventStore {
     agentName: string,
   ): { timestamp: string; kind: "turn-start" | "turn-end" } | null {
     return this.database
-      .query(`
+      .query(
+        `
       SELECT timestamp, kind FROM events
       WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
       ORDER BY timestamp DESC, rowid DESC LIMIT 1
-    `)
+    `,
+      )
       .get(agentName) as {
       timestamp: string;
       kind: "turn-start" | "turn-end";
@@ -88,21 +94,25 @@ export class EventStore {
     limit = 2,
   ): OrchestratorSignalKind[] {
     const rows = this.database
-      .query(`
+      .query(
+        `
       SELECT kind FROM events
       WHERE agentName = ? AND kind IN ('session-launch', 'session-start', 'session-end', 'turn-start', 'turn-end')
       ORDER BY timestamp DESC, rowid DESC LIMIT ?
-    `)
+    `,
+      )
       .all(agentName, limit) as Array<{ kind: OrchestratorSignalKind }>;
     return rows.map((row) => row.kind);
   }
 
   latestEventAt(agentName: string): string | null {
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT MAX(timestamp) AS value FROM events
       WHERE agentName = ?
-    `)
+    `,
+      )
       .get(agentName) as { value: string | null };
     return row.value;
   }
@@ -110,12 +120,14 @@ export class EventStore {
   insertEvent(event: HookEvent): HookEvent {
     const value = HookEventSchema.parse(event);
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO events (
         kind, agentName, timestamp, contextPct, description,
         usageUnits, usageSource
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         value.kind,
         value.agentName,
@@ -134,18 +146,22 @@ export class EventStore {
     const rows =
       agentName === undefined
         ? this.database
-            .query(`
+            .query(
+              `
           SELECT kind, agentName, timestamp, contextPct, description,
                  usageUnits, usageSource
           FROM events ORDER BY id
-        `)
+        `,
+            )
             .all()
         : this.database
-            .query(`
+            .query(
+              `
           SELECT kind, agentName, timestamp, contextPct, description,
                  usageUnits, usageSource
           FROM events WHERE agentName = ? ORDER BY id
-        `)
+        `,
+            )
             .all(agentName);
     return rows.map(parseEventRow);
   }

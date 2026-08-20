@@ -141,10 +141,12 @@ export class MemoryIndex {
 
   private insertRow(fact: MemoryFact): void {
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO memory_fts (id, scope, topic, title, body, tags, date, status, path, kind, source)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         fact.id,
         fact.scope,
@@ -162,9 +164,11 @@ export class MemoryIndex {
 
   private deleteRow(scope: MemoryScope, id: string): void {
     this.database
-      .query(`
+      .query(
+        `
       DELETE FROM memory_fts WHERE id = ? AND scope = ?
-    `)
+    `,
+      )
       .run(id, scope);
   }
 

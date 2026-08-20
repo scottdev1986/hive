@@ -156,12 +156,14 @@ export class RuntimeStore {
         throw new TerminalHostBindingConflictError();
       }
       this.database
-        .query(`
+        .query(
+          `
         INSERT INTO terminal_host_bindings (
           locatorInstanceId, locatorSessionId, locatorGeneration,
           locatorJson, visibilityJson
         ) VALUES (?, ?, ?, ?, ?)
-      `)
+      `,
+        )
         .run(
           value.locator.instanceId,
           value.locator.sessionId,
@@ -180,12 +182,14 @@ export class RuntimeStore {
       HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
     return (
       this.database
-        .query(`
+        .query(
+          `
       DELETE FROM terminal_host_bindings
       WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
         AND createEvidenceJson IS NULL AND terminationAuditJson IS NULL
         AND terminationEvidenceJson IS NULL
-    `)
+    `,
+        )
         .run(value.instanceId, value.sessionId, value.generation).changes > 0
     );
   }
@@ -207,11 +211,13 @@ export class RuntimeStore {
         throw new TerminalHostBindingConflictError();
       }
       this.database
-        .query(`
+        .query(
+          `
         UPDATE terminal_host_bindings
         SET createEvidenceJson = ?
         WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-      `)
+      `,
+        )
         .run(
           JSON.stringify(value),
           binding.locator.instanceId,
@@ -259,11 +265,13 @@ export class RuntimeStore {
         visibility: nextLease,
       };
       this.database
-        .query(`
+        .query(
+          `
         UPDATE terminal_host_bindings
         SET visibilityJson = ?, createEvidenceJson = ?
         WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-      `)
+      `,
+        )
         .run(
           JSON.stringify(nextVisibility),
           JSON.stringify(createEvidence),
@@ -286,11 +294,13 @@ export class RuntimeStore {
         throw new Error("terminal host locator binding does not exist");
       }
       this.database
-        .query(`
+        .query(
+          `
         UPDATE terminal_host_bindings
         SET terminationAuditJson = ?
         WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-      `)
+      `,
+        )
         .run(
           JSON.stringify(value),
           binding.locator.instanceId,
@@ -312,11 +322,13 @@ export class RuntimeStore {
         throw new Error("terminal host locator binding does not exist");
       }
       this.database
-        .query(`
+        .query(
+          `
         UPDATE terminal_host_bindings
         SET terminationEvidenceJson = ?
         WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-      `)
+      `,
+        )
         .run(
           JSON.stringify(value),
           binding.locator.instanceId,
@@ -333,12 +345,14 @@ export class RuntimeStore {
     const value =
       HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT locatorJson, visibilityJson, createEvidenceJson, terminationAuditJson,
              terminationEvidenceJson
       FROM terminal_host_bindings
       WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-    `)
+    `,
+      )
       .get(value.instanceId, value.sessionId, value.generation);
     return row === null ? null : parseTerminalHostBindingRow(row);
   }
@@ -346,13 +360,15 @@ export class RuntimeStore {
   listTerminalHostBindings(instanceId: string): readonly HiveTerminalBinding[] {
     const value = z.string().min(1).parse(instanceId);
     return this.database
-      .query(`
+      .query(
+        `
       SELECT locatorJson, visibilityJson, createEvidenceJson, terminationAuditJson,
              terminationEvidenceJson
       FROM terminal_host_bindings
       WHERE locatorInstanceId = ?
       ORDER BY locatorSessionId, locatorGeneration
-    `)
+    `,
+      )
       .all(value)
       .map(parseTerminalHostBindingRow);
   }
@@ -360,12 +376,14 @@ export class RuntimeStore {
   insertProviderRun(run: ProviderRun): ProviderRun {
     const value = ProviderRunSchema.parse(run);
     this.database
-      .query(`
+      .query(
+        `
       INSERT INTO provider_runs (
         runId, agentId, terminalInstanceId, terminalSessionId,
         terminalGeneration, state, recordJson
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
+    `,
+      )
       .run(
         value.runId,
         value.agentId,
@@ -391,35 +409,41 @@ export class RuntimeStore {
     const locator =
       ProviderRunBindingSchema.unwrap().shape.terminal.parse(terminal);
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT recordJson FROM provider_runs
       WHERE terminalInstanceId = ?
         AND terminalSessionId = ?
         AND terminalGeneration = ?
         AND state = 'running'
-    `)
+    `,
+      )
       .get(locator.instanceId, locator.sessionId, locator.generation);
     return row === null ? null : parseProviderRunRow(row);
   }
 
   listProviderRunsForAgent(agentId: string): readonly ProviderRun[] {
     return this.database
-      .query(`
+      .query(
+        `
       SELECT recordJson FROM provider_runs
       WHERE agentId = ?
       ORDER BY rowid
-    `)
+    `,
+      )
       .all(z.string().min(1).parse(agentId))
       .map(parseProviderRunRow);
   }
 
   getActiveProviderRunForAgent(agentId: string): ProviderRun | null {
     const row = this.database
-      .query(`
+      .query(
+        `
       SELECT recordJson FROM provider_runs
       WHERE agentId = ? AND state = 'running'
       ORDER BY rowid DESC LIMIT 1
-    `)
+    `,
+      )
       .get(z.string().min(1).parse(agentId));
     return row === null ? null : parseProviderRunRow(row);
   }
@@ -457,10 +481,12 @@ export class RuntimeStore {
       if (current.conversationId === conversationId) return current;
       const bound = ProviderRunSchema.parse({ ...current, conversationId });
       this.database
-        .query(`
+        .query(
+          `
         UPDATE provider_runs SET recordJson = ?
         WHERE runId = ? AND state = 'running'
-      `)
+      `,
+        )
         .run(JSON.stringify(bound), runId);
       return bound;
     });
@@ -492,10 +518,12 @@ export class RuntimeStore {
         adapterChild: identity,
       });
       this.database
-        .query(`
+        .query(
+          `
         UPDATE provider_runs SET recordJson = ?
         WHERE runId = ? AND state = 'running'
-      `)
+      `,
+        )
         .run(JSON.stringify(bound), runId);
       return bound;
     });
@@ -535,10 +563,12 @@ export class RuntimeStore {
         protocolReceipt: receipt,
       });
       this.database
-        .query(`
+        .query(
+          `
         UPDATE provider_runs SET recordJson = ?
         WHERE runId = ? AND state = 'running'
-      `)
+      `,
+        )
         .run(JSON.stringify(updated), runId);
       return updated;
     });
@@ -548,11 +578,13 @@ export class RuntimeStore {
     const value = ProviderEventSchema.parse(event);
     return (
       this.database
-        .query(`
+        .query(
+          `
         INSERT OR IGNORE INTO provider_events (
           eventId, providerRunId, occurredAt, recordJson
         ) VALUES (?, ?, ?, ?)
-      `)
+      `,
+        )
         .run(
           value.eventId,
           value.providerRunId,
@@ -564,11 +596,13 @@ export class RuntimeStore {
 
   listProviderEvents(providerRunId: string): readonly ProviderEvent[] {
     return this.database
-      .query(`
+      .query(
+        `
       SELECT recordJson FROM provider_events
       WHERE providerRunId = ?
       ORDER BY occurredAt, rowid
-    `)
+    `,
+      )
       .all(z.string().uuid().parse(providerRunId))
       .map(parseProviderEventRow);
   }
@@ -576,11 +610,13 @@ export class RuntimeStore {
   recordRunOutcome(outcome: RunOutcome): RunOutcome {
     const value = RunOutcomeSchema.parse(outcome);
     this.database
-      .query(`
+      .query(
+        `
         INSERT OR IGNORE INTO run_outcomes (
           providerRunId, outcome, endedAt, recordJson
         ) VALUES (?, ?, ?, ?)
-      `)
+      `,
+      )
       .run(
         value.providerRunId,
         value.outcome,
@@ -607,11 +643,13 @@ export class RuntimeStore {
   recordIncidentExposure(exposure: IncidentExposure): IncidentExposure {
     const value = IncidentExposureSchema.parse(exposure);
     this.database
-      .query(`
+      .query(
+        `
         INSERT OR IGNORE INTO incident_exposures (
           exposureId, signature, observedAt, outcome, recordJson
         ) VALUES (?, ?, ?, ?, ?)
-      `)
+      `,
+      )
       .run(
         value.exposureId,
         value.signature,
@@ -635,10 +673,12 @@ export class RuntimeStore {
     const value = HandoffBundleSchema.parse(bundle);
     return this.transaction(() => {
       this.database
-        .query(`
+        .query(
+          `
           INSERT INTO handoffs (handoffId, sourceRunId, recordJson)
           VALUES (?, ?, ?)
-        `)
+        `,
+        )
         .run(value.handoffId, value.sourceRunId, JSON.stringify(value));
       this.recordRunOutcome(value.runOutcome);
       return this.getHandoff(value.handoffId)?.bundle ?? value;
@@ -649,10 +689,12 @@ export class RuntimeStore {
     handoffId: string,
   ): { bundle: HandoffBundle; pickup: HandoffPickup | null } | null {
     const row = this.database
-      .query(`
+      .query(
+        `
         SELECT recordJson, replacementAgentId, pickedUpAt
         FROM handoffs WHERE handoffId = ?
-      `)
+      `,
+      )
       .get(z.string().uuid().parse(handoffId));
     return row === null ? null : parseHandoffRow(row);
   }
@@ -661,10 +703,12 @@ export class RuntimeStore {
     sourceRunId: string,
   ): { bundle: HandoffBundle; pickup: HandoffPickup | null } | null {
     const row = this.database
-      .query(`
+      .query(
+        `
         SELECT recordJson, replacementAgentId, pickedUpAt
         FROM handoffs WHERE sourceRunId = ?
-      `)
+      `,
+      )
       .get(z.string().uuid().parse(sourceRunId));
     return row === null ? null : parseHandoffRow(row);
   }
@@ -678,11 +722,13 @@ export class RuntimeStore {
     const agentId = z.string().min(1).parse(replacementAgentId);
     const timestamp = z.iso.datetime({ offset: true }).parse(pickedUpAt);
     this.database
-      .query(`
+      .query(
+        `
         UPDATE handoffs
         SET replacementAgentId = ?, pickedUpAt = ?
         WHERE handoffId = ? AND replacementAgentId IS NULL
-      `)
+      `,
+      )
       .run(agentId, timestamp, id);
     const stored = this.getHandoff(id);
     if (
@@ -710,11 +756,13 @@ export class RuntimeStore {
         exitReason,
       });
       this.database
-        .query(`
+        .query(
+          `
         UPDATE provider_runs
         SET state = 'exited', recordJson = ?
         WHERE runId = ? AND state = 'running'
-      `)
+      `,
+        )
         .run(JSON.stringify(exited), exited.runId);
       if (exited.agentId !== null && exited.model !== null) {
         const agent = this.database

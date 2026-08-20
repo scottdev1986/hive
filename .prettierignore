@@ -1,0 +1,16 @@
+vendor
+node_modules
+workspace
+prototypes
+tools
+docs
+graphify-out
+src/adapters/providers/codex-app-server/generated
+*.md
+*.json
+*.jsonl
+*.zig
+*.swift
+*.c
+*.h
+*.sh

@@ -66,13 +66,15 @@ export class ObservabilityStore {
   insert(event: ObservabilityEvent): boolean {
     return (
       this.db.database
-        .query(`
+        .query(
+          `
           INSERT OR IGNORE INTO observability_events (
             eventId, schemaVersion, occurredAt, recordedAt, severity, source,
             operation, reason, subject, agentId, provider, providerRunId,
             vendorSessionId, toolName, callId
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `)
+        `,
+        )
         .run(
           event.eventId,
           event.schemaVersion,
@@ -120,22 +122,26 @@ export class ObservabilityStore {
     parameters.push(query.limit);
     const where = clauses.length === 0 ? "" : `WHERE ${clauses.join(" AND ")}`;
     return this.db.database
-      .query<ObservabilityRow, Array<string | number>>(`
+      .query<ObservabilityRow, Array<string | number>>(
+        `
         ${SELECT_EVENT}
         ${where}
         ORDER BY occurredAt DESC, eventId DESC
         LIMIT ?
-      `)
+      `,
+      )
       .all(...parameters)
       .map((row) => ObservabilityEventSchema.parse(row));
   }
 
   get(eventId: string): ObservabilityEvent | null {
     const row = this.db.database
-      .query<ObservabilityRow, [string]>(`
+      .query<ObservabilityRow, [string]>(
+        `
         ${SELECT_EVENT}
         WHERE eventId = ?
-      `)
+      `,
+      )
       .get(eventId);
     return row === null ? null : ObservabilityEventSchema.parse(row);
   }

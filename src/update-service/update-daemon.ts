@@ -102,8 +102,7 @@ export interface RestartDeps {
 }
 
 export type RestartOutcome =
-  | { stopped: true; pid: number | null }
-  | { stopped: false; reason: string };
+  { stopped: true; pid: number | null } | { stopped: false; reason: string };
 
 const isNoSuchProcess = (error: unknown): boolean =>
   typeof error === "object" &&

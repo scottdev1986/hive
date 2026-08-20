@@ -464,9 +464,8 @@ describe("buildGraphBrief", () => {
     const root = await gitRepo();
     // Fake an installed binary and graph so the query path is reached.
     const { mkdir, writeFile: write } = await import("node:fs/promises");
-    const { graphifyBin, graphJsonPath } = await import(
-      "../../src/adapters/graphify"
-    );
+    const { graphifyBin, graphJsonPath } =
+      await import("../../src/adapters/graphify");
     const { dirname } = await import("node:path");
     await mkdir(dirname(graphifyBin()), { recursive: true });
     await write(graphifyBin(), "");
@@ -499,9 +498,8 @@ describe("buildGraphBrief", () => {
   test("a healthy query becomes an advisory-prefixed digest", async () => {
     const root = await gitRepo();
     const { mkdir, writeFile: write } = await import("node:fs/promises");
-    const { graphifyBin, graphJsonPath } = await import(
-      "../../src/adapters/graphify"
-    );
+    const { graphifyBin, graphJsonPath } =
+      await import("../../src/adapters/graphify");
     const { dirname } = await import("node:path");
     await mkdir(dirname(graphifyBin()), { recursive: true });
     await write(graphifyBin(), "");
@@ -598,9 +596,8 @@ describe("buildGraphBrief targeted path", () => {
   test("a parseable graph is answered by Hive's locate with no subprocess", async () => {
     const root = await gitRepo();
     const { mkdir, writeFile: write } = await import("node:fs/promises");
-    const { graphifyBin, graphJsonPath } = await import(
-      "../../src/adapters/graphify"
-    );
+    const { graphifyBin, graphJsonPath } =
+      await import("../../src/adapters/graphify");
     const { dirname } = await import("node:path");
     await mkdir(dirname(graphifyBin()), { recursive: true });
     await write(graphifyBin(), "");
@@ -801,9 +798,8 @@ describe("snapshotGraphForServing", () => {
   });
 
   test("a missing graph degrades to a reason, never a throw", async () => {
-    const { snapshotGraphForServing } = await import(
-      "../../src/adapters/graphify"
-    );
+    const { snapshotGraphForServing } =
+      await import("../../src/adapters/graphify");
     const root = await gitRepo();
     const result = await snapshotGraphForServing(root);
     expect(result.ok).toBe(false);

@@ -9,11 +9,7 @@ import type { DatabaseHost } from "../shared/database-host";
 /** Durable rows behind the wake path: what the daemon told a frontend, what the frontend admitted hearing, which wakes are outstanding, and the evidence every delivery transition was written from. The mailbox itself is untouched. These tables observe it; they never decide whether an item exists or who may read it. */
 
 export type MailWakeState =
-  | "queued"
-  | "requested"
-  | "observed"
-  | "settled"
-  | "dead_lettered";
+  "queued" | "requested" | "observed" | "settled" | "dead_lettered";
 
 export type MailWakeRow = Readonly<{
   wakeId: string;
@@ -137,14 +133,16 @@ export class MailWakeStore {
   /** Files one mail-ready notification and returns it with its cursor. Repeating an announcement already on file returns the original's cursor rather than minting a second one, so a redelivered publish receipt leaves a resuming frontend exactly one thing to read. */
   recordReady(event: Omit<MailReadyEvent, "cursor">): MailReadyEvent {
     const row = this.db.database
-      .query(`
+      .query(
+        `
         INSERT INTO mail_ready_events
           (recipient, brokerSeq, lane, oldestItemId, backlogCount, at)
         VALUES ($recipient, $brokerSeq, $lane, $oldestItemId, $backlogCount, $at)
         ON CONFLICT (recipient, brokerSeq, oldestItemId)
           DO UPDATE SET backlogCount = excluded.backlogCount
         RETURNING cursor
-      `)
+      `,
+      )
       .get({
         $recipient: event.recipient,
         $brokerSeq: event.brokerSeq,
@@ -220,13 +218,15 @@ export class MailWakeStore {
    * the acknowledged event's cursor for those decisions. */
   recordAck(recipient: string, brokerSeq: number, at: string): void {
     this.db.database
-      .query(`
+      .query(
+        `
         INSERT INTO mail_ready_acks (recipient, brokerSeq, at)
         VALUES ($recipient, $brokerSeq, $at)
         ON CONFLICT(recipient) DO UPDATE SET
           brokerSeq = MAX(brokerSeq, excluded.brokerSeq),
           at = CASE WHEN excluded.brokerSeq > brokerSeq THEN excluded.at ELSE at END
-      `)
+      `,
+      )
       .run({ $recipient: recipient, $brokerSeq: brokerSeq, $at: at });
   }
 
@@ -242,12 +242,14 @@ export class MailWakeStore {
       const existing = this.wakeByItem(row.oldestItemId);
       if (existing !== null) return existing;
       this.db.database
-        .query(`
+        .query(
+          `
           INSERT INTO mail_wakes (${WAKE_COLUMNS})
           VALUES ($wakeId, $recipient, $lane, $oldestItemId, $state, $attempts,
                   $nextAttemptAt, $clientInputId, $turnEventId,
                   $createdAt, $updatedAt)
-        `)
+        `,
+        )
         .run({
           $wakeId: row.wakeId,
           $recipient: row.recipient,
@@ -333,12 +335,14 @@ export class MailWakeStore {
 
   appendDelivery(entry: Omit<MailDeliveryRow, "id">): MailDeliveryRow {
     return this.db.database
-      .query(`
+      .query(
+        `
         INSERT INTO mail_delivery_events
           (itemId, recipient, lane, state, evidenceKind, evidenceRef, at)
         VALUES ($itemId, $recipient, $lane, $state, $evidenceKind, $evidenceRef, $at)
         RETURNING ${DELIVERY_COLUMNS}
-      `)
+      `,
+      )
       .get({
         $itemId: entry.itemId,
         $recipient: entry.recipient,

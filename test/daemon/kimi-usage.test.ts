@@ -106,8 +106,7 @@ describe("kimi usage probe", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://api.kimi.com/coding/v1/usages");
     const headers = calls[0]?.init.headers as
-      | Record<string, string>
-      | undefined;
+      Record<string, string> | undefined;
     expect(headers?.authorization).toBe("Bearer live-token");
 
     const billing = accountBillingFromKimiUsage(
@@ -182,8 +181,7 @@ describe("kimi usage probe", () => {
     expect((await stat(path)).mode & 0o777).toBe(0o600);
 
     const headers = usageCall?.init.headers as
-      | Record<string, string>
-      | undefined;
+      Record<string, string> | undefined;
     expect(headers?.authorization).toBe("Bearer fresh-token");
   });
 
