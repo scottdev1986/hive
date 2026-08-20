@@ -160,7 +160,7 @@ async function exportDoc(ctx: Stage1Context): Promise<PolicyDoc> {
 }
 
 /** One qa-control drive. Exit 1 with the app's reason is a measured door failure (FAIL); exit 2 or garbage is a rig fact (NO MEASUREMENT). */
-/** One qa-control drive. Exit 1 with the app's reason is a measured door failure (FAIL); exit 2 or garbage is a rig fact (NO MEASUREMENT). A "did not answer" is the app being busy, not absent — it is retried within the gate patience, and only outlasting the patience is reported. */
+/** One qa-control drive. Exit 1 with the app's reason is a measured door failure (FAIL); exit 2 or garbage is a rig fact (NO MEASUREMENT). Two answers are rig timing, not verdicts, and are retried within the gate patience: "did not answer" (the app's main thread is busy, e.g. the router screen's first render) and "control is not actionable" right after a successful drivable wait (the screen is mid-rebuild after a draft change or an apply — the control is momentarily dead, and the drivable-then-invoke pair has an inherent TOCTOU window). Only outlasting the patience is reported. */
 async function drive(ctx: Stage1Context, command: GateCommand): Promise<Drive> {
   const patience = ctx.gatePatienceMs ?? 60_000;
   const deadline = Date.now() + patience;
@@ -174,19 +174,26 @@ async function drive(ctx: Stage1Context, command: GateCommand): Promise<Drive> {
       await ctx.sleep(Math.min(500, Math.max(0, deadline - Date.now())));
       continue;
     }
-    if (answer.outcome === "no-measurement") {
-      return { ok: false, status: "NO MEASUREMENT", reason: answer.reason };
-    }
-    if (answer.exitCode !== 0) {
+    if (answer.outcome === "answered" && answer.exitCode !== 0) {
       const name =
         command.verb === "enumerate"
           ? "enumerate"
           : `${command.verb} ${command.identifier}`;
+      if (
+        answer.response.reason === "control is not actionable" &&
+        Date.now() < deadline
+      ) {
+        await ctx.sleep(Math.min(500, Math.max(0, deadline - Date.now())));
+        continue;
+      }
       return {
         ok: false,
         status: "FAIL",
-        reason: answer.response.reason ?? `${name} reported a failure`,
+        reason: `${name}: ${answer.response.reason ?? "reported a failure"}`,
       };
+    }
+    if (answer.outcome === "no-measurement") {
+      return { ok: false, status: "NO MEASUREMENT", reason: answer.reason };
     }
     return { ok: true };
   }
@@ -310,6 +317,42 @@ async function drivable(
   };
 }
 
+/** Apply the current draft, waiting first for Apply to come up enabled. The wait is the proof the edit produced a draft: if the field action was lost to a mid-rebuild view or the editor fenced, Apply never enables and the row reports NO MEASUREMENT instead of invoking a dead button. The failure reason describes the screen's last seen state so a flake is diagnosable from the transcript alone. */
+async function applyDraft(ctx: Stage1Context): Promise<Drive> {
+  let lastSeen = "no enumerate answered";
+  const poll = await pollGate(ctx, (response) => {
+    const controls = response.controls ?? [];
+    const apply = controls.find(
+      (control) => control.identifier === "task-router-apply",
+    );
+    const draft = controls.some(
+      (control) =>
+        control.identifier === "task-router-draft" &&
+        control.functionallyPresent,
+    );
+    const conflict = controls.some(
+      (control) =>
+        control.identifier === "task-router-conflict" &&
+        control.functionallyPresent,
+    );
+    lastSeen = `apply present=${apply?.functionallyPresent ?? false} enabled=${apply?.enabled ?? false} draft=${draft} conflict=${conflict}`;
+    return apply !== undefined && apply.enabled && apply.functionallyPresent
+      ? true
+      : null;
+  });
+  if (poll.kind === "met") {
+    return await drive(ctx, {
+      verb: "invoke",
+      identifier: "task-router-apply",
+    });
+  }
+  return {
+    ok: false,
+    status: "NO MEASUREMENT",
+    reason: `task-router-apply never became drivable within the bound (last seen: ${lastSeen})`,
+  };
+}
+
 /** Plant a member of the category route through the membership door, creating the route (Weighted split) when the category has none. An unplantable precondition is NO MEASUREMENT by plan rule 6, whatever the door said. */
 async function plantMember(
   ctx: Stage1Context,
@@ -369,10 +412,7 @@ async function plantMember(
       reason: `could not plant member ${name}: ${toggle.reason}`,
     };
   }
-  const apply = await drive(ctx, {
-    verb: "invoke",
-    identifier: "task-router-apply",
-  });
+  const apply = await applyDraft(ctx);
   if (!apply.ok) {
     const reason = apply.reason.includes("not actionable")
       ? `${apply.reason} — consistent with the known door defect: memberToggled reads sender.state, which qa-control invoke never flips (product fix dispatched to prudence)`
@@ -417,10 +457,7 @@ async function unplantMember(
     identifier: `task-router-member-${name}`,
   });
   if (!toggle.ok) return toggle;
-  const apply = await drive(ctx, {
-    verb: "invoke",
-    identifier: "task-router-apply",
-  });
+  const apply = await applyDraft(ctx);
   if (!apply.ok) return apply;
   const poll = await pollOracle(ctx, async () =>
     candidateOf(await exportDoc(ctx), category, key) === null ? true : null,
@@ -502,38 +539,37 @@ export async function rowT102MemberApplyWrites(
     identifier: `task-router-member-${name}`,
   });
   if (!toggle.ok) return { id, status: toggle.status, reason: toggle.reason };
-  const apply = await drive(ctx, {
-    verb: "invoke",
-    identifier: "task-router-apply",
-  });
+  const apply = await applyDraft(ctx);
   if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
-  const poll = await pollOracle(ctx, async () =>
-    candidateOf(await exportDoc(ctx), category, key) !== null ? true : null,
-  );
+  // The poll must see the write, not the pre-write state: requiring the
+  // candidate AND a revision bump in one condition is the only shape that
+  // cannot pass on a snapshot from before the apply landed.
+  let sawCandidate = false;
+  const poll = await pollOracle(ctx, async () => {
+    const present = candidateOf(await exportDoc(ctx), category, key) !== null;
+    sawCandidate = present;
+    const revision = (await policyViaHttp(ctx)).revision;
+    return present && revision > revBefore ? true : null;
+  });
   const written = pollOutcome(
     poll,
-    `apply reported ok but export shows no candidate ${name}`,
+    sawCandidate
+      ? `apply wrote ${name} but the revision stayed ${revBefore}`
+      : `apply reported ok but export shows no candidate ${name}`,
     `export unreadable after apply of ${name}`,
   );
   if (!written.ok) {
     return { id, status: written.status, reason: written.reason };
+  }
+  const restored = await unplantMember(ctx, category, categoryLabel, key);
+  if (!restored.ok) {
+    return { id, status: restored.status, reason: restored.reason };
   }
   let revAfter: number;
   try {
     revAfter = (await policyViaHttp(ctx)).revision;
   } catch (error) {
     return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
-  }
-  if (revAfter <= revBefore) {
-    return {
-      id,
-      status: "FAIL",
-      reason: `apply wrote ${name} but the revision stayed ${revBefore}`,
-    };
-  }
-  const restored = await unplantMember(ctx, category, categoryLabel, key);
-  if (!restored.ok) {
-    return { id, status: restored.status, reason: restored.reason };
   }
   return {
     id,
@@ -575,10 +611,7 @@ export async function rowT103WeightWritesThrough(
     input: String(target),
   });
   if (!set.ok) return { id, status: set.status, reason: set.reason };
-  const apply = await drive(ctx, {
-    verb: "invoke",
-    identifier: "task-router-apply",
-  });
+  const apply = await applyDraft(ctx);
   if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
   const poll = await pollOracle(ctx, async () => {
     const candidate = candidateOf(await exportDoc(ctx), category, key);
@@ -611,10 +644,7 @@ export async function rowT103WeightWritesThrough(
     input: String(weightBefore),
   });
   if (!reset.ok) return { id, status: reset.status, reason: reset.reason };
-  const reapply = await drive(ctx, {
-    verb: "invoke",
-    identifier: "task-router-apply",
-  });
+  const reapply = await applyDraft(ctx);
   if (!reapply.ok) {
     return { id, status: reapply.status, reason: reapply.reason };
   }
@@ -812,10 +842,7 @@ export async function rowT105ModeEffortWriteThrough(
   if (!selectEffort.ok) {
     return { id, status: selectEffort.status, reason: selectEffort.reason };
   }
-  const apply = await drive(ctx, {
-    verb: "invoke",
-    identifier: "task-router-apply",
-  });
+  const apply = await applyDraft(ctx);
   if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
   const poll = await pollOracle(ctx, async () => {
     const doc = await exportDoc(ctx);
@@ -875,10 +902,7 @@ export async function rowT105ModeEffortWriteThrough(
       return { id, status: effortRestore.status, reason: effortRestore.reason };
     }
   }
-  const reapply = await drive(ctx, {
-    verb: "invoke",
-    identifier: "task-router-apply",
-  });
+  const reapply = await applyDraft(ctx);
   if (!reapply.ok) {
     return { id, status: reapply.status, reason: reapply.reason };
   }
@@ -941,10 +965,7 @@ export async function rowT106ApplyIsTheOnlyWrite(
       reason: `a draft edit moved the revision ${revBefore} -> ${revDraft} without apply`,
     };
   }
-  const apply = await drive(ctx, {
-    verb: "invoke",
-    identifier: "task-router-apply",
-  });
+  const apply = await applyDraft(ctx);
   if (!apply.ok) return { id, status: apply.status, reason: apply.reason };
   const poll = await pollOracle(ctx, async () => {
     const present = candidateOf(await exportDoc(ctx), category, key) !== null;
