@@ -3,6 +3,10 @@ import { join } from "node:path";
 import { sessiondStateRoot } from "../../hive-home/home";
 
 export const TERMINAL_SHELL = "/bin/zsh";
+const TTY_READY_POLL_MS = 50;
+const TTY_READY_MAX_POLLS = 40;
+export const SHELL_SESSION_TTY_READY_WAIT_MS =
+  TTY_READY_POLL_MS * TTY_READY_MAX_POLLS;
 
 /**
  * Bootstrap script that runs hive agent-ui on first prompt, then returns control to zsh.
@@ -29,11 +33,11 @@ const HIVE_ZSHRC = [
   "      trap 'hive_tty_ready=1' WINCH",
   "      hive_tty_size=$(stty size 2>/dev/null || true)",
   '      if [[ "$hive_tty_size" == "24 80" && "$hive_tty_ready" -eq 0 ]]; then',
-  "        for _ in {1..40}; do",
+  `        for _ in {1..${TTY_READY_MAX_POLLS}}; do`,
   '          [[ "$hive_tty_ready" -eq 1 ]] && break',
   "          hive_tty_size=$(stty size 2>/dev/null || true)",
   '          [[ "$hive_tty_size" != "24 80" ]] && break',
-  "          sleep 0.05",
+  `          sleep ${TTY_READY_POLL_MS / 1_000}`,
   "        done",
   "      fi",
   "      trap - WINCH",

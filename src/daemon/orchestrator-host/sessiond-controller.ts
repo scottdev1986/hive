@@ -19,6 +19,7 @@ import type {
 import type { HiveTerminalHostAdapter } from "../session-host/hive-terminal-host";
 import { shellJoin } from "../../shared/shell-quote";
 import {
+  SHELL_SESSION_TTY_READY_WAIT_MS,
   type ShellSessionLaunch,
   prepareSessionZdotdir,
   shellSessionLaunch,
@@ -105,6 +106,13 @@ export interface OrchestratorSessiondDependencies {
 const CREATION_POLICY_RETRY_MS = 100;
 const INSPECTION_RETRY_MS = 250;
 const INHERITED_OBSERVATION_FAILURE_TIMEOUT_MS = 95_000;
+const FOREGROUND_INSPECTION_RETRY_MS = 25;
+export const ORCHESTRATOR_FOREGROUND_READY_MARGIN_MS = 1_000;
+export const ORCHESTRATOR_FOREGROUND_WAIT_MS =
+  SHELL_SESSION_TTY_READY_WAIT_MS + ORCHESTRATOR_FOREGROUND_READY_MARGIN_MS;
+const FOREGROUND_INSPECTION_MAX_ATTEMPTS = Math.ceil(
+  ORCHESTRATOR_FOREGROUND_WAIT_MS / FOREGROUND_INSPECTION_RETRY_MS,
+);
 
 type HostOrigin = "managed" | "inherited";
 
@@ -332,7 +340,11 @@ export class OrchestratorSessiondController {
           createdInspection?.foreground.state === expectedForeground
             ? createdInspection
             : null;
-        for (let attempt = 0; attempt < 40; attempt += 1) {
+        for (
+          let attempt = 0;
+          attempt < FOREGROUND_INSPECTION_MAX_ATTEMPTS;
+          attempt += 1
+        ) {
           if (inspection !== null) break;
           const candidate =
             await this.dependencies.terminalHost.inspect(locator);
@@ -341,7 +353,7 @@ export class OrchestratorSessiondController {
             break;
           }
           if (candidate.presence !== "present" || signal.aborted) break;
-          await this.wait(25, signal);
+          await this.wait(FOREGROUND_INSPECTION_RETRY_MS, signal);
         }
         if (
           inspection === null ||

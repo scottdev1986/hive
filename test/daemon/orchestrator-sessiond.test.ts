@@ -4,6 +4,8 @@ import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { macProcessIdentity } from "../../src/daemon/lifecycle/daemon-lifecycle";
 import {
   type HeadlessOrchestratorSessiondLaunch,
+  ORCHESTRATOR_FOREGROUND_READY_MARGIN_MS,
+  ORCHESTRATOR_FOREGROUND_WAIT_MS,
   OrchestratorSessiondController,
   type OrchestratorSessiondDependencies,
   type OrchestratorSessiondLaunch,
@@ -12,7 +14,10 @@ import { HiveTerminalHostAdapter } from "../../src/daemon/session-host/hive-term
 import type { SessionInspection } from "../../src/daemon/session-host/session-host-contract";
 import { SessiondHost } from "../../src/daemon/session-host/sessiond-host";
 import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
-import { TERMINAL_SHELL } from "../../src/daemon/session-host/shell-session";
+import {
+  SHELL_SESSION_TTY_READY_WAIT_MS,
+  TERMINAL_SHELL,
+} from "../../src/daemon/session-host/shell-session";
 import type {
   HiveTerminalBinding,
   TerminalHostBindingStore,
@@ -477,6 +482,57 @@ describe("OrchestratorSessiondController", () => {
     });
     await controller.start(launch);
     expect(creates).toBe(1);
+  });
+
+  test("waits through the shell bootstrap before requiring a vendor foreground", async () => {
+    const bindings = new MemoryBindings();
+    const providerRuns = new MemoryProviderRuns();
+    let inspections = 0;
+    const controller = new OrchestratorSessiondController({
+      bindings,
+      instanceId: "instance-a",
+      providerRuns,
+      visibility: {
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+        }),
+        admit: async () => null,
+      },
+      terminalHost: {
+        ...terminalTermination,
+        create: async (spec, policy) => {
+          bindings.bindTerminalHostSession(policy);
+          completeBinding(bindings, policy.locator);
+          return {
+            locator: spec.locator,
+            inspection: {
+              ...inspection(policy.locator, "present"),
+              foreground: { state: "shell-idle", runId: null },
+            },
+            created: true,
+          };
+        },
+        inspect: async (locator) => {
+          inspections += 1;
+          if (inspections > 40) return inspection(locator, "present");
+          return {
+            ...inspection(locator, "present"),
+            foreground: { state: "shell-idle", runId: null },
+          };
+        },
+      },
+      sleep: async () => {},
+    });
+
+    expect(ORCHESTRATOR_FOREGROUND_WAIT_MS).toBe(
+      SHELL_SESSION_TTY_READY_WAIT_MS + ORCHESTRATOR_FOREGROUND_READY_MARGIN_MS,
+    );
+    await expect(controller.start(launch)).resolves.toMatchObject({
+      state: "running",
+    });
+    expect(inspections).toBeGreaterThan(40);
+    expect(providerRuns.values).toHaveLength(1);
   });
 
   test("surfaces visibility expiry so the supervisor can relaunch", async () => {
