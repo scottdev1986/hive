@@ -23,6 +23,7 @@ import {
   type ShellSessionLaunch,
   prepareSessionZdotdir,
   shellSessionLaunch,
+  userZdotdir,
 } from "../session-host/shell-session";
 import type { TerminalHostBindingStore } from "../session-host/terminal-host-binding";
 import { ORCHESTRATOR_NAME } from "../../schemas/agent";
@@ -584,7 +585,7 @@ export class OrchestratorSessiondController {
     geometry: SessionSpec["geometry"],
   ): Promise<SessionSpec> {
     const zdotdir = await prepareSessionZdotdir(locator.sessionId);
-    const userZdotdir = process.env.ZDOTDIR ?? process.env.HOME ?? "";
+    const sourceZdotdir = userZdotdir();
 
     return {
       schemaVersion: 1,
@@ -600,7 +601,7 @@ export class OrchestratorSessiondController {
         })),
         ...params.shell.env,
         ZDOTDIR: zdotdir,
-        HIVE_USER_ZDOTDIR: userZdotdir,
+        HIVE_USER_ZDOTDIR: sourceZdotdir,
       },
       expectedExecutable: params.shell.expectedExecutable,
       readOnly: false,

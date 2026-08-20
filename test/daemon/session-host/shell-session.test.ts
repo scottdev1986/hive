@@ -4,6 +4,7 @@ import {
   prepareSessionZdotdir,
   shellSessionLaunch,
   TERMINAL_SHELL,
+  userZdotdir,
 } from "../../../src/daemon/session-host/shell-session";
 import { tempRoot } from "../../temp-root";
 
@@ -21,6 +22,19 @@ describe("shell-backed terminal sessions", () => {
     expect(() => shellSessionLaunch("codex\0ignored")).toThrow(
       "terminal command contains a NUL byte",
     );
+  });
+
+  test("does not source a Hive-owned session ZDOTDIR as user configuration", () => {
+    expect(
+      userZdotdir({
+        HOME: "/Users/tester",
+        ZDOTDIR:
+          "/Users/tester/.hive/instances/dev/sessiond-state/zdotdir/ses_old",
+      }),
+    ).toBe("/Users/tester");
+    expect(
+      userZdotdir({ HOME: "/Users/tester", ZDOTDIR: "/Users/tester/.zsh" }),
+    ).toBe("/Users/tester/.zsh");
   });
 
   test("prepares ZDOTDIR with init files that source user's config", async () => {
