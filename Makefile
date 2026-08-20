@@ -199,6 +199,7 @@ QA_BIN_LINK := $(QA)/bin/hive-qa
 QA_HOME := $(QA)/home
 QA_DAEMON_STARTUP_LOG := $(QA)/daemon-startup.log
 QA_STATE := $(QA)/state
+QA_PROCESS_REGISTRY := $(QA_STATE)/processes.json
 QA_BUILD_STAMP := $(QA)/build-ready
 QA_GRAPHIFY_LOCAL_DIR := $(QA)/graphify
 QA_GRAPHIFY_LOCAL_MANIFEST := $(QA_GRAPHIFY_LOCAL_DIR)/graphify-runtime.json
@@ -416,16 +417,26 @@ run:
 qa:
 	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
-	if [ -f "$(QA_STATE)/hive-before" ]; then \
-	  echo "refusing: leftover qa state at $(QA_STATE); run 'make qa-clean' first" >&2; exit 2; \
-	fi; \
 	[ -f "$(QA_BUILD_STAMP)" ] && \
 	[ -x "$(QA_DIST)/$(CLI_ASSET)" ] && \
 	[ -x "$(QA_DIST)/$(SESSIOND_ASSET)" ] && \
 	[ -f "$(QA_DIST)/HiveWorkspace.tar.gz" ] && \
 	[ -f "$(QA_GRAPHIFY_LOCAL_MANIFEST)" ] || \
 	  { echo "no qa build staged; run 'make build-qa' first" >&2; exit 2; }; \
-	mkdir -p "$(QA_STATE)" "$(QA)/bin" "$(QA)/tmp"; \
+	bun run "$(ROOT)/scripts/qa/process-ownership.ts" begin "$(QA)" "$(QA_PROCESS_REGISTRY)"; \
+	qa_leave_running=0; \
+	cleanup_qa() { \
+	  status=$$?; \
+	  trap - EXIT INT TERM; \
+	  if [ "$$qa_leave_running" -ne 1 ]; then \
+	    bun run "$(ROOT)/scripts/qa/process-ownership.ts" stop "$(QA_PROCESS_REGISTRY)" || true; \
+	  fi; \
+	  exit "$$status"; \
+	}; \
+	trap 'exit 130' INT; \
+	trap 'exit 143' TERM; \
+	trap cleanup_qa EXIT; \
+	mkdir -p "$(QA)/bin" "$(QA)/tmp"; \
 	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_STATE)/hive-before"; \
 	env $(QA_ENV) sh "$(ROOT)/install.sh" --variant qa --from-build "$(QA_DIST)" "$(DEV_VERSION)"; \
 	[ -x "$(QA_BIN)" ] || { echo "qa install produced no binary at $(QA_BIN)" >&2; exit 2; }; \
@@ -434,21 +445,21 @@ qa:
 	env $(QA_ENV) "$(QA_BIN)" init; \
 	/bin/rm -f "$(QA_DAEMON_STARTUP_LOG)"; \
 	env $(QA_ENV) "$(QA_BIN)" daemon >"$(QA_DAEMON_STARTUP_LOG)" 2>&1 & daemon_pid=$$!; \
+	bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" daemon; \
 	if ! bun run "$(ROOT)/scripts/dev/verify-dev-run.ts" "$(QA_DAEMON_STARTUP_LOG)" "$(QA_BIN)" "$(ROOT)" "$$daemon_pid"; then \
-	  kill "$$daemon_pid" 2>/dev/null || true; \
-	  wait "$$daemon_pid" 2>/dev/null || true; \
 	  exit 1; \
 	fi; \
-	if ! env $(QA_ENV) "$(QA_BIN)"; then \
-	  kill "$$daemon_pid" 2>/dev/null || true; \
-	  wait "$$daemon_pid" 2>/dev/null || true; \
+	if env $(QA_ENV) "$(QA_BIN)"; then \
+	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" workspace orchestrator; \
+	else \
+	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" || true; \
 	  exit 1; \
 	fi; \
 	if ! bun run "$(ROOT)/scripts/dev/verify-dev-run.ts" --memory "$(QA_HOME)"; then \
-	  kill "$$daemon_pid" 2>/dev/null || true; \
-	  wait "$$daemon_pid" 2>/dev/null || true; \
 	  exit 1; \
-	fi
+	fi; \
+	bun run "$(ROOT)/scripts/qa/process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)"; \
+	qa_leave_running=1
 
 # The QA runner against the rig `make qa` left up: fence preflight first, then
 # rows driven through the qa-control gate and verified on the daemon's own MCP
@@ -466,24 +477,30 @@ qa-run:
 	  HIVE_QA_RUNNER_PROJECT="$(QA_PROJECT)" \
 	  bun run "$(ROOT)/scripts/qa/run-qa.ts"
 
-# Product uninstall, then isolation checks. Order is load-bearing: repo
-# uninstall first, machine uninstall --purge, then check the qa paths are gone
-# and ~/.hive matches the pre-qa inventory. Never rm -rf the test project.
+# Product uninstall runs only after exact teardown; isolation checks follow it.
+# A registry-free old fixture may use product stop only after proving no
+# executable remains under its staging root.
 qa-clean:
 	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa-clean "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
 	[ -f "$(QA_STATE)/hive-before" ] || { echo "no pre-run isolation inventory at $(QA_STATE)/hive-before; run 'make qa' first" >&2; exit 2; }; \
 	[ -x "$(QA_BIN)" ] || { echo "no installed qa binary; cannot run the product uninstall" >&2; exit 2; }; \
 	cd "$(QA_PROJECT)"; \
-	env $(QA_ENV) "$(QA_BIN)" stop --force || true; \
-	if [ -d "$(QA_HOME)/instances" ]; then \
-	  for inst in "$(QA_HOME)/instances"/*; do \
-	    [ -d "$$inst" ] || continue; \
-	    env $(QA_ENV) "$(QA_BIN)" --instance "$${inst##*/}" stop --force || true; \
-	  done; \
+	if [ -f "$(QA_PROCESS_REGISTRY)" ]; then \
+	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" stop "$(QA_PROCESS_REGISTRY)"; \
+	else \
+	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" assert-empty "$(QA)"; \
+	  env $(QA_ENV) "$(QA_BIN)" stop --force || true; \
+	  if [ -d "$(QA_HOME)/instances" ]; then \
+	    for inst in "$(QA_HOME)/instances"/*; do \
+	      [ -d "$$inst" ] || continue; \
+	      env $(QA_ENV) "$(QA_BIN)" --instance "$${inst##*/}" stop --force || true; \
+	    done; \
+	  fi; \
 	fi; \
 	env $(QA_ENV) "$(QA_BIN)" uninstall --repo --yes; \
 	env $(QA_ENV) "$(QA_BIN)" uninstall --yes --purge; \
+	bun run "$(ROOT)/scripts/qa/process-ownership.ts" assert-empty "$(QA)"; \
 	/bin/rm -rf "$(QA_HOME)" "$(QA_HOME).runtime" "$(QA_INSTALL_ROOT)" "$(QA_DIST)" "$(QA)/bin" "$(QA)/tmp" "$(QA_DAEMON_STARTUP_LOG)"; \
 	"$(ROOT)/scripts/qa/assert-qa-gone.sh" \
 	  "$(QA_HOME)" "$(QA_BIN)" "$(QA_BIN_LINK)" \
