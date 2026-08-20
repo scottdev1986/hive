@@ -91,6 +91,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                             let error = MemoryRecallGateway.GatewayError
                                 .refused(status, detail)
                             controller?.showMemoryActionBanner(ShellBanner(
+                                identifier: "shell-banner-memory-recall-refused",
                                 severity: .warning,
                                 text: error.localizedDescription))
                         } catch {
@@ -149,6 +150,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                                 $0.editMemory { $0.maintenance = result.readBack.value }
                             }
                             controller.showMemoryActionBanner(ShellBanner(
+                                identifier: "shell-banner-memory-job-accepted",
                                 severity: .info,
                                 text: "The daemon accepted \(kind.title.lowercased()) "
                                     + "as receipt \(result.receipt.id)."))
@@ -157,6 +159,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                             let error = MemoryMaintenanceGateway.GatewayError
                                 .refused(status, detail)
                             controller.showMemoryActionBanner(ShellBanner(
+                                identifier: "shell-banner-memory-job-refused",
                                 severity: .warning,
                                 text: error.localizedDescription))
                         } catch MemoryMaintenanceGateway.GatewayError
@@ -171,6 +174,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                                 }
                             }
                             controller.showMemoryActionBanner(ShellBanner(
+                                identifier: "shell-banner-memory-job-readback-unknown",
                                 severity: .warning,
                                 text: "The job may have started, but its queue could not be read back."))
                         } catch {

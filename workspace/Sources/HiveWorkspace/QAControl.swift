@@ -94,49 +94,49 @@ final class QAControl {
         } catch {}
     }
 
-    // Controls are named by their accessibility identifier because that is how
+    // Views are named by their accessibility identifier because that is how
     // the product assigns names: setAccessibilityIdentifier leaves NSView's
     // `identifier` nil, and the two properties never mirror each other, so
-    // reading `identifier` here finds none of the shipped controls. This reads
+    // reading `identifier` here finds none of the shipped views. This reads
     // the property in-process; it drives no out-of-process accessibility API
     // and needs no permission.
     private func enumerate(window: NSWindow?) -> [QAControlResponse.Control] {
-        liveControls(window: window).compactMap { control -> QAControlResponse.Control? in
-            let identifier = control.accessibilityIdentifier()
+        liveViews(window: window).compactMap { view -> QAControlResponse.Control? in
+            let identifier = view.accessibilityIdentifier()
             guard !identifier.isEmpty else { return nil }
-            let present = functionallyPresent(control, in: window)
+            let present = functionallyPresent(view, in: window)
             return QAControlResponse.Control(
                 identifier: identifier,
-                role: control.accessibilityRole()?.rawValue ?? "control",
-                enabled: control.isEnabled,
-                actionable: control.action != nil,
+                role: view.accessibilityRole()?.rawValue ?? "view",
+                enabled: (view as? NSControl)?.isEnabled ?? true,
+                actionable: (view as? NSControl)?.action != nil,
                 functionallyPresent: present)
         }
     }
 
-    private func liveControls(window: NSWindow?) -> [NSControl] {
+    private func liveViews(window: NSWindow?) -> [NSView] {
         guard let root = window?.contentView else { return [] }
         root.layoutSubtreeIfNeeded()
-        var controls: [NSControl] = []
+        var views: [NSView] = []
         func visit(_ view: NSView) {
-            if let control = view as? NSControl { controls.append(control) }
+            views.append(view)
             view.subviews.forEach(visit)
         }
         visit(root)
-        return controls
+        return views
     }
 
-    private func functionallyPresent(_ control: NSControl, in window: NSWindow?) -> Bool {
-        guard control.window === window else { return false }
-        var view: NSView? = control
-        var visible = control.bounds
-        while let current = view, let superview = current.superview {
+    private func functionallyPresent(_ view: NSView, in window: NSWindow?) -> Bool {
+        guard view.window === window else { return false }
+        var currentView: NSView? = view
+        var visible = view.bounds
+        while let current = currentView, let superview = current.superview {
             if current.isHidden { return false }
             visible = current.convert(visible, to: superview)
             if current is NSClipView || superview is NSClipView {
                 visible = visible.intersection(superview.bounds)
             }
-            view = current.superview
+            currentView = current.superview
         }
         return !visible.isEmpty
     }
@@ -160,7 +160,7 @@ final class QAControl {
         var reason: String?
         if verb == "invoke" {
             guard let identifier,
-                  let control = harness.liveControls(window: window).first(where: {
+                  let view = harness.liveViews(window: window).first(where: {
                       $0.accessibilityIdentifier() == identifier
                   }) else {
                 return QAControlResponse(
@@ -169,15 +169,16 @@ final class QAControl {
                     terminator: "qa-control-end:\(requestId):\(controls.count)",
                     reason: "control not found")
             }
-            if let input, let field = control as? NSTextField { field.stringValue = input }
-            if !control.isEnabled || control.action == nil
-                || !NSApp.sendAction(control.action!, to: control.target, from: control) {
+            if let input, let field = view as? NSTextField { field.stringValue = input }
+            let control = view as? NSControl
+            if control?.isEnabled != true || control?.action == nil
+                || !NSApp.sendAction(control!.action!, to: control!.target, from: control!) {
                 status = "fail"
                 reason = "control is not actionable"
             }
         } else if verb == "select" {
             guard let identifier,
-                  let popup = harness.liveControls(window: window).first(where: {
+                  let popup = harness.liveViews(window: window).first(where: {
                       $0.accessibilityIdentifier() == identifier
                   }) as? NSPopUpButton else {
                 return QAControlResponse(

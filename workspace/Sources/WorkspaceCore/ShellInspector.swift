@@ -591,17 +591,20 @@ public enum ShellInspectorPresenter {
             switch read.result {
             case .refused(let detail):
                 result.append(ShellBanner(
+                    identifier: "shell-banner-inspector-routing-\(read.category)-refused",
                     severity: .warning,
                     text: "The daemon refused the \(read.category) routing inspection: "
                         + "\(detail). Other inspector reads were not changed."))
             case .invalid(let detail):
                 result.append(ShellBanner(
+                    identifier: "shell-banner-inspector-routing-\(read.category)-invalid",
                     severity: .warning,
                     text: "The \(read.category) routing inspection did not match "
                         + "RouteInspection schema v1: \(detail)."))
             case .projection(let projection):
                 if let banner = endpointBanner(
                     name: "\(read.category) routing inspection",
+                    identifier: "shell-banner-inspector-routing-\(read.category)",
                     availability: projection.availability,
                     evidence: projection.evidence,
                     retained: projection.value != nil) {
@@ -609,6 +612,7 @@ public enum ShellInspectorPresenter {
                 }
                 if let refusal = projection.value?.refusal {
                     result.append(ShellBanner(
+                        identifier: "shell-banner-inspector-routing-\(read.category)-route-refused",
                         severity: .warning,
                         text: "Routing refused \(read.category): \(refusalDetail(refusal)). "
                             + "The inspected projection remains visible."))
@@ -617,6 +621,7 @@ public enum ShellInspectorPresenter {
         }
         if let banner = endpointBanner(
             name: "workspace snapshot",
+            identifier: "shell-banner-inspector-snapshot",
             availability: inputs.snapshotAvailability,
             evidence: inputs.snapshotEvidence,
             retained: inputs.snapshot != nil) {
@@ -627,6 +632,7 @@ public enum ShellInspectorPresenter {
 
     private static func endpointBanner(
         name: String,
+        identifier: String,
         availability: ProjectionAvailability,
         evidence: ProjectionEvidence?,
         retained: Bool
@@ -637,24 +643,29 @@ public enum ShellInspectorPresenter {
         switch availability {
         case .unauthorized:
             return ShellBanner(
+                identifier: "\(identifier)-unauthorized",
                 severity: .warning,
                 text: "The daemon refused the \(name) read "
                     + "(\(evidence?.refusalCode ?? "unspecified")).\(suffix)")
         case .disconnected:
             return ShellBanner(
+                identifier: "\(identifier)-disconnected",
                 severity: .warning,
                 text: "Transport for the \(name) was lost at "
                     + "\(evidence?.transportLostAt ?? "an unknown time").\(suffix)")
         case .stale:
             return ShellBanner(
+                identifier: "\(identifier)-stale",
                 severity: .info,
                 text: "The \(name) is stale.\(suffix)")
         case .conflicting:
             return ShellBanner(
+                identifier: "\(identifier)-conflicting",
                 severity: .warning,
                 text: "The \(name) has competing revisions.\(suffix)")
         case .replaced:
             return ShellBanner(
+                identifier: "\(identifier)-replaced",
                 severity: .info,
                 text: "The \(name) was replaced by a newer source.\(suffix)")
         case .current, .unknown:

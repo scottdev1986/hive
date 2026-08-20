@@ -284,11 +284,15 @@ public struct ShellState: Equatable {
 
     public var commandBanner: ShellBanner? {
         if let policyWriteRefusal {
-            return ShellBanner(severity: .warning, text: policyWriteRefusal)
+            return ShellBanner(
+                identifier: "shell-banner-policy-write-refusal",
+                severity: .warning,
+                text: policyWriteRefusal)
         }
         switch lastOutcome {
         case .surfaceUnavailable(let command, let reason):
             return ShellBanner(
+                identifier: "shell-banner-command-unavailable",
                 severity: .info,
                 text: "\(command.title): \(reason)")
         case .routed, .localPerformed, nil:

@@ -68,8 +68,7 @@ final class ShellBannerView: NSView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.group)
-        setAccessibilityIdentifier(
-            presentation == .global ? "shell-banner-global" : "shell-banner-inline")
+        setAccessibilityIdentifier(banner.identifier)
         setAccessibilityLabel(banner.text)
     }
 

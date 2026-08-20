@@ -143,6 +143,7 @@ struct OuterHorizonGateway {
                     facts: []),
                 snapshot: nil,
                 warning: ShellBanner(
+                    identifier: "shell-banner-outer-horizon-refusal",
                     severity: .warning,
                     text: text + " No hierarchy is shown; no transport loss is claimed."))
         }
@@ -157,6 +158,7 @@ struct OuterHorizonGateway {
                 facts: previousScreen.facts),
             snapshot: previousSnapshot,
             warning: ShellBanner(
+                identifier: "shell-banner-outer-horizon-refusal",
                 severity: .warning,
                 text: text
                     + " Showing the last observed hierarchy; no transport loss is claimed."))

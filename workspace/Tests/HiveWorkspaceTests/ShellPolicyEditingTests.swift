@@ -269,6 +269,14 @@ final class ShellPolicyEditingTests: XCTestCase {
         let controller = try makeController()
         try show(.taskRouter, in: controller)
         try selectComplexCoding(in: controller)
+#if HIVE_QA_BUILD
+        let clean = QAControl.process(
+            verb: "enumerate", identifier: nil, input: nil,
+            window: try XCTUnwrap(controller.window), route: "router", requestId: "clean")
+        XCTAssertFalse(clean.controls.contains {
+            $0.identifier == "shell-banner-policy-write-refusal"
+        })
+#endif
         let weight = try view(
             controller, "task-router-weight-claude/claude-opus-4-8", as: NSTextField.self)
         weight.stringValue = "40"
@@ -299,6 +307,23 @@ final class ShellPolicyEditingTests: XCTestCase {
             "The route changed before this edit could be applied. Review the current route and edit again.")
         XCTAssertTrue(allText(in: try content(controller)).contains(
             "The route changed before this edit could be applied."))
+#if HIVE_QA_BUILD
+        let refused = QAControl.process(
+            verb: "enumerate", identifier: nil, input: nil,
+            window: try XCTUnwrap(controller.window), route: "router", requestId: "refused")
+        let banner = refused.controls.first {
+            $0.identifier == "shell-banner-policy-write-refusal"
+        }
+        XCTAssertEqual(banner?.functionallyPresent, true)
+        XCTAssertEqual(banner?.enabled, true)
+        XCTAssertEqual(banner?.actionable, false)
+        XCTAssertEqual(banner?.role, NSAccessibility.Role.group.rawValue)
+        let invoke = QAControl.process(
+            verb: "invoke", identifier: "shell-banner-policy-write-refusal", input: nil,
+            window: try XCTUnwrap(controller.window), route: "router", requestId: "invoke")
+        XCTAssertEqual(invoke.status, "fail")
+        XCTAssertEqual(invoke.reason, "control is not actionable")
+#endif
     }
 
     func testEditSurvivesAnUnchangedRouterRefresh() throws {

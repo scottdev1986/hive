@@ -179,11 +179,14 @@ final class WorkspaceDesignSystemTests: XCTestCase {
                 && $0.constant == Theme.Metric.controlMinHeight
         })
 
-        let banner = ShellBanner(severity: .warning, text: "Projection is stale.")
+        let banner = ShellBanner(
+            identifier: "shell-banner-test",
+            severity: .warning,
+            text: "Projection is stale.")
         let global = ShellBannerView(banner: banner, presentation: .global)
         let inline = ShellBannerView(banner: banner, presentation: .inline)
-        XCTAssertEqual(global.accessibilityIdentifier(), "shell-banner-global")
-        XCTAssertEqual(inline.accessibilityIdentifier(), "shell-banner-inline")
+        XCTAssertEqual(global.accessibilityIdentifier(), "shell-banner-test")
+        XCTAssertEqual(inline.accessibilityIdentifier(), "shell-banner-test")
     }
 
     func testLiveRunSupportSurfacesUseSharedControlsAndCards() throws {
@@ -300,7 +303,8 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         window.contentView?.layoutSubtreeIfNeeded()
         let content = try XCTUnwrap(window.contentView)
         let topBar = try XCTUnwrap(findView(in: content, identifier: "shell-top-bar"))
-        let banner = try XCTUnwrap(findView(in: content, identifier: "shell-banner-global"))
+        let banner = try XCTUnwrap(findView(
+            in: content, identifier: "shell-banner-command-unavailable"))
         let topBarFrame = topBar.convert(topBar.bounds, to: content)
         let bannerFrame = banner.convert(banner.bounds, to: content)
 

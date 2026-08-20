@@ -79,10 +79,12 @@ public struct ShellBanner: Equatable, Sendable {
         case critical
     }
 
+    public let identifier: String
     public let severity: Severity
     public let text: String
 
-    public init(severity: Severity, text: String) {
+    public init(identifier: String, severity: Severity, text: String) {
+        self.identifier = identifier
         self.severity = severity
         self.text = text
     }
@@ -92,11 +94,13 @@ extension ShellScreenProjection {
     public var banner: ShellBanner? {
         if case .protocolDrift(let reason) = evidence {
             return ShellBanner(
+                identifier: "shell-banner-screen-protocol-drift",
                 severity: .critical,
                 text: "The daemon answered with a protocol this build cannot read (\(reason)). No state is shown.")
         }
         if case .refused(let statusCode) = evidence {
             return ShellBanner(
+                identifier: "shell-banner-screen-read-refused",
                 severity: .warning,
                 text: "The daemon refused this read (HTTP \(statusCode)). No state is shown.")
         }
@@ -105,18 +109,21 @@ extension ShellScreenProjection {
             return nil
         case .stale:
             return ShellBanner(
+                identifier: "shell-banner-screen-stale",
                 severity: .info,
                 text: "Projection is stale. Values keep their observed "
                     + "timestamps; mutations require a fresh read first.")
         case .disconnected:
             let lostAt = evidence?.transportLostAt ?? "an unknown time"
             return ShellBanner(
+                identifier: "shell-banner-screen-disconnected",
                 severity: .warning,
                 text: "Daemon disconnected at \(lostAt). Showing the last "
                     + "observed state; nothing here is live.")
         case .unauthorized:
             let code = evidence?.refusalCode ?? "unspecified"
             return ShellBanner(
+                identifier: "shell-banner-screen-unauthorized",
                 severity: .critical,
                 text: "The daemon refused this read (\(code)). "
                     + "No state is shown.")
@@ -124,12 +131,14 @@ extension ShellScreenProjection {
             let competing = evidence?.competingRevision ?? "unknown"
             let shown = source.revision ?? "unknown"
             return ShellBanner(
+                identifier: "shell-banner-screen-conflicting",
                 severity: .warning,
                 text: "A competing revision (\(competing)) exists for this "
                     + "projection. Showing revision \(shown) as observed.")
         case .replaced:
             let successor = evidence?.supersedingDescription ?? "a newer source"
             return ShellBanner(
+                identifier: "shell-banner-screen-replaced",
                 severity: .info,
                 text: "This view was superseded by \(successor). "
                     + "The shown state is no longer the latest.")
