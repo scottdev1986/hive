@@ -641,7 +641,8 @@ function routingPresentation(
     ["global", policy.global] as const,
     ...Object.entries(policy.categories),
   ]) {
-    const shares = route === null || route === undefined ? [] : routeShares(route);
+    const shares =
+      route === null || route === undefined ? [] : routeShares(route);
     for (const candidate of route?.candidates ?? []) {
       const share =
         shares.find(

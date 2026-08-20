@@ -528,4 +528,3 @@ export function routeDigest(route: RoutePolicy): string {
     .update(JSON.stringify({ mode: route.mode, candidates: canonical }))
     .digest("hex");
 }
-
