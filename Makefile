@@ -185,13 +185,15 @@ DEV_ENV := \
 
 # Isolated qa variant. Staging sits outside the checkout entirely, under
 # /tmp/hvqa-<tag> — not a third location, and reusing DEV_HOME_TAG rather than
-# a fresh hash. A build must not write its staging root inside the source
-# checkout it is staging from.
+# a fresh hash. The path is the realpath: on macOS /tmp is a symlink, and the
+# daemon handshake hashes the home's spelling, so /tmp/... and /private/tmp/...
+# look like two instances. A build must not write its staging root inside the
+# source checkout it is staging from.
 # Home is also NOT a named instance under ~/.hive: uninstall resolves
 # getHiveHome() (HIVE_HOME, else ~/.hive) and listInstances() walks
 # defaultHiveHome()/instances (HIVE_DEFAULT_HOME, else ~/.hive). Both must
 # point at this tree or a qa uninstall sees — and can stop — the live fleet.
-QA := /tmp/hvqa-$(DEV_HOME_TAG)
+QA := $(shell /usr/bin/python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "/tmp/hvqa-$(DEV_HOME_TAG)")
 QA_DIST := $(QA)/dist
 QA_INSTALL_ROOT := $(QA)/root
 QA_BIN := $(QA_INSTALL_ROOT)/current/hive

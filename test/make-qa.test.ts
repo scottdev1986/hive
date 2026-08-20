@@ -234,7 +234,9 @@ test("make -n qa pins HIVE_SESSIOND_ROOT under the QA staging root", () => {
   // Make's own expansion of QA_ENV, not a recipe-text assertion: the sessiond
   // socket root must ride along under the same /tmp/hvqa-<tag> staging root,
   // or sessiond sockets land in the machine-wide run dir (qa-plan-v2 fence 1).
-  expect(output).toMatch(/HIVE_SESSIOND_ROOT=\/tmp\/hvqa-[0-9a-f]+\/sessiond/);
+  expect(output).toMatch(
+    /HIVE_SESSIOND_ROOT=(?:\/private)?\/tmp\/hvqa-[0-9a-f]+\/sessiond/,
+  );
 });
 
 test("make qa refuses a QA staging root inside the hive checkout", () => {
