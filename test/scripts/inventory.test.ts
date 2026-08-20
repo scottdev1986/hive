@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
@@ -84,6 +91,99 @@ test("isolation inventory ignores nested mutation and reds a new instance name",
     const leaked = run([inventory, "compare", before, afterLeak]);
     expect(leaked.exitCode).toBe(1);
     expect(leaked.stdout + leaked.stderr).toContain("qa-leaked");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("isolation inventory ignores vendor bin entries and reds hive-qa", () => {
+  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-isolation-bin-"));
+  const isolation = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "scripts",
+    "qa",
+    "isolation-inventory.sh",
+  );
+  try {
+    const hive = join(fixture, ".hive");
+    const bin = join(fixture, ".local", "bin");
+    const share = join(fixture, ".local", "share");
+    const versions = join(share, "claude", "versions");
+    mkdirSync(hive, { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(versions, { recursive: true });
+    writeFileSync(join(versions, "2.1.234"), "old\n");
+    writeFileSync(join(versions, "2.1.237"), "new\n");
+    symlinkSync(join(versions, "2.1.234"), join(bin, "claude"));
+    const before = join(fixture, "before");
+    const afterVendor = join(fixture, "after-vendor");
+    const afterLeak = join(fixture, "after-leak");
+    expect(run([isolation, hive, before]).exitCode).toBe(0);
+    expect(readFileSync(before, "utf8")).not.toContain("claude");
+    expect(readFileSync(before, "utf8")).not.toContain("grok");
+    rmSync(join(bin, "claude"));
+    symlinkSync(join(versions, "2.1.237"), join(bin, "claude"));
+    symlinkSync(join(versions, "2.1.237"), join(bin, "grok"));
+    mkdirSync(join(share, "grok"));
+    expect(run([isolation, hive, afterVendor]).exitCode).toBe(0);
+    expect(readFileSync(afterVendor, "utf8")).not.toContain("claude");
+    expect(readFileSync(afterVendor, "utf8")).not.toContain("grok");
+    const vendor = run([inventory, "compare", before, afterVendor]);
+    expect(vendor.exitCode, vendor.stderr + vendor.stdout).toBe(0);
+    symlinkSync(join(versions, "2.1.237"), join(bin, "hive-qa"));
+    expect(run([isolation, hive, afterLeak]).exitCode).toBe(0);
+    const leaked = run([inventory, "compare", before, afterLeak]);
+    expect(leaked.exitCode).toBe(1);
+    expect(leaked.stdout + leaked.stderr).toContain("hive-qa");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test("isolation compare drops vendor local-bin entries from an older snapshot", () => {
+  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-isolation-old-"));
+  const isolation = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "scripts",
+    "qa",
+    "isolation-inventory.sh",
+  );
+  try {
+    const before = join(fixture, "before");
+    const after = join(fixture, "after");
+    const leaked = join(fixture, "leaked");
+    const header = [
+      "kind\tisolation",
+      "root\t/tmp/fake/.hive",
+      "section\ttop\t/tmp/fake/.hive",
+      "state\tabsent",
+      "section\tlocal-bin\t/tmp/fake/.local/bin",
+    ].join("\n");
+    writeFileSync(
+      before,
+      `${header}\nL\tclaude\t/tmp/fake/.local/share/claude/versions/2.1.234\nL\tagent\t/tmp/fake/.grok/bin/agent\n`,
+    );
+    writeFileSync(
+      after,
+      `${header}\nL\tclaude\t/tmp/fake/.local/share/claude/versions/2.1.237\nL\tgrok\t/tmp/fake/.local/bin/grok-real\n`,
+    );
+    writeFileSync(
+      leaked,
+      `${header}\nL\tclaude\t/tmp/fake/.local/share/claude/versions/2.1.237\nL\thive-qa\t/tmp/hvqa/bin/hive-qa\n`,
+    );
+    const same = run([isolation, "compare", before, after]);
+    expect(same.exitCode, same.stderr + same.stdout).toBe(0);
+    expect(readFileSync(before, "utf8")).toBe(`${header}\n`);
+    expect(readFileSync(after, "utf8")).toBe(`${header}\n`);
+    expect(readFileSync(before, "utf8")).not.toContain("claude");
+    const differ = run([isolation, "compare", before, leaked]);
+    expect(differ.exitCode).toBe(1);
+    expect(differ.stdout + differ.stderr).toContain("hive-qa");
+    expect(readFileSync(leaked, "utf8")).toBe(`${header}\nL\thive-qa\n`);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

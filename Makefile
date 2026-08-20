@@ -479,34 +479,41 @@ qa-run:
 
 # Product uninstall runs only after exact teardown; isolation checks follow it.
 # A registry-free old fixture may use product stop only after proving no
-# executable remains under its staging root.
+# executable remains under its staging root. If a previous qa-clean already
+# removed the binary (isolation compare failed after uninstall), skip product
+# uninstall and finish the isolation checks.
 qa-clean:
 	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa-clean "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
 	[ -f "$(QA_STATE)/hive-before" ] || { echo "no pre-run isolation inventory at $(QA_STATE)/hive-before; run 'make qa' first" >&2; exit 2; }; \
-	[ -x "$(QA_BIN)" ] || { echo "no installed qa binary; cannot run the product uninstall" >&2; exit 2; }; \
 	cd "$(QA_PROJECT)"; \
 	if [ -f "$(QA_PROCESS_REGISTRY)" ]; then \
 	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" stop "$(QA_PROCESS_REGISTRY)"; \
 	else \
 	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" assert-empty "$(QA)"; \
-	  env $(QA_ENV) "$(QA_BIN)" stop --force || true; \
-	  if [ -d "$(QA_HOME)/instances" ]; then \
-	    for inst in "$(QA_HOME)/instances"/*; do \
-	      [ -d "$$inst" ] || continue; \
-	      env $(QA_ENV) "$(QA_BIN)" --instance "$${inst##*/}" stop --force || true; \
-	    done; \
+	  if [ -x "$(QA_BIN)" ]; then \
+	    env $(QA_ENV) "$(QA_BIN)" stop --force || true; \
+	    if [ -d "$(QA_HOME)/instances" ]; then \
+	      for inst in "$(QA_HOME)/instances"/*; do \
+	        [ -d "$$inst" ] || continue; \
+	        env $(QA_ENV) "$(QA_BIN)" --instance "$${inst##*/}" stop --force || true; \
+	      done; \
+	    fi; \
 	  fi; \
 	fi; \
-	env $(QA_ENV) "$(QA_BIN)" uninstall --repo --yes; \
-	env $(QA_ENV) "$(QA_BIN)" uninstall --yes --purge; \
+	if [ -x "$(QA_BIN)" ]; then \
+	  env $(QA_ENV) "$(QA_BIN)" uninstall --repo --yes; \
+	  env $(QA_ENV) "$(QA_BIN)" uninstall --yes --purge; \
+	else \
+	  echo "qa-clean: qa binary already gone; skipping product uninstall"; \
+	fi; \
 	bun run "$(ROOT)/scripts/qa/process-ownership.ts" assert-empty "$(QA)"; \
 	/bin/rm -rf "$(QA_HOME)" "$(QA_HOME).runtime" "$(QA_INSTALL_ROOT)" "$(QA_DIST)" "$(QA)/bin" "$(QA)/tmp" "$(QA_DAEMON_STARTUP_LOG)"; \
 	"$(ROOT)/scripts/qa/assert-qa-gone.sh" \
 	  "$(QA_HOME)" "$(QA_BIN)" "$(QA_BIN_LINK)" \
 	  "$(HOME)/.local/bin/hive-qa" "$(HOME)/.local/share/hive-qa"; \
 	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_STATE)/hive-after"; \
-	"$(ROOT)/scripts/qa/inventory.sh" compare "$(QA_STATE)/hive-before" "$(QA_STATE)/hive-after"; \
+	"$(ROOT)/scripts/qa/isolation-inventory.sh" compare "$(QA_STATE)/hive-before" "$(QA_STATE)/hive-after"; \
 	echo "qa-clean: Hive and the qa variant removed; user Hive isolation preserved"; \
 	/bin/rm -rf "$(QA_STATE)" "$(QA)"
 

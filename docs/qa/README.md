@@ -28,9 +28,12 @@ A guard refuses the staging root by name if it ever resolves back inside the
 checkout. `make qa-clean` runs the product repository and machine uninstall
 commands, checks that the QA installation paths are gone, and checks that
 `~/.hive`'s isolation inventory
-(top-level names, instances, `run/`, `db-identity/`, default hive-qa
-install locations) matches the pre-qa snapshot. Nested live-fleet writes
-are not part of that compare — they would make every run red.
+(top-level names, instances, `run/`, `db-identity/`, and Hive's own
+`hive` / `hive-dev` / `hive-qa` names under `~/.local/bin` and
+`~/.local/share`) matches the pre-qa snapshot. Nested live-fleet writes
+are not part of that compare — they would make every run red. Other
+products in those shared directories are not inventoried: isolation does
+not walk or record how they are installed or updated.
 
 The isolation scripts live in `scripts/qa/` and are load-bearing for this
 lifecycle. Do not move them.
