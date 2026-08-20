@@ -1,5 +1,8 @@
 import AppKit
 import WorkspaceCore
+#if HIVE_QA_BUILD
+import HiveTerminalKit
+#endif
 
 @MainActor
 protocol LiveRunTerminalSurface: AnyObject {
@@ -129,6 +132,12 @@ final class LiveRunWorkbenchView: NSView {
 
     var selectedLocator: AgentSessionLocator? { terminal?.locator }
     var installedTerminalCount: Int { terminal?.installedView == nil ? 0 : 1 }
+#if HIVE_QA_BUILD
+    var qaAttachedTerminalView: HiveTerminalView? {
+        guard selectedID == LiveRunSessionSummary.queenID else { return nil }
+        return terminal?.installedView as? HiveTerminalView
+    }
+#endif
     var rowCount: Int { sessions.count }
     var stopProviderControlEnabled: Bool { stopButton.isEnabled }
     var terminateTerminalControlEnabled: Bool { terminateButton.isEnabled }

@@ -1,5 +1,6 @@
 #if HIVE_QA_BUILD
 import AppKit
+import HiveTerminalKit
 
 struct QAControlResponse: Codable {
     struct Control: Codable {
@@ -27,6 +28,8 @@ final class QAControl {
         let verb: String
         let identifier: String?
         let input: String?
+        let target: String?
+        let text: String?
         let title: String?
         let index: Int?
     }
@@ -69,9 +72,12 @@ final class QAControl {
             verb: request.verb,
             identifier: request.identifier,
             input: request.input,
+            target: request.target,
+            text: request.text,
             itemTitle: request.title,
             itemIndex: request.index,
             window: window,
+            terminal: surface.qaAttachedTerminalView,
             route: surface.qaCurrentRoute,
             requestId: request.requestId))
     }
@@ -139,9 +145,12 @@ final class QAControl {
         verb: String,
         identifier: String?,
         input: String?,
+        target: String? = nil,
+        text: String? = nil,
         itemTitle: String? = nil,
         itemIndex: Int? = nil,
         window: NSWindow,
+        terminal: HiveTerminalView? = nil,
         route: String,
         requestId: String
     ) -> QAControlResponse {
@@ -218,6 +227,39 @@ final class QAControl {
                 status = "fail"
                 reason = "popup is not actionable"
             }
+        } else if verb == "type" {
+            guard target == "queen-terminal", let text, let terminal else {
+                return QAControlResponse(
+                    requestId: requestId, status: "fail", root: "hive-workspace-qa-root",
+                    route: route, controls: controls, count: controls.count,
+                    terminator: "qa-control-end:\(requestId):\(controls.count)",
+                    reason: "queen terminal not attached")
+            }
+            terminal.insertText(
+                text,
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            guard let submit = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: terminal.window?.windowNumber ?? 0,
+                context: nil,
+                characters: "\r",
+                charactersIgnoringModifiers: "\r",
+                isARepeat: false,
+                keyCode: 0x24
+            ) else {
+                status = "fail"
+                reason = "could not create Return event"
+                let after = harness.enumerate(window: window)
+                return QAControlResponse(
+                    requestId: requestId, status: status, root: "hive-workspace-qa-root",
+                    route: route, controls: after, count: after.count,
+                    terminator: "qa-control-end:\(requestId):\(after.count)", reason: reason)
+            }
+            terminal.keyDown(with: submit)
         }
         let after = harness.enumerate(window: window)
         return QAControlResponse(

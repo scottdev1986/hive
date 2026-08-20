@@ -12,7 +12,8 @@ export type QAControlRequest =
   | { requestId: string; verb: "enumerate" }
   | { requestId: string; verb: "invoke"; identifier: string; input?: string }
   | { requestId: string; verb: "select"; identifier: string; title: string }
-  | { requestId: string; verb: "select"; identifier: string; index: number };
+  | { requestId: string; verb: "select"; identifier: string; index: number }
+  | { requestId: string; verb: "type"; target: "queen-terminal"; text: string };
 
 type WithoutRequestId<Request> = Request extends unknown
   ? Omit<Request, "requestId">

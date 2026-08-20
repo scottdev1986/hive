@@ -110,6 +110,39 @@ describe("qa-control fails closed", () => {
     }
   });
 
+  test("sends a queen-terminal type request", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hive-qa-control-"));
+    process.env.HIVE_QA = "1";
+    process.env.HIVE_DEFAULT_HOME = home;
+    try {
+      const result = runQAControl(
+        { verb: "type", target: "queen-terminal", text: "qa-terminal-nonce" },
+        100,
+      );
+      const request = JSON.parse(
+        readFileSync(join(home, "qa-control", "request.json"), "utf8"),
+      ) as { requestId: string; verb: string; target: string; text: string };
+      expect(request).toMatchObject({
+        verb: "type",
+        target: "queen-terminal",
+        text: "qa-terminal-nonce",
+      });
+      writeFileSync(
+        join(home, "qa-control", `response.${request.requestId}.json`),
+        JSON.stringify({
+          requestId: request.requestId,
+          status: "ok",
+          root: "hive-workspace-qa-root",
+          count: 0,
+          terminator: `qa-control-end:${request.requestId}:0`,
+        }),
+      );
+      expect(await result).toBe(0);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("registers qa-control only in a QA build", () => {
     process.env.HIVE_BUILD_VARIANT = "qa";
     expect(createProgram().commands.map((command) => command.name())).toContain(

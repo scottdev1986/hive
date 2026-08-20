@@ -944,16 +944,22 @@ export function createProgram(): Command {
   if (process.env.HIVE_BUILD_VARIANT === "qa") {
     program
       .command("qa-control", { hidden: true })
-      .argument("<verb>", "enumerate, invoke, or select")
-      .argument("[identifier]", "live control identifier")
+      .argument("<verb>", "enumerate, invoke, select, or type")
+      .argument("[identifier]", "live control identifier or queen-terminal")
       .option("--input <value>", "native control input")
       .option("--title <title>", "popup item title")
       .option("--index <index>", "popup item index")
+      .option("--text <text>", "terminal text input")
       .action(
         async (
           verb: string,
           identifier: string | undefined,
-          options: { input?: string; title?: string; index?: string },
+          options: {
+            input?: string;
+            title?: string;
+            index?: string;
+            text?: string;
+          },
         ) => {
           if (verb === "enumerate") {
             process.exitCode = await runQAControl({ verb });
@@ -996,7 +1002,27 @@ export function createProgram(): Command {
             process.exitCode = await runQAControl({ verb, identifier, index });
             return;
           }
-          if (verb !== "enumerate" && verb !== "invoke" && verb !== "select") {
+          if (
+            verb === "type" &&
+            identifier === "queen-terminal" &&
+            options.text !== undefined
+          ) {
+            process.exitCode = await runQAControl({
+              verb,
+              target: identifier,
+              text: options.text,
+            });
+            return;
+          }
+          if (verb === "type") {
+            process.stderr.write(
+              "NO MEASUREMENT: type requires queen-terminal and --text\n",
+            );
+          } else if (
+            verb !== "enumerate" &&
+            verb !== "invoke" &&
+            verb !== "select"
+          ) {
             process.stderr.write("NO MEASUREMENT: unknown qa-control verb\n");
           } else
             process.stderr.write(

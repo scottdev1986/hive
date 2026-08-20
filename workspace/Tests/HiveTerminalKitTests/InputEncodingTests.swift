@@ -328,6 +328,22 @@ final class InputEncodingTests: XCTestCase {
         XCTAssertEqual(userInputs, ["文:false:false"])
     }
 
+    func testEventlessTextThenReturnUsesTheSamePathsAsAUserSubmission() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+
+        terminal.insertText(
+            "qa-terminal-nonce",
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        terminal.keyDown(with: makeKeyEvent(characters: "\r", keyCode: 0x24))
+
+        XCTAssertEqual(engine.textSent, ["qa-terminal-nonce"])
+        XCTAssertEqual(engine.keysSentDetail.count, 1)
+        XCTAssertEqual(engine.keysSentDetail.first?.keycode, 0x24)
+        XCTAssertEqual(engine.keysSentDetail.first?.action, .press)
+    }
+
     func testFileDropInsertsShellEscapedPathsThroughHumanTextInput() {
         let engine = FakeManualSurface()
         let terminal = makeTerminal(engine)

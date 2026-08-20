@@ -1,6 +1,9 @@
 
 import AppKit
 import WorkspaceCore
+#if HIVE_QA_BUILD
+import HiveTerminalKit
+#endif
 
 /// The only shell operations the separate QA target may drive. The concrete
 /// controller stays internal to the application module.
@@ -78,6 +81,11 @@ final class WorkspaceShellWindowController: NSWindowController {
     var installedLiveRunTerminalCount: Int {
         liveRunWorkbench?.installedTerminalCount ?? 0
     }
+#if HIVE_QA_BUILD
+    var qaAttachedTerminalView: HiveTerminalView? {
+        liveRunWorkbench?.qaAttachedTerminalView
+    }
+#endif
 
     func apply(_ mutation: (inout ShellState) -> Void) {
         mutation(&state)
