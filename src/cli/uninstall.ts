@@ -66,7 +66,7 @@ export interface UninstallDeps {
   stopCurrentInstance: (root?: string) => Promise<void>;
   /** Whether the selected instance's live daemon serves the repo being uninstalled. A foreign daemon must never be signaled. */
   currentInstanceOwnsProject: (root: string) => Promise<boolean>;
-  settleCurrentProject: (root: string) => Promise<unknown>;
+  settleCurrentProject: (root: string) => Promise<void>;
   liveTeams: () => Promise<readonly InstanceMutationBlocker[]>;
   stopInstances: () => Promise<void>;
   acquireLease: (
@@ -155,7 +155,7 @@ export const defaultUninstallDeps: UninstallDeps = {
     const port = readDaemonPort(resolveCliHiveHome(root));
     if (port === null)
       throw new Error("the project daemon has no readable port");
-    return requestSettlementSweep(port);
+    await requestSettlementSweep(port);
   },
   liveTeams: () =>
     instanceMutationBlockers(async (port) => {

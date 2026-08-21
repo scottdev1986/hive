@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  type TokenUsageEventIngest,
   TokenUsageSessionCreatedSchema,
   type TokenUsageSnapshot,
   TokenUsageSnapshotSchema,
@@ -8,17 +7,18 @@ import {
 } from "../schemas/token-usage-schema";
 import { isTestRunnerEnv } from "../cli/invoker";
 import { UserDaemonClient } from "../cli/user-daemon-client";
+import { type JsonValue, requireJsonValue } from "../shared/json";
 
 async function request(
   port: number,
   path: string,
   init?: RequestInit,
-): Promise<unknown> {
+): Promise<JsonValue> {
   const response = await new UserDaemonClient({
     port,
     verifyIdentity: !isTestRunnerEnv(),
   }).request(path, init);
-  const body = await response.json().catch(() => null);
+  const body = requireJsonValue(await response.json().catch(() => null), path);
   if (!response.ok) {
     const error = z.object({ error: z.string() }).safeParse(body);
     throw new Error(
@@ -76,18 +76,6 @@ export async function endTokenUsageSubject(
   subjectId: string,
 ): Promise<void> {
   await request(port, `/token-usage/subjects/${subjectId}/end`, post({}));
-}
-
-export async function recordTokenUsageEvents(
-  port: number,
-  subjectId: string,
-  events: readonly TokenUsageEventIngest[],
-): Promise<void> {
-  await request(
-    port,
-    `/token-usage/subjects/${subjectId}/events`,
-    post({ events }),
-  );
 }
 
 export async function endTokenUsageSession(

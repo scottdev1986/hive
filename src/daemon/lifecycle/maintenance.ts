@@ -1,7 +1,5 @@
 import { errorMessage } from "../../shared/error-message";
 
-// Runs the daemon's independent housekeeping tasks without letting one failed subsystem block the rest. It also owns the health state and recurring timer so HiveDaemon remains the composition root rather than the scheduler.
-
 export interface MaintenanceFailure {
   readonly component: string;
   readonly error: string;
@@ -18,7 +16,7 @@ export type MaintenanceHealth =
 
 export interface MaintenanceTask {
   readonly component: string;
-  readonly run: (signal: AbortSignal) => unknown;
+  readonly run: (signal: AbortSignal) => void | Promise<void>;
   readonly minimumIntervalMs?: number;
 }
 

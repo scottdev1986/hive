@@ -43,7 +43,7 @@ type LiveRunTerminalHost = Pick<
 export interface LiveRunControlEndpointDependencies {
   db: LiveRunControlDatabase;
   terminalHost: LiveRunTerminalHost;
-  terminateAgent(agent: AgentRecord): Promise<unknown>;
+  terminateAgent(agent: AgentRecord): Promise<void>;
   now(): Date;
   authenticate(request: Request, route: string): Decision;
   authorize(

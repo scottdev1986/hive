@@ -33,6 +33,7 @@ import {
 import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
 import type { HiveDatabase } from "../database/hive-database";
 import type { GraphifyService } from "../graphify-service/graphify-service";
+import type { SettlementDebtReport } from "../worktree-lifecycle-service/worktree-lifecycle-service";
 import { HierarchyStore } from "../hierarchy-store";
 import { computeMemoryMetric } from "../incident-ledger/metric";
 import type { GraphifyCallCursor } from "../observability/tool-telemetry";
@@ -144,7 +145,25 @@ export function mcpCredentialReport(
       };
 }
 
-/** The observability tool surface, with its dependencies named. Status reads across many daemon subsystems, so its inputs are explicit rather than reached through `this`. `memoryEmbeddingsStatusSection` is typed `() => unknown` because its result is only nested into a response object — naming its inferred union here would couple this module to the embedding service's shape for no benefit. */
+export type MemoryEmbeddingsStatusSection =
+  | {
+      readonly state: "disabled";
+      readonly detail: string;
+    }
+  | {
+      readonly provider: string;
+      readonly model: string;
+      readonly state: string;
+      readonly detail?: string;
+      readonly runtimeDir: string;
+      readonly vectors: {
+        readonly articles: number;
+        readonly facts: number;
+        readonly total: number;
+      };
+    };
+
+/** The observability tool surface, with its dependencies named. Status reads across many daemon subsystems, so its inputs are explicit rather than reached through `this`. */
 export interface StatusToolDeps {
   db: HiveDatabase;
   repoRoot: string;
@@ -171,13 +190,13 @@ export interface StatusToolDeps {
   getTask: (taskId: string) => TaskDetail | null;
   listTasks: () => TaskDetail[];
   hasCompletedSessiondBinding: (agent: AgentRecord) => boolean;
-  memoryEmbeddingsStatusSection: () => unknown;
+  memoryEmbeddingsStatusSection: () => MemoryEmbeddingsStatusSection;
   /** Root instructions still waiting in each agent's mailbox, by agent name. Only the ones nobody has finished with: a handled instruction is settled and gone, so this counts what is outstanding rather than what was ever said. The field names downstream say "waiting" for that reason. */
   waitingInstructions: () => Map<string, string[]>;
   mailBacklog: (recipient: string) => number;
   /** The daemon's receiving-side record for one credential. Measured where the requests arrive, never inferred from the agent looking alive. */
   mcpCredential: (subject: string) => McpCredentialObservation;
-  settlementDebt?: () => Promise<unknown>;
+  settlementDebt?: () => Promise<SettlementDebtReport>;
   statusLiveness: (
     agent: AgentRecord,
     sessions: Awaited<ReturnType<HiveTerminalHostAdapter["list"]>> | null,

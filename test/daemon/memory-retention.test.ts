@@ -248,7 +248,7 @@ describe("runRetentionSweep — wiki stale demotion", () => {
         "utf8",
       );
       expect(index).toContain("old-verified");
-      expect(index).toMatch(/old-verified \([^)]*\) \[stale\]/);
+      expect(index).toMatch(/old-verified \([^)]*\) \[stale]/);
       const log = await readFile(
         join(repo, ".hive", "memory", "wiki", "log.md"),
         "utf8",
@@ -393,7 +393,7 @@ describe("daemon retention wiring", () => {
       config: retentionConfig({ sweep_interval_hours: 1 }),
       episodic,
       serializeMemory: (operation) => operation(),
-      rebuildMemoryIndex: async () => {},
+      rebuildMemoryIndex: async () => ({ count: 0 }),
       runSweep: async () => {
         sweeps += 1;
         return null;

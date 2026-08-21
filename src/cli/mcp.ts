@@ -5,6 +5,11 @@ import {
 import { z } from "zod";
 import { daemonMcpUrl } from "../adapters/providers/shared/mcp-scope";
 import { definedFields } from "../shared/defined-fields";
+import {
+  type JsonValue,
+  requireJsonValue,
+  safeJsonParse,
+} from "../shared/json";
 import { HIVE_MCP_VERSION_NEGOTIATION } from "../shared/mcp-protocol";
 import {
   type AgentRecord,
@@ -58,8 +63,12 @@ function textToolContent(content: unknown, toolName: string): string {
   return item.text;
 }
 
-function textToolValue(content: unknown, toolName: string): unknown {
-  return JSON.parse(textToolContent(content, toolName)) as unknown;
+function textToolValue(content: unknown, toolName: string): JsonValue {
+  const parsed = safeJsonParse(textToolContent(content, toolName));
+  if (parsed === undefined) {
+    throw new Error(`${toolName} returned invalid JSON`);
+  }
+  return parsed;
 }
 
 export function toolErrorReason(content: unknown, toolName: string): string {
@@ -89,7 +98,7 @@ export class HiveMcpSession {
     args: Record<string, unknown>,
     key: string,
     errorLabel = name,
-  ): Promise<unknown> {
+  ): Promise<JsonValue> {
     const reused = this.client !== null;
     const client = await this.connected();
     let result: Awaited<ReturnType<Client["callTool"]>>;
@@ -118,7 +127,9 @@ export class HiveMcpSession {
       .record(z.string(), z.unknown())
       .optional()
       .parse(result.structuredContent);
-    return structured?.[key] ?? textToolValue(result.content, name);
+    return structured === undefined || !(key in structured)
+      ? textToolValue(result.content, name)
+      : requireJsonValue(structured[key], `${name}.${key}`);
   }
 
   async close(): Promise<void> {
@@ -151,7 +162,7 @@ export async function callHiveTool(
   key: string,
   fetcher?: McpFetcher,
   errorLabel = name,
-): Promise<unknown> {
+): Promise<JsonValue> {
   const session = new HiveMcpSession(port, fetcher);
   try {
     return await session.call(name, args, key, errorLabel);
@@ -186,7 +197,7 @@ async function postDaemonJson(
   path: string,
   body: unknown,
   fetcher?: McpFetcher,
-): Promise<unknown> {
+): Promise<JsonValue> {
   const { UserDaemonClient } = await import("./user-daemon-client");
   const authorizedFetch =
     fetcher === undefined
@@ -204,7 +215,10 @@ async function postDaemonJson(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  const payload: unknown = await response.json().catch(() => null);
+  const payload = requireJsonValue(
+    await response.json().catch(() => null),
+    path,
+  );
   if (!response.ok) {
     const reason = z.object({ error: z.string() }).safeParse(payload);
     throw new Error(
@@ -219,11 +233,11 @@ async function postDaemonJson(
 export async function requestSettlementSweep(
   port: number,
   fetcher?: McpFetcher,
-): Promise<unknown> {
+): Promise<JsonValue> {
   const payload = z
     .object({ settlement: z.unknown() })
     .parse(await postDaemonJson(port, "/settlement/sweep", {}, fetcher));
-  return payload.settlement;
+  return requireJsonValue(payload.settlement, "settlement sweep");
 }
 
 export async function sendOrchestratorMessage(

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { defaultComposerPlaceholder } from "../../../src/cli/agent-ui/agent-ui-exports";
+import { defaultComposerPlaceholder } from "../../../src/cli/agent-ui/presentation";
 import { stopHive } from "../../../src/cli/control";
 import { HiveDatabase } from "../../../src/daemon/database/hive-database";
 import {
@@ -246,7 +246,9 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         const host = new SessiondHost({
           repoRoot,
           hiveHome: home,
-          handshake: async () => handshake,
+          handshake: async () => {
+            void handshake;
+          },
           pendingBindings: db,
         });
         const adapter = new HiveTerminalHostAdapter(

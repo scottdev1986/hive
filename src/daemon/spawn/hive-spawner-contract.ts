@@ -136,7 +136,7 @@ export interface HiveSpawnerDependencies {
   sleep?: Sleep;
   /** Whether a subject's credential has authenticated against the daemon's /mcp at or after a launch baseline. Wired in production; when the seam is absent the reachability check does not run. */
   mcpClientSeen?: (subject: string, since: string) => boolean;
-  quotaReady?: () => Promise<unknown>;
+  quotaReady?: () => Promise<void>;
   /** A model-layer failure the vendor says is a rate limit goes to the drain handler, never the launch-failure quarantine. */
   drainError?: (agent: AgentRecord, failure: string) => Promise<void>;
   /** Test seam to collapse the reachability wait's deadline. */

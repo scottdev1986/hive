@@ -18,6 +18,7 @@ import type {
   CaptureResult,
   SessionLocator,
 } from "./session-host-contract";
+import { type JsonValue, requireJsonValue } from "../../shared/json";
 import { encodeSessiondFrame, SessiondFrameDecoder } from "./sessiond-host";
 import { hostSocketPath, HostOperationError } from "./host-operations";
 
@@ -59,9 +60,9 @@ async function exchange(
   timeoutMilliseconds: number,
   hello: { instanceId: string; buildId: string },
   responseType: FrameTypeName = type,
-): Promise<unknown> {
+): Promise<JsonValue> {
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
-  return await new Promise<unknown>((resolve, reject) => {
+  return await new Promise<JsonValue>((resolve, reject) => {
     const decoder = new SessiondFrameDecoder();
     let settled = false;
     const socket = connect(socketPath);
@@ -151,7 +152,12 @@ async function exchange(
           continue;
         finish(() => {
           try {
-            resolve(JSON.parse(new TextDecoder().decode(frame.payload)));
+            resolve(
+              requireJsonValue(
+                JSON.parse(new TextDecoder().decode(frame.payload)),
+                `host ${type} answer`,
+              ),
+            );
           } catch (error) {
             reject(
               new HostOperationError(`host ${type} answer was not JSON`, {

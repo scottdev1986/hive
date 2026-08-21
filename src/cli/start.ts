@@ -1,5 +1,3 @@
-/** Workspace launch — the session boundary. Each public Workspace launch owns the terminal long enough to print the update notice and prepare the repository before selecting this repo's instance. Initialization is a separate repo-only command and never calls this module. The check is best-effort and never blocks. A machine with no network prints "could not check for updates" and starts anyway. It never prints "up to date" on a failed check, because that sentence is a claim about the world and we would not have looked. */
-
 import { existsSync } from "node:fs";
 import { cp, mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
@@ -40,7 +38,7 @@ export interface StartDeps {
   readonly cwd?: string;
   readonly ensureDaemon?: (cwd: string) => Promise<void>;
   readonly ensurePort?: () => Promise<number>;
-  readonly repairProjectConfig?: (cwd: string) => Promise<unknown>;
+  readonly repairProjectConfig?: (cwd: string) => Promise<string[]>;
   readonly refreshGraphify?: () => Promise<void>;
   readonly prepareInstance?: (cwd: string) => void | Promise<void>;
 }

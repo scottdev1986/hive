@@ -1,7 +1,3 @@
-// Owns every product decision that can remove or retain a worktree, branch, or
-// stewardship ref. The adapter supplies proof-bound mechanics only; callers
-// cannot authorize deletion with a teardown option.
-
 import { createHash } from "node:crypto";
 import { definedFields } from "../../shared/defined-fields";
 import { existsSync } from "node:fs";
@@ -49,6 +45,7 @@ import {
 import { logAlertDeliveryFailure } from "../observability/daemon-log";
 import { NAME_POOL } from "../spawn/agent-name-selection";
 import {
+  type SettlementAggregate,
   type SettlementCase,
   SettlementCaseStore,
   type StoredSettlementCase,
@@ -72,6 +69,11 @@ import {
   type SettlementProofResult,
   type SettlementSnapshot,
 } from "./settlement-proof";
+
+export type SettlementDebtReport =
+  | SettlementAggregate
+  | { readonly state: "measurement-blocked"; readonly reason: string }
+  | null;
 
 /**
  * How long a preserved/salvage ref may sit before the sweep mails a decision
@@ -874,7 +876,7 @@ export class WorktreeLifecycleService {
     };
   }
 
-  async settlementDebt() {
+  async settlementDebt(): Promise<SettlementDebtReport> {
     if (this.settlementMeasurementFailure !== null) {
       return {
         state: "measurement-blocked",

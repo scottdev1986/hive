@@ -23,7 +23,7 @@ const isPermissionPrompt = (event: HookEvent): boolean =>
   event.kind === "notification" &&
   event.notificationType === CLAUDE_PERMISSION_PROMPT;
 
-/** Hook-event ingress, with its dependencies named. Second extraction of the `HiveDaemon` decomposition (audit §11). The teardown is typed as returning `unknown` deliberately: this path awaits it for its effect and reads nothing back, so the seam does not need the caller's large result shape and should not import it. */
+/** Hook-event ingress, with its dependencies named. Second extraction of the `HiveDaemon` decomposition (audit §11). The teardown is typed as `Promise<void>` because this path awaits it for its effect and reads nothing back. */
 export interface ProcessEventDeps {
   db: HiveDatabase;
   publish: SystemMailPublish;
@@ -36,7 +36,7 @@ export interface ProcessEventDeps {
   killAgentTeardown: (
     agent: AgentRecord,
     options?: { at?: string },
-  ) => Promise<unknown>;
+  ) => Promise<void>;
 }
 
 export async function processEvent(

@@ -9,6 +9,7 @@ import {
   ndJsonStream,
   type RequestPermissionResponse,
 } from "@agentclientprotocol/sdk";
+import { type JsonValue, requireJsonValue } from "../../../shared/json";
 import { terminateProcessGroup } from "./process-group";
 
 function uint8ReadableStream(source: Readable): ReadableStream<Uint8Array> {
@@ -31,7 +32,7 @@ function uint8ReadableStream(source: Readable): ReadableStream<Uint8Array> {
 export type AcpRequestHandler = (
   method: string,
   params: unknown,
-) => Promise<unknown>;
+) => Promise<JsonValue>;
 
 export interface AcpClientOptions {
   readonly executable: string;
@@ -131,8 +132,10 @@ export class AcpClient {
     return this.open().agent;
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
-    return this.open().agent.request(method, params);
+  request(method: string, params?: unknown): Promise<JsonValue> {
+    return this.open()
+      .agent.request(method, params)
+      .then((result) => requireJsonValue(result, method));
   }
 
   notify(method: string, params?: unknown): void {

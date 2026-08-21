@@ -2,6 +2,7 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { QuotaMeterState } from "../schemas/quota";
 import { systemClock } from "../shared/clock";
+import { type JsonValue, requireJsonValue } from "../shared/json";
 import { HIVE_VERSION } from "../shared/version";
 import {
   KimiHttpUsageTransport,
@@ -288,18 +289,18 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
 }
 
 type Correlated =
-  { id: string; result: unknown } | { id: string; error: string } | null;
+  { id: string; result: JsonValue } | { id: string; error: string } | null;
 
 /** Correlate replies off a line-delimited stdout stream. Both CLIs interleave their replies with notifications and log noise, so anything the extractor does not recognise as a reply to one of our requests is skipped rather than parsed. */
 function responseCollector(
   stream: ReadableStream<Uint8Array>,
   extract: (message: Record<string, unknown>) => Correlated,
   closedMessage: string,
-): { await(id: string): Promise<unknown> } {
-  const settled = new Map<string, { result: unknown } | { error: string }>();
+): { await(id: string): Promise<JsonValue> } {
+  const settled = new Map<string, { result: JsonValue } | { error: string }>();
   const waiting = new Map<
     string,
-    { resolve: (value: unknown) => void; reject: (error: Error) => void }
+    { resolve: (value: JsonValue) => void; reject: (error: Error) => void }
   >();
   let failure: Error | null = null;
 
@@ -350,7 +351,7 @@ function responseCollector(
   })();
 
   return {
-    await(id: string): Promise<unknown> {
+    await(id: string): Promise<JsonValue> {
       const done = settled.get(id);
       if (done !== undefined) {
         settled.delete(id);
@@ -373,7 +374,13 @@ export const pendingResponses = (stream: ReadableStream<Uint8Array>) =>
       if (typeof message.id !== "number") return null;
       const id = String(message.id);
       return message.error === undefined
-        ? { id, result: message.result }
+        ? {
+            id,
+            result: requireJsonValue(
+              message.result ?? null,
+              "codex app-server result",
+            ),
+          }
         : {
             id,
             error: `codex app-server error: ${JSON.stringify(message.error)}`,
@@ -396,7 +403,13 @@ export const pendingControlResponses = (stream: ReadableStream<Uint8Array>) =>
             id: record.request_id,
             error: `claude control error: ${String(record.error ?? "unknown")}`,
           }
-        : { id: record.request_id, result: record.response };
+        : {
+            id: record.request_id,
+            result: requireJsonValue(
+              record.response ?? null,
+              "claude control response",
+            ),
+          };
     },
     "claude closed before answering",
   );

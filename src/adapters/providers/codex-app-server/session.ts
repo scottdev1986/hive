@@ -5,6 +5,7 @@ import {
 import type { MeasuredProviderCapabilities } from "../../../schemas/capability";
 import { definedFields } from "../../../shared/defined-fields";
 import { isRecord } from "../../../shared/is-record";
+import { type JsonValue, requireJsonValue } from "../../../shared/json";
 import { percentOfWindow } from "../../../usage-service/context-occupancy";
 import type {
   ElicitationQuestion,
@@ -27,8 +28,8 @@ import {
   type CodexApprovalMethod,
   type PendingApproval,
 } from "./approvals";
-import type { ClientRequest } from "./generated/0.146.0/ClientRequest";
-import type { InitializeResponse } from "./generated/0.146.0/InitializeResponse";
+import type { ClientRequest } from "./generated/0.146.0";
+import type { InitializeResponse } from "./generated/0.146.0";
 import type {
   ConfigReadParams,
   ConfigReadResponse,
@@ -617,7 +618,7 @@ export class CodexAppServerSession implements ProviderSession {
     this.queue.end();
   }
 
-  private request(method: ClientMethod, params?: unknown): Promise<unknown> {
+  private request(method: ClientMethod, params?: unknown): Promise<JsonValue> {
     if (this.closed) {
       return Promise.reject(new Error("Codex session is closed"));
     }
@@ -1034,12 +1035,15 @@ export class CodexAppServerSession implements ProviderSession {
   private approvalResult(
     pending: PendingApproval,
     decision: PermissionDecision,
-  ): unknown {
+  ): JsonValue {
     if (pending.method === "item/permissions/requestApproval") {
       return decision.outcome === "allow"
         ? {
             permissions: isRecord(pending.params.permissions)
-              ? pending.params.permissions
+              ? requireJsonValue(
+                  pending.params.permissions,
+                  "approval permissions",
+                )
               : {},
             scope: decision.scope === "session" ? "session" : "turn",
           }

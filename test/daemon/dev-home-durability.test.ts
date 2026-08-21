@@ -1,13 +1,3 @@
-// The dev daemon's state must outlive /tmp, and sessiond's sockets must still fit in a sun_path.
-//
-// These two requirements used to be one path, and the shorter one won: HIVE_HOME sat in /tmp so
-// that host sockets named inside it stayed under macOS's 103-byte AF_UNIX limit, which put hive.db
-// — the board's only store — on a filesystem the OS reclaims at boot and sweeps daily. The tests
-// here hold the two apart: the home is proved persistent, the socket is proved short by
-// measurement rather than estimate, and the database is proved to survive losing the whole socket
-// tree. Nothing Hive resolves lands in /tmp any more, sockets included, which is why the byte
-// measurement is now split — the part after the root is Hive's and fixed at eleven bytes, and the
-// root itself is the operator's home and its length is theirs.
 import { describe, expect, test } from "bun:test";
 import {
   existsSync,
@@ -223,7 +213,7 @@ describe("the dev daemon's home survives /tmp", () => {
         log: () => {},
         stopCurrentInstance: async () => {},
         currentInstanceOwnsProject: async () => false,
-        settleCurrentProject: async () => ({}),
+        settleCurrentProject: async () => {},
         liveTeams: async () => [],
         stopInstances: async () => {},
         acquireLease: async () => ({ release: () => {} }),

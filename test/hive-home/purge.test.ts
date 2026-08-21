@@ -1,11 +1,3 @@
-// `hive uninstall --purge` is the same uninstaller with its variant retention overridden to
-// nothing — dev's destroy-everything command, reached as `make clean-all`. These tests run it
-// against scratch installs and read every path it must take from the variant record, because the
-// record is the one place the home, the socket root and the identity marker are named without
-// being rebuilt from string parts. The properties under test: the retained set dies with
-// everything else, the identity marker dies too even though it lives outside the home precisely
-// to survive the home's deletion, the shared memory symlinks are unlinked and never followed, and
-// the machine-wide artifact store one level up is not this instance's to take.
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync } from "node:fs";
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
@@ -57,7 +49,7 @@ function silentDeps(lines: string[]): UninstallDeps {
     log: (line) => lines.push(line),
     stopCurrentInstance: async () => {},
     currentInstanceOwnsProject: async () => false,
-    settleCurrentProject: async () => ({}),
+    settleCurrentProject: async () => {},
     liveTeams: async () => [],
     stopInstances: async () => {},
     acquireLease: async () => ({ release: () => {} }),

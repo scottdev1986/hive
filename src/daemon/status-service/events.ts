@@ -125,7 +125,7 @@ export function reconcileStatusSnapshot(
 
 export interface WorkspaceStatusEventSource {
   subscribe(afterSeq: string): AsyncIterable<WorkspaceEventV2>;
-  fetchSnapshot(): Promise<unknown>;
+  fetchSnapshot(): Promise<WorkspaceSnapshotV2>;
 }
 
 /** A source event before the store assigns it a seq, eventId, and entityRevision — what `StatusStore.appendSourceEvent(s)` accepts from a live caller (e.g. the sessiond status bridge in `server.ts`). */

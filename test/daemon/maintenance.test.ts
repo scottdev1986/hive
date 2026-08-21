@@ -32,7 +32,9 @@ describe("daemon maintenance", () => {
         },
         {
           component: "healthy subsystem",
-          run: () => completed.push("healthy subsystem"),
+          run: () => {
+            completed.push("healthy subsystem");
+          },
         },
       ],
       () => undefined,

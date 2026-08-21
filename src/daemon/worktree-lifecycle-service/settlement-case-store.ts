@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { runGit } from "../../adapters/git";
 import { hiveInstanceSuffix } from "../../hive-home/home";
+import { type JsonValue, requireJsonValue } from "../../shared/json";
 
 const GitOidSchema = z.string().regex(/^[0-9a-f]{40,64}$/);
 const IsoDateSchema = z.iso.datetime();
@@ -192,15 +193,19 @@ function assertGitSuccess(
  * predates the change. A digest without `evidenceFormat` includes ambient target-tip state and
  * must be refreshed before a destructive decision can use it.
  */
-function currentShape(document: unknown): unknown {
-  if (typeof document !== "object" || document === null) return document;
-  const fields: Record<string, unknown> = { ...document };
-  delete fields.wiring;
-  fields.regenerable ??= [];
-  fields.evidenceFormat ??= null;
-  fields.residue ??= null;
-  fields.unattendedBaseRevision ??= null;
-  return fields;
+function currentDocument(document: unknown): JsonValue {
+  const json = requireJsonValue(document, "settlement case blob");
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return json;
+  }
+  const { wiring: _wiring, ...fields } = json;
+  return {
+    ...fields,
+    regenerable: fields.regenerable ?? [],
+    evidenceFormat: fields.evidenceFormat ?? null,
+    residue: fields.residue ?? null,
+    unattendedBaseRevision: fields.unattendedBaseRevision ?? null,
+  };
 }
 
 function caseIdentity(input: {
@@ -393,7 +398,7 @@ export class SettlementCaseStore {
     const blob = await runGit(this.repoRoot, ["cat-file", "blob", objectOid]);
     assertGitSuccess(blob, "cat-file blob");
     const record = SettlementCaseSchema.parse(
-      currentShape(JSON.parse(blob.stdout)),
+      currentDocument(JSON.parse(blob.stdout)),
     );
     if (record.caseId !== caseId || record.instanceId !== this.instanceId) {
       throw new Error(`settlement case ref/content identity mismatch: ${ref}`);

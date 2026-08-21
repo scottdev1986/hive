@@ -14,6 +14,7 @@ import type {
   CodexAppServerMessage,
   CodexAppServerWire,
 } from "../src/adapters/providers/codex-app-server/jsonl-rpc";
+import type { JsonValue } from "../src/shared/json";
 import { ClaudeStreamJsonAdapter } from "../src/adapters/providers/protocol/claude-runtime-adapter";
 import type { ClaudeProcess } from "../src/adapters/providers/protocol/claude-stream-process";
 import {
@@ -32,7 +33,7 @@ import {
   openAgentUiProviderSession,
   sessionRefPath,
 } from "../src/cli/agent-ui/run";
-import type { CapabilityProvider } from "../src/schemas/capability";
+import type { CapabilityProvider } from "../src/schemas/provider";
 
 const FAKE_COMPACTION_SUMMARY =
   "PROVIDER_COMPACTION_SUMMARY_SENTINEL_do_not_trust_this_body";
@@ -435,7 +436,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
         return new Promise((resolve) => this.waiting.push(resolve));
       }
     }
-    type RequestHandler = (params: unknown) => unknown;
+    type RequestHandler = (params: unknown) => JsonValue;
     class FakeWire implements CodexAppServerWire {
       readonly requests: Array<{ method: string; params: unknown }> = [];
       readonly notifications: Array<{ method: string; params: unknown }> = [];
@@ -462,7 +463,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
         };
         this.closed = this.closeResult.promise;
       }
-      request(method: string, params?: unknown): Promise<unknown> {
+      request(method: string, params?: unknown): Promise<JsonValue> {
         this.requests.push({ method, params });
         const handler = this.handlers[method];
         return Promise.resolve(handler === undefined ? {} : handler(params));

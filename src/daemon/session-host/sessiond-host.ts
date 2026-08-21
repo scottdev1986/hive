@@ -163,11 +163,6 @@ export class SessiondFrameDecoder {
   constructor(
     private controlFrameMaxBytes = TERMINAL_LIMITS.controlJsonBytesPerFrame,
   ) {}
-
-  setControlFrameMaxBytes(value: number): void {
-    this.controlFrameMaxBytes = value;
-  }
-
   push(chunk: Uint8Array): SessiondFrame[] {
     const combined = new Uint8Array(
       this.buffered.byteLength + chunk.byteLength,
@@ -272,7 +267,7 @@ export interface SessiondHostOptions {
   captureHost?: typeof captureHostTerminal;
   connectDirect?: (session: SessionRef) => Promise<SessiondControlClient>;
   pendingBindings?: TerminalHostBindingStore;
-  handshake?: () => Promise<unknown>;
+  handshake?: () => Promise<void>;
 }
 
 export class SessiondHost implements LandedTerminalHost {
@@ -290,8 +285,7 @@ export class SessiondHost implements LandedTerminalHost {
   private readonly captureHost: typeof captureHostTerminal;
 
   constructor(options: SessiondHostOptions = {}) {
-    const hiveHome = resolveHiveHome(options.hiveHome);
-    this.hiveHome = hiveHome;
+    this.hiveHome = resolveHiveHome(options.hiveHome);
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.launchHostProcess = options.launchHost ?? launchHost;
     this.callHostDirect = options.callHost ?? callHost;

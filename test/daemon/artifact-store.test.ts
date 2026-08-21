@@ -1,10 +1,3 @@
-// The artifact store as an agent reaches it: through the two registered tools,
-// against the real capability layer, with real files on a real disk under a
-// throwaway HIVE_HOME. What has to hold is the whole chain — an agent stores an
-// analysis, gets an id the board accepts as evidence, and someone else reads
-// the body back — plus the two refusals that keep the store honest: an unknown
-// id, and a reader trying to write.
-
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import {
   copyFileSync,
@@ -313,7 +306,7 @@ describe("artifact retention", () => {
       config: null,
       episodic: null,
       serializeMemory: async (operation) => operation(),
-      rebuildMemoryIndex: async () => undefined,
+      rebuildMemoryIndex: async () => ({ count: 0 }),
       runSweep: async () => null,
       sweepArtifacts: () => {
         swept += 1;

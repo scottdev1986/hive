@@ -1,7 +1,7 @@
 import { connect, type Socket } from "node:net";
 import type { z } from "zod";
 import { definedFields } from "../../shared/defined-fields";
-import { safeJsonParse } from "../../shared/json";
+import { type JsonValue, safeJsonParse } from "../../shared/json";
 import {
   type TerminalGeometry,
   AppliedPayloadSchema,
@@ -602,7 +602,7 @@ export class SessiondViewerAttachClient {
   }
 }
 
-function safeJson(payload: Uint8Array): unknown {
+function safeJson(payload: Uint8Array): JsonValue {
   return safeJsonParse(textDecoder.decode(payload)) ?? null;
 }
 

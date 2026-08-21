@@ -7,6 +7,7 @@ import type {
   ProviderTransport,
 } from "../../../schemas/capability";
 import { definedFields } from "../../../shared/defined-fields";
+import { type JsonValue, requireJsonValue } from "../../../shared/json";
 import { errorMessage } from "../../../shared/error-message";
 import { pollUntil } from "../../../shared/poll-until";
 import { HIVE_VERSION } from "../../../shared/version";
@@ -52,7 +53,7 @@ const STDERR_LINE_CHARACTER_LIMIT = 512;
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 const ANSI_ESCAPE = new RegExp(
-  `${ESC}(?:\\[[0-?]*[ -/]*[@-~]|\\][^${BEL}]*(?:${BEL}|${ESC}\\\\))`,
+  `${ESC}(?:\[[0-?]*[ -/]*[@-~]|][^${BEL}]*(?:${BEL}|${ESC}\\))`,
   "g",
 );
 const CONTROL_CHARACTER = new RegExp(
@@ -163,7 +164,7 @@ export interface AcpVendorProfile {
 interface PendingPermission {
   readonly params: unknown;
   readonly kind: "permission" | "question";
-  resolve: ((result: unknown) => void) | null;
+  resolve: ((result: JsonValue) => void) | null;
   reject: ((error: Error) => void) | null;
   settled: boolean;
 }
@@ -416,18 +417,21 @@ export class AcpProviderSession implements ProviderSession {
   }
 
   /** Apply a vendor config option (model/effort/mode/…). Used by profiles that surface config via ACP `session/set_config_option` rather than session/new. */
-  async setConfigOption(configId: string, value: string): Promise<unknown> {
+  async setConfigOption(configId: string, value: string): Promise<JsonValue> {
     const sessionId = this.vendorSessionId;
     if (sessionId === null) {
       throw new Error("setConfigOption: no active vendor session");
     }
-    const result = await this.client.acp.request(
-      acpMethods.agent.session.setConfigOption,
-      {
-        sessionId,
-        configId,
-        value,
-      },
+    const result = requireJsonValue(
+      await this.client.acp.request(
+        acpMethods.agent.session.setConfigOption,
+        {
+          sessionId,
+          configId,
+          value,
+        },
+      ),
+      "session/set_config_option",
     );
     const resultRoot = asRecord(result);
     if (Array.isArray(resultRoot?.configOptions)) {
@@ -787,7 +791,10 @@ export class AcpProviderSession implements ProviderSession {
     this.emit({ kind: "run-ended", exitCode: null, raw: { closed: true } });
     this.queue.end();
   }
-  private handleReverseRpc(method: string, params: unknown): Promise<unknown> {
+  private handleReverseRpc(
+    method: string,
+    params: unknown,
+  ): Promise<JsonValue> {
     if (method === "session/request_permission") {
       this.permissionSeq += 1;
       const requestId = `perm-${this.permissionSeq}`;

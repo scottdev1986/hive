@@ -71,7 +71,7 @@ export interface MemoryToolDeps {
     verifier: string,
   ) => Promise<MemoryFact>;
   deleteMemoryFact: (scope: MemoryScope, id: string) => Promise<boolean>;
-  rebuildMemoryIndex: (signal?: AbortSignal) => Promise<unknown>;
+  rebuildMemoryIndex: (signal?: AbortSignal) => Promise<{ count: number }>;
 }
 
 export function registerMemoryTools(

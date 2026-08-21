@@ -133,6 +133,7 @@ import {
 } from "../schemas/token-usage-schema";
 import { systemClock } from "../shared/clock";
 import { definedFields } from "../shared/defined-fields";
+import { type JsonValue, requireJsonValue } from "../shared/json";
 import { errorMessage } from "../shared/error-message";
 import { HIVE_MCP_CATALOG_CACHE_TTL_MS } from "../shared/mcp-protocol";
 import { HIVE_VERSION } from "../shared/version";
@@ -318,6 +319,7 @@ import {
 } from "./status-service/status-service";
 import {
   type McpCredentialObservation,
+  type MemoryEmbeddingsStatusSection,
   registerStatusTools,
 } from "./status-service/status-tools";
 import {
@@ -1424,7 +1426,7 @@ export class HiveDaemon {
     return () => service.stateLabel();
   }
 
-  private memoryEmbeddingsStatusSection() {
+  private memoryEmbeddingsStatusSection(): MemoryEmbeddingsStatusSection {
     const service = this.embeddingService;
     if (service === null) {
       return {
@@ -1622,44 +1624,74 @@ export class HiveDaemon {
   async runMaintenance(): Promise<void> {
     const tasks: MaintenanceTask[] = [
       ...(this.quota?.needsRefresh() === true
-        ? [{ component: "quota refresh", run: () => this.refreshQuota() }]
+        ? [
+            {
+              component: "quota refresh",
+              run: async () => {
+                await this.refreshQuota();
+              },
+            },
+          ]
         : []),
       ...(this.refreshModelControl === undefined
         ? []
         : [
             {
               component: "model-control refresh",
-              run: () => this.refreshModelControl?.(),
+              run: async () => {
+                await this.refreshModelControl?.();
+              },
             },
           ]),
       {
         component: "quota reservation recovery",
-        run: () => this.recoverQuotaReservations(),
+        run: async () => {
+          await this.recoverQuotaReservations();
+        },
       },
       {
         component: "quota drain sweep",
-        run: () => this.drainHandler.sweep(),
+        run: async () => {
+          await this.drainHandler.sweep();
+        },
       },
-      { component: "agent reconciliation", run: () => this.reconcileAgents() },
+      {
+        component: "agent reconciliation",
+        run: async () => {
+          await this.reconcileAgents();
+        },
+      },
       {
         component: "tool telemetry sweep",
-        run: () => this.refreshToolTelemetry(),
+        run: async () => {
+          await this.refreshToolTelemetry();
+        },
       },
       {
         component: "token-usage sweep",
-        run: () => this.tokenUsage.refreshCurrent(this.repoRoot),
+        run: async () => {
+          await this.tokenUsage.refreshCurrent(this.repoRoot);
+        },
       },
       {
         component: "mail deadline sweep",
-        run: () => this.mailService.sweep(new Date()),
+        run: async () => {
+          await this.mailService.sweep(new Date());
+        },
       },
-      { component: "resource sweep", run: () => this.sweepResources() },
+      {
+        component: "resource sweep",
+        run: async () => {
+          await this.sweepResources();
+        },
+      },
       {
         component: "worktree reconciliation",
-        run: () =>
-          this.reconcileOrphanedWorktrees().catch((error) => {
+        run: async () => {
+          await this.reconcileOrphanedWorktrees().catch((error) => {
             this.worktrees.recordSettlementMeasurementFailure(error);
-          }),
+          });
+        },
         minimumIntervalMs: EXPENSIVE_MAINTENANCE_INTERVAL_MS,
       },
     ];
@@ -2018,14 +2050,6 @@ export class HiveDaemon {
         refusal = error;
       }
     }
-    // Broker dies after agents: terminate still needs a live socket. Heidi's teardown already treats an unreachable broker as a dead session rather than a refusal, so a race here cannot wedge shutdown.
-    // Drain maintenance before closing the database or tearing down services:
-    // start() fires an immediate recovery sweep that does real git work, and
-    // clearing the interval alone left that work running into later tests in
-    // Bun's shared process (hive-dlog-repo-* reconciles observed mid-suite).
-    // Capture a named drain refusal the same way as the queen-termination
-    // refusal above: throwing here would abandon the rest of teardown and
-    // swallow a survivor refusal already sitting in `refusal`.
     try {
       await this.maintenance.stop();
     } catch (error) {
@@ -2276,7 +2300,9 @@ export class HiveDaemon {
         {
           db: this.db,
           terminalHost: this.terminalHost,
-          terminateAgent: (agent) => this.killAgentTeardown(agent),
+          terminateAgent: async (agent) => {
+            await this.killAgentTeardown(agent);
+          },
           now: () => new Date(),
           authenticate: (req, route) => this.authenticate(req, route),
           authorize: (capability, route, action, subject, audit, reason) =>
@@ -2937,8 +2963,8 @@ export class HiveDaemon {
       );
       return decision.ok ? null : this.denied(decision);
     };
-    const body = async (): Promise<unknown> =>
-      await request.json().catch(() => null);
+    const body = async (): Promise<JsonValue> =>
+      requireJsonValue(await request.json().catch(() => null), route);
     const config = await readMemoryConfig();
 
     if (route === "/memory/overview" && request.method === "GET") {
@@ -4104,8 +4130,9 @@ export class HiveDaemon {
         repoRoot: this.repoRoot,
         status: this.status,
         tokenUsage: this.tokenUsage,
-        killAgentTeardown: (agent, options) =>
-          this.killAgentTeardown(agent, options ?? {}),
+        killAgentTeardown: async (agent, options) => {
+          await this.killAgentTeardown(agent, options ?? {});
+        },
       },
       event,
     );

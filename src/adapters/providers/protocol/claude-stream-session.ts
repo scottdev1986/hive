@@ -1,6 +1,3 @@
-// Owns Claude's stream-json session state machine, preserving wire-event order,
-// partial tool input, permission timing, and process lifecycle as one boundary.
-
 import { randomUUID } from "node:crypto";
 import {
   claudeEffectiveDefault,
@@ -10,7 +7,11 @@ import type { MeasuredProviderCapabilities } from "../../../schemas/capability";
 import { definedFields } from "../../../shared/defined-fields";
 import { errorMessage } from "../../../shared/error-message";
 import { isRecord } from "../../../shared/is-record";
-import { safeJsonParse } from "../../../shared/json";
+import {
+  type JsonValue,
+  requireJsonValue,
+  safeJsonParse,
+} from "../../../shared/json";
 import {
   CLAUDE_CHANNELS_ENABLEMENT,
   CLAUDE_CHANNELS_WARNING,
@@ -109,7 +110,7 @@ class EventQueue {
 }
 
 interface PendingControl {
-  readonly resolve: (response: unknown) => void;
+  readonly resolve: (response: JsonValue) => void;
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
 }
@@ -709,7 +710,9 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     clearTimeout(pending.timer);
     this.controls.delete(requestId);
     if (envelope?.subtype === "success") {
-      pending.resolve(envelope.response);
+      pending.resolve(
+        requireJsonValue(envelope.response ?? null, "Claude control response"),
+      );
       return;
     }
     pending.reject(
@@ -1184,9 +1187,9 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     this.permissions.clear();
   }
 
-  private sendControl(request: JsonObject): Promise<unknown> {
+  private sendControl(request: JsonObject): Promise<JsonValue> {
     const requestId = randomUUID();
-    return new Promise<unknown>((resolve, reject) => {
+    return new Promise<JsonValue>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.controls.delete(requestId);
         reject(new Error(`Claude ${String(request.subtype)} timed out`));

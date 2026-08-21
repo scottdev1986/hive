@@ -1,5 +1,9 @@
 import { isRecord } from "../../../shared/is-record";
-import { safeJsonParse } from "../../../shared/json";
+import {
+  type JsonValue,
+  requireJsonValue,
+  safeJsonParse,
+} from "../../../shared/json";
 import { terminateProcessGroup } from "../protocol/process-group";
 import { errorMessage } from "../../../shared/error-message";
 
@@ -17,7 +21,7 @@ export interface CodexAppServerWire {
     readonly exitCode: number | null;
     readonly reason: string;
   }>;
-  request(method: string, params?: unknown): Promise<unknown>;
+  request(method: string, params?: unknown): Promise<JsonValue>;
   notify(method: string, params?: unknown): void;
   respond(id: RequestId, result: unknown): void;
   reject(id: RequestId, code: number, message: string): void;
@@ -92,7 +96,7 @@ class AsyncMessageQueue {
 
 interface PendingRequest {
   readonly method: string;
-  readonly resolve: (value: unknown) => void;
+  readonly resolve: (value: JsonValue) => void;
   readonly reject: (error: Error) => void;
 }
 
@@ -174,7 +178,7 @@ export class JsonlCodexAppServerWire implements CodexAppServerWire {
     void new Response(this.child.stderr).text();
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: unknown): Promise<JsonValue> {
     if (this.dropped || this.closing) {
       return Promise.reject(
         new CodexAppServerUnknownOutcomeError(
@@ -290,7 +294,11 @@ export class JsonlCodexAppServerWire implements CodexAppServerWire {
           new CodexAppServerRpcError(code, errorMessage, message.error.data),
         );
       } else {
-        pending.resolve(message.result);
+        pending.resolve(
+          message.result === undefined
+            ? null
+            : requireJsonValue(message.result, pending.method),
+        );
       }
       return;
     }

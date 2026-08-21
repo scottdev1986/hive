@@ -97,7 +97,7 @@ function probe(
       stopRoots.push(root);
     },
     currentInstanceOwnsProject: async () => true,
-    settleCurrentProject: async () => ({}),
+    settleCurrentProject: async () => {},
     liveTeams: async () => [],
     stopInstances: async () => {},
     acquireLease: async (purpose) => {

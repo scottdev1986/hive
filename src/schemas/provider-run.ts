@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { CapabilityProviderSchema } from "./capability";
+import { type JsonValue, requireJsonValue } from "../shared/json";
+import { CapabilityProviderSchema } from "./provider";
 import { SessionLocatorSchema } from "./session-protocol";
 
 export const AdapterChildIdentitySchema = z
@@ -118,19 +119,19 @@ export const ProviderRunSchema = z
 
 export type ProviderRun = z.infer<typeof ProviderRunSchema>;
 
-export function migrateStoredProviderRun(value: unknown): unknown {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return value;
+export function migrateStoredProviderRun(value: unknown): JsonValue {
+  const json = requireJsonValue(value, "stored provider run");
+  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+    return json;
   }
-  const record = value as Record<string, unknown>;
-  if (!("pid" in record) && !("foregroundProcessGroupId" in record)) {
-    return value;
+  if (!("pid" in json) && !("foregroundProcessGroupId" in json)) {
+    return json;
   }
   const {
     pid: _pid,
     startToken: _startToken,
     foregroundProcessGroupId: _pgid,
     ...current
-  } = record;
+  } = json;
   return { ...current, adapterChild: null, protocolReceipt: null };
 }

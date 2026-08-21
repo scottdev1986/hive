@@ -11,7 +11,9 @@ import {
 } from "../../../src/adapters/providers/codex-app-server/wire";
 import type { NormalizedProviderEvent } from "../../../src/adapters/providers/protocol/types";
 
-type RequestHandler = (params: unknown) => unknown | Promise<unknown>;
+import { type JsonValue, requireJsonValue } from "../../../src/shared/json";
+
+type RequestHandler = (params: unknown) => JsonValue | Promise<JsonValue>;
 
 class Deferred<T> {
   readonly promise: Promise<T>;
@@ -87,10 +89,12 @@ class FakeWire implements CodexAppServerWire {
     this.closed = this.closeResult.promise;
   }
 
-  request(method: string, params?: unknown): Promise<unknown> {
+  request(method: string, params?: unknown): Promise<JsonValue> {
     this.requests.push({ method, params });
     const handler = this.handlers[method];
-    return Promise.resolve(handler === undefined ? {} : handler(params));
+    return Promise.resolve(
+      handler === undefined ? {} : requireJsonValue(handler(params), method),
+    );
   }
 
   notify(method: string, params?: unknown): void {
@@ -444,7 +448,7 @@ describe("Codex App Server sessions", () => {
   });
 
   test("marks a submission unknown when the stream drops before its ACK", async () => {
-    const turnStart = new Deferred<unknown>();
+    const turnStart = new Deferred<JsonValue>();
     const wire = wireWith({ "turn/start": () => turnStart.promise });
     const session = await adapterFor([wire]).connect(spawn());
     const submission = session.submit({

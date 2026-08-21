@@ -1,7 +1,3 @@
-// Owns memory-retention scheduling and sweep coordination. HiveDaemon supplies
-// its memory stores and the serialized mutation/reindex seams; the service
-// never reaches back into the daemon.
-
 import type { EpisodicStore } from "../../memory-service/episodic";
 import {
   type RetentionSweepReport,
@@ -14,7 +10,7 @@ export interface MemoryRetentionServiceDependencies {
   config: MemoryRetentionConfig | null;
   episodic: EpisodicStore | null;
   serializeMemory: <T>(operation: () => Promise<T>) => Promise<T>;
-  rebuildMemoryIndex: () => Promise<unknown>;
+  rebuildMemoryIndex: () => Promise<{ count: number }>;
   runSweep: (reason: string) => Promise<RetentionSweepReport | null>;
   /** Ages stored work products out on the same pass, and returns how many files it deleted. The artifact store owns where they live and how old is too old; retention only decides when the pass happens. */
   sweepArtifacts: () => number;

@@ -1,21 +1,8 @@
-/**
- * `hive workspace-feed --port <n>` is the Workspace app's NDJSON status wire.
- * Each snapshot carries the full worker array, autonomy observation, and the
- * queen beside the array because the root has no AgentRecord. The queen status
- * is the provider-native word shown by agent-ui, with explicit connection
- * lifecycle states outside a turn; it is never omitted as an unknown turn.
- *
- * A snapshot is emitted initially, on every change, and at least every five
- * seconds so silence is distinguishable from an unchanged roster. Distinct
- * daemon failures are emitted once. Before giving up after 30 seconds of
- * continuous refusal, the feed emits a stale line so retained UI state is not
- * mistaken for current state. Slow answers expand the per-poll timeout and do
- * not spend that refusal deadline. Polling stays here because this process owns
- * the user credential and daemon client; Swift only decodes the stream.
- */
-
-import type {Autonomy} from "../config/autonomy";
-import {macProcessIdentity, verifyDaemonInstance,} from "../daemon/lifecycle/daemon-lifecycle";
+import type { Autonomy } from "../config/autonomy";
+import {
+  macProcessIdentity,
+  verifyDaemonInstance,
+} from "../daemon/lifecycle/daemon-lifecycle";
 import {
   type OrchestratorHostStatus,
   OrchestratorHostStatusSchema,
@@ -24,16 +11,19 @@ import {
   type WorkspaceVisibilityInventoryInput,
   WorkspaceVisibilityInventoryInputSchema,
 } from "../daemon/session-host/workspace-visibility";
-import type {AgentRecord} from "../schemas/agent";
-import {AutonomyEnvelopeSchema} from "../schemas/config-schema";
-import {systemNow} from "../shared/clock";
-import {definedFields} from "../shared/defined-fields";
-import {errorMessage} from "../shared/error-message";
-import {abortableSleep} from "../shared/sleep";
-import {daemonErrorDetail, decodeJson} from "./daemon-response";
-import {HiveMcpSession, readAgentStatus} from "./mcp";
-import {UserDaemonClient} from "./user-daemon-client";
-import {presentWorkspaceAgent, presentWorkspaceOrchestrator,} from "./workspace-feed-presentation";
+import type { AgentRecord } from "../schemas/agent";
+import { AutonomyEnvelopeSchema } from "../schemas/config-schema";
+import { systemNow } from "../shared/clock";
+import { definedFields } from "../shared/defined-fields";
+import { errorMessage } from "../shared/error-message";
+import { abortableSleep } from "../shared/sleep";
+import { daemonErrorDetail, decodeJson } from "./daemon-response";
+import { HiveMcpSession, readAgentStatus } from "./mcp";
+import { UserDaemonClient } from "./user-daemon-client";
+import {
+  presentWorkspaceAgent,
+  presentWorkspaceOrchestrator,
+} from "./workspace-feed-presentation";
 
 export const FEED_VERSION = 1;
 export const FEED_POLL_MS = 1_000;
@@ -243,13 +233,13 @@ export class WorkspaceVisibilityPublisher {
     if (inventory === null) return;
     this.pending = null;
     this.inFlight = this.runOne(inventory)
-        .catch((error: unknown) => {
-          this.report(error);
-        })
-        .then(() => {
-          this.inFlight = null;
-          this.pump();
-        });
+      .catch((error: unknown) => {
+        this.report(error);
+      })
+      .then(() => {
+        this.inFlight = null;
+        this.pump();
+      });
   }
 
   private async runOne(
