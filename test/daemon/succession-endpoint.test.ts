@@ -7,6 +7,7 @@ import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import { HiveDaemon } from "../../src/daemon/server";
 import { definedFields } from "../../src/shared/defined-fields";
+import { type JsonValue, safeJsonParse } from "../../src/shared/json";
 import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import {
   type CapabilityProvider,
@@ -162,9 +163,13 @@ async function callTool(
 }
 
 /** Parse the one JSON text block a tool result carries. */
-function toolJson(content: unknown): unknown {
+function toolJson(content: unknown): JsonValue {
   const blocks = content as Array<{ type: string; text: string }>;
-  return JSON.parse(blocks[0]?.text ?? "null") as unknown;
+  const parsed = safeJsonParse(blocks[0]?.text ?? "null");
+  if (parsed === undefined) {
+    throw new Error("tool result was not JSON");
+  }
+  return parsed;
 }
 
 /** The client projection must parse, say only idle|pending|failed, and never

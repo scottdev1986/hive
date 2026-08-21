@@ -4,7 +4,7 @@ import type {
   Action,
   Capability,
 } from "../authorization/authorization-service";
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import { compactSpawnResult } from "../orchestrator-host/orchestrator-projections";
 import {
   type SpawnBatchRequest,
@@ -25,7 +25,7 @@ export interface SpawnToolDependencies {
 }
 
 export function registerSpawnTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: SpawnToolDependencies,
 ): void {

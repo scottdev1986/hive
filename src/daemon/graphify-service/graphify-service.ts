@@ -64,6 +64,18 @@ export class GraphifyService {
     };
   }
 
+  rebuildIsQueued(): boolean {
+    return this.rebuildQueued;
+  }
+
+  async whenIdle(): Promise<void> {
+    await this.rebuildChain;
+  }
+
+  serverPid(): number | null {
+    return this.child?.pid ?? null;
+  }
+
   /** Bring the required server up. Missing graph? Build it in the background first so startup never waits on graph extraction. */
   async start(): Promise<void> {
     if (!existsSync(graphifyMcpBin())) {

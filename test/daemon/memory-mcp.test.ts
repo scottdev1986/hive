@@ -22,6 +22,7 @@ import type {
   Spawner,
   SpawnRequest,
 } from "../../src/daemon/spawn/spawn-service";
+import { type JsonValue, safeJsonParse } from "../../src/shared/json";
 import { actingAs } from "../support/daemon-test-support";
 import type { AgentRecord } from "../../src/schemas/agent";
 
@@ -50,7 +51,7 @@ class UnusedSpawner implements Spawner {
   }
 }
 
-function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
+function textValue(result: Awaited<ReturnType<Client["callTool"]>>): JsonValue {
   const content = (
     result as {
       content: Array<{ type: string; text?: string }>;
@@ -59,7 +60,11 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
-  return JSON.parse(content.text) as unknown;
+  const parsed = safeJsonParse(content.text);
+  if (parsed === undefined) {
+    throw new Error("Expected JSON tool content");
+  }
+  return parsed;
 }
 
 async function connectedClient(daemon: HiveDaemon): Promise<Client> {

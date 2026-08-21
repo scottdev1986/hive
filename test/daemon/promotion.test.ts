@@ -441,8 +441,8 @@ function authority(
   return { binding: bindingRef, capabilityEpoch };
 }
 
-async function expectPromotionError(
-  work: () => Promise<unknown>,
+async function expectPromotionError<T>(
+  work: () => Promise<T>,
   code: PromotionError["code"],
   message?: RegExp,
 ): Promise<PromotionError> {

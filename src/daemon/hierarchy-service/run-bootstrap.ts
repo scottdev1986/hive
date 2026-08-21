@@ -21,7 +21,7 @@ import {
 } from "../../schemas/run-control";
 import { toolResult } from "../../shared/mcp-tool-result";
 import { AuthorizationRefusedError } from "../authorization/authorization-service";
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import type { HiveDatabase } from "../database/hive-database";
 import { HierarchyStore } from "../hierarchy-store";
 import { canonicalJson } from "../status-service/status-service";
@@ -323,7 +323,7 @@ export async function bootstrapRun(
 }
 
 export function registerRunBootstrapTool(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: RunBootstrapDeps,
 ): void {

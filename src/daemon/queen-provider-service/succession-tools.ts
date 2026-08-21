@@ -1,6 +1,6 @@
 // succession-tools.ts The root's own succession tools. Both are daemon-enforced, never prompt-level: the checkpoint write is how the root captures her run state at semantic boundaries (and how a no-checkpoint successor writes her first one), and the attestation is the explicit declaration that completes a succession — bound to the exact succession, generation, and digest, after the daemon has measured her re-read of status and inbox. `hive_run_checkpoint` is intentionally gated while a succession is open: the fresh root attests first, then checkpoints.
 
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import {
   HiveRunCheckpointGetRequestSchema,
   HiveRunCheckpointRequestSchema,
@@ -26,7 +26,7 @@ export interface SuccessionToolDeps {
 }
 
 export function registerSuccessionTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: SuccessionToolDeps,
 ): void {

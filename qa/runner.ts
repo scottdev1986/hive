@@ -1,15 +1,6 @@
-// The Hive QA runner's testable core. run.ts is the thin entrypoint that
-// wires real dependencies; everything here takes its environment, process
-// execution, oracle clients and sleep as parameters so the suite can construct
-// each failing condition itself — no QA rig required.
-//
-// The reporting contract is the whole interface: one line per row,
-// `PASS|FAIL|NO MEASUREMENT <row-id> <reason>`, and a process exit of 0 when
-// every row passed, 1 when any row measured a product failure, 2 when any row
-// could not be measured. A bound expiring is a fact about the rig, never a
-// product failure, so it always lands on NO MEASUREMENT.
 import { realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import type { JsonValue } from "../src/shared/json";
 import { runStage1Rows } from "./rows/stage1";
 
 export interface ExecResult {
@@ -295,7 +286,7 @@ export interface ObserveClients {
     name: string,
     args: Record<string, unknown>,
     key: string,
-  ): Promise<unknown>;
+  ): Promise<JsonValue>;
   close(): Promise<void>;
 }
 

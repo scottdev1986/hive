@@ -12,7 +12,7 @@ import {
 } from "../../schemas/task-detail";
 import { toolResult } from "../../shared/mcp-tool-result";
 import type { Capability } from "../authorization/authorization-service";
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import type { HierarchyService } from "./hierarchy-service";
 
 const GrantIssueInputSchema = DelegationGrantSchema.omit({
@@ -53,7 +53,7 @@ function taskWriteReceipt(task: TaskDetail) {
 }
 
 export function registerHierarchyWriteTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   hierarchy: HierarchyService,
 ): void {

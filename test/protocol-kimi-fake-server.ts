@@ -1,34 +1,16 @@
-/**
- * A fake `kimi acp` server speaking NDJSON ACP over stdio, replaying the
- * sanitized fixtures in test/fixtures/protocol/kimi/. Spawned as a child by
- * protocol-kimi-adapter.test.ts and protocol-acp-session-usage.test.ts (the
- * latter uses it only as a generic ACP transport to drive the shared
- * AcpProviderSession usage decoding — not to assert anything Kimi-specific).
- * Not itself a test.
- *
- * Behaviors by prompt text:
- * - contains "repeat-prompt"   → agent_message_chunk of the full prompt text
- * - contains "echo"            → tool_call update, then permission reverse-RPC
- *                                in "default" mode; runs straight through
- *                                in any autonomous mode
- * - contains "AskUserQuestion" → tool_call update, then question reverse-RPC
- * - contains "essay"           → hangs until session/cancel, then cancelled
- * - contains "usage-full"      → end_turn with a usage object carrying every
- *                                field the ACP usage decoder understands
- * - contains "stderr-failure"  → writes a vendor diagnostic to stderr, then
- *                                rejects the prompt RPC
- * - contains "chatty-stderr"   → writes more diagnostic lines than the bound
- * - contains "empty-rpc-error" → rejects the prompt RPC without stderr
- * - anything else              → thought+message chunks, then end_turn
- */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { type JsonValue, safeJsonParse } from "../src/shared/json";
 
 const FIXTURES = join(import.meta.dir, "fixtures/protocol/kimi");
 const SID = "session_00000000-0000-4000-8000-000000000001";
 
-function load(name: string): unknown {
-  return JSON.parse(readFileSync(join(FIXTURES, name), "utf8"));
+function load(name: string): JsonValue {
+  const parsed = safeJsonParse(readFileSync(join(FIXTURES, name), "utf8"));
+  if (parsed === undefined) {
+    throw new Error(`fixture ${name} was not JSON`);
+  }
+  return parsed;
 }
 
 function send(message: unknown): void {

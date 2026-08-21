@@ -1,4 +1,4 @@
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import { z } from "zod";
 import { graphLocate } from "../../adapters/graphify";
 import type {
@@ -19,7 +19,7 @@ export interface GraphToolDeps {
 }
 
 export function registerGraphTool(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: GraphToolDeps,
 ): void {

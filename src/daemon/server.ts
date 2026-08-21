@@ -1810,7 +1810,7 @@ export class HiveDaemon {
   }
 
   /** Git rechecks stranded work but never authorizes its deletion or release. */
-  private async killAgentTeardown(
+  async killAgentTeardown(
     agent: AgentRecord,
     options: {
       removeWorktree?: boolean;

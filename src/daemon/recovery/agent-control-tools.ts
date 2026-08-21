@@ -1,4 +1,4 @@
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import { z } from "zod";
 import type { StewardshipRef } from "../../adapters/worktrees";
 import type { SettlementDecision } from "../worktree-lifecycle-service/settlement-decision-store";
@@ -85,7 +85,7 @@ export interface AgentControlToolDeps {
 }
 
 export function registerAgentControlTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: AgentControlToolDeps,
 ): void {

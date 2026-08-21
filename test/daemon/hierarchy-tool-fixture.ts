@@ -1,15 +1,4 @@
-// The four-part world an authenticated hierarchy tool needs before it can
-// authorize anyone: a flat AgentRecord row, that agent live under its name, a
-// session locator whose subject and generation match the binding, and a stored
-// binding for that identity. The flat AgentRecord capability epoch is the one
-// credential fence. Every tool-layer suite needs all four, and a partial world
-// refuses for the wrong reason.
-
-import type {
-  Action,
-  Capability,
-  Role,
-} from "../../src/daemon/authorization/authorization-service";
+import type { Action, Capability, Role } from "../../src/schemas/authority";
 import { CapabilityStore } from "../../src/daemon/authorization/authorization-service";
 import type { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
@@ -17,25 +6,33 @@ import {
   type HierarchyServiceOptions,
 } from "../../src/daemon/hierarchy-service/hierarchy-service";
 import type { HierarchyStore } from "../../src/daemon/hierarchy-store";
-import type { HiveToolRegistrar } from "../../src/daemon/authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../../src/daemon/authorization/mcp-tool-policy";
 import type { AgentRecord } from "../../src/schemas/agent";
 import type { AgentBinding } from "../../src/schemas/hierarchy-node";
 
-export type ToolHandler = (input: never) => Promise<unknown>;
+export type ToolHandler = (input: never) => Promise<object>;
 
 const stamp = "2026-07-30T12:00:00.000Z";
 
 /** Captures the handlers a register* function installs. */
 export function captureTools(): {
-  server: HiveToolRegistrar;
+  server: HiveToolServer;
   handlers: Map<string, ToolHandler>;
 } {
   const handlers = new Map<string, ToolHandler>();
-  const server = {
-    registerTool: (name: string, _config: unknown, handler: ToolHandler) => {
-      handlers.set(name, handler);
+  const server: HiveToolServer = {
+    registerTool: (_name, _config, handler) => {
+      handlers.set(_name, async (input) => {
+        const result = await handler(input, {
+          mcpReq: { signal: new AbortController().signal },
+        } as Parameters<typeof handler>[1]);
+        if (typeof result !== "object" || result === null) {
+          throw new Error(`${_name} returned a non-object tool result`);
+        }
+        return result;
+      });
     },
-  } as unknown as HiveToolRegistrar;
+  };
   return { server, handlers };
 }
 

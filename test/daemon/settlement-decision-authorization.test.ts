@@ -6,6 +6,7 @@ import {
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { registerAgentControlTools } from "../../src/daemon/recovery/agent-control-tools";
 import type { SettlementDecision } from "../../src/daemon/worktree-lifecycle-service/settlement-decision-store";
+
 import { required } from "../required";
 
 const input = {
@@ -42,12 +43,12 @@ const decision: SettlementDecision = {
 async function mintAs(capability: Capability): Promise<{
   readonly inputs: Array<typeof input & { decisionOwner: string }>;
   readonly executions: Array<{ decisionId: string; executedBy: string }>;
-  readonly mint: () => Promise<unknown>;
-  readonly execute: () => Promise<unknown>;
+  readonly mint: () => Promise<object>;
+  readonly execute: () => Promise<object>;
 }> {
   const tools = new Map<
     string,
-    (args: Record<string, unknown>) => Promise<unknown>
+    (args: Record<string, unknown>) => Promise<object>
   >();
   const inputs: Array<typeof input & { decisionOwner: string }> = [];
   const executions: Array<{ decisionId: string; executedBy: string }> = [];
@@ -58,7 +59,7 @@ async function mintAs(capability: Capability): Promise<{
       registerTool: (
         name: string,
         _meta: unknown,
-        handler: (args: Record<string, unknown>) => Promise<unknown>,
+        handler: (args: Record<string, unknown>) => Promise<object>,
       ) => {
         tools.set(name, handler);
       },

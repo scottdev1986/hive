@@ -1,8 +1,3 @@
-// workspace-client-projections.wire-contract.test.ts
-//
-// Keeps the Bun producer schemas and Swift client fixtures on the same bytes.
-// A new wire adds its own module here without changing the shared wrapper.
-
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -13,6 +8,7 @@ import {
   type WorkspaceModelControlView,
 } from "../../src/daemon/routing-service/model-control-view";
 import { canonicalJson } from "../../src/daemon/status-service/events";
+import { type JsonValue, safeJsonParse } from "../../src/shared/json";
 import {
   CapabilityRecordSchema,
   EffectiveDefaultSchema,
@@ -111,8 +107,12 @@ const outerHorizonCorpusSchema = z.strictObject({
     .length(8),
 });
 
-async function readJSON(path: string): Promise<unknown> {
-  return JSON.parse(await readFile(path, "utf8")) as unknown;
+async function readJSON(path: string): Promise<JsonValue> {
+  const parsed = safeJsonParse(await readFile(path, "utf8"));
+  if (parsed === undefined) {
+    throw new Error(`${path} was not JSON`);
+  }
+  return parsed;
 }
 
 function expectSevenStateMatrix(

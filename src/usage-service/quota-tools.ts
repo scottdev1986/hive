@@ -1,4 +1,4 @@
-import type { HiveToolRegistrar } from "../daemon/authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../daemon/authorization/mcp-tool-policy";
 import { z } from "zod";
 import { formatlessString } from "../schemas/wire-schema";
 import { QuotaObservationSchema } from "../schemas/quota";
@@ -28,7 +28,7 @@ export interface QuotaToolDeps {
 }
 
 export function registerQuotaTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: QuotaToolDeps,
 ): void {

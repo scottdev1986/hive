@@ -167,13 +167,16 @@ export const HIVE_TOOL_POLICIES = {
 
 export type HiveToolName = keyof typeof HIVE_TOOL_POLICIES;
 
-interface HiveToolConfig<InputArgs extends z.ZodType> {
+export interface HiveToolConfig<InputArgs extends z.ZodType> {
   readonly title?: string;
   readonly description?: string;
   readonly inputSchema: InputArgs;
   readonly icons?: Icon[];
   readonly _meta?: Record<string, unknown>;
 }
+
+/** The registration surface tool modules depend on. Tests can implement this without impersonating the class. */
+export type HiveToolServer = Pick<HiveToolRegistrar, "registerTool">;
 
 /** Registers one capability-scoped Hive tool. Every tool remains callable so a direct forbidden request still receives a Hive authorization denial. Only tools/list is filtered; catalog visibility cannot express subject, epoch, revocation, or one-shot constraints. */
 export class HiveToolRegistrar {

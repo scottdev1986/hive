@@ -10,7 +10,7 @@ import {
   TaskIdSchema,
 } from "../../schemas/hierarchy-ids";
 import { toolResult } from "../../shared/mcp-tool-result";
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import {
   getArtifact,
   putArtifact,
@@ -37,7 +37,7 @@ export interface ArtifactToolDeps {
 }
 
 export function registerArtifactTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: ArtifactToolDeps,
 ): void {

@@ -1,7 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import type { Action, Capability } from "../schemas/authority";
-import type { HiveToolRegistrar } from "../daemon/authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../daemon/authorization/mcp-tool-policy";
 import { toolResult } from "../shared/mcp-tool-result";
 import {
   compactMemoryWriteResult,
@@ -75,7 +75,7 @@ export interface MemoryToolDeps {
 }
 
 export function registerMemoryTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: MemoryToolDeps,
 ): void {

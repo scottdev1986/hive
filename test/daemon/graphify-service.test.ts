@@ -2,9 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Subprocess } from "bun";
 import { graphifyPin } from "../../src/adapters/graphify";
 import { GraphifyService } from "../../src/daemon/graphify-service/graphify-service";
+import { required } from "../required";
 
 // The hard rule under test everywhere here: nothing throws, nothing hangs,
 // and a repo that cannot have a graph records an honest degraded state.
@@ -84,10 +84,9 @@ describe("GraphifyService", () => {
     service.scheduleRebuild();
     // Reaching into the private chain is deliberate: coalescing has no other
     // observable surface without a real server to restart.
-    const chain = service as unknown as { rebuildQueued: boolean };
-    expect(chain.rebuildQueued).toBe(true);
-    await (service as unknown as { rebuildChain: Promise<void> }).rebuildChain;
-    expect(chain.rebuildQueued).toBe(false);
+    expect(service.rebuildIsQueued()).toBe(true);
+    await service.whenIdle();
+    expect(service.rebuildIsQueued()).toBe(false);
     await rm(root, { recursive: true, force: true });
   });
 
@@ -119,11 +118,10 @@ describe("GraphifyService", () => {
       stdout: "ignore",
       stderr: "ignore",
     });
-    let child: Subprocess | null = null;
     try {
       await service.start();
-      child = (service as unknown as { child: Subprocess }).child;
-      expect(() => process.kill(required(child?.pid), 0)).not.toThrow();
+      const pid = required(service.serverPid());
+      expect(() => process.kill(pid, 0)).not.toThrow();
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
 
       const stopping = service.stop();
@@ -132,16 +130,21 @@ describe("GraphifyService", () => {
         Bun.sleep(500).then(() => false),
       ]);
       if (!stopped) {
-        child.kill("SIGKILL");
+        process.kill(pid, "SIGKILL");
         await stopping;
       }
 
       expect(stopped).toBe(true);
-      expect(() => process.kill(required(child?.pid), 0)).toThrow();
+      expect(() => process.kill(pid, 0)).toThrow();
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
       expect(service.serverUrl()).toBeNull();
     } finally {
-      if (child?.exitCode === null) child.kill("SIGKILL");
+      const leftover = service.serverPid();
+      if (leftover !== null) {
+        try {
+          process.kill(leftover, "SIGKILL");
+        } catch {}
+      }
       unrelated.kill("SIGKILL");
       await rm(root, { recursive: true, force: true });
     }
@@ -165,13 +168,15 @@ describe("GraphifyService", () => {
     expect((await fetch(firstUrl as string)).status).toBe(406);
 
     service.scheduleRebuild();
-    await (service as unknown as { rebuildChain: Promise<void> }).rebuildChain;
+    await service.whenIdle();
     expect(service.serverUrl()).toBe(firstUrl);
     expect((await fetch(firstUrl as string)).status).toBe(406);
 
-    const child = (service as unknown as { child: Subprocess }).child;
-    child.kill();
-    await child.exited;
+    const pid = required(service.serverPid());
+    process.kill(pid, "SIGKILL");
+    while (service.serverPid() === pid) {
+      await Bun.sleep(10);
+    }
     await Bun.sleep(0);
     expect(service.serverUrl()).toBeNull();
     expect(
@@ -182,5 +187,3 @@ describe("GraphifyService", () => {
     await rm(root, { recursive: true, force: true });
   });
 });
-
-import { required } from "../required";

@@ -18,7 +18,7 @@ import type {
   Action,
   Capability,
 } from "../authorization/authorization-service";
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import type { HiveDatabase } from "../database/hive-database";
 import type { MachineMutationCoordinator } from "../mutation-lease";
 import type { StatusService } from "../status-service/status-service";
@@ -55,7 +55,7 @@ export interface MessagingToolDeps {
 }
 
 export function registerMailTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: MailToolDeps,
 ): void {
@@ -160,7 +160,7 @@ export function registerMailTools(
 }
 
 export function registerMessagingTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: MessagingToolDeps,
 ): void {

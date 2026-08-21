@@ -5,10 +5,11 @@ import {
   MarkDeadRequestSchema,
   registerAgentControlTools,
 } from "../../src/daemon/recovery/agent-control-tools";
-import type { Capability } from "../../src/daemon/authorization/authorization-service";
+import type { Capability } from "../../src/schemas/capability";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
+
 import { required } from "../required";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
@@ -65,14 +66,14 @@ describe("hive_mark_dead options", () => {
     db.insertAgent(agent());
     const tools = new Map<
       string,
-      (args: Record<string, unknown>) => Promise<unknown>
+      (args: Record<string, unknown>) => Promise<object>
     >();
     registerAgentControlTools(
       {
         registerTool: (
           name: string,
           _meta: unknown,
-          handler: (args: Record<string, unknown>) => Promise<unknown>,
+          handler: (args: Record<string, unknown>) => Promise<object>,
         ) => {
           tools.set(name, handler);
         },
@@ -108,14 +109,14 @@ describe("hive_mark_dead options", () => {
     db.insertAgent(agent());
     const tools = new Map<
       string,
-      (args: Record<string, unknown>) => Promise<unknown>
+      (args: Record<string, unknown>) => Promise<object>
     >();
     registerAgentControlTools(
       {
         registerTool: (
           name: string,
           _meta: unknown,
-          handler: (args: Record<string, unknown>) => Promise<unknown>,
+          handler: (args: Record<string, unknown>) => Promise<object>,
         ) => {
           tools.set(name, handler);
         },
@@ -166,29 +167,18 @@ describe("hive_mark_dead options", () => {
       assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
     });
     try {
-      const defaultKill = await (
-        daemon as unknown as {
-          killAgentTeardown: (
-            a: AgentRecord,
-            o?: { removeWorktree?: boolean },
-          ) => Promise<{ worktree: { outcome: string } }>;
-        }
-      ).killAgentTeardown(required(db.getAgentByName("maya")));
+      const defaultKill = await daemon.killAgentTeardown(
+        required(db.getAgentByName("maya")),
+      );
       expect(defaultKill.worktree.outcome).toBe("preserved-stranded");
       expect(removals).toEqual([]);
 
       // Re-insert a live row for the flagged path.
       db.upsertAgent(agent({ status: "idle" }));
-      const flagged = await (
-        daemon as unknown as {
-          killAgentTeardown: (
-            a: AgentRecord,
-            o?: { removeWorktree?: boolean },
-          ) => Promise<{ worktree: { outcome: string } }>;
-        }
-      ).killAgentTeardown(required(db.getAgentByName("maya")), {
-        removeWorktree: true,
-      });
+      const flagged = await daemon.killAgentTeardown(
+        required(db.getAgentByName("maya")),
+        { removeWorktree: true },
+      );
       expect(flagged.worktree.outcome).toBe("preserved-stranded");
       expect(removals).toEqual([]);
     } finally {

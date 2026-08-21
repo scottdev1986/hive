@@ -237,7 +237,7 @@ const launchedRecord = {
 
 /** Records what Hive asked for, and answers as a booted host would. */
 function recordingLauncher(
-  outcome: () => unknown = () => launchedRecord,
+  outcome: () => LaunchedHost["record"] = () => launchedRecord,
   process: Readonly<{ exited: Promise<number> }> = {
     exited: new Promise<number>(() => {}),
   },
@@ -253,7 +253,7 @@ function recordingLauncher(
     launch: async (request: HostLaunchRequest): Promise<LaunchedHost> => {
       requests.push({ specJson: request.specJson });
       return {
-        record: outcome() as LaunchedHost["record"],
+        record: outcome(),
         hostPid: launchedRecord.hostPid,
         control: { destroy() {} } as Socket,
         process: process as LaunchedHost["process"],
@@ -396,7 +396,7 @@ class RecordingClient implements SessiondControlClient {
   constructor(
     private readonly respond: (
       request: SessiondControlRequest<unknown>,
-    ) => unknown,
+    ) => object,
   ) {}
 
   async request<Result>(

@@ -330,7 +330,7 @@ describe("the real Grok payload, verbatim off the wire", () => {
     // A value that is not a number at all fails the schema, and the whole
     // payload is refused rather than half-read. Either way the one thing that
     // must never happen is a confident 0.
-    for (const bad of [Number.NaN, "42" as unknown as number]) {
+    for (const bad of [Number.NaN, "42"]) {
       expect(
         readingsFromGrokBilling(
           {
@@ -607,7 +607,7 @@ describe("window ordering", () => {
   test("drops malformed Codex response shapes instead of throwing", () => {
     expect(
       readingsFromCodexResponse(
-        { rateLimits: null } as unknown as CodexRateLimitsResponse,
+        { rateLimits: null },
         "default",
         now.toISOString(),
       ),
@@ -1524,7 +1524,7 @@ describe("claude usage probe", () => {
           subscription_type: "max",
           rate_limits_available: true,
           rate_limits: { model_scoped: {} },
-        } as unknown as ClaudeUsageResponse,
+        },
         "default",
         now.toISOString(),
       ),

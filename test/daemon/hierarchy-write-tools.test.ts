@@ -154,7 +154,7 @@ type ToolCase = {
   tool: string;
   action: string;
   actor: string;
-  input: () => unknown;
+  input: () => object;
   prepare?: () => void;
 };
 
@@ -757,7 +757,7 @@ function definitionFor(
   return definition;
 }
 
-function hierarchySnapshot(): unknown {
+function hierarchySnapshot() {
   return {
     fences: db.database
       .query(

@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type {
-  Capability,
-  CapabilityStore,
-} from "../../src/daemon/authorization/authorization-service";
-import type { HiveDatabase } from "../../src/daemon/database/hive-database";
+import type { Capability } from "../../src/daemon/authorization/authorization-service";
+import type { HiveToolServer } from "../../src/daemon/authorization/mcp-tool-policy";
 import {
   type LandToolDeps,
   registerLandTool,
@@ -12,20 +9,14 @@ import {
   type HierarchyLanding,
   NothingToLandError,
 } from "../../src/daemon/landing/landing-service";
-import type { HiveToolRegistrar } from "../../src/daemon/authorization/mcp-tool-policy";
-
-// The hierarchy resolver is the trusted boundary: it derives authority from the
-// authenticated session, while the request only names the legacy flat fields.
-// Resolving and landing arrive as ONE value, so a half-wired pair is not a
-// runtime hazard to guard — it does not typecheck. What is left to test is the
-// routing: which of the two landers runs, and when.
+import type { AgentRecord } from "../../src/schemas/agent";
 
 type ToolInput = {
   agent: string;
   capabilityEpoch: number;
 };
 
-type ToolHandler = (args: ToolInput) => Promise<unknown>;
+type ToolHandler = (args: ToolInput) => Promise<object>;
 
 type InputSchema = {
   safeParse(input: unknown): { success: boolean };
@@ -40,23 +31,59 @@ type TestDeps = LandToolDeps & {
   landAgentCalls: Array<{ name: string; epoch: number }>;
 };
 
-function captureTool(deps: LandToolDeps): CapturedTool {
-  let captured: CapturedTool | null = null;
-  const server = {
-    registerTool: (_name: string, meta: unknown, handler: ToolHandler) => {
-      captured = {
-        handler,
-        inputSchema: (meta as { inputSchema: InputSchema }).inputSchema,
-      };
-    },
-  } as unknown as HiveToolRegistrar;
-  const capability = {
+const STAMP = "2026-07-09T12:00:00.000Z";
+
+function writerCapability(): Capability {
+  return {
+    id: "00000000-0000-4000-8000-000000000001",
     subject: "writer",
     role: "writer",
-    id: "cap-1",
     epoch: 0,
-  } as unknown as Capability;
-  registerLandTool(server, capability, deps);
+    issuedAt: STAMP,
+    expiresAt: "2026-07-10T12:00:00.000Z",
+    revokedAt: null,
+  };
+}
+
+function writerAgent(): AgentRecord {
+  return {
+    id: "agent-writer",
+    name: "writer",
+    tool: "codex",
+    model: "gpt-5",
+    category: "simple_coding",
+    status: "working",
+    taskDescription: "land",
+    worktreePath: "/tmp/hive-writer",
+    branch: "hive/writer",
+    contextPct: null,
+    createdAt: STAMP,
+    lastEventAt: STAMP,
+    capabilityEpoch: 1,
+    readOnly: false,
+    writeRevoked: false,
+  };
+}
+
+function captureTool(deps: LandToolDeps): CapturedTool {
+  let captured: CapturedTool | null = null;
+  const server: HiveToolServer = {
+    registerTool: (_name, config, handler) => {
+      captured = {
+        handler: async (input) => {
+          const result = await handler(input, {
+            mcpReq: { signal: new AbortController().signal },
+          } as Parameters<typeof handler>[1]);
+          if (typeof result !== "object" || result === null) {
+            throw new Error("hive_land returned a non-object tool result");
+          }
+          return result;
+        },
+        inputSchema: config.inputSchema,
+      };
+    },
+  };
+  registerLandTool(server, writerCapability(), deps);
   if (captured === null) throw new Error("handler not registered");
   return captured;
 }
@@ -84,16 +111,13 @@ function baseDeps(overrides: Partial<LandToolDeps> = {}): TestDeps {
   const landAgentCalls: Array<{ name: string; epoch: number }> = [];
   return {
     db: {
-      getAgentByName: () => ({
-        branch: "hive/writer",
-        worktreePath: "/tmp/hive-writer",
-      }),
-    } as unknown as HiveDatabase,
+      getAgentByName: () => writerAgent(),
+    },
     capabilities: {
       consumeOneShot: () => true,
       releaseOneShot: () => {},
       audit: () => {},
-    } as unknown as CapabilityStore,
+    },
     authorizeTool: () => {},
     projectGate: async () => {},
     readNothingToLandEvidence: async () => ({
@@ -189,7 +213,7 @@ describe("land-tool hierarchy routing", () => {
           releases += 1;
         },
         audit: () => {},
-      } as unknown as CapabilityStore,
+      },
       readNothingToLandEvidence: async (_agent, sourceOid) => ({
         sourceOid,
         baseOid: sourceOid,
@@ -234,7 +258,7 @@ describe("land-tool hierarchy routing", () => {
         },
         releaseOneShot: () => {},
         audit: () => {},
-      } as unknown as CapabilityStore,
+      },
     });
 
     const result = await captureHandler(deps)({
@@ -387,7 +411,7 @@ describe("land-tool hierarchy routing", () => {
         consumeOneShot: () => false,
         releaseOneShot: () => {},
         audit: () => {},
-      } as unknown as CapabilityStore,
+      },
       decideSpentLandGrant: async () => {
         readinessCalls += 1;
         return { kind: "nothing-to-land" } as const;
@@ -456,7 +480,7 @@ describe("land-tool hierarchy routing", () => {
           releaseCalls += 1;
         },
         audit: () => {},
-      } as unknown as CapabilityStore,
+      },
     });
 
     await expect(

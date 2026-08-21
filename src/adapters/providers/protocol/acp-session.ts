@@ -423,14 +423,11 @@ export class AcpProviderSession implements ProviderSession {
       throw new Error("setConfigOption: no active vendor session");
     }
     const result = requireJsonValue(
-      await this.client.acp.request(
-        acpMethods.agent.session.setConfigOption,
-        {
-          sessionId,
-          configId,
-          value,
-        },
-      ),
+      await this.client.acp.request(acpMethods.agent.session.setConfigOption, {
+        sessionId,
+        configId,
+        value,
+      }),
       "session/set_config_option",
     );
     const resultRoot = asRecord(result);

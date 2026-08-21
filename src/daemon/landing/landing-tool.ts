@@ -1,4 +1,4 @@
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import { z } from "zod";
 import type {
   Action,
@@ -107,8 +107,11 @@ const spentAskDetail = (
 };
 
 export interface LandToolDeps {
-  db: HiveDatabase;
-  capabilities: CapabilityStore;
+  db: Pick<HiveDatabase, "getAgentByName">;
+  capabilities: Pick<
+    CapabilityStore,
+    "consumeOneShot" | "releaseOneShot" | "audit"
+  >;
   authorizeTool: (
     capability: Capability,
     tool: string,
@@ -136,7 +139,7 @@ export interface LandToolDeps {
 }
 
 export function registerLandTool(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: LandToolDeps,
 ): void {

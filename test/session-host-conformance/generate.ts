@@ -2,6 +2,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { type JsonValue, requireJsonValue } from "../../src/shared/json";
 import { HV1_CAPABILITY_WIRE_SCHEMAS } from "../../src/schemas/capability";
 import {
   CHECKPOINT_HEADER,
@@ -75,13 +76,13 @@ const prettyJson = (value: unknown): string =>
  * putting it there would cost Kimi the entire tool list to fix a conformance
  * fixture.
  */
-function markUint64Formats(value: unknown): unknown {
+function markUint64Formats(value: JsonValue): JsonValue {
   if (Array.isArray(value)) return value.map(markUint64Formats);
   if (typeof value !== "object" || value === null) return value;
-  const entries = Object.entries(value as Record<string, unknown>).map(
-    ([key, nested]) => [key, markUint64Formats(nested)],
-  );
-  const marked = Object.fromEntries(entries) as Record<string, unknown>;
+  const marked: { [key: string]: JsonValue } = {};
+  for (const [key, nested] of Object.entries(value)) {
+    marked[key] = markUint64Formats(nested);
+  }
   if (marked.type === "string" && marked.pattern === DECIMAL_UINT64_PATTERN) {
     return { ...marked, format: "hive-uint64-decimal" };
   }
@@ -93,9 +94,12 @@ function renderSchemaDocument(): string {
     Object.entries(WIRE_SCHEMA_CATALOG).map(([name, schema]) => [
       name,
       markUint64Formats(
-        z.toJSONSchema(
-          schema,
-          BYTE_CODEC_SCHEMA_NAMES.has(name) ? { io: "input" } : undefined,
+        requireJsonValue(
+          z.toJSONSchema(
+            schema,
+            BYTE_CODEC_SCHEMA_NAMES.has(name) ? { io: "input" } : undefined,
+          ),
+          name,
         ),
       ),
     ]),

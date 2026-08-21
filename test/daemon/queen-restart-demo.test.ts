@@ -1,22 +1,9 @@
-/**
- * Stage D — live restart demo harness.
- *
- * Scripted end-to-end path: verified queen checkpoint → newer board ruling on a
- * tracking task + one unsettled control item + one live worker → prepare-launch
- * for gen N+1 with instrumented fresh session open → assert the boot capsule
- * carries checkpoint proof, board ruling, control backlog, worker snapshot, and
- * the attestation tuple — never a provider compaction summary — then prove the
- * recovery gate + measured re-read + attestation + worker resume eligibility.
- *
- * Graceful-path final-checkpoint ordering depends on Stage C (pascal). When that
- * surface is not yet on this base, the graceful row is marked pending-Stage-C
- * rather than re-implemented here.
- */
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { definedFields } from "../../src/shared/defined-fields";
+import { type JsonValue, safeJsonParse } from "../../src/shared/json";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -162,9 +149,13 @@ async function callTool(
   }
 }
 
-function toolJson(content: unknown): unknown {
+function toolJson(content: unknown): JsonValue {
   const blocks = content as Array<{ type: string; text: string }>;
-  return JSON.parse(blocks[0]?.text ?? "null") as unknown;
+  const parsed = safeJsonParse(blocks[0]?.text ?? "null");
+  if (parsed === undefined) {
+    throw new Error("tool result was not JSON");
+  }
+  return parsed;
 }
 
 describe("queen restart demo harness", () => {

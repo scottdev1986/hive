@@ -30,7 +30,7 @@ import {
   type Capability,
   permitsTerminalObservation,
 } from "../authorization/authorization-service";
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import type { HiveDatabase } from "../database/hive-database";
 import type { GraphifyService } from "../graphify-service/graphify-service";
 import type { SettlementDebtReport } from "../worktree-lifecycle-service/worktree-lifecycle-service";
@@ -428,7 +428,7 @@ function projectAgents(
 }
 
 export function registerStatusTools(
-  server: HiveToolRegistrar,
+  server: HiveToolServer,
   capability: Capability,
   deps: StatusToolDeps,
 ): void {

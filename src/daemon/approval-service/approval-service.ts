@@ -20,7 +20,7 @@ import type {
 } from "../authorization/authorization-service";
 import { logAlertDeliveryFailure } from "../observability/daemon-log";
 import type { HiveDatabase } from "../database/hive-database";
-import type { HiveToolRegistrar } from "../authorization/mcp-tool-policy";
+import type { HiveToolServer } from "../authorization/mcp-tool-policy";
 import { compactApprovalDescription } from "../orchestrator-host/orchestrator-projections";
 import type {
   ReadLandReadiness,
@@ -81,7 +81,7 @@ export class ApprovalService {
 
   constructor(private readonly deps: ApprovalServiceDependencies) {}
 
-  registerTools(server: HiveToolRegistrar, capability: Capability): void {
+  registerTools(server: HiveToolServer, capability: Capability): void {
     server.registerTool(
       "hive_approvals",
       {
