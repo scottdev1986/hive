@@ -10,6 +10,7 @@ import { HiveSpawner } from "../../../src/daemon/spawn/spawner-impl";
 import { StatusService } from "../../../src/daemon/status-service/status-projection-service";
 import type { AgentRecord } from "../../../src/schemas/agent";
 import type { RoutingPolicy } from "../../../src/schemas/routing-policy";
+import { definedFields } from "../../../src/shared/defined-fields";
 import { OUTSIDE_REPO_TMPDIR } from "../../outside-repo-tmpdir";
 
 const policy: RoutingPolicy = {
@@ -132,9 +133,9 @@ async function liveKimiLaunch(
     mcpClientSeen: reporting.mcpClientSeen ?? (() => false),
     mcpReportingTimeoutMs: reporting.timeoutMs ?? 0,
     measureWorktreeHead: async () => "0".repeat(40),
-    ...(reporting.hierarchyAdmission === undefined
-      ? {}
-      : { hierarchyAdmission: reporting.hierarchyAdmission }),
+    ...definedFields({
+      hierarchyAdmission: reporting.hierarchyAdmission,
+    }),
     buildMemoryIndex: async () => "",
     ps: async () =>
       [
@@ -334,9 +335,9 @@ test("a launch is fully recorded before MCP reporting is consulted", async () =>
   const fixture = await liveKimiLaunch({
     mcpClientSeen: (subject) => {
       seenAtFirstConsult ??= {
-        ...(fixture.db.getLiveAgentByName(subject) === null
-          ? {}
-          : { status: fixture.db.getLiveAgentByName(subject)?.status }),
+        ...definedFields({
+          status: fixture.db.getLiveAgentByName(subject)?.status,
+        }),
         bound,
       };
       return false;

@@ -16,6 +16,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { definedFields } from "../../src/shared/defined-fields";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -117,7 +118,9 @@ const request = (
     new Request(`http://hive${path}`, {
       method,
       headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...definedFields({
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }),
     }),
   );
 };

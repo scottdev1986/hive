@@ -17,6 +17,7 @@ import {
 } from "../embeddings-runtime/runtime";
 import { resolveVariant } from "../hive-home/variant";
 import { HIVE_EMBEDDINGS_DIGEST } from "../shared/version";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 
 export type { EmbeddingsInstallOutcome } from "../embeddings-runtime/install";
@@ -90,7 +91,7 @@ async function installFromRelease(
     defaultReleaseInstallDeps({
       runtimeDir,
       probe,
-      ...(version === undefined ? {} : { version }),
+      ...definedFields({ version }),
     }),
   );
 }
@@ -194,7 +195,9 @@ export async function ensureEmbeddingsRuntime(
   if (existing !== null) return existing;
   const source = Bun.env[EMBEDDINGS_SOURCE_ENV];
   return provisionEmbeddingsRuntime(
-    source === undefined || source === "" ? {} : { from: source },
+    definedFields({
+      from: source === undefined || source === "" ? undefined : source,
+    }),
     deps,
   );
 }

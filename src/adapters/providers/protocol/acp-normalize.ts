@@ -1,3 +1,4 @@
+import { definedFields } from "../../../shared/defined-fields";
 import { percentOfWindow } from "../../../usage-service/context-occupancy";
 import type {
   ElicitationOption,
@@ -228,18 +229,18 @@ export function normalizeSessionUpdate(
       // A collection the update did not mention is left standing rather than replaced with nothing: ACP puts a call's diff on whichever update happens to carry it, and that is often the one that also completes it. Only what this update actually states is carried. Grok sends `_meta` on every update but names the tool kind on only some of them, so writing an unresolved kind would blank the icon a moment after showing it.
       const updatedKind = resolvedToolKind(update);
       const updatedLocations = namedLocations(update.locations, update.content);
-      const carried = {
-        ...(updatedKind === null ? {} : { toolKind: updatedKind }),
-        ...(updatedLocations.length === 0
-          ? {}
-          : { locations: updatedLocations }),
-        ...(update.content === undefined
-          ? {}
-          : {
-              changes: toolFileChanges(update.content),
-              output: toolOutputText(update.content),
-            }),
-      };
+      const carried = definedFields({
+        toolKind: updatedKind ?? undefined,
+        locations: updatedLocations.length === 0 ? undefined : updatedLocations,
+        changes:
+          update.content === undefined
+            ? undefined
+            : toolFileChanges(update.content),
+        output:
+          update.content === undefined
+            ? undefined
+            : toolOutputText(update.content),
+      });
       if (status === "completed" || status === "failed" || status === "error") {
         const finished: EmittableNormalizedEvent[] = [];
         // The detail and the changes have to land before the call stops being running, or a completed call shows the title it was started with.
@@ -444,7 +445,7 @@ export function parseAvailableCommands(
     out.push({
       name,
       description,
-      ...(argumentHint !== undefined ? { argumentHint } : {}),
+      ...definedFields({ argumentHint }),
     });
   }
   return out;

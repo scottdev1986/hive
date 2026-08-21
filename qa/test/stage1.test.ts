@@ -1,15 +1,7 @@
-// Tests for the Stage-1 rows (qa/rows/stage1.ts). No rig: a fake-rig
-// simulator plays the app side of the qa-control mailbox and the daemon side
-// of the oracles, with switches that construct each failing condition — a
-// broken apply commit, a frozen revision, a dying gate, a static snapshot.
-// The simulator is faithful to the two product facts the rows depend on: the
-// Task Router edits one CATEGORY route (no route means the member checkboxes
-// are dead), and Apply refuses a route with zero candidates (so k0 must stand
-// in the route for k1 to be removable). The T1-09 property is proven by
-// running the whole stage twice against the same simulator.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { definedFields } from "../../src/shared/defined-fields";
 import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 import {
   normalizePolicyExport,
@@ -302,7 +294,7 @@ class FakeRig {
         controls,
         count: controls.length,
         terminator: `qa-control-end:r:${controls.length}`,
-        ...(reason === undefined ? {} : { reason }),
+        ...definedFields({ reason }),
       }),
       stderr: "",
     };

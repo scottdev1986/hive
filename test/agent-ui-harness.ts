@@ -17,8 +17,9 @@ import {
   AgentUi,
   type PaneIdentity,
   type UiDiagnosticReport,
-} from "../src/cli/agent-ui/agent-ui-exports";
+} from "../src/cli/agent-ui/agent-ui";
 import { OutboundJournal } from "../src/cli/agent-ui/outbound-journal";
+import { definedFields } from "../src/shared/defined-fields";
 
 /** Keeps UI tests deterministic without starting OpenTUI's shared parser worker. */
 export const testSyntaxHighlighter = {
@@ -101,15 +102,11 @@ export async function createAgentUiHarness(
       reportedWakes.push(report);
       await options.reportWake?.(report);
     },
-    ...(options.paneClient === undefined
-      ? {}
-      : { paneClient: options.paneClient }),
-    ...(options.reportDiagnostic === undefined
-      ? {}
-      : { reportDiagnostic: options.reportDiagnostic }),
-    ...(options.loadCompactReload === undefined
-      ? {}
-      : { loadCompactReload: options.loadCompactReload }),
+    ...definedFields({
+      paneClient: options.paneClient,
+      reportDiagnostic: options.reportDiagnostic,
+      loadCompactReload: options.loadCompactReload,
+    }),
   });
   let closed = false;
   return {

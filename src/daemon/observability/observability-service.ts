@@ -4,7 +4,7 @@ import {
   isCallToolResult,
 } from "@modelcontextprotocol/server";
 import { ZodError } from "zod";
-import type { CapabilityProvider } from "../../schemas/capability";
+import type { CapabilityProvider } from "../../schemas/provider";
 import {
   type ObservabilityEvent,
   ObservabilityEventSchema,
@@ -17,6 +17,7 @@ import {
 } from "../../schemas/observability";
 import type { Clock } from "../../shared/clock";
 import { systemClock } from "../../shared/clock";
+import { definedFields } from "../../shared/defined-fields";
 import type { DatabaseHost } from "../../shared/database-host";
 import { errorMessage } from "../../shared/error-message";
 import { isRecord } from "../../shared/is-record";
@@ -209,7 +210,9 @@ export class ObservabilityService {
       subject: scope?.subject ?? value("subject"),
       session: value("session"),
       tool: value("tool"),
-      ...(limitText === undefined ? {} : { limit: Number(limitText) }),
+      ...definedFields({
+        limit: limitText === undefined ? undefined : Number(limitText),
+      }),
     });
     if (!parsed.success) {
       return Response.json(

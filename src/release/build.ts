@@ -8,13 +8,14 @@ import {
   currentBuildHash,
   DAEMON_SCHEMA_EPOCH,
   DAEMON_WIRE_PROTOCOL,
-} from "../daemon/lifecycle/daemon-lifecycle";
+} from "../daemon/lifecycle/handshake";
 import {
   buildEmbeddingsRuntimeArtifact,
   EMBEDDINGS_RUNTIME_ASSET,
   findSourceNodeModules,
 } from "../embeddings-runtime/runtime";
 import { type HiveVariant, parseVariant } from "../hive-home/variant";
+import { definedFields } from "../shared/defined-fields";
 import {
   MANIFEST_ASSET,
   parseReleaseManifest,
@@ -94,7 +95,9 @@ async function sh(
     cwd,
     stdout: "inherit",
     stderr: "inherit",
-    ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
+    ...definedFields({
+      env: env === undefined ? undefined : { ...process.env, ...env },
+    }),
   });
   const code = await proc.exited;
   if (code !== 0) throw new Error(`${command.join(" ")} exited ${code}`);
@@ -137,7 +140,7 @@ export function nonSystemMachODependencies(otoolOutput: string): string[] {
     ...new Set(
       otoolOutput
         .split("\n")
-        .filter((line) => /^\s+(?:\/|@)/.test(line))
+        .filter((line) => /^\s+[\/@]/.test(line))
         .map((line) => line.trim())
         .map((line) => line.split(" (compatibility version", 1)[0] ?? "")
         .filter(

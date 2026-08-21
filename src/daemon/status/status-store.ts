@@ -17,7 +17,8 @@ import {
   WorkspaceSnapshotV2Schema,
 } from "../../schemas/status-envelope";
 import type { DatabaseHost } from "../../shared/database-host";
-import type { Role } from "../authorization/authorization-service";
+import { definedFields } from "../../shared/defined-fields";
+import type { Role } from "../../schemas/capability";
 import { HierarchyStore } from "../hierarchy-store";
 import {
   ManifestJournal,
@@ -495,13 +496,11 @@ export class StatusStore implements WorkspaceStatusEventSource {
           assignmentId: input.assignmentId,
           assignmentGeneration: input.assignmentGeneration,
           phase: input.phase,
-          ...(input.progress === undefined ? {} : { progress: input.progress }),
+          ...definedFields({ progress: input.progress }),
           summary: input.summary,
           blocker: input.blocker ?? null,
           evidenceRefs: input.evidenceRefs,
-          ...(input.nextCheckpoint === undefined
-            ? {}
-            : { nextCheckpoint: input.nextCheckpoint }),
+          ...definedFields({ nextCheckpoint: input.nextCheckpoint }),
           freshUntil: expiresAt,
           binding: {
             agentId: actor.agentId,

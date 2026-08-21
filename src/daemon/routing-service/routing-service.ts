@@ -186,12 +186,15 @@ export class RoutingService {
       const store = this.modelControlStore();
       const quota =
         this.deps.quota?.config.enabled === true ? this.deps.quota : undefined;
-      this.routingInspector = new HiveRouter({
-        db: this.deps.db,
-        readPolicy: () => store.read(),
-        ...(quota === undefined
-          ? {}
-          : {
+      this.routingInspector =
+        quota === undefined
+          ? new HiveRouter({
+              db: this.deps.db,
+              readPolicy: () => store.read(),
+            })
+          : new HiveRouter({
+              db: this.deps.db,
+              readPolicy: () => store.read(),
               launchCooldown: (candidate) => quota.launchCooldown(candidate),
               drainedPool: (candidate) => {
                 const drained = quota.drainFor(candidate);
@@ -201,8 +204,7 @@ export class RoutingService {
               },
               poolsGoverning: (candidate) =>
                 quota.poolsGoverning(candidate).map((status) => status.pool),
-            }),
-      });
+            });
     }
     return this.routingInspector;
   }

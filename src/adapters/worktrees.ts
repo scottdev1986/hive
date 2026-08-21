@@ -14,8 +14,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { hiveInstanceSuffix, isDefaultHiveHome } from "../hive-home/home";
 import { type AgentRecord, isLiveAgent } from "../schemas/agent";
-import { CAPABILITY_PROVIDERS } from "../schemas/capability";
+import { CAPABILITY_PROVIDERS } from "../schemas/provider";
 import { SHIPPED_SKILLS } from "../skills/shipped";
+import { definedFields } from "../shared/defined-fields";
 import { withFileLock } from "./file-lock";
 import { type GitResult, runGit as runGitCommand } from "./git";
 import { type ProcessLiveness, probeProcessLiveness } from "./process-liveness";
@@ -45,7 +46,7 @@ const runGit = (
 ): Promise<GitResult> =>
   runGitCommand(repoRoot, args, {
     killSignal: "SIGKILL",
-    ...(options.env === undefined ? {} : { env: options.env }),
+    ...definedFields({ env: options.env }),
   });
 
 export const WORKTREE_SETTLING_INTERVAL_MS = 30_000;
@@ -746,10 +747,11 @@ async function readStewardshipMeta(
       agentName: typeof parsed.agentName === "string" ? parsed.agentName : null,
       preservedAt:
         typeof parsed.preservedAt === "string" ? parsed.preservedAt : null,
-      ...(typeof parsed.observedAt === "string"
-        ? { observedAt: parsed.observedAt }
-        : {}),
-      ...(typeof parsed.keptAt === "string" ? { keptAt: parsed.keptAt } : {}),
+      ...definedFields({
+        observedAt:
+          typeof parsed.observedAt === "string" ? parsed.observedAt : undefined,
+        keptAt: typeof parsed.keptAt === "string" ? parsed.keptAt : undefined,
+      }),
     };
   } catch {
     return null;
@@ -1136,7 +1138,16 @@ export const isHiveWorktreeWiring = async (
   return source !== null && ownsGrokHook(source);
 };
 
-/** Commits on `revision` whose CHANGE is not already on the main branch. Equivalence is by patch id, not by commit id. A cherry-picked commit keeps its change but takes a new sha, so `main..revision` still lists it and a plain count calls a fully-landed branch stranded — forever, since nothing about it will ever change. `--cherry-pick --right-only` over the symmetric difference drops commits with an equivalent on the other side, which is the question actually being asked: is there work here that main does not have? Throws rather than returning 0 when git cannot answer, so a caller that deletes on zero cannot be told "nothing here" by a failed measurement. That is why the output is pattern-matched and not merely passed through `Number`, which turns empty output into a confident 0. */
+/** Commits on `revision` whose CHANGE is not already on the main branch.
+ * Equivalence is by patch id, not by commit id. A cherry-picked commit keeps its
+ * change but takes a new sha, so `main..revision` still lists it and a plain count
+ * calls a fully-landed branch stranded — forever, since nothing about it will ever change.
+ * `--cherry-pick --right-only` over the symmetric difference drops commits with an
+ * equivalent on the other side, which is the question actually being asked: is there
+ * work here that main does not have? Throws rather than returning 0 when git cannot
+ * answer, so a caller that deletes on zero cannot be told "nothing here" by a failed
+ * measurement. That is why the output is pattern-matched and not merely passed through
+ * `Number`, which turns empty output into a confident 0. */
 export async function countCommitsNotOnMain(
   repoRoot: string,
   mainBranch: string,
@@ -1286,8 +1297,10 @@ export async function listSettlementBranches(
         branch,
         tip,
         unmergedCommits,
-        ...(preserved ? { preserved } : {}),
-        ...(ownerInstanceId === undefined ? {} : { ownerInstanceId }),
+        ...definedFields({
+          preserved: preserved ? true : undefined,
+          ownerInstanceId,
+        }),
       };
     }),
   );
@@ -1401,16 +1414,17 @@ export async function reconcileOrphanedWorktrees(
           : agent.readOnly
             ? "expected-no-work"
             : "nothing-to-preserve"),
-      ...(landing === null ||
-      landedCommit === undefined ||
-      landedAt === undefined
-        ? {}
-        : {
-            landing: {
-              commit: landedCommit,
-              at: landedAt,
-            },
-          }),
+      ...definedFields({
+        landing:
+          landing === null ||
+          landedCommit === undefined ||
+          landedAt === undefined
+            ? undefined
+            : {
+                commit: landedCommit,
+                at: landedAt,
+              },
+      }),
     });
   }
 
@@ -1735,9 +1749,10 @@ export function createWorktreeSettlementBoundary(): {
             if (mutation.worktreePath !== null) {
               await removeWorktree(mutation.repoRoot, mutation.worktreePath, {
                 discardTracked: true,
-                ...(mutation.branch === null
-                  ? {}
-                  : { branch: mutation.branch.name }),
+                ...definedFields({
+                  branch:
+                    mutation.branch === null ? undefined : mutation.branch.name,
+                }),
               });
             }
             if (mutation.branch !== null) {
@@ -1808,9 +1823,10 @@ export function createWorktreeSettlementBoundary(): {
               await removeWorktree(mutation.repoRoot, mutation.worktreePath, {
                 discardTracked: true,
                 branchOwnership: "decision-bound",
-                ...(mutation.branch === null
-                  ? {}
-                  : { branch: mutation.branch.name }),
+                ...definedFields({
+                  branch:
+                    mutation.branch === null ? undefined : mutation.branch.name,
+                }),
               });
             }
             if (mutation.branch !== null) {

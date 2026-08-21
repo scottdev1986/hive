@@ -1,21 +1,9 @@
-// stopHive with partial deps must not kill through ambient HIVE_HOME.
-//
-// A call that mocks only liveness/kill/cleanup while leaving
-// readAgents/readSessiondBinding/stopSessiond on defaults can inherit a real
-// instance's HIVE_HOME from the worktree shell. Those defaults then read the
-// real agent list, daemon.port, and user credential and POST kill
-// requests (`reason="hive stop ppid=<gone> argv=[]"` under `bun test`), while
-// the mocked `kill` never signals the daemon.
-//
-// This suite sandboxes that scenario: scratch HIVE_HOME, a live sessiond
-// agent row, terminal-host binding, user credential, and daemon.port
-// aimed at a local capture server. No kill request may escape a stopHive
-// whose caller did not explicitly provide the lethal dependency.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { killAgentCli, killOrigin, stopHive } from "../../src/cli/control";
+import { definedFields } from "../../src/shared/defined-fields";
 import { writeCredential } from "../../src/daemon/authorization/credentials";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import type { AgentRecord } from "../../src/schemas/agent";
@@ -91,7 +79,7 @@ beforeEach(() => {
         } | null;
         killRequests.push({
           url: url.pathname,
-          ...(body?.origin === undefined ? {} : { origin: body.origin }),
+          ...definedFields({ origin: body?.origin }),
         });
         return Response.json({
           reaped: { killed: [{ pid: 1 }], survivors: [] },

@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import type { Autonomy, AutonomyControl } from "../../src/config/autonomy";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
+import { definedFields } from "../../src/shared/defined-fields";
 import { tempRoot } from "../temp-root";
 
 const home = tempRoot("hive-autonomy-endpoint-");
@@ -40,7 +41,9 @@ function harness(options: { withControl?: boolean } = {}): {
       },
     },
     repoRoot: "/tmp/hive-autonomy-noop",
-    ...(options.withControl === false ? {} : { autonomy: control }),
+    ...definedFields({
+      autonomy: options.withControl === false ? undefined : control,
+    }),
   });
   return { daemon, control };
 }
@@ -58,7 +61,9 @@ const request = (
     new Request("http://hive/autonomy", {
       method,
       headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...definedFields({
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }),
     }),
   );
 };

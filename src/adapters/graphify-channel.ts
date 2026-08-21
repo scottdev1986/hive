@@ -3,6 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { verifyManifest } from "../release/manifest";
+import { definedFields } from "../shared/defined-fields";
 import {
   HIVE_RELEASE_PUBLIC_KEY,
   HIVE_UPDATE_REPO,
@@ -114,9 +115,10 @@ export async function fetchGraphifyRelease(
     headers: {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
-      ...(token === undefined || token === ""
-        ? {}
-        : { Authorization: `Bearer ${token}` }),
+      ...definedFields({
+        Authorization:
+          token === undefined || token === "" ? undefined : `Bearer ${token}`,
+      }),
     },
     signal: AbortSignal.timeout(10_000),
   });

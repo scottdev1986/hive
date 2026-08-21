@@ -1,6 +1,7 @@
 // Decodes shared scalar fields from Claude's untrusted stream-json records.
 
 import { createHash } from "node:crypto";
+import { definedFields } from "../../../shared/defined-fields";
 import { isRecord } from "../../../shared/is-record";
 import type { VendorCommand } from "./types";
 
@@ -28,8 +29,9 @@ export function commandFrom(value: unknown): VendorCommand | null {
     name: value.name,
     description:
       typeof value.description === "string" ? value.description : null,
-    ...(typeof value.argumentHint === "string"
-      ? { argumentHint: value.argumentHint }
-      : {}),
+    ...definedFields({
+      argumentHint:
+        typeof value.argumentHint === "string" ? value.argumentHint : undefined,
+    }),
   };
 }

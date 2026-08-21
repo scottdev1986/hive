@@ -691,27 +691,31 @@ export class WorktreeLifecycleService {
       isLiveAgent(agent) &&
       (stored.record.state === "needs-integration" ||
         stored.record.state === "measurement-blocked");
-    return this.updateCase(stored, {
+    const record = {
       ...stored.record,
       agentId: agent.id,
       agentName: agent.name,
       generation: this.generation(agent),
       worktreePath: agent.worktreePath,
-      ...(reactivate
+    };
+    return this.updateCase(
+      stored,
+      (reactivate
         ? {
-            state: "active",
-            owner: "agent",
+            ...record,
+            state: "active" as const,
+            owner: "agent" as const,
             reason: "agent generation owns an active worktree bundle",
             due: {
               nextActionAt: null,
-              watchedTrigger: "agent-generation-ended",
+              watchedTrigger: "agent-generation-ended" as const,
             },
             blockedOn: null,
             reviewAt: null,
             proofDigest: null,
           }
-        : {}),
-    } as SettlementCase);
+        : record) as SettlementCase,
+    );
   }
 
   async updateSettlementDebt(settledThisSweep = 0): Promise<{

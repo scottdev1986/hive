@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { definedFields } from "../shared/defined-fields";
 import { formatlessString } from "./wire-schema";
 
 export function normalizeNulText(value: string): string {
@@ -199,8 +200,11 @@ export function compactMemoryWriteResult(
     rawPath,
     source: fact.source,
     status: fact.status,
-    ...(fact.verified !== undefined ? { verified: fact.verified } : {}),
-    ...(similarCandidates.length > 0 ? { similarCandidates } : {}),
+    ...definedFields({
+      verified: fact.verified,
+      similarCandidates:
+        similarCandidates.length > 0 ? similarCandidates : undefined,
+    }),
   };
 }
 

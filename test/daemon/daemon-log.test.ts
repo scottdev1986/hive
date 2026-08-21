@@ -12,6 +12,7 @@ import {
   daemonLogPath,
 } from "../../src/daemon/observability/daemon-log";
 import { HiveDaemon } from "../../src/daemon/server";
+import { definedFields } from "../../src/shared/defined-fields";
 import type {
   Spawner,
   SpawnRequest,
@@ -216,20 +217,19 @@ async function makeDaemon(options: {
     repoRoot,
     episodicStore: episodic,
     memoryEmbeddings: { provider: "local", model: "bge-small-en-v1.5" },
-    ...(options.load === undefined
-      ? {}
-      : { memoryEmbeddingLoad: options.load }),
-    ...(reconcile === undefined
-      ? {}
-      : {
-          reconcileOrphanedWorktrees: async () => {
-            await reconcile();
-            return {
-              worktrees: [],
-              preservedRefs: { releasable: [], kept: [] },
-            };
-          },
-        }),
+    ...definedFields({
+      memoryEmbeddingLoad: options.load,
+      reconcileOrphanedWorktrees:
+        reconcile === undefined
+          ? undefined
+          : async () => {
+              await reconcile();
+              return {
+                worktrees: [],
+                preservedRefs: { releasable: [], kept: [] },
+              };
+            },
+    }),
   });
   return { daemon, repoRoot };
 }

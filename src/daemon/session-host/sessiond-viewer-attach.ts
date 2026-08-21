@@ -1,5 +1,6 @@
 import { connect, type Socket } from "node:net";
 import type { z } from "zod";
+import { definedFields } from "../../shared/defined-fields";
 import { safeJsonParse } from "../../shared/json";
 import {
   type TerminalGeometry,
@@ -338,9 +339,9 @@ export class SessiondViewerAttachClient {
       action: request.action,
       transactionId: request.transactionId,
       idempotencyKey: request.idempotencyKey,
-      ...(request.expectedForeground === undefined
-        ? {}
-        : { expectedForeground: request.expectedForeground }),
+      ...definedFields({
+        expectedForeground: request.expectedForeground,
+      }),
       operation: {
         kind: "bytes",
         encoding: "base64",

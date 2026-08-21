@@ -6,6 +6,7 @@ import type {
   MeasuredProviderCapabilities,
   ProviderTransport,
 } from "../../../schemas/capability";
+import { definedFields } from "../../../shared/defined-fields";
 import { errorMessage } from "../../../shared/error-message";
 import { pollUntil } from "../../../shared/poll-until";
 import { HIVE_VERSION } from "../../../shared/version";
@@ -209,7 +210,7 @@ export class AcpProviderSession implements ProviderSession {
         workingDirectory: spawn.cwd,
       },
       measured: { ...profile.initialMeasured },
-      ...(profile.absences !== undefined ? { absences: profile.absences } : {}),
+      ...definedFields({ absences: profile.absences }),
       handshake,
     };
   }
@@ -303,11 +304,13 @@ export class AcpProviderSession implements ProviderSession {
     const result = await this.client.acp.request(acpMethods.agent.session.new, {
       cwd: input.cwd,
       mcpServers: [],
-      ...(configIds === undefined &&
-      this.profile.sessionOptionMethods === undefined &&
-      input.model !== undefined
-        ? { model: input.model }
-        : {}),
+      ...definedFields({
+        model:
+          configIds === undefined &&
+          this.profile.sessionOptionMethods === undefined
+            ? input.model
+            : undefined,
+      }),
     });
     const sessionId = sessionIdFrom(result);
     if (sessionId === null) {
@@ -731,9 +734,7 @@ export class AcpProviderSession implements ProviderSession {
         observedAt,
       ),
       measurements: { ...this.capabilities.measured },
-      ...(this.capabilities.absences === undefined
-        ? {}
-        : { absences: this.capabilities.absences }),
+      ...definedFields({ absences: this.capabilities.absences }),
       commands: [...this.commands],
     };
   }
@@ -1061,7 +1062,7 @@ export async function probeAcpRuntime(
         reason: errorMessage(error),
       },
       measurements: {},
-      ...(profile.absences === undefined ? {} : { absences: profile.absences }),
+      ...definedFields({ absences: profile.absences }),
       commands: [],
       executable: spawn.executable,
       version: null,

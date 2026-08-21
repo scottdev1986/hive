@@ -5,6 +5,7 @@ import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { TokenUsageEventIngest } from "../../src/schemas/token-usage-schema";
 import { TokenUsageStore } from "../../src/usage-service/token-usage";
+import { definedFields } from "../../src/shared/defined-fields";
 import { required } from "../required";
 import { tempRoot } from "../temp-root";
 
@@ -20,7 +21,9 @@ function reading(
     counts,
     observedAt: options.observedAt ?? at,
     source: options.source ?? "protocol-test",
-    ...(options.cumulative === true ? { cumulative: true } : {}),
+    ...definedFields({
+      cumulative: options.cumulative === true ? true : undefined,
+    }),
   };
 }
 
@@ -309,7 +312,9 @@ describe("TokenUsageStore", () => {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          ...definedFields({
+            body: body === undefined ? undefined : JSON.stringify(body),
+          }),
         }),
       );
 

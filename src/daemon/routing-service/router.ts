@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseHost } from "../../shared/database-host";
-import type { CapabilityProvider } from "../../schemas/capability";
+import { definedFields } from "../../shared/defined-fields";
+import type { CapabilityProvider } from "../../schemas/provider";
 import type {
   RouteCandidateInspection,
   RouteCandidateRefusal,
@@ -496,9 +497,12 @@ function policyGate(policy: RoutingPolicy): CandidateGate {
     const raw = {
       tool: candidate.provider,
       model: candidate.model,
-      ...(candidate.effort.mode === "exact"
-        ? { effort: candidate.effort.value }
-        : {}),
+      ...definedFields({
+        effort:
+          candidate.effort.mode === "exact"
+            ? candidate.effort.value
+            : undefined,
+      }),
     };
     const result = await AuthorizedLaunch.gate(raw, checks);
     return result.refusal !== undefined

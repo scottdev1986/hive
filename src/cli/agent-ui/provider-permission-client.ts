@@ -3,6 +3,7 @@ import {
   ProviderPermissionDecisionsSchema,
   type ProviderPermissionSettlementOutcome,
 } from "../../schemas/provider-permission";
+import { definedFields } from "../../shared/defined-fields";
 import { decodeJson } from "../daemon-response";
 import { PaneDaemonClient } from "./pane-daemon-client";
 
@@ -22,7 +23,7 @@ export class ProviderPermissionClient {
     this.daemon = new PaneDaemonClient({
       port,
       subject,
-      ...(fetcher === undefined ? {} : { fetch: fetcher }),
+      ...definedFields({ fetch: fetcher }),
     });
   }
 

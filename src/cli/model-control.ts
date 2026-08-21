@@ -11,6 +11,7 @@ import type { QuotaStatus } from "../schemas/quota";
 import type { TokenUsageSnapshot } from "../schemas/token-usage-schema";
 import { systemClock } from "../shared/clock";
 import { isDaemonPort } from "../shared/daemon-port";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 import { fetchTokenUsage } from "../usage-service/token-usage-client";
 import { readBillingWithMemory } from "../usage-service/usage-credits/usage-credit-memory";
@@ -190,7 +191,9 @@ export async function printModelControlSnapshot(port?: number): Promise<void> {
   console.log(
     JSON.stringify(
       await buildModelControlSnapshot(
-        port === undefined ? {} : { daemonPort: () => port },
+        definedFields({
+          daemonPort: port === undefined ? undefined : () => port,
+        }),
       ),
     ),
   );

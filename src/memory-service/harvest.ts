@@ -5,6 +5,7 @@ import type { EpisodicEvent, EpisodicStore } from "./episodic";
 import { discoverMemoryFacts, readMemoryFact } from "./memory-store";
 import { normalizeTitle } from "./article-format";
 import type { MemoryWriteFileResult } from "./store-records";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 
 export function isHarvestBoundaryEvent(
@@ -463,7 +464,7 @@ async function harvestPitfallsLocked(
       });
       const written = await write({
         scope: "repo",
-        ...(duplicate === undefined ? {} : { id: duplicate.id }),
+        ...definedFields({ id: duplicate?.id }),
         topic: "pitfalls",
         title,
         body,

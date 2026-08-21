@@ -22,6 +22,7 @@ import {
 } from "../../src/daemon/authorization/credentials";
 import { credentialPath } from "../../src/hive-home/home";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { definedFields } from "../../src/shared/defined-fields";
 import type { LandReadiness } from "../../src/daemon/landing/landing-service";
 import type { MainHealthMonitorHandle } from "../../src/daemon/landing/main-health-monitor";
 import type { ProjectGate } from "../../src/daemon/landing/project-gate";
@@ -125,18 +126,18 @@ function harness(
       };
     },
     projectGate: options.projectGate ?? (async () => {}),
-    ...(options.mainHealthMonitor === undefined
-      ? {}
-      : { mainHealthMonitor: options.mainHealthMonitor }),
+    ...definedFields({
+      mainHealthMonitor: options.mainHealthMonitor,
+    }),
     readLandReadiness: async () => readiness,
     listSettlementBranches: async () => [],
     reconcileOrphanedWorktrees: async () => ({
       worktrees: [],
       preservedRefs: { releasable: [], kept: [] },
     }),
-    ...(options.refreshModelControl === undefined
-      ? {}
-      : { refreshModelControl: options.refreshModelControl }),
+    ...definedFields({
+      refreshModelControl: options.refreshModelControl,
+    }),
   });
   bindRootSession(db);
   return { daemon, db, spawner, landed, landFailures };
@@ -214,7 +215,9 @@ describe("an unauthenticated process cannot mutate anything", () => {
       const response = await authorized(daemon, null)(`http://hive${path}`, {
         method,
         headers: { "content-type": "application/json" },
-        ...(body === null ? {} : { body: JSON.stringify(body) }),
+        ...definedFields({
+          body: body === null ? undefined : JSON.stringify(body),
+        }),
       });
       expect([path, method, response.status]).toEqual([path, method, 401]);
     }

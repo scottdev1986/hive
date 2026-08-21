@@ -19,6 +19,7 @@ import {
 } from "../schemas/quota";
 import type { RoutingCategory } from "../schemas/routing-policy";
 import { systemClock } from "../shared/clock";
+import { definedFields } from "../shared/defined-fields";
 import type { QuotaLedger } from "./quota-ledger";
 import type {
   DiscoveredQuotaPool,
@@ -312,7 +313,9 @@ export class QuotaService {
     const candidate = {
       tool: held.provider,
       model: liveModel,
-      ...(held.effort === null ? {} : { effort: held.effort }),
+      ...definedFields({
+        effort: held.effort === null ? undefined : held.effort,
+      }),
     };
     const entries = limitsFor(this.ledger, this.config, candidate).map(
       (limit) => ({
@@ -682,20 +685,16 @@ export class QuotaService {
         weeklyResetAt: reading.weekly?.resetsAt ?? null,
         source: reading.source,
         confidence: reading.confidence,
-        ...(fiveHourPct === null
-          ? {}
-          : {
-              fiveHourObservedAt: reading.observedAt,
-              fiveHourSource: reading.source,
-              fiveHourConfidence: reading.confidence,
-            }),
-        ...(weeklyPct === null
-          ? {}
-          : {
-              weeklyObservedAt: reading.observedAt,
-              weeklySource: reading.source,
-              weeklyConfidence: reading.confidence,
-            }),
+        ...definedFields({
+          fiveHourObservedAt:
+            fiveHourPct === null ? undefined : reading.observedAt,
+          fiveHourSource: fiveHourPct === null ? undefined : reading.source,
+          fiveHourConfidence:
+            fiveHourPct === null ? undefined : reading.confidence,
+          weeklyObservedAt: weeklyPct === null ? undefined : reading.observedAt,
+          weeklySource: weeklyPct === null ? undefined : reading.source,
+          weeklyConfidence: weeklyPct === null ? undefined : reading.confidence,
+        }),
       }),
     );
   }
@@ -895,10 +894,9 @@ export class QuotaService {
       request.category,
       now,
       { purpose: "control", controlMessageId: request.controlMessageId },
-    ).map((input, index) => ({
-      ...input,
-      ...(index === 0 ? {} : { controlMessageId: undefined }),
-    }));
+    ).map((input, index) =>
+      index === 0 ? input : { ...input, controlMessageId: undefined },
+    );
     // §05: a critical acknowledgement is never refused on usage either. It books unchecked, on its own model, always.
     const reservations = this.ledger.reserveGroupUnchecked(inputs);
     const reservation = reservations[0];

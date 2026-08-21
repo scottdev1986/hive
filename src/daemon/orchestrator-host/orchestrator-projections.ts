@@ -1,4 +1,5 @@
 import type { AgentRecord } from "../../schemas/agent";
+import { definedFields } from "../../shared/defined-fields";
 import type { ApprovalKind } from "../../schemas/approval";
 import type { ActivitySnapshot } from "../../schemas/provider-communication";
 
@@ -91,25 +92,27 @@ export function compactActiveTeam(
           MAX_TASK_CODE_POINTS,
         ),
         waitingInstructionCount: observed.instructions.length,
-        ...(latestWaiting === undefined
-          ? {}
-          : {
-              latestWaitingInstruction: truncateCodePoints(
-                latestWaiting.replaceAll(/\s+/g, " ").trim(),
-                MAX_TASK_CODE_POINTS,
-              ),
-            }),
+        ...definedFields({
+          latestWaitingInstruction:
+            latestWaiting === undefined
+              ? undefined
+              : truncateCodePoints(
+                  latestWaiting.replaceAll(/\s+/g, " ").trim(),
+                  MAX_TASK_CODE_POINTS,
+                ),
+        }),
         observedFiles: observed.files,
         overlaps,
-        ...(Object.hasOwn(agent, "graphifyCalls")
-          ? {
-              graphifyCalls: (
-                agent as AgentRecord & { graphifyCalls: number | null }
-              ).graphifyCalls,
-            }
-          : {}),
+        ...definedFields({
+          graphifyCalls: Object.hasOwn(agent, "graphifyCalls")
+            ? (agent as AgentRecord & { graphifyCalls: number | null })
+                .graphifyCalls
+            : undefined,
+        }),
         lastEventAt: agent.lastEventAt,
-        ...(activity.has(agent.id) ? { activity: activity.get(agent.id) } : {}),
+        ...definedFields({
+          activity: activity.has(agent.id) ? activity.get(agent.id) : undefined,
+        }),
       };
     });
 }
@@ -142,17 +145,13 @@ export function compactSpawnResult(agent: AgentRecord): SpawnResultSummary {
     tool: agent.tool,
     model: agent.model,
     category: agent.category,
-    ...(agent.executionIdentity?.effort !== undefined
-      ? { effort: agent.executionIdentity.effort }
-      : {}),
+    ...definedFields({ effort: agent.executionIdentity?.effort }),
     status: agent.status,
     branch: agent.branch,
     worktreePath: agent.worktreePath,
     contextPct: agent.contextPct,
     readOnly: agent.readOnly,
-    ...(agent.quotaReservationId !== undefined
-      ? { quotaReservationId: agent.quotaReservationId }
-      : {}),
+    ...definedFields({ quotaReservationId: agent.quotaReservationId }),
     taskDescription: truncateCodePoints(
       agent.taskDescription,
       MAX_SPAWN_TASK_CODE_POINTS,

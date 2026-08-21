@@ -5,7 +5,7 @@ import type { DatabaseHost } from "../shared/database-host";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
-} from "../schemas/capability";
+} from "../schemas/provider";
 import {
   type CandidateEffort,
   emptyRoutingPolicy,
@@ -20,6 +20,7 @@ import {
   RoutingPolicyMutationSchema,
   RoutingPolicySchema,
 } from "../schemas/routing-policy";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 
 type RoutingPolicyDatabase = Pick<DatabaseHost, "database">;
@@ -371,7 +372,7 @@ function applyMutation(
           {
             provider: mutation.provider,
             model: mutation.model,
-            ...(existing?.state === undefined ? {} : { state: existing.state }),
+            ...definedFields({ state: existing?.state }),
             effort: mutation.effort,
           },
         ],
@@ -478,7 +479,7 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
     .map((row) => ({
       provider: row.provider,
       model: row.model,
-      ...(row.state === undefined ? {} : { state: row.state }),
+      ...definedFields({ state: row.state }),
       effort: row.effort,
     }));
   const canonicalRoute = (route: RoutePolicy): RoutePolicy => ({

@@ -58,6 +58,7 @@ import { getHiveHome, orchestratorSessionKey } from "../hive-home/home";
 import { buildMemoryIndex } from "../memory-service/memory-store";
 import { ORCHESTRATOR_NAME } from "../schemas/agent";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
+import { definedFields } from "../shared/defined-fields";
 import { shellJoin } from "../shared/shell-quote";
 import { IS_RELEASE_BUILD } from "../shared/version";
 import { isTestRunnerEnv } from "./invoker";
@@ -169,9 +170,10 @@ export async function prepareOrchestratorConfig(
         daemonPort: port,
         orchestrator: true,
         instructionPath: launchPromptPath(orchestratorSessionKey()),
-        ...(skills.directory === null
-          ? {}
-          : { skillPaths: [skills.directory] }),
+        ...definedFields({
+          skillPaths:
+            skills.directory === null ? undefined : [skills.directory],
+        }),
       });
       return;
     }
@@ -369,15 +371,14 @@ export function orchestratorLaunchEnvironment(
   if (tool === "codex") {
     return { [HIVE_CAPABILITY_TOKEN_ENV]: tokens.codexToken };
   }
-  return {
-    [HIVE_CAPABILITY_TOKEN_ENV]: tokens.queenToken,
-    ...(tool === "grok"
-      ? {
-          GROK_HOME: grokQueenHome(orchestratorConfigRoot()),
-          ...GROK_COMPATIBILITY_ENV,
-        }
-      : {}),
-  };
+  if (tool === "grok") {
+    return {
+      [HIVE_CAPABILITY_TOKEN_ENV]: tokens.queenToken,
+      GROK_HOME: grokQueenHome(orchestratorConfigRoot()),
+      ...GROK_COMPATIBILITY_ENV,
+    };
+  }
+  return { [HIVE_CAPABILITY_TOKEN_ENV]: tokens.queenToken };
 }
 
 export async function launchOrchestrator(
@@ -535,7 +536,7 @@ export async function launchOrchestrator(
     worktreePath: cwd,
     journalPath: orchestratorJournalPath(),
     model: effectiveModel ?? "default",
-    ...(effectiveEffort === undefined ? {} : { effort: effectiveEffort }),
+    ...definedFields({ effort: effectiveEffort }),
     readOnly: true,
     instructionPath: launchPromptPath(orchestratorSessionKey()),
     kickoff: QUEEN_KICKOFF,
@@ -551,7 +552,7 @@ export async function launchOrchestrator(
     expectedExecutable: providerExecutable,
     model: effectiveModel ?? null,
     effort: effectiveEffort ?? null,
-    ...(targetGeneration === undefined ? {} : { targetGeneration }),
+    ...definedFields({ targetGeneration }),
   });
   return await runOrchestratorSessiondLaunch(
     launch,

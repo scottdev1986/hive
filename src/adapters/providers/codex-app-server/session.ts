@@ -1,11 +1,9 @@
-// Owns Codex App Server session state machine, preserving wire-event order,
-// approval timing, turn threading, and reconnect lifecycle as one boundary.
-
 import {
   codexEffectiveDefault,
   recordsFromCodexModelList,
 } from "../../../daemon/provider-capabilities/discovery";
 import type { MeasuredProviderCapabilities } from "../../../schemas/capability";
+import { definedFields } from "../../../shared/defined-fields";
 import { isRecord } from "../../../shared/is-record";
 import { percentOfWindow } from "../../../usage-service/context-occupancy";
 import type {
@@ -425,11 +423,10 @@ export class CodexAppServerSession implements ProviderSession {
     await this.updateThreadSettings({
       threadId: input.vendorSessionId,
       model: input.model,
-      ...(input.effort === undefined
-        ? {}
-        : {
-            effort: input.effort as ThreadSettingsUpdateParams["effort"],
-          }),
+      ...definedFields({
+        effort: input.effort as
+          ThreadSettingsUpdateParams["effort"] | undefined,
+      }),
     });
   }
 
@@ -470,7 +467,7 @@ export class CodexAppServerSession implements ProviderSession {
     for (const entry of response.data) {
       if (!isRecord(entry) || !Array.isArray(entry.skills)) continue;
       for (const skill of entry.skills) {
-        if (!isRecord(skill) || skill.enabled !== true) continue;
+        if (!isRecord(skill) || !skill.enabled) continue;
         const name = typeof skill.name === "string" ? skill.name : null;
         if (name === null || names.has(name)) continue;
         names.add(name);
@@ -516,9 +513,7 @@ export class CodexAppServerSession implements ProviderSession {
               effectiveDefault: codexEffectiveDefault(config, observedAt),
             },
       measurements: { ...this.capabilities.measured },
-      ...(this.capabilities.absences === undefined
-        ? {}
-        : { absences: this.capabilities.absences }),
+      ...definedFields({ absences: this.capabilities.absences }),
       commands,
     };
   }
@@ -671,7 +666,7 @@ export class CodexAppServerSession implements ProviderSession {
         this.emit({
           kind: "turn-started",
           turnId,
-          ...(clientInputId === undefined ? {} : { clientInputId }),
+          ...definedFields({ clientInputId }),
           raw: message,
         });
         return;
@@ -882,7 +877,7 @@ export class CodexAppServerSession implements ProviderSession {
         if (pending !== undefined) {
           clearTimeout(pending.timer);
           this.pendingApprovals.delete(requestId);
-        } else if (this.pendingQuestions.delete(requestId) === false) {
+        } else if (!this.pendingQuestions.delete(requestId)) {
           return;
         }
         this.emit({

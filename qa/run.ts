@@ -1,14 +1,9 @@
-// The Hive QA runner: drives the installed QA Workspace app through the
-// qa-control gate and verifies on the daemon's own MCP and HTTP clients. Run
-// it against a live rig with `make qa-run` after `make qa`; it refuses any
-// environment whose fences do not hold. Exit 0 = every row passed, 1 = a row
-// measured a product failure, 2 = something could not be measured. Lives in
-// qa/ with the rows and the unit tests; isolation fences stay in scripts/qa/.
 import { fileURLToPath } from "node:url";
 import { HiveMcpSession } from "../src/cli/mcp";
 import { UserDaemonClient } from "../src/cli/user-daemon-client";
 import { readDaemonPort } from "../src/daemon/lifecycle/daemon-lifecycle";
 import { hiveInstanceSuffix } from "../src/hive-home/home";
+import { definedFields } from "../src/shared/defined-fields";
 import {
   type Exec,
   type ExecResult,
@@ -22,8 +17,7 @@ const exec: Exec = async (argv, options): Promise<ExecResult> => {
   const proc = Bun.spawn([...argv], {
     stdout: "pipe",
     stderr: "pipe",
-    ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
-    ...(options?.env === undefined ? {} : { env: options.env }),
+    ...definedFields({ cwd: options?.cwd, env: options?.env }),
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),

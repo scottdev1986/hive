@@ -1,6 +1,4 @@
-// Connects the Codex App Server session to Hive's provider runtime surface
-// and owns capability probing and runtime dependency injection.
-
+import { definedFields } from "../../../shared/defined-fields";
 import { errorMessage } from "../../../shared/error-message";
 import { systemClock } from "../../../shared/clock";
 import type {
@@ -80,9 +78,12 @@ export class CodexAppServerAdapter implements ProviderRuntimeAdapter {
         transport: this.transport,
         verdict:
           snapshot.catalog.status === "ok" ? "compatible" : "incompatible",
-        ...(snapshot.catalog.status === "ok"
-          ? {}
-          : { reason: snapshot.catalog.reason }),
+        ...definedFields({
+          reason:
+            snapshot.catalog.status === "ok"
+              ? undefined
+              : snapshot.catalog.reason,
+        }),
       };
     } catch (error) {
       return unavailableCodexProbe(executable, version, errorMessage(error));

@@ -1,4 +1,5 @@
 import { type FileHandle, open, readFile } from "node:fs/promises";
+import { definedFields } from "../../shared/defined-fields";
 
 export interface DraftSnapshot {
   readonly text: string;
@@ -6,7 +7,11 @@ export interface DraftSnapshot {
   readonly purpose?: "user" | "compaction";
 }
 
-/** `delivery_unknown` is the transport dying between submit and acknowledgement: Hive cannot tell "never accepted" from "accepted, reply lost". It is terminal for a user row, because replaying a prompt the agent may already be working on is interference of its own. A person can retry it explicitly. */
+/** `delivery_unknown` is the transport dying between submit and acknowledgement:
+ * Hive cannot tell "never accepted" from "accepted, reply lost". It is terminal for a user row,
+ * because replaying a prompt the agent may already be working on is interference of its own.
+ * A person can retry it explicitly.
+ * */
 export type DeliveryState =
   "pending" | "submitted" | "observed" | "rejected" | "delivery_unknown";
 
@@ -104,7 +109,7 @@ export class OutboundJournal {
       clientInputId,
       text: snapshot.text,
       attachments: snapshot.attachments,
-      ...(snapshot.purpose === undefined ? {} : { purpose: snapshot.purpose }),
+      ...definedFields({ purpose: snapshot.purpose }),
       at,
     };
     await this.write(record);

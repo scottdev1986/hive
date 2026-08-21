@@ -55,6 +55,7 @@ import type {
   TerminalGeometry,
 } from "../schemas/session-protocol";
 import { systemClock } from "../shared/clock";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 import { HIVE_SOURCE_HASH } from "../shared/version";
 import {
@@ -148,14 +149,15 @@ export function stopSpawnSession(
           requireSessiondAgentLocator(record),
         )
       ).hostPid,
-    ...(dependencies.providerRuns === undefined
-      ? {}
-      : {
-          readProviderRun: (record: AgentRecord) =>
-            dependencies.providerRuns?.getActiveProviderRunForAgent(
-              record.id,
-            ) ?? null,
-        }),
+    ...definedFields({
+      readProviderRun:
+        dependencies.providerRuns === undefined
+          ? undefined
+          : (record: AgentRecord) =>
+              dependencies.providerRuns?.getActiveProviderRunForAgent(
+                record.id,
+              ) ?? null,
+    }),
   });
 }
 

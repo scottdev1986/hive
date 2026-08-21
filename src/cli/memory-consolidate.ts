@@ -20,6 +20,7 @@ import {
   MemoryJobReceiptSchema,
   MemoryMaintenanceProjectionSchema,
 } from "../schemas/memory-projections";
+import { definedFields } from "../shared/defined-fields";
 import { bindCliHiveHome } from "./bind-hive-home";
 import { UserDaemonClient } from "./user-daemon-client";
 
@@ -121,7 +122,7 @@ async function runOfflineConsolidation(
       repoRoot,
       episodic,
       service,
-      ...(apply === undefined ? {} : { apply }),
+      ...definedFields({ apply }),
     });
   } finally {
     episodic.close();

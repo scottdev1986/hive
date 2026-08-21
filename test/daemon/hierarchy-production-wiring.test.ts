@@ -14,6 +14,7 @@ import {
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import { HiveDaemon } from "../../src/daemon/server";
+import { definedFields } from "../../src/shared/defined-fields";
 import type {
   Spawner,
   SpawnRequest,
@@ -134,7 +135,7 @@ function agentRecord(
     taskDescription: "Exercise production hierarchy wiring",
     worktreePath: `/worktrees/${name}`,
     branch,
-    ...(locator === undefined ? {} : { sessionLocator: locator }),
+    ...definedFields({ sessionLocator: locator }),
     contextPct: null,
     createdAt: stamp,
     lastEventAt: stamp,

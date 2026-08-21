@@ -34,6 +34,7 @@ import {
   WakePayloadSchema,
 } from "../../schemas/wake-payload";
 import { systemNowIso } from "../../shared/clock";
+import { definedFields } from "../../shared/defined-fields";
 import { errorMessage } from "../../shared/error-message";
 import { reportProtocolSessionFacts } from "../../usage-service/protocol-facts-report";
 import { decodeJson } from "../daemon-response";
@@ -430,9 +431,7 @@ export class AgentUi {
       {
         mark: brand.mark,
         accent: brand.accent,
-        ...(identity.workspacePath === undefined
-          ? {}
-          : { workspacePath: identity.workspacePath }),
+        ...definedFields({ workspacePath: identity.workspacePath }),
       },
       () => {
         this.view = toggleToolDetails(this.view);
@@ -1268,9 +1267,12 @@ export class AgentUi {
           await this.session.runCommand({
             vendorSessionId: this.vendorSessionId,
             name,
-            ...(argumentsText === undefined || argumentsText === ""
-              ? {}
-              : { arguments: argumentsText }),
+            ...definedFields({
+              arguments:
+                argumentsText === undefined || argumentsText === ""
+                  ? undefined
+                  : argumentsText,
+            }),
           })
         ) {
           this.textarea.clear();
@@ -1502,9 +1504,12 @@ export class AgentUi {
         requestId: pending.requestId,
         outcome: optionId === VERDICT_DENY ? "deny" : "allow",
         // Only the session scope is stated. Absent already means "this once", and saying it explicitly would change the request Hive has always sent for a plain approval.
-        ...(optionId === VERDICT_ALLOW_SESSION
-          ? { scope: "session" as const }
-          : {}),
+        ...definedFields({
+          scope:
+            optionId === VERDICT_ALLOW_SESSION
+              ? ("session" as const)
+              : undefined,
+        }),
       });
       return;
     }
@@ -1710,12 +1715,12 @@ export class AgentUi {
       await setModel({
         vendorSessionId: this.vendorSessionId,
         model,
-        ...(effort === undefined ? {} : { effort }),
+        ...definedFields({ effort }),
       });
       this.view = closeModelPicker({
         ...this.view,
         liveModel: model,
-        ...(effort === undefined ? {} : { liveEffort: effort }),
+        ...definedFields({ liveEffort: effort }),
       });
       this.refresh();
     } catch (error) {

@@ -132,6 +132,7 @@ import {
   type TokenUsageSubjectCreated,
 } from "../schemas/token-usage-schema";
 import { systemClock } from "../shared/clock";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 import { HIVE_MCP_CATALOG_CACHE_TTL_MS } from "../shared/mcp-protocol";
 import { HIVE_VERSION } from "../shared/version";
@@ -280,7 +281,11 @@ import {
   type WorkspaceVisibilityLease,
   WorkspaceVisibilitySnapshotSchema,
 } from "./session-host/workspace-visibility";
-import { DrainHandler, type ReplacementDrain } from "./spawn/drain-handler";
+import {
+  DrainHandler,
+  type DrainHandlerDependencies,
+  type ReplacementDrain,
+} from "./spawn/drain-handler";
 import { WorkspaceOwnerService } from "./workspace-owner-service/workspace-owner-service";
 
 export {
@@ -625,9 +630,7 @@ export class HiveDaemon {
     this.embeddingService =
       this.episodic !== null && options.memoryEmbeddings !== undefined
         ? new MemoryEmbeddingService(options.memoryEmbeddings, {
-            ...(options.memoryEmbeddingLoad === undefined
-              ? {}
-              : { load: options.memoryEmbeddingLoad }),
+            ...definedFields({ load: options.memoryEmbeddingLoad }),
             log: (message) => this.writeDaemonLog(message),
           })
         : null;
@@ -961,7 +964,7 @@ export class HiveDaemon {
       onLanded: (agent, commit) => this.worktrees.onLanded(agent, commit),
     });
     const episodic = this.episodic;
-    this.drainHandler = new DrainHandler({
+    const drainDependencies: DrainHandlerDependencies = {
       db: this.db,
       quota: this.quota,
       publish: (from, to, body, options) =>
@@ -979,12 +982,16 @@ export class HiveDaemon {
       requestReplacement: async (agent, drain) => {
         await this.replaceWithHandoff(agent, drain);
       },
-      ...(episodic === null
-        ? {}
-        : {
-            remember: (event) => episodic.appendEvent(event),
-          }),
-    });
+    };
+    this.drainHandler =
+      episodic === null
+        ? new DrainHandler(drainDependencies)
+        : new DrainHandler({
+            ...drainDependencies,
+            remember: (event) => {
+              episodic.appendEvent(event);
+            },
+          });
     this.recovery = new CrashRecovery({
       db: this.db,
       terminalHost: this.terminalHost,
@@ -1065,7 +1072,9 @@ export class HiveDaemon {
         task: fenced.taskDescription,
         category: fenced.category,
         handoffId: bundle.handoffId,
-        ...(drain.pool === null ? {} : { excludedPoolIds: [drain.pool] }),
+        ...definedFields({
+          excludedPoolIds: drain.pool === null ? undefined : [drain.pool],
+        }),
       });
       await this.mailService.publishSystem(
         "hive-handoff",
@@ -1107,7 +1116,7 @@ export class HiveDaemon {
     // Startup/generic mint stays unconstrained. Root visible-text self-observe is granted only by the launcher mint (POST /codex-root-token) so the pre-launch queen.cap is not widened beyond what Q needs.
     const { token } = this.capabilities.mint(subject, role, {
       epoch,
-      ...(ttlMs === undefined ? {} : { ttlMs }),
+      ...definedFields({ ttlMs }),
     });
     writeCredential(subject, token);
     return token;
@@ -1134,7 +1143,7 @@ export class HiveDaemon {
   ): Decision {
     return this.capabilities.authorizeAndAudit(
       capability,
-      { route, action, ...(subject === undefined ? {} : { subject }) },
+      { route, action, ...definedFields({ subject }) },
       auditAllow,
       allowReason,
     );
@@ -1434,7 +1443,9 @@ export class HiveDaemon {
       provider: service.provider,
       model: service.model,
       state: service.stateLabel(),
-      ...(status.state === "unavailable" ? { detail: status.detail } : {}),
+      ...definedFields({
+        detail: status.state === "unavailable" ? status.detail : undefined,
+      }),
       runtimeDir: embeddingsRuntimeDir(),
       vectors: {
         articles: counts.articles,
@@ -2571,7 +2582,9 @@ export class HiveDaemon {
             },
             observedAt: report.observedAt ?? new Date().toISOString(),
             source: report.usage.source ?? "protocol",
-            ...(report.usage.cumulative === true ? { cumulative: true } : {}),
+            ...definedFields({
+              cumulative: report.usage.cumulative === true ? true : undefined,
+            }),
           },
         ],
         model,
@@ -2946,9 +2959,11 @@ export class HiveDaemon {
       if (denied !== null) return denied;
       const parsed = MemoryListRequestSchema.safeParse({
         cursor: url.searchParams.get("cursor"),
-        ...(url.searchParams.has("limit")
-          ? { limit: Number(url.searchParams.get("limit")) }
-          : {}),
+        ...definedFields({
+          limit: url.searchParams.has("limit")
+            ? Number(url.searchParams.get("limit"))
+            : undefined,
+        }),
         kinds: url.searchParams.getAll("kind"),
         scopes: url.searchParams.getAll("scope"),
         statuses: url.searchParams.getAll("status"),
@@ -3014,9 +3029,10 @@ export class HiveDaemon {
           {
             query: parsed.data.query,
             purpose: parsed.data.purpose,
-            ...(parsed.data.budget == null
-              ? {}
-              : { budget: parsed.data.budget }),
+            ...definedFields({
+              budget:
+                parsed.data.budget == null ? undefined : parsed.data.budget,
+            }),
           },
         ),
       );

@@ -8,6 +8,7 @@ import {
 } from "../../src/cli/model-control";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
+import { definedFields } from "../../src/shared/defined-fields";
 import { QuotaConfigSchema } from "../../src/schemas/quota";
 import { QuotaLedger } from "../../src/usage-service/quota-ledger";
 import type {
@@ -49,8 +50,10 @@ function harness(
       },
     },
     repoRoot: "/tmp/hive-model-control-snapshot-endpoint",
-    ...(snapshot === undefined ? {} : { modelControlSnapshot: snapshot }),
-    ...(quota === undefined ? {} : { quota: quota(db) }),
+    ...definedFields({
+      modelControlSnapshot: snapshot,
+      quota: quota === undefined ? undefined : quota(db),
+    }),
   });
 }
 

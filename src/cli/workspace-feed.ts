@@ -14,11 +14,8 @@
  * the user credential and daemon client; Swift only decodes the stream.
  */
 
-import type { Autonomy } from "../config/autonomy";
-import {
-  macProcessIdentity,
-  verifyDaemonInstance,
-} from "../daemon/lifecycle/daemon-lifecycle";
+import type {Autonomy} from "../config/autonomy";
+import {macProcessIdentity, verifyDaemonInstance,} from "../daemon/lifecycle/daemon-lifecycle";
 import {
   type OrchestratorHostStatus,
   OrchestratorHostStatusSchema,
@@ -27,18 +24,16 @@ import {
   type WorkspaceVisibilityInventoryInput,
   WorkspaceVisibilityInventoryInputSchema,
 } from "../daemon/session-host/workspace-visibility";
-import type { AgentRecord } from "../schemas/agent";
-import { AutonomyEnvelopeSchema } from "../schemas/config-schema";
-import { systemNow } from "../shared/clock";
-import { errorMessage } from "../shared/error-message";
-import { abortableSleep } from "../shared/sleep";
-import { daemonErrorDetail, decodeJson } from "./daemon-response";
-import { HiveMcpSession, readAgentStatus } from "./mcp";
-import { UserDaemonClient } from "./user-daemon-client";
-import {
-  presentWorkspaceAgent,
-  presentWorkspaceOrchestrator,
-} from "./workspace-feed-presentation";
+import type {AgentRecord} from "../schemas/agent";
+import {AutonomyEnvelopeSchema} from "../schemas/config-schema";
+import {systemNow} from "../shared/clock";
+import {definedFields} from "../shared/defined-fields";
+import {errorMessage} from "../shared/error-message";
+import {abortableSleep} from "../shared/sleep";
+import {daemonErrorDetail, decodeJson} from "./daemon-response";
+import {HiveMcpSession, readAgentStatus} from "./mcp";
+import {UserDaemonClient} from "./user-daemon-client";
+import {presentWorkspaceAgent, presentWorkspaceOrchestrator,} from "./workspace-feed-presentation";
 
 export const FEED_VERSION = 1;
 export const FEED_POLL_MS = 1_000;
@@ -107,7 +102,7 @@ export async function registerWorkspaceOwner(
   );
   const client = new UserDaemonClient({
     port,
-    ...(deps.post === undefined ? {} : { fetch: deps.post }),
+    ...definedFields({ fetch: deps.post }),
     verifyIdentity: deps.post === undefined,
   });
   const response = await client.request("/workspace-owner", {
@@ -167,7 +162,7 @@ export async function publishWorkspaceVisibility(
   const controller = new AbortController();
   const client = new UserDaemonClient({
     port,
-    ...(deps.post === undefined ? {} : { fetch: deps.post }),
+    ...definedFields({ fetch: deps.post }),
     verifyIdentity: deps.post === undefined,
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -247,15 +242,14 @@ export class WorkspaceVisibilityPublisher {
     const inventory = this.pending;
     if (inventory === null) return;
     this.pending = null;
-    const run = this.runOne(inventory)
-      .catch((error: unknown) => {
-        this.report(error);
-      })
-      .then(() => {
-        this.inFlight = null;
-        this.pump();
-      });
-    this.inFlight = run;
+    this.inFlight = this.runOne(inventory)
+        .catch((error: unknown) => {
+          this.report(error);
+        })
+        .then(() => {
+          this.inFlight = null;
+          this.pump();
+        });
   }
 
   private async runOne(
@@ -459,9 +453,12 @@ export async function runWorkspaceFeed(
               v: FEED_VERSION,
               agents: presentedAgents,
               autonomyState,
-              ...(presentedOrchestrator === null
-                ? {}
-                : { orchestrator: presentedOrchestrator }),
+              ...definedFields({
+                orchestrator:
+                  presentedOrchestrator === null
+                    ? undefined
+                    : presentedOrchestrator,
+              }),
             }),
           );
           lastSnapshot = snapshot;

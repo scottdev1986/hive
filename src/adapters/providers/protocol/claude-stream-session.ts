@@ -1,12 +1,16 @@
 // Owns Claude's stream-json session state machine, preserving wire-event order,
 // partial tool input, permission timing, and process lifecycle as one boundary.
 
-import {randomUUID} from "node:crypto";
-import {claudeEffectiveDefault, recordsFromClaudeInitialize,} from "../../../daemon/provider-capabilities/discovery";
-import type {MeasuredProviderCapabilities} from "../../../schemas/capability";
-import {errorMessage} from "../../../shared/error-message";
-import {isRecord} from "../../../shared/is-record";
-import {safeJsonParse} from "../../../shared/json";
+import { randomUUID } from "node:crypto";
+import {
+  claudeEffectiveDefault,
+  recordsFromClaudeInitialize,
+} from "../../../daemon/provider-capabilities/discovery";
+import type { MeasuredProviderCapabilities } from "../../../schemas/capability";
+import { definedFields } from "../../../shared/defined-fields";
+import { errorMessage } from "../../../shared/error-message";
+import { isRecord } from "../../../shared/is-record";
+import { safeJsonParse } from "../../../shared/json";
 import {
   CLAUDE_CHANNELS_ENABLEMENT,
   CLAUDE_CHANNELS_WARNING,
@@ -14,9 +18,24 @@ import {
   type ClaudeProcessFactory,
   signalClaudeProcessGroup,
 } from "./claude-stream-process";
-import {answersInput, ASK_USER_QUESTION, claudeQuestions,} from "./claude-stream-questions";
-import {accountFingerprint, asNumber, asString, commandFrom, type JsonObject,} from "./claude-stream-wire";
-import {claudeToolChanges, claudeToolDetail, claudeToolKind, claudeToolLocations,} from "./claude-tool-calls";
+import {
+  answersInput,
+  ASK_USER_QUESTION,
+  claudeQuestions,
+} from "./claude-stream-questions";
+import {
+  accountFingerprint,
+  asNumber,
+  asString,
+  commandFrom,
+  type JsonObject,
+} from "./claude-stream-wire";
+import {
+  claudeToolChanges,
+  claudeToolDetail,
+  claudeToolKind,
+  claudeToolLocations,
+} from "./claude-tool-calls";
 import type {
   NormalizedProviderEvent,
   PermissionDecision,
@@ -332,16 +351,21 @@ export class ClaudeStreamJsonSession implements ProviderSession {
                   ? pending.request.input
                   : {}
                 : answersInput(pending.request.input, input.answers),
-            ...(toolUseId === null ? {} : { toolUseID: toolUseId }),
-            ...(input.scope === "session" &&
-            Array.isArray(pending.request.permission_suggestions)
-              ? { updatedPermissions: pending.request.permission_suggestions }
-              : {}),
+            ...definedFields({
+              toolUseID: toolUseId ?? undefined,
+              updatedPermissions:
+                input.scope === "session" &&
+                Array.isArray(pending.request.permission_suggestions)
+                  ? pending.request.permission_suggestions
+                  : undefined,
+            }),
           }
         : {
             behavior: "deny",
             message: "Denied by user",
-            ...(toolUseId === null ? {} : { toolUseID: toolUseId }),
+            ...definedFields({
+              toolUseID: toolUseId ?? undefined,
+            }),
           };
     this.writeControlResponse(input.requestId, response);
     this.emit(
@@ -468,9 +492,7 @@ export class ClaudeStreamJsonSession implements ProviderSession {
               effectiveDefault: claudeEffectiveDefault(records, observedAt),
             },
       measurements: { ...this.capabilities.measured },
-      ...(this.capabilities.absences === undefined
-        ? {}
-        : { absences: this.capabilities.absences }),
+      ...definedFields({ absences: this.capabilities.absences }),
       commands: [...this.commands],
     });
   }
@@ -960,14 +982,17 @@ export class ClaudeStreamJsonSession implements ProviderSession {
         cachedInputTokens: cacheRead,
         cacheCreationInputTokens: cacheCreation,
         reasoningTokens: null,
-        ...(complete && resultId !== null
-          ? {
-              usageKey: `result:${resultId}`,
-              cumulative: false,
-              source: "claude-stream-json",
-              observedAt: new Date().toISOString(),
-            }
-          : {}),
+        ...definedFields({
+          usageKey:
+            complete && resultId !== null ? `result:${resultId}` : undefined,
+          cumulative: complete && resultId !== null ? false : undefined,
+          source:
+            complete && resultId !== null ? "claude-stream-json" : undefined,
+          observedAt:
+            complete && resultId !== null
+              ? new Date().toISOString()
+              : undefined,
+        }),
       },
       message,
     );
@@ -1111,7 +1136,9 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     const response = {
       behavior: "deny",
       message: "Permission request expired",
-      ...(toolUseId === null ? {} : { toolUseID: toolUseId }),
+      ...definedFields({
+        toolUseID: toolUseId ?? undefined,
+      }),
     };
     try {
       this.writeControlResponse(requestId, response);
@@ -1136,7 +1163,9 @@ export class ClaudeStreamJsonSession implements ProviderSession {
       const response = {
         behavior: "deny",
         message,
-        ...(toolUseId === null ? {} : { toolUseID: toolUseId }),
+        ...definedFields({
+          toolUseID: toolUseId ?? undefined,
+        }),
       };
       if (canWrite) {
         try {
@@ -1162,9 +1191,9 @@ export class ClaudeStreamJsonSession implements ProviderSession {
         this.controls.delete(requestId);
         reject(new Error(`Claude ${String(request.subtype)} timed out`));
       }, CONTROL_TIMEOUT_MS);
-      this.controls.set(requestId, {resolve, reject, timer});
+      this.controls.set(requestId, { resolve, reject, timer });
       try {
-        this.write({type: "control_request", request_id: requestId, request});
+        this.write({ type: "control_request", request_id: requestId, request });
       } catch (error) {
         clearTimeout(timer);
         this.controls.delete(requestId);

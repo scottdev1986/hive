@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { DatabaseHost } from "../../shared/database-host";
-import type { CapabilityProvider } from "../../schemas/capability";
+import { definedFields } from "../../shared/defined-fields";
+import type { CapabilityProvider } from "../../schemas/provider";
 import {
   type HandoffBundle,
   HandoffBundleSchema,
@@ -117,15 +118,20 @@ function parseTerminalHostBindingRow(row: unknown): HiveTerminalBinding {
   return HiveTerminalBindingSchema.parse({
     locator: JSON.parse(stored.locatorJson),
     visibility: JSON.parse(stored.visibilityJson),
-    ...(stored.createEvidenceJson === null
-      ? {}
-      : { createEvidence: JSON.parse(stored.createEvidenceJson) }),
-    ...(stored.terminationAuditJson === null
-      ? {}
-      : { terminationAudit: JSON.parse(stored.terminationAuditJson) }),
-    ...(stored.terminationEvidenceJson === null
-      ? {}
-      : { terminationEvidence: JSON.parse(stored.terminationEvidenceJson) }),
+    ...definedFields({
+      createEvidence:
+        stored.createEvidenceJson === null
+          ? undefined
+          : JSON.parse(stored.createEvidenceJson),
+      terminationAudit:
+        stored.terminationAuditJson === null
+          ? undefined
+          : JSON.parse(stored.terminationAuditJson),
+      terminationEvidence:
+        stored.terminationEvidenceJson === null
+          ? undefined
+          : JSON.parse(stored.terminationEvidenceJson),
+    }),
   });
 }
 

@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { which } from "bun";
 import type { AcpProviderSession } from "../src/adapters/providers/protocol/acp-session";
+import { definedFields } from "../src/shared/defined-fields";
 import {
   GrokAcpAdapter,
   grokAcpSpawn,
@@ -192,7 +193,7 @@ async function runBaseline(
     // rejected outright.
     const created = await session.newSession({
       cwd: spawn.cwd,
-      ...(options.manualMode === undefined ? {} : { mode: options.manualMode }),
+      ...definedFields({ mode: options.manualMode }),
     });
     steps["2-new-session"] = created.vendorSessionId ? "pass" : "fail";
 

@@ -1,4 +1,5 @@
 import type { MeasuredProviderCapabilities } from "../../../schemas/capability";
+import { definedFields } from "../../../shared/defined-fields";
 import type {
   NormalizedProviderEvent,
   PermissionDecision,
@@ -223,9 +224,7 @@ export class FakeProviderSession implements ProviderSession {
       observedAt,
       catalog: { status: "unavailable", reason: "fake catalog not supplied" },
       measurements: { ...this.capabilities.measured },
-      ...(this.capabilities.absences === undefined
-        ? {}
-        : { absences: this.capabilities.absences }),
+      ...definedFields({ absences: this.capabilities.absences }),
       commands: [...this.commands],
     });
   }
@@ -279,9 +278,7 @@ export class FakeProviderAdapter implements ProviderRuntimeAdapter {
       observedAt,
       catalog: { status: "unavailable", reason: "fake catalog not supplied" },
       measurements: { ...this.capabilities.measured },
-      ...(this.capabilities.absences === undefined
-        ? {}
-        : { absences: this.capabilities.absences }),
+      ...definedFields({ absences: this.capabilities.absences }),
       commands: [],
       executable,
       version: this.capabilities.runtime.version,

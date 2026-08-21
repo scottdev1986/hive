@@ -1,12 +1,6 @@
-// Builds the complete bounded context used to start a Queen. Durable Hive
-// records may grow without limit; this service is the one boundary that turns
-// them into a fixed working set with source digests and retrieval paths. It
-// also assembles the pinned policy, capsule, and memory index under one global
-// launch budget so callers cannot accidentally create a second growth path.
-
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { CapabilityProvider } from "../../schemas/capability";
+import type { CapabilityProvider } from "../../schemas/provider";
 import { type Digest, DigestSchema } from "../../schemas/hierarchy-ids";
 import { normalizeNulText } from "../../schemas/memory";
 import type {
@@ -18,6 +12,7 @@ import type {
   SuccessionReason,
 } from "../../schemas/run-checkpoint";
 import type { WorkspaceSnapshotV2 } from "../../schemas/status-envelope";
+import { definedFields } from "../../shared/defined-fields";
 import { estimateTokensForText } from "../../usage-service/token-estimate";
 import {
   announceMemoryIndexCaps,
@@ -252,9 +247,9 @@ export function renderQueenBoardSnapshot(
       `snapshot: ${JSON.stringify({
         seq: board.seq,
         digest: `sha256:${board.contentSha256}`,
-        ...(options.checkpointRevision === undefined
-          ? {}
-          : { checkpointRevision: options.checkpointRevision }),
+        ...definedFields({
+          checkpointRevision: options.checkpointRevision,
+        }),
       })}`,
     ]),
   ].join("\n\n");

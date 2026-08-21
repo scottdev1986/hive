@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
+import { definedFields } from "../../src/shared/defined-fields";
 import {
   QueenProviderProjectionSchema,
   SetLiveQueenProviderConflictSchema,
@@ -51,7 +52,9 @@ const request = (
     new Request(`http://hive${path}`, {
       method,
       headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...definedFields({
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }),
     }),
   );
 };

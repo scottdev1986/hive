@@ -4,6 +4,7 @@ import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
 import { graphifyHookPath, writeGraphifyHook } from "./shared/graphify-hook";
 import { daemonMcpUrl } from "./shared/mcp-scope";
 import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./shared/orchestrator-role";
+import { definedFields } from "../../shared/defined-fields";
 import { isRecord, readProjectConfig } from "./shared/project-config";
 import { resolveProviderExecutable } from "./shared/provider-executable";
 
@@ -187,27 +188,31 @@ export async function writeOpencodeAgentConfig(
   if (options.instructionPath !== undefined) {
     const agents = isRecord(existing.agent) ? existing.agent : {};
     const workerPermission = {
-      ...(options.dangerous === true
-        ? {
-            doom_loop: "allow" as const,
-            external_directory: "allow" as const,
-            read: { "*.env": "allow" as const, "*.env.*": "allow" as const },
-          }
-        : {}),
-      ...(options.readOnly === true
-        ? { edit: "deny" as const, bash: "deny" as const }
-        : {}),
+      ...definedFields({
+        doom_loop: options.dangerous === true ? ("allow" as const) : undefined,
+        external_directory:
+          options.dangerous === true ? ("allow" as const) : undefined,
+        read:
+          options.dangerous === true
+            ? { "*.env": "allow" as const, "*.env.*": "allow" as const }
+            : undefined,
+        edit: options.readOnly === true ? ("deny" as const) : undefined,
+        bash: options.readOnly === true ? ("deny" as const) : undefined,
+      }),
     };
     agents[OPENCODE_HIVE_AGENT] = {
       description: "Hive-managed agent carrying the launch brief",
       mode: "primary",
       // {file:} is resolved by opencode itself; absolute paths are honored (verified against opencode 1.18.3), so the brief never leaves the 0600 launch-prompt file.
       prompt: `{file:${options.instructionPath}}`,
-      ...(options.orchestrator === true
-        ? { permission: ORCHESTRATOR_OPENCODE_PERMISSION }
-        : Object.keys(workerPermission).length > 0
-          ? { permission: workerPermission }
-          : {}),
+      ...definedFields({
+        permission:
+          options.orchestrator === true
+            ? ORCHESTRATOR_OPENCODE_PERMISSION
+            : Object.keys(workerPermission).length > 0
+              ? workerPermission
+              : undefined,
+      }),
     };
     existing.agent = agents;
     existing.default_agent = OPENCODE_HIVE_AGENT;

@@ -4,6 +4,7 @@ import {
   type ProviderRuntimeReport,
   ProviderRuntimeReportSchema,
 } from "../../schemas/provider-run";
+import { definedFields } from "../../shared/defined-fields";
 import { PaneDaemonClient } from "./pane-daemon-client";
 
 export type RuntimeReportFetcher = (
@@ -35,7 +36,7 @@ export function providerRuntimeReporter(
   const daemon = new PaneDaemonClient({
     port,
     subject,
-    ...(fetcher === undefined ? {} : { fetch: fetcher }),
+    ...definedFields({ fetch: fetcher }),
   });
   /** A failed attempt is retried before the caller hears about it. This report is sent from inside a launch burst — the moment the daemon is busiest — and the first attempt can lose two races that resolve themselves: a response that outlives its timeout because the daemon is behind, and a 409 because the daemon's own spawn pipeline has not yet inserted the run row this pane was launched under. Both cost every agent in a batch its life before this retried; a report that still fails after the backoff is a real answer and still ends the launch loudly. */
   const post = async (report: ProviderRuntimeReport): Promise<void> => {

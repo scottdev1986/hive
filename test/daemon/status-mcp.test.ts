@@ -7,6 +7,7 @@ import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import type { RootSessiondLocator } from "../../src/daemon/orchestrator-host/orchestrator-host-contract";
 import { HiveDaemon } from "../../src/daemon/server";
+import { definedFields } from "../../src/shared/defined-fields";
 import type {
   CaptureResult,
   SessionLocator,
@@ -164,9 +165,10 @@ const harness = (
       sessionId === SESSION_ID && generation === 1
         ? { ...locator, instanceId: daemon.status.instanceId }
         : null,
-    ...(generationSource === null
-      ? {}
-      : { statusIncarnationGenerationSource: generationSource }),
+    ...definedFields({
+      statusIncarnationGenerationSource:
+        generationSource === null ? undefined : generationSource,
+    }),
   });
   if (completedBinding) {
     const boundLocator = { ...locator, instanceId: daemon.status.instanceId };

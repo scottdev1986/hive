@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import type { CapabilityProvider } from "../../src/schemas/capability";
+import type { CapabilityProvider } from "../../src/schemas/provider";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { queenBootCapsules } from "../../src/daemon/queen-provider-service/queen-boot-capsule-service";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon, type HiveDaemonOptions } from "../../src/daemon/server";
+import { definedFields } from "../../src/shared/defined-fields";
 import { HiveTerminalHostAdapter } from "../../src/daemon/session-host/hive-terminal-host";
 import { EpisodicStore } from "../../src/memory-service/episodic";
 import { MemoryJobStore, startMemoryJob } from "../../src/memory-service/jobs";
@@ -239,7 +240,7 @@ async function memoryRig(
     db,
     repoRoot: root,
     episodicStore: episodic,
-    ...(retention === undefined ? {} : { retention }),
+    ...definedFields({ retention }),
     port: 0,
   });
   const token = daemon.capabilities.mint("user", "user").token;

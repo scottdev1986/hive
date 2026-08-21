@@ -12,6 +12,7 @@ import type {
   WorkspaceEventV2,
   WorkspaceStatusDimensionsV1,
 } from "../../schemas/status-envelope";
+import { definedFields } from "../../shared/defined-fields";
 import type { HiveDatabase } from "../database/hive-database";
 import {
   buildActivitySnapshot,
@@ -414,13 +415,15 @@ export class StatusService {
       confidence: "authoritative" as const,
     };
     const data = {
-      ...(agent === null ? {} : { agentId: agent.id }),
+      ...definedFields({
+        agentId: agent === null ? undefined : agent.id,
+      }),
       providerRunId: run.runId,
       vendorSessionId: report.vendorSessionId,
       providerSequence: report.providerSequence,
-      ...(agent?.sessionLocator === undefined
-        ? {}
-        : { incarnationGeneration: agent.sessionLocator.generation }),
+      ...definedFields({
+        incarnationGeneration: agent?.sessionLocator?.generation,
+      }),
     };
     const events: WorkspaceStatusSourceEvent[] = [
       ...(report.projection.runtime === undefined

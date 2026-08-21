@@ -8,7 +8,7 @@ import {
   installBaseSkills,
   unaddressedSkills,
 } from "../adapters/skills";
-import { expectedDaemonHandshake } from "../daemon/lifecycle/daemon-lifecycle";
+import { expectedDaemonHandshake } from "../daemon/lifecycle/handshake";
 import { probeDaemonReuse } from "../daemon/lifecycle/daemon-lifecycle";
 import { projectStateDir } from "../daemon/project-identity-core/state";
 import {
@@ -17,6 +17,7 @@ import {
 } from "../memory-service/memory-store";
 import type { MemoryWriteFileInput } from "../memory-service/store-records";
 import type { EmbeddingsInstallOutcome } from "../embeddings-runtime/install";
+import { definedFields } from "../shared/defined-fields";
 import { slugify } from "../shared/slugify";
 import { ensureEmbeddingsRuntime } from "./embeddings-command";
 import { provisionGraphify } from "./graphify-command";
@@ -365,8 +366,7 @@ export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
     return {
       title: fact.title,
       body: fact.body,
-      ...(fact.id === undefined ? {} : { id: fact.id }),
-      ...(fact.tags === undefined ? {} : { tags: fact.tags }),
+      ...definedFields({ id: fact.id, tags: fact.tags }),
     };
   });
 }
@@ -387,10 +387,10 @@ export async function runInitCli(options: {
       ? []
       : await readSeedFactsFile(options.seedFacts);
   const result = await runInit(root, {
-    ...(options.scaffoldAgents === undefined
-      ? {}
-      : { scaffoldAgents: options.scaffoldAgents }),
-    ...(options.force === true ? { force: true } : {}),
+    ...definedFields({
+      scaffoldAgents: options.scaffoldAgents,
+      force: options.force === true ? true : undefined,
+    }),
     facts,
   });
   for (const line of result.messages) console.log(line);

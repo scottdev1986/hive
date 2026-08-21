@@ -1,6 +1,7 @@
 // Connects the Claude stream-json session to Hive's provider runtime surface
 // and owns capability probing and runtime dependency injection.
 
+import { definedFields } from "../../../shared/defined-fields";
 import { errorMessage } from "../../../shared/error-message";
 import { probeClaudeVersionDetached } from "../claude-cli";
 import { terminateProcessGroup } from "./process-group";
@@ -103,9 +104,12 @@ export class ClaudeStreamJsonAdapter implements ProviderRuntimeAdapter {
         transport: this.transport,
         verdict:
           snapshot.catalog.status === "ok" ? "compatible" : "incompatible",
-        ...(snapshot.catalog.status === "ok"
-          ? {}
-          : { reason: snapshot.catalog.reason }),
+        ...definedFields({
+          reason:
+            snapshot.catalog.status === "ok"
+              ? undefined
+              : snapshot.catalog.reason,
+        }),
       };
     } catch (error) {
       return unavailableClaudeProbe(executable, version, errorMessage(error));

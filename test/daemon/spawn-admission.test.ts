@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { definedFields } from "../../src/shared/defined-fields";
 import { RunControl } from "../../src/daemon/hierarchy-service/hierarchy-run-control";
 import { HierarchyService } from "../../src/daemon/hierarchy-service/hierarchy-service";
 import { HierarchyValidationError } from "../../src/daemon/hierarchy-service/records";
@@ -1800,20 +1801,16 @@ test("spawner binds after readiness and preserves identities when terminal death
       db: launchedDb,
       repoRoot: root,
       hierarchyAdmission: () => launchedAdmission,
-      ...(startsBoardTask
-        ? {
-            startBoardTask: (
-              startedTaskId: string,
-              agentId: string,
-              agentName: string,
-            ) =>
+      ...definedFields({
+        startBoardTask: startsBoardTask
+          ? (startedTaskId: string, agentId: string, agentName: string) =>
               launchedHierarchy.startTaskFromSpawn(
                 startedTaskId,
                 agentId,
                 agentName,
-              ),
-          }
-        : {}),
+              )
+          : undefined,
+      }),
       port: 4_317,
       config: {},
       readRoutingPolicy: () => policy,
@@ -1961,7 +1958,9 @@ test("spawner binds after readiness and preserves identities when terminal death
           generation: 1,
           credentialId: "credential-worker",
           unboundAt: null,
-          ...(movedHead ? { baseSha: "b".repeat(40) } : {}),
+          ...definedFields({
+            baseSha: movedHead ? "b".repeat(40) : undefined,
+          }),
         });
         const launchedRecord = launchedDb.getAgentById(record.id);
         if (launchedRecord === null) {
@@ -2457,20 +2456,17 @@ test("a failed launch leaves the hierarchy task and identity dispatchable for re
       db: scenario.fault === "record-insert" ? faultyDb : launchedDb,
       repoRoot: root,
       hierarchyAdmission: () => launchedAdmission,
-      ...(scenario.fault === "terminal-create"
-        ? {
-            startBoardTask: (
-              startedTaskId: string,
-              agentId: string,
-              agentName: string,
-            ) =>
-              launchedHierarchy.startTaskFromSpawn(
-                startedTaskId,
-                agentId,
-                agentName,
-              ),
-          }
-        : {}),
+      ...definedFields({
+        startBoardTask:
+          scenario.fault === "terminal-create"
+            ? (startedTaskId: string, agentId: string, agentName: string) =>
+                launchedHierarchy.startTaskFromSpawn(
+                  startedTaskId,
+                  agentId,
+                  agentName,
+                )
+            : undefined,
+      }),
       port: 4_317,
       config: {},
       readRoutingPolicy: () =>

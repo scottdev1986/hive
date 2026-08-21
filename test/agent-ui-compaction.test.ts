@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { CapabilityProvider } from "../src/schemas/capability";
 import { fakeCapabilities } from "../src/adapters/providers/protocol/fake-driver";
+import { definedFields } from "../src/shared/defined-fields";
 import { type AgentUiHarness, createAgentUiHarness } from "./agent-ui-harness";
 
 let harness: AgentUiHarness;
@@ -23,18 +24,21 @@ async function createProviderHarness(
     measured: {
       ...fakeCapabilities().measured,
       commandCatalog: "supported",
-      ...(compact === "supported" ? { compact: "supported" as const } : {}),
+      ...definedFields({
+        compact: compact === "supported" ? ("supported" as const) : undefined,
+      }),
     },
-    ...(compact === "unavailable"
-      ? {
-          absences: {
-            compact: {
-              reason: "OpenCode ACP does not expose compaction",
-              citation: "test evidence",
-            },
-          },
-        }
-      : {}),
+    ...definedFields({
+      absences:
+        compact === "unavailable"
+          ? {
+              compact: {
+                reason: "OpenCode ACP does not expose compaction",
+                citation: "test evidence",
+              },
+            }
+          : undefined,
+    }),
   });
   return await createAgentUiHarness({
     capabilities,

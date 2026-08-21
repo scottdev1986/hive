@@ -9,6 +9,7 @@ import {
 } from "../daemon/orchestrator-host/sessiond-controller";
 import { sameSessionLocator } from "../daemon/session-host/locators";
 import { hiveInstanceSuffix } from "../hive-home/home";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 import { isTestRunnerEnv } from "./invoker";
 import {
@@ -67,7 +68,7 @@ export function daemonOrchestratorSessiondControl(
 ): OrchestratorSessiondControl {
   const daemon = new UserDaemonClient({
     port,
-    ...(request === undefined ? {} : { fetch: request }),
+    ...definedFields({ fetch: request }),
     verifyIdentity: request === undefined && !isTestRunnerEnv(),
   });
   return {

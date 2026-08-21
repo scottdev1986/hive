@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Capability } from "../../src/daemon/authorization/authorization-service";
+import type { Capability } from "../../src/schemas/capability";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { liveRunControlEndpoint } from "../../src/daemon/live-run-control/live-run-control-endpoint";
 import { HiveDaemon } from "../../src/daemon/server";
@@ -13,6 +13,7 @@ import {
   type LiveRunControlIntent,
 } from "../../src/schemas/live-run-control";
 import type { ProviderRun } from "../../src/schemas/provider-run";
+import { definedFields } from "../../src/shared/defined-fields";
 
 const AT = "2026-08-15T20:00:00.000Z";
 const locator = {
@@ -253,9 +254,10 @@ function intent(operation: "stop-provider" | "terminate-terminal") {
       agentId: agent.id,
       locator,
       expectedShellRoot: shellRoot,
-      ...(operation === "stop-provider"
-        ? { expectedProviderRunId: run.runId }
-        : {}),
+      ...definedFields({
+        expectedProviderRunId:
+          operation === "stop-provider" ? run.runId : undefined,
+      }),
     },
   });
 }

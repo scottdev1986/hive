@@ -19,6 +19,7 @@ import {
   type TreeSitterClient,
 } from "@opentui/core";
 import type { ElicitationOption } from "../../adapters/providers/protocol/types";
+import { definedFields } from "../../shared/defined-fields";
 import {
   filetypeFor,
   ToolDiffProjectionCache,
@@ -465,9 +466,9 @@ export class TranscriptView {
       conceal: true,
       streaming: false,
       content: entry.text,
-      ...(this.treeSitter === null
-        ? {}
-        : { treeSitterClient: this.treeSitter }),
+      ...definedFields({
+        treeSitterClient: this.treeSitter ?? undefined,
+      }),
     });
   }
 
@@ -481,7 +482,7 @@ export class TranscriptView {
       width: "100%",
       maxWidth: TOOL_WIDTH,
       height: "auto",
-      ...(maxHeight === undefined ? {} : { maxHeight }),
+      ...definedFields({ maxHeight }),
       marginLeft: 2,
       diff,
       view: "unified",
@@ -489,10 +490,10 @@ export class TranscriptView {
       addedSignColor: this.colors.green,
       removedSignColor: this.colors.red,
       lineNumberFg: this.colors.dim,
-      ...(filetype === undefined ? {} : { filetype }),
-      ...(this.treeSitter === null
-        ? {}
-        : { treeSitterClient: this.treeSitter }),
+      ...definedFields({
+        filetype,
+        treeSitterClient: this.treeSitter ?? undefined,
+      }),
     });
   }
 
@@ -792,10 +793,10 @@ export class TranscriptView {
       content,
       syntaxStyle: this.syntaxStyle,
       onChunks: detectLinks,
-      ...(filetype === undefined ? {} : { filetype }),
-      ...(this.treeSitter === null
-        ? {}
-        : { treeSitterClient: this.treeSitter }),
+      ...definedFields({
+        filetype,
+        treeSitterClient: this.treeSitter ?? undefined,
+      }),
     });
   }
 
@@ -819,9 +820,10 @@ export class TranscriptView {
       paddingLeft: 1,
       paddingRight: 1,
       marginTop: 1,
-      ...(entry.settled
-        ? {}
-        : { title: this.cardTitle(entry), titleAlignment: "left" as const }),
+      ...definedFields({
+        title: entry.settled ? undefined : this.cardTitle(entry),
+        titleAlignment: entry.settled ? undefined : ("left" as const),
+      }),
     });
     box.add(this.buildElicitationBody(entry, accent));
     if (!entry.settled) {

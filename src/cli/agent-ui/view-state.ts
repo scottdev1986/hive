@@ -8,6 +8,7 @@ import type {
   VendorCommand,
 } from "../../adapters/providers/protocol/types";
 import { statusProjectionForProviderEvent } from "../../daemon/status-service/status-service";
+import { definedFields } from "../../shared/defined-fields";
 import type { MailLane } from "../../schemas/mail";
 import { clipTerminalText, type TerminalTextClip } from "./terminal-clip";
 import { sameToolFileChanges } from "./unified-diff";
@@ -1082,7 +1083,9 @@ export function applyDiagnostic(
   view.transcript.append({
     kind: "diagnostic",
     message,
-    ...(severity === "error" ? {} : { severity }),
+    ...definedFields({
+      severity: severity === "error" ? undefined : severity,
+    }),
   });
   return { ...view };
 }
@@ -1513,8 +1516,10 @@ export function applyProviderEvent(
   const status = statusProjectionForProviderEvent(event);
   const next = {
     ...reduced,
-    ...(status?.runtime === undefined ? {} : { runtime: status.runtime }),
-    ...(status?.turn === undefined ? {} : { turn: status.turn }),
+    ...definedFields({
+      runtime: status?.runtime,
+      turn: status?.turn,
+    }),
   };
   return {
     ...next,
@@ -1708,9 +1713,11 @@ function reduceProviderEvent(
       // Most vendors state the model on a frame that says nothing about effort, so a config event carries one field and nulls the other. Null is "this event did not mention it", and writing it over the reading already taken — or over the launch configuration the pane fell back to — would blank a setting that never changed.
       return {
         ...view,
-        ...(event.model === null ? {} : { liveModel: event.model }),
-        ...(event.effort === null ? {} : { liveEffort: event.effort }),
-        ...(event.mode === null ? {} : { permissionMode: event.mode }),
+        ...definedFields({
+          liveModel: event.model ?? undefined,
+          liveEffort: event.effort ?? undefined,
+          permissionMode: event.mode ?? undefined,
+        }),
       };
     case "usage-updated":
       if (event.contextPercent === null) return view;

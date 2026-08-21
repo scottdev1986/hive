@@ -1,4 +1,3 @@
-// Hive's MCP catalog policy lives here rather than inside 47 handlers. The authenticated role decides which tools are advertised. The handlers still authorize every call because catalog visibility is guidance, not an authority boundary. This layer also gives every structured result a minimal output contract and every tool an explicit risk profile.
 import type {
   Icon,
   McpServer,
@@ -8,6 +7,7 @@ import type {
   ToolCallback,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { definedFields } from "../../shared/defined-fields";
 import {
   type Action,
   type Capability,
@@ -232,17 +232,19 @@ export class HiveToolRegistrar {
       }
       this.visibleCatalog.push({
         name,
-        ...(config.title === undefined ? {} : { title: config.title }),
-        ...(config.description === undefined
-          ? {}
-          : { description: config.description }),
+        ...definedFields({
+          title: config.title,
+          description: config.description,
+        }),
         inputSchema: inputSchema as Tool["inputSchema"],
         outputSchema: z.toJSONSchema(policy.outputSchema, {
           io: "output",
         }) as Tool["outputSchema"],
         annotations: policy.annotations,
-        ...(config.icons === undefined ? {} : { icons: config.icons }),
-        ...(config._meta === undefined ? {} : { _meta: config._meta }),
+        ...definedFields({
+          icons: config.icons,
+          _meta: config._meta,
+        }),
       });
     }
   }

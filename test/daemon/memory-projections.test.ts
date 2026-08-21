@@ -18,6 +18,7 @@ import {
 import { buildMemoryRecallBundle } from "../../src/memory-service/recall";
 import { buildMemoryRecallPreview } from "../../src/memory-service/recall-preview";
 import { writeMemoryFact } from "../../src/memory-service/memory-store";
+import { definedFields } from "../../src/shared/defined-fields";
 import {
   MEMORY_PROJECTION_SCHEMA_VERSION,
   type MemoryConfigProjection,
@@ -220,7 +221,9 @@ describe("memory library", () => {
     do {
       const page = await buildMemoryListPage(deps, {
         limit: 2,
-        ...(cursor === null ? {} : { cursor }),
+        ...definedFields({
+          cursor: cursor === null ? undefined : cursor,
+        }),
       });
       seen.push(...page.items.map((item) => item.key));
       cursor = page.nextCursor;

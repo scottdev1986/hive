@@ -22,6 +22,7 @@ import {
   HiveUpdateStatusAdvertisedSchema,
 } from "../../schemas/status-envelope";
 import type { TaskDetail } from "../../schemas/task-detail";
+import { definedFields } from "../../shared/defined-fields";
 import { toolResult } from "../../shared/mcp-tool-result";
 import {
   type Action,
@@ -466,11 +467,12 @@ export function registerStatusTools(
           ...liveAgent,
           status: deps.status.displayStatus(liveAgent, fusedStatus),
           statusDimensions: deps.status.dimensionsFrom(fusedStatus),
-          ...(deps.graphify === undefined
-            ? {}
-            : {
-                graphifyCalls: deps.graphifyCalls.get(agent.id)?.count ?? null,
-              }),
+          ...definedFields({
+            graphifyCalls:
+              deps.graphify === undefined
+                ? undefined
+                : (deps.graphifyCalls.get(agent.id)?.count ?? null),
+          }),
         };
       });
       const waiting = deps.waitingInstructions();
@@ -530,7 +532,6 @@ export function registerStatusTools(
             getAgentAdapter(agent.tool).communication.eventSource ===
               "transcript"
           ) {
-            // TODO(C2): normalize Grok project-hook events after live hook firing can be verified; until then its transcript descriptor deliberately reaches the universal fallback below.
           }
           activity.set(
             agent.id,

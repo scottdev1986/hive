@@ -15,6 +15,7 @@ import {
   ORCHESTRATOR_NAME,
 } from "../../schemas/agent";
 import { type HookEvent, HookEventSchema } from "../../schemas/event";
+import { definedFields } from "../../shared/defined-fields";
 
 const CLAUDE_PERMISSION_PROMPT = "permission_prompt";
 
@@ -89,12 +90,11 @@ export async function processEvent(
           ...agent,
           lastEventAt: observedAt,
           // A tool ran to completion, so any native permission dialog that was holding this agent has been answered. This is the only honest way back out of `awaiting-approval` for a vendor-raised dialog: Hive cannot answer that dialog, so it must wait to OBSERVE it gone rather than assume. Left alone, a reader that a user unblocked at the pane would keep reporting "blocked" for the rest of its turn.
-          ...(agent.status === "awaiting-approval"
-            ? { status: "working" }
-            : {}),
-          ...(value.toolSessionId === undefined
-            ? {}
-            : { toolSessionId: value.toolSessionId }),
+          ...definedFields({
+            status:
+              agent.status === "awaiting-approval" ? "working" : undefined,
+            toolSessionId: value.toolSessionId,
+          }),
         });
       });
     }
@@ -140,9 +140,7 @@ export async function processEvent(
             ? value.contextPct
             : agent.contextPct,
         lastEventAt: new Date(value.timestamp).toISOString(),
-        ...(value.toolSessionId === undefined
-          ? {}
-          : { toolSessionId: value.toolSessionId }),
+        ...definedFields({ toolSessionId: value.toolSessionId }),
         // A completed turn proves the process is genuinely healthy, so the crash-resume budget rearms.
       };
       deps.db.upsertAgent(updated);

@@ -1,10 +1,3 @@
-// The succession seam over the daemon's real HTTP and MCP handlers: steer,
-// begin, replies, projection, launch-failure, and the root's own tools. What
-// is proven here and nowhere else: the successor completes her succession
-// only by an explicit attestation after a measured re-read — a provider
-// observation never attests — and the frozen client projection reports only
-// idle|pending|failed through every phase. Convergence comes through the
-// production paths (MCP tools and HTTP endpoints), never injected rows.
 import { describe, expect, test } from "bun:test";
 import {
   Client,
@@ -13,11 +6,12 @@ import {
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import { HiveDaemon } from "../../src/daemon/server";
+import { definedFields } from "../../src/shared/defined-fields";
 import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import {
   type CapabilityProvider,
   CAPABILITY_PROVIDERS,
-} from "../../src/schemas/capability";
+} from "../../src/schemas/provider";
 import { ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import type { Run } from "../../src/schemas/hierarchy-run";
 import {
@@ -123,7 +117,9 @@ const request = (
     new Request(`http://hive${path}`, {
       method,
       headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...definedFields({
+        body: body === undefined ? undefined : JSON.stringify(body),
+      }),
     }),
   );
 };

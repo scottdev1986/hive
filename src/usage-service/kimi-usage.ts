@@ -2,6 +2,7 @@ import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { kimiHome } from "../adapters/providers/kimi-cli";
+import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 import { systemNow } from "../shared/clock";
 
@@ -156,12 +157,10 @@ export class KimiHttpUsageTransport implements KimiUsageTransport {
         refresh_token: refreshed.tokens.refresh_token,
         expires_at: refreshed.tokens.expires_at,
         expires_in: refreshed.tokens.expires_in,
-        ...(refreshed.tokens.scope === undefined
-          ? {}
-          : { scope: refreshed.tokens.scope }),
-        ...(refreshed.tokens.token_type === undefined
-          ? {}
-          : { token_type: refreshed.tokens.token_type }),
+        ...definedFields({
+          scope: refreshed.tokens.scope,
+          token_type: refreshed.tokens.token_type,
+        }),
       };
       await writeFile(path, `${JSON.stringify(credentials, null, 2)}\n`, {
         mode: 0o600,
@@ -259,12 +258,10 @@ export class KimiHttpUsageTransport implements KimiUsageTransport {
         refresh_token: parsed.data.refresh_token,
         expires_at: Math.floor(now() / 1_000) + parsed.data.expires_in,
         expires_in: parsed.data.expires_in,
-        ...(parsed.data.scope === undefined
-          ? {}
-          : { scope: parsed.data.scope }),
-        ...(parsed.data.token_type === undefined
-          ? {}
-          : { token_type: parsed.data.token_type }),
+        ...definedFields({
+          scope: parsed.data.scope,
+          token_type: parsed.data.token_type,
+        }),
       },
     };
   }

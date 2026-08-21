@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { hiveInstanceSuffix } from "../../hive-home/home";
+import { definedFields } from "../../shared/defined-fields";
 import { isRecord } from "../../shared/is-record";
 import { shellToken } from "../../shared/shell-quote";
 import { withFileLock } from "../file-lock";
@@ -405,9 +406,11 @@ export async function writeClaudeAgentConfig(
 
   const settings = {
     enableAllProjectMcpServers: true,
-    ...(bypassingPermissions
-      ? { skipDangerousModePermissionPrompt: true }
-      : {}),
+    ...definedFields({
+      skipDangerousModePermissionPrompt: bypassingPermissions
+        ? true
+        : undefined,
+    }),
     hooks: {
       SessionStart: hook(eventCommand("session-start")),
       UserPromptSubmit: hook(eventCommand("turn-start")),
@@ -415,28 +418,32 @@ export async function writeClaudeAgentConfig(
       Notification: hook(eventCommand("notification")),
       // This is the mid-turn safe boundary for urgent injection. Without it, a busy agent's queued urgent controls wait for the end of a possibly hour-long turn. The daemon treats it as a delivery tick, never a status change or an events-table row.
       PostToolUse: hook(eventCommand("tool-boundary")),
-      ...(options.graphifyUrl === undefined
-        ? {}
-        : {
-            PreToolUse: [
-              {
-                matcher: "Bash",
-                hooks: [
-                  {
-                    type: "command",
-                    command: graphifyCommand("claude-search"),
-                  },
-                ],
-              },
-              {
-                matcher:
-                  "Read|Glob|Grep|mcp__hive__graph_locate|mcp__graphify__.*",
-                hooks: [
-                  { type: "command", command: graphifyCommand("claude-read") },
-                ],
-              },
-            ],
-          }),
+      ...definedFields({
+        PreToolUse:
+          options.graphifyUrl === undefined
+            ? undefined
+            : [
+                {
+                  matcher: "Bash",
+                  hooks: [
+                    {
+                      type: "command",
+                      command: graphifyCommand("claude-search"),
+                    },
+                  ],
+                },
+                {
+                  matcher:
+                    "Read|Glob|Grep|mcp__hive__graph_locate|mcp__graphify__.*",
+                  hooks: [
+                    {
+                      type: "command",
+                      command: graphifyCommand("claude-read"),
+                    },
+                  ],
+                },
+              ],
+      }),
     },
     permissions,
   };
@@ -448,14 +455,15 @@ export async function writeClaudeAgentConfig(
         // The capability travels through a helper Claude runs at connect time, not through `headers: {Authorization: "Bearer ${VAR}"}`. An env var would be inherited by every descendant of this agent's process; the helper reads a 0600 file with a close-on-exec descriptor instead.
         headersHelper: `${hiveInvocation} credential --agent ${shellToken(options.name)}`,
       },
-      ...(options.graphifyUrl === undefined
-        ? {}
-        : {
-            graphify: {
-              type: "http",
-              url: options.graphifyUrl,
-            },
-          }),
+      ...definedFields({
+        graphify:
+          options.graphifyUrl === undefined
+            ? undefined
+            : {
+                type: "http" as const,
+                url: options.graphifyUrl,
+              },
+      }),
     },
   };
 

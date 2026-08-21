@@ -22,6 +22,7 @@ import type {
   SpawnRequest,
 } from "../../src/daemon/spawn/spawn-service";
 import { recallMemory } from "../../src/cli/mcp";
+import { definedFields } from "../../src/shared/defined-fields";
 import { actingAs } from "../support/daemon-test-support";
 import type { MemoryEmbedder } from "../../src/memory-service/embeddings";
 import { EpisodicStore } from "../../src/memory-service/episodic";
@@ -240,23 +241,27 @@ async function makeDaemon(
     spawner: new UnusedSpawner(),
     db: new HiveDatabase(":memory:"),
     repoRoot,
-    ...(options.episodic === undefined
-      ? {}
-      : { episodicStore: options.episodic }),
-    ...(options.episodic === undefined
-      ? {}
-      : {
-          memoryEmbeddings: {
-            provider: "local" as const,
-            model: "bge-small-en-v1.5" as const,
-          },
-          memoryEmbeddingLoad: () =>
-            options.failingLoad === true
-              ? Promise.reject(
-                  new Error("embedding-runtime-missing: no bundle in the test"),
-                )
-              : Promise.resolve(mockEmbedder()),
-        }),
+    ...definedFields({
+      episodicStore: options.episodic,
+      memoryEmbeddings:
+        options.episodic === undefined
+          ? undefined
+          : {
+              provider: "local" as const,
+              model: "bge-small-en-v1.5" as const,
+            },
+      memoryEmbeddingLoad:
+        options.episodic === undefined
+          ? undefined
+          : () =>
+              options.failingLoad === true
+                ? Promise.reject(
+                    new Error(
+                      "embedding-runtime-missing: no bundle in the test",
+                    ),
+                  )
+                : Promise.resolve(mockEmbedder()),
+    }),
   });
   return { daemon, repoRoot };
 }

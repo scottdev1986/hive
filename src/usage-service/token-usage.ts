@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 import type { NormalizedProviderEvent } from "../adapters/providers/protocol/types";
 import type { DatabaseHost } from "../shared/database-host";
+import { definedFields } from "../shared/defined-fields";
 import { type AgentRecord, isLiveAgent } from "../schemas/agent";
 import {
   type TokenUsageBreakdown,
@@ -68,7 +69,9 @@ export function protocolTokenEvent(
     },
     observedAt: event.observedAt ?? new Date().toISOString(),
     source: event.source ?? "protocol",
-    ...(event.cumulative === true ? { cumulative: true } : {}),
+    ...definedFields({
+      cumulative: event.cumulative === true ? true : undefined,
+    }),
   };
 }
 
