@@ -26,6 +26,7 @@ const REBUILD = "building lock-pinned GhosttyKit";
 const STAGE = "scripts/native/stage-ghosttykit.sh";
 
 function lockValue(key: string): string {
+  // SAFETY: The test owns this value and its fields.
   const parsed = JSON.parse(readFileSync(lock, "utf8")) as {
     ghostty: Record<string, string>;
     zig: { version: string };
@@ -50,11 +51,7 @@ function lockSha(): string {
  * restage whenever nothing is staged yet, which is true of any worktree where `make
  * build` has not run, and that restage says nothing about the artifact's identity.
  */
-function seedCache(source: Record<string, string>): {
-  cache: string;
-  stamp: string;
-  staged: string;
-} {
+function seedCache(source: Record<string, string>) {
   const cache = tempRoot("ghostty-make-wiring-");
   const artifact = join(
     cache,

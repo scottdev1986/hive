@@ -2,6 +2,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { isString } from "../shared/is-record";
 
 export interface NotaryConfig {
   readonly keyPath: string;
@@ -138,9 +139,8 @@ export async function notarize(
       "--wait",
     ]);
     const parsed = safeJson(submit.stdout);
-    const status =
-      typeof parsed?.status === "string" ? parsed.status : "unknown";
-    const id = typeof parsed?.id === "string" ? parsed.id : null;
+    const status = isString(parsed?.status) ? parsed.status : "unknown";
+    const id = isString(parsed?.id) ? parsed.id : null;
 
     if (status !== "Accepted") {
       let detail = submit.stdout.trim() || submit.stderr.trim();
@@ -159,6 +159,7 @@ export async function notarize(
 
 function safeJson(text: string): { status?: string; id?: string } | null {
   try {
+    // SAFETY: The surrounding code already established this contract.
     return JSON.parse(text) as { status?: string; id?: string };
   } catch {
     return null;

@@ -30,6 +30,7 @@ import { getHiveHome, hiveInstanceSuffix } from "../../src/hive-home/home";
 import { type HiveVariant, resolveVariant } from "../../src/hive-home/variant";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
@@ -340,10 +341,11 @@ describe("hive uninstall --repo", () => {
       expect(exclude).not.toContain("graphify-out/");
       expect(exclude).not.toContain(".graphifyignore");
       expect(existsSync(join(root, ".graphifyignore"))).toBe(false);
+      // SAFETY: The test owns this value and its fields.
       const mcp = JSON.parse(
         await readFile(join(root, ".mcp.json"), "utf8"),
       ) as {
-        mcpServers: Record<string, unknown>;
+        mcpServers: JsonObject;
       };
       expect(mcp.mcpServers.hive).toBeUndefined();
 

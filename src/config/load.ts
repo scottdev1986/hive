@@ -7,6 +7,7 @@ import {
 } from "../schemas/quota";
 import { type HiveConfig, HiveConfigSchema } from "../schemas/config-schema";
 import { errorMessage } from "../shared/error-message";
+import type { JsonValue } from "../shared/json";
 
 async function readToml(path: string): Promise<string | undefined> {
   const file = Bun.file(path);
@@ -24,10 +25,11 @@ export function hiveConfigPath(): string {
 export async function loadHiveConfig(): Promise<HiveConfig> {
   const path = hiveConfigPath();
   const text = await readToml(path);
-  let parsed: unknown = {};
+  let parsed: JsonValue = {};
   if (text !== undefined) {
     try {
-      parsed = Bun.TOML.parse(text);
+      // SAFETY: Bun.TOML.parse of a config file yields JSON-shaped data; zod parse below is the contract.
+      parsed = Bun.TOML.parse(text) as JsonValue;
     } catch (error) {
       throw new Error(`Invalid TOML in ${path}: ${errorMessage(error)}`);
     }
@@ -42,10 +44,11 @@ export async function loadHiveConfig(): Promise<HiveConfig> {
 export async function loadQuotaConfig(): Promise<QuotaConfig> {
   const path = join(getHiveHome(), "quota.toml");
   const text = await readToml(path);
-  let parsed: unknown = DEFAULT_QUOTA_CONFIG;
+  let parsed: JsonValue = DEFAULT_QUOTA_CONFIG;
   if (text !== undefined) {
     try {
-      parsed = Bun.TOML.parse(text);
+      // SAFETY: Bun.TOML.parse of a config file yields JSON-shaped data; zod parse below is the contract.
+      parsed = Bun.TOML.parse(text) as JsonValue;
     } catch (error) {
       throw new Error(`Invalid TOML in ${path}: ${errorMessage(error)}`);
     }

@@ -92,7 +92,7 @@ describe("hive init command boundary", () => {
       }),
     );
 
-    const commandEnv: Record<string, string | undefined> = {
+    const commandEnv: NodeJS.ProcessEnv = {
       ...process.env,
       HOME: home,
       // This test proves Graphify and repository setup, not embedding setup.
@@ -192,6 +192,7 @@ describe("hive init command boundary", () => {
     ]);
     expect(launchExit).toBe(0);
     expect(launchError).toBe("");
+    // SAFETY: The test owns this value and its fields.
     const selected = JSON.parse(launchOut) as {
       home: string;
       initialized: boolean;

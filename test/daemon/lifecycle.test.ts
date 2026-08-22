@@ -28,6 +28,7 @@ import {
   writeLifecycleFiles,
 } from "../../src/daemon/lifecycle/daemon-lifecycle";
 import { hiveInstanceSuffix } from "../../src/hive-home/home";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 import { IS_RELEASE_BUILD } from "../../src/shared/version";
 
 const fixtureProcessIdentity = (pid: number) => ({
@@ -52,6 +53,7 @@ describe("respawning as the daemon", () => {
   test("names this exact CLI build before adding a subcommand", () => {
     const sourceArgv = hiveCliSpawnArgv(false, process.execPath);
     expect(sourceArgv[1]).toBe(join(import.meta.dir, "../../src/cli.ts"));
+    // SAFETY: The test owns this value and its fields.
     expect(existsSync(sourceArgv[1] as string)).toBe(true);
     expect(
       hiveCliSpawnArgv(false, "/usr/local/bin/bun", "/repo/src/cli.ts"),
@@ -392,6 +394,7 @@ describe("daemon lifecycle", () => {
     const previousHome = process.env.HIVE_HOME;
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-project-"));
     process.env.HIVE_HOME = home;
+    // SAFETY: The test owns this value and its fields.
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) => {
       const url = String(input);
       return Promise.resolve(
@@ -421,6 +424,7 @@ describe("daemon lifecycle", () => {
     const previousHome = process.env.HIVE_HOME;
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-starting-"));
     process.env.HIVE_HOME = home;
+    // SAFETY: The test owns this value and its fields.
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) =>
       Promise.resolve(
         String(input).endsWith("/health")
@@ -456,6 +460,7 @@ describe("daemon lifecycle", () => {
     // Work left pending by an earlier file can reach this process-wide fetch
     // spy, so it answers only for this test's port and passes the rest through.
     const realFetch = globalThis.fetch;
+    // SAFETY: The test owns this value and its fields.
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((
       input: string | URL | Request,
       init?: RequestInit,
@@ -479,15 +484,17 @@ describe("daemon lifecycle", () => {
     }) as typeof fetch);
     const daemonArgv = daemonSpawnArgv(IS_RELEASE_BUILD, process.execPath);
     let spawned = false;
-    const spawn = ((
-      _argv: string[],
-      options?: { env?: Record<string, string | undefined> },
-    ) => {
-      spawned = true;
-      throw new Error(
-        `must not spawn a duplicate daemon for ${options?.env?.HIVE_HOME}`,
-      );
-    }) as unknown as typeof Bun.spawn;
+    const spawn = unsafeCast<typeof Bun.spawn>(
+      (
+        _argv: string[],
+        options?: { env?: Record<string, string | undefined> },
+      ) => {
+        spawned = true;
+        throw new Error(
+          `must not spawn a duplicate daemon for ${options?.env?.HIVE_HOME}`,
+        );
+      },
+    );
     try {
       writeLifecycleFiles(4317);
       expect(await ensureStarted(spawn)).toBe(4317);
@@ -509,6 +516,7 @@ describe("daemon lifecycle", () => {
     const previousHome = process.env.HIVE_HOME;
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-build-"));
     process.env.HIVE_HOME = home;
+    // SAFETY: The test owns this value and its fields.
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) =>
       Promise.resolve(
         Response.json(
@@ -536,6 +544,7 @@ describe("daemon lifecycle", () => {
     const previousHome = process.env.HIVE_HOME;
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-reuse-"));
     process.env.HIVE_HOME = home;
+    // SAFETY: The test owns this value and its fields.
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) =>
       Promise.resolve(
         Response.json(

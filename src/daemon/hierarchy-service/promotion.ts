@@ -19,6 +19,7 @@ import {
 import { ABORTED_RUN_ADMISSION_SEAM } from "./hierarchy-run-control";
 import { canonicalJson } from "../status-service/status-service";
 import { errorMessage } from "../../shared/error-message";
+import type { JsonObject } from "../../shared/json";
 
 const nextRevision = (current: string): string =>
   (BigInt(current) + 1n).toString();
@@ -810,7 +811,8 @@ function missingValidationEvidenceStore(commitSha: string): PromotionError {
 /** Refuse runtime smuggling even though production supplies this object itself. */
 export function assertAuthorityOnly(authority: PromotionAuthority): void {
   const allowed = new Set(["binding", "capabilityEpoch"]);
-  for (const key of Object.keys(authority as Record<string, unknown>)) {
+  // SAFETY: The surrounding code already established this contract.
+  for (const key of Object.keys(authority as JsonObject)) {
     if (allowed.has(key)) continue;
     throw new PromotionError(
       "STAGE_MISMATCH",

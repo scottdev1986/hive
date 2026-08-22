@@ -74,6 +74,7 @@ beforeEach(() => {
     fetch: async (request) => {
       const url = new URL(request.url);
       if (url.pathname.endsWith("/kill")) {
+        // SAFETY: The test owns this value and its fields.
         const body = (await request.json().catch(() => null)) as {
           origin?: string;
         } | null;
@@ -111,7 +112,7 @@ test("stopHive with partial deps cannot reach through ambient HIVE_HOME and kill
     log: () => {},
   }).then(
     () => null,
-    (thrown: unknown) => thrown,
+    (thrown) => thrown,
   );
 
   // A leaked kill would show up here with a stop origin.
@@ -120,6 +121,7 @@ test("stopHive with partial deps cannot reach through ambient HIVE_HOME and kill
   ).toEqual([]);
 
   expect(error).toBeInstanceOf(Error);
+  // SAFETY: The test owns this value and its fields.
   expect((error as Error).message).toMatch(/refus/i);
 });
 

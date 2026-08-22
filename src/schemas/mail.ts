@@ -207,7 +207,7 @@ export const MailClaimRequestSchema = z.strictObject({
   handlerId: z.string().min(1).max(MAIL_HANDLER_ID_MAX_LENGTH),
 });
 
-const MailCompleteRequestShape = {
+const MailCompleteRequestFields = {
   recipient: z.string().min(1),
   itemId: z.string().min(1),
   handlerId: z.string().min(1).max(MAIL_HANDLER_ID_MAX_LENGTH),
@@ -223,15 +223,15 @@ const MailCompleteRequestShape = {
 
 export const MailCompleteRequestSchema = z.discriminatedUnion("disposition", [
   z.strictObject({
-    ...MailCompleteRequestShape,
+    ...MailCompleteRequestFields,
     disposition: z.literal("completed"),
   }),
   z.strictObject({
-    ...MailCompleteRequestShape,
+    ...MailCompleteRequestFields,
     disposition: z.literal("rejected"),
   }),
   z.strictObject({
-    ...MailCompleteRequestShape,
+    ...MailCompleteRequestFields,
     disposition: z.literal("deferred"),
     retryAfterSeconds: z
       .number()

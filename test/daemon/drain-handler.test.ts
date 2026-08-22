@@ -15,6 +15,7 @@ import { QuotaLedger } from "../../src/usage-service/quota-ledger";
 import { drainedWindowFor } from "../../src/usage-service/quota-pool-status";
 import type { QuotaProbe } from "../../src/usage-service/quota-sources";
 import { required } from "../required";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 
 /**
  * The drain handler: hold when a window resets within the hour,
@@ -313,13 +314,11 @@ describe("the drain handler", () => {
     const bothResuming = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const deps = (
-      h.drain as unknown as {
-        deps: {
-          resumeProvider: (record: AgentRecord) => Promise<boolean>;
-        };
-      }
-    ).deps;
+    const deps = unsafeCast<{
+      deps: {
+        resumeProvider: (record: AgentRecord) => Promise<boolean>;
+      };
+    }>(h.drain).deps;
     deps.resumeProvider = async (record) => {
       h.resumed.push(record.name);
       resumeCalls += 1;

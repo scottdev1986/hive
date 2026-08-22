@@ -79,9 +79,11 @@ export type WakeSchedule =
   | Readonly<{ kind: "wait"; wake: MailWakeRow; readyAt: string }>
   | Readonly<{ kind: "idle" }>;
 
-const PREREQUISITES: Partial<
-  Record<MailDeliveryState, readonly MailDeliveryState[]>
-> = {
+interface DeliveryPrerequisites {
+  readonly [state: string]: readonly MailDeliveryState[] | undefined;
+}
+
+const PREREQUISITES: DeliveryPrerequisites = {
   frontend_notified: ["published"],
   wake_queued: ["frontend_notified"],
   vendor_request_accepted: ["wake_queued"],

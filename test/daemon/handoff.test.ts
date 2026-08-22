@@ -17,6 +17,7 @@ import { buildAgentPrompt } from "../../src/daemon/spawn/spawner-impl";
 import { StatusStore } from "../../src/daemon/status/status-store";
 import { actingAs } from "../support/daemon-test-support";
 import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 import type { MemoryFact } from "../../src/schemas/memory";
 import type { ProviderEvent } from "../../src/schemas/provider-communication";
 import type { ProviderRun } from "../../src/schemas/provider-run";
@@ -410,7 +411,7 @@ describe("handoff bundle", () => {
         },
       },
     });
-    const internal = daemon as unknown as {
+    const internal = unsafeCast<{
       terminalHost: {
         pauseProvider: () => Promise<boolean>;
         stopProvider: () => Promise<boolean>;
@@ -425,7 +426,7 @@ describe("handoff bundle", () => {
           reason: string;
         },
       ) => Promise<void>;
-    };
+    }>(daemon);
     internal.terminalHost.pauseProvider = async () => {
       order.push("pause");
       return true;

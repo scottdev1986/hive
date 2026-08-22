@@ -235,6 +235,7 @@ describe("Git-backed settlement residue", () => {
         evidenceFormat: null,
       });
 
+      // SAFETY: The test owns this value and its fields.
       const report = (await lifecycle.reconcileOrphanedWorktrees()) as {
         settledCases?: Array<{
           caseId: string;

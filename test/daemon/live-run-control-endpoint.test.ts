@@ -386,6 +386,7 @@ describe("Live Run process controls", () => {
       request(intent("stop-provider")),
     );
     expect(replay.status).toBe(200);
+    // SAFETY: The test owns this value and its fields.
     expect((await replay.json()) as { operationId: string }).toMatchObject({
       operationId: result.operationId,
     });
@@ -422,6 +423,7 @@ describe("Live Run process controls", () => {
       request(intent("terminate-terminal")),
     );
     expect(replay.status).toBe(200);
+    // SAFETY: The test owns this value and its fields.
     expect((await replay.json()) as { operationId: string }).toMatchObject({
       operationId: result.operationId,
     });
@@ -434,6 +436,7 @@ describe("Live Run process controls", () => {
     const stale = intent("terminate-terminal");
     const response = await liveRunControlEndpoint(
       deps,
+      // SAFETY: The test owns this value and its fields.
       request({
         ...stale,
         body: {

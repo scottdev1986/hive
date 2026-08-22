@@ -6,7 +6,7 @@ import {
 import type { MeasuredProviderCapabilities } from "../../../schemas/capability";
 import { definedFields } from "../../../shared/defined-fields";
 import { errorMessage } from "../../../shared/error-message";
-import { isRecord } from "../../../shared/is-record";
+import { isRecord, isString } from "../../../shared/is-record";
 import {
   type JsonValue,
   requireJsonValue,
@@ -55,14 +55,14 @@ import type {
 const CONTROL_TIMEOUT_MS = 15_000;
 const CLOSE_GRACE_MS = 2_000;
 
-function claudeToolResultText(value: unknown): string | null {
-  if (typeof value === "string") {
+function claudeToolResultText<T>(value: T): string | null {
+  if (isString(value)) {
     const text = value.trim();
     return text === "" ? null : text;
   }
   if (!Array.isArray(value)) return null;
   const lines = value.flatMap((entry) => {
-    if (typeof entry === "string") return [entry];
+    if (isString(entry)) return [entry];
     if (!isRecord(entry)) return [];
     const text = asString(entry.text) ?? asString(entry.content);
     return text === null ? [] : [text];
@@ -839,7 +839,7 @@ export class ClaudeStreamJsonSession implements ProviderSession {
       if (!isRecord(block)) continue;
       if (
         block.type === "text" &&
-        typeof block.text === "string" &&
+        isString(block.text) &&
         (message.isApiErrorMessage === true ||
           asString(message.error) !== null ||
           (asNumber(message.apiErrorStatus) ?? 0) >= 400)
@@ -908,21 +908,18 @@ export class ClaudeStreamJsonSession implements ProviderSession {
       return;
     }
     const delta = event.delta;
-    if (delta.type === "text_delta" && typeof delta.text === "string") {
+    if (delta.type === "text_delta" && isString(delta.text)) {
       this.emit({ kind: "message-delta", turnId, text: delta.text }, message);
       return;
     }
-    if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
+    if (delta.type === "thinking_delta" && isString(delta.thinking)) {
       this.emit(
         { kind: "thought-delta", turnId, text: delta.thinking },
         message,
       );
       return;
     }
-    if (
-      delta.type === "input_json_delta" &&
-      typeof delta.partial_json === "string"
-    ) {
+    if (delta.type === "input_json_delta" && isString(delta.partial_json)) {
       const index = asNumber(event.index);
       const toolCallId = this.toolIdAtIndex(index);
       if (toolCallId !== null) {
@@ -936,7 +933,7 @@ export class ClaudeStreamJsonSession implements ProviderSession {
   private updateStreamedToolInput(
     toolCallId: string,
     fragment: string,
-    raw: unknown,
+    raw: JsonValue,
   ): void {
     const turn = this.activeTurn;
     if (turn === null) return;
@@ -1004,7 +1001,7 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     turn.state = "terminal";
     if (message.is_error === true || message.subtype !== "success") {
       const errors = Array.isArray(message.errors)
-        ? message.errors.filter((value) => typeof value === "string").join("; ")
+        ? message.errors.filter((value) => isString(value)).join("; ")
         : "";
       const reason =
         errors ||
@@ -1052,11 +1049,11 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     this.emit({ kind: "unrecognized" }, message);
   }
 
-  private startTool(
+  private startTool<T, U>(
     toolCallId: string,
     toolName: string,
-    input: unknown,
-    raw: unknown,
+    input: T,
+    raw: U,
     blockIndex: number | null = null,
   ): void {
     const turn = this.activeTurn;
@@ -1084,7 +1081,7 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     toolCallId: string,
     error: boolean,
     reason: string | null,
-    raw: unknown,
+    raw: JsonValue,
   ): void {
     const turn = this.activeTurn;
     if (turn === null || turn.finishedTools.has(toolCallId)) return;
@@ -1287,8 +1284,9 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     this.emit({ kind: "run-ended", exitCode }, { exitCode });
   }
 
-  private emit(event: EmittableEvent, raw: unknown): void {
+  private emit<T>(event: EmittableEvent, raw: T): void {
     this.sequence += 1;
+    // SAFETY: The surrounding code already established this contract.
     this.queue.push({
       ...event,
       sequence: this.sequence,

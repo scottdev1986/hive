@@ -66,6 +66,7 @@ const writeInput = (title: string, body: string, kind = "article") => ({
   source: "agent" as const,
   evidence: "memory-degradation-visibility.test.ts",
   status: "unverified" as const,
+  // SAFETY: The test owns this value and its fields.
   kind: kind as "article" | "pitfall",
   tags: [],
   supersedes: [],
@@ -293,14 +294,16 @@ async function connectedClient(
 function textValue(
   result: Awaited<ReturnType<Client["callTool"]>>,
 ): WriteToolValue {
-  const content = (
-    result as {
-      content: Array<{ type: string; text?: string }>;
-    }
-  ).content[0];
+  const content = // SAFETY: The test owns this value and its fields.
+    (
+      result as {
+        content: Array<{ type: string; text?: string }>;
+      }
+    ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
+  // SAFETY: The test owns this value and its fields.
   return JSON.parse(content.text) as WriteToolValue;
 }
 
@@ -424,17 +427,18 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
       name: "hive_status",
       arguments: {},
     });
-    const structured = (
-      result as unknown as {
-        structuredContent: { memory: { embeddings: EmbeddingStatusValue } };
-      }
-    ).structuredContent;
+    const structured = // SAFETY: The test owns this value and its fields.
+      (
+        result as {
+          structuredContent: { memory: { embeddings: EmbeddingStatusValue } };
+        }
+      ).structuredContent;
     const embeddings = structured.memory.embeddings;
     expect(embeddings.provider).toBe("local");
     expect(embeddings.model).toBe("bge-small-en-v1.5");
     expect(embeddings.state).toBe("ready");
     expect(embeddings.vectors).toEqual({ articles: 1, facts: 0, total: 1 });
-    expect(typeof embeddings.runtimeDir).toBe("string");
+    expect(embeddings.runtimeDir).toBeTypeOf("string");
     episodic.close();
   });
 
@@ -444,10 +448,11 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
     const client = await connectedClient(daemon);
     await seedArticle(client, "Trips the load");
     await required(daemon.embeddingIndex).settle();
+    // SAFETY: The test owns this value and its fields.
     const down = (await client.callTool({
       name: "hive_status",
       arguments: {},
-    })) as unknown as {
+    })) as {
       structuredContent: { memory: { embeddings: EmbeddingStatusValue } };
     };
     expect(down.structuredContent.memory.embeddings.state).toBe(
@@ -461,10 +466,11 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
 
     const bare = await makeDaemon();
     const bareClient = await connectedClient(bare.daemon);
+    // SAFETY: The test owns this value and its fields.
     const disabled = (await bareClient.callTool({
       name: "hive_status",
       arguments: {},
-    })) as unknown as {
+    })) as {
       structuredContent: { memory: { embeddings: EmbeddingStatusValue } };
     };
     expect(disabled.structuredContent.memory.embeddings.state).toBe("disabled");

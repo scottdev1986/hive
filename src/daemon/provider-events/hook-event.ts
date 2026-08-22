@@ -92,6 +92,7 @@ export function recordProviderHookEvent(
       .digest("hex"),
     providerRunId: run.runId,
     // getActiveProviderRunForAgent is agent-scoped, so this is always a worker run and ProviderRunSchema's refinement guarantees a non-null provider for it.
+    // SAFETY: The surrounding code already established this contract.
     provider: run.provider as CapabilityProvider,
     capabilityEpoch: run.capabilityEpoch,
     conversationId,

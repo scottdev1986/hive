@@ -27,11 +27,7 @@ const assertGone = join(
   "assert-qa-gone.sh",
 );
 
-function run(argv: string[]): {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-} {
+function run(argv: string[]) {
   const result = Bun.spawnSync(argv, { stdout: "pipe", stderr: "pipe" });
   return {
     exitCode: result.exitCode ?? 1,

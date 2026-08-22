@@ -5,6 +5,7 @@ import {
   type ViewState,
 } from "../src/cli/agent-ui/view-state";
 import { type AgentUiHarness, createAgentUiHarness } from "./agent-ui-harness";
+import { unsafeCast } from "../src/shared/unsafe-cast";
 
 let harness: AgentUiHarness;
 
@@ -18,7 +19,7 @@ afterEach(async () => {
 
 describe("transcript render window", () => {
   test("bounds OpenTUI children and pages to older transcript entries", async () => {
-    const internal = harness.ui as unknown as { view: ViewState };
+    const internal = unsafeCast<{ view: ViewState }>(harness.ui);
     let view = internal.view;
     for (let index = 0; index < 1_000; index += 1) {
       view = applyMailNotice(view, "work", `mail-${index}`);
@@ -53,13 +54,13 @@ describe("transcript render window", () => {
   });
 
   test("a spinner tick does not reconcile the transcript", () => {
-    const internal = harness.ui as unknown as {
+    const internal = unsafeCast<{
       spinnerTick: number;
       refresh(): void;
       transcriptView: {
         update(...args: unknown[]): void;
       };
-    };
+    }>(harness.ui);
     const original = internal.transcriptView.update.bind(
       internal.transcriptView,
     );

@@ -240,16 +240,14 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   await writeFile(stagedCli, cliBytes);
   await chmod(stagedCli, 0o755);
 
-  const reported = await deps
-    .probeVersion(stagedCli)
-    .catch(async (error: unknown) => {
-      await rm(staging, { recursive: true, force: true });
-      throw new UpdateError(
-        `Refusing update: staged hive ${version} did not run (${errorMessage(
-          error,
-        )})`,
-      );
-    });
+  const reported = await deps.probeVersion(stagedCli).catch(async (error) => {
+    await rm(staging, { recursive: true, force: true });
+    throw new UpdateError(
+      `Refusing update: staged hive ${version} did not run (${errorMessage(
+        error,
+      )})`,
+    );
+  });
   if (!probeMatchesVersion(reported, version)) {
     await rm(staging, { recursive: true, force: true });
     throw new UpdateError(
@@ -338,7 +336,7 @@ async function proveStaged(
     );
   }
 
-  const reported = await deps.probeVersion(staged).catch((error: unknown) => {
+  const reported = await deps.probeVersion(staged).catch((error) => {
     throw new UpdateError(
       `Refusing update: the staged hive ${version} did not run (${errorMessage(
         error,
@@ -684,6 +682,7 @@ export async function rollback(deps: RollbackDeps): Promise<ActivationOutcome> {
     // Symmetric with activateWithHealthCheck: never leave `current` pointing at a binary that just failed its own health check, rollback included. The version we came from got here by having already passed a health check (its own activation or an earlier rollback), so it is the thing to trust.
     const canRevert = state.active !== null && isStaged(state.active, root);
     if (canRevert) {
+      // SAFETY: The surrounding code already established this contract.
       await activate(state.active as string, root);
     }
     return {

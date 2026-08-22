@@ -63,6 +63,7 @@ import {
   StatusIncarnationUnavailableError,
 } from "./generation";
 import type { StatusService } from "./status-projection-service";
+import type { JsonObject } from "../../shared/json";
 
 export const StatusRequestSchema = z.object({
   detail: z.enum(["full", "active"]).optional(),
@@ -216,14 +217,16 @@ export type CurrentRunHierarchyFences =
       detail: string;
     };
 
+export type HierarchyStatusContext = {
+  currentRun: CurrentRunHierarchyFences;
+  agentRuns: Map<string, ActiveAgentRun>;
+};
+
 export function hierarchyStatusContext(
   db: HiveDatabase,
   agents: readonly AgentRecord[],
   instanceId = hiveInstanceSuffix(),
-): {
-  currentRun: CurrentRunHierarchyFences;
-  agentRuns: Map<string, ActiveAgentRun>;
-} {
+): HierarchyStatusContext {
   const store = new HierarchyStore(db);
   const bindingRunIds = new Map<string, string | null>();
   for (const { binding, runId } of store.listAgentBindings()) {
@@ -328,7 +331,7 @@ export function hierarchyStatusContext(
 /// `Record<keyof Shape, true>` is what keeps a declared list honest — it requires
 /// every key of the shape, so adding a field to either record fails `tsc` here
 /// until it is listed. That is the whole reason this is safe to hand-write.
-const FULL_FIELDS: Record<keyof AgentRecord, true> = {
+const FULL_FIELDS = {
   id: true,
   name: true,
   tool: true,
@@ -360,9 +363,9 @@ const FULL_FIELDS: Record<keyof AgentRecord, true> = {
   capabilityEpoch: true,
   readOnly: true,
   writeRevoked: true,
-};
+} satisfies Record<keyof AgentRecord, true>;
 
-const COMPACT_FIELDS: Record<keyof ActiveAgentSummary, true> = {
+const COMPACT_FIELDS = {
   name: true,
   capabilityEpoch: true,
   runId: true,
@@ -380,7 +383,7 @@ const COMPACT_FIELDS: Record<keyof ActiveAgentSummary, true> = {
   graphifyCalls: true,
   lastEventAt: true,
   activity: true,
-};
+} satisfies Record<keyof ActiveAgentSummary, true>;
 
 /// Project each agent record down to the requested keys, refusing any name that
 /// would otherwise be dropped in silence.
@@ -404,7 +407,7 @@ function projectAgents(
   elsewhere: Record<string, true>,
   otherDetail: string,
   fields: readonly string[],
-): Record<string, unknown>[] {
+): JsonObject[] {
   const missing = fields.filter((field) => legal[field] !== true);
   if (missing.length > 0) {
     const wrongDetail = missing.filter((field) => elsewhere[field] === true);
@@ -465,7 +468,7 @@ export function registerStatusTools(
       if (storedAgents.length > 0) {
         sessions = await deps.terminalHost
           .list(hiveInstanceSuffix())
-          .catch((error: unknown) => {
+          .catch((error) => {
             console.warn(
               `Hive could not list terminal sessions; no agent will report ` +
                 `terminal state this pass: ${

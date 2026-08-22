@@ -5,8 +5,8 @@ import { daemonMcpUrl } from "../adapters/providers/shared/mcp-scope";
 import { readDaemonPort } from "../daemon/lifecycle/daemon-lifecycle";
 import { listInstances } from "../daemon/lifecycle/instances";
 import { hiveInstanceSuffix, isDefaultHiveHome } from "../hive-home/home";
-import { isRecord } from "../shared/is-record";
-import { safeJsonParse } from "../shared/json";
+import { isRecord, isString } from "../shared/is-record";
+import { safeJsonParse, type JsonObject, type JsonValue } from "../shared/json";
 
 interface RepairScope {
   readonly instanceId: string;
@@ -25,7 +25,7 @@ async function readText(path: string): Promise<string | null> {
 
 async function writeJsonOrRemove(
   path: string,
-  value: Record<string, unknown>,
+  value: JsonObject,
 ): Promise<void> {
   if (Object.keys(value).length === 0) {
     await rm(path, { force: true });
@@ -34,17 +34,17 @@ async function writeJsonOrRemove(
   }
 }
 
-const localHiveUrl = (value: unknown, scope: RepairScope): boolean => {
-  if (typeof value !== "string") return false;
+const localHiveUrl = <T>(value: T, scope: RepairScope): boolean => {
+  if (!isString(value)) return false;
   if (scope.port !== null && value === daemonMcpUrl(scope.port)) return true;
   return scope.allowLegacy && /^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(value);
 };
 
-function isHiveMcpServer(value: unknown, scope: RepairScope): boolean {
+function isHiveMcpServer<T>(value: T, scope: RepairScope): boolean {
   return (
     isRecord(value) &&
     localHiveUrl(value.url, scope) &&
-    typeof value.headersHelper === "string" &&
+    isString(value.headersHelper) &&
     /^hive credential --agent (?:queen|orchestrator)$/.test(value.headersHelper)
   );
 }
@@ -66,18 +66,15 @@ async function cleanClaudeMcp(
     changed = true;
   }
   if (!changed) return false;
-  const next: Record<string, unknown> = { ...parsed };
+  const next: JsonObject = { ...parsed };
   if (Object.keys(servers).length === 0) delete next.mcpServers;
   else next.mcpServers = servers;
   await writeJsonOrRemove(path, next);
   return true;
 }
 
-const hiveOrchestratorCommand = (
-  value: unknown,
-  scope: RepairScope,
-): boolean => {
-  if (typeof value !== "string") return false;
+const hiveOrchestratorCommand = <T>(value: T, scope: RepairScope): boolean => {
+  if (!isString(value)) return false;
   if (
     !/^hive (?:event [a-z-]+|statusline) --agent (?:queen|orchestrator) --port \d+/.test(
       value,
@@ -91,7 +88,7 @@ const hiveOrchestratorCommand = (
   );
 };
 
-function knownReadOnlyPermissions(value: unknown): boolean {
+function knownReadOnlyPermissions<T>(value: T): boolean {
   if (
     !isRecord(value) ||
     value.defaultMode !== "default" ||
@@ -107,7 +104,7 @@ function knownReadOnlyPermissions(value: unknown): boolean {
         entry === "Read" ||
         entry === "Glob" ||
         entry === "Grep" ||
-        (typeof entry === "string" && entry.startsWith("mcp__hive__")),
+        (isString(entry) && entry.startsWith("mcp__hive__")),
     ) &&
     ["Read", "Glob", "Grep"].every((entry) => allow.has(entry)) &&
     deny.size === 4 &&
@@ -115,19 +112,16 @@ function knownReadOnlyPermissions(value: unknown): boolean {
   );
 }
 
-function removeHiveHooks(
-  value: unknown,
-  scope: RepairScope,
-): { value: unknown; changed: boolean } {
-  if (!isRecord(value)) return { value, changed: false };
-  const hooks: Record<string, unknown> = {};
+function removeHiveHooks<T>(value: T | undefined, scope: RepairScope) {
+  if (!isRecord(value)) return { value: value ?? null, changed: false };
+  const hooks: JsonObject = {};
   let changed = false;
   for (const [event, groupsValue] of Object.entries(value)) {
     if (!Array.isArray(groupsValue)) {
       hooks[event] = groupsValue;
       continue;
     }
-    const groups: unknown[] = [];
+    const groups: JsonValue[] = [];
     for (const groupValue of groupsValue) {
       if (!isRecord(groupValue) || !Array.isArray(groupValue.hooks)) {
         groups.push(groupValue);
@@ -156,7 +150,7 @@ async function cleanClaudeSettings(
   const parsed = safeJsonParse(text);
   if (parsed === undefined) return false;
   if (!isRecord(parsed)) return false;
-  const next: Record<string, unknown> = { ...parsed };
+  const next: JsonObject = { ...parsed };
   let changed = false;
   if (
     isRecord(next.statusLine) &&

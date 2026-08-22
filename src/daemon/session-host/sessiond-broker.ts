@@ -1,3 +1,4 @@
+import { isNumber } from "../../shared/is-record";
 /** Locates the `hive-sessiond` binary, and holds the AF_UNIX peer-identity helpers its test exercises.
 
 Nothing here supervises a broker process any more: `resolveSessiondBinary` is the only export production uses, from `cli/daemon.ts` and `sessiond-host.ts`. No code in this repository opens a `broker.sock`, and no code spawns `hive-sessiond serve`.
@@ -101,11 +102,11 @@ export function socketFileDescriptor(socket: Socket): number {
   const fd =
     handle !== null &&
     handle !== undefined &&
-    typeof handle === "object" &&
+    handle instanceof Object &&
     "fd" in handle
       ? handle.fd
       : undefined;
-  if (typeof fd !== "number" || fd < 0) {
+  if (!isNumber(fd) || fd < 0) {
     throw new Error(
       "connected socket has no usable file descriptor for LOCAL_PEERPID",
     );

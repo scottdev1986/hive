@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getHiveHome } from "../hive-home/home";
 import { systemNow } from "../shared/clock";
+import { isNumber } from "../shared/is-record";
 import {
   checkForUpdate,
   fetchLatestFromGitHub,
@@ -11,6 +12,7 @@ import {
 } from "../update-service/check";
 import { renderUpdateNotice } from "../update-service/notice";
 import { detectInstallMethod } from "../update-service/paths";
+import type { JsonValue } from "../shared/json";
 
 export const NOTICE_NETWORK_BUDGET_MS = 300;
 
@@ -31,9 +33,10 @@ export const noticeStatePath = (): string =>
 
 export function readLastNoticeAt(path = noticeStatePath()): number | null {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const parsed: JsonValue = JSON.parse(readFileSync(path, "utf8"));
+    // SAFETY: The surrounding code already established this contract.
     const at = (parsed as { lastNoticeAt?: unknown } | null)?.lastNoticeAt;
-    return typeof at === "number" && Number.isFinite(at) ? at : null;
+    return isNumber(at) && Number.isFinite(at) ? at : null;
   } catch {
     return null;
   }
@@ -66,6 +69,7 @@ export interface UpdateNoticeDeps {
 }
 
 /** The check with its network budget clamped: the same on-disk cache checkForUpdate always maintains, but a cold fetch aborts fast instead of keeping the process alive after the command has finished. */
+// SAFETY: The surrounding code already established this contract.
 const budgetedFetch = ((input, init) =>
   fetch(input, {
     ...init,

@@ -12,7 +12,7 @@ const event = (
   index: number,
   kind: string,
   sourceKind: WorkspaceEventV2["source"]["kind"],
-  data: Record<string, unknown>,
+  data: WorkspaceEventV2["data"],
   observedAt = AT,
   confidence: WorkspaceEventV2["source"]["confidence"] = "high",
 ): WorkspaceEventV2 => ({

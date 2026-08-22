@@ -1,4 +1,5 @@
 import type { Autonomy } from "../config/autonomy";
+import { isRecord, isString } from "../shared/is-record";
 import {
   macProcessIdentity,
   verifyDaemonInstance,
@@ -24,6 +25,7 @@ import {
   presentWorkspaceAgent,
   presentWorkspaceOrchestrator,
 } from "./workspace-feed-presentation";
+import type { JsonValue } from "../shared/json";
 
 export const FEED_VERSION = 1;
 export const FEED_POLL_MS = 1_000;
@@ -220,7 +222,7 @@ export class WorkspaceVisibilityPublisher {
       this.pending = WorkspaceVisibilityInventoryInputSchema.parse(
         JSON.parse(Buffer.from(line).toString("utf8")),
       );
-    } catch (error: unknown) {
+    } catch (error) {
       this.report(error);
       return;
     }
@@ -233,7 +235,7 @@ export class WorkspaceVisibilityPublisher {
     if (inventory === null) return;
     this.pending = null;
     this.inFlight = this.runOne(inventory)
-      .catch((error: unknown) => {
+      .catch((error) => {
         this.report(error);
       })
       .then(() => {
@@ -273,7 +275,7 @@ export class WorkspaceVisibilityPublisher {
     }
   }
 
-  private report(error: unknown): void {
+  private report<T>(error: T): void {
     this.write(
       JSON.stringify({
         v: FEED_VERSION,
@@ -287,9 +289,9 @@ export class WorkspaceVisibilityPublisher {
   }
 }
 
-export function classifyWorkspaceAutonomyResponse(
+export function classifyWorkspaceAutonomyResponse<T>(
   statusCode: number,
-  body: unknown,
+  body: T,
 ): WorkspaceAutonomyState {
   if (statusCode < 200 || statusCode >= 300) {
     return {
@@ -300,10 +302,11 @@ export function classifyWorkspaceAutonomyResponse(
   }
   const parsed = AutonomyEnvelopeSchema.safeParse(body);
   if (parsed.success) return { kind: "current", value: parsed.data.autonomy };
-  if (typeof body === "object" && body !== null && "autonomy" in body) {
+  if (isRecord(body) || (Array.isArray(body) && "autonomy" in body)) {
+    // SAFETY: The surrounding code already established this contract.
     const value = (body as { readonly autonomy?: unknown }).autonomy;
     if (value === null) return { kind: "absent" };
-    if (typeof value === "string") {
+    if (isString(value)) {
       return { kind: "unsupported", value };
     }
   }
@@ -336,8 +339,8 @@ async function getOrchestratorStatus(
 /** Root provider identity, turn status, and terminal lifecycle are independent.
  * A valid response always contains a concrete status; malformed legacy
  * responses fail closed instead of reintroducing the queen's unknown state. */
-export function parseWorkspaceOrchestratorSnapshot(
-  value: unknown,
+export function parseWorkspaceOrchestratorSnapshot<T>(
+  value: T,
 ): WorkspaceOrchestratorSnapshot | null {
   const parsed = OrchestratorHostStatusSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
@@ -363,7 +366,7 @@ function withTimeout<T>(work: Promise<T>, milliseconds: number): Promise<T> {
         clearTimeout(timer);
         resolve(value);
       },
-      (error: unknown) => {
+      (error: JsonValue) => {
         clearTimeout(timer);
         reject(error instanceof Error ? error : new Error(String(error)));
       },
@@ -409,7 +412,7 @@ export async function runWorkspaceFeed(
         const agents = await withTimeout(fetchStatus(port), statusTimeout);
         // Autonomy rides the same snapshot line as a typed observation. Its own failure is data, never a reason to drop the agent list.
         const autonomyState = await fetchAutonomy(port).catch(
-          (error: unknown): WorkspaceAutonomyState => ({
+          (error): WorkspaceAutonomyState => ({
             kind: "unreachable",
             reason: errorMessage(error),
           }),
@@ -521,7 +524,7 @@ export async function runWorkspaceFeedCli(
   const consumeInput = (chunk: Buffer | string): void => {
     input = Buffer.concat([
       input,
-      typeof chunk === "string" ? Buffer.from(chunk) : chunk,
+      isString(chunk) ? Buffer.from(chunk) : chunk,
     ]);
     let newline = input.indexOf(0x0a);
     while (newline >= 0) {

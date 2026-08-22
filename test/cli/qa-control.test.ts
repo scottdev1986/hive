@@ -80,6 +80,7 @@ describe("qa-control fails closed", () => {
         { verb: "select", identifier: "task-router-mode", title: "Missing" },
         100,
       );
+      // SAFETY: The test owns this value and its fields.
       const request = JSON.parse(
         readFileSync(join(home, "qa-control", "request.json"), "utf8"),
       ) as {
@@ -119,6 +120,7 @@ describe("qa-control fails closed", () => {
         { verb: "type", target: "queen-terminal", text: "qa-terminal-nonce" },
         100,
       );
+      // SAFETY: The test owns this value and its fields.
       const request = JSON.parse(
         readFileSync(join(home, "qa-control", "request.json"), "utf8"),
       ) as { requestId: string; verb: string; target: string; text: string };

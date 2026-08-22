@@ -12,11 +12,13 @@ import {
   capabilitySupport,
   type NormalizedProviderEvent,
 } from "../src/adapters/providers/protocol/types";
+import type { JsonObject } from "../src/shared/json";
 
 const SERVER = join(import.meta.dir, "protocol-kimi-fake-server.ts");
 
 function connect(): Promise<AcpProviderSession> {
   const adapter = new KimiAcpAdapter();
+  // SAFETY: The test owns this value and its fields.
   return adapter.connect({
     provider: "kimi",
     executable: process.execPath,
@@ -65,6 +67,7 @@ describe("kimi acp adapter", () => {
     expect(session.capabilities.provider).toBe("kimi");
     expect(session.capabilities.runtime.transport).toBe("acp");
     expect(session.capabilities.runtime.version).toBe("0.31.1");
+    // SAFETY: The test owns this value and its fields.
     const handshake = session.capabilities.handshake as {
       agentInfo?: { name?: string };
     };
@@ -393,12 +396,13 @@ describe("kimi acp adapter", () => {
       cwd: import.meta.dir,
       mode: "plan",
     });
+    // SAFETY: The test owns this value and its fields.
     const result = (await session.setConfigOption(
       "model",
       "kimi-code/k3-256k",
     )) as {
       configOptions: Array<{ id: string; currentValue: string }>;
-      recordedParams: Record<string, unknown>;
+      recordedParams: JsonObject;
     };
     expect(result.recordedParams).toEqual({
       sessionId: created.vendorSessionId,

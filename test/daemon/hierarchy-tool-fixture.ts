@@ -9,24 +9,23 @@ import type { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import type { HiveToolServer } from "../../src/daemon/authorization/mcp-tool-policy";
 import type { AgentRecord } from "../../src/schemas/agent";
 import type { AgentBinding } from "../../src/schemas/hierarchy-node";
+import { isRecord } from "../../src/shared/is-record";
 
 export type ToolHandler = (input: never) => Promise<object>;
 
 const stamp = "2026-07-30T12:00:00.000Z";
 
 /** Captures the handlers a register* function installs. */
-export function captureTools(): {
-  server: HiveToolServer;
-  handlers: Map<string, ToolHandler>;
-} {
+export function captureTools() {
   const handlers = new Map<string, ToolHandler>();
   const server: HiveToolServer = {
     registerTool: (_name, _config, handler) => {
       handlers.set(_name, async (input) => {
+        // SAFETY: The test owns this value and its fields.
         const result = await handler(input, {
           mcpReq: { signal: new AbortController().signal },
         } as Parameters<typeof handler>[1]);
-        if (typeof result !== "object" || result === null) {
+        if (!isRecord(result) && !Array.isArray(result)) {
           throw new Error(`${_name} returned a non-object tool result`);
         }
         return result;
@@ -46,12 +45,7 @@ export function captureTools(): {
  * permissive than the real one, which is how an unreachable door passes its
  * own suite.
  */
-export function realCaller(
-  db: HiveDatabase,
-  name: string,
-  role: Role = "writer",
-  epoch = 1,
-): {
+export type RealCaller = {
   capability: Capability;
   authorizeTool: (
     capability: Capability,
@@ -60,7 +54,14 @@ export function realCaller(
     subject?: string,
     auditAllow?: boolean,
   ) => void;
-} {
+};
+
+export function realCaller(
+  db: HiveDatabase,
+  name: string,
+  role: Role = "writer",
+  epoch = 1,
+): RealCaller {
   const capabilities = new CapabilityStore(db, (subject) => {
     const record = db.getAgentByName(subject);
     return record === null

@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import {
-  type LegacyMailMigration,
   MailStore,
   migrateLegacyMessagesToMail,
 } from "../../src/mail-service/store";
 import { MAIL_CONTROL_LANE_CAPACITY } from "../../src/schemas/mail";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 type LegacyRow = {
   id: string;
@@ -95,9 +95,7 @@ const MIGRATED_AT = "2026-08-01T18:00:00.000Z";
 
 /** Opens a legacy database. Opening it IS the migration; the daemon boot has
  * no other step. */
-const migrated = (
-  path: string,
-): { db: HiveDatabase; report: LegacyMailMigration | null } => {
+const migrated = (path: string) => {
   const db = new HiveDatabase(path);
   return { db, report: db.legacyMailMigration };
 };
@@ -106,18 +104,20 @@ const at = (minute: number): string =>
   new Date(Date.UTC(2026, 7, 1, 12, minute, 0)).toISOString();
 
 const items = (db: HiveDatabase) =>
+  // SAFETY: The test owns this value and its fields.
   db.database
     .query(
       "SELECT itemId, recipient, sender, lane, topic, seq, state, recipientGeneration FROM mail_items ORDER BY recipient, seq",
     )
-    .all() as Array<Record<string, unknown>>;
+    .all() as Array<JsonObject>;
 
 const events = (db: HiveDatabase) =>
+  // SAFETY: The test owns this value and its fields.
   db.database
     .query(
       "SELECT itemId, kind, actor, idempotencyKey, fingerprint, detailJson FROM mail_events ORDER BY rowid",
     )
-    .all() as Array<Record<string, unknown>>;
+    .all() as Array<JsonObject>;
 
 describe("the legacy messages migration", () => {
   test("moves unsettled rows into the control lane and drops the old tables", () => {

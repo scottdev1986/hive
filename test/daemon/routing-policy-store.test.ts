@@ -600,6 +600,7 @@ describe("mutations and compare-and-set", () => {
       "the-user",
       NOW,
     );
+    // SAFETY: The test owns this value and its fields.
     const events = db.database
       .query(
         "SELECT actor, operation, revision, before, after FROM routing_policy_events ORDER BY id",
@@ -778,6 +779,7 @@ describe("deterministic export", () => {
       },
       NOW,
     ).policy;
+    // SAFETY: The test owns this value and its fields.
     const parsed = JSON.parse(
       canonicalRoutingPolicyJson(policy),
     ) as RoutingPolicy;
@@ -943,6 +945,7 @@ describe("the machine policy under real-world damage", () => {
 
     // The user's damaged document is still exactly what it was: no seed, no
     // default, no silent repair.
+    // SAFETY: The test owns this value and its fields.
     const stored = db.database
       .query("SELECT revision, document FROM routing_policy WHERE id = 1")
       .get() as { revision: number; document: string };
@@ -1152,6 +1155,7 @@ db.close();
           new Response(writer.stdout).text(),
           writer.exited,
         ]);
+        // SAFETY: The test owns this value and its fields.
         return JSON.parse(stdout.trim()) as {
           ok: boolean;
           name?: string;

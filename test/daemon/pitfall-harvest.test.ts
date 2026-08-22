@@ -32,7 +32,6 @@ import { MemoryWriteService } from "../../src/memory-service/write-service";
 import {
   buildMemoryIndex,
   discoverMemoryFacts,
-  type MemoryWriteFileResult,
   readMemoryFact,
   verifyMemoryFact,
   writeMemoryFact,
@@ -95,17 +94,14 @@ async function countRawObservations(repoRoot: string): Promise<number> {
  * Every harvest below goes through it, so a candidate that reaches disk
  * without reaching the index fails here instead of going unnoticed until
  * somebody searches. */
-function indexedWriter(repoRoot: string): {
-  write: (input: MemoryWriteInput) => Promise<MemoryWriteFileResult>;
-  index: MemoryIndex;
-} {
+function indexedWriter(repoRoot: string) {
   const index = new MemoryIndex(new Database(":memory:"));
   const service = new MemoryWriteService({
     repoRoot,
     index,
     embeddingIndex: null,
   });
-  return { write: (input) => service.write(input), index };
+  return { write: (input: MemoryWriteInput) => service.write(input), index };
 }
 
 let primerSequence = 0;
@@ -123,6 +119,7 @@ async function primeCurrentFailures(
       agent: primer,
       type: event.type,
       summary: event.summary,
+      // SAFETY: The test owns this value and its fields.
       provenance: JSON.parse(
         event.provenance,
       ) as NewEpisodicEvent["provenance"],
@@ -198,6 +195,7 @@ describe("harvestPitfalls", () => {
     });
 
     expect(first.errors).toEqual([]);
+    // SAFETY: The test owns this value and its fields.
     if ((first as { rejected?: number }).rejected === undefined) {
       expect(first.candidates).toHaveLength(1);
       expect(await discoverMemoryFacts(repoRoot, "repo")).toHaveLength(1);
@@ -974,14 +972,16 @@ describe("harvestPitfalls", () => {
 // --- MCP level: memory_search kind=pitfall + the cross-agent shared-knowledge loop ------
 
 function parseToolJson<T>(result: Awaited<ReturnType<Client["callTool"]>>): T {
-  const content = (
-    result as {
-      content: Array<{ type: string; text?: string }>;
-    }
-  ).content[0];
+  const content = // SAFETY: The test owns this value and its fields.
+    (
+      result as {
+        content: Array<{ type: string; text?: string }>;
+      }
+    ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
+  // SAFETY: The test owns this value and its fields.
   return JSON.parse(content.text) as T;
 }
 
@@ -1002,7 +1002,7 @@ function daemonFixture(options: {
   repoRoot: string;
   episodic: EpisodicStore;
   agents?: AgentRecord[];
-}): { daemon: HiveDaemon; db: HiveDatabase } {
+}) {
   const db = new HiveDatabase(":memory:");
   for (const record of options.agents ?? []) db.insertAgent(record);
   const daemon = new HiveDaemon({

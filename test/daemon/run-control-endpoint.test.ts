@@ -45,7 +45,7 @@ function harness(): HiveDaemon {
   return daemon;
 }
 
-const post = (daemon: HiveDaemon, token: string, body: unknown) =>
+const post = <T>(daemon: HiveDaemon, token: string, body: T) =>
   daemon.fetch(
     new Request("http://hive/run-control", {
       method: "POST",

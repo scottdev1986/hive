@@ -23,10 +23,11 @@ const repoRoot = resolve(import.meta.dir, "../..");
 const roots: string[] = [];
 
 /** Owner-path installs do not carry an agent credential. extraEnv can put one back. */
-function ownerShapedEnv(
-  extra: Record<string, string | undefined>,
-): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env, ...extra };
+function ownerEnv(extra: Record<string, string | undefined>) {
+  const env = { ...process.env, ...extra } satisfies Record<
+    string,
+    string | undefined
+  >;
   if (extra.HIVE_CAPABILITY_TOKEN === undefined) {
     delete env.HIVE_CAPABILITY_TOKEN;
   }
@@ -250,7 +251,7 @@ async function runInstaller(
       // Fixture root is not an agent worktree. The installer refuses those, so
       // a checkout under .hive/worktrees/ cannot be the cwd of a successful run.
       cwd: options.cwd ?? fixture.root,
-      env: ownerShapedEnv({
+      env: ownerEnv({
         PATH: `${fixture.fakeBin}:${process.env.PATH ?? ""}`,
         HIVE_INSTALL_FIXTURES: fixture.fixtures,
         HIVE_INSTALL_ROOT: fixture.installRoot,
@@ -620,7 +621,7 @@ fi
 
     const install = Bun.spawn(["sh", join(repoRoot, "install.sh"), "1.2.3"], {
       cwd: root,
-      env: ownerShapedEnv({
+      env: ownerEnv({
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
         HIVE_INSTALL_FIXTURES: fixtures,
         HIVE_INSTALL_ROOT: installRoot,

@@ -631,6 +631,7 @@ describe("Graphify in init", () => {
     deps: typeof defaultInitDeps,
   ): Promise<string> => {
     const result = await runInit(root, options, deps);
+    // SAFETY: The test owns this value and its fields.
     return result.messages[result.messages.length - 1] as string;
   };
 
@@ -651,6 +652,7 @@ describe("Graphify in init", () => {
     try {
       const { deps } = probe({ provisionGraphify: async () => 1 });
       const result = await runInit(root, {}, deps);
+      // SAFETY: The test owns this value and its fields.
       const line = result.messages[result.messages.length - 1] as string;
       expect(line).toContain("GRAPHIFY UNAVAILABLE");
       expect(line).toContain("hive init");
@@ -679,7 +681,7 @@ describe("Graphify in init", () => {
 describe("the embeddings step in init", () => {
   function embeddingsProbe(
     installEmbeddings: (typeof defaultInitDeps)["installEmbeddings"],
-  ): { deps: typeof defaultInitDeps; calls: number[] } {
+  ) {
     const calls: number[] = [];
     return {
       calls,

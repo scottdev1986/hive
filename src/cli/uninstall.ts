@@ -58,6 +58,7 @@ import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { type ConfirmFn, confirmOnTty } from "./prompt";
 import { stripHiveGitignoreEntries } from "./repo-gitignore";
 import type { AuthorizedFetch } from "./user-daemon-client";
+import type { JsonValue } from "../shared/json";
 
 export interface UninstallDeps {
   run: CommandRunner;
@@ -345,6 +346,7 @@ async function reportUnsettledWork(
       `Left protected settlement worktree ${worktree.path} (${worktree.branch ?? "detached"}).`,
     );
   }
+  // SAFETY: The surrounding code already established this contract.
   const diskEntries = await readdir(container).catch(() => [] as string[]);
   const registeredPaths = new Set(
     registered.map((worktree) => resolve(worktree.path)),
@@ -586,11 +588,11 @@ export async function runUninstallMachine(
     // emptied — the next run reads it, finds no database, and refuses to start.
     let purgeFailure: string | null = null;
     if (options.purge === true) {
-      let markerError: unknown = null;
+      let markerError: JsonValue = null;
       try {
         await rm(config.databaseIdentityPath, { force: true });
       } catch (error) {
-        markerError = error;
+        markerError = errorMessage(error);
       }
       if (existsSync(config.databaseIdentityPath)) {
         purgeFailure =

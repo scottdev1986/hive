@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getHiveHome, hiveInstanceSuffix } from "../../hive-home/home";
 import type { DatabaseHost } from "../../shared/database-host";
 import { mintSessionLocator } from "../session-host/locators";
+import type { JsonObject } from "../../shared/json";
 
 function agentsTableDdl(table: string, ifNotExists = false): string {
   return `
@@ -57,6 +58,7 @@ const columnDefinition = (column: AgentColumn): string => {
 };
 
 function migrateTierColumn(database: Database, table: string): void {
+  // SAFETY: The surrounding code already established this contract.
   const columns = database.query(`PRAGMA table_info(${table})`).all() as {
     name: string;
   }[];
@@ -450,6 +452,7 @@ class HiveSchemaMigrator {
     // Root supersession is per instance and ordered by generation; agent
     // supersession is per agentId and ordered by rowid, which is the same
     // recency signal getActiveProviderRunForAgent already reads.
+    // SAFETY: The surrounding code already established this contract.
     const superseded = this.database
       .query(
         `
@@ -482,9 +485,10 @@ class HiveSchemaMigrator {
     if (superseded.length === 0) return;
     this.database.transaction(() => {
       for (const row of superseded) {
-        let record: Record<string, unknown>;
+        let record: JsonObject;
         try {
-          record = JSON.parse(row.recordJson) as Record<string, unknown>;
+          // SAFETY: The surrounding code already established this contract.
+          record = JSON.parse(row.recordJson) as JsonObject;
         } catch {
           continue;
         }

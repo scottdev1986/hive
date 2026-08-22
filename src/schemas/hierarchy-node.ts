@@ -64,7 +64,7 @@ export const AgentBindingRefSchema = z.strictObject({
 export type AgentBindingRef = z.infer<typeof AgentBindingRefSchema>;
 
 export const AgentBindingSchema = z.strictObject({
-  ...AgentBindingRefSchema.shape,
+  ...AgentBindingRefSchema["shape"],
   provider: SessionProtocolProviderSchema,
   model: z.string().min(1),
   sessionLocator: SessionLocatorSchema,
@@ -134,7 +134,7 @@ export const DelegationSpecSchema = z.strictObject({
     explicitNonAuthority: z.array(z.string().min(1)),
   }),
   allowance: z.strictObject({
-    ...DelegationBudgetSchema.shape,
+    ...DelegationBudgetSchema["shape"],
     blockers: z.array(z.string().min(1)),
     owner: AgentBindingRefSchema,
   }),

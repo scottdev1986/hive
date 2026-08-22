@@ -1,5 +1,6 @@
 import type { AgentRecord } from "../../schemas/agent";
 import { definedFields } from "../../shared/defined-fields";
+import { unsafeCast } from "../../shared/unsafe-cast";
 import type { ApprovalKind } from "../../schemas/approval";
 import type { ActivitySnapshot } from "../../schemas/provider-communication";
 
@@ -34,6 +35,10 @@ export interface ActiveAgentSummary {
   graphifyCalls?: number | null;
   lastEventAt: string;
   activity?: ActivitySnapshot;
+}
+
+interface AgentWithGraphifyCalls {
+  graphifyCalls: number | null;
 }
 
 const codePoints = (value: string): string[] => Array.from(value);
@@ -105,8 +110,7 @@ export function compactActiveTeam(
         overlaps,
         ...definedFields({
           graphifyCalls: Object.hasOwn(agent, "graphifyCalls")
-            ? (agent as AgentRecord & { graphifyCalls: number | null })
-                .graphifyCalls
+            ? unsafeCast<AgentWithGraphifyCalls>(agent).graphifyCalls
             : undefined,
         }),
         lastEventAt: agent.lastEventAt,

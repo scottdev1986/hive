@@ -94,6 +94,7 @@ describe("stageEmbeddingRuntime", () => {
         ),
       ).exists(),
     ).toBe(true);
+    // SAFETY: The test owns this value and its fields.
     const install = JSON.parse(
       await readFile(join(runtimeDir, "INSTALL.json"), "utf8"),
     ) as { fastembed: string; source: string };

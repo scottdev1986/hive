@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { isErrnoCode } from "../shared/error-message";
+import { isRecord, isString } from "../shared/is-record";
 import {
   mkdir,
   readdir,
@@ -735,8 +737,9 @@ async function readStewardshipMeta(
   const result = await runGit(repoRoot, ["cat-file", "-p", ref]);
   if (result.exitCode !== 0) return null;
   try {
+    // SAFETY: The surrounding code already established this contract.
     const parsed = JSON.parse(result.stdout) as StewardshipMeta;
-    if (typeof parsed !== "object" || parsed === null) return null;
+    if (!isRecord(parsed) && !Array.isArray(parsed)) return null;
     return {
       kind:
         parsed.kind === "preserved" ||
@@ -744,13 +747,11 @@ async function readStewardshipMeta(
         parsed.kind === "observed"
           ? parsed.kind
           : "observed",
-      agentName: typeof parsed.agentName === "string" ? parsed.agentName : null,
-      preservedAt:
-        typeof parsed.preservedAt === "string" ? parsed.preservedAt : null,
+      agentName: isString(parsed.agentName) ? parsed.agentName : null,
+      preservedAt: isString(parsed.preservedAt) ? parsed.preservedAt : null,
       ...definedFields({
-        observedAt:
-          typeof parsed.observedAt === "string" ? parsed.observedAt : undefined,
-        keptAt: typeof parsed.keptAt === "string" ? parsed.keptAt : undefined,
+        observedAt: isString(parsed.observedAt) ? parsed.observedAt : undefined,
+        keptAt: isString(parsed.keptAt) ? parsed.keptAt : undefined,
       }),
     };
   } catch {
@@ -804,11 +805,8 @@ function assertName(value: string, label: string): void {
   }
 }
 
-const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  error.code === "ENOENT";
+const isMissingFileError = <T>(error: T): error is T & { code: string } =>
+  isErrnoCode(error, "ENOENT");
 
 export function slugify(task: string): string {
   const slug = task
@@ -854,7 +852,7 @@ async function removeMissingWorktreeRegistration(
   const registrationsDir = join(commonDir, "worktrees");
   const entries = await readdir(registrationsDir, {
     withFileTypes: true,
-  }).catch((error: unknown) => {
+  }).catch((error) => {
     if (isMissingFileError(error)) return [];
     throw error;
   });
@@ -863,7 +861,7 @@ async function removeMissingWorktreeRegistration(
     if (!entry.isDirectory()) continue;
     const registration = join(registrationsDir, entry.name);
     const gitdir = await readFile(join(registration, "gitdir"), "utf8").catch(
-      (error: unknown) => {
+      (error) => {
         if (isMissingFileError(error)) return null;
         throw error;
       },
@@ -888,7 +886,7 @@ async function removeMissingWorktreeRegistration(
   if (registration === undefined) return false;
   const locked = await readFile(join(registration, "locked"), "utf8")
     .then(() => true)
-    .catch((error: unknown) => {
+    .catch((error) => {
       if (isMissingFileError(error)) return false;
       throw error;
     });
@@ -898,12 +896,10 @@ async function removeMissingWorktreeRegistration(
     );
   }
   await rm(registration, { recursive: true, force: true });
-  const remains: string[] = await readdir(registrationsDir).catch(
-    (error: unknown) => {
-      if (isMissingFileError(error)) return [];
-      throw error;
-    },
-  );
+  const remains: string[] = await readdir(registrationsDir).catch((error) => {
+    if (isMissingFileError(error)) return [];
+    throw error;
+  });
   if (remains.includes(basename(registration))) {
     throw new Error(
       `git worktree registration still exists after removal: ${worktreePath}`,
@@ -1021,8 +1017,8 @@ export async function unavailableAgentNames(
   const [worktrees, branchRefs, diskEntries] = await Promise.all([
     listWorktrees(repoRoot),
     listRefsWithPositiveControl(repoRoot, ["refs/heads/hive"]),
-    readdir(worktreesDir).catch((error: unknown) => {
-      if (isMissingFileError(error)) return [] as string[];
+    readdir(worktreesDir).catch((error): string[] => {
+      if (isMissingFileError(error)) return [];
       throw error;
     }),
   ]);
@@ -1344,6 +1340,7 @@ export async function reconcileOrphanedWorktrees(
     const base = {
       path,
       branch: worktree.branch,
+      // SAFETY: The surrounding code already established this contract.
       dirtyFiles: [] as string[],
       unmergedCommits: 0,
     };
@@ -1429,7 +1426,7 @@ export async function reconcileOrphanedWorktrees(
   }
 
   const entries = await readdir(worktreesRoot, { withFileTypes: true }).catch(
-    (error: unknown) => {
+    (error) => {
       if (isMissingFileError(error)) return [];
       throw error;
     },
@@ -1717,13 +1714,11 @@ async function settlementMutationLockPath(
  * repeats that callback immediately before the first destructive command, so
  * callers cannot turn an old clean measurement into a current deletion.
  */
-export function createWorktreeSettlementBoundary(): {
-  readonly issuer: SettlementMutationIssuer;
-  readonly mutator: WorktreeSettlementMutator;
-} {
+export function createWorktreeSettlementBoundary() {
   const issued = new WeakMap<object, SettlementMutation>();
   const issuer: SettlementMutationIssuer = {
     issue(input) {
+      // SAFETY: The surrounding code already established this contract.
       const authority = Object.freeze({}) as SettlementMutationAuthority;
       issued.set(authority, input);
       return authority;

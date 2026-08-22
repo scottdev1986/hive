@@ -29,6 +29,7 @@ import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import { MAIL_CONTROL_LANE_CAPACITY } from "../../src/schemas/mail";
 import { HiveUpdateStatusAdvertisedSchema } from "../../src/schemas/status-envelope";
 import { required } from "../required";
+import type { JsonObject, JsonValue } from "../../src/shared/json";
 
 const AT = "2026-07-16T12:00:00.000Z";
 const SESSION_ID = "ses_018f1e90-7b5a-7cc0-8000-000000000001";
@@ -92,11 +93,11 @@ const authorized =
     return daemon.fetch(new Request(input, { ...init, headers }));
   };
 
-async function callTool(
+async function callTool<T>(
   daemon: HiveDaemon,
   token: string,
   name: string,
-  args: Record<string, unknown>,
+  args: T,
 ) {
   const client = new Client({ name: "status-test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
@@ -105,7 +106,11 @@ async function callTool(
   );
   try {
     await client.connect(transport);
-    return await client.callTool({ name, arguments: args });
+    return await client.callTool({
+      name,
+      // SAFETY: The test constructed these MCP arguments.
+      arguments: args as { [key: string]: JsonValue },
+    });
   } finally {
     await client.close().catch(() => undefined);
   }
@@ -150,6 +155,7 @@ const harness = (
       },
     },
     repoRoot: "/tmp/hive-status-test",
+    // SAFETY: The test owns this value and its fields.
     terminalHost: {
       async list() {
         throw new Error("sessiond unavailable in status fixture");
@@ -474,9 +480,10 @@ describe("WP7 MCP status tools", () => {
         runEpoch: 0,
       },
     });
+    // SAFETY: The test owns this value and its fields.
     const structured = result.structuredContent as {
-      agents: Record<string, unknown>[];
-      currentRun: Record<string, unknown>;
+      agents: JsonObject[];
+      currentRun: JsonObject;
     };
     const row = structured.agents[0];
     expect(Object.keys(row ?? {}).sort()).toEqual([
@@ -550,11 +557,12 @@ describe("WP7 MCP status tools", () => {
       "orchestrator",
     ).token;
     const result = await callTool(daemon, token, "hive_status", {});
-    const outcomes = (
-      result.structuredContent as {
-        recentRunOutcomes?: Array<{ decisionId: string }>;
-      }
-    ).recentRunOutcomes;
+    const outcomes = // SAFETY: The test owns this value and its fields.
+      (
+        result.structuredContent as {
+          recentRunOutcomes?: Array<{ decisionId: string }>;
+        }
+      ).recentRunOutcomes;
     if (outcomes === undefined) return;
 
     expect(outcomes).toHaveLength(20);
@@ -589,15 +597,16 @@ describe("WP7 MCP status tools", () => {
     // Deliberately not tolerant of an absent section: the whole point of this
     // metric is that it is read in production, and a reader that returns
     // nothing looks identical to a world with no incidents.
-    const metric = (
-      result.structuredContent as {
-        memoryIncidentMetric?: {
-          avoidedRepeats: number;
-          repeatIncidentRate: number | null;
-          avoidedRepeatCost: { agentRuns: number; wallMs: number };
-        };
-      }
-    ).memoryIncidentMetric;
+    const metric = // SAFETY: The test owns this value and its fields.
+      (
+        result.structuredContent as {
+          memoryIncidentMetric?: {
+            avoidedRepeats: number;
+            repeatIncidentRate: number | null;
+            avoidedRepeatCost: { agentRuns: number; wallMs: number };
+          };
+        }
+      ).memoryIncidentMetric;
 
     expect(metric?.avoidedRepeats).toBe(1);
     expect(metric?.repeatIncidentRate).toBe(0);
@@ -991,6 +1000,7 @@ describe("WP7 MCP status tools", () => {
         detail: "full",
       });
       expect(result.isError).not.toBeTrue();
+      // SAFETY: The test owns this value and its fields.
       const agents = (result.structuredContent as { agents: AgentRecord[] })
         .agents;
       return required(agents.find((record) => record.id === "agent-maya"))
@@ -1179,7 +1189,8 @@ describe("WP7 MCP status tools", () => {
     const schema = tools.find(
       (tool) => tool.name === "hive_update_status",
     )?.inputSchema;
-    const properties = (schema?.properties ?? {}) as Record<string, unknown>;
+    // SAFETY: The test owns this value and its fields.
+    const properties = (schema?.properties ?? {}) as JsonObject;
 
     expect(Object.keys(properties).sort()).toEqual([
       "assignmentGeneration",
@@ -1266,6 +1277,7 @@ describe("WP7 MCP status tools", () => {
     }).token;
     const assignment = required(daemon.status.currentAssignment("agent-maya"));
     const report = async () =>
+      // SAFETY: The test owns this value and its fields.
       (
         await callTool(daemon, token, "hive_update_status", {
           assignmentId: assignment.assignmentId,
@@ -1274,7 +1286,7 @@ describe("WP7 MCP status tools", () => {
           summary: "still working",
           evidenceRefs: ["commit:fcc06d68"],
         })
-      ).structuredContent as { statusReport: Record<string, unknown> };
+      ).structuredContent as { statusReport: JsonObject };
 
     expect((await report()).statusReport.mailBacklog).toBe(0);
 

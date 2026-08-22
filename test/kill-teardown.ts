@@ -26,13 +26,16 @@ export async function killAgentTeardown(
   } = {},
 ): Promise<KillTeardownResult> {
   return (
-    daemon as unknown as {
-      killAgentTeardown: (
-        agent: AgentRecord,
-        options: {
-          removeWorktree?: boolean;
-        },
-      ) => Promise<KillTeardownResult>;
-    }
-  ).killAgentTeardown(agent, options);
+    // SAFETY: The test owns this value and its fields.
+    (
+      daemon as {
+        killAgentTeardown: (
+          agent: AgentRecord,
+          options: {
+            removeWorktree?: boolean;
+          },
+        ) => Promise<KillTeardownResult>;
+      }
+    ).killAgentTeardown(agent, options)
+  );
 }

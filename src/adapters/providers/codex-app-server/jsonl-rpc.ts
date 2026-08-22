@@ -1,4 +1,4 @@
-import { isRecord } from "../../../shared/is-record";
+import { isNumber, isRecord, isString } from "../../../shared/is-record";
 import {
   type JsonValue,
   requireJsonValue,
@@ -6,10 +6,11 @@ import {
 } from "../../../shared/json";
 import { terminateProcessGroup } from "../protocol/process-group";
 import { errorMessage } from "../../../shared/error-message";
+import type { JsonObject } from "../../../shared/json";
 
 type RequestId = number | string;
 
-export type CodexAppServerMessage = Readonly<Record<string, unknown>>;
+export type CodexAppServerMessage = Readonly<JsonObject>;
 
 export interface CodexAppServerWire {
   readonly adapterChild?: {
@@ -21,9 +22,9 @@ export interface CodexAppServerWire {
     readonly exitCode: number | null;
     readonly reason: string;
   }>;
-  request(method: string, params?: unknown): Promise<JsonValue>;
-  notify(method: string, params?: unknown): void;
-  respond(id: RequestId, result: unknown): void;
+  request<T>(method: string, params?: T): Promise<JsonValue>;
+  notify<T>(method: string, params?: T): void;
+  respond<T>(id: RequestId, result: T): void;
   reject(id: RequestId, code: number, message: string): void;
   close(): Promise<void>;
 }
@@ -43,7 +44,7 @@ export class CodexAppServerRpcError extends Error {
   constructor(
     readonly code: number,
     message: string,
-    readonly data?: unknown,
+    readonly data?: JsonValue,
   ) {
     super(message);
     this.name = "CodexAppServerRpcError";
@@ -110,14 +111,11 @@ interface CodexProcess {
 }
 
 function requestKey(id: RequestId): string {
-  return `${typeof id}:${id}`;
+  return `${isString(id) ? "string" : "number"}:${id}`;
 }
 
-function isRequestId(value: unknown): value is RequestId {
-  return (
-    typeof value === "string" ||
-    (typeof value === "number" && Number.isSafeInteger(value))
-  );
+function isRequestId<T>(value: T): value is T & RequestId {
+  return isString(value) || (isNumber(value) && Number.isSafeInteger(value));
 }
 
 async function waitForExit(
@@ -142,6 +140,11 @@ function signalProcessGroup(child: CodexProcess, signal: NodeJS.Signals): void {
   }
 }
 
+type CodexAdapterChild = {
+  pid: number;
+  processGroupId: number;
+};
+
 export class JsonlCodexAppServerWire implements CodexAppServerWire {
   readonly incoming: AsyncIterable<CodexAppServerMessage>;
   readonly closed: Promise<{
@@ -149,7 +152,7 @@ export class JsonlCodexAppServerWire implements CodexAppServerWire {
     readonly reason: string;
   }>;
 
-  get adapterChild(): { pid: number; processGroupId: number } {
+  get adapterChild(): CodexAdapterChild {
     return { pid: this.child.pid, processGroupId: this.child.pid };
   }
 
@@ -161,6 +164,7 @@ export class JsonlCodexAppServerWire implements CodexAppServerWire {
   private dropped = false;
 
   constructor(spawn: CodexAppServerWireSpawn) {
+    // SAFETY: The surrounding code already established this contract.
     this.child = Bun.spawn({
       cmd: [spawn.executable, "app-server", "--stdio", ...spawn.argv],
       cwd: spawn.cwd,
@@ -178,7 +182,7 @@ export class JsonlCodexAppServerWire implements CodexAppServerWire {
     void new Response(this.child.stderr).text();
   }
 
-  request(method: string, params?: unknown): Promise<JsonValue> {
+  request<T>(method: string, params?: T): Promise<JsonValue> {
     if (this.dropped || this.closing) {
       return Promise.reject(
         new CodexAppServerUnknownOutcomeError(
@@ -203,11 +207,11 @@ export class JsonlCodexAppServerWire implements CodexAppServerWire {
     });
   }
 
-  notify(method: string, params?: unknown): void {
+  notify<T>(method: string, params?: T): void {
     this.write(params === undefined ? { method } : { method, params });
   }
 
-  respond(id: RequestId, result: unknown): void {
+  respond<T>(id: RequestId, result: T): void {
     this.write({ id, result });
   }
 
@@ -232,7 +236,7 @@ export class JsonlCodexAppServerWire implements CodexAppServerWire {
     await terminateProcessGroup(this.child.pid, 500);
   }
 
-  private write(message: unknown): void {
+  private write<T>(message: T): void {
     if (this.dropped || this.closing) {
       throw new CodexAppServerUnknownOutcomeError(
         "app-server connection is closed",
@@ -284,12 +288,12 @@ export class JsonlCodexAppServerWire implements CodexAppServerWire {
       if (pending === undefined || this.dropped) return;
       this.pending.delete(key);
       if (isRecord(message.error)) {
-        const code =
-          typeof message.error.code === "number" ? message.error.code : -32_000;
-        const errorMessage =
-          typeof message.error.message === "string"
-            ? message.error.message
-            : `${pending.method}: app-server rejected request`;
+        const code = isNumber(message.error.code)
+          ? message.error.code
+          : -32_000;
+        const errorMessage = isString(message.error.message)
+          ? message.error.message
+          : `${pending.method}: app-server rejected request`;
         pending.reject(
           new CodexAppServerRpcError(code, errorMessage, message.error.data),
         );

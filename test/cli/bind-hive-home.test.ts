@@ -122,6 +122,7 @@ describe("CLI Hive-home resolution", () => {
         thrown = error;
       }
       expect(thrown).toBeInstanceOf(Error);
+      // SAFETY: The test owns this value and its fields.
       expect((thrown as Error).message).not.toMatch(/no readable port/);
       expect(process.env.HIVE_HOME).toBe(machineHome);
       const previousCwd = process.cwd();

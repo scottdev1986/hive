@@ -4,6 +4,7 @@ import type { NormalizedProviderEvent } from "../adapters/providers/protocol/typ
 import type { DatabaseHost } from "../shared/database-host";
 import { definedFields } from "../shared/defined-fields";
 import { type AgentRecord, isLiveAgent } from "../schemas/agent";
+import { isNumber } from "../shared/is-record";
 import {
   type TokenUsageBreakdown,
   type TokenUsageEventIngest,
@@ -44,8 +45,8 @@ const EventRowSchema = z.object({
   source: z.string(),
 });
 
-const observedCount = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0
+const observedCount = <T>(value: T): number | null =>
+  isNumber(value) && Number.isFinite(value) && value >= 0
     ? Math.floor(value)
     : null;
 

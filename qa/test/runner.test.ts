@@ -97,7 +97,7 @@ function makeRig(): RigFixture {
   mkdirSync(join(staging, "home"), { recursive: true });
   mkdirSync(userHive, { recursive: true });
   initRepo(project);
-  const env: Record<string, string> = {
+  const env = {
     HOME: userHome,
     HIVE_QA: "1",
     HIVE_HOME: join(staging, "home"),
@@ -112,7 +112,7 @@ function makeRig(): RigFixture {
     TMPDIR: join(staging, "tmp"),
     HIVE_DISABLE_UPDATES: "1",
     HIVE_PORT: "0",
-  };
+  } satisfies Record<string, string>;
   return {
     fixture,
     env,
@@ -201,7 +201,9 @@ describe("preflight fences", () => {
     const rig = makeRig();
     const target = join(rig.rig.userHive, "qa-home");
     mkdirSync(target, { recursive: true });
+    // SAFETY: The test owns this value and its fields.
     rmSync(rig.env.HIVE_HOME as string, { recursive: true, force: true });
+    // SAFETY: The test owns this value and its fields.
     symlinkSync(target, rig.env.HIVE_HOME as string);
     const outcome = await preflight({
       env: rig.env,

@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { NormalizedProviderEvent } from "../src/adapters/providers/protocol/types";
 import { MailLeaseHeartbeat } from "../src/cli/agent-ui/mail-lease-heartbeat";
+import { unsafeCast } from "../src/shared/unsafe-cast";
 
 const event = (
   kind: NormalizedProviderEvent["kind"],
-): NormalizedProviderEvent => ({ kind }) as NormalizedProviderEvent;
+): NormalizedProviderEvent => unsafeCast<NormalizedProviderEvent>({ kind });
 
 describe("mail lease heartbeat", () => {
   test("renews throughout an active turn and stops at its terminal event", async () => {
@@ -23,7 +24,7 @@ describe("mail lease heartbeat", () => {
       },
       schedule: (callback) => {
         scheduled.push(callback);
-        return 1 as unknown as ReturnType<typeof setTimeout>;
+        return unsafeCast<ReturnType<typeof setTimeout>>(1);
       },
       cancel: () => {},
     });
@@ -57,7 +58,7 @@ describe("mail lease heartbeat", () => {
       onError: (error) => errors.push(error),
       schedule: (callback) => {
         scheduled.push(callback);
-        return 1 as unknown as ReturnType<typeof setTimeout>;
+        return unsafeCast<ReturnType<typeof setTimeout>>(1);
       },
       cancel: () => {},
     });
@@ -93,7 +94,7 @@ describe("mail lease heartbeat", () => {
       },
       schedule: (callback) => {
         scheduled.push(callback);
-        return 1 as unknown as ReturnType<typeof setTimeout>;
+        return unsafeCast<ReturnType<typeof setTimeout>>(1);
       },
       cancel: () => {},
     });

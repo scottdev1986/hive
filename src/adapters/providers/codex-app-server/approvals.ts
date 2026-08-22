@@ -5,6 +5,8 @@
 import type { ServerRequest } from "./generated/0.146.0/ServerRequest";
 import type { CodexAppServerWire } from "./jsonl-rpc";
 import type { RequestId } from "./wire";
+import { isString } from "../../../shared/is-record";
+import type { JsonObject } from "../../../shared/json";
 
 export const CODEX_APPROVAL_METHODS = [
   "item/commandExecution/requestApproval",
@@ -18,28 +20,26 @@ export interface PendingApproval {
   readonly requestId: string;
   readonly wireRequestId: RequestId;
   readonly method: CodexApprovalMethod;
-  readonly params: Record<string, unknown>;
+  readonly params: JsonObject;
   readonly wire: CodexAppServerWire;
   readonly timer: ReturnType<typeof setTimeout>;
 }
 
 export function approvalSummary(
   method: CodexApprovalMethod,
-  params: Record<string, unknown>,
+  params: JsonObject,
 ): string {
   if (method === "item/commandExecution/requestApproval") {
-    const command =
-      typeof params.command === "string" ? params.command : "command";
-    const reason =
-      typeof params.reason === "string" ? ` — ${params.reason}` : "";
+    const command = isString(params.command) ? params.command : "command";
+    const reason = isString(params.reason) ? ` — ${params.reason}` : "";
     return `${command}${reason}`;
   }
   if (method === "item/fileChange/requestApproval") {
-    return typeof params.reason === "string"
+    return isString(params.reason)
       ? params.reason
       : "Approve proposed file changes";
   }
-  return typeof params.reason === "string"
+  return isString(params.reason)
     ? params.reason
     : "Approve additional permissions";
 }

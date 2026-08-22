@@ -5,6 +5,8 @@ import { systemClock } from "../shared/clock";
 import { toolResult } from "../shared/mcp-tool-result";
 import type { MailActor, MailRecipientResolver, MailService } from "./service";
 import { MailEvidenceError, type MailWakeLedger } from "./wake-ledger";
+import { isNumber, isRecord, isString } from "../shared/is-record";
+import type { JsonObject, JsonValue } from "../shared/json";
 
 /** The live incarnation generation bound to a subject right now, or null when nothing is bound to that name. This is the capability layer's answer, not the hierarchy binding's. Hive keeps two generation counters with two different writers, and they agree until they do not; the broker fences on exactly one of them, and this is where that one is read. */
 export type MailLiveGenerationLookup = (subject: string) => number | null;
@@ -80,7 +82,7 @@ export class MailTools {
     this.now = deps.now ?? systemClock;
   }
 
-  publish(capability: Capability, request: unknown) {
+  publish(capability: Capability, request: JsonValue) {
     // `from` is a claim about identity, so it is checked against the bound subject rather than trusted; the broker refuses the mismatch again.
     this.deps.authorizeTool(
       capability,
@@ -95,7 +97,7 @@ export class MailTools {
     );
   }
 
-  poll(capability: Capability, request: unknown) {
+  poll(capability: Capability, request: JsonValue) {
     this.deps.authorizeTool(
       capability,
       "hive_mail_poll",
@@ -129,7 +131,7 @@ export class MailTools {
     return result;
   }
 
-  claim(capability: Capability, request: unknown) {
+  claim(capability: Capability, request: JsonValue) {
     this.deps.authorizeTool(
       capability,
       "hive_mail_claim",
@@ -149,7 +151,7 @@ export class MailTools {
     return toolResult(mail, "mail");
   }
 
-  async complete(capability: Capability, request: unknown) {
+  async complete(capability: Capability, request: JsonValue) {
     this.deps.authorizeTool(
       capability,
       "hive_mail_complete",
@@ -172,7 +174,7 @@ export class MailTools {
     return toolResult(mail, "mail");
   }
 
-  status(capability: Capability, request: unknown) {
+  status(capability: Capability, request: JsonValue) {
     this.deps.authorizeTool(
       capability,
       "hive_mail_status",
@@ -188,7 +190,7 @@ export class MailTools {
   /** Completing an owner or user control message to queen is accepting a ruling. Deferred and rejected skip this: they did not accept it. Agent-to-queen mail is not a user ruling. */
   private async requireOwnerRuling(
     capability: Capability,
-    request: unknown,
+    request: JsonValue,
   ): Promise<void> {
     if (this.deps.requireRulingRecord === undefined) return;
     if (namedField(request, "disposition") !== "completed") return;
@@ -219,7 +221,7 @@ export class MailTools {
   }
 
   /** Refuses a publish already known to be undeliverable. A non-null addressedGeneration is a claim about the recipient's live incarnation. When the daemon can see that claim is already false, accepting the envelope would hand the sender a durable receipt for a message the first claim will quarantine — a success that means failure. Refusing here tells the sender while it can still re-send. A recipient whose generation cannot be looked up is accepted as before: an absent field is unknown, and unknown is not false. */
-  private refuseDoomedGeneration(request: unknown): void {
+  private refuseDoomedGeneration(request: JsonValue): void {
     // Only the control lane addresses a generation at all; a work-lane envelope carrying one is the broker's own refusal, not this one.
     if (namedField(request, "lane") !== "control") return;
     const addressed = generationField(request, "addressedGeneration");
@@ -236,7 +238,7 @@ export class MailTools {
   /** A live mailbox head is itself the presentation. hive_mail_claim used to refuse unless hive_mail_poll had already written mail_presented, so a wake that named the item (or a model that claimed the current offer first) died two seconds before the poll landed. Only the lane's current head is treated as shown — a digest-withheld sibling stays unclaimable. */
   private presentCurrentOffer(
     capability: Capability,
-    request: unknown,
+    request: JsonValue,
     at: Date,
   ): void {
     const itemId = namedField(request, "itemId");
@@ -305,19 +307,21 @@ export class MailTools {
 }
 
 /** The one refusal a poll may repair: presentation refused because the item's delivery chain lacks the `published` row. Anything else the evidence layer raises is a condition nobody diagnosed, and it must surface rather than be swallowed here. */
-const isMissingPublication = (error: unknown): error is MailEvidenceError =>
+const isMissingPublication = <T>(error: T): error is T & MailEvidenceError =>
   error instanceof MailEvidenceError && error.state === "mail_presented";
 
 /** The subject a request names, for the capability layer to compare against the bound one. A field of the wrong type reads as absent rather than being coerced: the broker parses the request properly a moment later, and a name invented here to fill a gap would be a name nobody asked for. */
-function namedField(request: unknown, field: string): string | undefined {
-  if (typeof request !== "object" || request === null) return undefined;
-  const value = (request as Record<string, unknown>)[field];
-  return typeof value === "string" ? value : undefined;
+function namedField<T>(request: T, field: string): string | undefined {
+  if (!isRecord(request) && !Array.isArray(request)) return undefined;
+  // SAFETY: The surrounding code already established this contract.
+  const value = (request as JsonObject)[field];
+  return isString(value) ? value : undefined;
 }
 
 /** The numeric field a request names, for the doomed-generation check. Same discipline as namedField: a value of the wrong type reads as absent, and the broker's schema parse is what properly refuses it a moment later. */
-function generationField(request: unknown, field: string): number | undefined {
-  if (typeof request !== "object" || request === null) return undefined;
-  const value = (request as Record<string, unknown>)[field];
-  return typeof value === "number" ? value : undefined;
+function generationField<T>(request: T, field: string): number | undefined {
+  if (!isRecord(request) && !Array.isArray(request)) return undefined;
+  // SAFETY: The surrounding code already established this contract.
+  const value = (request as JsonObject)[field];
+  return isNumber(value) ? value : undefined;
 }

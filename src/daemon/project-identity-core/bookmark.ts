@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { isBoolean, isString } from "../../shared/is-record";
+import type { JsonObject } from "../../shared/json";
 
 /** What a bookmark says when we ask it to resolve. `isStale` is Foundation's own admission that the bookmark's cached path no longer matches where it found the file. It is a signal to *re-verify*, never a verdict: an ordinary move sets it, and so does an impostor. */
 export interface BookmarkResolution {
@@ -18,13 +20,14 @@ export class FoundationBookmarkProvider implements BookmarkProvider {
 
   constructor(private readonly helperPath: string) {}
 
-  private run(args: string[]): Record<string, unknown> | null {
+  private run(args: string[]): JsonObject | null {
     try {
       const out = execFileSync(this.helperPath, args, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       });
-      return JSON.parse(out) as Record<string, unknown>;
+      // SAFETY: The surrounding code already established this contract.
+      return JSON.parse(out) as JsonObject;
     } catch {
       return null;
     }
@@ -33,7 +36,7 @@ export class FoundationBookmarkProvider implements BookmarkProvider {
   create(path: string): string | null {
     const result = this.run(["bookmark-create", path]);
     const bookmark = result?.bookmark;
-    return typeof bookmark === "string" ? bookmark : null;
+    return isString(bookmark) ? bookmark : null;
   }
 
   resolve(bookmark: string): BookmarkResolution | null {
@@ -41,7 +44,7 @@ export class FoundationBookmarkProvider implements BookmarkProvider {
     if (!result) return null;
     const path = result.path;
     const isStale = result.isStale;
-    if (typeof path !== "string" || typeof isStale !== "boolean") return null;
+    if (!isString(path) || !isBoolean(isStale)) return null;
     return { path, isStale };
   }
 }

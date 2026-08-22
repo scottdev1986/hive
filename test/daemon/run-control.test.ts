@@ -29,6 +29,7 @@ import {
   RunControlIntentSchema,
 } from "../../src/schemas/run-control";
 import type { TaskDetail } from "../../src/schemas/task-detail";
+import type { JsonObject } from "../../src/shared/json";
 
 const runId = "run_018f4f5e-0000-7000-8000-000000000001";
 const taskId = "task_018f4f5e-0000-7000-8000-000000000001";
@@ -112,7 +113,7 @@ function validTopology(): TopologyDecision {
     digest: topologyDigest,
     createdAt,
     lifecycle: "proposed",
-    shape: "direct",
+    ["shape"]: "direct",
     decomposition: {
       planRevision: { revision: "1", digest: planDigest },
       taskDag: [{ taskId, dependsOn: [] }],
@@ -180,6 +181,7 @@ function validBudget(): RunBudget {
 function validStage(
   overrides: Partial<IntegrationStage> = {},
 ): IntegrationStage {
+  // SAFETY: The test owns this value and its fields.
   return {
     stageId,
     revision: "1",
@@ -783,9 +785,8 @@ describe("run-delegate", () => {
     };
   }
 
-  const delegateBody = (
-    overrides: Record<string, unknown> = {},
-  ): RunControlBody =>
+  const delegateBody = (overrides: JsonObject = {}): RunControlBody =>
+    // SAFETY: The test owns this value and its fields.
     ({
       operation: "run-delegate",
       runId,
@@ -819,8 +820,10 @@ describe("run-delegate", () => {
   test("refuses a root grant with no path scope", () => {
     seed(store);
     const body = delegateBody();
+    // SAFETY: The test owns this value and its fields.
     const stripped = {
       ...body,
+      // SAFETY: The test owns this value and its fields.
       grant: { ...(body as { grant: DelegationGrant }).grant, paths: [] },
     } as RunControlBody;
 
@@ -903,9 +906,11 @@ describe("run-delegate", () => {
   test("refuses a delegation issued from any node but the run root", () => {
     seed(store);
     const body = delegateBody();
+    // SAFETY: The test owns this value and its fields.
     const forged = {
       ...body,
       grant: {
+        // SAFETY: The test owns this value and its fields.
         ...(body as { grant: DelegationGrant }).grant,
         issuer: { ...childRef },
       },

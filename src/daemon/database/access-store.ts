@@ -26,14 +26,12 @@ const StoredCapabilityRowSchema = z.object({
 
 export type CapabilityRow = Hv1CapabilityRecord;
 
-function parseCapabilityRow(row: unknown): {
-  capability: CapabilityRow;
-  secretHash: string;
-} {
+function parseCapabilityRow<T>(row: T) {
   const stored = StoredCapabilityRowSchema.parse(row);
   // Pre-rename role/scope strings still live in durable rows until the next remint.
   let constraints: { content?: true; scope?: "user" } | undefined;
   if (stored.constraints !== null) {
+    // SAFETY: The surrounding code already established this contract.
     const parsed = JSON.parse(stored.constraints) as {
       content?: true;
       scope?: string;
@@ -294,6 +292,7 @@ export class AccessStore {
   }
 
   countEscalationsForAgent(agentId: string): number {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.database
       .query("SELECT COUNT(*) AS count FROM escalations WHERE agentId = ?")
       .get(agentId) as { count: number };

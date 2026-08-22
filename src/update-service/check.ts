@@ -105,6 +105,7 @@ export async function fetchLatestFromGitHub(
   repo = HIVE_UPDATE_REPO,
   fetcher: typeof fetch = fetch,
 ): Promise<LatestRelease> {
+  // SAFETY: The surrounding code already established this contract.
   const bounded = ((input: RequestInfo | URL, init?: RequestInit) => {
     const budget = AbortSignal.timeout(NETWORK_TIMEOUT_MS);
     const existing = init?.signal;

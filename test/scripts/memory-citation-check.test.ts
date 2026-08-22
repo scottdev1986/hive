@@ -18,10 +18,7 @@ afterEach(() => {
 /** A fixture repo with known line counts, plus a memory scope whose wiki
  * holds the article under test. The checker resolves citations against the
  * repo root it is given, so the fixture never touches the real tree. */
-function makeFixture(articleBodies: Record<string, string>): {
-  readonly repoRoot: string;
-  readonly memoryRoot: string;
-} {
+function makeFixture(articleBodies: Record<string, string>) {
   const root = mkdtempSync(join(tmpdir(), "hive-memory-citation-check-"));
   fixtures.push(root);
   const repoRoot = join(root, "repo");

@@ -58,17 +58,17 @@ export type MemoryJobProgress = z.infer<typeof MemoryJobProgressSchema>;
 /** Job results and readbacks are scalar maps so a receipt cannot grow into an unbounded payload the client has to page through. */
 const JobFactsSchema = z.record(z.string(), z.union([z.number(), z.string()]));
 
-const MemoryJobReceiptIdentityShape = {
+const MemoryJobReceiptIdentityFields = {
   id: z.string().min(1),
   kind: MemoryJobKindSchema,
 } as const;
 
-const MemoryJobReceiptExecutionShape = {
+const MemoryJobReceiptExecutionFields = {
   requestedBy: z.string().min(1),
   startedAt: z.iso.datetime({ offset: true }),
 } as const;
 
-const MemoryJobReceiptProgressShape = {
+const MemoryJobReceiptProgressFields = {
   progress: MemoryJobProgressSchema,
   summary: z.string().max(400),
 } as const;
@@ -76,29 +76,29 @@ const MemoryJobReceiptProgressShape = {
 // Cross-language fixtures serialize schema order, so preserve the established field order.
 export const MemoryJobReceiptSchema = z.discriminatedUnion("state", [
   z.strictObject({
-    ...MemoryJobReceiptIdentityShape,
+    ...MemoryJobReceiptIdentityFields,
     state: z.literal("running"),
-    ...MemoryJobReceiptExecutionShape,
+    ...MemoryJobReceiptExecutionFields,
     finishedAt: z.null(),
-    ...MemoryJobReceiptProgressShape,
+    ...MemoryJobReceiptProgressFields,
     error: z.null(),
     readback: z.null(),
   }),
   z.strictObject({
-    ...MemoryJobReceiptIdentityShape,
+    ...MemoryJobReceiptIdentityFields,
     state: z.literal("succeeded"),
-    ...MemoryJobReceiptExecutionShape,
+    ...MemoryJobReceiptExecutionFields,
     finishedAt: z.iso.datetime({ offset: true }),
-    ...MemoryJobReceiptProgressShape,
+    ...MemoryJobReceiptProgressFields,
     error: z.null(),
     readback: JobFactsSchema,
   }),
   z.strictObject({
-    ...MemoryJobReceiptIdentityShape,
+    ...MemoryJobReceiptIdentityFields,
     state: z.literal("failed"),
-    ...MemoryJobReceiptExecutionShape,
+    ...MemoryJobReceiptExecutionFields,
     finishedAt: z.iso.datetime({ offset: true }),
-    ...MemoryJobReceiptProgressShape,
+    ...MemoryJobReceiptProgressFields,
     error: z.string().min(1).max(2000),
     // A failed job still reports whatever state can be read back safely.
     readback: JobFactsSchema.nullable(),
@@ -408,7 +408,7 @@ export const MemoryRecallPreviewRequestSchema = z.strictObject({
 export const MemoryRecallPreviewRowSchema = z.strictObject({
   rank: z.number().int().positive(),
   class: z.enum(["pitfall", "article"]),
-  ...MemoryRecallRowSchema.omit({ pitfall: true }).shape,
+  ...MemoryRecallRowSchema.omit({ pitfall: true })["shape"],
 });
 
 /** Per-class budget accounting. The reserve is what the class was guaranteed before the other side could bid for it, which is the anti-starvation guarantee made visible instead of asserted. */

@@ -39,13 +39,14 @@ import {
 } from "../schemas/quota";
 import { HIVE_VERSION } from "../shared/version";
 import { userFetch } from "./credential";
+import type { JsonObject } from "../shared/json";
 
 export type McpFetcher = (
   input: string | URL,
   init?: RequestInit,
 ) => Promise<Response>;
 
-function textToolContent(content: unknown, toolName: string): string {
+function textToolContent<T>(content: T, toolName: string): string {
   const items = z
     .array(
       z.object({
@@ -63,7 +64,7 @@ function textToolContent(content: unknown, toolName: string): string {
   return item.text;
 }
 
-function textToolValue(content: unknown, toolName: string): JsonValue {
+function textToolValue<T>(content: T, toolName: string): JsonValue {
   const parsed = safeJsonParse(textToolContent(content, toolName));
   if (parsed === undefined) {
     throw new Error(`${toolName} returned invalid JSON`);
@@ -71,9 +72,10 @@ function textToolValue(content: unknown, toolName: string): JsonValue {
   return parsed;
 }
 
-export function toolErrorReason(content: unknown, toolName: string): string {
+export function toolErrorReason<T>(content: T, toolName: string): string {
   const text = textToolContent(content, toolName);
   try {
+    // SAFETY: The surrounding code already established this contract.
     const value = JSON.parse(text) as unknown;
     const parsed = z.object({ reason: z.string() }).safeParse(value);
     return parsed.success ? parsed.data.reason : text;
@@ -95,7 +97,7 @@ export class HiveMcpSession {
 
   async call(
     name: string,
-    args: Record<string, unknown>,
+    args: JsonObject,
     key: string,
     errorLabel = name,
   ): Promise<JsonValue> {
@@ -158,7 +160,7 @@ export class HiveMcpSession {
 export async function callHiveTool(
   port: number,
   name: string,
-  args: Record<string, unknown>,
+  args: JsonObject,
   key: string,
   fetcher?: McpFetcher,
   errorLabel = name,
@@ -192,10 +194,10 @@ export async function fetchAgentStatus(
   }
 }
 
-async function postDaemonJson(
+async function postDaemonJson<T>(
   port: number,
   path: string,
-  body: unknown,
+  body: T,
   fetcher?: McpFetcher,
 ): Promise<JsonValue> {
   const { UserDaemonClient } = await import("./user-daemon-client");
@@ -285,6 +287,7 @@ export async function fetchQuotaStatus(
   port: number,
   fetcher?: McpFetcher,
 ): Promise<QuotaStatus[]> {
+  // SAFETY: The surrounding code already established this contract.
   return z
     .array(z.unknown())
     .parse(

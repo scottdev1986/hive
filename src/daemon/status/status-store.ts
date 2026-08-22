@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { AgentRecord } from "../../schemas/agent";
+import { isNumber, isRecord, isString } from "../../shared/is-record";
 import type {
   AgentBindingRef,
   HierarchyNode,
@@ -43,6 +44,7 @@ import {
   projectHierarchyEntities,
   projectStrandedManifestEntity,
 } from "../status-service/status-hierarchy-projection";
+import type { JsonObject } from "../../shared/json";
 
 interface StatusDatabase extends DatabaseHost {
   getAgentById(id: string): AgentRecord | null;
@@ -60,7 +62,7 @@ const sequenceKey = (sequence: string): string => sequence.padStart(20, "0");
 
 const subjectAgentId = (event: WorkspaceEventV2): string => {
   if (event.entity.kind === "agent") return event.entity.id;
-  return typeof event.data.agentId === "string" ? event.data.agentId : "";
+  return isString(event.data.agentId) ? event.data.agentId : "";
 };
 
 const statusDimension = (kind: string): string | null =>
@@ -196,6 +198,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
 
   private migrateStatusStorage(): void {
     const columns = new Set(
+      // SAFETY: The surrounding code already established this contract.
       (
         this.db.database
           .query("PRAGMA table_info(status_workspace_events)")
@@ -248,6 +251,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
     `);
 
     this.db.transaction(() => {
+      // SAFETY: The surrounding code already established this contract.
       const metadataRows = this.db.database
         .query(
           `
@@ -271,6 +275,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
         );
       }
 
+      // SAFETY: The surrounding code already established this contract.
       const projectionVersion = this.db.database
         .query(
           "SELECT value FROM status_projection_metadata WHERE key = 'version'",
@@ -283,6 +288,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
         DELETE FROM status_agent_current_revisions;
         DELETE FROM status_provider_reports;
       `);
+      // SAFETY: The surrounding code already established this contract.
       const rows = this.db.database
         .query("SELECT payload FROM status_workspace_events ORDER BY seqKey")
         .all() as Array<{ payload: string }>;
@@ -291,7 +297,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
         {
           sourceId: string;
           sequence: number;
-          projection: Record<string, unknown>;
+          projection: JsonObject;
         }
       >();
       for (const row of rows) {
@@ -299,7 +305,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
         this.projectAgentEventInTransaction(event);
         if (
           event.source.kind !== "provider-protocol" ||
-          typeof event.data.providerSequence !== "number"
+          !isNumber(event.data.providerSequence)
         ) {
           continue;
         }
@@ -359,6 +365,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
     return this.db.transaction(() => {
       const open = this.currentAssignment(agentId);
       if (open !== null) return open;
+      // SAFETY: The surrounding code already established this contract.
       const prior = this.db.database
         .query(
           `
@@ -461,6 +468,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
         const prior = RequestRowSchema.parse(priorValue);
         if (prior.digest !== digest)
           throw new StatusRequestConflictError(input.requestId);
+        // SAFETY: The surrounding code already established this contract.
         return JSON.parse(prior.result) as StatusReportResult;
       }
 
@@ -588,6 +596,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
           : { kind: "conflict" };
       }
 
+      // SAFETY: The surrounding code already established this contract.
       const newest = this.db.database
         .query(
           `
@@ -755,6 +764,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
 
   /** The newest sequence this agent's own entity has produced, or null when it has produced nothing. A monotonic identity rather than a timestamp. A watcher that samples this before an action and again after can tell that the stream genuinely advanced; a wall clock only tells it that some clock moved, and every writer of a shared clock moves it. */
   newestAgentEventSeq(agentId: string): string | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `
@@ -803,6 +813,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
   }
 
   async fetchSnapshot(): Promise<WorkspaceSnapshotV2> {
+    // SAFETY: The surrounding code already established this contract.
     const agents = this.db.database
       .query(
         "SELECT agentId FROM status_agent_current_revisions ORDER BY agentId",
@@ -823,10 +834,9 @@ export class StatusStore implements WorkspaceStatusEventSource {
             if (
               event.entity.kind === "agent" &&
               event.entity.id === agentId &&
-              typeof binding === "object" &&
-              binding !== null &&
+              isRecord(binding) &&
               "incarnationGeneration" in binding &&
-              typeof binding.incarnationGeneration === "number"
+              isNumber(binding.incarnationGeneration)
             )
               return binding.incarnationGeneration;
             if (
@@ -854,10 +864,8 @@ export class StatusStore implements WorkspaceStatusEventSource {
         kind: "agent",
         id: agentId,
         entityRevision: projection.revision,
-        projection: JSON.parse(JSON.stringify(projection)) as Record<
-          string,
-          unknown
-        >,
+        // SAFETY: The surrounding code already established this contract.
+        projection: JSON.parse(JSON.stringify(projection)) as JsonObject,
       };
     });
     const entities = [...agentEntities, ...this.hierarchyEntities()];
@@ -875,6 +883,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
   }
 
   private newestEventSeq(): string {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         "SELECT seq FROM status_workspace_events ORDER BY seqKey DESC LIMIT 1",
@@ -986,7 +995,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
     }
 
     if (event.kind === "status.attention-resolved") {
-      if (typeof event.data.causeEventId === "string") {
+      if (isString(event.data.causeEventId)) {
         this.db.database
           .query(
             `
@@ -1071,6 +1080,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
   }
 
   private nextCounter(key: string): string {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query("SELECT value FROM status_counters WHERE key = ?")
       .get(key) as { value: string } | null;

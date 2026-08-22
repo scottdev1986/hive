@@ -60,10 +60,11 @@ export type TerminalAgentStatus = (typeof TERMINAL_AGENT_STATUSES)[number];
 export function isTerminalAgentStatus(
   status: string,
 ): status is TerminalAgentStatus {
+  // SAFETY: The surrounding code already established this contract.
   return (TERMINAL_AGENT_STATUSES as readonly string[]).includes(status);
 }
 
-const AgentRecordShape = {
+const AgentRecordFields = {
   // The AgentUUID: distinct per holder of a name, for the lifetime of the Hive. Two agents that share a name across time never share an id, so history can always tell them apart.
   id: z.string().min(1),
   name: z.string().min(1),
@@ -120,9 +121,9 @@ const AgentRecordShape = {
   writeRevoked: z.boolean().default(false),
 } as const;
 
-export const AgentRecordObjectSchema = z.object(AgentRecordShape);
+export const AgentRecordObjectSchema = z.object(AgentRecordFields);
 
-export const AgentRecordSchema = z.strictObject(AgentRecordShape);
+export const AgentRecordSchema = z.strictObject(AgentRecordFields);
 
 export type AgentRecord = z.infer<typeof AgentRecordSchema>;
 

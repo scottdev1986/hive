@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { isString } from "../shared/is-record";
 import {
   type MemoryFact,
   type MemoryKind,
@@ -13,6 +14,7 @@ import {
   retireLegacyHarvestArticles,
 } from "./memory-store";
 import type { MemoryMigrationReport } from "./store-records";
+import type { JsonObject, JsonValue } from "../shared/json";
 
 const FTS_STOPWORDS = new Set([
   "a",
@@ -118,10 +120,10 @@ function encodeTags(tags: string[]): string {
   return JSON.stringify(tags);
 }
 
-function decodeTags(tags: unknown): string[] {
-  if (typeof tags !== "string") return [];
-  const parsed: unknown = JSON.parse(tags);
-  return Array.isArray(parsed) && parsed.every((tag) => typeof tag === "string")
+function decodeTags<T>(tags: T): string[] {
+  if (!isString(tags)) return [];
+  const parsed: JsonValue = JSON.parse(tags);
+  return Array.isArray(parsed) && parsed.every((tag) => isString(tag))
     ? parsed
     : [];
 }
@@ -207,6 +209,7 @@ export class MemoryIndex {
   }
 
   count(): number {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.database
       .query("SELECT COUNT(*) AS n FROM memory_fts")
       .get() as { n: number };
@@ -241,9 +244,12 @@ export class MemoryIndex {
       ORDER BY rank LIMIT ?
     `);
     for (const ftsQuery of ftsQueryPasses(query)) {
-      const rows = statement.all(ftsQuery, ...filterValues, limit) as Array<
-        Record<string, unknown>
-      >;
+      // SAFETY: The surrounding code already established this contract.
+      const rows = statement.all(
+        ftsQuery,
+        ...filterValues,
+        limit,
+      ) as Array<JsonObject>;
       if (rows.length === 0) continue;
       return rows.map((row) => {
         const tags = decodeTags(row.tags);

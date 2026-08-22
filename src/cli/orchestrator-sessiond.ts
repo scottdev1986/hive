@@ -38,9 +38,9 @@ export class OrchestratorLaunchFailedError extends Error {
   }
 }
 
-function typedLaunchFailure(
+function typedLaunchFailure<T>(
   action: string,
-  error: unknown,
+  error: T,
 ): OrchestratorLaunchFailedError {
   if (error instanceof OrchestratorLaunchFailedError) return error;
   return new OrchestratorLaunchFailedError(`${action}: ${errorMessage(error)}`);

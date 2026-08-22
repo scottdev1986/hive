@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isBoolean, isRecord, isString } from "../../src/shared/is-record";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -25,6 +26,7 @@ import {
   HIVE_MCP_CATALOG_CACHE_TTL_MS,
   HIVE_MCP_VERSION_NEGOTIATION,
 } from "../../src/shared/mcp-protocol";
+import type { JsonObject } from "../../src/shared/json";
 
 /**
  * Moonshot (Kimi) rejects a tool declaration outright — HTTP 400, before any
@@ -59,12 +61,12 @@ const MOONSHOT_REJECTED_KEYWORDS = [
   "maxContains",
 ] as const;
 
-function walkMoonshotSchema(
-  schema: unknown,
+function walkMoonshotSchema<T>(
+  schema: T,
   path: string,
   violations: string[],
 ): void {
-  if (typeof schema === "boolean") {
+  if (isBoolean(schema)) {
     // additionalProperties is documented as Union[bool, Schema]; every other
     // Schema-typed position (items, properties values, anyOf entries) is not,
     // so a bare boolean there is not a valid MFJS schema node.
@@ -73,8 +75,9 @@ function walkMoonshotSchema(
     }
     return;
   }
-  if (schema === null || typeof schema !== "object") return;
-  const node = schema as Record<string, unknown>;
+  if (!isRecord(schema)) return;
+  // SAFETY: The test owns this value and its fields.
+  const node = schema as JsonObject;
 
   if (Array.isArray(node.items)) {
     violations.push(
@@ -91,7 +94,7 @@ function walkMoonshotSchema(
   }
 
   if (
-    typeof node.$ref === "string" &&
+    isString(node.$ref) &&
     node.$ref !== "#" &&
     !node.$ref.startsWith("#/$defs/")
   ) {
@@ -100,9 +103,10 @@ function walkMoonshotSchema(
     );
   }
 
-  if (node.properties !== null && typeof node.properties === "object") {
+  if (isRecord(node.properties) || Array.isArray(node.properties)) {
     for (const [name, sub] of Object.entries(
-      node.properties as Record<string, unknown>,
+      // SAFETY: The test owns this value and its fields.
+      node.properties as JsonObject,
     )) {
       walkMoonshotSchema(sub, `${path}.properties.${name}`, violations);
     }
@@ -119,9 +123,10 @@ function walkMoonshotSchema(
       violations,
     );
   }
-  if (node.$defs !== null && typeof node.$defs === "object") {
+  if (isRecord(node.$defs) || Array.isArray(node.$defs)) {
     for (const [name, sub] of Object.entries(
-      node.$defs as Record<string, unknown>,
+      // SAFETY: The test owns this value and its fields.
+      node.$defs as JsonObject,
     )) {
       walkMoonshotSchema(sub, `${path}.$defs.${name}`, violations);
     }
@@ -196,6 +201,7 @@ async function makeDaemon(): Promise<HiveDaemon> {
 
 function visibleHiveToolNames(role: Role): HiveToolName[] {
   const actions = ROLE_GRANTS[role].actions;
+  // SAFETY: The test owns this value and its fields.
   return (Object.keys(HIVE_TOOL_POLICIES) as HiveToolName[]).filter((name) =>
     actions.includes(HIVE_TOOL_POLICIES[name].action),
   );
@@ -234,6 +240,7 @@ describe("MCP 2026 role-scoped tool catalog", () => {
         for (const tool of listed.tools) {
           advertised.add(tool.name);
           const policy =
+            // SAFETY: The test owns this value and its fields.
             HIVE_TOOL_POLICIES[tool.name as keyof typeof HIVE_TOOL_POLICIES];
           expect(tool.annotations).toEqual(policy.annotations);
           expect(tool.outputSchema).toBeDefined();

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isString } from "../../shared/is-record";
 import {
   type CapabilityRecord,
   capabilityKey,
@@ -39,8 +40,8 @@ const ClaudeInitializeSchema = z
 const CLAUDE = "claude.initialize" as const;
 
 /** One `initialize` response → capability records. Several menu entries can name one model: 2.1.207 offers both `default` and `opus[1m]`, and both resolve to `claude-opus-4-8[1m]`. They are one model with one meter, so they collapse into one record whose `aliases` list every name it answers to. The record is keyed by the canonical id and variant, so the two entries land in the same group by construction. The launch token is the canonical id rather than any menu alias. An alias like `default` is not a model identity — it is a pointer to whatever the CLI currently prefers, and pinning a spawn to it would let the model change under a recorded launch. The canonical id is what the vendor itself said the alias resolves to, and it is the most specific name available. */
-export function recordsFromClaudeInitialize(
-  response: unknown,
+export function recordsFromClaudeInitialize<T>(
+  response: T,
   cliVersion: string,
   observedAt: string,
 ): CapabilityRecord[] {
@@ -150,8 +151,8 @@ const CodexConfigSchema = z
   })
   .loose();
 
-export function codexEffectiveDefault(
-  config: unknown,
+export function codexEffectiveDefault<T>(
+  config: T,
   observedAt: string,
 ): EffectiveDefault {
   const parsed = CodexConfigSchema.safeParse(config);
@@ -215,9 +216,9 @@ const CodexAccountSchema = z
 const CODEX = "codex.model/list" as const;
 
 /** One `model/list` reply → capability records. Codex has no aliases and no context-window variants: an id is the whole name. The hidden flag is preserved rather than filtered here — a record describes what the vendor said, and excluding hidden models from *automatic selection* is a routing decision that belongs to the layer that routes. Dropping them at ingestion would also make an explicit pin of a hidden model unresolvable. */
-export function recordsFromCodexModelList(
-  result: unknown,
-  account: unknown,
+export function recordsFromCodexModelList<T, U>(
+  result: T,
+  account: U,
   cliVersion: string,
   observedAt: string,
 ): CapabilityRecord[] {
@@ -278,9 +279,7 @@ function effortLevels(
   }
   const levels = efforts
     .map((effort) => effort.reasoningEffort)
-    .filter(
-      (level): level is string => typeof level === "string" && level.length > 0,
-    );
+    .filter((level): level is string => isString(level) && level.length > 0);
   if (levels.length === 0 && efforts.length > 0) {
     return unknown("malformed", CODEX, observedAt);
   }

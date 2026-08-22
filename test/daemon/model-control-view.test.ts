@@ -90,6 +90,7 @@ describe("daemon-owned Workspace model-control view", () => {
   });
 
   test("owns quota, billing, model, and availability presentation", async () => {
+    // SAFETY: The test owns this value and its fields.
     const snapshot = structuredClone(
       await buildModelControlSnapshotFixture(),
     ) as ModelControlSnapshot;

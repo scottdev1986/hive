@@ -5,6 +5,7 @@ export function processGroupAlive(processGroupId: number): boolean {
     process.kill(-processGroupId, 0);
     return true;
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }

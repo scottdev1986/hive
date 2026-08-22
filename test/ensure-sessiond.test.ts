@@ -27,6 +27,7 @@ const BINARY = "native/sessiond/zig-out/bin/hive-sessiond";
 
 /** A root whose `sessiond` recipe does what the caller asked for: succeed by writing the binary, or fail. */
 function fakeCheckout(recipe: "succeeds" | "fails"): string {
+  // SAFETY: The test owns this value and its fields.
   const root = mkdtempSync(join(process.env.HIVE_TEST_ROOT as string, "sd-"));
   mkdirSync(join(root, "native/sessiond/src"), { recursive: true });
   writeFileSync(join(root, SOURCE), "// stand-in for the sessiond sources\n");
@@ -60,7 +61,7 @@ function plantBinary(root: string, mtimeSeconds: number): void {
   utimesSync(binary, mtimeSeconds, mtimeSeconds);
 }
 
-function runGate(...args: string[]): { code: number; log: string } {
+function runGate(...args: string[]) {
   const gate = Bun.spawnSync([GATE, ...args], {
     stdout: "pipe",
     stderr: "pipe",

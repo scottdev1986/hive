@@ -11,7 +11,6 @@ import { join } from "node:path";
 import {
   beginOwnership,
   captureOwnership,
-  type ProcessOwnershipSystem,
   readOwnershipRegistry,
   stopOwnedProcesses,
 } from "./process-ownership";
@@ -22,14 +21,7 @@ interface FakeProcess {
   startToken: string;
 }
 
-function fixture(): {
-  root: string;
-  qaRoot: string;
-  registryPath: string;
-  processes: Map<number, FakeProcess>;
-  signals: Array<{ pid: number; signal: NodeJS.Signals }>;
-  system: ProcessOwnershipSystem;
-} {
+function fixture() {
   const root = mkdtempSync(join(tmpdir(), "hive-qa-ownership-"));
   const qaRoot = join(root, "qa");
   const registryPath = join(qaRoot, "state", "processes.json");
@@ -48,8 +40,8 @@ function fixture(): {
           pid,
           command: process.command,
         })),
-      identity: (pid) => processes.get(pid) ?? null,
-      signal: (pid, signal) => {
+      identity: (pid: number) => processes.get(pid) ?? null,
+      signal: (pid: number, signal: NodeJS.Signals) => {
         signals.push({ pid, signal });
         processes.delete(pid);
       },

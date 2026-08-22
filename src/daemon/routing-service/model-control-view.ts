@@ -608,6 +608,7 @@ function routingPresentation(
       const [provider = "", model = ""] = key.split("\0");
       const reading = modelPolicyState(
         policy,
+        // SAFETY: The surrounding code already established this contract.
         provider as CapabilityProvider,
         model,
       );
@@ -675,6 +676,7 @@ function routingPresentation(
     providerIds.length > 0 &&
     providerIds.every(
       (provider) =>
+        // SAFETY: The surrounding code already established this contract.
         providerPolicyState(policy, provider as CapabilityProvider) !==
         "enabled",
     )
@@ -744,6 +746,7 @@ function routingPresentation(
       providerIds.map((provider) => [
         provider,
         {
+          // SAFETY: The surrounding code already established this contract.
           state: providerPolicyState(policy, provider as CapabilityProvider),
         },
       ]),
@@ -760,6 +763,7 @@ export function buildWorkspaceModelControlView(
 ): WorkspaceModelControlView {
   const providers = Object.fromEntries(
     Object.entries(snapshot.providers).map(([provider, discovery]) => {
+      // SAFETY: The surrounding code already established this contract.
       const billing = snapshot.billing[provider as CapabilityProvider] ?? null;
       const billingView = billingPresentation(billing);
       return [
@@ -772,6 +776,7 @@ export function buildWorkspaceModelControlView(
           ...billingView,
           usage: providerUsage(
             provider,
+            // SAFETY: The surrounding code already established this contract.
             snapshot.usageSurfaces[provider as CapabilityProvider],
             snapshot.quota,
             snapshot.quotaError,

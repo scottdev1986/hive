@@ -21,6 +21,7 @@ const at = "2026-08-02T12:00:00.000Z";
 type UsageEvent = Extract<NormalizedProviderEvent, { kind: "usage-updated" }>;
 
 function usage(fields: Partial<UsageEvent>): UsageEvent {
+  // SAFETY: The test owns this value and its fields.
   return {
     kind: "usage-updated",
     turnId: "turn-1",
@@ -182,6 +183,7 @@ describe("protocol usage ingestion", () => {
     );
     const fromProtocol = required(
       protocolTokenEvent(
+        // SAFETY: The test owns this value and its fields.
         required(
           events.find((event) => event.kind === "usage-updated"),
         ) as UsageEvent,

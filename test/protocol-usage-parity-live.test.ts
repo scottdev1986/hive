@@ -1,3 +1,5 @@
+import { isString } from "../src/shared/is-record";
+import type { JsonObject } from "../src/shared/json";
 /**
  * Live protocol usage smoke: drive a real vendor, attribute the readings
  * through `recordProtocolUsage`, and require a reconnect replay to leave the
@@ -39,8 +41,8 @@ type UsageEvent = Extract<NormalizedProviderEvent, { kind: "usage-updated" }>;
 
 function environment(): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
+    Object.entries(process.env).filter((entry): entry is [string, string] =>
+      isString(entry[1]),
     ),
   );
 }
@@ -148,7 +150,7 @@ async function protocolTotals(
   };
 }
 
-function writeEvidence(vendor: string, payload: Record<string, unknown>): void {
+function writeEvidence<T>(vendor: string, payload: T): void {
   writeEvidenceFile(
     join(EVIDENCE, `${vendor}.json`),
     `${JSON.stringify(payload, null, 2)}\n`,
@@ -182,7 +184,8 @@ async function proveProtocol(
     prompt,
     rawUsageFrames: usage.map((event) => event.raw),
     normalizedUsageEvents: usage.map(
-      ({ raw: _raw, ...event }) => event as Record<string, unknown>,
+      // SAFETY: The test owns this value and its fields.
+      ({ raw: _raw, ...event }) => event as JsonObject,
     ),
     toolCalls: turn.events.flatMap((event) =>
       event.kind === "tool-started" ? [event.toolName] : [],

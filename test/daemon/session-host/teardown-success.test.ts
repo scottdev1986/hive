@@ -27,7 +27,7 @@ describe("the one teardown-success predicate", () => {
   // `unknown` unconditionally for a process-tree target, so this — not
   // `terminated` — is what a clean kill looks like from here. A caller that
   // demanded `terminated` waited for a state that cannot occur.
-  test("the documented floor is success: unknown, no survivors, escapees stated", () => {
+  test("the documented floor is success: JsonValue, no survivors, escapees stated", () => {
     expect(
       sessiondTeardownSucceeded(
         result({ state: "unknown", errors: [escapeesUnaccounted] }),

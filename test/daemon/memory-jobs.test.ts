@@ -57,6 +57,7 @@ afterAll(async () => {
 });
 
 function input(overrides: Partial<MemoryWriteInput> = {}): MemoryWriteInput {
+  // SAFETY: The test owns this value and its fields.
   return {
     scope: "repo",
     topic: "terminal",
@@ -158,6 +159,7 @@ describe("memory jobs", () => {
     );
     expect(receipt.readback?.ftsRows).toBe(target.index.count());
     expect(receipt.progress.total).not.toBeNull();
+    // SAFETY: The test owns this value and its fields.
     expect(receipt.progress.done).toBe(receipt.progress.total as number);
   });
 

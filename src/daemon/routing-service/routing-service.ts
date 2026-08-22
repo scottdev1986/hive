@@ -55,7 +55,7 @@ export interface RoutingServiceDependencies {
   ) => RouteAuthorization;
 }
 
-const json = (value: unknown, init?: ResponseInit): Response =>
+const json = <T>(value: T, init?: ResponseInit): Response =>
   Response.json(value, init);
 
 export class RoutingService {

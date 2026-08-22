@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isString } from "../shared/is-record";
 import {
   buildClaudeSpawnCommand,
   type ResolvedClaudeExecutable,
@@ -92,6 +93,7 @@ export const CODEX_ROOT_TOKEN_SUBJECT = "codex-root";
 export async function requestCodexRootToken(
   port: number,
 ): Promise<string | null> {
+  // SAFETY: The surrounding code already established this contract.
   const body = (await new UserDaemonClient({
     port,
     verifyIdentity: !isTestRunnerEnv(),
@@ -106,9 +108,7 @@ export async function requestCodexRootToken(
     .catch(() => null)) as {
     token?: string;
   } | null;
-  return typeof body?.token === "string" && body.token.length > 0
-    ? body.token
-    : null;
+  return isString(body?.token) && body.token.length > 0 ? body.token : null;
 }
 
 /** Refresh the root's credential for a new launch: the daemon mints a FRESH orchestrator credential, revoking every predecessor's, and persists it for the vendors whose config reads it from the store. Every vendor calls this per launch — a dead predecessor token can never read or attest in the successor's place. A daemon that cannot mint fails the launch loudly: a root that cannot authenticate as the queen is not a root. */
@@ -366,7 +366,7 @@ export interface LaunchOrchestratorOptions {
 export function orchestratorLaunchEnvironment(
   tool: OrchestratorTool,
   tokens: { codexToken: string; queenToken: string },
-): Record<string, string> {
+) {
   if (tool === "claude") return {};
   if (tool === "codex") {
     return { [HIVE_CAPABILITY_TOKEN_ENV]: tokens.codexToken };

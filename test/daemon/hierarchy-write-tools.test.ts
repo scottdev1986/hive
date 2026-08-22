@@ -39,6 +39,8 @@ import {
   type ToolHandler,
   toolService,
 } from "./hierarchy-tool-fixture";
+import type { JsonObject } from "../../src/shared/json";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 
 const stamp = "2026-08-01T12:00:00.000Z";
 const expiresAt = "2099-08-01T12:00:00.000Z";
@@ -357,7 +359,7 @@ function grant(overrides: Partial<DelegationGrant> = {}): DelegationGrant {
   };
 }
 
-function grantInput(value: DelegationGrant): Record<string, unknown> {
+function grantInput(value: DelegationGrant): JsonObject {
   const {
     issuer: _issuer,
     capabilityEpoch: _capabilityEpoch,
@@ -445,7 +447,7 @@ function advanceHierarchyRevision(expectedHierarchyRevision: string): void {
   );
 }
 
-function rootSpawnInput(runEpoch: number): Record<string, unknown> {
+function rootSpawnInput(runEpoch: number): JsonObject {
   const spec = {
     ...delegationSpec(rootRef, spawnGrantId),
     inputs: {
@@ -517,6 +519,7 @@ function seedRootSpawnWorld(): void {
     0,
   );
   store.putNode(node(spawnNodeId, ownerNodeId, "author"), null);
+  // SAFETY: rootSpawnInput builds this field with delegationSpec(), so the erased value has that contract.
   const spec = rootSpawnInput(0).delegationSpec as DelegationSpec;
   store.putTask(
     task({
@@ -714,12 +717,9 @@ function seedTransferWorld(): void {
   store.putAgentBinding({ ...lost, unboundAt: stamp }, runId);
 }
 
-function captureDefinitions(): {
-  server: HiveToolRegistrar;
-  definitions: Map<string, ToolDefinition>;
-} {
+function captureDefinitions() {
   const definitions = new Map<string, ToolDefinition>();
-  const server = {
+  const server = unsafeCast<HiveToolRegistrar>({
     registerTool: (
       name: string,
       config: { inputSchema: ZodType },
@@ -727,7 +727,7 @@ function captureDefinitions(): {
     ) => {
       definitions.set(name, { handler, schema: config.inputSchema });
     },
-  } as unknown as HiveToolRegistrar;
+  });
   return { server, definitions };
 }
 
@@ -782,6 +782,7 @@ async function expectRefusal(
     expect.unreachable("write should have been refused");
   } catch (error) {
     expect(error).toBeInstanceOf(Error);
+    // SAFETY: The preceding runtime assertion establishes Error before its message is read.
     expect((error as Error).message).toBe(message);
   }
 }
@@ -790,7 +791,7 @@ async function callMcpTool(
   daemon: HiveDaemon,
   token: string,
   name: string,
-  args: Record<string, unknown>,
+  args: JsonObject,
 ) {
   const client = new Client({ name: "hierarchy-write-test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
@@ -819,6 +820,7 @@ function currentRunFromTool(result: {
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("hive_status returned no text payload");
   }
+  // SAFETY: hive_status owns this JSON payload; the optional fields are validated before use below.
   const value = JSON.parse(content.text) as {
     currentRun?: {
       availability: string;
@@ -836,6 +838,7 @@ function currentRunFromTool(result: {
   ) {
     throw new Error("hive_status returned no current hierarchy fences");
   }
+  // SAFETY: The guard above established every required current-run field.
   return current as {
     runId: string;
     hierarchyRevision: string;
@@ -852,6 +855,7 @@ async function expectUnrecognizedKeys(
     expect.unreachable("forged caller facts should have been refused");
   } catch (error) {
     expect(error).toBeInstanceOf(ZodError);
+    // SAFETY: The preceding runtime assertion establishes ZodError before its issues are read.
     const unrecognizedKeys = (error as ZodError).issues.flatMap((issue) =>
       issue.code === "unrecognized_keys" ? issue.keys : [],
     );
@@ -1005,10 +1009,12 @@ describe("authenticated hierarchy writer positive paths", () => {
 
   test("the rootless queen creates and updates a task as the genesis root principal", async () => {
     seedRootAuthority();
+    // SAFETY: The named definition is hive_node_create, and node() matches its registered schema.
     await definitionFor("hive_node_create", ORCHESTRATOR_NAME, {
       role: "orchestrator",
       epoch: 0,
     }).handler(node(rootWorkerNodeId, ownerNodeId, "author") as never);
+    // SAFETY: The named definition is hive_grant_issue, and grantInput() matches its registered schema.
     await definitionFor("hive_grant_issue", ORCHESTRATOR_NAME, {
       role: "orchestrator",
       epoch: 0,
@@ -1031,6 +1037,7 @@ describe("authenticated hierarchy writer positive paths", () => {
       },
       rootRef,
     );
+    // SAFETY: The named definition is hive_task_create, and created came from taskCreateInput().
     await definitionFor("hive_task_create", ORCHESTRATOR_NAME, {
       role: "orchestrator",
       epoch: 0,
@@ -1041,6 +1048,7 @@ describe("authenticated hierarchy writer positive paths", () => {
     );
     expect(store.getGrant(rootGrantId)?.subject).toEqual(rootWorkerRef);
 
+    // SAFETY: The named definition is hive_task_update, and this object matches its registered schema.
     await definitionFor("hive_task_update", ORCHESTRATOR_NAME, {
       role: "orchestrator",
       epoch: 0,
@@ -1060,6 +1068,7 @@ describe("authenticated hierarchy writer positive paths", () => {
   test("the root principal is refused without a live root provider run", async () => {
     store.putRootBinding(runId, ownerNodeId);
 
+    // SAFETY: taskCreateInput() matches hive_task_create's registered schema.
     await expectRefusal(
       definitionFor("hive_task_create", ORCHESTRATOR_NAME, {
         role: "orchestrator",
@@ -1073,6 +1082,7 @@ describe("authenticated hierarchy writer positive paths", () => {
   test("the root principal is refused at a stale provider epoch", async () => {
     seedRootAuthority();
 
+    // SAFETY: taskCreateInput() matches hive_task_create's registered schema.
     await expectRefusal(
       definitionFor("hive_task_create", ORCHESTRATOR_NAME, {
         role: "orchestrator",
@@ -1086,6 +1096,7 @@ describe("authenticated hierarchy writer positive paths", () => {
   test("hive_grant_issue lets the run root issue a parentless grant and derives its epoch", async () => {
     // Flat rotation + matching capability: the grant pins the live flat epoch.
     bumpCapabilityEpoch(db, ownerRef);
+    // SAFETY: grantInput() matches hive_grant_issue's registered schema.
     await definitionFor("hive_grant_issue", names.owner, { epoch: 2 }).handler(
       grantInput(grant()) as never,
     );
@@ -1098,7 +1109,9 @@ describe("authenticated hierarchy writer positive paths", () => {
 
   test("hive_grant_issue lets the same issuer update its own grant", async () => {
     const handler = definitionFor("hive_grant_issue", names.owner).handler;
+    // SAFETY: grantInput() matches the captured hive_grant_issue schema.
     await handler(grantInput(grant()) as never);
+    // SAFETY: grantInput() matches the captured hive_grant_issue schema.
     await handler(grantInput(grant({ status: "revoked" })) as never);
 
     expect(store.getGrant(rootGrantId)?.status).toBe("revoked");
@@ -1110,6 +1123,7 @@ describe("authenticated hierarchy writer positive paths", () => {
     const fences = statusFences(names.owner);
     const handler = definitionFor("hive_grant_issue", names.owner).handler;
 
+    // SAFETY: grantInput() matches the captured hive_grant_issue schema.
     await expectRefusal(
       handler(
         grantInput(
@@ -1121,6 +1135,7 @@ describe("authenticated hierarchy writer positive paths", () => {
       ),
       `fence rejected: hierarchyRevision expected ${stale.hierarchyRevision}, current is ${fences.hierarchyRevision}`,
     );
+    // SAFETY: grantInput() matches the captured hive_grant_issue schema.
     await handler(
       grantInput(
         grant({
@@ -1135,10 +1150,11 @@ describe("authenticated hierarchy writer positive paths", () => {
 
   test("hive_task_create stores a task for its exact allowance owner", async () => {
     bumpCapabilityEpoch(db, ownerRef);
+    // SAFETY: The named handler receives taskCreateInput() and returns its registered task result.
     const result = (await definitionFor("hive_task_create", names.owner, {
       epoch: 2,
     }).handler(taskCreateInput({ taskId: newTaskId }) as never)) as {
-      structuredContent: { task: Record<string, unknown> };
+      structuredContent: { task: JsonObject };
     };
 
     expect(store.getTask(newTaskId)?.delegationSpec.allowance.owner).toEqual(
@@ -1156,6 +1172,7 @@ describe("authenticated hierarchy writer positive paths", () => {
   });
 
   test("hive_task_create lets a binding assign itself", async () => {
+    // SAFETY: taskCreateInput() matches hive_task_create's registered schema.
     await definitionFor("hive_task_create", names.assignee).handler(
       taskCreateInput(
         {
@@ -1172,6 +1189,7 @@ describe("authenticated hierarchy writer positive paths", () => {
 
   test("hive_task_update derives the assignee actor and performs the CAS", async () => {
     bumpCapabilityEpoch(db, assigneeRef);
+    // SAFETY: This object matches hive_task_update's registered schema.
     await definitionFor("hive_task_update", names.assignee, {
       epoch: 2,
     }).handler({
@@ -1189,6 +1207,7 @@ describe("authenticated hierarchy writer positive paths", () => {
   });
 
   test("only the owner can add a first-class correction", async () => {
+    // SAFETY: This object matches hive_task_update's registered schema.
     await expectRefusal(
       definitionFor("hive_task_update", names.assignee).handler({
         taskId,
@@ -1197,6 +1216,7 @@ describe("authenticated hierarchy writer positive paths", () => {
       } as never),
       "only the task owner may correct its story",
     );
+    // SAFETY: This object matches hive_task_update's registered schema.
     await definitionFor("hive_task_update", names.owner).handler({
       taskId,
       expectedRevision: "1",
@@ -1207,6 +1227,7 @@ describe("authenticated hierarchy writer positive paths", () => {
 
   test("hive_review_put derives and stores the reviewer binding", async () => {
     bumpCapabilityEpoch(db, reviewerRef);
+    // SAFETY: review() matches hive_review_put's registered schema.
     await definitionFor("hive_review_put", names.reviewer, {
       epoch: 2,
     }).handler(review() as never);
@@ -1217,6 +1238,7 @@ describe("authenticated hierarchy writer positive paths", () => {
   test("hive_ownership_transfer records both live bindings at the current capability epoch", async () => {
     seedTransferWorld();
     bumpCapabilityEpoch(db, ownerRef);
+    // SAFETY: This object matches hive_ownership_transfer's registered schema.
     await definitionFor("hive_ownership_transfer", names.owner, {
       epoch: 2,
     }).handler({
@@ -1252,6 +1274,7 @@ describe("authenticated hierarchy writer positive paths", () => {
       names.owner,
     ).handler;
 
+    // SAFETY: This object matches the captured hive_ownership_transfer schema.
     await expectRefusal(
       handler({
         transfer: transfer(),
@@ -1260,6 +1283,7 @@ describe("authenticated hierarchy writer positive paths", () => {
       } as never),
       `fence rejected: hierarchyRevision expected ${stale.hierarchyRevision}, current is ${fences.hierarchyRevision}`,
     );
+    // SAFETY: This object matches the captured hive_ownership_transfer schema.
     await handler({
       transfer: transfer(),
       expectedHierarchyRevision: fences.hierarchyRevision,
@@ -1282,6 +1306,7 @@ describe("task terminal state and owner-run guards", () => {
       });
       expect(terminal.state).toBe(terminalState);
 
+      // SAFETY: This object matches hive_task_update's registered schema.
       await expectRefusal(
         definitionFor("hive_task_update", names.assignee).handler({
           taskId,
@@ -1307,6 +1332,7 @@ describe("task terminal state and owner-run guards", () => {
       state: "completed",
     });
 
+    // SAFETY: This object matches hive_task_update's registered schema.
     await definitionFor("hive_task_update", names.assignee).handler({
       taskId,
       expectedRevision: "2",
@@ -1331,6 +1357,7 @@ describe("task terminal state and owner-run guards", () => {
       },
     });
 
+    // SAFETY: taskCreateInput() matches the captured hive_task_create schema.
     await expectRefusal(
       definition.handler(taskCreateInput({ taskId: newTaskId }) as never),
       `run ${runId} must exist and be active`,
@@ -1349,6 +1376,7 @@ describe("task terminal state and owner-run guards", () => {
       },
     });
 
+    // SAFETY: This object matches the captured hive_task_update schema.
     await expectRefusal(
       definition.handler({
         taskId,
@@ -1368,10 +1396,9 @@ describe("production capability gates", () => {
     async ({ tool, action, actor, input, prepare }) => {
       prepare?.();
       const before = hierarchySnapshot();
-      expect((before as { records: unknown[] }).records.length).toBeGreaterThan(
-        0,
-      );
+      expect(before.records.length).toBeGreaterThan(0);
 
+      // SAFETY: Each toolCases entry pairs its registered tool with a matching input builder.
       await expectRefusal(
         definitionFor(tool, actor, { role: "reader" }).handler(
           input() as never,
@@ -1391,6 +1418,7 @@ describe("production capability gates", () => {
       db.upsertAgent({ ...live, writeRevoked: true });
       const before = hierarchySnapshot();
 
+      // SAFETY: Each toolCases entry pairs its registered tool with a matching input builder.
       await expectRefusal(
         definitionFor(tool, actor).handler(input() as never),
         `Write and landing authority is revoked for ${actor}`,
@@ -1410,6 +1438,7 @@ describe("actor authorization", () => {
       );
     expect(store.findBindingByAgent(outsiderRef.agentId, 1)).toBeNull();
 
+    // SAFETY: This object matches hive_task_update's registered schema.
     await expectRefusal(
       definitionFor("hive_task_update", names.outsider).handler({
         taskId,
@@ -1527,6 +1556,7 @@ describe("actor authorization", () => {
       const before = hierarchySnapshot();
       expect(store.getTask(taskId)?.taskId).toBe(taskId);
 
+      // SAFETY: Each table entry pairs its registered tool with a matching input builder.
       await expectRefusal(
         definitionFor(tool, actor).handler(input() as never),
         expected(),
@@ -1561,6 +1591,7 @@ describe("actor authorization", () => {
     expect(store.getNode(foreignNodeId)?.runId).toBe(foreignRunId);
     const before = hierarchySnapshot();
 
+    // SAFETY: grantInput() matches the tool schema; the foreign subject is the domain error under test.
     await expectRefusal(
       definitionFor("hive_grant_issue", names.owner).handler(
         grantInput(
@@ -1581,6 +1612,7 @@ describe("actor authorization", () => {
     expect(store.getNode(outsiderNodeId)?.runId).toBe(runId);
     const before = hierarchySnapshot();
 
+    // SAFETY: grantInput() matches the tool schema; subtree authority is the domain error under test.
     await expectRefusal(
       definitionFor("hive_grant_issue", names.lost).handler(
         grantInput(
@@ -1614,6 +1646,7 @@ describe("actor authorization", () => {
     expect(store.getNode(foreignNodeId)?.runId).toBe(foreignRunId);
     const before = hierarchySnapshot();
 
+    // SAFETY: taskCreateInput() matches the schema; the foreign assignee is the domain error under test.
     await expectRefusal(
       definitionFor("hive_task_create", names.owner).handler(
         taskCreateInput({
@@ -1649,6 +1682,7 @@ describe("final-transaction caller fences", () => {
           });
         },
       });
+      // SAFETY: Each toolCases entry pairs its registered tool with a matching input builder.
       await expectRefusal(
         definition.handler(input() as never),
         `caller ${actor} does not hold the live capability epoch`,
@@ -1672,6 +1706,7 @@ describe("final-transaction caller fences", () => {
           store.putAgentBinding({ ...live, unboundAt: stamp }, runId);
         },
       });
+      // SAFETY: Each toolCases entry pairs its registered tool with a matching input builder.
       await expectRefusal(
         definition.handler(input() as never),
         `agent ${actor} holds no live hierarchy binding`,
@@ -1687,6 +1722,7 @@ describe("final-transaction caller fences", () => {
     putGrantDirect(childGrant(successorGrantId, successorRef));
     const before = hierarchySnapshot();
 
+    // SAFETY: grantInput() matches the schema; issuer ownership is the domain error under test.
     await expectRefusal(
       definitionFor("hive_grant_issue", names.successor).handler(
         grantInput(
@@ -1794,6 +1830,7 @@ describe("strict tool inputs reject forged caller facts", () => {
       expect(definition.schema.safeParse(forged()).success).toBe(false);
       const before = hierarchySnapshot();
 
+      // SAFETY: This negative-path call deliberately passes the schema-rejected fixture to verify runtime refusal.
       await expectUnrecognizedKeys(
         definition.handler(forged() as never),
         forgedKeys,
@@ -1808,6 +1845,7 @@ describe("store-backed references fail closed", () => {
     expect(store.getAgentBinding(assigneeRef)?.unboundAt).toBeNull();
     const before = hierarchySnapshot();
 
+    // SAFETY: review() matches the schema; the invalid author relation is the domain error under test.
     await expectRefusal(
       definitionFor("hive_review_put", names.reviewer).handler(
         review({ authors: [reviewerRef] }) as never,
@@ -1821,6 +1859,7 @@ describe("store-backed references fail closed", () => {
     expect(store.getAgentBinding(outsiderRef)?.unboundAt).toBeNull();
     const before = hierarchySnapshot();
 
+    // SAFETY: review() matches the schema; the missing assignee relation is the domain error under test.
     await expectRefusal(
       definitionFor("hive_review_put", names.reviewer).handler(
         review({ authors: [outsiderRef] }) as never,
@@ -1841,6 +1880,7 @@ describe("store-backed references fail closed", () => {
     });
     const before = hierarchySnapshot();
 
+    // SAFETY: missing came from review(), so it matches the schema while naming the absent task under test.
     await expectRefusal(
       definitionFor("hive_review_put", names.reviewer).handler(
         missing as never,
@@ -1855,6 +1895,7 @@ describe("store-backed references fail closed", () => {
     expect(store.getGrant(rootGrantId)?.grantId).toBe(rootGrantId);
     const before = hierarchySnapshot();
 
+    // SAFETY: This object matches the transfer schema; the missing grant is the domain error under test.
     await expectRefusal(
       definitionFor("hive_ownership_transfer", names.owner).handler({
         transfer: transfer(),

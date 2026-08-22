@@ -154,9 +154,7 @@ async function selectProviders(
   return providers;
 }
 
-function countBy(
-  providers: CapabilityProvider[],
-): Partial<Record<CapabilityProvider, number>> {
+function countBy(providers: CapabilityProvider[]) {
   const counts: Partial<Record<CapabilityProvider, number>> = {};
   for (const provider of providers) {
     counts[provider] = (counts[provider] ?? 0) + 1;
@@ -167,6 +165,7 @@ function countBy(
 function balanceRows(
   db: HiveDatabase,
 ): { candidateKey: string; current: number }[] {
+  // SAFETY: The test owns this value and its fields.
   return db.database
     .query(
       "SELECT candidateKey, current FROM routing_balance ORDER BY candidateKey",
@@ -176,10 +175,13 @@ function balanceRows(
 
 function rowCount(db: HiveDatabase, table: string): number {
   return (
-    db.database.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as {
-      n: number;
-    }
-  ).n;
+    // SAFETY: The test owns this value and its fields.
+    (
+      db.database.query(`SELECT COUNT(*) AS n FROM ${table}`).get() as {
+        n: number;
+      }
+    ).n
+  );
 }
 
 describe("smooth weighted selection", () => {

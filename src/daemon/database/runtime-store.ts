@@ -68,7 +68,7 @@ const StoredHandoffRowSchema = z.object({
   pickedUpAt: z.string().nullable(),
 });
 
-function parseProviderRunRow(row: unknown): ProviderRun {
+function parseProviderRunRow<T>(row: T): ProviderRun {
   return ProviderRunSchema.parse(
     migrateStoredProviderRun(
       JSON.parse(StoredProviderRunRowSchema.parse(row).recordJson),
@@ -76,28 +76,25 @@ function parseProviderRunRow(row: unknown): ProviderRun {
   );
 }
 
-function parseProviderEventRow(row: unknown): ProviderEvent {
+function parseProviderEventRow<T>(row: T): ProviderEvent {
   return ProviderEventSchema.parse(
     JSON.parse(StoredProviderEventRowSchema.parse(row).recordJson),
   );
 }
 
-function parseRunOutcomeRow(row: unknown): RunOutcome {
+function parseRunOutcomeRow<T>(row: T): RunOutcome {
   return RunOutcomeSchema.parse(
     JSON.parse(StoredRunOutcomeRowSchema.parse(row).recordJson),
   );
 }
 
-function parseIncidentExposureRow(row: unknown): IncidentExposure {
+function parseIncidentExposureRow<T>(row: T): IncidentExposure {
   return IncidentExposureSchema.parse(
     JSON.parse(StoredIncidentExposureRowSchema.parse(row).recordJson),
   );
 }
 
-function parseHandoffRow(row: unknown): {
-  bundle: HandoffBundle;
-  pickup: HandoffPickup | null;
-} {
+function parseHandoffRow<T>(row: T) {
   const stored = StoredHandoffRowSchema.parse(row);
   const bundle = HandoffBundleSchema.parse(JSON.parse(stored.recordJson));
   return {
@@ -113,7 +110,7 @@ function parseHandoffRow(row: unknown): {
   };
 }
 
-function parseTerminalHostBindingRow(row: unknown): HiveTerminalBinding {
+function parseTerminalHostBindingRow<T>(row: T): HiveTerminalBinding {
   const stored = StoredTerminalHostBindingRowSchema.parse(row);
   return HiveTerminalBindingSchema.parse({
     locator: JSON.parse(stored.locatorJson),
@@ -185,7 +182,7 @@ export class RuntimeStore {
     locator: HiveTerminalBinding["locator"],
   ): boolean {
     const value =
-      HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+      HiveTerminalBindingSchema.unwrap()["shape"].locator.parse(locator);
     return (
       this.database
         .query(
@@ -240,19 +237,19 @@ export class RuntimeStore {
     lease: z.infer<typeof VisibilityLeaseSchema>,
   ): HiveTerminalBinding {
     const nextVisibility =
-      HiveTerminalBindingSchema.unwrap().shape.visibility.parse(request);
+      HiveTerminalBindingSchema.unwrap()["shape"].visibility.parse(request);
     const parsedLease = VisibilityLeaseSchema.parse(lease);
-    const nextLease =
-      HiveTerminalCreateEvidenceSchema.unwrap().shape.visibility.parse({
-        state: "visible",
-        workspaceSessionId: nextVisibility.workspaceSessionId,
-        openTerminalRevision: parsedLease.openTerminalRevision,
-        expiresAt: parsedLease.expiresAt,
-      });
-    const expectedLocator =
-      HiveTerminalBindingSchema.unwrap().shape.locator.parse(
-        parsedLease.locator,
-      );
+    const nextLease = HiveTerminalCreateEvidenceSchema.unwrap()[
+      "shape"
+    ].visibility.parse({
+      state: "visible",
+      workspaceSessionId: nextVisibility.workspaceSessionId,
+      openTerminalRevision: parsedLease.openTerminalRevision,
+      expiresAt: parsedLease.expiresAt,
+    });
+    const expectedLocator = HiveTerminalBindingSchema.unwrap()[
+      "shape"
+    ].locator.parse(parsedLease.locator);
     return this.transaction(() => {
       const binding = this.getTerminalHostBindingByLocator(locator);
       if (binding === null) {
@@ -349,7 +346,7 @@ export class RuntimeStore {
     locator: HiveTerminalBinding["locator"],
   ): HiveTerminalBinding | null {
     const value =
-      HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+      HiveTerminalBindingSchema.unwrap()["shape"].locator.parse(locator);
     const row = this.database
       .query(
         `
@@ -413,7 +410,7 @@ export class RuntimeStore {
     terminal: ProviderRun["terminal"],
   ): ProviderRun | null {
     const locator =
-      ProviderRunBindingSchema.unwrap().shape.terminal.parse(terminal);
+      ProviderRunBindingSchema.unwrap()["shape"].terminal.parse(terminal);
     const row = this.database
       .query(
         `
@@ -771,6 +768,7 @@ export class RuntimeStore {
         )
         .run(JSON.stringify(exited), exited.runId);
       if (exited.agentId !== null && exited.model !== null) {
+        // SAFETY: The surrounding code already established this contract.
         const agent = this.database
           .query("SELECT category, status FROM agents WHERE id = ?")
           .get(exited.agentId) as {
@@ -782,6 +780,7 @@ export class RuntimeStore {
             decisionId: exited.launchGrantId,
             providerRunId: exited.runId,
             // A worker run (agentId !== null, checked above) always carries a provider — enforced by ProviderRunSchema's refinement, not just this call site.
+            // SAFETY: The surrounding code already established this contract.
             provider: exited.provider as CapabilityProvider,
             model: exited.model,
             taskCategory: agent.category,

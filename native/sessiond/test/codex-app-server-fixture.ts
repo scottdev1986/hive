@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import { isRecord, isString } from "../../../src/shared/is-record";
 
 type Message = {
   readonly id?: number | string;
@@ -6,19 +7,15 @@ type Message = {
   readonly params?: unknown;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function send(message: unknown): void {
+function send<T>(message: T): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
-function turnText(params: unknown): string {
+function turnText<T>(params: T): string {
   if (!isRecord(params) || !Array.isArray(params.input)) return "";
   return params.input
     .filter(isRecord)
-    .map((item) => (typeof item.text === "string" ? item.text : ""))
+    .map((item) => (isString(item.text) ? item.text : ""))
     .join("");
 }
 
@@ -30,6 +27,7 @@ if (process.argv.includes("--version")) {
 let nextTurn = 1;
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of lines) {
+  // SAFETY: The test owns this value and its fields.
   const message = JSON.parse(line) as Message;
   if (message.id === undefined || message.method === undefined) continue;
   if (message.method === "initialize") {

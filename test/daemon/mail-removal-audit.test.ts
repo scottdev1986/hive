@@ -292,12 +292,14 @@ describe("the legacy message path stays deleted", () => {
     ];
     const LEAF = "src/daemon/database/hive-database.ts";
     while (queue.length > 0) {
+      // SAFETY: The test owns this value and its fields.
       const current = queue.pop() as string;
       if (visited.has(current)) continue;
       visited.add(current);
       const text = FILES.find((file) => file.path === current)?.text;
       if (text === undefined || current === LEAF) continue;
       for (const match of text.matchAll(/from "(\.[^"]+)"/g)) {
+        // SAFETY: The test owns this value and its fields.
         const resolved = resolveImport(current, match[1] as string);
         if (resolved !== null) queue.push(resolved);
       }
@@ -357,6 +359,7 @@ describe("the legacy message path stays deleted", () => {
   test("a fresh database has the mailbox and neither dropped table", () => {
     const db = new HiveDatabase(":memory:");
     const tables = new Set(
+      // SAFETY: The test owns this value and its fields.
       (
         db.database
           .query("SELECT name FROM sqlite_master WHERE type = 'table'")

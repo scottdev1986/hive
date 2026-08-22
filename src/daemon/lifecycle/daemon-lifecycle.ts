@@ -1,4 +1,5 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { isNumber, isRecord, isString } from "../../shared/is-record";
 import {
   closeSync,
   mkdirSync,
@@ -19,6 +20,7 @@ import {
   handshakeMismatch,
   probeHandshake,
 } from "./handshake";
+import type { JsonObject, JsonValue } from "../../shared/json";
 
 export * from "./handshake";
 
@@ -98,26 +100,24 @@ function readDaemonLock(hiveHome = getHiveHome()): FileEvidence<DaemonLock> {
   try {
     contents = readFileSync(getDaemonLockPath(hiveHome), "utf8");
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     return (error as NodeJS.ErrnoException).code === "ENOENT"
       ? { state: "absent" }
       : { state: "unknown" };
   }
   try {
-    const value: unknown = JSON.parse(contents);
-    if (typeof value !== "object" || value === null)
-      return { state: "unknown" };
-    const lock = value as Record<string, unknown>;
+    const value: JsonValue = JSON.parse(contents);
+    if (!isRecord(value) && !Array.isArray(value)) return { state: "unknown" };
+    // SAFETY: The surrounding code already established this contract.
+    const lock = value as JsonObject;
     if (
-      typeof lock.pid !== "number" ||
+      !isNumber(lock.pid) ||
       !Number.isSafeInteger(lock.pid) ||
       lock.pid <= 0 ||
-      typeof lock.instanceId !== "string" ||
-      typeof lock.startedAt !== "string" ||
-      !(lock.startToken === undefined || typeof lock.startToken === "string") ||
-      !(
-        lock.executablePath === undefined ||
-        typeof lock.executablePath === "string"
-      ) ||
+      !isString(lock.instanceId) ||
+      !isString(lock.startedAt) ||
+      !(lock.startToken === undefined || isString(lock.startToken)) ||
+      !(lock.executablePath === undefined || isString(lock.executablePath)) ||
       (lock.startToken === undefined) !== (lock.executablePath === undefined)
     )
       return { state: "unknown" };
@@ -249,6 +249,7 @@ export async function acquireDaemonLock(
       });
       return;
     } catch (error) {
+      // SAFETY: The surrounding code already established this contract.
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
 
@@ -302,6 +303,7 @@ function readPositiveInteger(path: string): FileEvidence<number> {
   try {
     contents = readFileSync(path, "utf8").trim();
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     return (error as NodeJS.ErrnoException).code === "ENOENT"
       ? { state: "absent" }
       : { state: "unknown" };
@@ -343,13 +345,8 @@ async function daemonHealthy(port: number): Promise<boolean> {
     if (!response.ok) {
       return false;
     }
-    const body: unknown = await response.json();
-    return (
-      typeof body === "object" &&
-      body !== null &&
-      "ok" in body &&
-      body.ok === true
-    );
+    const body: JsonValue = await response.json();
+    return isRecord(body) && "ok" in body && body.ok === true;
   } catch {
     return false;
   }

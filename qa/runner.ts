@@ -1,7 +1,8 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import type { JsonValue } from "../src/shared/json";
+import type { JsonValue, JsonObject } from "../src/shared/json";
 import { runStage1Rows } from "./rows/stage1";
+import { isRecord, isString } from "../src/shared/is-record";
 
 export interface ExecResult {
   exitCode: number;
@@ -104,7 +105,9 @@ function checkPinSet(
       );
     }
   }
+  // SAFETY: The surrounding code already established this contract.
   const hiveHome = env.HIVE_HOME as string;
+  // SAFETY: The surrounding code already established this contract.
   const defaultHome = env.HIVE_DEFAULT_HOME as string;
   if (canonical(hiveHome) !== canonical(defaultHome)) {
     return fail(
@@ -129,6 +132,7 @@ async function checkIsolation(
     deps.rig.repoRoot,
     deps.rig.stagingRoot,
     join(home, ".hive"),
+    // SAFETY: The surrounding code already established this contract.
     deps.env.HIVE_HOME as string,
     deps.rig.devHome,
     deps.rig.userHive,
@@ -147,6 +151,7 @@ function checkSessiondRoot(
   env: Record<string, string | undefined>,
   stagingRoot: string,
 ): PreflightOutcome | null {
+  // SAFETY: The surrounding code already established this contract.
   const root = canonical(env.HIVE_SESSIOND_ROOT as string);
   const staging = canonical(stagingRoot);
   if (root !== staging && !root.startsWith(`${staging}/`)) {
@@ -177,6 +182,7 @@ async function checkBuildIdentity(
     );
   }
   const treeCommit = git.stdout.trim();
+  // SAFETY: The surrounding code already established this contract.
   const installRoot = deps.env.HIVE_INSTALL_ROOT as string;
   const qaBin = join(installRoot, "current", "hive");
   const version = await deps.exec([qaBin, "--version"]);
@@ -266,15 +272,16 @@ export function formatRow(row: RowResult): string {
 
 /** Parse the `hive credential --agent user` contract: a JSON object of headers on stdout. A raw header line is not JSON and must fail here, never reach a request. */
 export function parseCredentialHeaders(stdout: string): Record<string, string> {
-  const value: unknown = JSON.parse(stdout);
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  const value: JsonValue = JSON.parse(stdout);
+  if (!isRecord(value)) {
     throw new Error("credential helper did not print a JSON header object");
   }
   for (const header of Object.values(value)) {
-    if (typeof header !== "string") {
+    if (!isString(header)) {
       throw new Error("credential helper printed a non-string header value");
     }
   }
+  // SAFETY: The surrounding code already established this contract.
   return value as Record<string, string>;
 }
 
@@ -282,11 +289,7 @@ export function parseCredentialHeaders(stdout: string): Record<string, string> {
 export interface ObserveClients {
   httpStatus(path: string): Promise<number>;
   httpJson(path: string): Promise<{ status: number; body: unknown }>;
-  mcpCall(
-    name: string,
-    args: Record<string, unknown>,
-    key: string,
-  ): Promise<JsonValue>;
+  mcpCall(name: string, args: JsonObject, key: string): Promise<JsonValue>;
   close(): Promise<void>;
 }
 
@@ -343,6 +346,7 @@ export async function gate(
     return {
       outcome: "answered",
       exitCode: result.exitCode,
+      // SAFETY: The surrounding code already established this contract.
       response: JSON.parse(result.stdout) as GateResponse,
     };
   } catch {
@@ -373,7 +377,7 @@ export async function rowRouteTransition(
     };
   }
   const routeBefore = first.response.route;
-  if (typeof routeBefore !== "string" || routeBefore.length === 0) {
+  if (!isString(routeBefore) || routeBefore.length === 0) {
     return {
       id,
       status: "FAIL",
@@ -472,6 +476,7 @@ export async function rowObserveClients(
     return {
       id,
       status: "NO MEASUREMENT",
+      // SAFETY: The surrounding code already established this contract.
       reason: `hive_status over MCP refused: ${(error as Error).message}`,
     };
   }

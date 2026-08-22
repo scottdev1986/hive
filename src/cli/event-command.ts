@@ -4,6 +4,8 @@ import { type HookEvent, HookEventSchema } from "../schemas/event";
 import { PaneDaemonClient } from "./agent-ui/pane-daemon-client";
 import { agentFetch } from "./credential";
 import { responseErrorDetail } from "./daemon-response";
+import { isRecord, isString } from "../shared/is-record";
+import type { JsonValue } from "../shared/json";
 
 export interface HookEventOptions {
   agent?: string;
@@ -128,18 +130,18 @@ function approvalDescription(parsed: HookPermissionRequest): string {
 export function parseHookStdin(text: string): CapturedHookStdin {
   const captured: CapturedHookStdin = {};
   try {
-    const parsed: unknown = JSON.parse(text);
-    if (typeof parsed !== "object" || parsed === null) return captured;
+    const parsed: JsonValue = JSON.parse(text);
+    if (!isRecord(parsed) && !Array.isArray(parsed)) return captured;
     if (
       "session_id" in parsed &&
-      typeof parsed.session_id === "string" &&
+      isString(parsed.session_id) &&
       parsed.session_id.length > 0
     ) {
       captured.toolSessionId = parsed.session_id;
     }
     if (
       "sessionId" in parsed &&
-      typeof parsed.sessionId === "string" &&
+      isString(parsed.sessionId) &&
       parsed.sessionId.length > 0
     ) {
       captured.toolSessionId = parsed.sessionId;
@@ -148,14 +150,14 @@ export function parseHookStdin(text: string): CapturedHookStdin {
       "hook_event_name" in parsed &&
       parsed.hook_event_name === "PostToolUse" &&
       "tool_name" in parsed &&
-      typeof parsed.tool_name === "string" &&
+      isString(parsed.tool_name) &&
       parsed.tool_name.length > 0
     ) {
       captured.toolName = parsed.tool_name;
     }
     if (
       "toolName" in parsed &&
-      typeof parsed.toolName === "string" &&
+      isString(parsed.toolName) &&
       parsed.toolName.length > 0
     ) {
       captured.toolName = parsed.toolName;
@@ -167,7 +169,7 @@ export function parseHookStdin(text: string): CapturedHookStdin {
     }
     if (
       "timestamp" in parsed &&
-      typeof parsed.timestamp === "string" &&
+      isString(parsed.timestamp) &&
       !Number.isNaN(Date.parse(parsed.timestamp))
     ) {
       captured.timestamp = new Date(parsed.timestamp).toISOString();
@@ -181,7 +183,7 @@ export function parseHookStdin(text: string): CapturedHookStdin {
     }
     if (
       "notification_type" in parsed &&
-      typeof parsed.notification_type === "string" &&
+      isString(parsed.notification_type) &&
       parsed.notification_type.length > 0
     ) {
       captured.notificationType = parsed.notification_type;
@@ -190,12 +192,10 @@ export function parseHookStdin(text: string): CapturedHookStdin {
       "hook_event_name" in parsed &&
       parsed.hook_event_name === "PermissionRequest" &&
       "tool_name" in parsed &&
-      typeof parsed.tool_name === "string"
+      isString(parsed.tool_name)
     ) {
       const rawInput =
-        "tool_input" in parsed &&
-        typeof parsed.tool_input === "object" &&
-        parsed.tool_input !== null
+        "tool_input" in parsed && isRecord(parsed.tool_input)
           ? parsed.tool_input
           : undefined;
       captured.description = approvalDescription({
@@ -204,13 +204,13 @@ export function parseHookStdin(text: string): CapturedHookStdin {
           command:
             rawInput !== undefined &&
             "command" in rawInput &&
-            typeof rawInput.command === "string"
+            isString(rawInput.command)
               ? rawInput.command
               : undefined,
           description:
             rawInput !== undefined &&
             "description" in rawInput &&
-            typeof rawInput.description === "string"
+            isString(rawInput.description)
               ? rawInput.description
               : undefined,
         },

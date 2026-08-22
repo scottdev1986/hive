@@ -5,6 +5,7 @@ import {
   TOKEN_USAGE_ROLES,
   TokenUsageSnapshotSchema,
 } from "../../src/schemas/token-usage-schema";
+import type { JsonValue } from "../../src/shared/json";
 
 /**
  * THE DAEMON HALF OF THE TOKEN-USAGE WIRE CONTRACT.
@@ -23,7 +24,7 @@ describe("token usage wire contract (shared with the Swift Usage decoder)", () =
     import.meta.dir,
     "../../workspace/Tests/WorkspaceCoreTests/Fixtures/token-usage-wire.json",
   );
-  const fixture: unknown = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture: JsonValue = JSON.parse(readFileSync(fixturePath, "utf8"));
 
   test("the fixture is a document the daemon may legitimately emit", () => {
     const parsed = TokenUsageSnapshotSchema.safeParse(fixture);
@@ -38,6 +39,7 @@ describe("token usage wire contract (shared with the Swift Usage decoder)", () =
     const fixtureRoles = [
       ...new Set(
         snapshot.sessions.flatMap((session) =>
+          // SAFETY: The test owns this value and its fields.
           session.subjects.map((subject) => subject.role as string),
         ),
       ),

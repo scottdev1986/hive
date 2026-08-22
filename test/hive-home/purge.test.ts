@@ -140,6 +140,7 @@ describe("hive uninstall --purge", () => {
 
       // The links went with the home; what they pointed at did not.
       for (const name of DEV_SHARED_WITH_DEFAULT_HOME) {
+        // SAFETY: The test owns this value and its fields.
         const target = shared[name] as string;
         if (name.endsWith(".json")) {
           expect(await readFile(target, "utf8")).toBe(`{"shared":"${name}"}\n`);

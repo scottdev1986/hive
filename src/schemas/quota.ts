@@ -53,10 +53,7 @@ export const QuotaLimitSchema = z.strictObject({
 export type QuotaLimit = z.infer<typeof QuotaLimitSchema>;
 
 /** How much of each window one run of a category is expected to consume, as a percent of that window. This is Hive's own workload guess — never a provider number — so every reservation built from it is surfaced as `estimated`. It is separate from `estimates` because a discovered pool is percent-denominated, and a run is a much larger fraction of a five-hour bucket than of a week: a week does not hold 33 five-hour buckets' worth of capacity. Defaults ship so that no user ever has to enter one. Provider observations overwrite the *usage* these estimates stand in for as soon as a real number arrives; the estimate only ever governs in-flight reservations. */
-export const DEFAULT_PERCENT_ESTIMATES: Record<
-  RoutingCategory,
-  { fiveHour: number; weekly: number }
-> = {
+export const DEFAULT_PERCENT_ESTIMATES = {
   // Workload guesses, never provider numbers; observations overwrite them.
   complex_coding: { fiveHour: 8, weekly: 1.5 },
   debugging: { fiveHour: 8, weekly: 1.5 },
@@ -68,7 +65,7 @@ export const DEFAULT_PERCENT_ESTIMATES: Record<
   code_review: { fiveHour: 3, weekly: 0.6 },
   light_research: { fiveHour: 1.5, weekly: 0.3 },
   summarization: { fiveHour: 1.5, weekly: 0.3 },
-};
+} satisfies Record<RoutingCategory, { fiveHour: number; weekly: number }>;
 
 export const QuotaConfigSchema = z
   .strictObject({

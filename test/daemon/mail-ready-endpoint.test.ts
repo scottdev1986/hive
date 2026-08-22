@@ -173,6 +173,7 @@ describe("the mail-ready endpoint", () => {
     // Positive control: the reader works, so the refusal below is the ACL and
     // not an endpoint that returns nothing to everyone.
     const own = await call(daemon, ada, "/mail-ready?sinceCursor=0");
+    // SAFETY: The test owns this value and its fields.
     expect(((await own.json()) as { events: unknown[] }).events).toHaveLength(
       1,
     );
@@ -340,6 +341,7 @@ describe("the mail-ready endpoint", () => {
     );
     expect(response.status).toBe(200);
     expect(
+      // SAFETY: The test owns this value and its fields.
       ((await response.json()) as { events: unknown[] }).events,
     ).toHaveLength(1);
   });
@@ -474,6 +476,7 @@ describe("an announcement the mailbox has outlived", () => {
       tokenFor(daemon, "ada"),
       "/mail-ready?sinceCursor=0",
     );
+    // SAFETY: The test owns this value and its fields.
     const body = (await response.json()) as {
       events: { oldestItemId: string }[];
     };
@@ -564,9 +567,10 @@ describe("an announcement one item behind the mailbox", () => {
       tokenFor(daemon, "ada"),
       "/mail-ready?sinceCursor=0",
     );
-    const named = (
-      (await response.json()) as { events: { oldestItemId: string }[] }
-    ).events.map((event) => event.oldestItemId);
+    const named = // SAFETY: The test owns this value and its fields.
+      (
+        (await response.json()) as { events: { oldestItemId: string }[] }
+      ).events.map((event) => event.oldestItemId);
     expect(named).not.toContain(first);
     expect(named).toContain(second);
   });

@@ -72,6 +72,7 @@ async function collectRows(
   // Whether a store EXISTS, never whether it produced rows. Inferring existence from a row count reports a freshly initialized project — wiki directories built, nothing written yet — as `absent` rather than `empty`, and a user reading that believes a fresh install is a wiped one.
   let anyStore = deps.episodic !== null;
 
+  // SAFETY: The surrounding code already established this contract.
   for (const scope of ["repo", "global"] as MemoryScope[]) {
     if (await wikiScopeExists(deps.repoRoot, scope)) anyStore = true;
     for (const fact of await discoverMemoryFacts(deps.repoRoot, scope).catch(

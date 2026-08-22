@@ -37,12 +37,12 @@ interface ObservedState {
   readonly resetsAt: string | null;
 }
 
-const LEVEL_RANK: Readonly<Record<ObservedLevel, number>> = {
+const LEVEL_RANK = {
   normal: 0,
   warning: 1,
   critical: 2,
   exhausted: 3,
-};
+} satisfies Readonly<Record<ObservedLevel, number>>;
 
 function appliesToModel(
   status: QuotaPoolStatus,

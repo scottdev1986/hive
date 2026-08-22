@@ -86,7 +86,7 @@ export function stagedEmbeddedSchemaDigest(binary: Uint8Array): string | null {
 export function assertSessiondSchemaDigest(
   binary: Uint8Array,
   treeSchema: Uint8Array,
-): { treeDigest: string; stagedDigest: string } {
+) {
   if (treeSchema.byteLength === 0) {
     throw new Error(SESSIOND_SCHEMA_EMPTY_TREE);
   }

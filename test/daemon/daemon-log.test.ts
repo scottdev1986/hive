@@ -180,6 +180,7 @@ describe("DaemonLog", () => {
     expect(lines[0]).toContain("deployed-mode report line");
     // The fd carried the console leg verbatim, timestamp and all — the same
     // shape an append would have written.
+    // SAFETY: The test owns this value and its fields.
     expect(Number.isNaN(Date.parse((lines[0] as string).slice(0, 24)))).toBe(
       false,
     );

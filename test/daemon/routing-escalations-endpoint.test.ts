@@ -12,7 +12,7 @@ import { tempRoot } from "../temp-root";
 const home = tempRoot("hive-routing-escalations-endpoint-");
 process.env.HIVE_HOME = home;
 
-function harness(): { daemon: HiveDaemon; db: HiveDatabase } {
+function harness() {
   const db = new HiveDatabase(":memory:");
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,

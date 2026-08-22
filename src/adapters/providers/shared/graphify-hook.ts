@@ -9,10 +9,7 @@ export type GraphifyHookKind =
   "claude-search" | "claude-read" | "codex" | "grok" | "kimi" | "opencode";
 
 /** Total over known hook kinds at compile time: `filter` is what the vendor's hook fires on, `gate` is whether that vendor spends the one decline. The generated hook stays fail-open everywhere else, because a nudge failure must never block an agent tool call. Only the vendors measured at zero graph calls are gated. Codex already works graph-first on its own and gets the advisory nudge it has always had. */
-const GRAPHIFY_HOOK_FILTERS: Record<
-  GraphifyHookKind,
-  { filter: string; gate: boolean }
-> = {
+const GRAPHIFY_HOOK_FILTERS = {
   "claude-search": {
     filter:
       '    case "$input" in *grep*|*ripgrep*|*"rg "*|*"find "*|*"fd "*|*"ack "*|*"ag "*) ;; *) exit 0 ;; esac',
@@ -48,7 +45,7 @@ const GRAPHIFY_HOOK_FILTERS: Record<
     ].join("\n"),
     gate: true,
   },
-};
+} satisfies Record<GraphifyHookKind, { filter: string; gate: boolean }>;
 
 const DECLINE_MESSAGE =
   "Graphify gate (once per session): this search is declined so the graph gets " +

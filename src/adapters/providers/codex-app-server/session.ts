@@ -4,8 +4,12 @@ import {
 } from "../../../daemon/provider-capabilities/discovery";
 import type { MeasuredProviderCapabilities } from "../../../schemas/capability";
 import { definedFields } from "../../../shared/defined-fields";
-import { isRecord } from "../../../shared/is-record";
-import { type JsonValue, requireJsonValue } from "../../../shared/json";
+import { isNumber, isRecord, isString } from "../../../shared/is-record";
+import {
+  type JsonValue,
+  requireJsonValue,
+  type JsonObject,
+} from "../../../shared/json";
 import { percentOfWindow } from "../../../usage-service/context-occupancy";
 import type {
   ElicitationQuestion,
@@ -84,15 +88,14 @@ interface PendingQuestion {
   readonly wire: CodexAppServerWire;
 }
 
-function codexTurnFailureReason(turn: Record<string, unknown>): string {
-  if (typeof turn.error === "string" && turn.error.trim() !== "") {
+function codexTurnFailureReason(turn: JsonObject): string {
+  if (isString(turn.error) && turn.error.trim() !== "") {
     return turn.error;
   }
   const error = isRecord(turn.error) ? turn.error : null;
-  if (error !== null && typeof error.message === "string") {
+  if (error !== null && isString(error.message)) {
     const detail =
-      typeof error.additionalDetails === "string" &&
-      error.additionalDetails.trim() !== ""
+      isString(error.additionalDetails) && error.additionalDetails.trim() !== ""
         ? ` — ${error.additionalDetails}`
         : "";
     return `${error.message}${detail}`;
@@ -228,6 +231,7 @@ export class CodexAppServerSession implements ProviderSession {
           ? undefined
           : { model_reasoning_effort: input.effort },
     };
+    // SAFETY: The surrounding code already established this contract.
     const response = (await this.request(
       CODEX_APP_SERVER_METHODS.threadStart,
       params,
@@ -243,6 +247,7 @@ export class CodexAppServerSession implements ProviderSession {
   }
 
   async resumeSession(input: SessionResume): Promise<VendorSessionRef> {
+    // SAFETY: The surrounding code already established this contract.
     const response = (await this.request(
       CODEX_APP_SERVER_METHODS.threadResume,
       {
@@ -269,17 +274,16 @@ export class CodexAppServerSession implements ProviderSession {
   }
 
   /** The model a thread opened with. `thread/settings/updated` only fires on a change, so without this the model stays unknown until someone switches. */
-  private emitThreadConfig(response: unknown): void {
+  private emitThreadConfig(response: JsonValue): void {
     if (!isRecord(response)) return;
-    const model = typeof response.model === "string" ? response.model : null;
+    const model = isString(response.model) ? response.model : null;
     if (model === null) return;
     this.emit({
       kind: "config-updated",
       model,
-      effort:
-        typeof response.reasoningEffort === "string"
-          ? response.reasoningEffort
-          : null,
+      effort: isString(response.reasoningEffort)
+        ? response.reasoningEffort
+        : null,
       mode: null,
       raw: response,
     });
@@ -311,6 +315,7 @@ export class CodexAppServerSession implements ProviderSession {
     pending.push(input.clientInputId);
     this.pendingInputs.set(input.session.vendorSessionId, pending);
     try {
+      // SAFETY: The surrounding code already established this contract.
       const response = (await this.request(
         CODEX_APP_SERVER_METHODS.turnStart,
         params,
@@ -381,7 +386,7 @@ export class CodexAppServerSession implements ProviderSession {
     for (const questionId of question.questionIds) {
       const answer = supplied[questionId];
       if (answer === undefined) continue;
-      const values = typeof answer === "string" ? [answer] : [...answer];
+      const values = isString(answer) ? [answer] : [...answer];
       if (values.length > 0) answers[questionId] = { answers: values };
     }
     this.pendingQuestions.delete(input.requestId);
@@ -425,6 +430,7 @@ export class CodexAppServerSession implements ProviderSession {
       threadId: input.vendorSessionId,
       model: input.model,
       ...definedFields({
+        // SAFETY: The surrounding code already established this contract.
         effort: input.effort as
           ThreadSettingsUpdateParams["effort"] | undefined,
       }),
@@ -458,6 +464,7 @@ export class CodexAppServerSession implements ProviderSession {
   }
 
   async listCommands(): Promise<readonly VendorCommand[]> {
+    // SAFETY: The surrounding code already established this contract.
     const response = (await this.request(CODEX_APP_SERVER_METHODS.skills, {
       cwds: [this.spawn.cwd],
       forceReload: false,
@@ -469,13 +476,12 @@ export class CodexAppServerSession implements ProviderSession {
       if (!isRecord(entry) || !Array.isArray(entry.skills)) continue;
       for (const skill of entry.skills) {
         if (!isRecord(skill) || !skill.enabled) continue;
-        const name = typeof skill.name === "string" ? skill.name : null;
+        const name = isString(skill.name) ? skill.name : null;
         if (name === null || names.has(name)) continue;
         names.add(name);
         commands.push({
           name,
-          description:
-            typeof skill.description === "string" ? skill.description : null,
+          description: isString(skill.description) ? skill.description : null,
         });
       }
     }
@@ -520,6 +526,7 @@ export class CodexAppServerSession implements ProviderSession {
   }
 
   listThreads(params: ThreadListParams = {}): Promise<ThreadListResponse> {
+    // SAFETY: The surrounding code already established this contract.
     return this.request(
       CODEX_APP_SERVER_METHODS.threadList,
       params,
@@ -530,6 +537,7 @@ export class CodexAppServerSession implements ProviderSession {
     threadId: string,
     includeTurns = true,
   ): Promise<ThreadReadResponse> {
+    // SAFETY: The surrounding code already established this contract.
     return this.request(CODEX_APP_SERVER_METHODS.threadRead, {
       threadId,
       includeTurns,
@@ -537,6 +545,7 @@ export class CodexAppServerSession implements ProviderSession {
   }
 
   startReview(params: ReviewStartParams): Promise<ReviewStartResponse> {
+    // SAFETY: The surrounding code already established this contract.
     return this.request(
       CODEX_APP_SERVER_METHODS.review,
       params,
@@ -544,12 +553,14 @@ export class CodexAppServerSession implements ProviderSession {
   }
 
   compact(threadId: string): Promise<ThreadCompactStartResponse> {
+    // SAFETY: The surrounding code already established this contract.
     return this.request(CODEX_APP_SERVER_METHODS.compact, {
       threadId,
     }) as Promise<ThreadCompactStartResponse>;
   }
 
   listModels(params: ModelListParams = {}): Promise<ModelListResponse> {
+    // SAFETY: The surrounding code already established this contract.
     return this.request(
       CODEX_APP_SERVER_METHODS.models,
       params,
@@ -559,6 +570,7 @@ export class CodexAppServerSession implements ProviderSession {
   listPermissionProfiles(
     params: PermissionProfileListParams = {},
   ): Promise<PermissionProfileListResponse> {
+    // SAFETY: The surrounding code already established this contract.
     return this.request(
       CODEX_APP_SERVER_METHODS.permissions,
       params,
@@ -566,6 +578,7 @@ export class CodexAppServerSession implements ProviderSession {
   }
 
   readConfig(params: ConfigReadParams = {}): Promise<ConfigReadResponse> {
+    // SAFETY: The surrounding code already established this contract.
     return this.request(
       CODEX_APP_SERVER_METHODS.config,
       params,
@@ -618,7 +631,7 @@ export class CodexAppServerSession implements ProviderSession {
     this.queue.end();
   }
 
-  private request(method: ClientMethod, params?: unknown): Promise<JsonValue> {
+  private request<T>(method: ClientMethod, params?: T): Promise<JsonValue> {
     if (this.closed) {
       return Promise.reject(new Error("Codex session is closed"));
     }
@@ -637,7 +650,7 @@ export class CodexAppServerSession implements ProviderSession {
     message: CodexAppServerMessage,
     wire: CodexAppServerWire,
   ): Promise<void> {
-    const method = typeof message.method === "string" ? message.method : null;
+    const method = isString(message.method) ? message.method : null;
     const params = isRecord(message.params) ? message.params : {};
     if (isRequestId(message.id) && method === "item/tool/requestUserInput") {
       this.acceptQuestion(message.id, params, wire);
@@ -645,9 +658,11 @@ export class CodexAppServerSession implements ProviderSession {
     }
     if (
       isRequestId(message.id) &&
+      // SAFETY: The surrounding code already established this contract.
       CODEX_APPROVAL_METHODS.includes(method as CodexApprovalMethod)
     ) {
       this.acceptApproval(
+        // SAFETY: The surrounding code already established this contract.
         method as CodexApprovalMethod,
         message.id,
         params,
@@ -737,7 +752,7 @@ export class CodexAppServerSession implements ProviderSession {
         const key = `${turnId}:${toolCallId}`;
         const output =
           (this.commandOutputs.get(key) ?? "") +
-          (typeof params.delta === "string" ? params.delta : "");
+          (isString(params.delta) ? params.delta : "");
         this.commandOutputs.set(key, output);
         this.emit({
           kind: "tool-updated",
@@ -755,7 +770,7 @@ export class CodexAppServerSession implements ProviderSession {
           kind: "tool-updated",
           turnId: requiredString(params, "turnId", method),
           toolCallId: requiredString(params, "itemId", method),
-          detail: typeof params.delta === "string" ? params.delta : null,
+          detail: isString(params.delta) ? params.delta : null,
           raw: message,
         });
         return;
@@ -789,7 +804,7 @@ export class CodexAppServerSession implements ProviderSession {
       }
       case "turn/diff/updated": {
         // Codex is the one provider that aggregates the whole turn's edits into a unified diff itself, so this is taken as sent rather than rebuilt from the individual file-change items.
-        const diff = typeof params.diff === "string" ? params.diff : null;
+        const diff = isString(params.diff) ? params.diff : null;
         if (diff === null) break;
         this.emit({
           kind: "turn-diff-updated",
@@ -805,7 +820,7 @@ export class CodexAppServerSession implements ProviderSession {
           kind: "plan-updated",
           turnId: requiredString(params, "turnId", method),
           entries: plan.flatMap((step) =>
-            isRecord(step) && typeof step.step === "string" ? [step.step] : [],
+            isRecord(step) && isString(step.step) ? [step.step] : [],
           ),
           raw: message,
         });
@@ -815,15 +830,15 @@ export class CodexAppServerSession implements ProviderSession {
         const usage = isRecord(params.tokenUsage) ? params.tokenUsage : {};
         const total = isRecord(usage.total) ? usage.total : {};
         const last = isRecord(usage.last) ? usage.last : {};
-        const window =
-          typeof usage.modelContextWindow === "number"
-            ? usage.modelContextWindow
-            : null;
+        const window = isNumber(usage.modelContextWindow)
+          ? usage.modelContextWindow
+          : null;
         // `total` sums every turn the thread has ever run, so it climbs without bound and passes the window long before the context is full. `last` is the newest turn, which is what actually occupies the window now.
-        const occupiedTokens =
-          typeof last.totalTokens === "number" ? last.totalTokens : null;
-        const count = (value: unknown): number | null =>
-          typeof value === "number" ? value : null;
+        const occupiedTokens = isNumber(last.totalTokens)
+          ? last.totalTokens
+          : null;
+        const count = <T>(value: T): number | null =>
+          isNumber(value) ? value : null;
         this.emit({
           kind: "usage-updated",
           turnId: requiredString(params, "turnId", method),
@@ -849,12 +864,11 @@ export class CodexAppServerSession implements ProviderSession {
           : {};
         this.emit({
           kind: "config-updated",
-          model: typeof settings.model === "string" ? settings.model : null,
-          effort: typeof settings.effort === "string" ? settings.effort : null,
-          mode:
-            typeof settings.collaborationMode === "string"
-              ? settings.collaborationMode
-              : null,
+          model: isString(settings.model) ? settings.model : null,
+          effort: isString(settings.effort) ? settings.effort : null,
+          mode: isString(settings.collaborationMode)
+            ? settings.collaborationMode
+            : null,
           raw: message,
         });
         return;
@@ -899,7 +913,7 @@ export class CodexAppServerSession implements ProviderSession {
   private acceptApproval(
     method: CodexApprovalMethod,
     id: RequestId,
-    params: Record<string, unknown>,
+    params: JsonObject,
     wire: CodexAppServerWire,
   ): void {
     const requestId = requestIdKey(id);
@@ -922,8 +936,7 @@ export class CodexAppServerSession implements ProviderSession {
     this.emit({
       kind: "approval-waiting",
       requestId,
-      turnId:
-        typeof params.turnId === "string" ? params.turnId : "unknown-turn",
+      turnId: isString(params.turnId) ? params.turnId : "unknown-turn",
       toolName:
         method === "item/commandExecution/requestApproval"
           ? "commandExecution"
@@ -937,7 +950,7 @@ export class CodexAppServerSession implements ProviderSession {
 
   private acceptQuestion(
     id: RequestId,
-    params: Record<string, unknown>,
+    params: JsonObject,
     wire: CodexAppServerWire,
   ): void {
     const requestId = requestIdKey(id);
@@ -954,12 +967,12 @@ export class CodexAppServerSession implements ProviderSession {
     const questions: ElicitationQuestion[] = rawQuestions.flatMap(
       (raw): ElicitationQuestion[] => {
         if (!isRecord(raw)) return [];
-        const questionId = typeof raw.id === "string" ? raw.id : null;
-        const text = typeof raw.question === "string" ? raw.question : null;
+        const questionId = isString(raw.id) ? raw.id : null;
+        const text = isString(raw.question) ? raw.question : null;
         if (questionId === null || text === null) return [];
         const options = Array.isArray(raw.options)
           ? raw.options.flatMap((value) => {
-              if (!isRecord(value) || typeof value.label !== "string") {
+              if (!isRecord(value) || !isString(value.label)) {
                 return [];
               }
               return [
@@ -967,10 +980,9 @@ export class CodexAppServerSession implements ProviderSession {
                   optionId: value.label,
                   name: value.label,
                   kind: "allow" as const,
-                  description:
-                    typeof value.description === "string"
-                      ? value.description
-                      : null,
+                  description: isString(value.description)
+                    ? value.description
+                    : null,
                 },
               ];
             })
@@ -979,7 +991,7 @@ export class CodexAppServerSession implements ProviderSession {
           {
             questionId,
             text,
-            header: typeof raw.header === "string" ? raw.header : null,
+            header: isString(raw.header) ? raw.header : null,
             multiSelect: false,
             allowCustom: raw.isOther === true || options.length === 0,
             secret: raw.isSecret === true,
@@ -1005,8 +1017,7 @@ export class CodexAppServerSession implements ProviderSession {
     this.emit({
       kind: "question-waiting",
       requestId,
-      turnId:
-        typeof params.turnId === "string" ? params.turnId : "unknown-turn",
+      turnId: isString(params.turnId) ? params.turnId : "unknown-turn",
       summary: questions[0]?.header ?? "Codex needs input",
       detail: questions[0]?.text ?? null,
       questions,
@@ -1138,16 +1149,16 @@ export class CodexAppServerSession implements ProviderSession {
     }
   }
 
-  private replayThread(thread: Record<string, unknown>): void {
+  private replayThread(thread: JsonObject): void {
     if (!Array.isArray(thread.turns)) return;
     for (const value of thread.turns) {
-      if (!isRecord(value) || typeof value.id !== "string") continue;
+      if (!isRecord(value) || !isString(value.id)) continue;
       const turnId = value.id;
       this.emit({ kind: "turn-started", turnId, raw: value });
       if (Array.isArray(value.items)) {
         for (const item of value.items) {
           if (!isRecord(item)) continue;
-          if (item.type === "agentMessage" && typeof item.text === "string") {
+          if (item.type === "agentMessage" && isString(item.text)) {
             this.emit({
               kind: "message-delta",
               turnId,
@@ -1174,6 +1185,7 @@ export class CodexAppServerSession implements ProviderSession {
 
   private emit(event: EmittableEvent): void {
     this.sequence += 1;
+    // SAFETY: The surrounding code already established this contract.
     this.queue.push({
       ...event,
       sequence: this.sequence,

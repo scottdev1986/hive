@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { type AgentUiHarness, createAgentUiHarness } from "./agent-ui-harness";
+import type { JsonValue } from "../src/shared/json";
+import { unsafeCast } from "../src/shared/unsafe-cast";
 
 interface InstrumentedTextBuffer {
-  setStyledText(value: unknown): void;
+  setStyledText(value: JsonValue): void;
 }
 
 interface InstrumentedTextRenderable {
@@ -35,7 +37,7 @@ afterEach(async () => {
 
 describe("Agent UI refresh dirtiness", () => {
   test("an unchanged refresh performs no text FFI writes or render request", () => {
-    const internals = harness.ui as unknown as AgentUiTextInternals;
+    const internals = unsafeCast<AgentUiTextInternals>(harness.ui);
     const renderables = [
       internals.bannerText,
       internals.queueStatus,
@@ -73,7 +75,7 @@ describe("Agent UI refresh dirtiness", () => {
   });
 
   test("a synchronous provider burst paints its final projection once", async () => {
-    const internals = harness.ui as unknown as AgentUiRefreshInternals;
+    const internals = unsafeCast<AgentUiRefreshInternals>(harness.ui);
     const originalRefresh = internals.refresh.bind(internals);
     let refreshes = 0;
     internals.refresh = () => {

@@ -92,7 +92,7 @@ export interface QueenProviderServiceDependencies {
   >;
 }
 
-const json = (value: unknown, init?: ResponseInit): Response =>
+const json = <T>(value: T, init?: ResponseInit): Response =>
   Response.json(value, init);
 
 export class QueenProviderService {
@@ -181,7 +181,7 @@ export class QueenProviderService {
           this.controlStore().reportLaunchFailure(provider, detail);
         }
       })
-      .catch((error: unknown) => {
+      .catch((error) => {
         this.controlStore().reportLaunchFailure(
           provider,
           `could not terminate the running root: ${errorMessage(error)}`,

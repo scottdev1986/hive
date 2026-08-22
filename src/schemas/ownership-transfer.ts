@@ -36,7 +36,7 @@ export type OwnershipTransferInput = z.infer<
 
 /** The stored fact. Fence fields stamp the exact counters the transfer committed under: hierarchyRevision is the value the transfer advanced to, and each binding's epoch is the one its fence check matched. */
 export const OwnershipTransferSchema = z.strictObject({
-  ...OwnershipTransferInputSchema.shape,
+  ...OwnershipTransferInputSchema["shape"],
   reason: OwnerLossReasonSchema,
   hierarchyRevision: RevisionSchema,
   runEpoch: SafeUintSchema,

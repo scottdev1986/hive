@@ -17,6 +17,7 @@ import {
 import { machineModelControlDatabase } from "../../src/daemon/routing-service/instance-settings";
 import { hiveInstanceSuffix } from "../../src/hive-home/home";
 import type { RoutingPolicy } from "../../src/schemas/routing-policy";
+import type { JsonValue } from "../../src/shared/json";
 
 const NOW = new Date("2026-07-22T12:00:00.000Z");
 const roots: string[] = [];
@@ -26,7 +27,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 
-function fixture(): { root: string; currentHome: string; defaultHome: string } {
+function fixture() {
   const root = mkdtempSync(join(tmpdir(), "hive-promote-default-"));
   roots.push(root);
   const currentHome = join(root, "current");
@@ -98,6 +99,7 @@ test("promote copies an instance policy into an empty default and audits the con
   try {
     const store = new RoutingPolicyStore(db);
     expectCopied(store.read(NOW), source);
+    // SAFETY: The test owns this value and its fields.
     const event = db.database
       .query(
         "SELECT actor, operation, revision, before, after FROM routing_policy_events",
@@ -282,7 +284,8 @@ test("promote refuses on a slow-but-alive default daemon, never reading it as de
   // regression to a short timeout reads "unknown" and fails this test with
   // the wrong refusal — only "live" proves the gate waited for the answer.
   const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
-    ((_input: unknown, init?: RequestInit) =>
+    // SAFETY: The test owns this value and its fields.
+    ((_input: JsonValue, init?: RequestInit) =>
       new Promise<Response>((resolve, reject) => {
         const timer = setTimeout(
           () =>

@@ -22,7 +22,7 @@ import {
 import { HostOperationError } from "./host-operations";
 import { sameSessionLocator } from "./locators";
 
-const json = (value: unknown, init?: ResponseInit): Response =>
+const json = <T>(value: T, init?: ResponseInit): Response =>
   Response.json(value, init);
 
 /** The viewer attach-grant endpoint, with its dependencies named. The three authorization callbacks cross as functions rather than the capability store itself: this route needs the daemon's audited decisions, not the ability to mint its own, and passing the store would hand a route the authority to decide what it is allowed to do. */
@@ -62,7 +62,7 @@ export async function attachGrantEndpoint(
     name,
   );
   if (!decision.ok) return deps.denied(decision);
-  let body: unknown;
+  let body;
   try {
     body = await request.json();
   } catch {
@@ -167,7 +167,7 @@ export async function attachGrantEndpoint(
 }
 
 /** Spawn publishes a locator before sessiond has bound host.sock. Workspace then attaches and used to get a 500 "host control socket failed". That is a start race, not a dead host: tell the pane to retry the way queen already does. */
-function attachFailure(name: string, error: unknown): Response {
+function attachFailure<T>(name: string, error: T): Response {
   if (isTransientAttachFailure(error)) {
     return json(
       {
@@ -187,7 +187,7 @@ function attachFailure(name: string, error: unknown): Response {
   );
 }
 
-function isTransientAttachFailure(error: unknown): boolean {
+function isTransientAttachFailure<T>(error: T): boolean {
   if (
     error instanceof TerminalHostBindingIncompleteError ||
     error instanceof TerminalHostBindingNotFoundError

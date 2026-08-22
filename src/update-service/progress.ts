@@ -1,4 +1,5 @@
 import { systemNow } from "../shared/clock";
+import { isNumber } from "../shared/is-record";
 
 const ESC = "\u001B";
 const dim = (text: string): string => `${ESC}[2m${text}${ESC}[0m`;
@@ -13,7 +14,7 @@ const FALLBACK_COLUMNS = 80;
 
 /** A terminal's width, or 80 when it will not say. Not paranoia: a PTY that is not a real terminal — `script`, some CI runners, a pipe promoted to a TTY — reports `columns` as **0**, and `??` does not catch a zero. Left alone, that zero makes every optional segment "not fit" and the bar silently degrades to a bare percentage on exactly the machines whose output someone is most likely to be reading. Unit tests that pass an explicit width cannot exercise this fallback. */
 function usableColumns(value: number | undefined): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
+  return isNumber(value) && Number.isFinite(value) && value > 0
     ? value
     : FALLBACK_COLUMNS;
 }

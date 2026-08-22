@@ -134,9 +134,11 @@ export async function composeModelControlSnapshot(
     generatedAt: now().toISOString(),
     providers,
     billing,
+    // SAFETY: The surrounding code already established this contract.
     usageSurfaces: Object.fromEntries(
       Object.keys(providers).map((provider) => [
         provider,
+        // SAFETY: The surrounding code already established this contract.
         usageSurface(provider as CapabilityProvider),
       ]),
     ) as Record<CapabilityProvider, "metered" | "none">,

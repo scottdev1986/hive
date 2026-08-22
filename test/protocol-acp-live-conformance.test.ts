@@ -1,3 +1,5 @@
+import { isRecord, isString } from "../src/shared/is-record";
+import type { JsonObject } from "../src/shared/json";
 /**
  * Live ACP baseline conformance (§2.3) against installed Grok, OpenCode, and
  * Kimi.
@@ -82,10 +84,7 @@ async function requireSettledTurn(
   requireSuccessfulTurn(label, receipt, seen);
 }
 
-function writeEvidence(
-  vendor: string,
-  payload: Record<string, unknown>,
-): string {
+function writeEvidence(vendor: string, payload: JsonObject): string {
   const path = join(
     "docs/evidence/protocol-terminal",
     vendor,
@@ -100,9 +99,7 @@ function writeEvidence(
     : `${path} (unchanged; set HIVE_WRITE_EVIDENCE=1 to capture)`;
 }
 
-function summarizeCapabilities(
-  capabilities: MeasuredProviderCapabilities,
-): Record<string, string> {
+function summarizeCapabilities(capabilities: MeasuredProviderCapabilities) {
   const names: CapabilityName[] = [
     "newSession",
     "prompt",
@@ -173,6 +170,7 @@ async function runBaseline(
   steps["1-initialize-probe"] =
     probe.verdict === "compatible" ? "pass" : `fail: ${probe.reason ?? ""}`;
 
+  // SAFETY: The test owns this value and its fields.
   const session = (await adapter.connect({
     ...spawn,
     env,
@@ -335,6 +333,7 @@ async function runBaseline(
     // 8b. disconnect + reattach on a fresh vendor process: load replays
     // history (measured, not asserted) and no prompt is duplicated.
     if (options.measureReplay === true) {
+      // SAFETY: The test owns this value and its fields.
       const reattach = (await adapter.connect({
         ...spawn,
         env,
@@ -528,15 +527,17 @@ async function waitForQuestion(
 }
 
 /** First answer option that is not a skip/reject, from the raw request payload. */
-function firstAnswerOption(raw: unknown): string | null {
-  if (typeof raw !== "object" || raw === null) return null;
+function firstAnswerOption<T>(raw: T): string | null {
+  if (!isRecord(raw) && !Array.isArray(raw)) return null;
+  // SAFETY: The test owns this value and its fields.
   const options = (raw as { options?: unknown }).options;
   if (!Array.isArray(options)) return null;
   for (const entry of options) {
-    if (typeof entry !== "object" || entry === null) continue;
+    if (!isRecord(entry) && !Array.isArray(entry)) continue;
+    // SAFETY: The test owns this value and its fields.
     const rec = entry as { optionId?: unknown; kind?: unknown };
-    if (typeof rec.optionId !== "string") continue;
-    if (typeof rec.kind === "string" && rec.kind.startsWith("reject")) continue;
+    if (!isString(rec.optionId)) continue;
+    if (isString(rec.kind) && rec.kind.startsWith("reject")) continue;
     return rec.optionId;
   }
   return null;

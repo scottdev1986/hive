@@ -42,6 +42,7 @@ import {
   RunCheckpointSchema,
 } from "../../src/schemas/run-checkpoint";
 import { digestWorkManifest } from "../../src/schemas/work-manifest";
+import type { JsonObject } from "../../src/shared/json";
 
 const INSTANCE = hiveInstanceSuffix();
 const T0 = "2026-07-31T00:00:00.000Z";
@@ -124,6 +125,7 @@ function beginRequest(
 }
 
 /** The successor's credential as the gate sees it, and another valid one. */
+// SAFETY: The test owns this value and its fields.
 const SUCCESSOR = { id: "cap-successor" } as never;
 const attester = "cap-successor";
 
@@ -205,11 +207,13 @@ describe("checkpoint provenance", () => {
   test("a checkpoint whose digest no longer verifies is an explicit mismatch", () => {
     const { service, db } = harness();
     const checkpoint = service.writeCheckpoint(checkpointInput());
+    // SAFETY: The test owns this value and its fields.
     const row = db.database
       .query(
         "SELECT document FROM run_checkpoints WHERE instanceId = ? AND revision = '1'",
       )
       .get(INSTANCE) as { document: string };
+    // SAFETY: The test owns this value and its fields.
     const tampered = JSON.parse(row.document) as {
       unresolvedQuestions: string[];
     };
@@ -270,6 +274,7 @@ describe("checkpoint provenance", () => {
       { createdAt: "2099-01-01T00:00:00.000Z" },
     ]) {
       expect(() =>
+        // SAFETY: The test owns this value and its fields.
         service.writeCheckpoint({
           ...checkpointInput(),
           ...spine,
@@ -284,11 +289,13 @@ describe("checkpoint provenance", () => {
   test("a tampered checkpoint fails verification as corrupt, with the detail saying how", () => {
     const { service, db } = harness();
     service.writeCheckpoint(checkpointInput());
+    // SAFETY: The test owns this value and its fields.
     const row = db.database
       .query(
         "SELECT document FROM run_checkpoints WHERE instanceId = ? AND revision = '1'",
       )
       .get(INSTANCE) as { document: string };
+    // SAFETY: The test owns this value and its fields.
     const tampered = JSON.parse(row.document) as { agentSnapshot: unknown[] };
     tampered.agentSnapshot = [];
     db.database
@@ -430,6 +437,7 @@ describe("succession convergence", () => {
 
   test("no checkpoint: bootstrap reads the journal and measured replies, never the agent table alone", () => {
     const { service, journal, db } = harness();
+    // SAFETY: The test owns this value and its fields.
     db.insertAgent({
       id: "agent-ghost",
       name: "ghost",
@@ -563,7 +571,8 @@ describe("the explicit attestation", () => {
     // Durable root is empty in this harness → prior 0 → backup generation 1.
     expect(succession.priorRootGeneration).toEqual(0);
     const expectedGeneration = succession.priorRootGeneration + 1;
-    const attempt = (overrides: Record<string, unknown>) =>
+    const attempt = (overrides: JsonObject) =>
+      // SAFETY: The test owns this value and its fields.
       attestWith(service, {
         successionId: succession.successionId,
         generation: expectedGeneration,
@@ -645,6 +654,7 @@ describe("the explicit attestation", () => {
 
   test("who is measured: a different valid queen credential's reads contribute nothing", () => {
     const { service, db, checkpoint, succession } = openSuccession();
+    // SAFETY: The test owns this value and its fields.
     const predecessor = { id: "cap-predecessor" } as never;
     // The predecessor's credential reads both surfaces — validly, measurably.
     readBack(service, predecessor);
@@ -824,6 +834,7 @@ describe("checkpoint content", () => {
         },
         authority: {
           grantId: "grant_018f4f5e-0000-7000-8000-000000000001",
+          // SAFETY: The test owns this value and its fields.
           permittedOperations: ["read", "write", "test"] as GrantAction[],
           environment: "worktree",
           worktree: "/worktree",
@@ -857,6 +868,7 @@ describe("checkpoint content", () => {
     };
     store.putTask(task);
     store.putIntegrationStage(
+      // SAFETY: The test owns this value and its fields.
       {
         stageId: "stage_018f4f5e-0000-7000-8000-000000000001",
         revision: "1",
@@ -1146,16 +1158,18 @@ describe("stored checkpoints that still name approvedSpec", () => {
       checkpointInput({ hierarchy: currentHierarchy() }),
       T0,
     );
+    // SAFETY: The test owns this value and its fields.
     const row = db.database
       .query(
         "SELECT document FROM run_checkpoints WHERE instanceId = ? AND revision = ?",
       )
       .get(INSTANCE, written.revision) as { document: string };
+    // SAFETY: The test owns this value and its fields.
     const legacy = JSON.parse(row.document) as {
       hierarchy: {
         spec?: unknown;
         approvedSpec?: unknown;
-        gates?: Record<string, unknown>;
+        gates?: JsonObject;
       };
     };
     legacy.hierarchy.approvedSpec = legacy.hierarchy.spec;

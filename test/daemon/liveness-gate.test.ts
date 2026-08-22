@@ -12,6 +12,7 @@ import { queenBootCapsules } from "../../src/daemon/queen-provider-service/queen
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon, type HiveDaemonOptions } from "../../src/daemon/server";
 import { definedFields } from "../../src/shared/defined-fields";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 import { HiveTerminalHostAdapter } from "../../src/daemon/session-host/hive-terminal-host";
 import { EpisodicStore } from "../../src/memory-service/episodic";
 import { MemoryJobStore, startMemoryJob } from "../../src/memory-service/jobs";
@@ -188,6 +189,7 @@ async function startMemoryJobThroughHttp(
     body: JSON.stringify({ kind }),
   });
   expect(response.status).toBe(202);
+  // SAFETY: The test owns this value and its fields.
   const started = (await response.json()) as MemoryJobReceipt;
   expect(started.kind).toBe(kind);
   return await waitForMemoryJob(jobs, started.id);
@@ -276,6 +278,7 @@ describe("production liveness evidence", () => {
       const run = insertProviderRun(db);
 
       const terminalHost = new HiveTerminalHostAdapter(
+        // SAFETY: The test owns this value and its fields.
         {} as never,
         db,
         "liveness-instance",
@@ -297,16 +300,18 @@ describe("production liveness evidence", () => {
         "orchestrator",
       ).token;
       const result = await callStatus(daemon, token);
-      const outcomes = (
-        result.structuredContent as {
-          recentRunOutcomes: RunOutcome[];
-        }
-      ).recentRunOutcomes;
+      const outcomes = // SAFETY: The test owns this value and its fields.
+        (
+          result.structuredContent as {
+            recentRunOutcomes: RunOutcome[];
+          }
+        ).recentRunOutcomes;
 
       expect(outcomes).toHaveLength(1);
       expect(outcomes[0]?.providerRunId).toBe(run.runId);
       expect(outcomes[0]?.decisionId).toBe(run.launchGrantId);
       // insertProviderRun always writes a worker row (agentId set), so provider is never null here.
+      // SAFETY: The test owns this value and its fields.
       expect(outcomes[0]?.provider).toBe(run.provider as CapabilityProvider);
       expect(outcomes[0]?.model).toBe("gpt-5.6-sol");
       expect(outcomes[0]?.taskCategory).toBe("complex_coding");
@@ -326,6 +331,7 @@ describe("production liveness evidence", () => {
       const run = insertProviderRun(db);
       let processState: "running" | "gone" = "running";
       const terminalHost = new HiveTerminalHostAdapter(
+        // SAFETY: The test owns this value and its fields.
         {} as never,
         db,
         "liveness-instance",
@@ -358,6 +364,7 @@ describe("production liveness evidence", () => {
       const run = insertProviderRun(db);
       completeTerminalBinding(db, run);
       const terminalHost = new HiveTerminalHostAdapter(
+        // SAFETY: The test owns this value and its fields.
         {
           list: async () => [],
         } as never,
@@ -385,6 +392,7 @@ describe("production liveness evidence", () => {
       const run = insertProviderRun(db);
       completeTerminalBinding(db, run);
       const terminalHost = new HiveTerminalHostAdapter(
+        // SAFETY: The test owns this value and its fields.
         {
           list: async () => [
             {
@@ -505,6 +513,7 @@ describe("production liveness evidence", () => {
       expect(receipt.error).toBeNull();
       expect(receipt.progress.step).toBe("reading back");
       expect(receipt.progress.total).not.toBeNull();
+      // SAFETY: The test owns this value and its fields.
       expect(receipt.progress.done).toBe(receipt.progress.total as number);
       expect(receipt.readback?.wikiArticles).toBe(allArticles.length);
       expect(Number(receipt.readback?.ftsRows)).toBe(daemon.memory.count());
@@ -739,12 +748,12 @@ describe("production liveness evidence", () => {
       repoRoot: root,
       port: 0,
     });
-    const internal = daemon as unknown as {
+    const internal = unsafeCast<{
       terminalHost: {
         pauseProvider: () => Promise<boolean>;
         inspect: () => Promise<never>;
       };
-    };
+    }>(daemon);
     internal.terminalHost.pauseProvider = async () => false;
     internal.terminalHost.inspect = async () => {
       throw new Error("terminal readback unavailable in liveness fixture");

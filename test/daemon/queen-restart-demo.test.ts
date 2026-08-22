@@ -3,7 +3,11 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { definedFields } from "../../src/shared/defined-fields";
-import { type JsonValue, safeJsonParse } from "../../src/shared/json";
+import {
+  type JsonValue,
+  safeJsonParse,
+  type JsonObject,
+} from "../../src/shared/json";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -53,6 +57,7 @@ const ALL_AVAILABLE = {
 
 function harness() {
   const db = new HiveDatabase(":memory:");
+  // SAFETY: The test owns this value and its fields.
   const observation = { provider: null as CapabilityProvider | null };
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
@@ -91,12 +96,12 @@ function insertWorker(db: HiveDatabase): void {
   });
 }
 
-const request = (
+const request = <T>(
   daemon: HiveDaemon,
   token: string | null,
   method: "GET" | "POST",
   path: string,
-  body?: unknown,
+  body?: T,
 ): Promise<Response> => {
   const headers = new Headers();
   if (token !== null) headers.set("Authorization", `Bearer ${token}`);
@@ -116,7 +121,7 @@ async function callTool(
   daemon: HiveDaemon,
   token: string,
   name: string,
-  args: Record<string, unknown> = {},
+  args: JsonObject = {},
 ): Promise<{ ok: boolean; error: string; content: unknown }> {
   const client = new Client({ name: "test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
@@ -149,7 +154,8 @@ async function callTool(
   }
 }
 
-function toolJson(content: unknown): JsonValue {
+function toolJson<T>(content: T): JsonValue {
+  // SAFETY: The test owns this value and its fields.
   const blocks = content as Array<{ type: string; text: string }>;
   const parsed = safeJsonParse(blocks[0]?.text ?? "null");
   if (parsed === undefined) {
@@ -315,6 +321,7 @@ describe("queen restart demo harness", () => {
     expect(opened.decision).toEqual({ outcome: "fresh" });
     const sessionB = opened.vendorSession.vendorSessionId;
     expect(sessionB).not.toBe(SESSION_A);
+    // SAFETY: The test owns this value and its fields.
     const session = adapter.session as FakeProviderSession;
     expect(session.sessionCalls.map((call) => call.kind)).toEqual([
       "newSession",
@@ -422,6 +429,7 @@ describe("queen restart demo harness", () => {
       vendorSessionId: "worker-thread-resume-eligible",
     });
     expect(
+      // SAFETY: The test owns this value and its fields.
       (workerAdapter.session as FakeProviderSession).sessionCalls.map(
         (call) => call.kind,
       ),

@@ -18,6 +18,7 @@ import {
   requireSuccessfulTurn,
   requireVerifiedVersion,
 } from "./live-prerequisites";
+import type { JsonObject } from "../src/shared/json";
 
 const LIVE = process.env.HIVE_CODEX_LIVE === "1";
 const EVIDENCE_PATH = join(
@@ -175,7 +176,7 @@ async function exerciseApproval(
   }
 }
 
-function writeEvidence(payload: Record<string, unknown>): void {
+function writeEvidence(payload: JsonObject): void {
   writeEvidenceFile(EVIDENCE_PATH, `${JSON.stringify(payload, null, 2)}\n`);
 }
 
@@ -203,7 +204,7 @@ function writeEvidence(payload: Record<string, unknown>): void {
     const seen: NormalizedProviderEvent[] = [];
     let session: CodexAppServerSession | null = null;
     let reader: Promise<void> | null = null;
-    let processAudit: Record<string, unknown> = {};
+    let processAudit: JsonObject = {};
     let measuredVersion = "unknown";
 
     try {

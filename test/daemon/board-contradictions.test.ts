@@ -6,10 +6,12 @@ import type { TaskDetail } from "../../src/schemas/task-detail";
 describe("board contradiction detector", () => {
   test("fires on a live agent whose task is not in progress and goes quiet when corrected", () => {
     const taskId = "task_019fec14-1023-7000-8000-000000000123";
+    // SAFETY: The test owns this value and its fields.
     const agent = {
       id: "agent-luke",
       name: "luke",
     } as AgentRecord;
+    // SAFETY: The test owns this value and its fields.
     const task = {
       taskId,
       state: "planned",

@@ -115,6 +115,7 @@ export class FakeProviderSession implements ProviderSession {
   emit(event: EmittableEvent): NormalizedProviderEvent {
     this.sequence += 1;
     this.clock += 1;
+    // SAFETY: The surrounding code already established this contract.
     const value = {
       ...event,
       sequence: this.sequence,

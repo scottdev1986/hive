@@ -62,6 +62,7 @@ const landFails = async (
   try {
     await landBranch(root, branch);
   } catch (error) {
+    // SAFETY: The test owns this value and its fields.
     return (error as Error).message;
   }
   throw new Error("expected the land to fail, but it succeeded");
@@ -88,6 +89,7 @@ describe("the repository landing lease", () => {
     const lock = join(root, ".git", "hive-landing.lock");
     const ownerPid = 424_242;
     const kill = spyOn(process, "kill").mockImplementation(() => {
+      // SAFETY: The test owns this value and its fields.
       const error = new Error("no such process") as NodeJS.ErrnoException;
       error.code = "ESRCH";
       throw error;
@@ -279,7 +281,7 @@ describe("a land that is not a fast-forward says so, and says which way", () => 
       const mainBefore = git(root, ["rev-parse", "HEAD"]);
 
       const refusal = await landBranch(root, "hive/writer").catch(
-        (error: unknown) => error,
+        (error) => error,
       );
       expect(refusal).toBeInstanceOf(NothingToLandError);
       expect(git(root, ["rev-parse", "HEAD"])).toBe(mainBefore);

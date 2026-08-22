@@ -82,6 +82,7 @@ function processGroupAlive(processGroupId: number): boolean {
     process.kill(-processGroupId, 0);
     return true;
   } catch (error) {
+    // SAFETY: The test owns this value and its fields.
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }

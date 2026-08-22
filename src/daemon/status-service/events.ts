@@ -5,16 +5,19 @@ import {
   WorkspaceSnapshotV2Schema,
 } from "../../schemas/status-envelope";
 import { canonicalJson } from "./status-canonical";
+import type { JsonObject } from "../../shared/json";
 
 export { canonicalJson } from "./status-canonical";
+
+export type StatusEntityProjection = JsonObject;
 
 export type StatusReducerProjection = Readonly<{
   highWaterSeq: string;
   paused: boolean;
   recovery: "SNAPSHOT_REQUIRED" | null;
   corruption: string | null;
-  entities: Readonly<Record<string, unknown>>;
-  seen: Readonly<Record<string, string>>;
+  entities: { readonly [key: string]: StatusEntityProjection | undefined };
+  seen: { readonly [key: string]: string | undefined };
 }>;
 
 export const emptyStatusProjection = (): StatusReducerProjection => ({
@@ -48,11 +51,11 @@ export function reduceStatusEvent(
 
   const seen = { ...state.seen, [event.eventId]: encoded };
   const key = statusEntityKey(event.entity);
-  const existing = state.entities[key] as
-    { entityRevision?: string } | undefined;
+  const existing = state.entities[key];
   const entities =
     existing !== undefined &&
-    BigInt(event.entityRevision) < BigInt(existing.entityRevision ?? "0")
+    BigInt(event.entityRevision) <
+      BigInt(String(existing.entityRevision ?? "0"))
       ? state.entities
       : {
           ...state.entities,
@@ -75,8 +78,8 @@ export class InvalidWorkspaceSnapshotError extends Error {
   }
 }
 
-export function verifyWorkspaceSnapshot(
-  value: unknown,
+export function verifyWorkspaceSnapshot<T>(
+  value: T,
   lastAppliedSeq: string,
 ): WorkspaceSnapshotV2 {
   const parsed = WorkspaceSnapshotV2Schema.safeParse(value);
@@ -102,9 +105,9 @@ export function verifyWorkspaceSnapshot(
   return snapshot;
 }
 
-export function reconcileStatusSnapshot(
+export function reconcileStatusSnapshot<T>(
   state: StatusReducerProjection,
-  value: unknown,
+  value: T,
 ): StatusReducerProjection {
   const snapshot = verifyWorkspaceSnapshot(value, state.highWaterSeq);
   const entities = Object.fromEntries(

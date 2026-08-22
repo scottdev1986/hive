@@ -1,3 +1,4 @@
+import { isNumber } from "../../shared/is-record";
 import {
   type CapabilitySurface,
   known,
@@ -9,10 +10,7 @@ import type { AccountBilling } from "./usage-credit-types";
 const poolPercent = (pool: DiscoveredPoolReading): number | null => {
   const values = [pool.fiveHour?.usedPct, pool.weekly?.usedPct].filter(
     (value): value is number =>
-      typeof value === "number" &&
-      Number.isFinite(value) &&
-      value >= 0 &&
-      value <= 100,
+      isNumber(value) && Number.isFinite(value) && value >= 0 && value <= 100,
   );
   return values.length === 0 ? null : Math.max(...values);
 };

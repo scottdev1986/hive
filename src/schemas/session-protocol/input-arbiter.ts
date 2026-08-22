@@ -43,6 +43,11 @@ export const INPUT_EVIDENCE_LEVELS = [
 
 export const InputEvidenceLevelSchema = z.enum(INPUT_EVIDENCE_LEVELS);
 
+type InputEvidenceMeaning = {
+  readonly means: string;
+  readonly excludes: readonly string[];
+};
+
 export const INPUT_EVIDENCE_CONTRACTS = {
   buffered: {
     means: "length-and-digest-verified",
@@ -60,7 +65,10 @@ export const INPUT_EVIDENCE_CONTRACTS = {
     means: "matching-provider-boundary-after-attempt",
     excludes: ["understood", "acknowledged", "applied"],
   },
-} as const satisfies Record<(typeof INPUT_EVIDENCE_LEVELS)[number], unknown>;
+} as const satisfies Record<
+  (typeof INPUT_EVIDENCE_LEVELS)[number],
+  InputEvidenceMeaning
+>;
 
 export const INPUT_RECEIPT_STATES = [
   "submitted",

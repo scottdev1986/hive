@@ -25,6 +25,7 @@ export async function postProviderStatus(
     signal: AbortSignal.timeout(5_000),
   });
   if (!response.ok) {
+    // SAFETY: The surrounding code already established this contract.
     const body = (await response.json().catch(() => null)) as {
       error?: string;
     } | null;
@@ -35,12 +36,12 @@ export async function postProviderStatus(
 }
 
 /** Sends the exact status projection the pane applies to the one daemon-owned status service. Reports stay ordered; a failure is surfaced to the pane but never interrupts the provider event stream or the user's terminal. */
-export function providerStatusForwarder(options: {
+export function providerStatusForwarder<T>(options: {
   readonly subject: string;
   readonly providerRunId: string | undefined;
   readonly vendorSessionId: string;
   readonly post: StatusPoster | null;
-  readonly onError?: (error: unknown) => void;
+  readonly onError?: (error: T) => void;
 }): ProviderStatusForwarder {
   if (options.post === null || options.providerRunId === undefined) {
     return Object.assign(() => {}, { flush: async () => {} });
@@ -60,7 +61,7 @@ export function providerStatusForwarder(options: {
     if (report === null) return;
     posted = posted
       .then(() => postProviderStatus(report, post))
-      .catch((error: unknown) => options.onError?.(error));
+      .catch((error) => options.onError?.(error));
   };
   return Object.assign(forward, { flush: () => posted });
 }

@@ -16,7 +16,7 @@ export const OrchestratorHostKindSchema = z.literal("sessiond");
 export type OrchestratorHostKind = z.infer<typeof OrchestratorHostKindSchema>;
 
 export const RootSessiondLocatorSchema = HiveTerminalBindingSchema.unwrap()
-  .shape.locator.unwrap()
+  ["shape"].locator.unwrap()
   .extend({
     subject: z.strictObject({ kind: z.literal("root") }).readonly(),
     hostKind: z.literal("sessiond"),

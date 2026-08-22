@@ -7,10 +7,7 @@ import { defaultHiveHome } from "../../hive-home/home";
 export function machineModelControlDatabase(
   db: HiveDatabase,
   options: { readonly?: boolean } = {},
-): {
-  readonly database: HiveDatabase;
-  readonly opened: boolean;
-} {
+) {
   const machinePath = join(defaultHiveHome(), "hive.db");
   if (resolve(db.path) === resolve(machinePath)) {
     return { database: db, opened: false };

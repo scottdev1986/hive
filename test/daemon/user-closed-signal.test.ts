@@ -17,6 +17,7 @@ import {
 import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 const AT = "2026-08-19T12:00:00.000Z";
 
@@ -102,11 +103,7 @@ async function rig(seed: AgentRecord[] = [agent()]) {
   };
 }
 
-function killRequest(
-  name: string,
-  token: string,
-  body: Record<string, unknown>,
-): Request {
+function killRequest(name: string, token: string, body: JsonObject): Request {
   return new Request(`http://hive/agents/${encodeURIComponent(name)}/kill`, {
     method: "POST",
     headers: {
@@ -262,6 +259,7 @@ describe("a user-ordered close tells the orchestrator; an orchestrator kill does
       });
 
       expect(
+        // SAFETY: The test owns this value and its fields.
         (settled.structuredContent.mail as { disposition: string }).disposition,
       ).toBe("completed");
       expect(item.sender).not.toBe("user");
@@ -283,6 +281,7 @@ describe("a user-ordered close tells the orchestrator; an orchestrator kill does
           idempotencyKey: "owner-ruling-1",
         },
       );
+      // SAFETY: The test owns this value and its fields.
       const ownerItemId = (owner.structuredContent.mail as { itemId: string })
         .itemId;
       tools.poll(queenCapability, { recipient: ORCHESTRATOR_NAME });

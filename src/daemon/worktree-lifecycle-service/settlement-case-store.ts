@@ -6,6 +6,7 @@ import { z } from "zod";
 import { runGit } from "../../adapters/git";
 import { hiveInstanceSuffix } from "../../hive-home/home";
 import { type JsonValue, requireJsonValue } from "../../shared/json";
+import { isRecord } from "../../shared/is-record";
 
 const GitOidSchema = z.string().regex(/^[0-9a-f]{40,64}$/);
 const IsoDateSchema = z.iso.datetime();
@@ -193,9 +194,9 @@ function assertGitSuccess(
  * predates the change. A digest without `evidenceFormat` includes ambient target-tip state and
  * must be refreshed before a destructive decision can use it.
  */
-function currentDocument(document: unknown): JsonValue {
+function currentDocument<T>(document: T): JsonValue {
   const json = requireJsonValue(document, "settlement case blob");
-  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+  if (!isRecord(json)) {
     return json;
   }
   const { wiring: _wiring, ...fields } = json;

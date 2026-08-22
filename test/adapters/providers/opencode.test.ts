@@ -10,6 +10,7 @@ import {
 } from "../../../src/adapters/providers/opencode-cli";
 import { getAgentAdapter } from "../../../src/adapters/providers/provider-registry";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
+import type { JsonObject } from "../../../src/shared/json";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -110,11 +111,12 @@ describe("opencode adapter", () => {
       readOnly: true,
     });
     const path = join(root, "opencode.json");
+    // SAFETY: The test owns this value and its fields.
     const written = JSON.parse(await readFile(path, "utf8")) as {
       default_agent: string;
-      agent: Record<string, Record<string, unknown>>;
-      mcp: Record<string, Record<string, unknown>>;
-      permission: Record<string, unknown>;
+      agent: Record<string, JsonObject>;
+      mcp: Record<string, JsonObject>;
+      permission: JsonObject;
     };
     // The repo's own entries survive.
     expect(written.agent.review).toEqual({
@@ -168,10 +170,11 @@ describe("opencode adapter", () => {
     // A respawn without a fresh token or brief keeps both, and a missing
     // graphify URL removes the stale endpoint.
     await writeOpencodeAgentConfig(root, { daemonPort: 4400 });
+    // SAFETY: The test owns this value and its fields.
     const respawned = JSON.parse(await readFile(path, "utf8")) as {
       default_agent: string;
-      agent: Record<string, Record<string, unknown>>;
-      mcp: Record<string, Record<string, unknown>>;
+      agent: Record<string, JsonObject>;
+      mcp: Record<string, JsonObject>;
     };
     expect(respawned.mcp.hive).toEqual({
       type: "remote",
@@ -214,6 +217,7 @@ describe("opencode adapter", () => {
     const inputs: string[] = [];
     const spawn = spyOn(Bun, "spawn").mockImplementation(
       () =>
+        // SAFETY: The test owns this value and its fields.
         ({
           stdin: {
             write: (input: string) => inputs.push(input),
@@ -224,6 +228,7 @@ describe("opencode adapter", () => {
         }) as never,
     );
     try {
+      // SAFETY: The test owns this value and its fields.
       const { HiveGraphifyGate } = (await import(
         join(root, ".opencode", "plugins", "hive-graphify-gate.ts")
       )) as {
@@ -261,9 +266,10 @@ describe("opencode adapter", () => {
       instructionPath: "/tmp/prompt.txt",
       readOnly: false,
     });
+    // SAFETY: The test owns this value and its fields.
     const written = JSON.parse(
       await readFile(join(root, "opencode.json"), "utf8"),
-    ) as { agent: Record<string, Record<string, unknown>> };
+    ) as { agent: Record<string, JsonObject> };
     // Measured against opencode 1.18.5: a blanket `bash: "deny"` removes the
     // tool from the model's tool list rather than refusing calls, so a writer
     // that inherits the barrier has no shell at all and cannot run `git log`.
@@ -277,9 +283,10 @@ describe("opencode adapter", () => {
       instructionPath: "/tmp/prompt.txt",
       dangerous: true,
     });
+    // SAFETY: The test owns this value and its fields.
     const written = JSON.parse(
       await readFile(join(root, "opencode.json"), "utf8"),
-    ) as { agent: Record<string, Record<string, unknown>> };
+    ) as { agent: Record<string, JsonObject> };
     expect(written.agent.hive?.permission).toEqual({
       doom_loop: "allow",
       external_directory: "allow",
@@ -295,11 +302,12 @@ describe("opencode adapter", () => {
       readOnly: true,
       dangerous: true,
     });
+    // SAFETY: The test owns this value and its fields.
     const written = JSON.parse(
       await readFile(join(root, "opencode.json"), "utf8"),
     ) as {
-      agent: Record<string, Record<string, unknown>>;
-      permission: Record<string, unknown>;
+      agent: Record<string, JsonObject>;
+      permission: JsonObject;
     };
     expect(written.agent.hive?.permission).toEqual({
       doom_loop: "allow",
@@ -328,8 +336,9 @@ describe("opencode adapter", () => {
     expect(config).not.toContain("secret-token");
     expect(config).toContain(`Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}`);
     expect(config).toContain("{file:/tmp/prompt.txt}");
+    // SAFETY: The test owns this value and its fields.
     const written = JSON.parse(config) as {
-      agent: Record<string, Record<string, unknown>>;
+      agent: Record<string, JsonObject>;
     };
     expect(written.agent.hive?.permission).toEqual({
       doom_loop: "allow",
@@ -345,9 +354,10 @@ describe("opencode adapter", () => {
       instructionPath: "/tmp/prompt.txt",
       orchestrator: true,
     });
+    // SAFETY: The test owns this value and its fields.
     const written = JSON.parse(
       await readFile(join(root, "opencode.json"), "utf8"),
-    ) as { agent: Record<string, Record<string, unknown>> };
+    ) as { agent: Record<string, JsonObject> };
     expect(written.agent.hive).toEqual({
       description: "Hive-managed agent carrying the launch brief",
       mode: "primary",
@@ -358,6 +368,7 @@ describe("opencode adapter", () => {
       },
     });
     // Positive lock: memory stays granted; planning/ is not a writable home.
+    // SAFETY: The test owns this value and its fields.
     const permission = written.agent.hive?.permission as {
       edit: Record<string, string>;
     };

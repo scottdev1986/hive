@@ -12,10 +12,7 @@ interface Call {
   readonly body: unknown;
 }
 
-function harness(responses: readonly { events: unknown[] }[]): {
-  client: MailReadyClient;
-  calls: Call[];
-} {
+function harness(responses: readonly { events: unknown[] }[]) {
   const calls: Call[] = [];
   let index = 0;
   const client = new MailReadyClient({

@@ -1075,6 +1075,7 @@ const validCases: readonly WireCorpusCase[] = [
   },
 ];
 
+// SAFETY: Every indexed validCases entry is a fixed object fixture; these cases clone one and corrupt one field.
 const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "locator rejects display-name fallback",
@@ -1665,7 +1666,9 @@ export function parseFrameHeader(bytes: Uint8Array): FrameHeaderFields | null {
     }
     throw new Error("UNSUPPORTED_FRAME");
   }
+  // SAFETY: Object.entries(FRAME_TYPES) found this key in the owned FrameTypeName table.
   const type = entry[0] as FrameTypeName;
+  // SAFETY: RAW_BYTE_FRAME_TYPES is the string-valued subset of the same owned frame-type table.
   const cap = (RAW_BYTE_FRAME_TYPES as readonly string[]).includes(type)
     ? TERMINAL_LIMITS.streamChunkBytes
     : TERMINAL_LIMITS.controlJsonBytesPerFrame;
@@ -1986,6 +1989,7 @@ const HAND_AUTHORED_GAP_PREFIX: ReducerProjection = {
 
 export function buildReducerCorpus() {
   const permutationScenarios = permutations.map((order, scenarioIndex) => {
+    // SAFETY: Each entry starts from a WorkspaceEventV2 fixture and overrides only its eventId and seq strings.
     const events = order.map((sourceIndex, sequenceIndex) => ({
       ...baseReducerEvents[sourceIndex],
       eventId: `evt_018f1e90-7b5a-7cc0-8${scenarioIndex.toString(16).padStart(3, "0")}-${(sequenceIndex + 20).toString().padStart(12, "0")}`,

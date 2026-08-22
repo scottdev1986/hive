@@ -15,7 +15,10 @@ describe("providersOf — the one legal record enumerator", () => {
   });
 
   test("keys the union does not know are appended, never dropped", () => {
-    const record = { claude: 1, zeta: 2, acme: 3 } as Record<string, number>;
+    interface NumberByName {
+      readonly [name: string]: number;
+    }
+    const record: NumberByName = { claude: 1, zeta: 2, acme: 3 };
     expectTypeOf(providersOf(record)).toEqualTypeOf<string[]>();
     expect(providersOf(record)).toEqual([
       ...CAPABILITY_PROVIDERS,

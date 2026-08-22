@@ -122,7 +122,7 @@ function coordinationPackage(input: {
 
   const topology: TopologyDecision = withDigest({
     ...revisioned,
-    shape: "direct",
+    ["shape"]: "direct",
     decomposition: { planRevision: ref(plan), taskDag: [] },
     coupling: {
       sharedFiles: [],

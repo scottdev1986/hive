@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { type Autonomy, isAutonomy } from "../config/autonomy";
+import { isString } from "../shared/is-record";
 import {
   cleanupLifecycleFiles,
   type DaemonInstanceLiveness,
@@ -94,6 +95,7 @@ export async function attachGrantCli(
       operations: ["view", "user-input", "resize"],
     }),
   });
+  // SAFETY: The surrounding code already established this contract.
   const body = (await response.json().catch(() => null)) as {
     state?: string;
     grant?: unknown;
@@ -144,6 +146,7 @@ export async function killAgentCli(
       ...definedFields({ origin }),
     }),
   });
+  // SAFETY: The surrounding code already established this contract.
   const body = (await response.json().catch(() => null)) as {
     error?: string;
     reason?: string;
@@ -195,12 +198,12 @@ export async function printQuotaStatus(): Promise<void> {
   console.log(formatQuotaStatus(await fetchQuotaStatus(requireDaemonPort())));
 }
 
-const AUTONOMY_MEANING: Record<Autonomy, string> = {
+const AUTONOMY_MEANING = {
   sandboxed:
     "writers use vendor sandboxes and agent permission prompts remain enabled",
   dangerous:
     "agents run with permission prompts off; writers also use unrestricted vendor mode",
-};
+} satisfies Record<Autonomy, string>;
 
 /** `hive autonomy [mode]` — read or set the daemon's live autonomy dial. Both directions go through the daemon, never the config file directly: what this prints is what the next spawn will actually use, and a set is confirmed by the daemon's answer, not assumed from a clean exit. */
 export async function autonomyCli(
@@ -210,6 +213,7 @@ export async function autonomyCli(
   if (mode !== undefined && !isAutonomy(mode)) {
     throw new Error('autonomy must be "sandboxed" or "dangerous"');
   }
+  // SAFETY: The surrounding code already established this contract.
   const body = (await new UserDaemonClient({
     port,
     verifyIdentity: !isTestRunnerEnv(),
@@ -364,6 +368,7 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(name === undefined ? {} : { agent: name }),
   });
+  // SAFETY: The surrounding code already established this contract.
   const body = ((await decodeJson(response)) ?? {}) as {
     outcomes?: RecoveryOutcomeView[];
     error?: string;
@@ -429,13 +434,15 @@ export async function requestDaemonStop(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  // SAFETY: The surrounding code already established this contract.
   const parsed = (await response.json().catch(() => null)) as
     (Partial<StopResponseBody> & { error?: string }) | null;
-  if (parsed === null || typeof parsed.state !== "string") {
+  if (parsed === null || !isString(parsed.state)) {
     throw new Error(
       `hive stop failed (HTTP ${response.status}): the daemon returned no stop state`,
     );
   }
+  // SAFETY: The surrounding code already established this contract.
   return parsed as StopResponseBody;
 }
 

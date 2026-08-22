@@ -19,6 +19,7 @@ import {
 import {
   presentWorkspaceAgent,
   presentWorkspaceOrchestrator,
+  type WorkspaceAgentPresentation,
 } from "../../src/cli/workspace-feed-presentation";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
@@ -29,6 +30,7 @@ import {
   WORKSPACE_FEED_SNAPSHOT_FIXTURE,
   workspaceFeedAgentFixture,
 } from "../fixtures/builders/workspace-feed-snapshot";
+import type { JsonValue } from "../../src/shared/json";
 
 const timestamp = "2026-07-10T12:00:00.000Z";
 
@@ -56,13 +58,23 @@ function agent(
   };
 }
 
+type FeedLine = {
+  v?: number;
+  error?: string;
+  stale?: boolean;
+  reason?: string;
+  agents?: Array<AgentRecord & { presentation: WorkspaceAgentPresentation }>;
+  autonomyState?: WorkspaceAutonomyState;
+  orchestrator?: { name?: string; status?: string; presentation?: unknown };
+};
+
 /** One scripted poll: returns a snapshot or throws. `abort` ends the loop
  * after the step is processed, exactly like SIGTERM between polls. */
 type Step = (abort: () => void) => AgentRecord[];
 
 interface FeedRun {
   exitCode: number;
-  lines: Array<Record<string, unknown>>;
+  lines: Array<FeedLine>;
   sleeps: number[];
 }
 
@@ -79,7 +91,7 @@ async function runScript(
   verifyInstance: () => Promise<void> = async () => {},
 ): Promise<FeedRun> {
   const controller = new AbortController();
-  const lines: Array<Record<string, unknown>> = [];
+  const lines: Array<FeedLine> = [];
   const sleeps: number[] = [];
   let time = 0;
   let index = 0;
@@ -91,7 +103,8 @@ async function runScript(
       time += milliseconds;
     },
     write: (line) => {
-      lines.push(JSON.parse(line) as Record<string, unknown>);
+      // SAFETY: The test owns this value and its fields.
+      lines.push(JSON.parse(line) as FeedLine);
     },
     fetchAutonomy,
     fetchOrchestrator,
@@ -373,7 +386,7 @@ describe("runWorkspaceFeed", () => {
   });
 
   test("records one live-source conflict and stops publishing that inventory", async () => {
-    const output: Array<Record<string, unknown>> = [];
+    const output: Array<FeedLine> = [];
     let requests = 0;
     const publisher = new WorkspaceVisibilityPublisher(
       (inventory) =>
@@ -397,7 +410,8 @@ describe("runWorkspaceFeed", () => {
             },
           },
         ),
-      (line) => output.push(JSON.parse(line) as Record<string, unknown>),
+      // SAFETY: The test owns this value and its fields.
+      (line) => output.push(JSON.parse(line) as FeedLine),
     );
     const line = Buffer.from(
       JSON.stringify({
@@ -462,7 +476,7 @@ describe("runWorkspaceFeed", () => {
       },
     ).then(
       () => "resolved",
-      (error: unknown) => error,
+      (error: JsonValue) => error,
     );
     expect(
       await Promise.race([outcome, Bun.sleep(100).then(() => "still pending")]),
@@ -470,7 +484,7 @@ describe("runWorkspaceFeed", () => {
   });
 
   test("a stalled publish does not block the next one: newest inventory still lands", async () => {
-    const output: Array<Record<string, unknown>> = [];
+    const output: Array<FeedLine> = [];
     const published: string[] = [];
     let attempts = 0;
     const publisher = new WorkspaceVisibilityPublisher(
@@ -480,6 +494,7 @@ describe("runWorkspaceFeed", () => {
           timeoutMs: 20,
           post: async (_input, init) => {
             attempts += 1;
+            // SAFETY: The test owns this value and its fields.
             const body = (await new Request("http://x", init).json()) as {
               inventoryRevision: string;
             };
@@ -492,7 +507,8 @@ describe("runWorkspaceFeed", () => {
             });
           },
         }),
-      (line) => output.push(JSON.parse(line) as Record<string, unknown>),
+      // SAFETY: The test owns this value and its fields.
+      (line) => output.push(JSON.parse(line) as FeedLine),
     );
     const inventory = (revision: string): Uint8Array =>
       Buffer.from(
@@ -519,10 +535,11 @@ describe("runWorkspaceFeed", () => {
   });
 
   test("a slow but successful publish is reported as a warning, not a failure", async () => {
-    const output: Array<Record<string, unknown>> = [];
+    const output: Array<FeedLine> = [];
     const publisher = new WorkspaceVisibilityPublisher(
       async () => ({ durationMs: 1_500 }),
-      (line) => output.push(JSON.parse(line) as Record<string, unknown>),
+      // SAFETY: The test owns this value and its fields.
+      (line) => output.push(JSON.parse(line) as FeedLine),
       1_000,
     );
     publisher.publishLine(
@@ -678,6 +695,7 @@ describe("runWorkspaceFeed", () => {
     expect(run.lines).toHaveLength(2);
     const [, changed] = run.lines;
     expect(
+      // SAFETY: The test owns this value and its fields.
       (changed?.agents as Array<{ status: string }> | undefined)?.[0]?.status,
     ).toEqual("idle");
   });
@@ -790,7 +808,7 @@ describe("runWorkspaceFeed", () => {
     // Driven at a scaled base so the same ladder runs in milliseconds: a
     // daemon that never answers at all, which is the worst a slow one can look.
     const controller = new AbortController();
-    const lines: Array<Record<string, unknown>> = [];
+    const lines: Array<FeedLine> = [];
     let time = 0;
     let polls = 0;
     const exitCode = await runWorkspaceFeed(4483, {
@@ -800,7 +818,8 @@ describe("runWorkspaceFeed", () => {
         time += milliseconds;
       },
       write: (line) => {
-        lines.push(JSON.parse(line) as Record<string, unknown>);
+        // SAFETY: The test owns this value and its fields.
+        lines.push(JSON.parse(line) as FeedLine);
       },
       statusTimeoutMs: 50,
       fetchStatus: async () => {
@@ -823,7 +842,7 @@ describe("runWorkspaceFeed", () => {
     // deadline while their sum is well past it. Rejections are immediate here so
     // the injected clock can run far beyond 30s without the test waiting for it.
     const controller = new AbortController();
-    const lines: Array<Record<string, unknown>> = [];
+    const lines: Array<FeedLine> = [];
     let time = 0;
     let polls = 0;
     const exitCode = await runWorkspaceFeed(4483, {
@@ -833,7 +852,8 @@ describe("runWorkspaceFeed", () => {
         time += milliseconds;
       },
       write: (line) => {
-        lines.push(JSON.parse(line) as Record<string, unknown>);
+        // SAFETY: The test owns this value and its fields.
+        lines.push(JSON.parse(line) as FeedLine);
       },
       fetchStatus: async () => {
         polls += 1;
@@ -856,7 +876,7 @@ describe("runWorkspaceFeed", () => {
     // it must still time out.
     const maya = agent("maya");
     const controller = new AbortController();
-    const lines: Array<Record<string, unknown>> = [];
+    const lines: Array<FeedLine> = [];
     let time = 0;
     let polls = 0;
     const exitCode = await runWorkspaceFeed(4483, {
@@ -866,7 +886,8 @@ describe("runWorkspaceFeed", () => {
         time += milliseconds;
       },
       write: (line) => {
-        lines.push(JSON.parse(line) as Record<string, unknown>);
+        // SAFETY: The test owns this value and its fields.
+        lines.push(JSON.parse(line) as FeedLine);
       },
       statusTimeoutMs: 50,
       fetchStatus: async () => {
@@ -896,7 +917,7 @@ describe("runWorkspaceFeed", () => {
     const maya = agent("maya");
     const otis = agent("otis");
     const controller = new AbortController();
-    const lines: Array<Record<string, unknown>> = [];
+    const lines: Array<FeedLine> = [];
     let time = 0;
     let polls = 0;
     const exitCode = await runWorkspaceFeed(4483, {
@@ -906,7 +927,8 @@ describe("runWorkspaceFeed", () => {
         time += milliseconds;
       },
       write: (line) => {
-        lines.push(JSON.parse(line) as Record<string, unknown>);
+        // SAFETY: The test owns this value and its fields.
+        lines.push(JSON.parse(line) as FeedLine);
       },
       statusTimeoutMs: 50,
       fetchStatus: async () => {
@@ -920,7 +942,12 @@ describe("runWorkspaceFeed", () => {
       },
     });
     const rosters = lines
-      .filter((line): line is { agents: AgentRecord[] } => "agents" in line)
+      .filter(
+        (
+          line,
+        ): line is FeedLine & { agents: NonNullable<FeedLine["agents"]> } =>
+          line.agents !== undefined,
+      )
       .map((line) => line.agents.map((each) => each.name));
 
     expect(rosters).toContainEqual(["maya", "otis"]);

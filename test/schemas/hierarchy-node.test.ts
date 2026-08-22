@@ -263,6 +263,7 @@ describe("DelegationGrant attenuation", () => {
     ["run epoch", { runEpoch: 1 }],
   ] as const)("rejects widened %s authority", (_name, patch) => {
     expect(
+      // SAFETY: The test owns this value and its fields.
       isDelegationGrantAttenuation(parentGrant, {
         ...childGrant,
         ...patch,

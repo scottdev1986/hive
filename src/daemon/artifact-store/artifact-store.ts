@@ -180,6 +180,7 @@ export function sweepArtifacts(
         rmSync(storagePath);
         deleted += 1;
       } catch (error) {
+        // SAFETY: The surrounding code already established this contract.
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
     }
@@ -187,6 +188,7 @@ export function sweepArtifacts(
       try {
         rmdirSync(directory);
       } catch (error) {
+        // SAFETY: The surrounding code already established this contract.
         const code = (error as NodeJS.ErrnoException).code;
         // A peer sweeper emptied it first, or a peer writer refilled it.
         if (code !== "ENOENT" && code !== "ENOTEMPTY") throw error;

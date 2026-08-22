@@ -45,7 +45,7 @@ const record = (overrides: Partial<CapabilityRecord>): CapabilityRecord => ({
   ...overrides,
 });
 
-const discovery: Record<CapabilityProvider, CapabilityDiscoveryResult> = {
+const discovery = {
   claude: {
     status: "ok",
     records: [record({})],
@@ -89,9 +89,9 @@ const discovery: Record<CapabilityProvider, CapabilityDiscoveryResult> = {
   },
   kimi: { status: "unavailable", reason: "kimi CLI not signed in" },
   opencode: { status: "unavailable", reason: "opencode CLI not signed in" },
-};
+} satisfies Record<CapabilityProvider, CapabilityDiscoveryResult>;
 
-const billing: Record<CapabilityProvider, AccountBilling | null> = {
+const billing = {
   claude: {
     creditsEnabled: known(false, "claude.get_usage", OBSERVED_AT),
     generalUtilization: known(63, "claude.get_usage", OBSERVED_AT),
@@ -102,7 +102,7 @@ const billing: Record<CapabilityProvider, AccountBilling | null> = {
   grok: null,
   kimi: null,
   opencode: null,
-};
+} satisfies Record<CapabilityProvider, AccountBilling | null>;
 
 const quota: QuotaStatus[] = [
   {

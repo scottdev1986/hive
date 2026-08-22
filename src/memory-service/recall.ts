@@ -19,6 +19,7 @@ import {
 import { normalizeTitle } from "./article-format";
 import { selectMemoryClasses } from "./ranking";
 import type { MemoryWriteFileResult } from "./store-records";
+import type { JsonObject } from "../shared/json";
 
 export type MemoryTriggerKind = "recall" | "note" | "document";
 
@@ -88,7 +89,7 @@ export interface MemoryTriggerContext {
 export interface MemoryTriggerExecution {
   body: string;
   summary: string;
-  provenance: Record<string, unknown>;
+  provenance: JsonObject;
 }
 
 const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
@@ -301,10 +302,7 @@ export function partitionMemoryRecall(
   bundle: Pick<MemoryRecallBundle, "pitfalls" | "articles">,
   budget: number,
 ): MemoryRecallPartitionResult {
-  const fill = (
-    rows: readonly MemoryRecallRow[],
-    ceiling: number,
-  ): { kept: MemoryRecallRow[]; tokens: number } => {
+  const fill = (rows: readonly MemoryRecallRow[], ceiling: number) => {
     const kept: MemoryRecallRow[] = [];
     let used = 0;
     for (const row of rows) {

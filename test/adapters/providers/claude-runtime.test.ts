@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ClaudeStreamJsonAdapter } from "../../../src/adapters/providers/protocol/claude-runtime-adapter";
+import { isRecord, isString } from "../../../src/shared/is-record";
 import {
   CLAUDE_CHANNELS_WARNING,
   type ClaudeProcess,
@@ -10,8 +11,8 @@ import {
   type ProviderSession,
   steadyStateUnknowns,
 } from "../../../src/adapters/providers/protocol/types";
-
-type JsonObject = Record<string, unknown>;
+import type { JsonObject, JsonValue } from "../../../src/shared/json";
+import { unsafeCast } from "../../../src/shared/unsafe-cast";
 
 class ByteQueue implements AsyncIterable<Uint8Array> {
   private readonly buffered: Uint8Array[] = [];
@@ -72,6 +73,7 @@ class FakeClaudeProcess implements ClaudeProcess {
       write: (data) => {
         for (const line of data.trim().split("\n")) {
           if (line.length === 0) continue;
+          // SAFETY: The test owns this value and its fields.
           const message = JSON.parse(line) as JsonObject;
           this.writes.push(message);
           this.onWrite(message, this);
@@ -108,7 +110,7 @@ interface Harness {
   readonly commands: readonly string[][];
 }
 
-function success(requestId: string, response: unknown): JsonObject {
+function success(requestId: string, response: JsonValue): JsonObject {
   return {
     type: "control_response",
     response: { subtype: "success", request_id: requestId, response },
@@ -130,12 +132,10 @@ function harness(
       const process = new FakeClaudeProcess(
         processes.length + 10,
         (message, child) => {
+          // SAFETY: The test owns this value and its fields.
           const request = message.request as JsonObject | undefined;
           const requestId = message.request_id;
-          if (
-            request?.subtype === "initialize" &&
-            typeof requestId === "string"
-          ) {
+          if (request?.subtype === "initialize" && isString(requestId)) {
             child.emit(
               success(requestId, {
                 commands: [
@@ -156,10 +156,7 @@ function harness(
             );
             return;
           }
-          if (
-            request?.subtype === "get_context_usage" &&
-            typeof requestId === "string"
-          ) {
+          if (request?.subtype === "get_context_usage" && isString(requestId)) {
             child.emit(
               success(requestId, {
                 totalTokens: 10,
@@ -189,10 +186,7 @@ async function connect(testHarness: Harness): Promise<ProviderSession> {
   });
 }
 
-function record(session: ProviderSession): {
-  readonly events: NormalizedProviderEvent[];
-  readonly finished: Promise<void>;
-} {
+function record(session: ProviderSession) {
   const events: NormalizedProviderEvent[] = [];
   const finished = (async () => {
     for await (const event of session.events) events.push(event);
@@ -205,9 +199,11 @@ async function tick(): Promise<void> {
 }
 
 function requestOf(message: JsonObject): JsonObject | null {
-  return typeof message.request === "object" && message.request !== null
-    ? (message.request as JsonObject)
-    : null;
+  if (isRecord(message.request)) return message.request;
+  if (Array.isArray(message.request)) {
+    return unsafeCast<JsonObject>(message.request);
+  }
+  return null;
 }
 
 describe("Claude stream-json runtime", () => {
@@ -280,7 +276,7 @@ describe("Claude stream-json runtime", () => {
     const submitted = process.writes.find((message) => message.type === "user");
     if (submitted === undefined) throw new Error("submission missing");
     const turnId = submitted?.uuid;
-    if (typeof turnId !== "string") throw new Error("submission UUID missing");
+    if (!isString(turnId)) throw new Error("submission UUID missing");
     process.emit(submitted);
 
     expect(await receiptPromise).toEqual({
@@ -408,6 +404,7 @@ describe("Claude stream-json runtime", () => {
     const permissionResponse = process.writes.find(
       (message) =>
         message.type === "control_response" &&
+        // SAFETY: The test owns this value and its fields.
         (message.response as JsonObject | undefined)?.request_id ===
           "permission-1",
     );
@@ -590,7 +587,10 @@ describe("Claude stream-json runtime", () => {
   });
 
   test("completion winning an interrupt race stays completed", async () => {
-    const observed: { interrupt: JsonObject | null } = { interrupt: null };
+    interface ObservedInterrupt {
+      interrupt: JsonObject | null;
+    }
+    const observed: ObservedInterrupt = { interrupt: null };
     const testHarness = harness((message) => {
       if (requestOf(message)?.subtype === "interrupt")
         observed.interrupt = message;
@@ -622,6 +622,7 @@ describe("Claude stream-json runtime", () => {
       is_error: false,
       usage: { input_tokens: 1, output_tokens: 1 },
     });
+    // SAFETY: The test owns this value and its fields.
     process.emit(success(interrupt.request_id as string, { still_queued: [] }));
     await cancel;
     await tick();
@@ -636,7 +637,7 @@ describe("Claude stream-json runtime", () => {
     const testHarness = harness((message, process) => {
       if (
         requestOf(message)?.subtype === "interrupt" &&
-        typeof message.request_id === "string"
+        isString(message.request_id)
       ) {
         process.emit(success(message.request_id, {}));
       }

@@ -23,9 +23,11 @@ test("the ordinary suite runs inside its hard byte ceiling", () => {
   expect(root).toBeString();
   expect(maxBytes).toBeGreaterThan(0n);
 
+  // SAFETY: The test owns this value and its fields.
   const stats = statfsSync(root as string, { bigint: true });
   expect(stats.bsize * stats.blocks).toBeLessThanOrEqual(maxBytes);
 
+  // SAFETY: The test owns this value and its fields.
   const positiveControl = join(root as string, "write-positive-control");
   writeFileSync(positiveControl, "ok");
   expect(existsSync(positiveControl)).toBe(true);
@@ -40,11 +42,13 @@ test("ambient credentials do not cross the test-process boundary", () => {
 test("an out-of-root write is refused by the host sandbox", () => {
   const outside = process.env.HIVE_TEST_OUTSIDE_PATH;
   expect(outside).toBeString();
+  // SAFETY: The test owns this value and its fields.
   const escapedFile = join(outside as string, "escape");
   try {
     writeFileSync(escapedFile, "escape");
     throw new Error("out-of-root write unexpectedly succeeded");
   } catch (error) {
+    // SAFETY: The test owns this value and its fields.
     expect((error as NodeJS.ErrnoException).code).toBe("EPERM");
   }
   expect(existsSync(escapedFile)).toBe(false);
@@ -78,6 +82,7 @@ test("both socket kinds fit sun_path at their longest, measured from the builder
   // code that binds the socket has moved on, which is the failure this file exists to catch.
   const canonicalProductionRoot = withSocketRoot(
     sessiondRuntimeRoot("/some/persistent/home"),
+    // SAFETY: The test owns this value and its fields.
     () => process.env.HIVE_SESSIOND_ROOT as string,
   );
   // This root used to be a 27-byte constant under /private/tmp — /tmp being a symlink was worth
@@ -139,6 +144,7 @@ test("the durable half of a session is under the home, never under the socket ro
 test("the bounded test root leaves room for production session sockets", () => {
   const root = process.env.HIVE_TEST_ROOT;
   expect(root).toBeString();
+  // SAFETY: The test owns this value and its fields.
   const longest = withSocketRoot(root as string, () => [
     hostSocketPath("", LONGEST_SESSION_ID),
     neutralSocketPath("", LONGEST_NEUTRAL_SESSION),
@@ -161,6 +167,7 @@ test("the native gate routes its Bun tests through the bounded runner", () => {
 });
 
 test("the ordinary gate does not rerun the destructive sandbox self-test", () => {
+  // SAFETY: The test owns this value and its fields.
   const manifest = JSON.parse(
     readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"),
   ) as { scripts: Record<string, string> };
@@ -171,10 +178,12 @@ test("the ordinary gate does not rerun the destructive sandbox self-test", () =>
 test("the ordinary gate emits that the sessiond leg did not run", () => {
   const root = process.env.HIVE_TEST_ROOT;
   expect(root).toBeString();
+  // SAFETY: The test owns this value and its fields.
   const fixture = mkdtempSync(join(root as string, "test-gate-output-"));
   const fakeBin = join(fixture, "bin");
   const sessiondSentinel = join(fixture, "sessiond-ran");
   mkdirSync(fakeBin);
+  // SAFETY: The test owns this value and its fields.
   const manifest = JSON.parse(
     readFileSync(join(import.meta.dir, "..", "package.json"), "utf8"),
   ) as { scripts: Record<string, string> };

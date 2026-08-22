@@ -96,10 +96,7 @@ function isEscapeStart(character: string): boolean {
   );
 }
 
-function parseLines(text: string): {
-  readonly lines: ParsedLine[];
-  readonly incompleteEscape: boolean;
-} {
+function parseLines(text: string) {
   const lines: ParsedLine[] = [{ tokens: [], visible: false }];
   let incompleteEscape = false;
   let index = 0;

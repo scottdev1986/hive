@@ -266,11 +266,16 @@ export function providerPolicyState(
   return policy.providers[provider] ?? "unconfigured";
 }
 
+export type ModelPolicyReading = {
+  state: PolicyState;
+  source: "provider" | "model" | "none";
+};
+
 export function modelPolicyState(
   policy: RoutingPolicy,
   provider: CapabilityProvider,
   model: string,
-): { state: PolicyState; source: "provider" | "model" | "none" } {
+): ModelPolicyReading {
   const providerState = providerPolicyState(policy, provider);
   if (providerState !== "enabled") {
     return providerState === "disabled"

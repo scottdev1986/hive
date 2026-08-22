@@ -141,11 +141,11 @@ describe("StatusStore", () => {
     // MCP requires a top-level object, while the store uses a discriminated
     // union. They must keep declaring and accepting the same states.
     const advertised = Object.keys(
-      HiveUpdateStatusAdvertisedSchema.shape,
+      HiveUpdateStatusAdvertisedSchema["shape"],
     ).sort();
     expect(HiveUpdateStatusInputSchema.options).toHaveLength(6);
     for (const branch of HiveUpdateStatusInputSchema.options) {
-      expect(Object.keys(branch.shape).sort()).toEqual(advertised);
+      expect(Object.keys(branch["shape"]).sort()).toEqual(advertised);
     }
 
     const nonBlockedWithBlocker = {
@@ -392,6 +392,7 @@ describe("StatusStore", () => {
         events: [],
       }),
     ).toEqual({ kind: "duplicate" });
+    // SAFETY: The test owns this value and its fields.
     const plan = db.database
       .query(
         `

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { type Stats, statSync } from "node:fs";
+import { isBoolean } from "../../shared/is-record";
 
 import type { Provenance, VolumeBehavior } from "./project-identity-types";
 
@@ -24,11 +25,12 @@ function foundationVolInfo(
     const out = execFileSync(helperPath, ["volinfo", path], {
       encoding: "utf8",
     });
+    // SAFETY: The surrounding code already established this contract.
     const parsed = JSON.parse(out) as {
       caseSensitive?: boolean;
       isLocal?: boolean;
     };
-    if (typeof parsed.caseSensitive !== "boolean") return null;
+    if (!isBoolean(parsed.caseSensitive)) return null;
     return {
       caseSensitive: parsed.caseSensitive,
       isLocal: parsed.isLocal ?? false,

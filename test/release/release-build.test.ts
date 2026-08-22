@@ -75,6 +75,7 @@ describe("what a CLI binary is told about itself at compile time", () => {
         .filter((argument) => argument.startsWith("process.env."))
         .map(
           (argument) =>
+            // SAFETY: The test owns this value and its fields.
             argument.slice("process.env.".length).split("=")[0] as string,
         );
 

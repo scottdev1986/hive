@@ -1,5 +1,6 @@
 /** What to do about the daemon that is already running when the binary changes. Replacing a file is easy. Replacing the control plane while agents are writing, approvals are pending, and landing authority is live is not. The handshake already *detects* the problem: a daemon started from the old binary presents the old content-addressed build hash, and `probeDaemonReuse` refuses to adopt it. Detection without a restart path is a dead end, though — the user is left with a new `hive` that will not talk to the daemon it just updated past. This module is that path. Three distinctions do all the work, and conflating any two of them is a bug: stale — same project, different build. Ours to restart. foreign — a different project's daemon on our port. Never ours to kill. busy — stale, but a team is live. Ours to leave alone until quiescence. `handshakeMismatch` reports only the first field that differs, in a fixed order that puts product version ahead of project identity. Trusting that reason string alone would let a version bump masquerade as permission to kill another project's daemon, so identity is compared here, first, explicitly. */
 import { readFileSync } from "node:fs";
+import { isErrnoCode } from "../shared/error-message";
 import {
   cleanupLifecycleFiles,
   type DaemonHandshake,
@@ -66,8 +67,8 @@ export async function inspectDaemonForUpdate(
   if (actual === null) {
     return { state: "unknown", port, reason: "no Hive handshake" };
   }
-  const expected =
-    typeof deps.expected === "function" ? await deps.expected() : deps.expected;
+  const provided = deps.expected;
+  const expected = provided instanceof Function ? await provided() : provided;
 
   // Identity before everything. A daemon serving another project or instance is never ours to stop.
   if (actual.hiveUuid !== expected.hiveUuid) {
@@ -104,11 +105,7 @@ export interface RestartDeps {
 export type RestartOutcome =
   { stopped: true; pid: number | null } | { stopped: false; reason: string };
 
-const isNoSuchProcess = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  (error as { code?: unknown }).code === "ESRCH";
+const isNoSuchProcess = <T>(error: T): boolean => isErrnoCode(error, "ESRCH");
 
 /** Stop a stale daemon so the next `hive` spawns the new binary. We stop rather than hot-swap on purpose. The daemon owns SQLite state, approvals, and landing authority; a clean SIGTERM lets it checkpoint and exit while nothing is in flight, which is only knowable because `inspectDaemonForUpdate` already proved the team is idle. Hot-swapping a live control plane is the alternative, and it buys nothing when there is by definition no work to preserve. */
 export async function restartStaleDaemon(

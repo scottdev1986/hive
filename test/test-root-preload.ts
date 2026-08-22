@@ -53,5 +53,6 @@ try {
   accessSync(outside, constants.W_OK);
   throw new Error("the test filesystem sandbox permits out-of-root writes");
 } catch (error) {
+  // SAFETY: The test owns this value and its fields.
   if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
 }

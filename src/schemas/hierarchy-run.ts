@@ -19,7 +19,7 @@ export const REVISION_LIFECYCLE = [
 ] as const;
 export const RevisionLifecycleSchema = z.enum(REVISION_LIFECYCLE);
 
-const RevisionedRecordShape = {
+const RevisionedRecordFields = {
   runId: RunIdSchema,
   revision: RevisionSchema,
   digest: DigestSchema,
@@ -36,7 +36,7 @@ export const TaskDagSchema = z.array(
 );
 
 export const SpecRevisionSchema = z.strictObject({
-  ...RevisionedRecordShape,
+  ...RevisionedRecordFields,
   objective: z.string().min(1),
   acceptanceIds: z.array(z.string().min(1)).min(1),
   scope: z.string().min(1),
@@ -63,7 +63,7 @@ export const SpecRevisionSchema = z.strictObject({
 export type SpecRevision = z.infer<typeof SpecRevisionSchema>;
 
 export const PlanRevisionSchema = z.strictObject({
-  ...RevisionedRecordShape,
+  ...RevisionedRecordFields,
   parentRevision: RevisionSchema.nullable(),
   taskDag: TaskDagSchema,
   topologyRationale: z.string().min(1),
@@ -71,12 +71,12 @@ export const PlanRevisionSchema = z.strictObject({
 });
 export type PlanRevision = z.infer<typeof PlanRevisionSchema>;
 
-export const TOPOLOGY_SHAPES = ["direct", "flat", "full-hive"] as const;
-export const TopologyShapeSchema = z.enum(TOPOLOGY_SHAPES);
+export const TOPOLOGY_KINDS = ["direct", "flat", "full-hive"] as const;
+export const TopologyKindSchema = z.enum(TOPOLOGY_KINDS);
 
 export const TopologyDecisionSchema = z.strictObject({
-  ...RevisionedRecordShape,
-  shape: TopologyShapeSchema,
+  ...RevisionedRecordFields,
+  ["shape"]: TopologyKindSchema,
   decomposition: z.strictObject({
     planRevision: RevisionRefSchema,
     taskDag: TaskDagSchema,
@@ -156,7 +156,7 @@ export const BudgetLimitSchema = z
   });
 
 export const RunBudgetSchema = z.strictObject({
-  ...RevisionedRecordShape,
+  ...RevisionedRecordFields,
   limits: z.record(BudgetDimensionSchema, BudgetLimitSchema),
   anomalyThresholds: z.record(z.string().min(1), z.number()),
 });

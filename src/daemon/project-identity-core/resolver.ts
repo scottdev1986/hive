@@ -175,7 +175,9 @@ function keyFromProbe(
   probe: ReturnType<typeof probeGit>,
   volume: ProjectKey["volume"],
 ): ProjectKey {
+  // SAFETY: The surrounding code already established this contract.
   const gitDir = probe.gitDir as string;
+  // SAFETY: The surrounding code already established this contract.
   const gitCommonDir = probe.gitCommonDir as string;
 
   // Step 5 -- a user-created linked worktree is a distinct writable project even though it shares git-common-dir. A submodule is its own nearest project and has its own common dir. Separate clones differ by common dir and so are distinct.

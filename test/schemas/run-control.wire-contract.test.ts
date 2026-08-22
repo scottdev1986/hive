@@ -8,6 +8,7 @@ import {
   mutationResultSchema,
   RunControlIntentSchema,
 } from "../../src/schemas/run-control";
+import type { JsonObject } from "../../src/shared/json";
 
 /**
  * THE DAEMON HALF OF THE RUN-CONTROL WIRE CONTRACT.
@@ -19,6 +20,7 @@ import {
  * read. Neither side may change the envelope alone.
  */
 describe("mutation envelope wire contract (shared with the Swift client)", () => {
+  // SAFETY: The test owns this value and its fields.
   const fixture = JSON.parse(
     readFileSync(
       join(
@@ -58,13 +60,15 @@ describe("mutation envelope wire contract (shared with the Swift client)", () =>
 
   test("an expectation cannot carry the token its kind excludes", () => {
     const withEpoch = IntentSchema.safeParse({
-      ...(fixture.intents[0] as Record<string, unknown>),
+      // SAFETY: The test owns this value and its fields.
+      ...(fixture.intents[0] as JsonObject),
       expected: { kind: "revision", revision: "7", epoch: "3" },
     });
     expect(withEpoch.success).toBe(false);
 
     const withRevision = IntentSchema.safeParse({
-      ...(fixture.intents[1] as Record<string, unknown>),
+      // SAFETY: The test owns this value and its fields.
+      ...(fixture.intents[1] as JsonObject),
       expected: { kind: "epoch", epoch: "3", revision: "7" },
     });
     expect(withRevision.success).toBe(false);
@@ -72,7 +76,8 @@ describe("mutation envelope wire contract (shared with the Swift client)", () =>
 
   test("an accepted outcome cannot carry a failure", () => {
     const parsed = ResultSchema.safeParse({
-      ...(fixture.results[0] as Record<string, unknown>),
+      // SAFETY: The test owns this value and its fields.
+      ...(fixture.results[0] as JsonObject),
       outcome: {
         status: "accepted",
         failure: { code: "revision-conflict", message: "expected 7" },
@@ -83,7 +88,8 @@ describe("mutation envelope wire contract (shared with the Swift client)", () =>
 
   test("a rejected outcome must say why", () => {
     const parsed = ResultSchema.safeParse({
-      ...(fixture.results[1] as Record<string, unknown>),
+      // SAFETY: The test owns this value and its fields.
+      ...(fixture.results[1] as JsonObject),
       outcome: { status: "rejected" },
     });
     expect(parsed.success).toBe(false);

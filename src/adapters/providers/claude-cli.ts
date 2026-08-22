@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { hiveInstanceSuffix } from "../../hive-home/home";
 import { definedFields } from "../../shared/defined-fields";
-import { isRecord } from "../../shared/is-record";
+import { isNumber, isRecord, isString } from "../../shared/is-record";
 import { shellToken } from "../../shared/shell-quote";
 import { withFileLock } from "../file-lock";
 import {
@@ -27,6 +27,7 @@ import {
   providerExecutableCandidates,
   resolveProviderExecutable,
 } from "./shared/provider-executable";
+import type { JsonObject, JsonValue } from "../../shared/json";
 
 export interface ClaudeSpawnOptions {
   name: string;
@@ -138,10 +139,10 @@ const hook = (
 
 const claudeHome = (): string => process.env.HOME ?? homedir();
 
-const isMissingFileError = (error: unknown): boolean =>
+const isMissingFileError = <T>(error: T): boolean =>
   isRecord(error) && error.code === "ENOENT";
 
-async function readJsonObject(path: string): Promise<Record<string, unknown>> {
+async function readJsonObject(path: string): Promise<JsonObject> {
   let source: string;
   try {
     source = await readFile(path, "utf8");
@@ -152,7 +153,7 @@ async function readJsonObject(path: string): Promise<Record<string, unknown>> {
     throw error;
   }
 
-  const parsed: unknown = JSON.parse(source);
+  const parsed: JsonValue = JSON.parse(source);
   if (!isRecord(parsed)) {
     throw new Error(`${path} must contain a JSON object`);
   }
@@ -160,10 +161,10 @@ async function readJsonObject(path: string): Promise<Record<string, unknown>> {
 }
 
 function deepMerge(
-  existing: Record<string, unknown>,
-  hive: Record<string, unknown>,
+  existing: JsonObject,
+  hive: JsonObject,
   path: string[] = [],
-): Record<string, unknown> {
+): JsonObject {
   const merged = { ...existing };
   for (const [key, hiveValue] of Object.entries(hive)) {
     const existingValue = merged[key];
@@ -186,17 +187,14 @@ function deepMerge(
   return merged;
 }
 
-function removeOwnedHiveHooks(
-  settings: Record<string, unknown>,
-  instanceId: string,
-): void {
+function removeOwnedHiveHooks(settings: JsonObject, instanceId: string): void {
   if (!isRecord(settings.hooks)) return;
   for (const [kind, entries] of Object.entries(settings.hooks)) {
     if (!Array.isArray(entries)) continue;
     settings.hooks[kind] = entries.filter((entry) => {
       if (!isRecord(entry) || !Array.isArray(entry.hooks)) return true;
       return !entry.hooks.some((hook) => {
-        if (!isRecord(hook) || typeof hook.command !== "string") return false;
+        if (!isRecord(hook) || !isString(hook.command)) return false;
         if (
           !/(?:^|\s)event [a-z-]+ --agent \S+ --port \d+/.test(hook.command)
         ) {
@@ -256,8 +254,8 @@ export function claudeConfigPath(home = claudeHome()): string {
 
 let trustSeedQueue: Promise<void> = Promise.resolve();
 
-const positiveInteger = (value: unknown): number =>
-  typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+const positiveInteger = <T>(value: T): number =>
+  isNumber(value) && Number.isFinite(value) && value > 0 ? value : 0;
 
 /** Trust exactly the agent worktree. Without folder trust Claude blocks and discards the project permission rules that enforce read-only sessions. */
 export async function seedClaudeWorktreeTrust(

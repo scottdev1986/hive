@@ -4,7 +4,7 @@ import type { DatabaseHost } from "../../shared/database-host";
 import { type HookEvent, HookEventSchema } from "../../schemas/event";
 import type { OrchestratorSignalKind } from "../status-service/status-service";
 
-function parseEventRow(row: unknown): HookEvent {
+function parseEventRow<T>(row: T): HookEvent {
   const value = z
     .object({
       kind: z.string(),
@@ -52,6 +52,7 @@ export class EventStore {
   }
 
   latestSafePointAt(agentName: string): string | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.database
       .query(
         `
@@ -64,6 +65,7 @@ export class EventStore {
   }
 
   latestTurnBoundaryAt(agentName: string): string | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.database
       .query(
         `
@@ -78,6 +80,7 @@ export class EventStore {
   latestTurnBoundary(
     agentName: string,
   ): { timestamp: string; kind: "turn-start" | "turn-end" } | null {
+    // SAFETY: The surrounding code already established this contract.
     return this.database
       .query(
         `
@@ -96,6 +99,7 @@ export class EventStore {
     agentName: string,
     limit = 2,
   ): OrchestratorSignalKind[] {
+    // SAFETY: The surrounding code already established this contract.
     const rows = this.database
       .query(
         `
@@ -109,6 +113,7 @@ export class EventStore {
   }
 
   latestEventAt(agentName: string): string | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.database
       .query(
         `

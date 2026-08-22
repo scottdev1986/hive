@@ -1,4 +1,4 @@
-export function toolResult(value: unknown, key: string, note?: string | null) {
+export function toolResult<T>(value: T, key: string, note?: string | null) {
   const payload = { type: "text" as const, text: JSON.stringify(value) };
   return {
     content:

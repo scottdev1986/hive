@@ -304,7 +304,7 @@ describe("TokenUsageStore", () => {
       "orchestrator",
       { epoch: 0 },
     ).token;
-    const request = (path: string, token: string, body?: unknown) =>
+    const request = <T>(path: string, token: string, body?: T) =>
       daemon.fetch(
         new Request(`http://127.0.0.1${path}`, {
           method: body === undefined ? "GET" : "POST",
@@ -327,6 +327,7 @@ describe("TokenUsageStore", () => {
       repoRoot: "/tmp/hive-token-api",
     });
     expect(started.status).toBe(200);
+    // SAFETY: The test owns this value and its fields.
     const sessionId = ((await started.json()) as { sessionId: string })
       .sessionId;
     const read = await request(
@@ -335,6 +336,7 @@ describe("TokenUsageStore", () => {
     );
     expect(read.status).toBe(200);
     expect(
+      // SAFETY: The test owns this value and its fields.
       ((await read.json()) as { currentSessionId: string }).currentSessionId,
     ).toBe(sessionId);
   });
@@ -421,10 +423,12 @@ describe("TokenUsageStore", () => {
 
     new TokenUsageStore(db);
 
+    // SAFETY: The test owns this value and its fields.
     const roles = db.database
       .query("SELECT role FROM token_usage_subjects ORDER BY name")
       .all() as Array<{ role: string }>;
     expect(roles).toEqual([{ role: "orchestrator" }]);
+    // SAFETY: The test owns this value and its fields.
     const events = db.database
       .query("SELECT subjectId FROM token_usage_events")
       .all() as Array<{ subjectId: string }>;

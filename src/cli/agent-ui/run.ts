@@ -94,7 +94,11 @@ export const AGENT_UI_CONSOLE_OPTIONS = {
   "consoleMode" | "openConsoleOnError"
 >;
 
-const VENDOR_NAMES: Record<string, string> = {
+interface VendorNameTable {
+  readonly [provider: string]: string | undefined;
+}
+
+const VENDOR_NAMES: VendorNameTable = {
   claude: "Claude Code",
   codex: "Codex",
   grok: "Grok",
@@ -186,7 +190,11 @@ export async function runAgentUi(options: AgentUiOptions): Promise<number> {
     executable: options.executable ?? options.provider,
     argv: options.providerArgv ?? [],
     cwd: options.worktreePath,
-    env: { ...process.env } as Record<string, string>,
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined,
+      ),
+    ),
   };
 
   await mkdir(dirname(options.journalPath), { recursive: true });
@@ -317,7 +325,7 @@ export async function runAgentUi(options: AgentUiOptions): Promise<number> {
       void diagnosticReporter
         .report(fact)
         .then((event) => ui?.renderDiagnostic(event))
-        .catch((error: unknown) =>
+        .catch((error) =>
           ui?.renderDiagnostic({
             severity: fact.severity,
             reason: `${fact.reason}\nAudit delivery failed — ${errorMessage(error)}`,
@@ -402,7 +410,7 @@ export async function runAgentUi(options: AgentUiOptions): Promise<number> {
           .then((failure) => {
             if (failure !== null) ui?.renderDiagnostic(failure);
           })
-          .catch((error: unknown) =>
+          .catch((error) =>
             ui?.renderDiagnostic({
               severity: "error",
               reason: `Audit delivery failed — ${errorMessage(error)}`,

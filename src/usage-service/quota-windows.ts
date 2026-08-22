@@ -168,13 +168,7 @@ function zonedToUtc(
   );
 }
 
-export function calendarWeekBounds(
-  now: Date,
-  limit: QuotaLimit,
-): {
-  start: string;
-  end: string;
-} {
+export function calendarWeekBounds(now: Date, limit: QuotaLimit) {
   const local = zonedParts(now, limit.timezone);
   let daysBack = (local.weekday - limit.resetWeekday + 7) % 7;
   const beforeReset =
@@ -218,11 +212,7 @@ export function windowBounds(
     weeklyWindowMinutes?: number | null;
   },
   now: Date,
-): {
-  fiveHourStart: string;
-  weeklyStart: string;
-  weeklyEnd: string | null;
-} {
+) {
   const fiveHourMs = (limit.fiveHourWindowMinutes ?? 5 * 60) * 60_000;
   if (limit.weeklyWindow === "calendar") {
     const weekly = calendarWeekBounds(now, limit);

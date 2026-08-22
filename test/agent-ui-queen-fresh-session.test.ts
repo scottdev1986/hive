@@ -1,3 +1,4 @@
+import { isString } from "../src/shared/is-record";
 /**
  * Stage D — five-vendor fresh-session wire assertions for queen/root launch.
  *
@@ -14,7 +15,11 @@ import type {
   CodexAppServerMessage,
   CodexAppServerWire,
 } from "../src/adapters/providers/codex-app-server/jsonl-rpc";
-import type { JsonValue } from "../src/shared/json";
+import {
+  requireJsonValue,
+  type JsonValue,
+  type JsonObject,
+} from "../src/shared/json";
 import { ClaudeStreamJsonAdapter } from "../src/adapters/providers/protocol/claude-runtime-adapter";
 import type { ClaudeProcess } from "../src/adapters/providers/protocol/claude-stream-process";
 import {
@@ -70,7 +75,7 @@ function storedRecord(
   provider: CapabilityProvider,
   cwd: string,
   transport: DurableSessionRecord["identity"]["transport"],
-): Record<string, unknown> {
+): JsonObject {
   return {
     schemaVersion: 1,
     identity: {
@@ -160,6 +165,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
     expect(queen.vendorSession.vendorSessionId).not.toBe(
       SENTINEL_VENDOR_SESSION_ID,
     );
+    // SAFETY: The test owns this value and its fields.
     const queenSession = adapter.session as FakeProviderSession;
     expect(queenSession.sessionCalls.map((call) => call.kind)).toEqual([
       "newSession",
@@ -198,6 +204,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
     expect(worker.vendorSession.vendorSessionId).toBe(
       SENTINEL_VENDOR_SESSION_ID,
     );
+    // SAFETY: The test owns this value and its fields.
     const workerSession = workerAdapter.session as FakeProviderSession;
     expect(workerSession.sessionCalls.map((call) => call.kind)).toEqual([
       "resumeSession",
@@ -244,7 +251,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
       readonly pid: number;
       readonly stdout = new ByteQueue();
       readonly stderr = new ByteQueue();
-      readonly writes: Record<string, unknown>[] = [];
+      readonly writes: JsonObject[] = [];
       readonly exited: Promise<number>;
       readonly stdin: { write(data: string): void; end(): void };
       private resolveExit: ((code: number) => void) | null = null;
@@ -252,7 +259,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
       constructor(
         pid: number,
         private readonly onWrite: (
-          message: Record<string, unknown>,
+          message: JsonObject,
           process: FakeClaudeProcess,
         ) => void,
       ) {
@@ -264,7 +271,8 @@ describe("five-vendor queen fresh-session wire assertions", () => {
           write: (data) => {
             for (const line of data.trim().split("\n")) {
               if (line.length === 0) continue;
-              const message = JSON.parse(line) as Record<string, unknown>;
+              // SAFETY: The test owns this value and its fields.
+              const message = JSON.parse(line) as JsonObject;
               this.writes.push(message);
               this.onWrite(message, this);
             }
@@ -272,7 +280,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
           end: () => this.exit(0),
         };
       }
-      emit(message: Record<string, unknown>): void {
+      emit(message: JsonObject): void {
         this.stdout.push(`${JSON.stringify(message)}\n`);
       }
       exit(code: number): void {
@@ -296,13 +304,10 @@ describe("five-vendor queen fresh-session wire assertions", () => {
         const process = new FakeClaudeProcess(
           processes.length + 10,
           (message, child) => {
-            const request = message.request as
-              Record<string, unknown> | undefined;
+            // SAFETY: The test owns this value and its fields.
+            const request = message.request as JsonObject | undefined;
             const requestId = message.request_id;
-            if (
-              request?.subtype === "initialize" &&
-              typeof requestId === "string"
-            ) {
+            if (request?.subtype === "initialize" && isString(requestId)) {
               child.emit({
                 type: "control_response",
                 response: {
@@ -319,7 +324,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
             }
             if (
               request?.subtype === "get_context_usage" &&
-              typeof requestId === "string"
+              isString(requestId)
             ) {
               child.emit({
                 type: "control_response",
@@ -436,7 +441,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
         return new Promise((resolve) => this.waiting.push(resolve));
       }
     }
-    type RequestHandler = (params: unknown) => JsonValue;
+    type RequestHandler = <T>(params: T) => JsonValue;
     class FakeWire implements CodexAppServerWire {
       readonly requests: Array<{ method: string; params: unknown }> = [];
       readonly notifications: Array<{ method: string; params: unknown }> = [];
@@ -463,15 +468,23 @@ describe("five-vendor queen fresh-session wire assertions", () => {
         };
         this.closed = this.closeResult.promise;
       }
-      request(method: string, params?: unknown): Promise<JsonValue> {
+      request<T>(method: string, params?: T): Promise<JsonValue> {
         this.requests.push({ method, params });
         const handler = this.handlers[method];
-        return Promise.resolve(handler === undefined ? {} : handler(params));
+        return Promise.resolve(
+          handler === undefined
+            ? {}
+            : requireJsonValue(
+                // SAFETY: Fake wire handlers return JSON the test constructed.
+                handler(params) as JsonValue,
+                method,
+              ),
+        );
       }
-      notify(method: string, params?: unknown): void {
+      notify<T>(method: string, params?: T): void {
         this.notifications.push({ method, params });
       }
-      respond(id: number | string, result: unknown): void {
+      respond<T>(id: number | string, result: T): void {
         this.responses.push({ id, result });
       }
       reject(id: number | string, code: number, message: string): void {
@@ -500,6 +513,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
           "thread/start": () => ({ thread: { id: "thread-fresh-1" } }),
           "thread/resume": (params) => ({
             thread: {
+              // SAFETY: The test owns this value and its fields.
               id: (params as { threadId: string }).threadId,
               turns: [],
             },
@@ -646,6 +660,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
         ),
       });
       expect(queen.decision).toEqual({ outcome: "fresh" });
+      // SAFETY: The test owns this value and its fields.
       const queenSession = adapter.session as FakeProviderSession;
       expect(queenSession.sessionCalls.map((call) => call.kind)).toEqual([
         "newSession",
@@ -688,6 +703,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
         outcome: "resume",
         vendorSessionId: SENTINEL_VENDOR_SESSION_ID,
       });
+      // SAFETY: The test owns this value and its fields.
       const workerSession = workerAdapter.session as FakeProviderSession;
       expect(workerSession.sessionCalls).toEqual([
         {
@@ -725,6 +741,7 @@ describe("five-vendor queen fresh-session wire assertions", () => {
       ),
     });
     expect(opened.decision).toEqual({ outcome: "fresh" });
+    // SAFETY: The test owns this value and its fields.
     expect((adapter.session as FakeProviderSession).sessionCalls).toHaveLength(
       1,
     );

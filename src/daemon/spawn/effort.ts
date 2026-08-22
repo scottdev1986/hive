@@ -16,15 +16,15 @@ export interface AutoEffortResolution {
 }
 
 /** Exact vendor spellings with source-proved ordinal semantics. This is not a validation enum: discovery still preserves and explicit choices may still use any advertised future value. It is only the smaller set Hive may order automatically without turning array position into meaning. Claude documents low→medium→high→xhigh→max as increasing capability/token spend. OpenAI documents reduced effort as faster/fewer reasoning tokens, and Codex model/list describes max as maximum reasoning and ultra as maximum reasoning plus task delegation. xAI documents low→medium→high as increasing reasoning depth. Unknown spellings therefore remain explicitly selectable but make AUTO refuse until their order is proved. */
-const PROVED_EFFORT_ORDER: Record<CapabilityProvider, readonly string[]> = {
+const PROVED_EFFORT_ORDER = {
   claude: ["low", "medium", "high", "xhigh", "max"],
   codex: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
   grok: ["low", "medium", "high"],
   kimi: ["low", "medium", "high", "xhigh", "max"],
   opencode: [],
-};
+} satisfies Record<CapabilityProvider, readonly string[]>;
 
-const EFFORT_ORDER_BASIS: Record<CapabilityProvider, string> = {
+const EFFORT_ORDER_BASIS = {
   claude: "Claude effort documentation and the model's advertised levels",
   codex:
     "Codex model/list descriptions and OpenAI reasoning-effort documentation",
@@ -32,7 +32,7 @@ const EFFORT_ORDER_BASIS: Record<CapabilityProvider, string> = {
   kimi: "Kimi Code thinking-effort documentation and the model's advertised levels",
   opencode:
     "no vendor-canonical effort order; opencode reasoning levels are provider-specific variants",
-};
+} satisfies Record<CapabilityProvider, string>;
 
 export function codingTierForCategory(category: RoutingCategory): CodingTier {
   switch (category) {

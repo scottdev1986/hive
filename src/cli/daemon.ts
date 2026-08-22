@@ -81,31 +81,33 @@ import { QuotaService } from "../usage-service/usage-quota";
 import { bindCliHiveHome } from "./bind-hive-home";
 import { composeModelControlSnapshot } from "./model-control";
 
-export async function startBrokerAndDiscoverEngineBuildId(
+export async function startBrokerAndDiscoverEngineBuildId<T>(
   dependencies: Readonly<{
     startBroker: () => Promise<void>;
     discoverEngineBuildId: () => Promise<string>;
     onFatalFailure: (
       stage: "broker-start" | "engine-discovery",
-      error: unknown,
+      error: T,
     ) => Promise<never>;
   }>,
 ): Promise<string> {
   try {
     await dependencies.startBroker();
   } catch (error) {
-    return await dependencies.onFatalFailure("broker-start", error);
+    // SAFETY: Fatal-failure callbacks accept the thrown value the catch already bound.
+    return await dependencies.onFatalFailure("broker-start", error as T);
   }
   try {
     return await dependencies.discoverEngineBuildId();
   } catch (error) {
-    return await dependencies.onFatalFailure("engine-discovery", error);
+    // SAFETY: Fatal-failure callbacks accept the thrown value the catch already bound.
+    return await dependencies.onFatalFailure("engine-discovery", error as T);
   }
 }
 
-export async function exitAfterDaemonStartupFailure(
+export async function exitAfterDaemonStartupFailure<T>(
   stage: "broker-start" | "engine-discovery",
-  error: unknown,
+  error: T,
   dependencies: Readonly<{
     stopBroker: () => Promise<void>;
     stopDaemon: () => Promise<void>;
@@ -220,13 +222,7 @@ export function createProductionTerminalComposition(
 /** Single source of truth for the spawner's per-vendor executable paths, so a new vendor added to `discoveryExecutables` cannot be forgotten here. */
 export function spawnerExecutables(
   discoveryExecutables: Record<CapabilityProvider, string>,
-): {
-  claudeExecutable: string;
-  codexExecutable: string;
-  grokExecutable: string;
-  kimiExecutable: string;
-  opencodeExecutable: string;
-} {
+) {
   return {
     claudeExecutable: discoveryExecutables.claude,
     codexExecutable: discoveryExecutables.codex,
@@ -259,13 +255,13 @@ export async function runDaemon(): Promise<void> {
   const kimiExecutable = resolveWorkingKimiExecutable()?.path ?? "kimi";
   const opencodeExecutable =
     resolveWorkingOpencodeExecutable()?.path ?? "opencode";
-  const discoveryExecutables: Record<CapabilityProvider, string> = {
+  const discoveryExecutables = {
     claude: claudeExecutable,
     codex: codexExecutable,
     grok: grokExecutable,
     kimi: kimiExecutable,
     opencode: opencodeExecutable,
-  };
+  } satisfies Record<CapabilityProvider, string>;
   const quotaDb = new QuotaDatabase();
   const capabilityAuthority = createCapabilitySnapshotAuthority(
     quotaDb.database,

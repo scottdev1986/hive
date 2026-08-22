@@ -259,6 +259,7 @@ describe("Workspace client projection fixtures shared with Swift", () => {
     for (const fixture of fixtures) {
       if (fixture.value === null) continue;
       validateModelControlNestedContracts(
+        // SAFETY: The test owns this value and its fields.
         fixture.value as WorkspaceModelControlView,
       );
       expect(fixture.value).toEqual(expected);

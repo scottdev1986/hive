@@ -26,6 +26,7 @@ import {
   STATUS_WIRE_SCHEMAS,
 } from "../../src/schemas/status-envelope";
 import { buildReducerCorpus, buildWireCorpus } from "./fixtures";
+import { isRecord } from "../../src/shared/is-record";
 
 export const FIXTURE_DIRECTORY = resolve(
   import.meta.dir,
@@ -58,7 +59,7 @@ const BYTE_CODEC_SCHEMA_NAMES = new Set([
   "terminalHostSessionInspection",
 ]);
 
-const prettyJson = (value: unknown): string =>
+const prettyJson = <T>(value: T): string =>
   `${JSON.stringify(value, null, 2)}\n`;
 
 /**
@@ -76,9 +77,11 @@ const prettyJson = (value: unknown): string =>
  * putting it there would cost Kimi the entire tool list to fix a conformance
  * fixture.
  */
-function markUint64Formats(value: JsonValue): JsonValue {
+function markUint64Formats<T>(value: T): JsonValue {
   if (Array.isArray(value)) return value.map(markUint64Formats);
-  if (typeof value !== "object" || value === null) return value;
+  if (!isRecord(value) && !Array.isArray(value)) {
+    return requireJsonValue(value, "json schema node");
+  }
   const marked: { [key: string]: JsonValue } = {};
   for (const [key, nested] of Object.entries(value)) {
     marked[key] = markUint64Formats(nested);
@@ -830,7 +833,7 @@ pub const reducer_corpus_fixture = @embedFile("reducer-parity-corpus.json");
 `;
 }
 
-export function renderGeneratedArtifacts(): Readonly<Record<string, string>> {
+export function renderGeneratedArtifacts() {
   return {
     [GENERATED_FILES.schema]: renderSchemaDocument(),
     [GENERATED_FILES.corpus]: prettyJson(buildWireCorpus()),

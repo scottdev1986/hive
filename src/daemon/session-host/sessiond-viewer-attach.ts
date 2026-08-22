@@ -2,6 +2,7 @@ import { connect, type Socket } from "node:net";
 import type { z } from "zod";
 import { definedFields } from "../../shared/defined-fields";
 import { type JsonValue, safeJsonParse } from "../../shared/json";
+import { isString } from "../../shared/is-record";
 import {
   type TerminalGeometry,
   AppliedPayloadSchema,
@@ -42,6 +43,7 @@ const OUTPUT_POLL_MS = 20;
 const frameNames = new Map<number, FrameTypeName>(
   Object.entries(FRAME_TYPES).map(([name, code]) => [
     code,
+    // SAFETY: The surrounding code already established this contract.
     name as FrameTypeName,
   ]),
 );
@@ -172,7 +174,7 @@ export class SessiondViewerAttachClient {
     private readonly afterSeq: string,
   ) {
     socket.on("data", (chunk) =>
-      this.receive(typeof chunk === "string" ? Buffer.from(chunk) : chunk),
+      this.receive(isString(chunk) ? Buffer.from(chunk) : chunk),
     );
     socket.on("error", (error) => this.fail(error));
     socket.on("close", () =>
@@ -382,7 +384,7 @@ export class SessiondViewerAttachClient {
     requestType: FrameTypeName,
     responseType: FrameTypeName,
     flags: number,
-    payload: unknown,
+    payload: JsonValue,
   ): Promise<SessiondFrame> {
     if (this.closed)
       return Promise.reject(

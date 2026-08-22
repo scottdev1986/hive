@@ -29,6 +29,7 @@ const base = {
   now: () => NOW,
   currentVersion: "0.0.4",
   isReleaseBuild: true,
+  // SAFETY: The test owns this value and its fields.
   env: {} as NodeJS.ProcessEnv,
 };
 const latest =
@@ -287,6 +288,7 @@ const MANIFEST = {
 
 describe("fetchLatestFromGitHub", () => {
   test("reads version and securityCritical from the release manifest, not the GitHub notes", async () => {
+    // SAFETY: The test owns this value and its fields.
     const fetcher = ((url: string) => {
       if (url.includes("api.github.com")) {
         return Promise.resolve(
@@ -313,7 +315,7 @@ describe("fetchLatestFromGitHub", () => {
         return Promise.resolve(new Response("sig\n"));
       }
       return Promise.resolve(new Response("not found", { status: 404 }));
-    }) as unknown as typeof fetch;
+    }) as typeof fetch;
 
     await expect(fetchLatestFromGitHub("owner/repo", fetcher)).resolves.toEqual(
       {

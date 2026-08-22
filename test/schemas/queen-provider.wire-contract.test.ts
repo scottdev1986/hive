@@ -97,7 +97,7 @@ describe("queen provider wire contract (shared with the Swift screen decoder)", 
 
   test("revisions are decimal STRINGS, and one exceeds what a Double holds exactly", () => {
     for (const projection of projections) {
-      expect(typeof projection.change.revision).toBe("string");
+      expect(projection.change.revision).toBeTypeOf("string");
     }
     // A revision past 2^53 decodes fine as a string and silently truncates as a
     // number. The fixture carries one so an Int-based decoder cannot pass.

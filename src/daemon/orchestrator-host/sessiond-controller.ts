@@ -32,6 +32,7 @@ import {
   ROOT_VISIBILITY_ID,
   type WorkspaceVisibilityAuthority,
 } from "../session-host/workspace-visibility";
+import type { JsonValue } from "../../shared/json";
 
 export const OrchestratorSessiondLaunchSchema = z
   .strictObject({
@@ -571,7 +572,7 @@ export class OrchestratorSessiondController {
           cleanup();
           resolve();
         },
-        (error: unknown) => {
+        (error: JsonValue) => {
           cleanup();
           reject(error);
         },

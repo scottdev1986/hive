@@ -14,7 +14,7 @@ export const ProviderPermissionDecisionsSchema = z.strictObject({
 });
 
 export const ProviderPermissionSettlementOutcomeSchema = z.enum([
-  ...ProviderPermissionDecisionSchema.shape.outcome.options,
+  ...ProviderPermissionDecisionSchema["shape"].outcome.options,
   "answered",
   "cancelled",
 ]);

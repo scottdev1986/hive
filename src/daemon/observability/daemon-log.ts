@@ -63,7 +63,7 @@ function sharedDaemonLog(): DaemonLog {
 }
 
 /** Resource and control alerts are the only way daemon degradation reaches the orchestrator; a failed alert send must not crash the sweep, but it must not vanish either. Built as a `.catch` handler: the failure is reported and the promise resolves `undefined`. */
-export function logAlertDeliveryFailure(error: unknown): undefined {
+export function logAlertDeliveryFailure<T>(error: T): undefined {
   sharedDaemonLog().report(
     `Hive failed to deliver a daemon alert to the orchestrator: ${
       error instanceof Error ? error.message : "unknown error"

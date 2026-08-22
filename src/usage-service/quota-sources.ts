@@ -2,8 +2,14 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { QuotaMeterState } from "../schemas/quota";
 import { systemClock } from "../shared/clock";
-import { type JsonValue, requireJsonValue } from "../shared/json";
+import {
+  type JsonValue,
+  requireJsonValue,
+  type JsonObject,
+} from "../shared/json";
 import { HIVE_VERSION } from "../shared/version";
+import { isNumber, isRecord, isString } from "../shared/is-record";
+import { unsafeCast } from "../shared/unsafe-cast";
 import {
   KimiHttpUsageTransport,
   type KimiUsageProbeResult,
@@ -63,7 +69,7 @@ export interface QuotaProbe {
 }
 
 const unixSecondsToIso = (value: number | null | undefined): string | null => {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+  if (!isNumber(value) || !Number.isFinite(value) || value < 0) {
     return null;
   }
   const date = new Date(value * 1_000);
@@ -71,10 +77,7 @@ const unixSecondsToIso = (value: number | null | undefined): string | null => {
 };
 
 /** Order the two reported windows by duration rather than by the name the provider happened to give them. `primary`/`secondary` is positional, and a plan that reports its weekly bucket first would otherwise silently invert the five-hour and weekly numbers. A snapshot with fewer than two usable windows yields whatever it did report; nothing is fabricated for the missing one. */
-export function orderRateLimitWindows(snapshot: CodexRateLimitSnapshot): {
-  fiveHour: DiscoveredWindow | null;
-  weekly: DiscoveredWindow | null;
-} {
+export function orderRateLimitWindows(snapshot: CodexRateLimitSnapshot) {
   // An undated window cannot be placed at all: its duration is the only thing that says which bucket it describes. Dropping it is the whole point — a window sorted by a guessed duration lands in the wrong bucket silently.
   const windows = [snapshot.primary, snapshot.secondary]
     .filter(
@@ -87,7 +90,7 @@ export function orderRateLimitWindows(snapshot: CodexRateLimitSnapshot): {
         Number.isFinite(window.usedPercent) &&
         window.usedPercent >= 0 &&
         window.usedPercent <= 100 &&
-        typeof window.windowDurationMins === "number" &&
+        isNumber(window.windowDurationMins) &&
         Number.isFinite(window.windowDurationMins) &&
         window.windowDurationMins > 0,
     )
@@ -107,8 +110,8 @@ export function orderRateLimitWindows(snapshot: CodexRateLimitSnapshot): {
 }
 
 /** Translate one `account/rateLimits/read` response into discovered pools. The top-level `rateLimits` snapshot is the account's routable bucket: every model spends from it, so it carries `["*"]`. Entries in `rateLimitsByLimitId` describe metered sub-limits — a specific model's own cap, like `codex_bengalfox` for GPT-5.3-Codex-Spark. The `limitId` itself is an opaque codename that maps to no model, but `limitName` is the model's display name, and the app-server's `model/list` publishes those display names against concrete ids. The binding is therefore resolved against the catalog rather than from this payload alone, so it is left empty here. */
-export function readingsFromCodexResponse(
-  response: unknown,
+export function readingsFromCodexResponse<T>(
+  response: T,
   account: string,
   observedAt: string,
 ): DiscoveredPoolReading[] {
@@ -164,9 +167,7 @@ export interface CodexProbeTransport {
   readRateLimits(timeoutMs: number): Promise<CodexProbePayload>;
 }
 
-export function catalogFromCodexModelList(
-  result: unknown,
-): ModelCatalogEntry[] {
+export function catalogFromCodexModelList<T>(result: T): ModelCatalogEntry[] {
   const parsed = CodexModelListSchema.safeParse(result);
   if (!parsed.success) return [];
   const entries: ModelCatalogEntry[] = [];
@@ -244,7 +245,7 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
     const timer = setTimeout(() => child.kill(), timeoutMs);
     try {
       const responses = pendingResponses(child.stdout);
-      const send = (message: unknown): void => {
+      const send = <T>(message: T): void => {
         child.stdin.write(`${JSON.stringify(message)}\n`);
         child.stdin.flush();
       };
@@ -275,7 +276,7 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
       const catalog = await responses
         .await("3")
         .then(catalogFromCodexModelList)
-        .catch(() => [] as ModelCatalogEntry[]);
+        .catch((): ModelCatalogEntry[] => []);
       return {
         limits: limits.data,
         catalog,
@@ -294,9 +295,9 @@ type Correlated =
 /** Correlate replies off a line-delimited stdout stream. Both CLIs interleave their replies with notifications and log noise, so anything the extractor does not recognise as a reply to one of our requests is skipped rather than parsed. */
 function responseCollector(
   stream: ReadableStream<Uint8Array>,
-  extract: (message: Record<string, unknown>) => Correlated,
+  extract: (message: JsonObject) => Correlated,
   closedMessage: string,
-): { await(id: string): Promise<JsonValue> } {
+) {
   const settled = new Map<string, { result: JsonValue } | { error: string }>();
   const waiting = new Map<
     string,
@@ -327,10 +328,11 @@ function responseCollector(
         } catch {
           continue;
         }
-        if (typeof parsed !== "object" || parsed === null) continue;
+        if (!isRecord(parsed) && !Array.isArray(parsed)) continue;
         let correlated: Correlated;
         try {
-          correlated = extract(parsed as Record<string, unknown>);
+          // SAFETY: The surrounding code already established this contract.
+          correlated = extract(parsed as JsonObject);
         } catch {
           continue;
         }
@@ -371,7 +373,7 @@ export const pendingResponses = (stream: ReadableStream<Uint8Array>) =>
   responseCollector(
     stream,
     (message) => {
-      if (typeof message.id !== "number") return null;
+      if (!isNumber(message.id)) return null;
       const id = String(message.id);
       return message.error === undefined
         ? {
@@ -395,9 +397,10 @@ export const pendingControlResponses = (stream: ReadableStream<Uint8Array>) =>
     (message) => {
       if (message.type !== "control_response") return null;
       const response = message.response;
-      if (typeof response !== "object" || response === null) return null;
-      const record = response as Record<string, unknown>;
-      if (typeof record.request_id !== "string") return null;
+      if (!isRecord(response) && !Array.isArray(response)) return null;
+      // SAFETY: The surrounding code already established this contract.
+      const record = response as JsonObject;
+      if (!isString(record.request_id)) return null;
       return record.subtype === "error"
         ? {
             id: record.request_id,
@@ -516,7 +519,7 @@ const ClaudeUsageResponseSchema = z.object({
 });
 
 const isoOrNull = (value: string | null | undefined): string | null => {
-  if (typeof value !== "string" || value.length === 0) return null;
+  if (!isString(value) || value.length === 0) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 };
@@ -527,7 +530,7 @@ const claudeWindow = (
 ): DiscoveredWindow | null =>
   window === null ||
   window === undefined ||
-  typeof window.utilization !== "number" ||
+  !isNumber(window.utilization) ||
   !Number.isFinite(window.utilization) ||
   window.utilization < 0 ||
   window.utilization > 100
@@ -539,8 +542,8 @@ const claudeWindow = (
       };
 
 /** Turn one `get_usage` response into discovered pools. The account-wide five-hour and seven-day windows form the general pool. Every Claude model spends from it — including the ones with no meter of their own, which is most of them — so it carries `["*"]` and is the pool a model falls back to. Opus has no dedicated weekly cap and is metered here; a Claude model is never "unmetered" while this pool exists. A model-scoped weekly cap (a premium model with its own ceiling) arrives with a display name and a null model id — `scope.model.id` is null next to `display_name: "Fable"`. The id gap is closed against the CLI's own model catalog rather than by guessing, so the pool is left unbound here and bound at resolve time. Its five-hour window is genuinely absent, not merely unread: the provider meters these caps weekly only. */
-export function readingsFromClaudeUsage(
-  response: unknown,
+export function readingsFromClaudeUsage<T>(
+  response: T,
   account: string,
   observedAt: string,
 ): DiscoveredPoolReading[] {
@@ -603,7 +606,7 @@ export interface ClaudeProbeTransport {
 const withoutContextSuffix = (model: string): string =>
   model.replace(/\[\d+m]$/i, "");
 
-export function catalogFromClaudeModels(models: unknown): ModelCatalogEntry[] {
+export function catalogFromClaudeModels<T>(models: T): ModelCatalogEntry[] {
   const parsed = ClaudeModelListSchema.safeParse(models);
   if (!parsed.success) return [];
   const ids = new Map<string, Set<string>>();
@@ -628,7 +631,7 @@ export function catalogFromClaudeModels(models: unknown): ModelCatalogEntry[] {
       withoutContextSuffix(model.value ?? ""),
       base,
     ]) {
-      if (typeof form === "string" && form.length > 0) forms.add(form);
+      if (isString(form) && form.length > 0) forms.add(form);
     }
     ids.set(base, forms);
     const display = names.get(base) ?? new Set<string>();
@@ -712,7 +715,7 @@ export class ClaudeStdioProbeTransport implements ClaudeProbeTransport {
     const timer = setTimeout(() => child.kill(), timeoutMs);
     try {
       const responses = pendingControlResponses(child.stdout);
-      const send = (message: unknown): void => {
+      const send = <T>(message: T): void => {
         child.stdin.write(`${JSON.stringify(message)}\n`);
         child.stdin.flush();
       };
@@ -723,9 +726,11 @@ export class ClaudeStdioProbeTransport implements ClaudeProbeTransport {
       });
       const handshake = await responses.await("hive-init");
       const catalog = catalogFromClaudeModels(
-        typeof handshake === "object" && handshake !== null
-          ? (handshake as Record<string, unknown>).models
-          : undefined,
+        isRecord(handshake)
+          ? handshake.models
+          : Array.isArray(handshake)
+            ? unsafeCast<JsonObject>(handshake).models
+            : undefined,
       );
       send({
         type: "control_request",
@@ -818,17 +823,16 @@ function periodWindowMinutes(
   period: { start?: string | null; end?: string | null } | null | undefined,
 ): number | null {
   if (period === null || period === undefined) return null;
-  const start =
-    typeof period.start === "string" ? Date.parse(period.start) : NaN;
-  const end = typeof period.end === "string" ? Date.parse(period.end) : NaN;
+  const start = isString(period.start) ? Date.parse(period.start) : NaN;
+  const end = isString(period.end) ? Date.parse(period.end) : NaN;
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
     return null;
   return Math.round((end - start) / 60_000);
 }
 
 /** Turn one `_x.ai/billing` response into discovered pools. The SuperGrok weekly pool is account-wide (`["*"]`). `creditUsagePercent` is the gauge (0–100 used). `currentPeriod.end` is the reset boundary. There is no five-hour window on this surface — that is a positive `not-metered`, not a failed read. A payload that parses but lacks a usable percent leaves the weekly window `unknown` (vendor meters it; we could not read the number), never `not-metered` and never a fabricated 0/100. */
-export function readingsFromGrokBilling(
-  response: unknown,
+export function readingsFromGrokBilling<T>(
+  response: T,
   account: string,
   observedAt: string,
 ): DiscoveredPoolReading[] {
@@ -842,7 +846,7 @@ export function readingsFromGrokBilling(
   const usablePercent =
     percent === undefined || percent === null
       ? 0
-      : typeof percent === "number" &&
+      : isNumber(percent) &&
           Number.isFinite(percent) &&
           percent >= 0 &&
           percent <= 100
@@ -902,23 +906,21 @@ export interface GrokProbeTransport {
   readBilling(timeoutMs: number): Promise<GrokProbePayload>;
 }
 
-export function catalogFromGrokInitialize(
-  result: unknown,
-): ModelCatalogEntry[] {
-  if (typeof result !== "object" || result === null) return [];
-  const meta = (result as Record<string, unknown>)._meta;
-  if (typeof meta !== "object" || meta === null) return [];
-  const modelState = (meta as Record<string, unknown>).modelState;
+export function catalogFromGrokInitialize<T>(result: T): ModelCatalogEntry[] {
+  if (!isRecord(result) && !Array.isArray(result)) return [];
+  // SAFETY: The surrounding code already established this contract.
+  const meta = (result as JsonObject)._meta;
+  if (!isRecord(meta) && !Array.isArray(meta)) return [];
+  // SAFETY: The surrounding code already established this contract.
+  const modelState = (meta as JsonObject).modelState;
   const parsed = GrokInitModelsSchema.safeParse(modelState);
   if (!parsed.success) return [];
   const entries: ModelCatalogEntry[] = [];
   for (const model of parsed.data.availableModels ?? []) {
     const modelId = model.modelId;
-    if (typeof modelId !== "string" || modelId.length === 0) continue;
+    if (!isString(modelId) || modelId.length === 0) continue;
     const displayName =
-      typeof model.name === "string" && model.name.length > 0
-        ? model.name
-        : modelId;
+      isString(model.name) && model.name.length > 0 ? model.name : modelId;
     entries.push({ provider: "grok", modelId, displayName });
   }
   return entries;
@@ -978,7 +980,7 @@ export class GrokStdioProbeTransport implements GrokProbeTransport {
     const timer = setTimeout(() => child.kill(), timeoutMs);
     try {
       const responses = pendingResponses(child.stdout);
-      const send = (message: unknown): void => {
+      const send = <T>(message: T): void => {
         child.stdin.write(`${JSON.stringify(message)}\n`);
         child.stdin.flush();
       };
@@ -1025,8 +1027,8 @@ export class GrokStdioProbeTransport implements GrokProbeTransport {
 const KIMI_WEEKLY_MINUTES = 7 * 24 * 60;
 
 /** Turn one /usages response into a discovered pool. The payload is account-wide — one weekly quota and a set of rate windows with no model names anywhere — so there is exactly one pool and it carries `["*"]`. The 300-minute rate window is the five-hour one; the weekly's 7-day length is the documented refresh, not a payload field. Both windows are things this surface meters, so a missing or unparseable number is `unknown`, never `not-metered`. The membership level is the vendor's own plan name, used as the label the way Claude's `subscription_type` and Grok's tier are. */
-export function readingsFromKimiUsages(
-  response: unknown,
+export function readingsFromKimiUsages<T>(
+  response: T,
   account: string,
   observedAt: string,
 ): DiscoveredPoolReading[] {

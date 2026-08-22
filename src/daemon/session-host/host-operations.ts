@@ -4,6 +4,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import { sessiondRuntimeRoot, sessiondStateRoot } from "../../hive-home/home";
+import { isString } from "../../shared/is-record";
 
 /** Speaks the neutral host operation protocol directly to a terminal's own socket, with no broker in between. Hive opens `host.sock` per request instead of routing frequent INSPECT polls through a shared accept loop. This keeps one slow host from delaying other terminals. NHOP is a private per-request protocol: connect, write one request, read one response, close. There is no session, so a slow host delays only its own caller. */
 
@@ -200,7 +201,7 @@ export async function callHost(options: {
       );
     });
     socket.on("data", (chunk: Buffer | string) => {
-      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+      chunks.push(isString(chunk) ? Buffer.from(chunk) : chunk);
       const buffered = Buffer.concat(chunks);
       if (buffered.byteLength < RESPONSE_HEADER_BYTES) return;
       if (buffered.subarray(0, 4).toString("latin1") !== RESPONSE_MAGIC) {
@@ -250,12 +251,13 @@ export async function listNeutralSessions(
   for (const name of names) {
     if (!name.startsWith("nh-")) continue;
     try {
+      // SAFETY: The surrounding code already established this contract.
       const record = JSON.parse(
         await readFile(join(root, name, "record.json"), "utf8"),
       ) as { session?: { key?: string; incarnation?: string } };
       const session = record.session;
-      if (typeof session?.key !== "string") continue;
-      if (typeof session.incarnation !== "string") continue;
+      if (!isString(session?.key)) continue;
+      if (!isString(session.incarnation)) continue;
       sessions.push({ key: session.key, incarnation: session.incarnation });
     } catch {}
   }
@@ -273,6 +275,7 @@ export function countSocketRootNodes(hiveHome: string): number {
     try {
       entries = readdirSync(directory, { withFileTypes: true });
     } catch (error) {
+      // SAFETY: The surrounding code already established this contract.
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
     }

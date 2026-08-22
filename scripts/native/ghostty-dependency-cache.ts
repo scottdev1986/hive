@@ -19,6 +19,7 @@ if (
 const zig = resolve(zigArg);
 const cache = resolve(cacheArg);
 const manifestPath = resolve(manifestArg);
+// SAFETY: The surrounding code already established this contract.
 const manifest = (await Bun.file(manifestPath).json()) as Record<
   string,
   Dependency

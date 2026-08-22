@@ -85,6 +85,7 @@ describe("runGit", () => {
       child.exited,
     ]);
     if (exitCode !== 0) throw new Error(`timeout fixture failed: ${stderr}`);
+    // SAFETY: The test owns this value and its fields.
     const result = JSON.parse(stdout) as GitResult;
     expect(result.timedOut).toBe(true);
     expect(result.exitCode).not.toBe(0);

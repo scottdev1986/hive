@@ -28,6 +28,7 @@ export type RedactedText = string & { readonly [redactedTextBrand]: true };
 export function redactTerminalEvidence(value: string): RedactedText {
   // The cast is the vouch the brand stands for: both replacements above are
   // what make the text safe to quote.
+  // SAFETY: The surrounding code already established this contract.
   return value
     .replaceAll(ANSI, "")
     .replaceAll(SECRET, "[REDACTED]") as RedactedText;

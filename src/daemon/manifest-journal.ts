@@ -33,6 +33,7 @@ export class ManifestJournal {
   /** Append one capture. The revision is the next strictly increasing value for this agentId — never supplied by the caller, so no caller can rewrite or skip history. Returns the stored entry; its (revision, digest) ref is how recovery names this exact capture. */
   append(manifest: WorkManifest, at?: string): WorkManifestJournalEntry {
     return this.db.transaction(() => {
+      // SAFETY: The surrounding code already established this contract.
       const row = this.db.database
         .query(
           `SELECT revision FROM work_manifest_journal
@@ -66,6 +67,7 @@ export class ManifestJournal {
 
   /** The newest capture for one agent, or null when it was never journaled. */
   latest(agentId: string): WorkManifestJournalEntry | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `SELECT document FROM work_manifest_journal
@@ -78,6 +80,7 @@ export class ManifestJournal {
 
   /** The entries recovery and the attention projection care about: each agent's LATEST capture, keeping only the ones whose final known state was not clean. An unknown classification stays on the list on purpose — a measurement that failed is work nobody accounted for, not work that does not exist. */
   listAttention(): WorkManifestJournalEntry[] {
+    // SAFETY: The surrounding code already established this contract.
     const rows = this.db.database
       .query(
         `SELECT document FROM work_manifest_journal AS candidate

@@ -18,14 +18,14 @@ const HOLD_WINDOW_MS = 60 * 60_000;
 const ALL_DRAINED_WEEKLY_WAIT_MS = 5 * 60 * 60_000;
 
 /** Vendor rate-limit/billing errors that mean DRAIN, not crash. Deliberately small: anything this cannot name stays a crash and feeds the launch-failure quarantine instead. */
-const VENDOR_DRAIN_PATTERNS: Record<CapabilityProvider, readonly RegExp[]> = {
+const VENDOR_DRAIN_PATTERNS = {
   claude: [/rate.?limit/i, /\b429\b/, /credit balance/i, /usage (limit|cap)/i],
   // Codex surfaces "Rate limit reached" and usage-limit errors verbatim.
   codex: [/rate.?limit/i, /\b429\b/, /usage.?limit/i, /quota/i],
   grok: [/rate.?limit/i, /\b429\b/, /quota/i],
   kimi: [/rate.?limit/i, /rate_limit/, /\b429\b/, /quota/i],
   opencode: [/rate.?limit/i, /\b429\b/, /quota/i],
-};
+} satisfies Record<CapabilityProvider, readonly RegExp[]>;
 
 /** Is this failure text the vendor saying "out of usage" — honestly, or not at all? Unknown error shapes are crashes, never drains. */
 export function classifyVendorDrainError(

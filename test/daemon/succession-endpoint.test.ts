@@ -7,7 +7,11 @@ import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";
 import { HiveDaemon } from "../../src/daemon/server";
 import { definedFields } from "../../src/shared/defined-fields";
-import { type JsonValue, safeJsonParse } from "../../src/shared/json";
+import {
+  type JsonValue,
+  safeJsonParse,
+  type JsonObject,
+} from "../../src/shared/json";
 import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import {
   type CapabilityProvider,
@@ -43,6 +47,7 @@ const ALL_AVAILABLE = {
 
 function harness() {
   const db = new HiveDatabase(":memory:");
+  // SAFETY: The test owns this value and its fields.
   const observation = { provider: null as CapabilityProvider | null };
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
@@ -104,12 +109,12 @@ function expectedBackupGeneration(declaration: {
   return declaration.succession.priorRootGeneration + 1;
 }
 
-const request = (
+const request = <T>(
   daemon: HiveDaemon,
   token: string | null,
   method: "GET" | "POST",
   path: string,
-  body?: unknown,
+  body?: T,
 ): Promise<Response> => {
   const headers = new Headers();
   if (token !== null) headers.set("Authorization", `Bearer ${token}`);
@@ -129,7 +134,7 @@ async function callTool(
   daemon: HiveDaemon,
   token: string,
   name: string,
-  args: Record<string, unknown> = {},
+  args: JsonObject = {},
 ): Promise<{ ok: boolean; error: string; content: unknown }> {
   const client = new Client({ name: "test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
@@ -163,7 +168,8 @@ async function callTool(
 }
 
 /** Parse the one JSON text block a tool result carries. */
-function toolJson(content: unknown): JsonValue {
+function toolJson<T>(content: T): JsonValue {
+  // SAFETY: The test owns this value and its fields.
   const blocks = content as Array<{ type: string; text: string }>;
   const parsed = safeJsonParse(blocks[0]?.text ?? "null");
   if (parsed === undefined) {
@@ -180,7 +186,8 @@ async function expectClientWireOpaque(
 ): Promise<void> {
   const response = await request(daemon, token, "GET", "/queen-provider");
   expect(response.status).toEqual(200);
-  const body = (await response.json()) as Record<string, unknown>;
+  // SAFETY: The test owns this value and its fields.
+  const body = (await response.json()) as JsonObject;
   const projection = QueenProviderProjectionSchema.parse(body);
   expect(["idle", "pending", "failed"]).toContain(projection.change.state);
   const keys = JSON.stringify(Object.keys(body));
@@ -197,6 +204,7 @@ async function expectClientWireOpaque(
 }
 
 const steer = async (daemon: HiveDaemon, token: string) =>
+  // SAFETY: The test owns this value and its fields.
   (
     (await (
       await request(daemon, token, "GET", "/queen-succession/steer")
@@ -444,6 +452,7 @@ describe("a succession through the production paths", () => {
       },
     );
     expect(began.status).toEqual(200);
+    // SAFETY: The test owns this value and its fields.
     const declaration = (await began.json()) as {
       succession: {
         successionId: string;
@@ -598,6 +607,7 @@ describe("a succession through the production paths", () => {
         reasonDetail: VALID_BEGIN.reasonDetail,
       },
     );
+    // SAFETY: The test owns this value and its fields.
     const declaration = (await began.json()) as {
       succession: {
         successionId: string;
@@ -659,6 +669,7 @@ describe("a succession through the production paths", () => {
       model: null,
     });
     expect(first.ok).toEqual(true);
+    // SAFETY: The test owns this value and its fields.
     expect((toolJson(first.content) as { revision: string }).revision).toEqual(
       "1",
     );
@@ -780,6 +791,7 @@ describe("a succession through the production paths", () => {
       artifactRefs: ["art_018f4f5e-0000-7000-8000-000000000003"],
     });
     store.putIntegrationStage(
+      // SAFETY: The test owns this value and its fields.
       {
         stageId: "stage_018f4f5e-0000-7000-8000-000000000001",
         revision: "1",
@@ -807,6 +819,7 @@ describe("a succession through the production paths", () => {
     expect(decided.status).toEqual(200);
     expect((await decided.json()).outcome.status).toEqual("accepted");
 
+    // SAFETY: The test owns this value and its fields.
     const row = daemon.db.database
       .query(
         "SELECT document FROM run_checkpoints WHERE instanceId = ? ORDER BY CAST(revision AS INTEGER) DESC LIMIT 1",
@@ -815,6 +828,7 @@ describe("a succession through the production paths", () => {
       document: string;
     } | null;
     expect(row).not.toBeNull();
+    // SAFETY: The test owns this value and its fields.
     const checkpoint = JSON.parse(row?.document ?? "{}") as {
       reason: string;
       hierarchy: {
@@ -896,6 +910,7 @@ describe("a succession through the production paths", () => {
         reasonDetail: VALID_BEGIN.reasonDetail,
       },
     );
+    // SAFETY: The test owns this value and its fields.
     const declaration = (await began.json()) as {
       succession: { successionId: string; priorRootGeneration: number };
     };

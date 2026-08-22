@@ -2,6 +2,7 @@
 import { existsSync } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { isRecord, isString } from "../shared/is-record";
 import {
   type BaseSkillInstallReport,
   globalSkillsRoot,
@@ -30,6 +31,7 @@ import {
 import { projectRootOrCwd } from "../daemon/project-identity-core/project-root";
 import { scaffoldAgentStandardsMd } from "../daemon/spawn/agent-standards";
 import { errorMessage } from "../shared/error-message";
+import type { JsonValue } from "../shared/json";
 
 export { HIVE_GITIGNORE_ENTRIES } from "./repo-gitignore";
 
@@ -349,24 +351,23 @@ async function provisionEmbeddings(deps: InitDeps): Promise<string> {
 }
 
 export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
-  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  const parsed: JsonValue = JSON.parse(await readFile(path, "utf8"));
   if (!Array.isArray(parsed)) {
     throw new Error("--seed-facts file must contain a JSON array of facts");
   }
   return parsed.map((entry) => {
-    if (
-      typeof entry !== "object" ||
-      entry === null ||
-      typeof (entry as { title?: unknown }).title !== "string" ||
-      typeof (entry as { body?: unknown }).body !== "string"
-    ) {
+    if (!isRecord(entry) || !isString(entry.title) || !isString(entry.body)) {
       throw new Error("each seed fact needs a string title and body");
     }
-    const fact = entry as InitFact;
     return {
-      title: fact.title,
-      body: fact.body,
-      ...definedFields({ id: fact.id, tags: fact.tags }),
+      title: entry.title,
+      body: entry.body,
+      ...definedFields({
+        id: isString(entry.id) ? entry.id : undefined,
+        tags: Array.isArray(entry.tags)
+          ? entry.tags.filter(isString)
+          : undefined,
+      }),
     };
   });
 }

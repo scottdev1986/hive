@@ -137,6 +137,7 @@ test("claude's plugin manifest names the namespace her skills arrive under", asy
 
   await provisionQueenSkills(repo, "claude", queen, join(queen, "no-global"));
 
+  // SAFETY: The test owns this value and its fields.
   const manifest = JSON.parse(
     await readFile(
       join(claudeQueenPluginRoot(queen), ".claude-plugin", "plugin.json"),

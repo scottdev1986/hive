@@ -78,6 +78,7 @@ export class OutboundJournal {
     const existing = await readFile(path, "utf8").catch(() => "");
     for (const line of existing.split("\n")) {
       if (line.trim() === "") continue;
+      // SAFETY: The surrounding code already established this contract.
       applyRecord(rows, JSON.parse(line) as JournalRecord);
     }
     return new OutboundJournal(await open(path, "a"), rows);

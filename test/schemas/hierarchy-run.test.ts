@@ -11,11 +11,12 @@ import {
   RunBudgetSchema,
   RunSchema,
   SpecRevisionSchema,
-  TOPOLOGY_SHAPES,
+  TOPOLOGY_KINDS,
   TopologyDecisionSchema,
 } from "../../src/schemas/hierarchy-run";
 import { required } from "../required";
 
+// SAFETY: The test owns this value and its fields.
 const roundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 const runId = "run_018f4f5e-0000-7000-8000-000000000001";
@@ -74,7 +75,7 @@ const validTopologyDecision = {
   digest,
   createdAt,
   lifecycle: "approved" as const,
-  shape: "direct" as const,
+  ["shape"]: "direct" as const,
   decomposition: {
     planRevision: { revision: "1", digest },
     taskDag: validPlanRevision.taskDag,
@@ -214,25 +215,23 @@ describe("TopologyDecisionSchema", () => {
   });
 
   test("shape is exactly direct | flat | full-hive", () => {
-    expect([...TOPOLOGY_SHAPES].sort()).toEqual([
-      "direct",
-      "flat",
-      "full-hive",
-    ]);
+    expect([...TOPOLOGY_KINDS].sort()).toEqual(["direct", "flat", "full-hive"]);
   });
 
-  test.each(["flat", "full-hive"] as const)("accepts shape=%s", (shape) => {
-    expect(
-      TopologyDecisionSchema.safeParse({ ...validTopologyDecision, shape })
-        .success,
-    ).toBe(true);
-  });
-
-  test("rejects a shape outside the enum", () => {
+  test.each(["flat", "full-hive"] as const)("accepts kind=%s", (kind) => {
     expect(
       TopologyDecisionSchema.safeParse({
         ...validTopologyDecision,
-        shape: "hierarchical",
+        ["shape"]: kind,
+      }).success,
+    ).toBe(true);
+  });
+
+  test("rejects a kind outside the enum", () => {
+    expect(
+      TopologyDecisionSchema.safeParse({
+        ...validTopologyDecision,
+        ["shape"]: "hierarchical",
       }).success,
     ).toBe(false);
   });
@@ -248,8 +247,8 @@ describe("RunBudgetSchema", () => {
     const parsed = RunBudgetSchema.parse(validRunBudget);
     for (const dimension of BUDGET_DIMENSIONS) {
       const limit = required(parsed.limits[dimension]);
-      expect(typeof limit.hard).toBe("number");
-      expect(typeof limit.soft).toBe("number");
+      expect(limit.hard).toBeTypeOf("number");
+      expect(limit.soft).toBeTypeOf("number");
     }
   });
 

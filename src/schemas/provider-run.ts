@@ -2,6 +2,7 @@ import { z } from "zod";
 import { type JsonValue, requireJsonValue } from "../shared/json";
 import { CapabilityProviderSchema } from "./provider";
 import { SessionLocatorSchema } from "./session-protocol";
+import { isRecord } from "../shared/is-record";
 
 export const AdapterChildIdentitySchema = z
   .strictObject({
@@ -84,7 +85,7 @@ export const ProviderRunBindingSchema = z
 
 export const ProviderRunSchema = z
   .strictObject({
-    ...ProviderRunBindingSchema.unwrap().shape,
+    ...ProviderRunBindingSchema.unwrap()["shape"],
     adapterChild: AdapterChildIdentitySchema.nullable(),
     protocolReceipt: ProviderProtocolReceiptSchema.nullable(),
     state: z.enum(["running", "exited"]),
@@ -119,9 +120,9 @@ export const ProviderRunSchema = z
 
 export type ProviderRun = z.infer<typeof ProviderRunSchema>;
 
-export function migrateStoredProviderRun(value: unknown): JsonValue {
+export function migrateStoredProviderRun<T>(value: T): JsonValue {
   const json = requireJsonValue(value, "stored provider run");
-  if (typeof json !== "object" || json === null || Array.isArray(json)) {
+  if (!isRecord(json)) {
     return json;
   }
   if (!("pid" in json) && !("foregroundProcessGroupId" in json)) {

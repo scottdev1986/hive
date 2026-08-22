@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { persistAutonomy, upsertAutonomy } from "../../src/config/autonomy";
 import { hiveConfigPath } from "../../src/config/load";
+import type { JsonObject } from "../../src/shared/json";
 
 describe("upsertAutonomy", () => {
   test("an empty file becomes exactly the assignment", () => {
@@ -39,7 +40,8 @@ describe("upsertAutonomy", () => {
     const text = ["[resources]", 'autonomy = "whatever"', ""].join("\n");
     const result = upsertAutonomy(text, "sandboxed");
     // Inserted at the top, above the table, so it parses as top-level.
-    const parsed = Bun.TOML.parse(result) as Record<string, unknown>;
+    // SAFETY: The test owns this value and its fields.
+    const parsed = Bun.TOML.parse(result) as JsonObject;
     expect(parsed.autonomy).toEqual("sandboxed");
     expect(result).toContain('autonomy = "whatever"');
   });
@@ -65,18 +67,15 @@ describe("persistAutonomy", () => {
     roots.push(root);
     const path = join(root, "config.toml");
     await persistAutonomy("dangerous", path);
-    const parsed = Bun.TOML.parse(await readFile(path, "utf8")) as Record<
-      string,
-      unknown
-    >;
+    // SAFETY: The test owns this value and its fields.
+    const parsed = Bun.TOML.parse(await readFile(path, "utf8")) as JsonObject;
     expect(parsed.autonomy).toEqual("dangerous");
     // Flip it back: the same file updates rather than doubling the key.
     await persistAutonomy("sandboxed", path);
     const text = await readFile(path, "utf8");
     expect(text.match(/autonomy/g)).toHaveLength(1);
-    expect((Bun.TOML.parse(text) as Record<string, unknown>).autonomy).toEqual(
-      "sandboxed",
-    );
+    // SAFETY: The test owns this value and its fields.
+    expect((Bun.TOML.parse(text) as JsonObject).autonomy).toEqual("sandboxed");
   });
 
   test("concurrent writes resolve in request order and leave no staging file", async () => {
@@ -89,10 +88,8 @@ describe("persistAutonomy", () => {
       persistAutonomy("sandboxed", path),
     ]);
 
-    const parsed = Bun.TOML.parse(await readFile(path, "utf8")) as Record<
-      string,
-      unknown
-    >;
+    // SAFETY: The test owns this value and its fields.
+    const parsed = Bun.TOML.parse(await readFile(path, "utf8")) as JsonObject;
     expect(parsed.autonomy).toBe("sandboxed");
     expect(await readdir(root)).toEqual(["config.toml"]);
   });
@@ -104,9 +101,10 @@ describe("persistAutonomy", () => {
     process.env.HIVE_HOME = root;
     try {
       await persistAutonomy("dangerous");
+      // SAFETY: The test owns this value and its fields.
       const parsed = Bun.TOML.parse(
         await readFile(hiveConfigPath(), "utf8"),
-      ) as Record<string, unknown>;
+      ) as JsonObject;
       expect(parsed.autonomy).toEqual("dangerous");
     } finally {
       if (original === undefined) {

@@ -2,6 +2,7 @@
 import { Database } from "bun:sqlite";
 import { definedFields } from "../shared/defined-fields";
 import { z } from "zod";
+import { isString } from "../shared/is-record";
 import type {
   StatusFreshness,
   StatusService,
@@ -17,6 +18,7 @@ import type { TokenUsageStore } from "../usage-service/token-usage";
 import type { EpisodicStore } from "./episodic";
 import { ftsQueryPasses, type MemoryIndex } from "./fts-index";
 import { listMemoryFacts } from "./memory-store";
+import type { JsonObject } from "../shared/json";
 
 export const MemoryQueryInputSchema = z.object({
   class: MemoryQueryClassSchema,
@@ -34,7 +36,7 @@ export const MemoryQueryInputSchema = z.object({
 export type MemoryQueryInput = z.infer<typeof MemoryQueryInputSchema>;
 
 /** Server-enforced per-class token ceilings. Chars/4 estimation — the same order as graphify's token_budget accounting, deterministic in tests. */
-export const DEFAULT_CLASS_BUDGETS: Record<MemoryQueryClass, number> = {
+export const DEFAULT_CLASS_BUDGETS = {
   "agent-now": 400,
   "agent-history": 800,
   "fleet-summary": 1200,
@@ -44,9 +46,9 @@ export const DEFAULT_CLASS_BUDGETS: Record<MemoryQueryClass, number> = {
   "point-search": 1000,
   "my-history": 800,
   "pitfall-check": 600,
-};
+} satisfies Record<MemoryQueryClass, number>;
 
-export const estimateTokens = (value: unknown): number =>
+export const estimateTokens = <T>(value: T): number =>
   estimateTokensForValue(value);
 
 export interface MemoryQueryEnvelope {
@@ -227,7 +229,7 @@ function fleetAgents(
       const agentId =
         event.entity.kind === "agent"
           ? event.entity.id
-          : typeof event.data.agentId === "string"
+          : isString(event.data.agentId)
             ? event.data.agentId
             : null;
       if (agentId !== null) agents.add(agentId);
@@ -467,7 +469,8 @@ async function runClass(
         }),
       });
       return finish(
-        rows.map((row) => ({ ...row }) as Record<string, unknown>),
+        // SAFETY: The surrounding code already established this contract.
+        rows.map((row) => ({ ...row }) as JsonObject),
         `no episodic events match "${input.query}"`,
         ["episodic-fts"],
       );

@@ -20,6 +20,7 @@ import { ProtocolSessionFactsReportSchema } from "../../src/schemas/token-usage-
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
+// SAFETY: The test owns this value and its fields.
 const roundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 describe("HiveConfigSchema", () => {

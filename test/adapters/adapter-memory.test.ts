@@ -172,6 +172,7 @@ describe("raw observations and compiled articles", () => {
   test("rejects malformed writes before creating memory files", async () => {
     const root = await makeRoot();
     await expect(
+      // SAFETY: The test owns this value and its fields.
       writeMemoryFact(root, {
         ...input(),
         topic: "Not A Topic",

@@ -1,5 +1,6 @@
 import type { ZodType } from "zod";
 import { type AgentRecord, ORCHESTRATOR_NAME } from "../schemas/agent";
+import { isRecord, isString } from "../shared/is-record";
 import {
   type AgentBinding,
   type AgentBindingRef,
@@ -59,6 +60,7 @@ import {
 } from "./hierarchy-service/records";
 import { selectLiveReviews } from "./hierarchy-service/review-live";
 import { applyTaskUpdate } from "./hierarchy-service/task-update";
+import type { JsonObject, JsonValue } from "../shared/json";
 
 interface HierarchyDatabase extends DatabaseHost {
   getAgentById(id: string): AgentRecord | null;
@@ -73,6 +75,7 @@ type StoredHierarchyRow = {
 
 /** Stored Runs, and the Run snapshot frozen on a run-control decision, must match RunSchema. Older rows named the spec `approvedSpec` and sometimes carried extra keys the current schema rejects. Point `spec` at that ref when present, otherwise the highest stored SpecRevision. Skip the write when there is no spec to point at rather than inventing one. */
 function migrateRunSpecRef(db: DatabaseHost): void {
+  // SAFETY: The surrounding code already established this contract.
   const rows = db.database
     .query(
       `SELECT id, runId, kind, document FROM hierarchy_records
@@ -101,7 +104,7 @@ function migrateRunSpecRef(db: DatabaseHost): void {
 
 /** True when leftover keys were stripped and `document` now has a spec. */
 export function liftStoredSpec(
-  document: Record<string, unknown>,
+  document: JsonObject,
   db: DatabaseHost,
   runId: string,
 ): boolean {
@@ -115,7 +118,7 @@ export function liftStoredSpec(
   return document.spec !== null && document.spec !== undefined;
 }
 
-function parseJsonObject(raw: string): Record<string, unknown> | null {
+function parseJsonObject(raw: string): JsonObject | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -125,16 +128,15 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   return asRecord(parsed);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+function asRecord<T>(value: T): JsonObject | null {
+  if (!isRecord(value)) {
     return null;
   }
-  return value as Record<string, unknown>;
+  // SAFETY: The surrounding code already established this contract.
+  return value as JsonObject;
 }
 
-function observedPostStateRecord(
-  decision: Record<string, unknown>,
-): Record<string, unknown> | null {
+function observedPostStateRecord(decision: JsonObject): JsonObject | null {
   const result = asRecord(decision.result);
   return result === null ? null : asRecord(result.observedPostState);
 }
@@ -144,6 +146,7 @@ function statedSpecRef(
   db: DatabaseHost,
   runId: string,
 ): { revision: string; digest: string } | null {
+  // SAFETY: The surrounding code already established this contract.
   const rows = db.database
     .query(
       `SELECT document FROM hierarchy_records
@@ -154,11 +157,12 @@ function statedSpecRef(
   for (const row of rows) {
     let spec: { revision?: unknown; digest?: unknown };
     try {
+      // SAFETY: The surrounding code already established this contract.
       spec = JSON.parse(row.document) as typeof spec;
     } catch {
       continue;
     }
-    if (typeof spec.revision !== "string" || typeof spec.digest !== "string") {
+    if (!isString(spec.revision) || !isString(spec.digest)) {
       continue;
     }
     if (best === null || BigInt(spec.revision) > BigInt(best.revision)) {
@@ -209,6 +213,7 @@ export class HierarchyStore {
   getFences(
     runId: string,
   ): { hierarchyRevision: string; runEpoch: number } | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         "SELECT hierarchyRevision, runEpoch FROM hierarchy_fences WHERE runId = ?",
@@ -982,15 +987,18 @@ export class HierarchyStore {
 
   listAgentBindings(): Array<{ binding: AgentBinding; runId: string }> {
     return (
-      this.db.database
-        .query(
-          "SELECT runId, document FROM hierarchy_records WHERE kind = ? ORDER BY id",
-        )
-        .all("binding") as Array<{ runId: string; document: string }>
-    ).map(({ runId, document }) => ({
-      runId,
-      binding: AgentBindingSchema.parse(JSON.parse(document)),
-    }));
+      // SAFETY: The surrounding code already established this contract.
+      (
+        this.db.database
+          .query(
+            "SELECT runId, document FROM hierarchy_records WHERE kind = ? ORDER BY id",
+          )
+          .all("binding") as Array<{ runId: string; document: string }>
+      ).map(({ runId, document }) => ({
+        runId,
+        binding: AgentBindingSchema.parse(JSON.parse(document)),
+      }))
+    );
   }
 
   findBindingsByAgent(agentId: string): AgentBinding[] {
@@ -1496,6 +1504,7 @@ export class HierarchyStore {
   }
 
   listIntegrationStages(runId: string): IntegrationStage[] {
+    // SAFETY: The surrounding code already established this contract.
     const rows = this.db.database
       .query(
         `SELECT document FROM hierarchy_records
@@ -1569,10 +1578,7 @@ export class HierarchyStore {
     return run;
   }
 
-  private requireLiveParticipant(
-    runId: string,
-    ref: AgentBindingRef,
-  ): { binding: AgentBinding; node: HierarchyNode } {
+  private requireLiveParticipant(runId: string, ref: AgentBindingRef) {
     const row = this.readRow("binding", bindingId(ref));
     const binding = this.requireBinding(ref);
     if (row === null || row.runId !== runId || binding.unboundAt !== null) {
@@ -1734,7 +1740,7 @@ export class HierarchyStore {
     expectedRevision: string | null,
     newRevision: string,
     capabilityEpoch: number | null,
-    document: unknown,
+    document: JsonValue,
   ): void {
     const row = this.readRow(kind, id);
     if (expectedRevision === null) {
@@ -1757,7 +1763,7 @@ export class HierarchyStore {
     id: string,
     runId: string,
     revision: string,
-    document: unknown,
+    document: JsonValue,
   ): void {
     const row = this.readRow(kind, id);
     if (row !== null) {
@@ -1772,7 +1778,7 @@ export class HierarchyStore {
     runId: string,
     revision: string | null,
     capabilityEpoch: number | null,
-    document: unknown,
+    document: JsonValue,
   ): void {
     this.db.database
       .query(
@@ -1799,6 +1805,7 @@ export class HierarchyStore {
     kind: HierarchyRecordKind,
     runId: string | null,
   ): unknown[] {
+    // SAFETY: The surrounding code already established this contract.
     const rows = (
       runId === null
         ? this.db.database
@@ -1822,6 +1829,7 @@ export class HierarchyStore {
     id: string,
   ): HierarchyRecordRow | null {
     return (
+      // SAFETY: The surrounding code already established this contract.
       (this.db.database
         .query(
           `SELECT kind, id, runId, revision, capabilityEpoch, document

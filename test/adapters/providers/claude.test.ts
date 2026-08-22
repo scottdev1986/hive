@@ -28,6 +28,7 @@ import {
 import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/providers/shared/graphify-hook";
 import { hiveInstanceSuffix } from "../../../src/hive-home/home";
 import { tempRootAsync as tempDir } from "../../temp-root";
+import type { JsonObject } from "../../../src/shared/json";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -52,6 +53,7 @@ async function readPermissions(root: string): Promise<{
   deny: string[];
   allow: string[];
 }> {
+  // SAFETY: The adapter owns settings.local.json and writes this permissions contract.
   const settings = JSON.parse(
     await readFile(join(root, ".claude", "settings.local.json"), "utf8"),
   ) as {
@@ -319,12 +321,13 @@ describe("Claude adapter", () => {
       graphifyUrl: "http://127.0.0.1:7777/mcp",
     });
 
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
         "utf8",
       ),
-    ) as { hooks: Record<string, unknown> };
+    ) as { hooks: JsonObject };
 
     const registered = Object.keys(settings.hooks);
     // Positive control: an all-empty read is a bad key, not an empty world.
@@ -343,6 +346,7 @@ describe("Claude adapter", () => {
       providerRunId: "3f2b1a90-0000-4000-8000-000000000001",
     });
 
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -370,6 +374,7 @@ describe("Claude adapter", () => {
       dangerous: true,
     });
 
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -403,6 +408,7 @@ describe("Claude adapter", () => {
       dangerous: true,
     });
 
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -453,6 +459,7 @@ describe("Claude adapter", () => {
       dangerous: true,
       hiveCommand: ["hive"],
     });
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -490,6 +497,7 @@ describe("Claude adapter", () => {
       readOnly: true,
     });
 
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -500,6 +508,7 @@ describe("Claude adapter", () => {
       hooks: Record<string, { hooks: { command: string }[] }[]>;
       permissions: { defaultMode: string; deny: string[]; allow: string[] };
     };
+    // SAFETY: writeClaudeAgentConfig just wrote this owned MCP contract.
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as {
@@ -628,9 +637,11 @@ describe("Claude adapter", () => {
       readOnly: false,
       graphifyUrl: "http://127.0.0.1:7799/mcp",
     });
+    // SAFETY: writeClaudeAgentConfig just wrote this owned MCP contract.
     const withGraph = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as { mcpServers: Record<string, { type: string; url: string }> };
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const withGraphSettings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -683,9 +694,11 @@ describe("Claude adapter", () => {
       daemonPort: 4317,
       readOnly: false,
     });
+    // SAFETY: The rewrite owns the MCP contract and removes the optional graphify entry.
     const without = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
-    ) as { mcpServers: Record<string, unknown> };
+    ) as { mcpServers: JsonObject };
+    // SAFETY: The rewrite owns the settings contract and removes the graphify hook.
     const withoutSettings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -755,6 +768,7 @@ describe("Claude adapter", () => {
       readOnly: false,
     });
 
+    // SAFETY: writeClaudeAgentConfig just merged this owned settings contract.
     const settings = JSON.parse(
       await readFile(join(claudeDirectory, "settings.local.json"), "utf8"),
     ) as {
@@ -766,6 +780,7 @@ describe("Claude adapter", () => {
       };
       hooks: Record<string, { hooks: { command?: string }[] }[]>;
     };
+    // SAFETY: writeClaudeAgentConfig just merged this owned MCP contract.
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as {
@@ -825,6 +840,7 @@ describe("Claude adapter", () => {
       readOnly: true,
     });
 
+    // SAFETY: writeClaudeAgentConfig just rewrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -846,6 +862,7 @@ describe("Claude adapter", () => {
       daemonPort: 4317,
       readOnly: false,
     });
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -866,6 +883,7 @@ describe("Claude adapter", () => {
       daemonPort: 4317,
       readOnly: false,
     });
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -886,6 +904,7 @@ describe("Claude Hive integration", () => {
       readOnly: true,
       hiveCommand: [hive],
     });
+    // SAFETY: writeClaudeAgentConfig just wrote this owned settings contract.
     const settings = JSON.parse(
       await readFile(
         join(worktreePath, ".claude", "settings.local.json"),
@@ -895,6 +914,7 @@ describe("Claude Hive integration", () => {
       hooks: { SessionStart: Array<{ hooks: Array<{ command: string }> }> };
       statusLine?: unknown;
     };
+    // SAFETY: writeClaudeAgentConfig just wrote this owned MCP contract.
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as {
@@ -932,9 +952,10 @@ describe("Claude Hive integration", () => {
       daemonPort: 4317,
       readOnly: false,
     });
+    // SAFETY: writeClaudeAgentConfig just wrote this owned MCP contract.
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
-    ) as { mcpServers: Record<string, Record<string, unknown>> };
+    ) as { mcpServers: Record<string, JsonObject> };
 
     expect(mcp.mcpServers.hive).toEqual({
       type: "http",

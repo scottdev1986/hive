@@ -6,6 +6,7 @@ import {
   type WorkspaceOrchestratorSnapshot,
 } from "../../../src/cli/workspace-feed";
 import type { AgentRecord } from "../../../src/schemas/agent";
+import type { JsonObject } from "../../../src/shared/json";
 
 const OBSERVED_AT = "2026-07-13T12:00:00.000Z";
 
@@ -96,9 +97,7 @@ export const workspaceFeedAgentFixture: AgentRecord = {
   writeRevoked: false,
 };
 
-export async function buildWorkspaceFeedSnapshotFixture(): Promise<
-  Record<string, unknown>
-> {
+export async function buildWorkspaceFeedSnapshotFixture(): Promise<JsonObject> {
   const controller = new AbortController();
   const lines: string[] = [];
   const exitCode = await runWorkspaceFeed(4483, {
@@ -127,7 +126,8 @@ export async function buildWorkspaceFeedSnapshotFixture(): Promise<
       `workspace feed fixture produced exit ${exitCode} and ${lines.length} lines`,
     );
   }
-  return JSON.parse(lines[0]) as Record<string, unknown>;
+  // SAFETY: The test owns this value and its fields.
+  return JSON.parse(lines[0]) as JsonObject;
 }
 
 export const renderWorkspaceFeedSnapshotFixture = async (): Promise<string> =>

@@ -1,4 +1,5 @@
 import type { MeasuredProviderCapabilities } from "../../schemas/capability";
+import { isNumber, isRecord, isString } from "../../shared/is-record";
 import {
   ATTENTION_STATES,
   HEALTH_STATES,
@@ -182,13 +183,17 @@ const sourceRank = (kind: SourceKind): number => {
   }
 };
 
-const enumValue = <T extends string>(
-  value: unknown,
+const enumValue = <T extends string, V>(
+  value: V,
   allowed: readonly T[],
-): T | null =>
-  typeof value === "string" && allowed.includes(value as T)
-    ? (value as T)
-    : null;
+): T | null => {
+  if (!isString(value)) return null;
+  const text: string = value;
+  for (const option of allowed) {
+    if (option === text) return option;
+  }
+  return null;
+};
 
 const ageMilliseconds = (observedAt: string, now: Date): number =>
   Math.max(0, now.getTime() - Date.parse(observedAt));
@@ -269,10 +274,9 @@ const belongsToAgent = (
   if (event.entity.kind === "agent" && event.entity.id === agentId) {
     const binding = event.data.binding;
     const reportGeneration =
-      typeof binding === "object" &&
-      binding !== null &&
+      isRecord(binding) &&
       "incarnationGeneration" in binding &&
-      typeof binding.incarnationGeneration === "number"
+      isNumber(binding.incarnationGeneration)
         ? binding.incarnationGeneration
         : undefined;
     return (
@@ -285,7 +289,7 @@ const belongsToAgent = (
   const eventGeneration =
     event.entity.kind === "session"
       ? event.entity.generation
-      : typeof event.data.incarnationGeneration === "number"
+      : isNumber(event.data.incarnationGeneration)
         ? event.data.incarnationGeneration
         : undefined;
   return (
@@ -309,29 +313,27 @@ const reportFrom = (
   const phase = enumValue(event.data.phase, STATUS_PHASES);
   if (
     phase === null ||
-    typeof event.data.summary !== "string" ||
-    typeof event.data.assignmentId !== "string" ||
-    typeof event.data.assignmentGeneration !== "string" ||
-    typeof event.data.freshUntil !== "string"
+    !isString(event.data.summary) ||
+    !isString(event.data.assignmentId) ||
+    !isString(event.data.assignmentGeneration) ||
+    !isString(event.data.freshUntil)
   )
     return null;
   const freshness =
     now.getTime() <= Date.parse(event.data.freshUntil) ? "fresh" : "stale";
   return {
     phase,
-    progress:
-      typeof event.data.progress === "number" ? event.data.progress : null,
+    progress: isNumber(event.data.progress) ? event.data.progress : null,
     summary: event.data.summary,
-    blocker: typeof event.data.blocker === "string" ? event.data.blocker : null,
+    blocker: isString(event.data.blocker) ? event.data.blocker : null,
     evidenceRefs: Array.isArray(event.data.evidenceRefs)
-      ? event.data.evidenceRefs.filter(
-          (value): value is string => typeof value === "string",
+      ? event.data.evidenceRefs.filter((value): value is string =>
+          isString(value),
         )
       : [],
-    nextCheckpoint:
-      typeof event.data.nextCheckpoint === "string"
-        ? event.data.nextCheckpoint
-        : null,
+    nextCheckpoint: isString(event.data.nextCheckpoint)
+      ? event.data.nextCheckpoint
+      : null,
     assignmentId: event.data.assignmentId,
     assignmentGeneration: event.data.assignmentGeneration,
     freshUntil: event.data.freshUntil,
@@ -387,7 +389,7 @@ export function fuseAgentStatus(
     events
       .filter((event) => event.kind === "status.attention-resolved")
       .map((event) => event.data.causeEventId)
-      .filter((value): value is string => typeof value === "string"),
+      .filter((value): value is string => isString(value)),
   );
 
   for (const event of events) {
@@ -413,6 +415,7 @@ export function fuseAgentStatus(
       isActiveAttentionEvent(event) &&
       !resolvedAttention.has(event.eventId)
     ) {
+      // SAFETY: The surrounding code already established this contract.
       const value = event.data.value as Attention;
       attentionEvents.push({
         value,
@@ -466,7 +469,7 @@ export function fuseAgentStatus(
     );
   }
 
-  const fields: Record<StatusDimension, StatusField<string> | null> = {
+  const fields = {
     session: sessionState,
     runtime: runtimeState,
     turn: turnState,
@@ -474,7 +477,7 @@ export function fuseAgentStatus(
     mail: mailState,
     health: healthState,
     attention,
-  };
+  } satisfies Record<StatusDimension, StatusField<string> | null>;
   // The newest event a dimension ever produced, even one whose value was superseded or dropped: it is what separates "went quiet" from "never spoke", and those are different facts.
   const lastHeard = new Map<StatusDimension, string>();
   for (const event of events) {

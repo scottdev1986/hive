@@ -1,6 +1,8 @@
 // Hive's durable memory on disk: what agents have learned about a repository, kept as plain Markdown rather than rows in the database. The database is Hive's runtime state and is expected to be thrown away and rebuilt. Memory is not — it has to survive that, be readable by a user who has never run Hive, and be diffable in the repository it describes. Hence files with frontmatter, and hence every index in here being derived: a lost index is rebuilt from the articles, and an article is never rebuilt from an index. Two scopes, chosen by the writer: `repo` under the checkout's own `.hive`, travelling with the project; `global` under `~/.hive`, for what holds across every repository on this machine. Two layers within a scope, and the distinction is the heart of the design: - `raw/` — observations, append-only. One file per thing an agent claimed, never edited, never deleted. - `wiki/` — articles, one per subject, rewritten as understanding changes. Each carries `raw:` pointers back to the observations behind it. So an article can be corrected without destroying the evidence that produced the earlier version, and a reader can always get from a current claim back to who observed what. Superseding an article deletes the article and keeps its raw files, which is why `supersedes` is required to change one.
 
 import type { Dirent } from "node:fs";
+import { isErrnoCode } from "../shared/error-message";
+import { isRecord, isString } from "../shared/is-record";
 import {
   appendFile,
   cp,
@@ -40,6 +42,7 @@ import type {
   MemoryMigrationReport,
   MemoryWriteFileResult,
 } from "./store-records";
+import type { JsonObject, JsonValue } from "../shared/json";
 
 export {
   normalizeTitle,
@@ -54,11 +57,8 @@ export type {
   MemoryWriteFileResult,
 } from "./store-records";
 
-const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  error.code === "ENOENT";
+const isMissingFileError = <T>(error: T): boolean =>
+  isErrnoCode(error, "ENOENT");
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -587,8 +587,12 @@ async function discoverLegacyFacts(
   return facts;
 }
 
+interface LegacyTopicAliases {
+  readonly [tag: string]: string | undefined;
+}
+
 function legacyTopic(fact: LegacyFact): string {
-  const aliases: Record<string, string> = {
+  const aliases: LegacyTopicAliases = {
     router: "routing",
     routing: "routing",
     model: "routing",
@@ -633,22 +637,23 @@ async function migrationMarker(
   scope: MemoryScope,
 ): Promise<{ backup: string; completedAt: string } | null> {
   try {
-    const parsed: unknown = JSON.parse(
+    const parsed: JsonValue = JSON.parse(
       await readFile(
         join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER),
         "utf8",
       ),
     );
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    if (!isRecord(parsed))
       throw new Error("Invalid legacy memory migration marker");
-    const record = parsed as Record<string, unknown>;
+    // SAFETY: The surrounding code already established this contract.
+    const record = parsed as JsonObject;
     if (
       Object.keys(record).some(
         (key) => key !== "backup" && key !== "completedAt",
       ) ||
-      typeof record.backup !== "string" ||
+      !isString(record.backup) ||
       record.backup.length === 0 ||
-      typeof record.completedAt !== "string" ||
+      !isString(record.completedAt) ||
       !Number.isFinite(Date.parse(record.completedAt))
     )
       throw new Error("Invalid legacy memory migration marker");
@@ -678,13 +683,7 @@ async function backupLegacyMemory(
       });
       return destination;
     } catch (error) {
-      if (!(
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ERR_FS_CP_EEXIST"
-      ))
-        throw error;
+      if (!isErrnoCode(error, "ERR_FS_CP_EEXIST")) throw error;
       destination = join(backupRoot, `legacy-v1-${timestamp}-${suffix}`);
       suffix += 1;
     }
@@ -765,13 +764,7 @@ async function migrateLegacyScope(
       try {
         await writeFile(destination, old.contents, { flag: "wx" });
       } catch (error) {
-        if (!(
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code === "EEXIST"
-        ))
-          throw error;
+        if (!isErrnoCode(error, "EEXIST")) throw error;
         if ((await readFile(destination, "utf8")) !== old.contents) {
           throw new Error(
             `Legacy raw destination already contains different evidence: ${destination}`,

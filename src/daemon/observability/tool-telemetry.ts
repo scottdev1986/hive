@@ -1,5 +1,5 @@
 import { open } from "node:fs/promises";
-import { isRecord } from "../../shared/is-record";
+import { isRecord, isString } from "../../shared/is-record";
 import { safeJsonParse } from "../../shared/json";
 import type { AgentRecord } from "../../schemas/agent";
 import type { HiveDatabase } from "../database/hive-database";
@@ -61,7 +61,7 @@ export function lastGrokTurnCompleted(tail: string): boolean | null {
     const entry = entries[index];
     if (!isRecord(entry) || !isRecord(entry.params)) continue;
     const update = entry.params.update;
-    if (!isRecord(update) || typeof update.sessionUpdate !== "string") continue;
+    if (!isRecord(update) || !isString(update.sessionUpdate)) continue;
     return update.sessionUpdate === "turn_completed";
   }
   return null;

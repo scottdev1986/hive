@@ -161,6 +161,7 @@ describe("durable session ref", () => {
       () => "2026-08-02T12:00:00.000Z",
     );
 
+    // SAFETY: The test owns this value and its fields.
     const record = JSON.parse(
       await readFile(store, "utf8"),
     ) as DurableSessionRecord;

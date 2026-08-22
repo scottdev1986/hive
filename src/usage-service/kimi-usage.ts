@@ -5,6 +5,7 @@ import { kimiHome } from "../adapters/providers/kimi-cli";
 import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 import { systemNow } from "../shared/clock";
+import type { JsonValue } from "../shared/json";
 
 /** Kimi's usage surface: `GET {baseUrl}/usages`, the same endpoint the CLI's own /usage panel calls (verified against kimi 0.28.1). It answers with the account's plan windows — the weekly quota and a rolling 300-minute rate window — and it is UNAUTHENTICATED-shaped like every other vendor surface: a bearer minted by the CLI's OAuth flow, read from the CLI's own credential file, never from anything Hive stores. The credential file is `$KIMI_CODE_HOME/credentials/kimi-code.json`. An expired access token is refreshed with the exact grant the CLI performs (contract read from the 0.28.1 binary): a form POST to `{oauthHost}/api/oauth/token` with the CLI's public client_id, and the rotated credential written back to the same 0600 file — which is what the CLI itself does, so the CLI stays in sync. Every failure — missing file, dead refresh, HTTP error, shape change — is an honest unknown, never a guess and never a stale-as-truth reading. */
 
@@ -237,7 +238,7 @@ export class KimiHttpUsageTransport implements KimiUsageTransport {
         reason: `kimi credential refresh failed: ${errorMessage(error)}`,
       };
     }
-    const body: unknown = await response.json().catch(() => null);
+    const body: JsonValue = await response.json().catch(() => null);
     if (response.status !== 200) {
       return {
         status: "unavailable",

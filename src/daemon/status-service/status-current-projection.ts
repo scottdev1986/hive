@@ -1,3 +1,4 @@
+import { isString } from "../../shared/is-record";
 import {
   ATTENTION_STATES,
   HEALTH_STATES,
@@ -43,13 +44,17 @@ type StatusCandidate =
       value: (typeof HEALTH_STATES)[number];
     }>;
 
-const enumValue = <T extends string>(
-  value: unknown,
+const enumValue = <T extends string, V>(
+  value: V,
   allowed: readonly T[],
-): T | null =>
-  typeof value === "string" && allowed.includes(value as T)
-    ? (value as T)
-    : null;
+): T | null => {
+  if (!isString(value)) return null;
+  const text: string = value;
+  for (const option of allowed) {
+    if (option === text) return option;
+  }
+  return null;
+};
 
 export function statusCandidateForEvent(
   event: WorkspaceEventV2,

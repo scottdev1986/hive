@@ -34,6 +34,7 @@ import {
   MAIL_WORK_DIGEST_MAX,
 } from "../../src/schemas/mail";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 const T0 = new Date("2026-08-01T12:00:00.000Z");
 const at = (seconds: number): Date => new Date(T0.getTime() + seconds * 1_000);
@@ -68,7 +69,7 @@ const store = (
   recipients: resolver(overrides),
 });
 
-const control = (overrides: Record<string, unknown> = {}) => ({
+const control = (overrides: JsonObject = {}) => ({
   from: "queen",
   to: "ada",
   lane: "control",
@@ -78,7 +79,7 @@ const control = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const work = (overrides: Record<string, unknown> = {}) => ({
+const work = (overrides: JsonObject = {}) => ({
   from: "worker",
   to: "ada",
   lane: "work",
@@ -104,6 +105,7 @@ describe("schema initialisation", () => {
     const db = new HiveDatabase(":memory:");
     expect(() => new MailStore(db)).not.toThrow();
     expect(() => new MailStore(db)).not.toThrow();
+    // SAFETY: The test owns this value and its fields.
     const tables = db.database
       .query(
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'mail_%'

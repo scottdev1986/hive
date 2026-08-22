@@ -10,6 +10,7 @@ import {
 import { type NowIsoFn, systemNowIso } from "../../shared/clock";
 import { isRecord } from "../../shared/is-record";
 import type { PaneDaemonClient } from "./pane-daemon-client";
+import type { JsonValue } from "../../shared/json";
 
 export interface PaneFailureFact {
   readonly severity: ObservabilitySeverity;
@@ -125,7 +126,7 @@ export class PaneObservabilityReporter {
     if (!response.ok) {
       throw new Error(await this.options.client.errorDetail(response));
     }
-    const body: unknown = await response.json();
+    const body: JsonValue = await response.json();
     return ObservabilityEventSchema.parse(
       isRecord(body) ? body.event : undefined,
     );

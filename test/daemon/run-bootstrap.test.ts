@@ -29,6 +29,7 @@ import {
 import type { TaskCreateInput } from "../../src/schemas/task-detail";
 import { required } from "../required";
 import { tempRoot } from "../temp-root";
+import type { JsonObject } from "../../src/shared/json";
 
 const home = tempRoot("hive-run-bootstrap-");
 process.env.HIVE_HOME = home;
@@ -114,8 +115,8 @@ const callTool = async (
   daemon: HiveDaemon,
   token: string,
   name: string,
-  args: Record<string, unknown> = {},
-): Promise<{ ok: boolean; text: string; value: Record<string, unknown> }> => {
+  args: JsonObject = {},
+): Promise<{ ok: boolean; text: string; value: JsonObject }> => {
   const client = new Client({ name: "test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
@@ -127,7 +128,8 @@ const callTool = async (
     return {
       ok: result.isError !== true,
       text: JSON.stringify(result.content ?? ""),
-      value: (result.structuredContent ?? {}) as Record<string, unknown>,
+      // SAFETY: The test owns this value and its fields.
+      value: (result.structuredContent ?? {}) as JsonObject,
     };
   } catch (error) {
     return {
@@ -153,7 +155,8 @@ type Bootstrap = {
   next: string;
 };
 
-const bootstrapOf = (result: { value: Record<string, unknown> }): Bootstrap =>
+const bootstrapOf = (result: { value: JsonObject }): Bootstrap =>
+  // SAFETY: The test owns this value and its fields.
   required(result.value.bootstrap as Bootstrap | undefined, "bootstrap");
 
 const queenToken = (daemon: HiveDaemon, epoch = 0): string =>
@@ -162,7 +165,7 @@ const queenToken = (daemon: HiveDaemon, epoch = 0): string =>
 type SnapshotEntity = {
   kind: string;
   id: string;
-  projection: Record<string, unknown>;
+  projection: JsonObject;
 };
 
 const snapshot = async (daemon: HiveDaemon): Promise<SnapshotEntity[]> => {
@@ -173,6 +176,7 @@ const snapshot = async (daemon: HiveDaemon): Promise<SnapshotEntity[]> => {
     }),
   );
   expect(response.status).toBe(200);
+  // SAFETY: The test owns this value and its fields.
   const body = (await response.json()) as { entities: SnapshotEntity[] };
   return body.entities;
 };
@@ -390,6 +394,7 @@ describe("hive_run_bootstrap", () => {
     const completed = required(store.getTask(task.taskId), "completed task");
     expect(completed.state).toBe("completed");
 
+    // SAFETY: The test owns this value and its fields.
     const row = db.database
       .query(
         "SELECT document FROM run_checkpoints WHERE instanceId = ? ORDER BY CAST(revision AS INTEGER) DESC LIMIT 1",

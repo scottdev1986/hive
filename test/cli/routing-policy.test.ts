@@ -142,6 +142,7 @@ describe("Model Control Center daemon pinning", () => {
       },
     };
     let requestedUrl = "";
+    // SAFETY: The test owns this value and its fields.
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
       input,
     ) => {
@@ -190,6 +191,7 @@ describe("Model Control Center daemon pinning", () => {
     writeCredential(USER_SUBJECT, userToken);
     const policyDatabase = machineModelControlDatabase(db).database;
     const store = new RoutingPolicyStore(policyDatabase);
+    // SAFETY: The test owns this value and its fields.
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
       input,
       init,

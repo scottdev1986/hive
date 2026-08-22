@@ -1,4 +1,6 @@
 import { isAbsolute } from "node:path";
+import { isRecord, isString } from "../../shared/is-record";
+import type { JsonObject, JsonValue } from "../../shared/json";
 
 export const DAEMON_STARTUP_PREFIX = "Hive daemon ready: ";
 
@@ -19,16 +21,18 @@ export function parseDaemonStartupAnnouncement(
 ): DaemonStartupAnnouncement | null {
   if (!line.startsWith(DAEMON_STARTUP_PREFIX)) return null;
   try {
-    const value: unknown = JSON.parse(line.slice(DAEMON_STARTUP_PREFIX.length));
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return null;
-    const announcement = value as Record<string, unknown>;
+    const value: JsonValue = JSON.parse(
+      line.slice(DAEMON_STARTUP_PREFIX.length),
+    );
+    if (!isRecord(value)) return null;
+    // SAFETY: The surrounding code already established this contract.
+    const announcement = value as JsonObject;
     if (
-      typeof announcement.engineBuildId !== "string" ||
+      !isString(announcement.engineBuildId) ||
       !/^[0-9a-f]{64}$/.test(announcement.engineBuildId) ||
-      typeof announcement.binaryPath !== "string" ||
+      !isString(announcement.binaryPath) ||
       !isAbsolute(announcement.binaryPath) ||
-      typeof announcement.sourceHash !== "string" ||
+      !isString(announcement.sourceHash) ||
       !/^[0-9a-f]{64}$/.test(announcement.sourceHash)
     )
       return null;

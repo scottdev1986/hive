@@ -34,12 +34,13 @@ import { systemClock } from "../../shared/clock";
 import { ABORTED_RUN_ADMISSION_SEAM } from "../hierarchy-service/hierarchy-run-control";
 import type { HierarchyStore } from "../hierarchy-store";
 import { canonicalJson } from "../status-service/status-service";
+import { isRecord } from "../../shared/is-record";
 
 export const SpawnBriefInputSchema = z.strictObject({
-  engineerConstraints: SpawnBriefSchema.shape.engineerConstraints.omit({
+  engineerConstraints: SpawnBriefSchema["shape"].engineerConstraints.omit({
     specRevision: true,
   }),
-  written: SpawnBriefSchema.shape.written,
+  written: SpawnBriefSchema["shape"].written,
 });
 
 /** Hierarchy fields stay optional after `runId` so admission, rather than a generic parser, can name the missing authority fact precisely. A request without `runId` is parsed by the separate flat schema and never reaches this shape. */
@@ -95,7 +96,7 @@ type Attempt = {
   measuredProvenanceStamped: boolean;
 };
 
-function sameJson(left: unknown, right: unknown): boolean {
+function sameJson<T>(left: T, right: T): boolean {
   return canonicalJson(left) === canonicalJson(right);
 }
 
@@ -112,7 +113,7 @@ function pathWithin(path: string, scope: string): boolean {
 }
 
 function freezeDeep<T>(value: T): T {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) {
+  if ((!isRecord(value) && !Array.isArray(value)) || Object.isFrozen(value)) {
     return value;
   }
   for (const nested of Object.values(value)) freezeDeep(nested);

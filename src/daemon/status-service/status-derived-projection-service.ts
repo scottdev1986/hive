@@ -4,7 +4,7 @@ export interface StatusDerivedProjectionServiceOptions {
   readonly project: (event: WorkspaceEventV2) => void;
   readonly capacity?: number;
   readonly batchSize?: number;
-  readonly onError?: (event: WorkspaceEventV2, error: unknown) => void;
+  readonly onError?: <T>(event: WorkspaceEventV2, error: T) => void;
   readonly onDrop?: (dropped: number) => void;
 }
 

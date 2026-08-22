@@ -25,10 +25,12 @@ export interface ShareResult {
   warnings: string[];
 }
 
-const isEnoent = (error: unknown): boolean =>
+const isEnoent = <T>(error: T): boolean =>
+  // SAFETY: The surrounding code already established this contract.
   (error as NodeJS.ErrnoException).code === "ENOENT";
 
-const isEexist = (error: unknown): boolean =>
+const isEexist = <T>(error: T): boolean =>
+  // SAFETY: The surrounding code already established this contract.
   (error as NodeJS.ErrnoException).code === "EEXIST";
 
 /** Link the real home's memory state into `devHome` per the header's rules. Never deletes real-directory content; never throws for an occupied dev path — the warning is the contract. Throws only on genuine IO failure. */
@@ -50,13 +52,13 @@ export async function shareMemoryState(
     join(realHome, "project-registry.json"),
     '{"records":[],"tombstones":[]}',
     { flag: "wx" },
-  ).catch((error: unknown) => {
+  ).catch((error) => {
     if (!isEexist(error)) throw error;
   });
   for (const name of SHARED_STATE_NAMES) {
     const realPath = join(realHome, name);
     const devPath = join(devHome, name);
-    const realStat = await lstat(realPath).catch((error: unknown) => {
+    const realStat = await lstat(realPath).catch((error) => {
       if (isEnoent(error)) return null;
       throw error;
     });
@@ -64,7 +66,7 @@ export async function shareMemoryState(
       result.skipped.push(name);
       continue;
     }
-    const devStat = await lstat(devPath).catch((error: unknown) => {
+    const devStat = await lstat(devPath).catch((error) => {
       if (isEnoent(error)) return null;
       throw error;
     });

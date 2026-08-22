@@ -9,7 +9,7 @@ type Timer = ReturnType<typeof setTimeout>;
 
 interface MailLeaseHeartbeatOptions {
   readonly client: Pick<PaneDaemonClient, "request" | "errorDetail">;
-  readonly onError: (error: unknown) => void;
+  readonly onError: <T>(error: T) => void;
   readonly intervalMs?: number;
   readonly schedule?: (callback: () => void, delayMs: number) => Timer;
   readonly cancel?: (timer: Timer) => void;

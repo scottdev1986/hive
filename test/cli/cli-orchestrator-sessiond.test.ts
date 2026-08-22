@@ -134,7 +134,7 @@ describe("sessiond orchestrator launch client", () => {
       waitForTerminal: async () => ({ kind: "missing" }),
     };
     const error = await runOrchestratorSessiondLaunch(launch, control).catch(
-      (cause: unknown) => cause,
+      (cause) => cause,
     );
     expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
     expect(error).toMatchObject({
@@ -165,7 +165,7 @@ describe("sessiond orchestrator launch client", () => {
     const control = daemonOrchestratorSessiondControl(4317, async () =>
       Response.json({ error: "sessiond is unavailable" }, { status: 503 }),
     );
-    const error = await control.start(launch).catch((cause: unknown) => cause);
+    const error = await control.start(launch).catch((cause) => cause);
     expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
     expect(error).toMatchObject({
       code: "ORCHESTRATOR_LAUNCH_FAILED",
@@ -208,10 +208,11 @@ describe("sessiond orchestrator launch client", () => {
     };
 
     const error = await runOrchestratorSessiondLaunch(launch, control).catch(
-      (cause: unknown) => cause,
+      (cause) => cause,
     );
     expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
     expect(error).toMatchObject({ code: "ORCHESTRATOR_LAUNCH_FAILED" });
+    // SAFETY: The test owns this value and its fields.
     expect((error as Error).message).toContain("ECONNREFUSED");
   });
 });

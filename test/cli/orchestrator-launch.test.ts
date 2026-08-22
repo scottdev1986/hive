@@ -38,6 +38,7 @@ import {
   orchestratorSessionKey,
 } from "../../src/hive-home/home";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 let hiveHome: string;
 let previousHiveHome: string | undefined;
@@ -305,6 +306,7 @@ describe("orchestrator launch", () => {
     const project = await mkdtemp(join(tmpdir(), "hive-claude-orch-"));
     try {
       await prepareOrchestratorConfig("claude", 4317, project);
+      // SAFETY: The test owns this value and its fields.
       const mcp = JSON.parse(
         await readFile(
           join(hiveHome, "runtime", "orchestrator", ".mcp.json"),
@@ -395,14 +397,16 @@ describe("orchestrator launch", () => {
       );
       writeCredential(USER_SUBJECT, "user-token");
       await prepareOrchestratorConfig("opencode", 4317, project);
+      // SAFETY: The test owns this value and its fields.
       const config = JSON.parse(
         await readFile(join(project, "opencode.json"), "utf8"),
-      ) as { agent: Record<string, Record<string, unknown>> };
+      ) as { agent: Record<string, JsonObject> };
       expect(config.agent.hive?.permission).toEqual({
         edit: { "*": "deny", ".hive/**": "allow" },
         bash: { "*": "ask", "gh *": "allow" },
       });
       // Positive lock: memory stays granted; planning/ is not a writable home.
+      // SAFETY: The test owns this value and its fields.
       const editPermission = config.agent.hive?.permission as {
         edit: Record<string, string>;
       };

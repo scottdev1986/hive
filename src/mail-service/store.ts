@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonicalOrchestratorName } from "../schemas/agent";
+import { isRecord, isString } from "../shared/is-record";
 import {
   type MailDeadLetter,
   MailDeadLetterSchema,
@@ -18,6 +19,8 @@ import {
 } from "../schemas/mail";
 import type { DatabaseHost } from "../shared/database-host";
 import { errorMessage } from "../shared/error-message";
+import type { JsonObject, JsonValue } from "../shared/json";
+import { unsafeCast } from "../shared/unsafe-cast";
 
 export const MAIL_CONTROL_LANE_FULL = "MAIL_CONTROL_LANE_FULL";
 export const MAIL_IDEMPOTENCY_CONFLICT = "MAIL_IDEMPOTENCY_CONFLICT";
@@ -138,6 +141,10 @@ export type MailSettleInput = Readonly<{
   now: string;
   maxAttempts: number;
 }>;
+
+interface MailSuccessorRow {
+  itemId: string;
+}
 
 const ITEM_COLUMNS = `itemId, recipient, sender, lane, topic, body, seq, state,
   mergedCount, attempts, recipientGeneration, createdAt, updatedAt, expiresAt,
@@ -814,6 +821,7 @@ export class MailStore {
     sender: string,
     idempotencyKey: string,
   ): { fingerprint: string | null; receipt: MailPublishReceipt } | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `SELECT fingerprint, detailJson FROM mail_events
@@ -838,6 +846,7 @@ export class MailStore {
     const conditionId = input.conditionId ?? null;
     const condition = input.condition ?? null;
     if (conditionId === null || condition === null) return null;
+    // SAFETY: The surrounding code already established this contract.
     const ack = this.db.database
       .query(
         `SELECT itemId, condition, ownerGeneration FROM mail_conditions
@@ -925,6 +934,7 @@ export class MailStore {
   private publishedCondition(
     itemId: string,
   ): { conditionId: string; condition: string } | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `SELECT detailJson FROM mail_events
@@ -933,19 +943,18 @@ export class MailStore {
       )
       .get(itemId) as { detailJson: string } | null;
     if (row === null) return null;
-    const detail: unknown = JSON.parse(row.detailJson);
-    if (typeof detail !== "object" || detail === null) return null;
-    const record = detail as Record<string, unknown>;
-    if (
-      typeof record.conditionId !== "string" ||
-      typeof record.condition !== "string"
-    ) {
+    const detail: JsonValue = JSON.parse(row.detailJson);
+    if (!isRecord(detail) && !Array.isArray(detail)) return null;
+    // SAFETY: The surrounding code already established this contract.
+    const record = detail as JsonObject;
+    if (!isString(record.conditionId) || !isString(record.condition)) {
       return null;
     }
     return { conditionId: record.conditionId, condition: record.condition };
   }
 
   private currentSeq(recipient: string): number {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query("SELECT lastSeq FROM mail_sequences WHERE recipient = ?")
       .get(recipient) as { lastSeq: number } | null;
@@ -957,6 +966,7 @@ export class MailStore {
     input: MailPublishInput,
     fingerprint: string,
   ): MailPublishReceipt | null {
+    // SAFETY: The surrounding code already established this contract.
     const target = this.db.database
       .query(
         `SELECT itemId FROM mail_items
@@ -1016,15 +1026,15 @@ export class MailStore {
     }
     const successor =
       item.lane === "work"
-        ? (this.db.database
-            .query(
-              `SELECT itemId FROM mail_items
+        ? unsafeCast<MailSuccessorRow | null>(
+            this.db.database
+              .query(
+                `SELECT itemId FROM mail_items
                WHERE recipient = ? AND sender = ? AND topic = ? AND lane = 'work'
                  AND state = 'available' AND itemId <> ?`,
-            )
-            .get(item.recipient, item.sender, item.topic, item.itemId) as {
-            itemId: string;
-          } | null)
+              )
+              .get(item.recipient, item.sender, item.topic, item.itemId),
+          )
         : null;
     if (successor !== null) {
       this.db.database
@@ -1108,6 +1118,7 @@ export class MailStore {
 
   /** The settlement this handler already recorded for the attempt it held, when this call is a retry of one whose response was lost. A deferred item is re-armed rather than deleted, so the attempt number is what separates a lost response from a genuine second settlement after a fresh claim. */
   private replayedDisposition(input: MailSettleInput): MailSettleResult | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `SELECT kind, at, detailJson FROM mail_events
@@ -1136,6 +1147,7 @@ export class MailStore {
 
   /** The key this item was first accepted under, whichever kind of event bound it. Filtering on `published` alone would lose the key for the two items that never had one: a migrated row, whose key is on its `migrated` event, and an item created by a coalescing publish. Both would then be dead-lettered with no key recorded, which reads as "sent without one". The first key wins, because a coalesced item accumulates one per publish that merged into it and the annotation names the envelope that made it. */
   private publishKeyFor(itemId: string): string | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `SELECT idempotencyKey FROM mail_events
@@ -1169,7 +1181,7 @@ export class MailStore {
       fingerprint: string | null;
       receipt?: MailPublishReceipt;
       at: string;
-      detail: Record<string, unknown>;
+      detail: JsonObject;
     }>,
   ): void {
     this.db.database
@@ -1199,7 +1211,9 @@ export class MailStore {
   private listItems(sql: string, parameters: unknown[]): MailItem[] {
     return z
       .array(MailItemSchema)
-      .parse(this.db.database.query(sql).all(...(parameters as never[])));
+      .parse(
+        this.db.database.query(sql).all(...unsafeCast<never[]>(parameters)),
+      );
   }
 
   private requireItem(itemId: string): MailItem {

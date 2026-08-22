@@ -9,6 +9,7 @@ import {
 } from "../../src/memory-service/query";
 import { TokenUsageStore } from "../../src/usage-service/token-usage";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
@@ -109,7 +110,8 @@ describe("L0 projections", () => {
     expect(result.state).toBe("ok");
     expect(result.truncated).toBe(false);
     expect(result.budget).toBe(DEFAULT_CLASS_BUDGETS["agent-now"]);
-    const row = result.results[0] as Record<string, unknown>;
+    // SAFETY: The test owns this value and its fields.
+    const row = result.results[0] as JsonObject;
     expect(row).toMatchObject({
       agent: "agent-maya",
       phase: "implementing",
@@ -141,7 +143,8 @@ describe("L0 projections", () => {
       NOW,
     );
     expect(result.state).toBe("ok");
-    const row = result.results[0] as Record<string, unknown>;
+    // SAFETY: The test owns this value and its fields.
+    const row = result.results[0] as JsonObject;
     expect(row).toMatchObject({
       agent: "agent-lena",
       summary: "Rebased the stack",
@@ -173,6 +176,7 @@ describe("L0 projections", () => {
       NOW,
     );
     expect(result.state).toBe("ok");
+    // SAFETY: The test owns this value and its fields.
     const summary = result.results[0] as {
       agents: number;
       blocked: number;
@@ -216,6 +220,7 @@ describe("L0 projections", () => {
     );
     expect(all.state).toBe("ok");
     expect(
+      // SAFETY: The test owns this value and its fields.
       (all.results as Array<{ summary: string }>).map((row) => row.summary),
     ).toEqual(["WP2 done", "WP1 landed"]);
 
@@ -229,6 +234,7 @@ describe("L0 projections", () => {
       NOW,
     );
     expect(
+      // SAFETY: The test owns this value and its fields.
       (since.results as Array<{ summary: string }>).map((row) => row.summary),
     ).toEqual(["WP2 done"]);
   });
@@ -330,6 +336,7 @@ describe("L0 projections", () => {
       NOW,
     );
     expect(all.state).toBe("ok");
+    // SAFETY: The test owns this value and its fields.
     const rows = all.results as Array<{
       agentId: string;
       inputTokens: number;
@@ -383,10 +390,12 @@ describe("L1 point search", () => {
       NOW,
     );
     expect(result.state).toBe("ok");
+    // SAFETY: The test owns this value and its fields.
     const kinds = (result.results as Array<{ kind: string }>)
       .map((row) => row.kind)
       .sort();
     expect(kinds).toEqual(["event"]);
+    // SAFETY: The test owns this value and its fields.
     for (const row of result.results as Array<{ snippet: string }>) {
       expect(row.snippet.toLowerCase()).toContain("quota");
     }

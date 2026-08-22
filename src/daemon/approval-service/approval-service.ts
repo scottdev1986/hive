@@ -65,7 +65,7 @@ type VendorPromptAnswer =
   | { outcome: "answered" | "not-applicable" | "stale" }
   | { outcome: "delivery-failed"; reason: string };
 
-const json = (value: unknown, init?: ResponseInit): Response =>
+const json = <T>(value: T, init?: ResponseInit): Response =>
   Response.json(value, init);
 
 export class ApprovalService {

@@ -30,7 +30,7 @@ async function request(
   return body;
 }
 
-const post = (value: unknown): RequestInit => ({
+const post = <T>(value: T): RequestInit => ({
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(value),

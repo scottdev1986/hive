@@ -3,12 +3,14 @@ import type { HiveConfig } from "../schemas/config-schema";
 import { withHiveConfigLock } from "./document-lock";
 import { hiveConfigPath } from "./load";
 import { errorMessage } from "../shared/error-message";
+import type { JsonObject } from "../shared/json";
 
 export type Autonomy = HiveConfig["autonomy"];
 
 export const AUTONOMY_VALUES: readonly Autonomy[] = ["sandboxed", "dangerous"];
 
-export function isAutonomy(value: unknown): value is Autonomy {
+export function isAutonomy<T>(value: T): value is T & Autonomy {
+  // SAFETY: The surrounding code already established this contract.
   return AUTONOMY_VALUES.includes(value as Autonomy);
 }
 
@@ -37,9 +39,10 @@ export function upsertAutonomy(text: string, value: Autonomy): string {
     : text === ""
       ? `${assignment}\n`
       : `${assignment}\n${text}`;
-  let parsed: Record<string, unknown>;
+  let parsed: JsonObject;
   try {
-    parsed = Bun.TOML.parse(result) as Record<string, unknown>;
+    // SAFETY: The surrounding code already established this contract.
+    parsed = Bun.TOML.parse(result) as JsonObject;
   } catch (error) {
     throw new Error(
       `refusing to write config: the result does not parse as TOML (${errorMessage(

@@ -63,6 +63,7 @@ function harness(options: {
   const gates = {
     isStopping: () => options.stopping ?? false,
     admitRootWork: () =>
+      // SAFETY: The test owns this value and its fields.
       options.admit ?? ({ admit: true } as AdmissionDecision),
     memoryPressure: () => options.memoryPressure ?? false,
     machineMutations: {

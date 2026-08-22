@@ -4,9 +4,10 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { hiveInstanceSuffix } from "../../hive-home/home";
-import { safeJsonParse } from "../../shared/json";
+import { safeJsonParse, type JsonObject } from "../../shared/json";
 import { shellToken } from "../../shared/shell-quote";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
+import { isRecord, isString } from "../../shared/is-record";
 import {
   type GraphifyHookKind,
   graphifyHookPath,
@@ -292,28 +293,25 @@ async function readRolloutSessionMeta(
   const parsed = safeJsonParse(firstLine);
   if (parsed === undefined) return null;
   if (
-    typeof parsed !== "object" ||
-    parsed === null ||
+    !isRecord(parsed) ||
     !("type" in parsed) ||
     parsed.type !== "session_meta"
   ) {
     return null;
   }
-  if (
-    !("payload" in parsed) ||
-    typeof parsed.payload !== "object" ||
-    parsed.payload === null
-  )
+  if (!("payload" in parsed) || !isRecord(parsed.payload))
     throw new Error(`Invalid Codex session_meta in ${path}`);
-  const payload = parsed.payload as Record<string, unknown>;
+  // SAFETY: The surrounding code already established this contract.
+  const payload = parsed.payload as JsonObject;
   const sessionId = payload.id ?? payload.session_id;
-  if (typeof sessionId !== "string" || typeof payload.cwd !== "string") {
+  if (!isString(sessionId) || !isString(payload.cwd)) {
     throw new Error(`Invalid Codex session_meta in ${path}`);
   }
   return {
     sessionId,
     cwd: payload.cwd,
-    createdAt: (parsed as Record<string, unknown>).timestamp,
+    // SAFETY: The surrounding code already established this contract.
+    createdAt: (parsed as JsonObject).timestamp,
   };
 }
 

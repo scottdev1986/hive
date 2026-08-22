@@ -27,10 +27,7 @@ class FakeControl implements AutonomyControl {
   }
 }
 
-function harness(options: { withControl?: boolean } = {}): {
-  daemon: HiveDaemon;
-  control: FakeControl;
-} {
+function harness(options: { withControl?: boolean } = {}) {
   const control = new FakeControl();
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
@@ -48,11 +45,11 @@ function harness(options: { withControl?: boolean } = {}): {
   return { daemon, control };
 }
 
-const request = (
+const request = <T>(
   daemon: HiveDaemon,
   token: string | null,
   method: "GET" | "POST",
-  body?: unknown,
+  body?: T,
 ): Promise<Response> => {
   const headers = new Headers();
   if (token !== null) headers.set("Authorization", `Bearer ${token}`);
@@ -150,6 +147,7 @@ describe("POST /autonomy", () => {
       autonomy: "dangerous",
     });
     expect(response.status).toEqual(500);
+    // SAFETY: The test owns this value and its fields.
     expect(((await response.json()) as { error: string }).error).toContain(
       "disk full",
     );

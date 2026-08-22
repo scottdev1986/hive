@@ -20,6 +20,7 @@ import type { IntegrationStage } from "../../src/schemas/integration-stage";
 import type { OwnershipTransferInput } from "../../src/schemas/ownership-transfer";
 import type { TaskDetail } from "../../src/schemas/task-detail";
 import { bumpCapabilityEpoch, bumpHierarchyRevision } from "./fence-state";
+import type { JsonObject } from "../../src/shared/json";
 
 const runId = "run_018f4f5e-0000-7000-8000-000000000001";
 const taskId = "task_018f4f5e-0000-7000-8000-000000000001";
@@ -83,7 +84,7 @@ const delegationSpec = {
   },
   authority: {
     grantId,
-    permittedOperations: ["read", "write", "test"] as GrantAction[],
+    permittedOperations: ["read", "write", "test"] satisfies GrantAction[],
     environment: "worktree",
     worktree: "/worktree",
     branch: "hive/worker",
@@ -154,7 +155,7 @@ function validTopology(
     digest,
     createdAt,
     lifecycle: "proposed",
-    shape: "direct",
+    ["shape"]: "direct",
     decomposition: {
       planRevision: { revision: "1", digest },
       taskDag: [{ taskId, dependsOn: [] }],
@@ -247,6 +248,7 @@ function validGrant(overrides: Partial<DelegationGrant> = {}): DelegationGrant {
 function validRunStage(
   overrides: Partial<IntegrationStage> = {},
 ): IntegrationStage {
+  // SAFETY: Callers override kind and ownerNodeId together when selecting the lead-stage variant.
   return {
     stageId,
     revision: "1",
@@ -394,6 +396,7 @@ afterEach(() => {
 
 describe("hierarchy tables land without touching flat Assignments", () => {
   test("hierarchy_fences and hierarchy_records exist; status_assignments shape is unchanged", () => {
+    // SAFETY: This fixed SELECT projects one string-valued name column from sqlite_master.
     const tables = (
       db.database
         .query(
@@ -409,6 +412,7 @@ describe("hierarchy tables land without touching flat Assignments", () => {
     // until StatusStore creates it, proving hierarchy did not redefine it.
     expect(tables).not.toContain("status_assignments");
 
+    // SAFETY: SQLite PRAGMA table_info always includes a string-valued name column.
     const fenceCols = (
       db.database.query("PRAGMA table_info(hierarchy_fences)").all() as {
         name: string;
@@ -418,6 +422,7 @@ describe("hierarchy tables land without touching flat Assignments", () => {
       expect.arrayContaining(["runId", "hierarchyRevision", "runEpoch"]),
     );
 
+    // SAFETY: SQLite PRAGMA table_info always includes a string-valued name column.
     const recordCols = (
       db.database.query("PRAGMA table_info(hierarchy_records)").all() as {
         name: string;
@@ -445,7 +450,9 @@ describe("expected-revision CAS", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyConflictError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyConflictError.
       expect((error as HierarchyConflictError).currentRevision).toBe("1");
+      // SAFETY: The preceding runtime assertion establishes HierarchyConflictError.
       expect((error as HierarchyConflictError).code).toBe("HIERARCHY_CONFLICT");
     }
 
@@ -495,6 +502,7 @@ describe("three independent fences", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       const fence = error as HierarchyFenceError;
       expect(fence.fence).toBe("hierarchyRevision");
       expect(fence.expected).toBe("0");
@@ -532,6 +540,7 @@ describe("three independent fences", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       const fence = error as HierarchyFenceError;
       expect(fence.fence).toBe("runEpoch");
       expect(fence.expected).toBe(0);
@@ -569,6 +578,7 @@ describe("three independent fences", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       const fence = error as HierarchyFenceError;
       expect(fence.fence).toBe("capabilityEpoch");
       expect(fence.expected).toBe(1);
@@ -591,6 +601,7 @@ describe("task-update authority", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyValidationError);
+      // SAFETY: The preceding runtime assertion establishes Error before its message is read.
       expect((error as Error).message).toMatch(/assignee cannot accept/i);
     }
 
@@ -628,6 +639,7 @@ describe("task-update authority", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyValidationError);
+      // SAFETY: The preceding runtime assertion establishes Error before its message is read.
       expect((error as Error).message).toMatch(/assignee cannot accept/i);
     }
   });
@@ -639,6 +651,7 @@ describe("task-update authority", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyConflictError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyConflictError.
       expect((error as HierarchyConflictError).currentRevision).toBe("1");
     }
     // State is still the created value — raw put did not rewrite it.
@@ -695,6 +708,7 @@ describe("terminal task state", () => {
         expect.unreachable("should have thrown");
       } catch (error) {
         expect(error).toBeInstanceOf(HierarchyValidationError);
+        // SAFETY: The preceding runtime assertion establishes Error before its message is read.
         expect((error as Error).message).toBe(
           `task update cannot change state on a ${terminalState} task`,
         );
@@ -894,8 +908,11 @@ describe("grant document fences and binding run match", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).fence).toBe("hierarchyRevision");
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).expected).toBe("0");
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).current).toBe("1");
     }
 
@@ -910,6 +927,7 @@ describe("grant document fences and binding run match", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).fence).toBe("runEpoch");
     }
 
@@ -928,6 +946,7 @@ describe("grant document fences and binding run match", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).fence).toBe("capabilityEpoch");
     }
     db2.close();
@@ -948,6 +967,7 @@ describe("grant document fences and binding run match", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyValidationError);
+      // SAFETY: The preceding runtime assertion establishes Error before its message is read.
       expect((error as Error).message).toMatch(/belongs to run/);
     }
   });
@@ -964,7 +984,9 @@ describe("epoch rollback is closed", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).fence).toBe("runEpoch");
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).current).toBe(1);
     }
     expect(store.getFences(runId)?.runEpoch).toBe(1);
@@ -982,6 +1004,7 @@ describe("epoch rollback is closed", () => {
       agentId: ownerBinding.agentId,
       generation: ownerBinding.generation,
     });
+    // SAFETY: The positive control above established that this fixture binding exists.
     expect(
       "capabilityEpoch" in (store.getAgentBinding(ownerBinding) as object),
     ).toBe(false);
@@ -1033,6 +1056,7 @@ describe("hierarchyRevision advances on tree mutations", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).fence).toBe("hierarchyRevision");
     }
     expect(store.getFences(runId)?.hierarchyRevision).toBe("0");
@@ -1127,6 +1151,7 @@ describe("provenance at creation and immutability after", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyValidationError);
+      // SAFETY: The preceding runtime assertion establishes Error before its message is read.
       expect((error as Error).message).toMatch(/does not match node/);
     }
     expect(
@@ -1178,6 +1203,7 @@ describe("provenance at creation and immutability after", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyValidationError);
+      // SAFETY: The preceding runtime assertion establishes Error before its message is read.
       expect((error as Error).message).toMatch(/must equal the grant issuer/);
     }
     expect(store.getGrant(grantId)).toBeNull();
@@ -1216,6 +1242,7 @@ describe("provenance at creation and immutability after", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyValidationError);
+      // SAFETY: The preceding runtime assertion establishes Error before its message is read.
       expect((error as Error).message).toMatch(/runId is immutable/);
     }
     expect(store.getNode(assigneeNodeId)?.runId).toBe(runId);
@@ -1663,6 +1690,7 @@ describe("proposal records carry provenance at creation", () => {
         expect.unreachable("should have thrown");
       } catch (error) {
         expect(error).toBeInstanceOf(HierarchyFenceError);
+        // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
         expect((error as HierarchyFenceError).fence).toBe("runEpoch");
       }
     }
@@ -1916,7 +1944,7 @@ describe("ownership transfer", () => {
     );
   }
 
-  function transferInput(overrides: Record<string, unknown> = {}) {
+  function transferInput(overrides: JsonObject = {}) {
     return {
       transferId,
       runId,
@@ -1981,6 +2009,7 @@ describe("ownership transfer", () => {
   test("a caller-authored death fact is refused; the reason is daemon-derived only", () => {
     seedTransferWorld();
     unbindLostLead();
+    // SAFETY: This negative fixture deliberately adds the forbidden reason field for runtime validation.
     const authored = {
       ...transferInput(),
       reason: "died",
@@ -2588,6 +2617,7 @@ describe("organizationalRole conferral provenance", () => {
       expect.unreachable("should have thrown");
     } catch (error) {
       expect(error).toBeInstanceOf(HierarchyFenceError);
+      // SAFETY: The preceding runtime assertion establishes HierarchyFenceError.
       expect((error as HierarchyFenceError).fence).toBe("capabilityEpoch");
     }
     expect(store.getNode(assigneeNodeId)?.organizationalRole).toBe("worker");
@@ -2846,10 +2876,7 @@ describe("stored Runs that still name approvedSpec instead of spec", () => {
   // instance holds. RunSchema is strict, so putRun could not produce this and
   // a fixture in the current shape would prove nothing: "the rewrite ran" and
   // "there was nothing to do" look identical.
-  function insertLegacyRun(
-    document: Record<string, unknown>,
-    id = runId,
-  ): void {
+  function insertLegacyRun(document: JsonObject, id = runId): void {
     db.database
       .query(
         `INSERT INTO hierarchy_records (kind, id, runId, revision, document)
@@ -2858,7 +2885,7 @@ describe("stored Runs that still name approvedSpec instead of spec", () => {
       .run(id, runId, JSON.stringify(document));
   }
 
-  function insertLegacyDecision(observed: Record<string, unknown>): void {
+  function insertLegacyDecision(observed: JsonObject): void {
     const decision = {
       idempotencyKey: `run-bootstrap:${runId}`,
       intentDigest: digest,
@@ -2883,7 +2910,7 @@ describe("stored Runs that still name approvedSpec instead of spec", () => {
       .run(decision.idempotencyKey, runId, JSON.stringify(decision));
   }
 
-  function legacyRun(overrides: Record<string, unknown> = {}) {
+  function legacyRun(overrides: JsonObject = {}) {
     const { spec: _dropped, ...rest } = validRun();
     return {
       ...rest,
@@ -2945,12 +2972,14 @@ describe("stored Runs that still name approvedSpec instead of spec", () => {
     new HierarchyStore(db).putSpecRevision(validSpec());
 
     const once = new HierarchyStore(db);
+    // SAFETY: This fixed SELECT returns the stored JSON document column as text.
     const afterFirst = db.database
       .query("SELECT document FROM hierarchy_records WHERE kind = 'run'")
       .get() as { document: string };
     expect(once.getRun(runId)?.spec).toEqual({ revision: "1", digest });
 
     new HierarchyStore(db);
+    // SAFETY: This fixed SELECT returns the same stored JSON document column as text.
     const afterSecond = db.database
       .query("SELECT document FROM hierarchy_records WHERE kind = 'run'")
       .get() as { document: string };

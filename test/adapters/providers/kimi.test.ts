@@ -20,6 +20,7 @@ import {
 } from "../../../src/adapters/providers/kimi-cli";
 import { getAgentAdapter } from "../../../src/adapters/providers/provider-registry";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
+import type { JsonObject } from "../../../src/shared/json";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -126,8 +127,9 @@ describe("Kimi adapter", () => {
       graphifyUrl: "http://127.0.0.1:7799/mcp",
     });
     const path = join(root, ".kimi-code", "mcp.json");
+    // SAFETY: The test owns this value and its fields.
     const written = JSON.parse(await readFile(path, "utf8")) as {
-      mcpServers: Record<string, Record<string, unknown>>;
+      mcpServers: Record<string, JsonObject>;
     };
     expect(written.mcpServers.other).toEqual({ command: "other" });
     // The bearer is named, never written: kimi reads it from the environment at
@@ -149,8 +151,9 @@ describe("Kimi adapter", () => {
     // A respawn moves the port and a missing graphify URL removes the stale
     // endpoint.
     await writeKimiAgentConfig(root, { daemonPort: 4400 });
+    // SAFETY: The test owns this value and its fields.
     const respawned = JSON.parse(await readFile(path, "utf8")) as {
-      mcpServers: Record<string, Record<string, unknown>>;
+      mcpServers: Record<string, JsonObject>;
     };
     expect(respawned.mcpServers.hive).toEqual({
       url: "http://127.0.0.1:4400/mcp",

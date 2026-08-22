@@ -21,10 +21,12 @@ import type {
   SessionInspection,
   SessionRef,
   TerminationResult,
+  TerminalHost,
 } from "../../../src/daemon/session-host/terminal-host-contract";
 import type { ProviderRun } from "../../../src/schemas/provider-run";
 import { required } from "../../required";
 import { PROCESS_TABLE_VISIBLE_MS, waitUntil } from "../../support/wait-until";
+import type { JsonValue } from "../../../src/shared/json";
 
 async function processGroupStates(
   processGroupId: number,
@@ -327,7 +329,9 @@ describe("HiveTerminalHostAdapter", () => {
         expect(spec).toEqual(sessionSpec);
         return createResult;
       },
-      submitInput: async (request: unknown) => {
+      submitInput: async (
+        request: Parameters<TerminalHost["submitInput"]>[0],
+      ) => {
         directRequests.push(request);
         return {
           transactionId: "transaction-fixture",
@@ -340,13 +344,13 @@ describe("HiveTerminalHostAdapter", () => {
           diagnostic: "fixture",
         };
       },
-      resize: async (request: unknown) => {
+      resize: async (request: JsonValue) => {
         directRequests.push(request);
         return { state: "unknown" as const, diagnostic: "fixture" };
       },
       list: async () => [inspection, unbound],
       inspect: async () => inspection,
-      terminate: async (request: unknown) => {
+      terminate: async (request: Parameters<TerminalHost["terminate"]>[0]) => {
         terminateRequests.push(request);
         return termination;
       },
@@ -1305,7 +1309,7 @@ describe("closing a session whose host is already gone", () => {
   function adapterWithNoLiveHosts(options: {
     endedRuns: string[];
     activeRun?: ProviderRun;
-  }): { adapter: HiveTerminalHostAdapter; bindings: MemoryBindings } {
+  }) {
     const bindings = new MemoryBindings();
     bindings.bindTerminalHostSession({ locator, visibility });
     bindings.completeTerminalHostSession(locator, {
@@ -1443,6 +1447,7 @@ describe("requireSessiondRootLocator", () => {
       "Queen has a mismatched",
     );
     expect(() =>
+      // SAFETY: The test owns this value and its fields.
       requireSessiondRootLocator({ ...root, hostKind: "invalid" } as never),
     ).toThrow("Queen has a mismatched");
   });
@@ -1490,10 +1495,7 @@ describe("a teardown the platform cannot positively prove still ends the run", (
     diagnostics: ["process-tree-escapees-unaccounted"],
   };
 
-  function adapterReturning(result: TerminationResult): {
-    adapter: HiveTerminalHostAdapter;
-    endedRuns: string[];
-  } {
+  function adapterReturning(result: TerminationResult) {
     const endedRuns: string[] = [];
     const bindings = new MemoryBindings();
     bindings.bindTerminalHostSession({ locator, visibility });
@@ -1611,11 +1613,7 @@ function rootRunHarness(
       exitCode: number | null;
     }>;
   } = {},
-): {
-  adapter: HiveTerminalHostAdapter;
-  active: ProviderRun;
-  ended: Array<{ runId: string; exitReason: string }>;
-} {
+) {
   const bindings = new MemoryBindings();
   bindings.bindTerminalHostSession({ locator: rootLocator, visibility });
   bindings.completeTerminalHostSession(rootLocator, {

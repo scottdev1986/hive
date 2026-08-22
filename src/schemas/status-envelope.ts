@@ -216,7 +216,7 @@ export const WorkspaceEventV2Schema = z.strictObject({
     observedAt: Rfc3339UtcMillisecondsSchema,
     confidence: z.enum(WORKSPACE_EVENT_CONFIDENCE),
   }),
-  data: z.record(z.string(), z.unknown()),
+  data: z.record(z.string(), z.json()),
 });
 export type WorkspaceEventV2 = z.infer<typeof WorkspaceEventV2Schema>;
 
@@ -231,7 +231,7 @@ export const WorkspaceSnapshotV2Schema = z.strictObject({
       id: z.string().min(1),
       generation: PositiveGenerationSchema.optional(),
       entityRevision: DecimalUint64Schema,
-      projection: z.record(z.string(), z.unknown()),
+      projection: z.record(z.string(), z.json()),
     }),
   ),
   createdAt: Rfc3339UtcMillisecondsSchema,
@@ -249,7 +249,7 @@ const PositiveDecimalUint64Schema = z
   .meta({ description: "unsigned 64-bit integer encoded as a decimal string" });
 
 // The minimal flat C0 record. The Queen's Hive extends this later; status must not infer task, review, gate, or hierarchy state from it.
-const FlatAssignmentCommonShape = {
+const FlatAssignmentCommonFields = {
   assignmentId: domainUuidV7Schema("asg"),
   agentId: z.string().min(1),
   assignmentGeneration: PositiveDecimalUint64Schema,
@@ -258,19 +258,19 @@ const FlatAssignmentCommonShape = {
 
 export const FlatAssignmentSchema = z.discriminatedUnion("state", [
   z.strictObject({
-    ...FlatAssignmentCommonShape,
+    ...FlatAssignmentCommonFields,
     state: z.literal("open"),
     closedAt: z.null(),
   }),
   z.strictObject({
-    ...FlatAssignmentCommonShape,
+    ...FlatAssignmentCommonFields,
     state: z.literal("closed"),
     closedAt: Rfc3339UtcMillisecondsSchema,
   }),
 ]);
 export type FlatAssignment = z.infer<typeof FlatAssignmentSchema>;
 
-const StatusUpdateCommonShape = {
+const StatusUpdateCommonFields = {
   requestId: domainUuidV7Schema("req"),
   assignmentId: domainUuidV7Schema("asg"),
   assignmentGeneration: PositiveDecimalUint64Schema,
@@ -296,7 +296,7 @@ const nonBlockedStatusSchema = (
   phase: Exclude<(typeof STATUS_PHASES)[number], "blocked">,
 ) =>
   z.strictObject({
-    ...StatusUpdateCommonShape,
+    ...StatusUpdateCommonFields,
     phase: z.literal(phase),
     blocker: z.null().optional(),
   });
@@ -307,7 +307,7 @@ export const HiveUpdateStatusInputSchema = z.discriminatedUnion("phase", [
   nonBlockedStatusSchema("testing"),
   nonBlockedStatusSchema("reviewing"),
   z.strictObject({
-    ...StatusUpdateCommonShape,
+    ...StatusUpdateCommonFields,
     phase: z.literal("blocked"),
     blocker: z.string().min(1).max(STATUS_LIMITS.blockerCharactersMax),
   }),
@@ -322,8 +322,8 @@ const ADVERTISED_STATUS_VALIDATION_REQUEST_ID =
 // cannot accept different phase/blocker combinations.
 export const HiveUpdateStatusAdvertisedSchema = z
   .strictObject({
-    ...StatusUpdateCommonShape,
-    requestId: StatusUpdateCommonShape.requestId
+    ...StatusUpdateCommonFields,
+    requestId: StatusUpdateCommonFields.requestId
       .optional()
       .describe(
         "Omit on the first call. On a retry, reuse only the exact req_ UUIDv7 returned by the daemon.",

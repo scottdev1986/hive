@@ -2,11 +2,12 @@
 // untrusted JSON-RPC surface. Parsing failures stay fail-closed via
 // CodexAppServerIncompatibleError so a bad initialize cannot look like success.
 
-import { isRecord } from "../../../shared/is-record";
+import { isNumber, isRecord, isString } from "../../../shared/is-record";
 import type { ClientRequest } from "./generated/0.146.0/ClientRequest";
 import type { InitializeParams } from "./generated/0.146.0/InitializeParams";
 import type { InitializeResponse } from "./generated/0.146.0/InitializeResponse";
 import type { CodexAppServerWire } from "./jsonl-rpc";
+import type { JsonObject } from "../../../shared/json";
 
 export const CLIENT_NAME = "hive-protocol-terminal";
 export const CLIENT_VERSION = "0.0.0";
@@ -43,29 +44,26 @@ export class CodexAppServerIncompatibleError extends Error {
 }
 
 export function requiredString(
-  value: Record<string, unknown>,
+  value: JsonObject,
   key: string,
   context: string,
 ): string {
   const field = value[key];
-  if (typeof field !== "string" || field === "") {
+  if (!isString(field) || field === "") {
     throw new CodexAppServerIncompatibleError(`${context}.${key} is absent`);
   }
   return field;
 }
 
 export function requestIdKey(id: RequestId): string {
-  return `${typeof id}:${id}`;
+  return `${isString(id) ? "string" : "number"}:${id}`;
 }
 
-export function isRequestId(value: unknown): value is RequestId {
-  return (
-    typeof value === "string" ||
-    (typeof value === "number" && Number.isSafeInteger(value))
-  );
+export function isRequestId<T>(value: T): value is T & RequestId {
+  return isString(value) || (isNumber(value) && Number.isSafeInteger(value));
 }
 
-export function validateHandshake(value: unknown): InitializeResponse {
+export function validateHandshake<T>(value: T): InitializeResponse {
   if (!isRecord(value)) {
     throw new CodexAppServerIncompatibleError(
       "initialize result is not an object",

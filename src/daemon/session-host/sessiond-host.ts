@@ -132,6 +132,7 @@ export type SessiondFrame = Readonly<{
 const frameNames = new Map<number, FrameTypeName>(
   Object.entries(FRAME_TYPES).map(([name, code]) => [
     code,
+    // SAFETY: The surrounding code already established this contract.
     name as FrameTypeName,
   ]),
 );
@@ -306,7 +307,7 @@ export class SessiondHost implements LandedTerminalHost {
       throw new SessiondCreateAdmissionDisabledError();
     }
     const parsedSpec = SessionSpecSchema.parse(spec);
-    const locator = HiveTerminalBindingSchema.unwrap().shape.locator.parse(
+    const locator = HiveTerminalBindingSchema.unwrap()["shape"].locator.parse(
       parsedSpec.locator,
     );
     const binding =

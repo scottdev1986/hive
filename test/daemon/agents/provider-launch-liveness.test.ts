@@ -11,7 +11,9 @@ import { StatusService } from "../../../src/daemon/status-service/status-project
 import type { AgentRecord } from "../../../src/schemas/agent";
 import type { RoutingPolicy } from "../../../src/schemas/routing-policy";
 import { definedFields } from "../../../src/shared/defined-fields";
+import { unsafeCast } from "../../../src/shared/unsafe-cast";
 import { OUTSIDE_REPO_TMPDIR } from "../../outside-repo-tmpdir";
+import type { JsonValue } from "../../../src/shared/json";
 
 const policy: RoutingPolicy = {
   schemaVersion: 3,
@@ -348,17 +350,17 @@ test("a launch is fully recorded before MCP reporting is consulted", async () =>
     },
     timeoutMs: 60_000,
     hierarchyAdmission: () =>
-      ({
+      unsafeCast<SpawnAdmission>({
         preflight: () => identity,
         stampMeasuredLaunch: () => {},
         prepareLaunch: () => {},
         revalidateLaunch: () => {},
         takeLaunchContext: () => undefined,
-        bindAfterReadiness: (_: unknown, credentialId: string) => {
+        bindAfterReadiness: (_: JsonValue, credentialId: string) => {
           bound = credentialId;
         },
         failLaunch: () => {},
-      }) as unknown as SpawnAdmission,
+      }),
   });
   const { db, spawner } = fixture;
 
@@ -469,14 +471,12 @@ test("a missing terminal is unknown rather than stuck", () => {
     },
     repoRoot: process.cwd(),
   });
-  const project = (
-    daemon as unknown as {
-      statusLiveness(
-        current: AgentRecord,
-        sessions: readonly SessionInspection[] | null,
-      ): AgentRecord;
-    }
-  ).statusLiveness.bind(daemon);
+  const project = unsafeCast<{
+    statusLiveness(
+      current: AgentRecord,
+      sessions: readonly SessionInspection[] | null,
+    ): AgentRecord;
+  }>(daemon).statusLiveness.bind(daemon);
 
   expect(project(agent, [presentInspection(locator)]).status).toBe("working");
   expect(project(agent, []).status).toBe("unknown");

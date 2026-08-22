@@ -95,7 +95,7 @@ async function fixture(
     listSettlementBranches,
     reconcileOrphanedWorktrees,
     processLiveness: async () =>
-      typeof liveness === "function" ? liveness() : liveness,
+      liveness instanceof Function ? liveness() : liveness,
   });
   await lifecycle.openSettlementCase(
     agent,

@@ -20,11 +20,7 @@ process.env.HIVE_HOME = home;
  * database the daemon's inspector resolves, so seeding through it is what the
  * endpoint actually reads.
  */
-function harness(): {
-  daemon: HiveDaemon;
-  db: HiveDatabase;
-  policyDb: HiveDatabase;
-} {
+function harness() {
   process.env.HIVE_DEFAULT_HOME = tempRoot("hive-routing-inspect-machine-");
   const db = new HiveDatabase(":memory:");
   const daemon = new HiveDaemon({

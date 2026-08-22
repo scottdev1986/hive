@@ -53,16 +53,14 @@ const manifest: ReleaseManifest = {
 };
 
 /** An offline release key, exactly as the pipeline would hold one. */
-function releaseKey(): {
-  publicKey: string;
-  signBytes: (bytes: Uint8Array) => string;
-} {
+function releaseKey() {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   return {
     publicKey: publicKey
       .export({ format: "der", type: "spki" })
       .toString("base64"),
-    signBytes: (bytes) => sign(null, bytes, privateKey).toString("base64"),
+    signBytes: (bytes: Uint8Array) =>
+      sign(null, bytes, privateKey).toString("base64"),
   };
 }
 

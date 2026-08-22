@@ -598,17 +598,7 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     this.pushEvent(record, { kind: "flow-control", outputPaused: paused });
   }
 
-  producePattern(
-    session: SessionRef,
-    byteLength: number,
-  ): Readonly<{
-    producedBytes: number;
-    retainedBytes: number;
-    checksum: number;
-    gapCount: number;
-    maxBufferedBytes: number;
-    flowTransitions: number;
-  }> {
+  producePattern(session: SessionRef, byteLength: number) {
     const record = this.record(session);
     const cycles = Math.floor(byteLength / 251);
     const remainder = byteLength % 251;
@@ -903,6 +893,7 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     event: Omit<TerminalEvent, "session" | "eventSequence" | "occurredAt">,
   ): void {
     record.eventSequence += 1;
+    // SAFETY: The test owns this value and its fields.
     record.events.push({
       ...event,
       session: record.ref,

@@ -41,10 +41,7 @@ export function terminationFailureDetail(
 /** The same gates `launchOrchestrator` applies before it will launch each vendor, so `available: true` means "asking for this queen can work", not "a binary exists somewhere". Probing spawns `--version` per vendor, so results are held briefly rather than re-probed by every poll. */
 const AVAILABILITY_TTL_MS = 60_000;
 
-function probeVendorAvailability(): Record<
-  CapabilityProvider,
-  { available: boolean }
-> {
+function probeVendorAvailability() {
   const claude = resolveWorkingClaudeExecutable();
   return {
     claude: {

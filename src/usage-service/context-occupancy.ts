@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { findLatestGrokSessionDirectory } from "../adapters/providers/grok-cli";
+import { isNumber, isRecord } from "../shared/is-record";
+import type { JsonValue } from "../shared/json";
 
 /** Context-occupancy arithmetic and probes: the one owner of how a vendor's token readings become the "context N%" every Hive surface shows. Three vendor postures exist, and each is handled here or provably cannot be: - Claude states its own percent (`get_context_usage`), so there is nothing to derive — the adapter passes the vendor's number through. - Codex and ACP vendors state occupied tokens and a window; the division lives here, not in the adapters. - Grok states occupancy only in its own signals.json (ACP carries billing tokens, which measured 15,214 billed against 4,851 resident for one turn, so occupancy cannot be derived from the wire). The file probe lives here. */
 
@@ -35,17 +37,12 @@ export async function readGrokContextOccupancy(
   );
   if (directory === null) return null;
   try {
-    const signals: unknown = JSON.parse(
+    const signals: JsonValue = JSON.parse(
       await readFile(join(directory, "signals.json"), "utf8"),
     );
-    if (
-      typeof signals === "object" &&
-      signals !== null &&
-      !Array.isArray(signals) &&
-      typeof (signals as { contextWindowUsage?: unknown })
-        .contextWindowUsage === "number"
-    ) {
+    if (isRecord(signals) && isNumber(signals.contextWindowUsage)) {
       return clampPct(
+        // SAFETY: The surrounding code already established this contract.
         (signals as { contextWindowUsage: number }).contextWindowUsage,
       );
     }

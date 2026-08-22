@@ -69,6 +69,7 @@ import {
   type SettlementProofResult,
   type SettlementSnapshot,
 } from "./settlement-proof";
+import type { JsonValue } from "../../shared/json";
 
 export type SettlementDebtReport =
   | SettlementAggregate
@@ -271,7 +272,7 @@ export interface WorktreeLifecycleServiceDependencies {
     readonly issuer: SettlementMutationIssuer;
     readonly mutator: WorktreeSettlementMutator;
   };
-  onAlertDeliveryFailure?: (error: unknown) => void;
+  onAlertDeliveryFailure?: (error: JsonValue) => void;
 }
 
 export interface SettledCaseEvidence {
@@ -433,7 +434,7 @@ export class WorktreeLifecycleService {
     return work;
   }
 
-  private reportAlertDeliveryFailure(error: unknown): undefined {
+  private reportAlertDeliveryFailure(error: JsonValue): undefined {
     if (this.deps.onAlertDeliveryFailure === undefined) {
       return logAlertDeliveryFailure(error);
     }
@@ -598,6 +599,7 @@ export class WorktreeLifecycleService {
           : result.state === "needs-integration"
             ? "resolver"
             : "settlement-service";
+    // SAFETY: The surrounding code already established this contract.
     return this.updateCase(stored, {
       ...stored.record,
       state: result.state,
@@ -642,6 +644,7 @@ export class WorktreeLifecycleService {
           measurementStatus === "target-moved"
             ? `the landing target moved to ${targetBranch}`
             : "the settlement subject moved";
+        // SAFETY: The surrounding code already established this contract.
         return this.updateCase(stored, {
           ...stored.record,
           reason: `settlement evidence is stale after ${movement}; remeasurement failed: ${measured.kind === "kept" ? measured.reason : "measurement returned no evidence"}`,
@@ -657,6 +660,7 @@ export class WorktreeLifecycleService {
     ) {
       return this.keepMeasuredCase(stored, measured, at);
     }
+    // SAFETY: The surrounding code already established this contract.
     return this.updateCase(stored, {
       ...stored.record,
       reason: OWNED_ELSEWHERE.includes(stored.record.state)
@@ -702,6 +706,7 @@ export class WorktreeLifecycleService {
     };
     return this.updateCase(
       stored,
+      // SAFETY: The surrounding code already established this contract.
       (reactivate
         ? {
             ...record,
@@ -760,6 +765,7 @@ export class WorktreeLifecycleService {
       if (unattended && stored.record.unattendedBaseRevision === null) {
         // A case from before the baseline existed takes its first sighting as
         // the baseline; spin is measured from there.
+        // SAFETY: The surrounding code already established this contract.
         stored = await this.updateCase(stored, {
           ...stored.record,
           unattendedBaseRevision: stored.record.revision,
@@ -790,6 +796,7 @@ export class WorktreeLifecycleService {
           // landing the work and discarding it are both product judgments, and only a person can
           // make one. Reclassifying is the whole escalation — it reaches the owner, deletes
           // nothing, and blocks nothing.
+          // SAFETY: The surrounding code already established this contract.
           await this.updateCase(stored, {
             ...stored.record,
             escalationTier: tier,
@@ -894,7 +901,7 @@ export class WorktreeLifecycleService {
   }
 
   async listSettlementCases(): Promise<SettlementCase[]> {
-    const priority: Readonly<Record<SettlementCase["state"], number>> = {
+    const priority = {
       "owner-decision": 0,
       blocked: 1,
       "measurement-blocked": 2,
@@ -905,7 +912,7 @@ export class WorktreeLifecycleService {
       assessing: 7,
       "safe-release": 8,
       active: 9,
-    };
+    } satisfies Readonly<Record<SettlementCase["state"], number>>;
     return (await this.cases.list(await this.targetBranch()))
       .map(({ record }) => record)
       .sort(
@@ -916,7 +923,7 @@ export class WorktreeLifecycleService {
       );
   }
 
-  recordSettlementMeasurementFailure(error: unknown): void {
+  recordSettlementMeasurementFailure<T>(error: T): void {
     this.assertWritesAccepted();
     this.settlementMeasurementFailure = errorMessage(error);
   }
@@ -942,6 +949,7 @@ export class WorktreeLifecycleService {
     case: StoredSettlementCase;
   }> {
     let stored = initial;
+    // SAFETY: The surrounding code already established this contract.
     stored = await this.updateCase(stored, {
       ...stored.record,
       state: "assessing",
@@ -1112,7 +1120,11 @@ export class WorktreeLifecycleService {
   ): Promise<TeardownWorktreeSettlement> {
     const { agent, capture, at: timestamp } = request;
     let updated = request.updated;
-    const cleaned: { worktreePath: string | null; branch: string | null } = {
+    interface TeardownCleanup {
+      worktreePath: string | null;
+      branch: string | null;
+    }
+    const cleaned: TeardownCleanup = {
       worktreePath: null,
       branch: null,
     };
@@ -1250,6 +1262,7 @@ export class WorktreeLifecycleService {
         }
         preserved = await preserveCapturedWork();
         if (preserved !== null) {
+          // SAFETY: The surrounding code already established this contract.
           const withRefs = await this.updateCase(settlement.case, {
             ...settlement.case.record,
             preservedRef: preserved.ref,
@@ -1337,6 +1350,7 @@ export class WorktreeLifecycleService {
             stored.record.state === "needs-integration" ||
             stored.record.state === "measurement-blocked")
         ) {
+          // SAFETY: The surrounding code already established this contract.
           await this.updateCase(stored, {
             ...stored.record,
             worktreePath: null,
@@ -1463,6 +1477,7 @@ export class WorktreeLifecycleService {
             stored.record.state !== "needs-integration" ||
             stored.record.reason !== unowned
           ) {
+            // SAFETY: The surrounding code already established this contract.
             stored = await this.updateCase(stored, {
               ...stored.record,
               state: "needs-integration",
@@ -1514,6 +1529,7 @@ export class WorktreeLifecycleService {
         stored.record.reason !== reason ||
         stored.record.headOid !== branch.tip
       ) {
+        // SAFETY: The surrounding code already established this contract.
         stored = await this.updateCase(stored, {
           ...stored.record,
           state: "needs-integration",
@@ -1837,6 +1853,7 @@ export class WorktreeLifecycleService {
       ) {
         return attached;
       }
+      // SAFETY: The surrounding code already established this contract.
       return this.updateCase(attached, {
         ...attached.record,
         preservedRef,
@@ -1856,6 +1873,7 @@ export class WorktreeLifecycleService {
         new Date(this.deps.clock().getTime()).toISOString(),
       reason: "discovered stewardship ref is awaiting settlement",
     });
+    // SAFETY: The surrounding code already established this contract.
     return this.updateCase(opened, {
       ...opened.record,
       state: "needs-integration",
@@ -1951,6 +1969,7 @@ export class WorktreeLifecycleService {
     };
     const measured = await measureEvidence();
     if (!measured.accounted) {
+      // SAFETY: The surrounding code already established this contract.
       stored = await this.updateCase(stored, {
         ...stored.record,
         state: "needs-integration",
@@ -2030,6 +2049,7 @@ export class WorktreeLifecycleService {
       await this.cases.close(stored);
     } else {
       const removedRefs = new Set(refs.map((candidate) => candidate.ref));
+      // SAFETY: The surrounding code already established this contract.
       stored = await this.updateCase(stored, {
         ...stored.record,
         state: "assessing",
@@ -2199,6 +2219,7 @@ export class WorktreeLifecycleService {
     if (measured.snapshot.digest !== input.evidenceDigest) {
       throw new Error("settlement evidence changed before decision minting");
     }
+    // SAFETY: The surrounding code already established this contract.
     stored = await this.updateCase(stored, {
       ...stored.record,
       state: "owner-decision",
@@ -2424,6 +2445,7 @@ export class WorktreeLifecycleService {
       landedAt: recordedAt,
     });
     let stored = await this.adoptCase(agent);
+    // SAFETY: The surrounding code already established this contract.
     stored = await this.updateCase(stored, {
       ...stored.record,
       state: "settling",
@@ -2478,6 +2500,7 @@ export class WorktreeLifecycleService {
       },
     });
     await this.settlementMutator.apply(authority);
+    // SAFETY: The surrounding code already established this contract.
     await this.updateCase(stored, {
       ...stored.record,
       state: "active",

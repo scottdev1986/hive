@@ -214,6 +214,7 @@ describe("Grok adapter", () => {
       providerRunId: runId,
       hiveCommand: ["/opt/Hive App/bin/hive"],
     });
+    // SAFETY: The test owns this value and its fields.
     const parsed = JSON.parse(
       await readFile(join(root, ".grok", "hooks", grokHookFilename()), "utf8"),
     ) as {
@@ -253,6 +254,7 @@ describe("Grok adapter", () => {
       providerRunId: "018f1e90-7b5a-7cc0-8000-000000000222",
     };
     const readHooks = async () =>
+      // SAFETY: The test owns this value and its fields.
       JSON.parse(
         await readFile(
           join(root, ".grok", "hooks", grokHookFilename()),

@@ -76,6 +76,7 @@ describe("universal queen launch preparation", () => {
       fetchAgents: async () =>
         launches === 1
           ? [
+              // SAFETY: The test owns this value and its fields.
               {
                 id: "agent-1",
                 name: "maya",

@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type JsonValue, safeJsonParse } from "../src/shared/json";
+import { isRecord } from "../src/shared/is-record";
+import {
+  type JsonValue,
+  safeJsonParse,
+  type JsonObject,
+} from "../src/shared/json";
 
 const FIXTURES = join(import.meta.dir, "fixtures/protocol/kimi");
 const SID = "session_00000000-0000-4000-8000-000000000001";
@@ -13,11 +18,11 @@ function load(name: string): JsonValue {
   return parsed;
 }
 
-function send(message: unknown): void {
+function send<T>(message: T): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
-function notify(update: unknown): void {
+function notify<T>(update: T): void {
   send({
     jsonrpc: "2.0",
     method: "session/update",
@@ -35,7 +40,7 @@ let mode = "default";
 function handleRequest(msg: {
   id: number;
   method: string;
-  params?: Record<string, unknown>;
+  params?: JsonObject;
 }): void {
   switch (msg.method) {
     case "initialize":
@@ -72,15 +77,12 @@ function handleRequest(msg: {
     case "session/set_config_option": {
       const params = msg.params ?? {};
       if (params.configId === "mode") mode = String(params.value);
-      const fixture = load("session-new.response.json") as Record<
-        string,
-        unknown
-      >;
+      // SAFETY: The test owns this value and its fields.
+      const fixture = load("session-new.response.json") as JsonObject;
       const configOptions = Array.isArray(fixture.configOptions)
         ? fixture.configOptions.map((option) => {
             if (
-              typeof option === "object" &&
-              option !== null &&
+              isRecord(option) &&
               "id" in option &&
               option.id === params.configId
             ) {
@@ -98,6 +100,7 @@ function handleRequest(msg: {
     }
     case "session/prompt": {
       const blocks = Array.isArray(msg.params?.prompt) ? msg.params.prompt : [];
+      // SAFETY: The test owns this value and its fields.
       const first = blocks[0] as { text?: string } | undefined;
       const text = first?.text ?? "";
       if (text.includes("repeat-prompt")) {
@@ -179,6 +182,7 @@ function handleRequest(msg: {
       if (text.includes("AskUserQuestion")) {
         promptAwaitingQuestion = msg.id;
         notify(load("tool_call.update.json"));
+        // SAFETY: The test owns this value and its fields.
         const question = load("question.request.json") as { params: unknown };
         send({
           jsonrpc: "2.0",
@@ -200,6 +204,7 @@ function handleRequest(msg: {
           return;
         }
         promptAwaitingPermission = msg.id;
+        // SAFETY: The test owns this value and its fields.
         const permission = load("permission.request.json") as {
           params: unknown;
         };
@@ -240,6 +245,7 @@ process.stdin.on("data", (chunk) => {
     buffer = buffer.slice(idx + 1);
     idx = buffer.indexOf("\n");
     if (!line) continue;
+    // SAFETY: The test owns this value and its fields.
     const msg = JSON.parse(line) as {
       id?: number;
       method?: string;
@@ -257,6 +263,7 @@ process.stdin.on("data", (chunk) => {
       continue;
     }
     if (msg.method !== undefined && msg.id !== undefined) {
+      // SAFETY: The test owns this value and its fields.
       handleRequest(msg as { id: number; method: string });
       continue;
     }

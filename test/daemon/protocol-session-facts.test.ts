@@ -34,6 +34,7 @@ function mergeAgentFactPatches(
 function config(
   fields: Partial<Extract<NormalizedProviderEvent, { kind: "config-updated" }>>,
 ): NormalizedProviderEvent {
+  // SAFETY: The test owns this value and its fields.
   return {
     kind: "config-updated",
     model: null,
@@ -47,6 +48,7 @@ function config(
 function usage(
   fields: Partial<Extract<NormalizedProviderEvent, { kind: "usage-updated" }>>,
 ): NormalizedProviderEvent {
+  // SAFETY: The test owns this value and its fields.
   return {
     kind: "usage-updated",
     turnId: "turn-1",
@@ -121,6 +123,7 @@ describe("protocol session facts (w2-m9 statusline deletion)", () => {
 
   test("non-session events do not invent agent facts", () => {
     expect(
+      // SAFETY: The test owns this value and its fields.
       agentFactsFromProtocolEvent({
         kind: "turn-idle",
         turnId: "t1",
@@ -164,7 +167,9 @@ describe("protocol session facts (w2-m9 statusline deletion)", () => {
       inputTokens: null,
       outputTokens: null,
     });
+    // SAFETY: The test owns this value and its fields.
     expect(protocolTokenEvent(attributed as never)).not.toBeNull();
+    // SAFETY: The test owns this value and its fields.
     expect(protocolTokenEvent(displayOnly as never)).toBeNull();
     expect(tokenEventsFromProtocol([attributed, displayOnly])).toHaveLength(1);
     expect(tokenEventsFromProtocol([attributed, displayOnly])[0]?.key).toBe(

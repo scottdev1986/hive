@@ -185,13 +185,14 @@ describe("daemon maintenance", () => {
     const outcome = await Promise.race([
       maintenance.stop().then(
         () => "resolved" as const,
-        (error: unknown) => error,
+        (error) => error,
       ),
       Bun.sleep(200).then(() => "still-pending" as const),
     ]);
 
     try {
       expect(outcome).toBeInstanceOf(Error);
+      // SAFETY: The test owns this value and its fields.
       expect((outcome as Error).message).toBe(
         'Hive refused shutdown because maintenance drain "stuck drain" did not finish',
       );
