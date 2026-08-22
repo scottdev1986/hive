@@ -885,7 +885,7 @@ export class HiveDaemon {
       repoRoot: this.repoRoot,
       config: options.retention ?? null,
       episodic: this.episodic,
-      serializeMemory: (operation) => this.memoryWrites.serialize(operation),
+      serializeMemory: (operation) => this.memoryWrites.serialize("repo", operation),
       rebuildMemoryIndex: () => this.rebuildMemoryIndex(),
       runSweep: (reason) => this.runMemoryRetentionSweep(reason),
       sweepArtifacts: () =>
@@ -1402,7 +1402,9 @@ export class HiveDaemon {
   }
 
   private serializeMemory<T>(operation: () => Promise<T>): Promise<T> {
-    return this.memoryWrites.serialize(operation);
+    // P0: repo-wide operations (reindex, retention) use repo lock for now.
+    // Future: may need to lock both scopes for operations touching both.
+    return this.memoryWrites.serialize("repo", operation);
   }
 
   /** An unwired semantic leg yields byte-identical FTS-only recall. */
@@ -3025,7 +3027,7 @@ export class HiveDaemon {
       const result = await applyMemoryMutation(
         {
           repoRoot: this.repoRoot,
-          serialize: (operation) => this.memoryWrites.serialize(operation),
+          serialize: (operation) => this.memoryWrites.serialize("repo", operation),
           writeMemoryFact: (input) => this.memoryWrites.writeLocked(input),
           deleteMemoryFact: (scope, id) =>
             this.memoryWrites.deleteLocked(scope, id),

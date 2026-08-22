@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { withFileLock } from "../adapters/file-lock";
+import { getHiveHome } from "../hive-home/home";
 import type {
   MemoryFact,
   MemoryScope,
@@ -32,7 +33,8 @@ export class MemoryWriteService {
   readonly repoRoot: string;
   private readonly index: MemoryIndex;
   private readonly embeddingIndex: MemoryEmbeddingIndex | null;
-  private chain: Promise<unknown> = Promise.resolve();
+  private repoChain: Promise<unknown> = Promise.resolve();
+  private globalChain: Promise<unknown> = Promise.resolve();
 
   constructor(deps: MemoryWriteServiceDeps) {
     this.repoRoot = deps.repoRoot;
@@ -40,23 +42,37 @@ export class MemoryWriteService {
     this.embeddingIndex = deps.embeddingIndex;
   }
 
-  /** Runs an operation inside the memory critical section. Writes, deletes, reindexes and the retention sweep share one promise chain so concurrent MCP calls never race on slug generation or interleave a rebuild with an in-flight upsert, and one file lock so a second process cannot do the same. Public because a caller that has to fence on a revision needs its read and its write inside ONE section. */
-  serialize<T>(operation: () => Promise<T>): Promise<T> {
+  /** P0: Per-scope lock paths. Global writes take ~/.hive/memory/memory.lock; repo writes take <repo>/.hive/memory.lock. */
+  private getLockPath(scope: MemoryScope): string {
+    if (scope === "global") {
+      return join(getHiveHome(), "memory", "memory.lock");
+    }
+    return join(this.repoRoot, ".hive", "memory.lock");
+  }
+
+  /** Runs an operation inside the memory critical section. Writes, deletes, reindexes and the retention sweep share one promise chain per scope so concurrent MCP calls never race on slug generation or interleave a rebuild with an in-flight upsert, and one file lock per scope so a second process cannot do the same. Public because a caller that has to fence on a revision needs its read and its write inside ONE section. */
+  serialize<T>(scope: MemoryScope, operation: () => Promise<T>): Promise<T> {
+    const chain = scope === "global" ? this.globalChain : this.repoChain;
     const locked = async (): Promise<T> => {
-      const directory = join(this.repoRoot, ".hive");
-      await mkdir(directory, { recursive: true });
-      return withFileLock(join(directory, "memory.lock"), operation);
+      const lockPath = this.getLockPath(scope);
+      await mkdir(join(lockPath, ".."), { recursive: true });
+      return withFileLock(lockPath, operation);
     };
-    const run = this.chain.then(locked, locked);
-    this.chain = run.then(
+    const run = chain.then(locked, locked);
+    const next = run.then(
       () => undefined,
       () => undefined,
     );
+    if (scope === "global") {
+      this.globalChain = next;
+    } else {
+      this.repoChain = next;
+    }
     return run;
   }
 
   async write(input: MemoryWriteInput): Promise<MemoryWriteResult> {
-    return this.serialize(() => this.writeLocked(input));
+    return this.serialize(input.scope, () => this.writeLocked(input));
   }
 
   async writeLocked(input: MemoryWriteInput): Promise<MemoryWriteResult> {
@@ -83,7 +99,7 @@ export class MemoryWriteService {
     id: string,
     options: { verifier: string; date?: string },
   ): Promise<MemoryFact> {
-    return this.serialize(async () => {
+    return this.serialize(scope, async () => {
       const verified = await verifyMemoryFactFile(
         this.repoRoot,
         scope,
@@ -96,7 +112,7 @@ export class MemoryWriteService {
   }
 
   async delete(scope: MemoryScope, id: string): Promise<boolean> {
-    return this.serialize(() => this.deleteLocked(scope, id));
+    return this.serialize(scope, () => this.deleteLocked(scope, id));
   }
 
   async deleteLocked(scope: MemoryScope, id: string): Promise<boolean> {
