@@ -60,8 +60,8 @@ export const HiveConfigSchema = z.strictObject({
     .strictObject({
       retention: MemoryRetentionConfigSchema.prefault({}),
       wake_budget_tokens: z.number().int().positive().default(300),
-      // The semantic recall provider. "local" runs an ONNX model in the daemon, models cached under the Hive-owned models dir. "api" is a manual escape-hatch knob only — no API provider ships, and there is NO automatic fallback machinery: an unavailable semantic surface degrades recall to the FTS-only bundle, it never switches providers.
-      embedding_provider: z.enum(["local", "api"]).default("local"),
+      // P0: "api" provider fails config parse until implemented. "local" runs an ONNX model in the daemon, models cached under the Hive-owned models dir.
+      embedding_provider: z.enum(["local"]).default("local"),
       embedding_model: MemoryEmbeddingModelSchema.default("bge-small-en-v1.5"),
     })
     .prefault({}),
