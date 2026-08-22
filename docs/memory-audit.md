@@ -402,19 +402,101 @@ wake_pack_enabled: z.boolean().default(true),
 
 ---
 
-## 6. Open Residuals for Critic
+## 6. Critic's Ranked Hole List (Post-Merge Residuals)
 
-(Short section; Critic owns full ranked list)
+**Source**: Critic agent post-merge review  
+**Pinned**: `dev` @ `dfc55968` (file-backed only)  
+**Status**: P0 PASS still stands for pack/handoff/honesty; these are post-merge residuals + one ship-blocker the brief path introduced
 
-1. **empty_vs_dropped soft theater**: Index→buildAgentPrompt path still has soft prompt theater remnant per Critic PASS notes. Pack floor is real but index injection has legacy phrasing.
+**Note**: CEO is launching a separate fix for #1+#2 — fix in flight / Critic will re-score.
 
-2. **FTS-only index path**: `buildMemoryIndex` uses semantic: null explicitly (honest, but single-leg RRF). Plan calls for hybrid when embeddings ready, but P0 ships FTS-only.
+---
 
-3. **Consolidator not shipped in P0**: Plan §4 P1 item. P0 has prewrite gate, but no idle consolidator job for recurrence≥2 auto-promote or profile/docs proposals.
+### CRITICAL
 
-4. **Result card on return**: Plan §3.10.5 says "result card on specialist return: P1 acceptable if inbound card is P0." P0 ships inbound handoff; outbound result card is P1.
+**#1: Brief-ranked spawn index wipe (prompt-theater → empty knowledge)**
 
-Before claiming other plan P1+ items as missing, verify against `docs/memory-plan.md` §4 phases.
+**Evidence**: `src/memory-service/memory-store.ts:973` parses index lines with `/^\[([^\]]+)\]\s+([^:]+):/` but real rows are `- [scope/topic] id (date) [status]...: title` (`rebuildScopeIndex` ~286–288). Regex never matches → `rowsByKey` empty → `shown=[]` while omitted=N. Every specialist spawn calls `buildMemoryIndex(..., { brief: request.task })` (`hive-spawner.ts:1109–1111`), so production injection is header + "N older articles omitted" with zero rows. Bun repro on tip: match=null. Adapter tests that assert brief ranking would catch this if run.
+
+**Strategy**: Parse stable `scope`+`id` from the real line shape (or map recall hits→rows without regex); fixture: brief path must emit real `- [` rows, not omit-everything.
+
+**#2: Named wake-query theater**
+
+**Evidence**: `WakePayloadRequestSchema` optional `topic`/`objective`/`lastMailSnippet` (`schemas/wake-payload.ts:39–41`); `buildWakeQuery` concatenates them (`wake-payload-service.ts:20–31`). Sole caller `agent-ui.ts:2066–2071` sends only recipient/wakeId/oldestItemId/lane → query collapses to lane string. Comments still say "hybrid named query".
+
+**Strategy**: Populate query from wake mail topic + snippet at the only caller; reject empty meaningful query or fall back honestly.
+
+---
+
+### HIGH
+
+**#3: Mem0 write-gate incomplete (NOOP dead)**
+
+**Evidence**: `preWriteCheck` return type includes `"noop"` but only returns `add|update` (`write-service.ts:78–125`); `writeLocked` discards the return (`:129–132`); title collision mutates into forced UPDATE. `findSimilarMemoryCandidates` is post-write advisory only (`memory-tools.ts:185`).
+
+**Strategy**: Mem0 ADD/UPDATE/DELETE/NOOP with pre-write similar retrieve; identical body → NOOP; honor gate result.
+
+**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)**
+
+**Evidence**: `docs/memory-plan.md` requires auto-promote after recurrence≥2; harvest writes unverified pitfalls (`harvest.ts` ~470–478) and stops. No consolidator/job path promotes into always-on mistakes floor.
+
+**Strategy**: Sleep consolidator counts recurrence → promote to always-on mistakes slot; deadly rules → hooks.
+
+**#5: Proposals inbox unwired**
+
+**Evidence**: `docs/memory-proposals.md` is review-policy stub only; `consolidate.ts` merges similar articles only — never appends profile/project proposals.
+
+**Strategy**: Consolidator writes proposals → inbox; human apply to `~/.hive/profile.md` / committed docs; no silent shared-tier writes.
+
+**#6: Spawn index FTS-only + throwaway `:memory:` rebuild**
+
+**Evidence**: Brief path always `semantic: null` + new `Database(":memory:")` + `tempIndex.rebuild(root)` per call (`memory-store.ts:952–966`). Wake path can use daemon semantic (`server.ts:792–796`); spawn index cannot. Cost + ranking drift vs live FTS.
+
+**Strategy**: One recall path; reuse daemon `MemoryIndex` + hybrid when embeddings up; label degraded when not.
+
+---
+
+### MEDIUM
+
+**#7: Queen CLI cold mistakes**
+
+**Evidence**: `buildQueenLaunchContext` calls `loadRecentMistakes(undefined)` (`orchestrator.ts:199`) → empty mistakes in CLI queen pack.
+
+**Strategy**: Thread episodic/daemon floor into queen launch; don't ship empty-as-normal.
+
+**#8: Preference / engineer learning absent**
+
+**Evidence**: No preference kind or repetition→proposal path under `src/memory-service/`; profile is file stub only (`pack-floor.ts:22–34`).
+
+**Strategy**: Preference extraction → review-gated proposals (never silent law).
+
+**#9: §7 soft residuals + pack-off silence**
+
+**Evidence**: `empty_vs_dropped` / dual-read still exercise `buildAgentPrompt` after pack assembly (`memory-p0-acceptance.test.ts` ~450–665), not full `HiveSpawner.spawn`. `wake_pack_enabled === false` skips floor with no CAP/warning (`hive-spawner.ts:1328–1354`).
+
+**Strategy**: Harden fixtures on real spawn; pack-off must fail closed or scream.
+
+**#10: Citation heuristic fail-closed on read**
+
+**Evidence**: `validateFactCitations` regex-scrape paths/backticks then throw on `memory_read` for verified/stale (`memory-tools.ts:58–109,247–249`). False positives can block legitimate reads.
+
+**Strategy**: Structured citation fields; soft flag vs throw for heuristic misses.
+
+---
+
+### LOW
+
+**#11: Retention keep-set still prose-regex**
+
+**Evidence**: `extractReferencedEpisodeIds` (`retention.ts:17–40`) vs harvest `e${id}` strings — works for that shape, fragile elsewhere.
+
+**Strategy**: Structured provenance IDs on facts, not evidence regex.
+
+**#12: Docs/comment theater left for Hive Memory**
+
+**Evidence**: Wake-payload JSDoc still says "hybrid" unconditionally; `docs/agents/memory.md` still says citation "stubs".
+
+**Strategy**: Honest labels in code; this audit writeup should correct docs claims.
 
 ---
 
@@ -436,12 +518,12 @@ Before claiming other plan P1+ items as missing, verify against `docs/memory-pla
 - §7 named acceptance tests: 8 tests in `test/memory-p0-acceptance.test.ts`
 
 **What remains** (open work, not gaps):
-- Consolidator: P1 (idle/sweep, not every-turn, recurrence≥2 auto-promote, profile/docs proposals)
+- Consolidator: P1 (idle/sweep, not every-turn, recurrence≥2 auto-promote, profile/docs proposals) — Critic #4, #5
 - Result card: P1 (inbound handoff is P0)
-- Hybrid recall: P0 ships FTS-only index pick (honest); hybrid when embeddings ready
-- empty_vs_dropped soft theater: pack floor real, index path has legacy phrasing per Critic notes
+- Hybrid recall: P0 ships FTS-only index pick (honest); hybrid when embeddings ready — Critic #6
+- Preference learning: P1 (profile extraction → review-gated proposals) — Critic #8
 
-**Remaining work**: Critic hole list (separate doc) + plan P1+ items. P0 closed feed/honesty/continuity/seed phase.
+**Remaining work**: See §6 Critic's ranked hole list above. P0 closed feed/honesty/continuity/seed phase. Holes #1+#2 have fixes in flight from CEO.
 
 ---
 
