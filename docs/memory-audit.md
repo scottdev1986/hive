@@ -252,17 +252,22 @@ return queenBootCapsules.composeLaunchContext({
 
 ---
 
-### 3.5 Prewrite Gate (Dedup Before Write)
+### 3.5 Prewrite Gate (Partial Dedup Before Write)
 
 **File**: `src/memory-service/write-service.ts:79-130`
 
-**P0**: `MemoryWriteService.preWriteCheck` implements ADD/UPDATE/NOOP write-gate:
+**P0 reality**: `MemoryWriteService.preWriteCheck` returns `add|update` only (NOOP typed but never returned):
 1. Normalize title (lowercase, strip punctuation)
 2. Search for existing fact with same normalized title
 3. If found → return `"update"` (set supersedes field)
 4. Else → return `"add"`
+5. `writeLocked` **discards the return** (`:129-132`) — title collision forces UPDATE regardless
 
-**Test**: `prewrite_dedup` in `test/memory-p0-acceptance.test.ts:164-216` writes "Test Article" then "Test Article!" (same normalized title), verifies second write returns same id with supersedes field set, and only one fact file exists on disk.
+**Post-write advisory**: `findSimilarMemoryCandidates` runs after write (`memory-tools.ts:185`), returns suggestions only.
+
+**Hole**: NOOP not implemented. See §6 Critic hole #3 (HIGH: Mem0 write-gate incomplete).
+
+**Test**: `prewrite_dedup` in `test/memory-p0-acceptance.test.ts:164-216` writes "Test Article" then "Test Article!" (same normalized title), verifies second write returns same id with supersedes field set, and only one fact file exists on disk. Test validates UPDATE path; NOOP path does not exist.
 
 ---
 
@@ -410,9 +415,14 @@ wake_pack_enabled: z.boolean().default(true),
 
 **Note**: CEO is launching a separate fix for #1+#2 — fix in flight / Critic will re-score.
 
+**Phase labels** (Research+Critic):
+- **P0 residuals/leftovers**: #1 brief-index wipe, #2 wake-query theater, #3 Mem0 NOOP dead (feed bugs + incomplete P0 write-gate)
+- **LOCKED P1 not yet shipped**: #4 recurrence≥2 auto-promote, #5 proposals inbox (not P0 regressions; planned for P1)
+- Other holes: mix of P1 items (#6-8) and lower-priority fixes (#9-12)
+
 ---
 
-### CRITICAL
+### CRITICAL (P0 residuals)
 
 **#1: Brief-ranked spawn index wipe (prompt-theater → empty knowledge)**
 
@@ -430,25 +440,25 @@ wake_pack_enabled: z.boolean().default(true),
 
 ### HIGH
 
-**#3: Mem0 write-gate incomplete (NOOP dead)**
+**#3: Mem0 write-gate incomplete (NOOP dead)** — P0 residual
 
 **Evidence**: `preWriteCheck` return type includes `"noop"` but only returns `add|update` (`write-service.ts:78–125`); `writeLocked` discards the return (`:129–132`); title collision mutates into forced UPDATE. `findSimilarMemoryCandidates` is post-write advisory only (`memory-tools.ts:185`).
 
 **Strategy**: Mem0 ADD/UPDATE/DELETE/NOOP with pre-write similar retrieve; identical body → NOOP; honor gate result.
 
-**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)**
+**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)** — LOCKED P1 not yet shipped
 
 **Evidence**: `docs/memory-plan.md` requires auto-promote after recurrence≥2; harvest writes unverified pitfalls (`harvest.ts` ~470–478) and stops. No consolidator/job path promotes into always-on mistakes floor.
 
 **Strategy**: Sleep consolidator counts recurrence → promote to always-on mistakes slot; deadly rules → hooks.
 
-**#5: Proposals inbox unwired**
+**#5: Proposals inbox unwired** — LOCKED P1 not yet shipped
 
 **Evidence**: `docs/memory-proposals.md` is review-policy stub only; `consolidate.ts` merges similar articles only — never appends profile/project proposals.
 
 **Strategy**: Consolidator writes proposals → inbox; human apply to `~/.hive/profile.md` / committed docs; no silent shared-tier writes.
 
-**#6: Spawn index FTS-only + throwaway `:memory:` rebuild**
+**#6: Spawn index FTS-only + throwaway `:memory:` rebuild** — P1 item
 
 **Evidence**: Brief path always `semantic: null` + new `Database(":memory:")` + `tempIndex.rebuild(root)` per call (`memory-store.ts:952–966`). Wake path can use daemon semantic (`server.ts:792–796`); spawn index cannot. Cost + ranking drift vs live FTS.
 
@@ -508,7 +518,7 @@ wake_pack_enabled: z.boolean().default(true),
 - Wake pack floor: constitution, profile, project doc, handoff card, recent mistakes (always-on slots)
 - Handoff: every specialist spawn (not escalation-only)
 - Retention keep-set: real (episodes cited by wiki preserved)
-- Prewrite gate: ADD/UPDATE/NOOP dedup before write
+- Prewrite gate: ADD/UPDATE partial dedup (NOOP typed but not implemented — Critic #3)
 - Index pick: RRF via buildMemoryRecallBundle (FTS-only, semantic null — documented honestly)
 - Per-scope locks: global vs repo separation
 - Citation validation: pathExists/commandExists before load-bearing use (stub in P0)
@@ -517,13 +527,21 @@ wake_pack_enabled: z.boolean().default(true),
 - Dual-read sunset: wake_pack_enabled flag (default true)
 - §7 named acceptance tests: 8 tests in `test/memory-p0-acceptance.test.ts`
 
-**What remains** (open work, not gaps):
-- Consolidator: P1 (idle/sweep, not every-turn, recurrence≥2 auto-promote, profile/docs proposals) — Critic #4, #5
-- Result card: P1 (inbound handoff is P0)
-- Hybrid recall: P0 ships FTS-only index pick (honest); hybrid when embeddings ready — Critic #6
-- Preference learning: P1 (profile extraction → review-gated proposals) — Critic #8
+**P0 residuals** (bugs/incomplete, not design):
+- Brief-ranked index wipe (regex mismatch → empty knowledge) — Critic #1 CRITICAL, fix in flight
+- Wake-query theater (caller sends minimal fields) — Critic #2 CRITICAL, fix in flight
+- Mem0 NOOP dead (write-gate incomplete) — Critic #3 HIGH
 
-**Remaining work**: See §6 Critic's ranked hole list above. P0 closed feed/honesty/continuity/seed phase. Holes #1+#2 have fixes in flight from CEO.
+**LOCKED P1 not yet shipped** (planned, not regressions):
+- Consolidator: idle/sweep, not every-turn, recurrence≥2 auto-promote, profile/docs proposals — Critic #4, #5
+- Hybrid recall: daemon MemoryIndex reuse when embeddings ready — Critic #6
+- Preference learning: extraction → review-gated proposals (never silent law) — Critic #8
+
+**Other open work**:
+- Result card: P1 (inbound handoff is P0)
+- Critic holes #7, #9-12 (MED/LOW fixes)
+
+**Remaining work**: See §6 Critic's ranked hole list above. P0 closed feed/honesty/continuity/seed phase. Holes #1-3 are P0 residuals; #4-5 are LOCKED P1.
 
 ---
 
