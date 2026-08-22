@@ -946,13 +946,10 @@ export async function buildMemoryIndex(
   if (options.brief !== undefined && options.brief.trim() !== "") {
     const { buildMemoryRecallBundle } = await import("./recall");
     const { MemoryIndex } = await import("./fts-index");
-    const { HiveDatabase } = await import("../daemon/database/hive-database");
     const Database = (await import("bun:sqlite")).Database;
 
     // Build temporary in-memory index for recall
-    const tempDb = new Database(":memory:");
-    const database = new HiveDatabase(tempDb);
-    const tempIndex = new MemoryIndex(database);
+    const tempIndex = new MemoryIndex(new Database(":memory:"));
     await tempIndex.rebuild(root);
 
     // Use buildMemoryRecallBundle with FTS-only (semantic disabled)
@@ -961,19 +958,19 @@ export async function buildMemoryIndex(
       {
         repoRoot: () => root,
         memory: tempIndex,
-        semantic: null,
         semanticStatus: () => "disabled",
       },
       MEMORY_INDEX_MAX_ENTRIES,
     );
 
     // Convert recall results to index rows (preserve recall order)
+    // Format: - [scope/topic] id (date) [status] [pitfall]?: title
     const rowsByKey = new Map<string, string>();
     for (const item of allRows) {
-      const match = item.row.match(/^\[([^\]]+)\]\s+([^:]+):/);
+      const match = item.row.match(/^- \[([^\]]+)\]\s+(\S+)/);
       if (match !== null) {
         const scopeTopic = match[1];
-        const id = match[2].trim();
+        const id = match[2];
         const scope = scopeTopic.split("/")[0];
         rowsByKey.set(`${scope}/${id}`, item.row);
       }
