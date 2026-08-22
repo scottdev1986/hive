@@ -76,7 +76,7 @@ describe("loadRecentMistakes with EpisodicStore", () => {
       body: "## What failed\n\n- Failure signature: test:promoted:error\n\nTest",
       tags: ["pitfall", "promoted", "always-on"],
       source: "orchestrator",
-      status: "verified",
+      status: "unverified",
       kind: "pitfall",
       date: "2026-08-20",
       evidence: "Test",
