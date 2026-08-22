@@ -1,6 +1,3 @@
-// GET /workspace-snapshot exposes the StatusStore snapshot directly so the
-// Workspace reads the same schema-versioned projection as daemon consumers.
-
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";

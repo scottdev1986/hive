@@ -1,7 +1,3 @@
-// GET /routing/inspect: the Task Router screen's read-only preview. Same
-// audience as /routing/policy (user-only — this previews the routing
-// that governs spend), and its response freezes RouteInspectionSchema, so
-// the HTTP layer gets its own proof independent of the HiveRouter unit tests.
 import { describe, expect, spyOn, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { machineModelControlDatabase } from "../../src/daemon/routing-service/instance-settings";

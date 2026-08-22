@@ -1,10 +1,3 @@
-// The queen's compaction-exempt mission. Governance Decay (arXiv 2606.22528)
-// measured that soft org policy is the first thing a summarizer drops, and that
-// ~47 pinned tokens re-injected verbatim after compact restore 0% violation.
-// This buffer is that pin: daemon-owned, never written by the queen, never
-// edited by a vendor summary. Launch context and compact-reload both carry the
-// same bytes so a later integrity check is a substring test, not a paraphrase.
-
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { type Digest, DigestSchema } from "../../schemas/hierarchy-ids";

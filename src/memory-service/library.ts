@@ -1,6 +1,3 @@
-// Stable, paginated memory listing plus fenced create, update, and delete.
-// Rows sort by their identity key so concurrent writes never renumber a cursor.
-
 import type {
   MemoryFact,
   MemoryScope,

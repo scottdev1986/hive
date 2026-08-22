@@ -1,10 +1,3 @@
-// Unit tests for the offline consolidation dedup pass: bucket thresholds,
-// report-first read-only mode, --apply supersession semantics (articles
-// through the normal write path, facts through bi-temporal
-// invalidation), the similar bucket's never-auto-apply
-// rule, the unavailable-degradation contract, and the retention sweep's
-// candidate count. The embedder is ALWAYS mocked with controlled vectors —
-// `bun test` never downloads a model.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

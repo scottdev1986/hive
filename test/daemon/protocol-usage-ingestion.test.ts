@@ -1,8 +1,3 @@
-/**
- * Milestone 4 acceptance: usage taken from the live protocol stream carries
- * every fact the artifact collectors persist, and replaying it leaves the same
- * attribution totals rather than counting the tokens twice.
- */
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";

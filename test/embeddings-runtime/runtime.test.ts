@@ -1,9 +1,3 @@
-/**
- * The shared bundling pipeline (src/embeddings-runtime/runtime.ts), exercised
- * end to end against a planted fixture node_modules: stage the closure, run
- * the real `bun build`, and tar the result — the artifact step build.ts runs.
- * The fixture's "fastembed" is a trivial ESM module; no model, no network.
- */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

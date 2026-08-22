@@ -1,6 +1,3 @@
-// Connects the Claude stream-json session to Hive's provider runtime surface
-// and owns capability probing and runtime dependency injection.
-
 import { definedFields } from "../../../shared/defined-fields";
 import { errorMessage } from "../../../shared/error-message";
 import { probeClaudeVersionDetached } from "../claude-cli";

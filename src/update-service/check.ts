@@ -1,4 +1,3 @@
-/** "Is there a newer Hive?" — answered honestly or not at all. The invariant that drives the shape below: `up-to-date` is a claim about evidence, never a fallback. A failed network call returns `unavailable` with the reason. A cached answer is still evidence — we observed that version exist — so an offline machine keeps telling the truth it last learned, and only a machine that has never successfully checked says "could not check". Checks are cached for a day, jittered nowhere because the CLI check happens on an explicit user command. A future daemon-owned background check can call this module unchanged and should jitter its timer to spread network load. */
 import { randomUUID } from "node:crypto";
 import {
   mkdirSync,

@@ -1,6 +1,3 @@
-// Decodes Claude's AskUserQuestion payloads and returns selected answers in
-// the permission response shape expected by the stream-json protocol.
-
 import { isRecord } from "../../../shared/is-record";
 import { asString, type JsonObject } from "./claude-stream-wire";
 import type { ElicitationOption, ElicitationQuestion } from "./types";

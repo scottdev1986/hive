@@ -1,4 +1,3 @@
-/** Never collapse the first two entries into `.hive/`: that directory also contains project skills. */
 export const HIVE_GITIGNORE_ENTRIES = [
   ".hive/memory/",
   ".hive/worktrees/",

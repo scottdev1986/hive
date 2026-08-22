@@ -1,10 +1,3 @@
-// Unit tests for memory recall's semantic leg: vector-store CRUD + prune,
-// cosine ranking, the hybrid RRF recall blend, the unavailable-degradation
-// contract, and config validation. The embedder is ALWAYS mocked here —
-// `bun test` never downloads a model. The real-model paraphrase-recall gate
-// lives in test/memory-embedding-live.test.ts behind
-// HIVE_LIVE_MEMORY_EMBEDDINGS=1.
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

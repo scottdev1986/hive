@@ -1,5 +1,3 @@
-// Picking which copy of a vendor CLI a spawn will actually run, shared by all five provider adapters. Hive cannot delegate this to PATH lookup. A terminal host outlives the daemon and carries its own environment, so `claude` resolved at spawn time and `claude` resolved in the pane can be different files. And PATH order is not a preference ranking: a package-manager shim left behind by a failed or half-removed install sits early on a normal login PATH and is happy to be found while being unable to start anything. So candidates are gathered rather than resolved, and each one has to prove it runs before it is allowed to launch an agent.
-
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";

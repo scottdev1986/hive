@@ -1,13 +1,3 @@
-// Adversarial tests for the daemon's authorization boundary.
-//
-// Every test here is written from the attacker's side: it asserts that a thing
-// which *looks* legitimate is refused. A few assert the opposite — that the
-// orchestrator and a self-scoped writer keep working — because an
-// authorization layer that only denies is indistinguishable from a broken
-// daemon.
-//
-// Nothing in this file touches live work: an in-memory database, a stub
-// spawner that launches nothing, and a stub landBranch that runs no git.
 import { describe, expect, test } from "bun:test";
 import { readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";

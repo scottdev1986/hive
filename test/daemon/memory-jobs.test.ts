@@ -1,10 +1,3 @@
-// Daemon-owned memory maintenance jobs, the fenced library mutations, and the
-// configuration compare-and-set.
-//
-// Every readback assertion compares the job's own receipt against a store read
-// taken independently of it. A job reporting what its loop counter believed is
-// reporting an act; only a readback that agrees with a separate read of the
-// store is evidence of a state.
 import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";

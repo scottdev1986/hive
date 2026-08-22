@@ -1,9 +1,3 @@
-// Owns the lazily-resolved model-control stores — the routing policy, the
-// machine-wide database it lives in, and the router built over it — and the
-// routing surfaces exposed over HTTP. HiveDaemon supplies its database, quota
-// service, and narrow authorization callbacks; the service never reaches back
-// into the daemon.
-
 import { randomUUID } from "node:crypto";
 import { RouteInspectionSchema } from "../../schemas/routing-inspection";
 import {

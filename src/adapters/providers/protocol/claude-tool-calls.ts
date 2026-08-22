@@ -1,6 +1,3 @@
-// Classifies Claude tool calls and projects their readable details and file
-// changes without interpreting fields the provider did not report.
-
 import { isRecord } from "../../../shared/is-record";
 import type { ToolFileChange, ToolKind } from "./types";
 import { claudeQuestionText } from "./claude-stream-questions";

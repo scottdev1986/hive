@@ -1,5 +1,3 @@
-/** The queen-knowledge registry: the queen's pull path to the skills Hive ships for her. Vendor provisioning (src/adapters/queen-skills.ts) pushes her skills to per-vendor paths, one of which (codex) cannot be isolated at all — so this registry names each queen skill by topic and the hive_knowledge tool (knowledge-tool.ts) serves the body straight out of the binary, the same on every vendor. Content is never stored here: an entry points at SHIPPED_SKILLS (shipped.ts), the one embedded copy, and the registry-content agreement test fails the build if a skillName stops resolving. Adding a queen skill is two moves: ship it in shipped.ts, then add one entry here. */
-
 import { createHash } from "node:crypto";
 import { SHIPPED_SKILLS, type ShippedSkill } from "./shipped";
 

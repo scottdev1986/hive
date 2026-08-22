@@ -1,26 +1,3 @@
-// metric.ts
-//
-// The memory programme's success measure, computed from the incident-exposure
-// ledger and from nothing else.
-//
-// Two numbers are co-primary. Repeat-incident rate answers "when a trap we had
-// already met was in play again, how often did it still bite?" Avoided-repeat
-// cost answers "how much damage did not happen?" The first alone is blind to
-// success: a system that goes from repeating every known failure to repeating
-// none can show a flat rate the whole way if the remaining incidents are always
-// first-of-kind. The second alone is blind to regression. Read together they
-// move in opposite directions for the same underlying change, which is what
-// makes either of them trustworthy.
-//
-// WHY THE CORPUS IS NOT AN INPUT
-//
-// The owner's constraint is that writing articles must not improve the score.
-// That is enforced structurally rather than by rule: this function is never
-// handed the article corpus, so no count of it can appear in any output. The
-// only article-shaped datum that reaches here is citedArticleIds on an exposure,
-// and it is confined to articleReward, which splits a total that is fixed before
-// any citation is read. See the conservation property on articleReward.
-
 import type {
   IncidentCost,
   IncidentExposure,

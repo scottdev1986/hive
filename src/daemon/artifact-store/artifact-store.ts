@@ -1,24 +1,3 @@
-// Where an agent's finished work products live. Mail is a conversation: a
-// settled message body is gone, so an analysis delivered only by mail dies with
-// the mailbox. An artifact is a file — one Markdown document per work product,
-// under the project's own artifacts directory, named by the same `art_` id the
-// board's task records already accept as evidence. So a task can point at the
-// analysis that justified it, and the analysis is still there to read.
-//
-// A file, not a row: the hive database is runtime state and is expected to be
-// thrown away, and a work product has to outlive that and be readable by a
-// user with no Hive at all. The frontmatter carries what the file's path
-// cannot (who wrote it, when, what it is called); everything after the closing
-// fence is the body exactly as it was handed in.
-//
-// The board cites artifacts as permanent evidence, so the store lives at the
-// machine-level home, not under the live HIVE_HOME: an installed session runs
-// out of a fresh per-run instance home, and an artifact written there would be
-// stranded every session. Writes go only to the machine-level root. Artifacts
-// written before the move stay where they are — nothing here deletes them —
-// and reads fall back to that pre-move root so an id minted before the move
-// still resolves.
-
 import {
   existsSync,
   mkdirSync,

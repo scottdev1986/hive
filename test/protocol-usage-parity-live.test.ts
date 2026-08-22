@@ -1,11 +1,3 @@
-/**
- * Live protocol usage smoke: drive a real vendor, attribute the readings
- * through `recordProtocolUsage`, and require a reconnect replay to leave the
- * totals unchanged. Milestone 4 already proved protocol == artifact; the
- * collectors are deleted, so this only re-checks the protocol path.
- *
- * Gated on HIVE_USAGE_PARITY_LIVE=1: it spends real tokens.
- */
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { which } from "bun";

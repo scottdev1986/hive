@@ -1,8 +1,3 @@
-// Unit tests for the embedding-runtime provisioning helpers: the
-// dependency-closure walk, the source node_modules discovery, and the
-// already-installed fast path every provisioning caller shares. The full
-// install (copy + bun build + model probe) is proven against the compiled
-// binary end-to-end, not here — `bun test` never downloads a model.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";

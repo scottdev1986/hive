@@ -1,5 +1,3 @@
-// HiveDaemon.stop() must keep tearing down after a named maintenance-drain
-// refusal. Isolation tests on DaemonMaintenance cannot see a half-dead listener.
 import { afterEach, describe, expect, test } from "bun:test";
 import { HiveDaemon } from "../../src/daemon/server";
 import type {

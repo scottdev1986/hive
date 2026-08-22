@@ -1,4 +1,3 @@
-/** `hive update` — check, stage, and (when the team is idle) activate. The command always performs the safe half immediately: check, download, verify, stage. Then it tells the truth about activation. There is no `--now` flag that forces activation over a live team; the daemon owns landing authority and approvals, so "force" would mean killing agents mid-write. A user who genuinely wants that has an honest spelling already: `hive stop && hive update`. Making destruction a deliberate two-command act rather than a flag is the point. A successful activation also re-provisions the embedding and Graphify runtimes pinned to the new version. Each failure is reported as a loud degraded state, never hidden or turned into a rollback of a healthy binary. */
 import { spawn } from "node:child_process";
 import { type GraphifyOutcome, installGraphify } from "../adapters/graphify";
 import { expectedDaemonHandshake } from "../daemon/lifecycle/daemon-lifecycle";

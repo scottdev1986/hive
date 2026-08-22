@@ -1,13 +1,3 @@
-/**
- * What can be proven without a certificate: the branch that decides signed vs
- * unsigned, the exact entitlements the CLI slices are signed with, that the
- * offline manifest signature the pipeline produces verifies against the key the
- * binary embeds, and that the workflow wires all of it up and fails on defects.
- *
- * Everything that needs a real Developer ID — the codesign, notarytool, and
- * stapler calls — is proven instead by scripts/signing/dry-run.sh against a real
- * cert, because pretending to test it here would be a test that always passes.
- */
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

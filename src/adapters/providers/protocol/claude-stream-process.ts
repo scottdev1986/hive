@@ -1,6 +1,3 @@
-// Owns the Claude child-process contract and transport-level channel guards
-// shared by the runtime adapter and stream session.
-
 export const CLAUDE_CHANNELS_WARNING =
   /WARNING:\s*Loading development channels|Channels are enabled|MCP channels? enabled/i;
 

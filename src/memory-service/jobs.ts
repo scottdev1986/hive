@@ -1,5 +1,3 @@
-// Daemon-owned memory maintenance jobs. Every one of these operations already existed as a CLI command or an internal call. What was missing is the thing a user actually needs: a record that survives the operation. A job here writes a receipt before it starts, rewrites it as it progresses, and finishes by reading the stores back and recording what they now say — not what the job's own loop counter believed it did. "Reindexed 42 articles" is an act; "the index now holds 42 rows and the wiki holds 42 files" is a state, and only the second one can be checked. A failing job is isolated: it records its failure and returns. It never throws into the caller and never stops the next job.
-
 import {
   type MemoryJobKind,
   type MemoryJobProgress,

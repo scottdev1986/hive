@@ -1,5 +1,3 @@
-// hierarchy-projection.ts Snapshot entity shapes the Live Run hierarchy rail reads. Hierarchy records are durable truth; these projections are the read surface U4 renders. Every field that a screen might display carries an explicit availability state so "we never built this source" cannot look like "the value is empty". Entity kinds ride inside WorkspaceSnapshotV2's generic entities[] as new kind strings. The snapshot envelope stays untouched — kinds are free-form strings, and FlatAssignment remains the legacy C0 record that the Queen's Hive extends later rather than a hierarchy authority. SessionLocator is deliberately not part of any hierarchy-node projection. A node entity may carry an AgentBindingRef; the locator lives on the binding record and is joined elsewhere.
-
 import { z } from "zod";
 import {
   ArtifactRefIdSchema,

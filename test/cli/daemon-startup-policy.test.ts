@@ -1,7 +1,3 @@
-// The startup Model Control decision, exercised through the function runDaemon
-// actually calls. A corrupt document must stop the boot rather than be seeded
-// over, so this drives prepareStartupRoutingPolicy itself, not a re-derivation
-// of its rules.
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

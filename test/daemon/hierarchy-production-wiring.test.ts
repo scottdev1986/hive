@@ -1,8 +1,3 @@
-// Proves the hierarchy writers and landing path are reachable through the
-// daemon's authenticated MCP transport, not only through captured handlers.
-// Fixtures enter through the same database and HierarchyStore APIs production
-// uses; the assertions then observe the durable rows written by the real server.
-
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -1,4 +1,3 @@
-/** Copies only defined properties so callers can build optional fields without a conditional empty-object spread. */
 export function definedFields<T extends object>(
   fields: T,
 ): {

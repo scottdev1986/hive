@@ -1,5 +1,3 @@
-/** Point a CLI process at the Hive home the daemon for this repository actually uses. */
-
 import {
   namedInstanceHome,
   repoInstanceName,

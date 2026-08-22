@@ -1,10 +1,3 @@
-// Recall preview through the real client parse: the drift catcher for the
-// HTTP read-path wire contract. The producer-side tests read the payload as
-// loose JSON and the live self-test exercises the client only against a
-// deployed daemon, so neither runs the daemon's real output through the schema
-// the client actually parses with. This test does — a real daemon, its real
-// wire payload, and the real client functions from src/cli/mcp.ts — so a field
-// the producer drops or the schema narrows fails here.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -1,5 +1,3 @@
-// Resolves the hierarchy identity held by one authenticated MCP session. Flat AgentRecord.capabilityEpoch is the one credential-rotation counter: it authenticates the capability and fences hierarchy authority. There is no second copy on AgentBinding.
-
 import { isOrchestratorName } from "../../schemas/agent";
 import type {
   AgentBinding,

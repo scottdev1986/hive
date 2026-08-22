@@ -1,12 +1,3 @@
-// What `status: verified` is allowed to mean.
-//
-// The rule has two halves and a test that only proves one cannot tell this
-// change from deleting the validator outright: an author stamping their own
-// article must be REFUSED, and a different session stamping it on a later date
-// must SUCCEED. Both are asserted here, along with the three refusals that make
-// "a different session" a check the daemon performs rather than a promise the
-// caller keeps.
-
 import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

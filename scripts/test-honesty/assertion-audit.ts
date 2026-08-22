@@ -1,14 +1,4 @@
 #!/usr/bin/env bun
-// Counts the tests in test/ that cannot fail for a reason visible without
-// running them: no assertion at all, or an assertion so weak that deleting the
-// code under test would leave the test green.
-//
-// This is the cheap half of the honesty measurement. It needs no mutation run,
-// so it is fast enough to gate every change, and it names offenders rather
-// than only scoring them.
-//
-// Usage: bun run scripts/test-honesty/assertion-audit.ts [--json out.json]
-
 import { writeFileSync } from "node:fs";
 import { Glob } from "bun";
 

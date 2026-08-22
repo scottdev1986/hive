@@ -1,10 +1,3 @@
-// The board bootstrap as the queen actually reaches it: over the daemon's MCP
-// server, through the registered tool and the capability layer. The board reads
-// hierarchy records, and until a run root exists it renders empty — so what this
-// proves is the whole chain, from an empty database to a task visible in
-// GET /workspace-snapshot, plus the two things the tool must NOT do: open a
-// second root, or open a run anything can spawn under.
-
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import {

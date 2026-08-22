@@ -1,4 +1,3 @@
-/** Graphify: Hive's repo-local code knowledge graph. Four rules hold this module together, and every one of them exists to keep a third-party tool from reaching the network, the user's global config, or their git history on Hive's behalf: - Installed as a Hive-built frozen bundle: fetched from Hive's signed runtime channel and unpacked only after its size and SHA-256 match the signed manifest. No uv, Python, or PyPI on a user's machine. - Every graphify invocation runs keyless from a scrubbed allowlist environment with `--code-only`, so the LLM-enrichment paths fail closed instead of sending repo content anywhere. - Invocation is by absolute path into Hive's own bundle dir; nothing lands on PATH and upstream's `graphify install` (which writes the user's global assistant configs) is never run. - `hive init` keeps graphify's generated files out of git through the repository's tracked `.gitignore`. */
 import { existsSync } from "node:fs";
 import {
   copyFile,

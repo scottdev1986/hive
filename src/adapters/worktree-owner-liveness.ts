@@ -1,8 +1,3 @@
-// Owner liveness for worktree reclamation. A failed or unanswerable measurement
-// must never collapse into a confident negative: missing agent rows and probe
-// failures are unknown, not dead. Builds on probeProcessLiveness so every
-// reclamation path shares one process instrument.
-
 import { type ProcessLiveness, probeProcessLiveness } from "./process-liveness";
 
 /** Three-way ownership answer used by reclamation decisions. Collapses other-uid into live: a process that exists is never treated as gone. */

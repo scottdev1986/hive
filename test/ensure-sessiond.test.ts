@@ -1,14 +1,3 @@
-// Proves scripts/native/ensure-sessiond.sh can tell its outcomes apart. Three
-// of them — missing, stale, and a build that failed — mean the caller did not
-// run against sessiond at all, and until this gate existed all three reached
-// the log as an ordinary sub-20ms test failure.
-//
-// The states are driven against a throwaway root with a Makefile of the same
-// shape as the real one, because producing a genuinely stale binary in the
-// checkout means either a 38s rebuild or writing to a build output the sandbox
-// has no business touching. The real Makefile gets its own read-only case
-// below, so a rename of the `sessiond` target still lands here.
-
 import { expect, test } from "bun:test";
 import {
   chmodSync,

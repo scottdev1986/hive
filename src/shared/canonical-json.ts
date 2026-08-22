@@ -1,6 +1,3 @@
-// Deterministic JSON serialization for content comparison and hashing.
-// Object keys use JavaScript code-unit order so results do not depend on locale.
-
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(canonicalJson).join(",")}]`;

@@ -1,9 +1,3 @@
-// Golden hierarchy-snapshot inputs for the six U4 topology scenarios.
-//
-// Each builder returns frozen records the pure projector accepts. Tests
-// project them and pin root/worker semantics, reviewer-as-assignment, and
-// present/absent field coverage. No SessionLocator appears on any node.
-
 import type { HierarchyProjectionInput } from "../../../src/daemon/status-service/status-hierarchy-projection";
 import type { HierarchyNode } from "../../../src/schemas/hierarchy-node";
 import type { StrandedManifestAttention } from "../../../src/schemas/hierarchy-projection";

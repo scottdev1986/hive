@@ -1,8 +1,3 @@
-// Build-variant policy for prod, dev, and QA. Runtime filesystem identity lives in home.ts; this
-// module combines those paths with the compiled-in variant for installation, uninstall, and the
-// one capability that differs between production and development builds.
-//
-// The variant is inlined at build time by `bun build --compile --define 'process.env.HIVE_BUILD_VARIANT="dev"' ...`, the same mechanism src/shared/version.ts uses for the version strings. A `--define` rewrites the member expression into a string literal before the bundle is written, so a compiled binary cannot be relabelled by exporting HIVE_BUILD_VARIANT at it. Unset means `prod`: prod's paths are the ones an unlabelled build has always resolved to, so a checkout and a pre-variant release keep landing exactly where they landed before this module existed.
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { IS_RELEASE_BUILD } from "../shared/version";

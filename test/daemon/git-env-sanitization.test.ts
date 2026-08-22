@@ -1,17 +1,3 @@
-// Every git invocation that decides project identity or landing must run with
-// the hostile discovery variables stripped from the inherited environment.
-//
-// The hazard is real and silent: `GIT_DIR=<decoy> git -C <repo> rev-parse
-// --git-common-dir` reports the decoy, not the repo. Hive's daemon inherits
-// whatever environment launched it, so an unsanitized call mints a different
-// project identity — a parallel `~/.hive/projects` tree — or points the landing
-// gate at another repository's refs.
-//
-// The probe runs in a child process on purpose. Bun snapshots the environment
-// at process start, so poisoning `process.env` from inside a test never reaches
-// a `Bun.spawn` child: an in-process version of this test passes whether or not
-// the call sites sanitize. Only a child born with the hostile variables already
-// in its environ can tell the two apart.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -81,15 +67,10 @@ describe("git discovery env is stripped at every identity call site", () => {
       { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_DIR: decoy } },
     ).trim();
 
-    // Without this the assertions below would pass against a hazard that
-    // never fires, which is exactly how an unsanitized call site stays green.
     expect(redirected).toEqual(decoy);
   });
 
   test("every call site ignores every hostile variable", async () => {
-    // The clean run first, so the project registry mints this repo's uuid from
-    // an honest environment; a redirected second run would key a second
-    // project directory beside it.
     const clean = await probe({});
     const hostile = await probe(
       Object.fromEntries(HOSTILE_GIT_ENV.map((key) => [key, decoy])),

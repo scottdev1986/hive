@@ -1,8 +1,3 @@
-// Wait until the QA daemon has written daemon.port — the artefact the rest of
-// the lifecycle actually uses. The startup announcement is not that proof: it
-// can print while the port file is still absent, and the next step then fails
-// with "no daemon port file". This process exits 0 only after a usable port
-// file exists under a home inside the QA staging tree; 2 is NO MEASUREMENT.
 import { realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { readDaemonPort } from "../src/daemon/lifecycle/daemon-lifecycle";

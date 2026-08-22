@@ -1,4 +1,3 @@
-// Who is invoking this CLI process — captured at the origin because the audit row is the only record that survives a teardown cascade. A bare ppid is useless once the parent exits, so record enough identity to attribute a teardown from the audit row alone. This is accident prevention, not a security boundary: a same-UID process can read the user credential and lie about all of it (credentials.ts says the same). What it buys is that every HONEST caller — every test runner, build script, Workspace teardown and user shell — is decisively attributable from its audit row alone.
 import { spawnSync } from "node:child_process";
 
 export interface InvokerIdentity {

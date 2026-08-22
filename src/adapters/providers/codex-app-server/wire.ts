@@ -1,7 +1,3 @@
-// Decodes shared handshake fields and method names from Codex App Server's
-// untrusted JSON-RPC surface. Parsing failures stay fail-closed via
-// CodexAppServerIncompatibleError so a bad initialize cannot look like success.
-
 import { isRecord } from "../../../shared/is-record";
 import type { ClientRequest } from "./generated/0.146.0/ClientRequest";
 import type { InitializeParams } from "./generated/0.146.0/InitializeParams";

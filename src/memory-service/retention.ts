@@ -1,5 +1,3 @@
-// The tiered-retention sweep does two things against the daemon's own memory state: 1. Ages out the raw hot tier: episodic `events` rows older than `events_hot_days` are deleted — EXCEPT any row a digest's provenance still references, because a referenced event is still a drill-down target. 2. Demotes verified wiki articles whose `verified` date is older than `stale_after_days` to `stale`, in both repo and global scope, through the memory adapter's own update mechanics so article file, scope index, and log stay consistent. Stale is a demotion, not a deletion: the article stays visible and readable. The sweep is maintenance, not authority: the daemon logs a failure and keeps running.
-
 import type { MemoryRetentionConfig } from "../schemas/config-schema";
 import type { MemoryScope } from "../schemas/memory";
 import { countConsolidationCandidates } from "./consolidate";

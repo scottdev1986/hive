@@ -1,4 +1,3 @@
-// The one spawn policy, enforced behind the spawner so every door inherits it. Before this wrapper existed, the MCP spawn door applied succession admission, the memory-pressure refusal, and the machine-mutation lease — and the quota-drain replacement door applied none of them. The shutdown latch belongs here too because it must stop every launch door. A policy that lives at each call site is a policy one caller eventually forgets, so the gates wrap the spawner itself: any caller handed a GatedSpawner cannot launch without passing them.
 import { ORCHESTRATOR_NAME } from "../../schemas/agent";
 import type { AgentRecord } from "../../schemas/agent";
 import type { MachineMutationCoordinator } from "../mutation-lease";

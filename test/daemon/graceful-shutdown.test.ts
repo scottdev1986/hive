@@ -1,5 +1,3 @@
-// Exercises the real /stop path so checkpoint verification is proven against
-// durable storage before worker teardown, including the fail-closed path.
 import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

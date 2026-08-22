@@ -1,7 +1,3 @@
-// The two MCP doors onto the artifact store. They authenticate, validate, call
-// the store, and render what it returns; every rule about where a file lands
-// and how long it lives is behind the store boundary, not here.
-
 import { z } from "zod";
 import type { Action, Capability } from "../../schemas/authority";
 import {

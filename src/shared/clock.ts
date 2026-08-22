@@ -1,4 +1,3 @@
-/** The `now()` seam most modules inject for testability, returning the current time as a `Date`. */
 export type Clock = () => Date;
 export const systemClock: Clock = () => new Date();
 

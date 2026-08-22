@@ -1,16 +1,3 @@
-// The crash-recovery sweep observes and reports; it never closes an agent.
-//
-// The three claims here are the whole of that contract. The first is the
-// regression: before this change the sweep called markAgentDead on its own, so
-// a false reading of "the terminal is gone" cost a living agent its row, its
-// capability, and its quota. Now the row is the owner's to close, and a wrong
-// report costs one glance.
-//
-// The evidence bar is the second claim. Every branch that reports must have
-// watched something disappear — a terminal session, a provider run. An absent
-// heartbeat is not death: kimi's lastEventAt freezes at spawn, so a clock-keyed
-// death is a report about missing instrumentation, and it has twice been wrong.
-// The third test pins the report's identity off that clock for the same reason.
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { CrashRecovery } from "../../src/daemon/recovery/recovery-service";

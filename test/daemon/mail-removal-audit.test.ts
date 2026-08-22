@@ -1,15 +1,3 @@
-// The audit that makes the cutover irreversible.
-//
-// Deleting a system once is easy; keeping it deleted is not. Every check here
-// fails the build if any part of the terminal notice path comes back — as a
-// symbol, as a tool name in a brief, as SQL against a dropped table, as an
-// Escape byte, as a re-wireable daemon option, or as an import edge from the
-// message service into the session host.
-//
-// Each scanner is self-tested against a string that SHOULD trip it, so a
-// scanner that silently stopped matching fails here rather than passing a clean
-// tree by accident. A clean-tree pass alone would prove only that the tree is
-// clean, not that anyone would notice if it stopped being.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";

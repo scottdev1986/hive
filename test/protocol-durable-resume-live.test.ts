@@ -1,14 +1,3 @@
-/**
- * Live durable resume against installed vendors: OpenCode over ACP and Codex
- * over the App Server.
- *
- * The proof is a fact the model can only know from the earlier turn. A fresh
- * adapter process resumes on nothing but the recorded `VendorSessionRef` — no
- * transcript directory, rollout file, SQLite database, or process table is
- * read — and then answers with the passphrase it was told before the close.
- *
- * Opt-in because it spends vendor quota: HIVE_DURABLE_RESUME_LIVE=1.
- */
 import { expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { writeFile } from "node:fs/promises";

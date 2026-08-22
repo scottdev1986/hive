@@ -1,5 +1,3 @@
-/** hive_knowledge: the vendor-neutral pull half of queen-knowledge delivery. Vendor provisioning decides per vendor whether the queen's skills reach her at all; this tool does not — she asks for a topic and gets the body the binary ships, wherever she runs. The registry and all content resolution live in knowledge.ts (the one home for knowledge machinery); this file is only the MCP surface, and the daemon's whole share of it is one registration line in server.ts. */
-
 import { z } from "zod";
 import type { HiveToolServer } from "../daemon/authorization/mcp-tool-policy";
 import type { Action, Capability } from "../schemas/authority";

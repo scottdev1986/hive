@@ -1,7 +1,3 @@
-// Runs build.sh's actual smoke function against scratch bundle binaries. The
-// fake MCP server records its own PID and fixture directory so the test can
-// prove cleanup removed both after success and after a measured smoke failure.
-
 import { expect, test } from "bun:test";
 import {
   chmodSync,

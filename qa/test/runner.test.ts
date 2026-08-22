@@ -1,8 +1,3 @@
-// Unit tests for the QA runner core (qa/runner.ts). No QA rig is
-// involved: each test constructs its own failing condition — a missing pin, a
-// pin resolving into the real home, a staging root inside the checkout, a
-// stale binary, a predicate that never holds, an oracle that refuses — and the
-// real validate-isolation.sh runs wherever the runner would call it.
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   mkdirSync,

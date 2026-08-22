@@ -1,7 +1,3 @@
-// Projects Codex approval requests into the short user-facing summary shown
-// while a permission decision is pending. The method set is the server-request
-// surface the session treats as approval rather than ordinary notification.
-
 import type { ServerRequest } from "./generated/0.146.0/ServerRequest";
 import type { CodexAppServerWire } from "./jsonl-rpc";
 import type { RequestId } from "./wire";

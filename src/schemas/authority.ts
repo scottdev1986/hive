@@ -1,5 +1,3 @@
-// Shared authorization vocabulary. Minting, verification, and role grants stay
-// in the daemon; schemas and services import these names without that engine.
 export type { Capability, Role } from "./capability";
 
 export type Action =

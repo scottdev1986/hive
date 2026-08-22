@@ -1,5 +1,3 @@
-/** What is ON a terminal screen, reconstructed from the bytes that were sent to it. A pane's output stream and its screen are the same thing only for a program that prints and never revises. Every vendor TUI revises: it addresses the cursor, erases regions, and swaps to an alternate screen. Reading the tail of such a stream reports text the terminal has already replaced and can miss text that remains visible elsewhere on the screen. This is a deliberately small VT subset: the sequences a coding TUI actually uses to paint. Anything else is consumed and dropped rather than passed through, because a control sequence rendered as text is worse than a missing one — the reader cannot tell which characters the user would have seen. */
-
 const ESC = 0x1b;
 const BEL = 0x07;
 

@@ -1,12 +1,3 @@
-// Every wired vendor must deliver the one `hive` MCP server (loopback
-// HTTP + per-agent Bearer capability auth) through its own config channel,
-// because the whole memory surface — search/read/write, the episodic tools,
-// pitfall promotion — rides that single entry. A vendor row drives the REAL
-// config writer into a fixture worktree and asserts the produced config, the
-// auth delivery channel, that no capability token ever reaches an argv, and
-// the spawn-time prompt's memory surface.
-// This suite is the static vendor matrix; live behavior belongs to the
-// provider conformance suites that exercise an actual session.
 import {
   afterAll,
   afterEach,

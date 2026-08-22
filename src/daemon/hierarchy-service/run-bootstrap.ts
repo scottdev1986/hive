@@ -1,7 +1,3 @@
-// Opens the queen's coordination run so the hierarchy board has a root to hang work on. A run root is deliberately unreachable through hive_node_create, which refuses parentNodeId null: roots exist only as the genesis half of run-create. That left the queen with no supported way to open a run at all, and a board that reads hierarchy records renders empty until one exists. This tool closes that gap without adding a second genesis path — it assembles a run-create package and hands it to the SAME RunControl operation the /run-control endpoint uses.
-//
-// The package is assembled here rather than asked of the caller because the queen has no honest source for a repo sha, an instance id, or a revision digest; the daemon does. What the daemon must not do is invent a package that then FENCES real work, so this one claims as little as it can: every budget dimension is zero and the plan carries no tasks. Neither is a fence — spawn admission reads neither the RunBudget nor the plan's taskDag — so they bound what this run SAYS it will spend, not what it can be made to do. What actually bounds delegation under this run is the DelegationGrant an engineer issues into it.
-
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { runGit } from "../../adapters/git";

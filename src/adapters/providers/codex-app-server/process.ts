@@ -1,6 +1,3 @@
-// Owns process-environment projection and the detached version probe used by
-// the Codex App Server runtime adapter.
-
 export function processEnvironment(): Record<string, string> {
   return Object.fromEntries(
     Object.entries(process.env).filter(

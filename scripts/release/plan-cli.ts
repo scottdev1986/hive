@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-/** `bun run scripts/release/plan-cli.ts` — decide the next version from git state. CI calls exactly this. The bump rule therefore lives in `src/release/plan.ts`, under the tests in `plan.test.ts`, and never in a shell fragment inside a YAML file where nothing can test it. This file is the adapter from `git` to that pure function. It writes `version`, `tag`, and `action` to `$GITHUB_OUTPUT` when present, and always prints the plan as JSON. */
 import { appendFileSync } from "node:fs";
 import { planRelease } from "../../src/release/plan";
 

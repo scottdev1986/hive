@@ -1,4 +1,3 @@
-// Reading and compare-and-set writing of the `[memory]` configuration. The revision covers the WHOLE config document, not just the memory tables. A client that read the file, edited retention, and wrote back while someone else changed autonomy in between would otherwise overwrite that change and report success. Fencing on the whole document costs an occasional spurious conflict — the client re-reads and retries — and buys the guarantee that no write ever lands on a document the client had not seen. Only the memory tables are rewritten; every other line in the file is carried across byte-for-byte, because this writer has no business reformatting settings it does not own.
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { withHiveConfigLock } from "../config/document-lock";

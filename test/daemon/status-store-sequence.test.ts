@@ -1,7 +1,3 @@
-// The readiness watch decides an agent is alive when this sequence advances,
-// so a query that silently matched nothing would read as "no agent ever
-// reported" forever — an absent row and an absent agent are indistinguishable
-// from the caller's side. Every assertion here is a positive control first.
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { StatusStore } from "../../src/daemon/status/status-store";

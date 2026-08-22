@@ -1,8 +1,3 @@
-/**
- * After scanner deletion the refresh pass only keeps graphify call counts
- * current from provider tool events. Context, model, and turn no longer come
- * from vendor artifacts.
- */
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import type { GraphifyCallCursor } from "../../src/daemon/observability/tool-telemetry";

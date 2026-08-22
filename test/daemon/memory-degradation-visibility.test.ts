@@ -1,9 +1,3 @@
-// Embedding degradation is LOUD at every surface a user or agent sees.
-// These tests pin the recall envelope's semantic discriminator
-// (hybrid / degraded:<state> / disabled) with its unclamplable warning line,
-// the write responses' embedding outcome field, the CLI printer's quiet-
-// unless-degraded line, and the memory.embeddings status section.
-
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";

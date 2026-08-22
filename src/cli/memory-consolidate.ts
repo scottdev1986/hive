@@ -1,5 +1,3 @@
-// `hive memory consolidate` deduplicates THIS project's memory stores (repo + global wiki articles and the project's episodic facts). Report first: default mode finds and groups duplicate pairs, changes nothing, and exits 0 even with findings — it is a report, not a gate. `--apply` supersedes only the ≥0.95 identical bucket (older into newer) through the memory system's own write paths; the similar bucket is never auto-applied because false merges destroy information irreversibly. Real errors — the semantic surface being unavailable, an apply the write path refused — exit nonzero.
-
 import { loadHiveConfig } from "../config/load";
 import {
   daemonInstanceLiveness,

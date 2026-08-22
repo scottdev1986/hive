@@ -1,9 +1,3 @@
-/**
- * AcpProviderSession's usage-updated event, decoded from a session/prompt
- * result (test/protocol-kimi-fake-server.ts, "usage-full" trigger). Reuses
- * the Kimi fake server purely as an ACP transport; nothing here asserts
- * anything about Kimi's own (real) usage reporting.
- */
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { AcpProviderSession } from "../src/adapters/providers/protocol/acp-session";

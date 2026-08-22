@@ -1,4 +1,3 @@
-// The per-project episodic store: the daemon's typed record of what happened and what is currently believed, for exactly one project. The store file lives under the per-project state directory keyed by the project registry's hiveUuid, so two projects can never share a store and no caller ever names the project a query runs against — isolation is the directory layout, not a parameter. Facts are bi-temporal and immutable: a contradiction is a new row plus an `invalid_at` stamp on the old one with a `supersedes_id` pointer between them. There is deliberately no delete path — `invalid_at IS NULL` is the "currently believed" filter and everything else is history.
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";

@@ -1,11 +1,3 @@
-/** Locates the `hive-sessiond` binary, and holds the AF_UNIX peer-identity helpers its test exercises.
-
-Nothing here supervises a broker process any more: `resolveSessiondBinary` is the only export production uses, from `cli/daemon.ts` and `sessiond-host.ts`. No code in this repository opens a `broker.sock`, and no code spawns `hive-sessiond serve`.
-
-Peer identity is proved on the sessiond side instead, and in the opposite direction to what a supervisor-checks-its-child arrangement would do: `inspectPeer` in `native/sessiond/src/daemon_identity.zig` reads uid and gid via `getpeereid` and the pid via `LOCAL_PEERPID` straight from the kernel before any HELLO is parsed, so a JSON claim can never populate an identity field. `session_host.zig` then matches that observed peer against the role the connection asks for. It is a stronger check than comparing a pid: the observed identity carries the peer's process start time, so a recycled pid resolves as a different process rather than impersonating the earlier one.
-
-`socketFileDescriptor`, `readLocalPeerPid` and `connectUnixSocket` below have no production caller left — only `test/daemon/sessiond-broker.test.ts` reaches them. They are kept rather than deleted because that test still proves the macOS `getsockopt` binding works; retire them together with it, not separately. */
-
 import { dlopen, FFIType, suffix } from "bun:ffi";
 import { accessSync, constants } from "node:fs";
 import { connect, type Socket } from "node:net";
@@ -28,7 +20,6 @@ export interface ResolveSessiondBinaryOptions {
   readonly isReleaseBuild?: boolean;
 }
 
-/** Locate the staged or development `hive-sessiond` binary. */
 export function resolveSessiondBinary(
   options: ResolveSessiondBinaryOptions = {},
 ): string | null {
@@ -113,7 +104,6 @@ export function socketFileDescriptor(socket: Socket): number {
   return fd;
 }
 
-/** Kernel peer pid for a connected AF_UNIX socket (macOS LOCAL_PEERPID). Measured: against hive-sessiond serve, peer equals the broker process pid. */
 export function readLocalPeerPid(fd: number): number {
   const peer = new Int32Array(1);
   const len = new Uint32Array([4]);
@@ -131,11 +121,11 @@ export function readLocalPeerPid(fd: number): number {
   return peerPid;
 }
 
-/** Connect with a hard timeout — a stale broker.sock after SIGKILL can otherwise hang connect() until the process is killed, blocking crash recovery forever. */
 export function connectUnixSocket(
   path: string,
   timeoutMs = 500,
 ): Promise<Socket> {
+  // Stale AF_UNIX paths can hang connect() until the process is killed.
   return new Promise((resolveSocket, reject) => {
     const socket = connect(path);
     const timer = setTimeout(() => {
@@ -156,5 +146,3 @@ export function connectUnixSocket(
     });
   });
 }
-
-// ! The broker process supervisor lived here: spawning `hive-sessiond serve`, ! proving kernel peer ownership of broker.sock, and restarting it within a ! bound. Hive launches each terminal host itself now and speaks to it on the ! host's own sockets, so nothing supervises a broker — what remains is ! locating the binary and the socket helpers the viewer path still uses.

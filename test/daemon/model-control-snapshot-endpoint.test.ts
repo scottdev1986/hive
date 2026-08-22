@@ -1,6 +1,3 @@
-// The Workspace endpoint is an authenticated HTTP view of the existing
-// model-control snapshot builder, not a second implementation of its schema.
-
 import { describe, expect, test } from "bun:test";
 import {
   buildModelControlSnapshot,

@@ -1,4 +1,3 @@
-/** The one interactive prompt surface in Hive's CLI. Hive's commands are non-interactive by principle (init's doc comment makes it a design rule): scripts and CI must never hang on a question. This helper keeps that promise structurally — it asks only when stdin AND stdout are TTYs, and returns null otherwise so the caller falls back to its scriptable default. Explicit flags always win before this is ever called. */
 import { createInterface } from "node:readline/promises";
 
 export type ConfirmFn = (

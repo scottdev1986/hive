@@ -1,8 +1,3 @@
-/** Staged hive-sessiond embeds session-protocol.schema.json at compile time
- * (`@embedFile`). A binary staged before a wire-schema change is present and
- * still wrong. This check hashes the embed OUT OF THE BINARY, then compares
- * that digest to the tree file. It must not look up the staged artifact by
- * the tree's digest — that turns a stale binary into an absence. */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 

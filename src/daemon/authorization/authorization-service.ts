@@ -1,4 +1,3 @@
-// The Hive authorization boundary. Four roles — user, orchestrator, writer, reader — and the action allowlists each holds are defined here. Two rules carry the whole design: 1. A request body is evidence of intent, never of authority. The subject a caller names is compared against the subject bound into its capability; it is never used to widen what the caller may do. 2. Only the daemon mints. There is no delegation and no attenuation grammar, so the authority graph is exactly one level deep. The single carve-out is the Codex root token (`root-token:mint`): the user's launcher asks the daemon to mint the orchestrator credential the codex root will present, because that root has no spawn path of its own — still daemon-minted, still one level deep.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { isOrchestratorName } from "../../schemas/agent";
 import type { Action, Capability, Role } from "../../schemas/authority";

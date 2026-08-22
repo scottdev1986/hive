@@ -1,13 +1,3 @@
-// The digest is the whole basis of load-time integrity for the embedding
-// runtime, so what it does and does not cover is a contract, not an
-// implementation detail. An unstated exclusion is a silent hole, so the
-// exclusions are asserted here too.
-//
-// The end-to-end proof that a release binary REFUSES a tampered runtime cannot
-// live in `bun test`: HIVE_EMBEDDINGS_DIGEST is a compile-time constant and is
-// null here, which is exactly the dev-skip branch. That leg is proven against a
-// real keyed release build, signed Developer ID with hardened runtime, by
-// injecting into dist/entry.js and observing the refusal.
 import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";

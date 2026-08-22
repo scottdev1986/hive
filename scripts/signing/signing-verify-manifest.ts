@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-/** Prove the release we are about to publish is one `hive update` will accept. `bun run scripts/signing/signing-verify-manifest.ts dist/hive-release.json` Catches a mismatched key pair before the tag exists. Verification is fail-closed: a binary with an embedded public key refuses any manifest that key cannot vouch for. If `HIVE_RELEASE_PUBLIC_KEY` and `HIVE_RELEASE_PRIVATE_KEY` disagree, the pipeline would publish a release every installed Hive refuses to install. Uses the same `verifyManifest` and public key the client embeds. */
 import { readFileSync } from "node:fs";
 import {
   parseReleaseManifest,
