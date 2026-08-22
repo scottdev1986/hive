@@ -44,7 +44,7 @@ export async function runRetentionSweep(options: {
   repoRoot: string;
   config: MemoryRetentionConfig;
   now: Date;
-  /** Pairwise vector scan. Skip it on a kill-time sweep: the count is a diagnostic, and running it on the request thread is what made /handshake miss its 1s budget. */
+  /** Pairwise vector scan. Skip it on a kill-time sweep: the count is a diagnostic, and running it on the request thread is what made /handshave miss its 1s budget. */
   countCandidates?: boolean;
 }): Promise<RetentionSweepReport> {
   const { episodic, repoRoot, config, now } = options;
@@ -54,10 +54,17 @@ export async function runRetentionSweep(options: {
     consolidationCandidates: 0,
   };
 
+  // P0: Build real keep-set from active ledger/pitfall provenance
+  const allFacts = [
+    ...(await discoverMemoryFacts(repoRoot, "repo")),
+    ...(await discoverMemoryFacts(repoRoot, "global")),
+  ];
+  const keepIds = extractReferencedEpisodeIds(allFacts);
+
   const cutoff = new Date(
     now.getTime() - config.events_hot_days * DAY_MS,
   ).toISOString();
-  report.eventsDeleted = episodic.sweepEvents(cutoff, new Set());
+  report.eventsDeleted = episodic.sweepEvents(cutoff, keepIds);
 
   // (3) Verified wiki articles whose verification aged out demote to stale.
   const staleCutoff = new Date(now.getTime() - config.stale_after_days * DAY_MS)

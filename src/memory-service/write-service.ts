@@ -75,7 +75,60 @@ export class MemoryWriteService {
     return this.serialize(input.scope, () => this.writeLocked(input));
   }
 
+  /** P0: Pre-write gate checks for duplicates/updates before writing. */
+  private async preWriteCheck(
+    input: MemoryWriteInput,
+  ): Promise<"add" | "update" | "noop"> {
+    // If id is provided and supersedes itself, this is an explicit update
+    if (
+      input.id !== undefined &&
+      input.supersedes.length > 0 &&
+      input.supersedes.includes(input.id)
+    ) {
+      return "update";
+    }
+
+    // If id is provided but not in supersedes, caller is creating with specific id
+    if (input.id !== undefined && input.supersedes.length === 0) {
+      return "add";
+    }
+
+    // Search for similar facts by normalized title (dedup-before-write)
+    const normalizeTitle = (title: string): string =>
+      title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+
+    const facts = await (
+      await import("./memory-store")
+    ).discoverMemoryFacts(this.repoRoot, input.scope);
+    const normalized = normalizeTitle(input.title);
+    const duplicate = facts.find(
+      (fact) => normalizeTitle(fact.title) === normalized,
+    );
+
+    if (duplicate === undefined) {
+      return "add";
+    }
+
+    // Found duplicate with same normalized title - this becomes an update
+    // Mutate input to target the existing id and supersede it
+    if (input.id === undefined) {
+      input.id = duplicate.id;
+    }
+    if (!input.supersedes.includes(duplicate.id)) {
+      input.supersedes = [...input.supersedes, duplicate.id];
+    }
+    input.topic = duplicate.topic; // preserve topic on update
+
+    return "update";
+  }
+
   async writeLocked(input: MemoryWriteInput): Promise<MemoryWriteResult> {
+    // P0: Pre-write gate determines ADD/UPDATE/NOOP
+    await this.preWriteCheck(input);
+
     const written = await writeMemoryFactFile(this.repoRoot, input);
     for (const id of written.supersededIds) {
       this.index.removeFact(input.scope, id);
