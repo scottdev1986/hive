@@ -14,7 +14,7 @@ import {
 } from "../schemas/memory";
 import type { MemoryEmbeddingWriteOutcome } from "./embeddings";
 import { findSimilarMemoryCandidates, type MemoryIndex } from "./fts-index";
-import { readMemoryFact } from "./memory-store";
+import { readMemoryFact, pathExists, commandExists } from "./memory-store";
 import type { MemoryWriteFileResult } from "./store-records";
 
 export const MemoryIdSchema = z
@@ -49,6 +49,52 @@ export const MemoryWriteRequestSchema =
   });
 
 export const MEMORY_RECALL_DEFAULT_BUDGET = 800;
+
+/**
+ * P0: Citation path-exists check (minimum viable).
+ * Validates that paths and commands mentioned in a memory fact still exist.
+ * Throws if any cited path/command is not found, treating the fact as stale/unverified.
+ */
+async function validateFactCitations(
+  fact: MemoryFact,
+  repoRoot: string,
+): Promise<void> {
+  const textToCheck = [fact.title, fact.body, ...fact.evidence].join("\n");
+  
+  // Extract potential file paths (simple heuristic: words that look like paths)
+  const pathPattern = /(?:^|\s)([.~]?\/[^\s]+|[a-zA-Z0-9_-]+\/[^\s]+\.[a-zA-Z0-9]+)/g;
+  const paths = Array.from(textToCheck.matchAll(pathPattern), (m) => m[1]);
+  
+  // Extract potential commands (simple heuristic: backtick-wrapped words or common commands)
+  const commandPattern = /`([a-zA-Z0-9_-]+)`/g;
+  const commands = Array.from(textToCheck.matchAll(commandPattern), (m) => m[1]);
+  
+  // Check paths
+  for (const path of paths) {
+    const exists = await pathExists(path);
+    if (!exists) {
+      throw new Error(
+        `Citation validation failed: path '${path}' not found (fact: ${fact.id})`,
+      );
+    }
+  }
+  
+  // Check commands (only common binaries, not all backticked words)
+  const commonCommands = new Set([
+    "git", "npm", "bun", "node", "cargo", "make", "docker", "kubectl",
+    "python", "ruby", "go", "rustc", "gcc", "clang", "tsc", "eslint",
+  ]);
+  for (const cmd of commands) {
+    if (commonCommands.has(cmd)) {
+      const exists = await commandExists(cmd);
+      if (!exists) {
+        throw new Error(
+          `Citation validation failed: command '${cmd}' not found (fact: ${fact.id})`,
+        );
+      }
+    }
+  }
+}
 
 export interface MemoryToolDeps {
   repoRoot: string;
@@ -174,14 +220,15 @@ export function registerMemoryTools(
         false,
       );
       const fact = await readMemoryFact(deps.repoRoot, scope, id);
-      
-      // P0: Citation path-exists check on load-bearing facts
-      if (fact.status === "verified" || fact.status === "stale") {
-        await validateFactCitations(fact, deps.repoRoot);
-      }
       if (fact === null) {
         throw new Error(`Memory fact not found: [${scope}] ${id}`);
       }
+      
+      // P0: Citation path-exists check on load-bearing facts (verified/stale)
+      if (fact.status === "verified" || fact.status === "stale") {
+        await validateFactCitations(fact, deps.repoRoot);
+      }
+      
       return toolResult(fact, "fact");
     },
   );

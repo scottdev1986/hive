@@ -49,13 +49,33 @@ describe("P0 Memory Acceptance Tests", () => {
     const database = new HiveDatabase(db);
     const episodic = new EpisodicStore(database);
 
-    // Create fact with episode reference
+    // Add episodes with specific IDs (appendEvent returns the id)
+    const ep1 = episodic.appendEvent({
+      agent: "test-agent",
+      type: "test",
+      summary: "Referenced episode 1",
+      provenance: {},
+    });
+    const ep2 = episodic.appendEvent({
+      agent: "test-agent",
+      type: "test",
+      summary: "Referenced episode 2",
+      provenance: {},
+    });
+    const ep3 = episodic.appendEvent({
+      agent: "test-agent",
+      type: "test",
+      summary: "Unreferenced old episode",
+      provenance: {},
+    });
+
+    // Create fact with episode references using real episode IDs
     await writeMemoryFact(root, {
       scope: "repo",
       topic: "pitfalls",
       title: "Test pitfall",
-      body: "See episode E123 for details",
-      evidence: "From verification in event #456",
+      body: `See episode E${ep1.id} for details`,
+      evidence: `From verification in event #${ep2.id}`,
       source: "agent",
       status: "verified",
       verified: "2026-08-01",
@@ -65,44 +85,24 @@ describe("P0 Memory Acceptance Tests", () => {
       date: "2026-08-01",
     });
 
-    // Add episodes that should be kept
-    episodic.appendEvent({
-      agent: "test-agent",
-      type: "test",
-      summary: "Episode 123",
-      provenance: {},
-    });
-    episodic.appendEvent({
-      agent: "test-agent",
-      type: "test",
-      summary: "Episode 456",
-      provenance: {},
-    });
-    
-    // Add old episode that should be swept
-    episodic.appendEvent({
-      agent: "test-agent",
-      type: "test",
-      summary: "Old episode 999",
-      provenance: {},
-    });
-
+    // Set cutoff before all events (so all would be deleted without keep-set)
     const report = await runRetentionSweep({
       episodic,
       repoRoot: root,
-      config: { events_hot_days: 30, stale_after_days: 90, sweep_interval_hours: 24 },
+      config: { events_hot_days: 0, stale_after_days: 0, sweep_interval_hours: 24 },
       now: new Date("2026-08-20"),
       countCandidates: false,
     });
 
-    // Episodes 123 and 456 should be preserved (referenced in fact)
-    // Episode 999 should be deleted
+    // Episodes ep1 and ep2 should be preserved (referenced in fact)
+    // Episode ep3 should be deleted
     const events = episodic.listEvents();
     const eventIds = events.map((e) => e.id);
     
-    // At least episodes 123 and 456 should still exist
-    expect(events.length).toBeGreaterThanOrEqual(2);
-    expect(report.eventsDeleted).toBeGreaterThanOrEqual(0);
+    expect(eventIds).toContain(ep1.id);
+    expect(eventIds).toContain(ep2.id);
+    expect(eventIds).not.toContain(ep3.id);
+    expect(report.eventsDeleted).toBe(1); // Only ep3 deleted
   });
 
   // P0.8: Global writes use global lock, repo writes use repo lock
@@ -153,7 +153,7 @@ describe("P0 Memory Acceptance Tests", () => {
     expect(globalFact.scope).toBe("global");
   });
 
-  // P0.7: Pre-write gate prevents duplicate titles
+  // P0.7: Pre-write gate prevents duplicate titles  
   test("prewrite_dedup", async () => {
     const root = await makeTempDir("hive-prewrite-");
     const db = new Database(":memory:");
@@ -196,59 +196,112 @@ describe("P0 Memory Acceptance Tests", () => {
       date: "2026-08-20",
     });
 
-    // Should update existing, not create new
+    // Should UPDATE existing (same id), not ADD new
     expect(second.id).toBe(first.id);
-    expect(second.supersededIds).toContain(first.id);
+    // supersedes field should list the id being updated
+    expect(second.supersedes).toContain(first.id);
     
-    // Only one fact should exist
+    // Only one fact file should exist on disk
     const facts = await discoverMemoryFacts(root, "repo");
     expect(facts.length).toBe(1);
+    expect(facts[0].id).toBe(first.id);
+    expect(facts[0].body).toBe("Updated body"); // body updated
   });
 
   // P0.5: Wake semantic not hardcoded disabled
   test("wake_semantic_not_hardcoded", async () => {
-    // This test validates that WakePayloadService uses real semantic status
-    // Not a hardcoded "disabled" const
-    // Implementation complete in wake-payload-service.ts
-    expect(true).toBe(true); // Placeholder - validates implementation exists
+    // Verify that wake-payload-service.ts does NOT hardcode semantic: "disabled"
+    const wakePayloadSource = await Bun.file(
+      join(import.meta.dir, "../src/daemon/wake-payload-service.ts"),
+    ).text();
+    
+    // Should use bundle.semantic, not a hardcoded "disabled" literal
+    expect(wakePayloadSource).toContain("semantic: bundle.semantic");
+    expect(wakePayloadSource).not.toContain('semantic: "disabled" as const');
+    
+    // buildWakeQuery should construct from lane, topic, objective, lastMailSnippet
+    expect(wakePayloadSource).toContain("buildWakeQuery");
+    expect(wakePayloadSource).toContain("request.lane");
+    expect(wakePayloadSource).toContain("request.topic");
+    expect(wakePayloadSource).toContain("request.objective");
+    expect(wakePayloadSource).toContain("lastMailSnippet");
   });
 
   // P0.5: Wake not newest-10 date slice
   test("wake_not_newest10", async () => {
-    // This test validates that wake uses buildMemoryRecallBundle with query
-    // Not date-ranked newest-10 slice
-    // Implementation complete in wake-payload-service.ts
-    expect(true).toBe(true); // Placeholder - validates implementation exists
+    // Verify wake uses buildMemoryRecallBundle with constructed query, not newest-10
+    const wakePayloadSource = await Bun.file(
+      join(import.meta.dir, "../src/daemon/wake-payload-service.ts"),
+    ).text();
+    
+    // Should call buildMemoryRecallBundle with named query
+    expect(wakePayloadSource).toContain("buildMemoryRecallBundle");
+    expect(wakePayloadSource).toContain("buildWakeQuery(request)");
+    
+    // buildWakeQuery must join non-empty parts (not empty fallback)
+    expect(wakePayloadSource).toContain("parts.filter");
+    expect(wakePayloadSource).toContain(".join");
+    
+    // Should NOT be a pure date-ranked slice
+    expect(wakePayloadSource).not.toContain("newest");
+    expect(wakePayloadSource).not.toContain("slice(0, 10)");
   });
 
   // P0.3: Handoff every spawn (not only quota-drain)
   test("handoff_every_spawn", async () => {
-    // TODO: Implement when handoff auto-inject is complete
-    expect(true).toBe(true); // Placeholder
+    // P0 INCOMPLETE: Requires handoff auto-inject implementation in spawn path
+    // Test must verify:
+    // 1. Every specialist spawn includes auto-injected handoff card (not hive_pickup_handoff lookup)
+    // 2. Handoff is auto-synthed from assignment when durable handoff missing
+    // 3. Spawn fails closed (explicit error) when neither durable nor synthable
+    expect(true).toBe(true); // Will be replaced when handoff implementation lands
   });
 
   // P0.1: Empty vs dropped distinguishable
   test("empty_vs_dropped", async () => {
-    // TODO: Implement when wake pack floor is complete
-    expect(true).toBe(true); // Placeholder
+    // P0 INCOMPLETE: Requires wake pack floor implementation with CAP signals
+    // Test must verify:
+    // 1. Empty store + no index = explicit empty note in prompt (not silent zero)
+    // 2. Non-empty store + truncated/omitted index = CAP signal with omitted count (not silent zero)
+    // 3. Empty vs dropped are distinguishable in prompt text
+    expect(true).toBe(true); // Will be replaced when pack floor lands
   });
 
   // P0.1: Queen budget CAP signal present
   test("queen_budget_cap_signal", async () => {
-    // TODO: Implement when wake pack floor + CAP is complete
-    expect(true).toBe(true); // Placeholder
+    // P0 INCOMPLETE: Requires wake pack floor + ordered drop implementation
+    // Test must verify:
+    // 1. When over QUEEN_LAUNCH_CONTEXT_MAX_ESTIMATED_TOKENS, prompt contains explicit CAP
+    // 2. CAP lists what was omitted (non-floor items only)
+    // 3. Floor slots (constitution, profile, project, mistakes, handoff, min index) present despite budget
+    expect(true).toBe(true); // Will be replaced when pack floor + CAP lands
   });
 
   // P0.1: Spawn pack for silent specialist
   test("spawn_pack_silent_specialist", async () => {
-    // TODO: Implement when wake pack floor is complete
-    expect(true).toBe(true); // Placeholder
+    // P0 INCOMPLETE: Requires wake pack floor with always-on slots
+    // Test must verify:
+    // 1. Specialist with memory_* tools denied/unused still gets pack floor
+    // 2. Pack floor includes: constitution, profile (if non-empty), project, mistakes last-N, handoff
+    // 3. Specialist behaves correctly on project conventions + mistakes without calling memory tools
+    expect(true).toBe(true); // Will be replaced when pack floor lands
   });
 
   // P1: Consolidator not on hotpath
   test("consolidator_not_hotpath", async () => {
-    // Validates consolidator is not called from memory_write
-    // Should only run from idle/sweep
-    expect(true).toBe(true); // Placeholder - validates architecture
+    // Validates consolidator is idle/sweep only, not called from memory_write hotpath
+    // Architecture: consolidate.ts exports are for CLI/jobs, not write-service
+    const { consolidate } = await import("../src/memory-service/consolidate");
+    
+    // Consolidate function exists and is async (for offline use)
+    expect(typeof consolidate).toBe("function");
+    expect(consolidate.constructor.name).toBe("AsyncFunction");
+    
+    // Write service does NOT import consolidate
+    const writeServiceSource = await Bun.file(
+      join(import.meta.dir, "../src/memory-service/write-service.ts"),
+    ).text();
+    expect(writeServiceSource).not.toContain('from "./consolidate"');
+    expect(writeServiceSource).not.toContain("consolidate(");
   });
 });
