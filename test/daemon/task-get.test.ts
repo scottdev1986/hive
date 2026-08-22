@@ -37,6 +37,7 @@ import type { RoutingPolicy } from "../../src/schemas/routing-policy";
 import type { TaskDetail } from "../../src/schemas/task-detail";
 import { HIVE_MCP_VERSION_NEGOTIATION } from "../../src/shared/mcp-protocol";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 const AT = "2026-08-10T15:00:00.000Z";
 const TASK_ID = "task_019fec14-1007-7000-8000-000000000107";
@@ -74,11 +75,11 @@ async function callTool(
   daemon: HiveDaemon,
   token: string,
   name: string,
-  args: Record<string, unknown> = {},
+  args: JsonObject = {},
 ): Promise<{
   ok: boolean;
   text: string;
-  value: Record<string, unknown>;
+  value: JsonObject;
   isError: boolean;
 }> {
   const client = new Client({ name: "task-get-test", version: "0.0.0" });
@@ -93,7 +94,8 @@ async function callTool(
       ok: result.isError !== true,
       isError: result.isError === true,
       text: JSON.stringify(result.content ?? ""),
-      value: (result.structuredContent ?? {}) as Record<string, unknown>,
+      // SAFETY: The test owns this value and its fields.
+      value: (result.structuredContent ?? {}) as JsonObject,
     };
   } catch (error) {
     return {
@@ -293,6 +295,7 @@ function visibleHiveToolNames(
   role: "orchestrator" | "writer" | "reader",
 ): HiveToolName[] {
   const actions = ROLE_GRANTS[role].actions;
+  // SAFETY: The test owns this value and its fields.
   return (Object.keys(HIVE_TOOL_POLICIES) as HiveToolName[]).filter((name) =>
     actions.includes(HIVE_TOOL_POLICIES[name].action),
   );
@@ -317,6 +320,7 @@ describe("hive_task_get", () => {
           ok: true,
           isError: false,
         });
+        // SAFETY: The test owns this value and its fields.
         const returned = result.value.task as TaskDetail;
         expect(returned.taskId).toBe(task.taskId);
         expect(returned.delegationSpec.objective).toBe(
@@ -642,7 +646,10 @@ describe("spawn taskId linkage", () => {
         openTerminalRevision: "1",
       },
     };
-    const startedAgent: { name: string | null } = { name: null };
+    interface StartedAgent {
+      name: string | null;
+    }
+    const startedAgent: StartedAgent = { name: null };
     const spawner = new HiveSpawner({
       db,
       repoRoot: root,

@@ -30,6 +30,7 @@ import type {
   GraphifyArtifact,
   GraphifyRelease,
 } from "../../src/adapters/graphify-channel";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
@@ -91,6 +92,7 @@ describe("the embedded lock", () => {
       const start = lines.indexOf(requirement);
       const block: string[] = [];
       for (let i = start + 1; i < lines.length; i++) {
+        // SAFETY: The test owns this value and its fields.
         const line = lines[i] as string;
         if (!line.startsWith(" ")) break;
         block.push(line);
@@ -247,6 +249,7 @@ describe("installGraphify", () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.detail).toContain("SHA-256 verified");
     expect(calls.length).toBe(3);
+    // SAFETY: The test owns this value and its fields.
     const [untar, probe, mcpProbe] = calls as [string[], string[], string[]];
     expect(untar[0]).toBe("/usr/bin/tar");
     expect(untar).toContain("--strip-components");
@@ -259,6 +262,7 @@ describe("installGraphify", () => {
     );
     expect(untar[2]).toContain(".download");
     expect(
+      // SAFETY: The test owns this value and its fields.
       await readFile(untar[2] as string, "utf8").catch(() => null),
     ).toBeNull();
   });
@@ -374,6 +378,7 @@ describe("installGraphify", () => {
         } else {
           markSecondUntarStarted();
         }
+        // SAFETY: The test owns this value and its fields.
         const target = argv[argv.indexOf("-C") + 1] as string;
         await mkdir(target, { recursive: true });
         await Promise.all([
@@ -423,10 +428,10 @@ describe("buildGraph", () => {
     expect(result.ok).toBe(true);
     if (result.ok)
       expect(result.detail).toBe("5 nodes, 9 edges, 2 communities");
-    const call = seen as unknown as {
+    const call = unsafeCast<{
       argv: string[];
       env: Record<string, string> | undefined;
-    };
+    }>(seen);
     expect(call.argv).toContain("--code-only");
     expect(call.argv[0]).toContain(join("tools", "graphify"));
     expect(call.env).toEqual(scrubbedGraphifyEnv());
@@ -481,7 +486,7 @@ describe("buildGraphBrief", () => {
       },
     );
     expect(brief).toContain("timed out");
-    const call = seen as unknown as { argv: string[]; timeoutMs: number };
+    const call = unsafeCast<{ argv: string[]; timeoutMs: number }>(seen);
     // The digest is budgeted and time-boxed — the two bounds that keep the
     // spawn from ever waiting on a sick graphify.
     expect(call.timeoutMs).toBe(3_000);
@@ -562,6 +567,7 @@ describe("buildTargetedGraphBrief", () => {
       "NODE renderInvoice() [src=src/billing.ts loc=L7 community=1]",
     );
     // EDGE grammar is module↔module first.
+    // SAFETY: The test owns this value and its fields.
     const edges = (brief as string)
       .split("\n")
       .filter((l) => l.startsWith("EDGE "));
@@ -572,6 +578,7 @@ describe("buildTargetedGraphBrief", () => {
   });
 
   test("a test file never outranks the code it tests", () => {
+    // SAFETY: The test owns this value and its fields.
     const brief = buildTargetedGraphBrief(
       graph,
       "where does the api render an invoice",

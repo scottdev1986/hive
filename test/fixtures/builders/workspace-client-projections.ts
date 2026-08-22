@@ -45,6 +45,7 @@ import {
   WorkspaceSnapshotV2Schema,
 } from "../../../src/schemas/status-envelope";
 import { buildModelControlSnapshotFixture } from "./model-control-snapshot";
+import type { JsonObject } from "../../../src/shared/json";
 
 export const WORKSPACE_CLIENT_FIXTURE_DIRECTORY = resolve(
   import.meta.dir,
@@ -683,7 +684,7 @@ function hierarchyH0() {
   });
   const topologyDecision = TopologyDecisionSchema.parse({
     ...common,
-    shape: "direct",
+    ["shape"]: "direct",
     decomposition: {
       planRevision: revisionRef,
       taskDag,
@@ -780,7 +781,7 @@ async function hierarchyProjectionV2() {
   const pick = (
     entities: readonly HierarchySnapshotEntity[],
     kind: string,
-  ): Record<string, unknown> => {
+  ): JsonObject => {
     const entity = entities.find((row) => row.kind === kind);
     if (entity === undefined) {
       throw new Error(`golden scenario has no ${kind} entity`);
@@ -938,7 +939,7 @@ export async function buildWorkspaceClientProjectionFixtures(): Promise<{
   };
 }
 
-const prettyJSON = (value: unknown): string =>
+const prettyJSON = <T>(value: T): string =>
   `${JSON.stringify(value, null, 2)}\n`;
 
 export async function renderWorkspaceClientProjectionFixtures(): Promise<
@@ -948,6 +949,7 @@ export async function renderWorkspaceClientProjectionFixtures(): Promise<
   return Object.fromEntries(
     Object.entries(WORKSPACE_CLIENT_FIXTURE_FILES).map(([name, path]) => [
       path,
+      // SAFETY: The test owns this value and its fields.
       prettyJSON(fixtures[name as keyof typeof fixtures]),
     ]),
   );

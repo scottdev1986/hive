@@ -137,6 +137,7 @@ afterEach(() => {
 
 describe("hive_node_create derives the acting identity", () => {
   test("the created node records no actor, and the caller is read from the capability", async () => {
+    // SAFETY: The captured hive_node_create handler receives and returns its registered contracts.
     const created = (await handlerFor("lead")(
       node(createdNodeId, leadNodeId) as never,
     )) as { structuredContent: { node: HierarchyNode } };
@@ -146,6 +147,7 @@ describe("hive_node_create derives the acting identity", () => {
   });
 
   test("a caller with no live agent is refused at the gate", async () => {
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("ghost")(node(createdNodeId, leadNodeId) as never),
     ).rejects.toThrow(/No live authority record exists for ghost/);
@@ -153,6 +155,7 @@ describe("hive_node_create derives the acting identity", () => {
   });
 
   test("the door refuses a caller with no live agent on its own", async () => {
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerWithoutOuterGate("ghost")(
         node(createdNodeId, leadNodeId) as never,
@@ -170,6 +173,7 @@ describe("hive_node_create derives the acting identity", () => {
     if (live === null) throw new Error("lead binding fixture disappeared");
     store.putAgentBinding({ ...live, unboundAt: stamp }, runId);
 
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("lead")(node(createdNodeId, leadNodeId) as never),
     ).rejects.toThrow(/holds no live hierarchy binding/);
@@ -177,6 +181,7 @@ describe("hive_node_create derives the acting identity", () => {
   });
 
   test("a caller presenting a stale capability epoch is refused at the gate", async () => {
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("lead", 2)(node(createdNodeId, leadNodeId) as never),
     ).rejects.toThrow(/Capability epoch 2 is stale/);
@@ -184,6 +189,7 @@ describe("hive_node_create derives the acting identity", () => {
   });
 
   test("the door refuses a stale capability epoch on its own, inside the write", async () => {
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerWithoutOuterGate(
         "lead",
@@ -203,6 +209,7 @@ describe("hive_node_create derives the acting identity", () => {
       generation: 1,
     });
 
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("lead")(
         node(createdNodeId, leafNodeId, "lead-worker") as never,
@@ -210,6 +217,7 @@ describe("hive_node_create derives the acting identity", () => {
     ).rejects.toThrow(/stale|does not hold the live capability epoch/);
     expect(store.getNode(createdNodeId)).toBeNull();
 
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerWithoutOuterGate(
         "lead",
@@ -218,6 +226,7 @@ describe("hive_node_create derives the acting identity", () => {
     ).rejects.toThrow(/does not hold the live capability epoch/);
 
     // Re-minting at the live epoch is the recovery path.
+    // SAFETY: The captured hive_node_create handler receives and returns its registered contracts.
     const created = (await handlerFor(
       "lead",
       2,
@@ -269,6 +278,7 @@ describe("the door is reachable by the caller production actually mints", () => 
   // tool asked for an action neither role carries, every real caller would be
   // denied while a stubbed suite stayed green.
   test("a writer reaches the door and creates", async () => {
+    // SAFETY: The captured hive_node_create handler receives and returns its registered contracts.
     const created = (await handlerFor(
       "lead",
       1,
@@ -281,6 +291,7 @@ describe("the door is reachable by the caller production actually mints", () => 
   });
 
   test("a reader is refused: creating a node is not a read-only act", async () => {
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("lead", 1, "reader")(node(createdNodeId, leafNodeId) as never),
     ).rejects.toThrow(/may not node:create/);
@@ -292,6 +303,7 @@ describe("the door is reachable by the caller production actually mints", () => 
     if (live === null) throw new Error("lead fixture disappeared");
     db.upsertAgent({ ...live, writeRevoked: true });
 
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("lead")(node(createdNodeId, leafNodeId) as never),
     ).rejects.toThrow(/Write and landing authority is revoked for lead/);
@@ -303,6 +315,7 @@ describe("hive_node_create enforces creation authority", () => {
   test("a caller that is neither the run root nor an ancestor of the parent is refused", async () => {
     // The outsider sits under the root, so it is inside the run but holds
     // nothing above leadNodeId.
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("outsider")(node(createdNodeId, leadNodeId) as never),
     ).rejects.toThrow(/does not hold parent/);
@@ -310,6 +323,7 @@ describe("hive_node_create enforces creation authority", () => {
   });
 
   test("the run root may create anywhere in its run", async () => {
+    // SAFETY: The captured hive_node_create handler receives and returns its registered contracts.
     const created = (await handlerFor("queen-root")(
       node(createdNodeId, leafNodeId) as never,
     )) as { structuredContent: { node: HierarchyNode } };
@@ -318,6 +332,7 @@ describe("hive_node_create enforces creation authority", () => {
   });
 
   test("a lead may create under a descendant of its own node", async () => {
+    // SAFETY: The captured hive_node_create handler receives and returns its registered contracts.
     const created = (await handlerFor("lead")(
       node(createdNodeId, leafNodeId) as never,
     )) as { structuredContent: { node: HierarchyNode } };
@@ -326,6 +341,7 @@ describe("hive_node_create enforces creation authority", () => {
   });
 
   test("creating a second run root through this tool is refused", async () => {
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("queen-root")(node(createdNodeId, null) as never),
     ).rejects.toThrow(/a run root is not created through this tool/);
@@ -335,7 +351,9 @@ describe("hive_node_create enforces creation authority", () => {
 
 describe("hive_node_create validates the owner edge at the write", () => {
   test("owner=parent and owner=self are both admitted inside a held subtree", async () => {
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await handlerFor("lead")(node(createdNodeId, leadNodeId) as never);
+    // SAFETY: The object is a schema-valid hive_node_create input with an explicit self-owner.
     await handlerFor("lead")({
       ...node(selfOwnedNodeId, leafNodeId),
       ownerNodeId: selfOwnedNodeId,
@@ -348,6 +366,7 @@ describe("hive_node_create validates the owner edge at the write", () => {
   test("a missing owner node is refused without creating the node", async () => {
     expect(store.getNode(missingOwnerNodeId)).toBeNull();
 
+    // SAFETY: The object matches the tool schema; its missing owner is the domain error under test.
     await expect(
       handlerFor("lead")({
         ...node(createdNodeId, leafNodeId),
@@ -380,6 +399,7 @@ describe("hive_node_create validates the owner edge at the write", () => {
       null,
     );
 
+    // SAFETY: The object matches the tool schema; its cross-run owner is the domain error under test.
     await expect(
       handlerFor("lead")({
         ...node(crossRunNodeId, leafNodeId),
@@ -394,6 +414,7 @@ describe("hive_node_create validates the owner edge at the write", () => {
   test("an owner outside the creator's held subtree is refused", async () => {
     expect(store.getNode(outsiderNodeId)?.runId).toBe(runId);
 
+    // SAFETY: The object matches the tool schema; its outside owner is the domain error under test.
     await expect(
       handlerFor("lead")({
         ...node(createdNodeId, leafNodeId),
@@ -414,6 +435,7 @@ describe("hive_node_create requires an active stored run", () => {
       .run(runId);
     expect(store.getRun(runId)).toBeNull();
 
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("lead")(node(createdNodeId, leafNodeId) as never),
     ).rejects.toThrow(`run ${runId} must exist and be active`);
@@ -425,6 +447,7 @@ describe("hive_node_create requires an active stored run", () => {
     if (activeRun === null) throw new Error("active run fixture disappeared");
     store.putRun({ ...activeRun, revision: "2", lifecycle: "completed" }, "1");
 
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("lead")(node(createdNodeId, leafNodeId) as never),
     ).rejects.toThrow(`run ${runId} must exist and be active`);
@@ -435,6 +458,7 @@ describe("hive_node_create requires an active stored run", () => {
 
 describe("hive_node_create composes with the landed conferral guard", () => {
   test("a lead confers lead-worker inside its subtree; a plain worker cannot", async () => {
+    // SAFETY: The captured hive_node_create handler receives and returns its registered contracts.
     const conferred = (await handlerFor("lead")(
       node(createdNodeId, leafNodeId, "lead-worker") as never,
     )) as { structuredContent: { node: HierarchyNode } };
@@ -444,6 +468,7 @@ describe("hive_node_create composes with the landed conferral guard", () => {
 
     // The outsider is a plain worker: it fails creation authority before the
     // conferral guard is ever consulted, which is the stricter of the two.
+    // SAFETY: The captured handler is hive_node_create, and node() matches its input contract.
     await expect(
       handlerFor("outsider")(
         node(

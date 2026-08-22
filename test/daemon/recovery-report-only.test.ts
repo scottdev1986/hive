@@ -86,10 +86,7 @@ type Published = {
   idempotencyKey: string | undefined;
 };
 
-function recoveryOver(db: HiveDatabase): {
-  recovery: CrashRecovery;
-  published: Published[];
-} {
+function recoveryOver(db: HiveDatabase) {
   const published: Published[] = [];
   const recovery = new CrashRecovery({
     db,

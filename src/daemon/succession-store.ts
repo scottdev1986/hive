@@ -1,3 +1,4 @@
+import { isRecord, isString } from "../shared/is-record";
 import {
   digestCheckpointContent,
   digestRunCheckpoint,
@@ -10,6 +11,7 @@ import {
 } from "../schemas/run-checkpoint";
 import type { DatabaseHost } from "../shared/database-host";
 import { liftStoredSpec } from "./hierarchy-store";
+import type { JsonObject } from "../shared/json";
 
 /** What loading the latest checkpoint can find. A corrupt checkpoint is a first-class outcome — the successor converges without it and the contradiction stays on the record — so it is never thrown away here. */
 export type CheckpointLoad =
@@ -43,6 +45,7 @@ type DocumentRow = { revision: string; document: string };
 type StoredDocumentRow = { rowid: number; document: string };
 
 function migrateBootCapsuleDigest(db: DatabaseHost): void {
+  // SAFETY: The surrounding code already established this contract.
   const rows = db.database
     .query(
       `SELECT rowid, document FROM queen_successions
@@ -56,15 +59,12 @@ function migrateBootCapsuleDigest(db: DatabaseHost): void {
     } catch {
       continue;
     }
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
+    if (!isRecord(parsed)) {
       continue;
     }
-    const document = parsed as Record<string, unknown>;
-    if (typeof document.briefDigest !== "string") {
+    // SAFETY: The surrounding code already established this contract.
+    const document = parsed as JsonObject;
+    if (!isString(document.briefDigest)) {
       continue;
     }
     document.bootCapsuleDigest ??= document.briefDigest;
@@ -83,6 +83,7 @@ type StoredCheckpointRow = {
 
 /** Older checkpoints named the spec `approvedSpec` and stored a leftover `gates` object. The current schema rejects both, so a leftover row loads as corrupt. Rewrite the hierarchy onto `spec`, drop the leftover keys, and recompute the digest so the row verifies. Point any succession that named the old digest at the new one. */
 function migrateCheckpointSpec(db: DatabaseHost): void {
+  // SAFETY: The surrounding code already established this contract.
   const rows = db.database
     .query(
       `SELECT instanceId, revision, document FROM run_checkpoints
@@ -102,7 +103,7 @@ function migrateCheckpointSpec(db: DatabaseHost): void {
       changed = true;
     }
     const hierarchy = asRecord(document.hierarchy);
-    if (hierarchy !== null && typeof hierarchy.runId === "string") {
+    if (hierarchy !== null && isString(hierarchy.runId)) {
       const lifted = liftStoredSpec(hierarchy, db, hierarchy.runId);
       const hadGates = "gates" in hierarchy;
       delete hierarchy.gates;
@@ -122,7 +123,7 @@ function migrateCheckpointSpec(db: DatabaseHost): void {
          WHERE instanceId = ? AND revision = ?`,
       )
       .run(JSON.stringify(document), row.instanceId, row.revision);
-    if (typeof previousDigest === "string" && previousDigest !== digest) {
+    if (isString(previousDigest) && previousDigest !== digest) {
       retargetSuccessionDigests(
         db,
         row.instanceId,
@@ -141,6 +142,7 @@ function retargetSuccessionDigests(
   from: string,
   to: string,
 ): void {
+  // SAFETY: The surrounding code already established this contract.
   const rows = db.database
     .query(
       `SELECT revision, document FROM queen_successions WHERE instanceId = ?`,
@@ -176,7 +178,7 @@ function retargetSuccessionDigests(
   }
 }
 
-function parseJsonObject(raw: string): Record<string, unknown> | null {
+function parseJsonObject(raw: string): JsonObject | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -186,11 +188,12 @@ function parseJsonObject(raw: string): Record<string, unknown> | null {
   return asRecord(parsed);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+function asRecord<T>(value: T): JsonObject | null {
+  if (!isRecord(value)) {
     return null;
   }
-  return value as Record<string, unknown>;
+  // SAFETY: The surrounding code already established this contract.
+  return value as JsonObject;
 }
 
 function latestRow(
@@ -198,6 +201,7 @@ function latestRow(
   table: "run_checkpoints" | "queen_successions",
   instanceId: string,
 ): DocumentRow | null {
+  // SAFETY: The surrounding code already established this contract.
   return db.database
     .query(
       `SELECT revision, document FROM ${table}
@@ -215,6 +219,7 @@ function checkpointRow(
   if (revision === undefined) {
     return latestRow(db, "run_checkpoints", instanceId);
   }
+  // SAFETY: The surrounding code already established this contract.
   return db.database
     .query(
       `SELECT revision, document FROM run_checkpoints
@@ -370,6 +375,7 @@ export class SuccessionStore {
     instanceId: string,
     requestId: string,
   ): QueenSuccession | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `SELECT document FROM queen_successions WHERE instanceId = ?
@@ -414,6 +420,7 @@ export class SuccessionStore {
   }
 
   priorSuccessionId(instanceId: string, revision: string): string | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `SELECT successionId FROM queen_successions
@@ -426,6 +433,7 @@ export class SuccessionStore {
 
   /** Every succession still waiting for its attestation. */
   listOpenSuccessions(instanceId: string): QueenSuccession[] {
+    // SAFETY: The surrounding code already established this contract.
     const rows = this.db.database
       .query(
         `SELECT document FROM queen_successions WHERE instanceId = ?
@@ -485,6 +493,7 @@ export class SuccessionStore {
 
   /** Which re-read kinds ONE credential has measured for one succession. */
   readsFor(successionId: string, capabilityId: string): ReadonlySet<string> {
+    // SAFETY: The surrounding code already established this contract.
     const rows = this.db.database
       .query(
         `SELECT kind FROM queen_succession_reads

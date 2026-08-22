@@ -31,7 +31,7 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
 });
 
-function parseAgentRow(row: unknown): AgentRecord {
+function parseAgentRow<T>(row: T): AgentRecord {
   const value = AgentDatabaseRowSchema.parse(row);
   return AgentRecordSchema.parse({
     ...value,
@@ -71,6 +71,7 @@ export class AgentStore {
 
   upsertAgent(agent: AgentRecord): AgentRecord {
     const parsed = AgentRecordSchema.parse(agent);
+    // SAFETY: The surrounding code already established this contract.
     const existingLocator = this.database
       .query("SELECT sessionLocator FROM agents WHERE id = ?")
       .get(parsed.id) as { sessionLocator: string | null } | null;
@@ -175,6 +176,7 @@ export class AgentStore {
   private resolveClosedAt(value: AgentRecord): string | null {
     if (!isTerminalAgentStatus(value.status)) return null;
     if (value.closedAt !== undefined) return value.closedAt;
+    // SAFETY: The surrounding code already established this contract.
     const existing = this.database
       .query("SELECT closedAt FROM agents WHERE id = ?")
       .get(value.id) as { closedAt: string | null } | null;

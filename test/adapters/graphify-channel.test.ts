@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fetchGraphifyRelease } from "../../src/adapters/graphify-channel";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 
 const originalOverride = process.env.HIVE_GRAPHIFY_MANIFEST;
 
@@ -52,6 +53,7 @@ describe("Graphify runtime channel", () => {
     };
 
     const release = await fetchGraphifyRelease(
+      // SAFETY: The test owns this value and its fields.
       fetcher as typeof fetch,
       "owner/repo",
     );
@@ -66,9 +68,11 @@ describe("Graphify runtime channel", () => {
     await writeFile(path, `${JSON.stringify(manifest("file:///tmp/a"))}\n`);
     process.env.HIVE_GRAPHIFY_MANIFEST = path;
     try {
-      const release = await fetchGraphifyRelease((() => {
-        throw new Error("network must not be used");
-      }) as unknown as typeof fetch);
+      const release = await fetchGraphifyRelease(
+        unsafeCast<typeof fetch>(() => {
+          throw new Error("network must not be used");
+        }),
+      );
       expect(release.local).toBe(true);
       expect(release.artifact.url).toBe("file:///tmp/a");
     } finally {

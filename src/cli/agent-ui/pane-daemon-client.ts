@@ -45,10 +45,9 @@ export class PaneDaemonClient {
         minTimeout: 250,
         maxTimeout: 2_000,
       },
-    ).catch((error: unknown) => {
+    ).catch((error) => {
       if (
-        typeof error === "object" &&
-        error !== null &&
+        error instanceof Object &&
         "response" in error &&
         error.response instanceof Response
       ) {

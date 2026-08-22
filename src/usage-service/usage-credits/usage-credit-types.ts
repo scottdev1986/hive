@@ -22,7 +22,7 @@ export type AccountBillings = Partial<
 /** The vendors whose billing actually read back. A vendor that answered null is omitted — absent means unknown here, and the derivation reads it as such — but the caller supplies a slot for every known vendor, so "unknown" is a measured null and never a vendor nobody remembered to ask. */
 export function knownBillings(
   read: Record<CapabilityProvider, AccountBilling | null>,
-): AccountBillings {
+) {
   const billings: AccountBillings = {};
   for (const provider of CAPABILITY_PROVIDERS) {
     const billing = read[provider];

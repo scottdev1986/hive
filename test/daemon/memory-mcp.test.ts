@@ -22,7 +22,11 @@ import type {
   Spawner,
   SpawnRequest,
 } from "../../src/daemon/spawn/spawn-service";
-import { type JsonValue, safeJsonParse } from "../../src/shared/json";
+import {
+  type JsonValue,
+  safeJsonParse,
+  type JsonObject,
+} from "../../src/shared/json";
 import { actingAs } from "../support/daemon-test-support";
 import type { AgentRecord } from "../../src/schemas/agent";
 
@@ -52,6 +56,7 @@ class UnusedSpawner implements Spawner {
 }
 
 function textValue(result: Awaited<ReturnType<Client["callTool"]>>): JsonValue {
+  // SAFETY: The MCP client result contract exposes content entries with optional text payloads.
   const content = (
     result as {
       content: Array<{ type: string; text?: string }>;
@@ -77,7 +82,7 @@ async function connectedClient(daemon: HiveDaemon): Promise<Client> {
   return client;
 }
 
-function validWrite(overrides: Record<string, unknown> = {}) {
+function validWrite(overrides: JsonObject = {}) {
   return {
     scope: "repo",
     topic: "testing",
@@ -172,6 +177,7 @@ describe("memory MCP tools", () => {
     });
     const client = await connectedClient(daemon);
     try {
+      // SAFETY: memory_write owns this JSON result contract.
       const written = textValue(
         await client.callTool({
           name: "memory_write",
@@ -189,6 +195,7 @@ describe("memory MCP tools", () => {
         "Race condition in session setup.",
       );
 
+      // SAFETY: memory_search owns this JSON array result contract.
       const found = textValue(
         await client.callTool({
           name: "memory_search",
@@ -197,6 +204,7 @@ describe("memory MCP tools", () => {
       ) as Array<{ id: string; scope: string }>;
       expect(found.map((result) => result.id)).toEqual([written.id]);
 
+      // SAFETY: memory_read owns this JSON result contract.
       const read = textValue(
         await client.callTool({
           name: "memory_read",
@@ -216,6 +224,7 @@ describe("memory MCP tools", () => {
           supersedes: [written.id],
         }),
       });
+      // SAFETY: memory_search owns this JSON array result contract.
       const afterUpdate = textValue(
         await client.callTool({
           name: "memory_search",
@@ -223,6 +232,7 @@ describe("memory MCP tools", () => {
         }),
       ) as Array<{ id: string }>;
       expect(afterUpdate.map((result) => result.id)).toEqual([written.id]);
+      // SAFETY: memory_search owns this JSON array result contract.
       const staleSearch = textValue(
         await client.callTool({
           name: "memory_search",
@@ -265,6 +275,7 @@ describe("memory MCP tools", () => {
         ).isError,
       ).toBe(true);
 
+      // SAFETY: memory_delete owns this JSON result contract.
       const deletion = textValue(
         await client.callTool({
           name: "memory_delete",
@@ -273,6 +284,7 @@ describe("memory MCP tools", () => {
       ) as { deleted: boolean };
       expect(deletion.deleted).toEqual(true);
 
+      // SAFETY: memory_search owns this JSON array result contract.
       const afterDelete = textValue(
         await client.callTool({
           name: "memory_search",
@@ -287,6 +299,7 @@ describe("memory MCP tools", () => {
       });
       expect(missingRead.isError).toEqual(true);
 
+      // SAFETY: memory_delete owns this JSON result contract.
       const secondDelete = textValue(
         await client.callTool({
           name: "memory_delete",
@@ -314,6 +327,7 @@ describe("memory MCP tools", () => {
     try {
       const longBody =
         "Root cause: an unawaited promise in session setup. ".repeat(20);
+      // SAFETY: memory_write owns this JSON result contract.
       const written = textValue(
         await client.callTool({
           name: "memory_write",
@@ -325,7 +339,7 @@ describe("memory MCP tools", () => {
             date: "2026-07-10",
           }),
         }),
-      ) as Record<string, unknown>;
+      ) as JsonObject;
       expect(written).toEqual({
         id: "the-login-test-is-flaky",
         scope: "repo",
@@ -343,6 +357,7 @@ describe("memory MCP tools", () => {
 
       // The full body the caller just wrote is still reachable through
       // memory_read (and the Markdown file at `path`), just not echoed back.
+      // SAFETY: memory_read owns this JSON result contract.
       const read = textValue(
         await client.callTool({
           name: "memory_read",
@@ -375,6 +390,7 @@ describe("memory MCP tools", () => {
     });
     const client = await connectedClient(daemon);
     try {
+      // SAFETY: memory_write owns this JSON result contract.
       const written = textValue(
         await client.callTool({
           name: "memory_write",
@@ -453,6 +469,7 @@ describe("memory MCP tools", () => {
     });
     const client = await connectedClient(daemon);
     try {
+      // SAFETY: memory_write owns this JSON result contract.
       const written = textValue(
         await client.callTool({
           name: "memory_write",
@@ -478,6 +495,7 @@ describe("memory MCP tools", () => {
       expect(onDisk).toContain("author: user");
       expect(onDisk).not.toContain("status: verified");
 
+      // SAFETY: memory_read owns this JSON result contract.
       const read = textValue(
         await client.callTool({
           name: "memory_read",
@@ -514,6 +532,7 @@ describe("memory MCP tools", () => {
     });
     const client = await connectedClient(daemon);
     try {
+      // SAFETY: memory_write owns this JSON result contract.
       const written = textValue(
         await client.callTool({
           name: "memory_write",
@@ -527,6 +546,7 @@ describe("memory MCP tools", () => {
       ) as { id: string; path: string };
       expect(await readFile(written.path, "utf8")).toContain("kind: pitfall");
 
+      // SAFETY: memory_read owns this JSON result contract.
       const read = textValue(
         await client.callTool({
           name: "memory_read",
@@ -545,6 +565,7 @@ describe("memory MCP tools", () => {
       );
 
       // A plain write stays an article: no kind line on disk, article on read.
+      // SAFETY: memory_write owns this JSON result contract.
       const plain = textValue(
         await client.callTool({
           name: "memory_write",
@@ -555,6 +576,7 @@ describe("memory MCP tools", () => {
         }),
       ) as { path: string };
       expect(await readFile(plain.path, "utf8")).not.toContain("kind:");
+      // SAFETY: memory_read owns this JSON result contract.
       const plainRead = textValue(
         await client.callTool({
           name: "memory_read",
@@ -581,6 +603,7 @@ describe("memory MCP tools", () => {
     const client = await connectedClient(daemon);
     try {
       // The first write has nothing to collide with: no candidates key.
+      // SAFETY: memory_write owns this JSON result contract.
       const first = textValue(
         await client.callTool({
           name: "memory_write",
@@ -590,12 +613,13 @@ describe("memory MCP tools", () => {
             body: "Provider caps reset at midnight UTC.",
           }),
         }),
-      ) as Record<string, unknown>;
+      ) as JsonObject;
       expect(first.similarCandidates).toBeUndefined();
 
       // A near-duplicate: different normalized title (layer 1 lets it
       // through), overlapping terms — the write succeeds and the lookalike
       // comes back as an advisory candidate.
+      // SAFETY: memory_write owns this JSON result contract.
       const second = textValue(
         await client.callTool({
           name: "memory_write",
@@ -620,6 +644,7 @@ describe("memory MCP tools", () => {
       ).not.toContain("quota-token-spend");
 
       // A write with no lookalikes carries no candidates.
+      // SAFETY: memory_write owns this JSON result contract.
       const clean = textValue(
         await client.callTool({
           name: "memory_write",
@@ -628,7 +653,7 @@ describe("memory MCP tools", () => {
             body: "Entirely unrelated to quotas.",
           }),
         }),
-      ) as Record<string, unknown>;
+      ) as JsonObject;
       expect(clean.similarCandidates).toBeUndefined();
     } finally {
       await client.close().catch(() => undefined);
@@ -658,6 +683,7 @@ describe("memory MCP tools", () => {
         "---\ntitle: Added outside the daemon\ndate: 2026-06-01\ntags: []\n---\n\nDiscovered by reindex, not by memory_write.\n",
       );
 
+      // SAFETY: memory_search owns this JSON array result contract.
       const beforeReindex = textValue(
         await client.callTool({
           name: "memory_search",
@@ -666,6 +692,7 @@ describe("memory MCP tools", () => {
       ) as unknown[];
       expect(beforeReindex).toEqual([]);
 
+      // SAFETY: memory_reindex owns this JSON result contract.
       const reindexed = textValue(
         await client.callTool({
           name: "memory_reindex",
@@ -693,6 +720,7 @@ describe("memory MCP tools", () => {
         await readFile(join(memoryDir, "externally-added.md"), "utf8"),
       ).toContain("Discovered by reindex");
 
+      // SAFETY: A repeated memory_reindex call returns the same owned result contract.
       const again = textValue(
         await client.callTool({
           name: "memory_reindex",
@@ -707,6 +735,7 @@ describe("memory MCP tools", () => {
         alreadyMigrated: ["repo"],
       });
 
+      // SAFETY: memory_search owns this JSON array result contract.
       const afterReindex = textValue(
         await client.callTool({
           name: "memory_search",
@@ -739,6 +768,7 @@ describe("memory MCP tools", () => {
     let dbPath: string;
     try {
       dbPath = daemonA.db.path;
+      // SAFETY: memory_write owns this JSON result contract.
       const written = textValue(
         await clientA.callTool({
           name: "memory_write",
@@ -752,6 +782,7 @@ describe("memory MCP tools", () => {
       ) as { id: string };
       expect(written.id).toEqual("survives-restart");
 
+      // SAFETY: memory_search owns this JSON array result contract.
       const foundBeforeStop = textValue(
         await clientA.callTool({
           name: "memory_search",
@@ -785,6 +816,7 @@ describe("memory MCP tools", () => {
 
       const clientB = await connectedClient(daemonB);
       try {
+        // SAFETY: memory_search owns this JSON array result contract.
         const foundAfterRebuild = textValue(
           await clientB.callTool({
             name: "memory_search",

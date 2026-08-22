@@ -3,6 +3,7 @@ import { known, unknown } from "../../schemas/capability";
 import { readingsFromGrokBilling } from "../quota-sources";
 import type { AccountBilling } from "./usage-credit-types";
 import { utilizationFromPools } from "./utilization";
+import { isNumber } from "../../shared/is-record";
 
 const GROK_BILLING = "grok._x.ai/billing" as const;
 
@@ -23,8 +24,8 @@ const GrokBillingSchema = z.object({
 });
 
 /** Read Grok money-guard + weekly utilization from `_x.ai/billing`. `creditUsagePercent` is the gauge (plan pool used). The money rails (`onDemandCap` / `onDemandUsed` / `prepaidBalance`) answer whether paid overflow is live. All three rails at zero is measured paid-overflow-off; any positive rail is paid capacity. Do not map a money-rail zero onto utilization: the rails and the plan gauge measure different things. */
-export function accountBillingFromGrokBilling(
-  response: unknown,
+export function accountBillingFromGrokBilling<T>(
+  response: T,
   observedAt: string,
 ): AccountBilling {
   const utilization = utilizationFromPools(
@@ -44,9 +45,7 @@ export function accountBillingFromGrokBilling(
   const moneyVal = (
     rail: { val?: number | null } | null | undefined,
   ): number | null =>
-    typeof rail?.val === "number" && Number.isFinite(rail.val)
-      ? rail.val
-      : null;
+    isNumber(rail?.val) && Number.isFinite(rail.val) ? rail.val : null;
   const cap = moneyVal(config.onDemandCap);
   const used = moneyVal(config.onDemandUsed);
   const prepaid = moneyVal(config.prepaidBalance);

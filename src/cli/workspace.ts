@@ -6,6 +6,7 @@ import { projectKey } from "../daemon/project-identity-core/state";
 import { getHiveHome, hiveInstanceSuffix } from "../hive-home/home";
 import { errorMessage } from "../shared/error-message";
 import { IS_RELEASE_BUILD } from "../shared/version";
+import { isString } from "../shared/is-record";
 import {
   checkForUpdate,
   fetchLatestFromGitHub,
@@ -74,7 +75,7 @@ function listProcessCommands(): string {
   const result = spawnSync("ps", ["-ax", "-o", "pid=,command="], {
     encoding: "utf8",
   });
-  return typeof result.stdout === "string" ? result.stdout : "";
+  return isString(result.stdout) ? result.stdout : "";
 }
 
 export function workspaceProcessPid(instanceHome: string): number | null {
@@ -144,6 +145,7 @@ export function workspaceOpenArguments(
   defaultHiveHome = process.env.HIVE_DEFAULT_HOME,
   hiveHome = process.env.HIVE_HOME,
 ): string[] {
+  const home = instanceHome(args);
   return [
     "-n",
     "-a",
@@ -161,9 +163,7 @@ export function workspaceOpenArguments(
       ? []
       : ["--env", `HIVE_HOME=${hiveHome}`]),
     // `open` wires the app's stderr to /dev/null unless told otherwise, and the app's NSLog diagnostics are the ONLY record of why a pane's renderer gave up — every attach failure, every recovery tick, and the bounded give-up itself are written there. Keyed to the instance home already in `args`, so a Dock launch with no instance keeps the default.
-    ...(instanceHome(args) === undefined
-      ? []
-      : ["--stderr", join(instanceHome(args) as string, "workspace.log")]),
+    ...(home === undefined ? [] : ["--stderr", join(home, "workspace.log")]),
     "--args",
     ...args,
   ];
@@ -278,7 +278,7 @@ export async function runWorkspace(
         `No Hive here yet — initializing ${root} first (\`hive init\`: skills, memory):`,
       );
       await (deps.init ?? ((r: string) => runInitCli({ cwd: r })))(root).catch(
-        (error: unknown) => {
+        (error) => {
           (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(
             `init did not complete (${errorMessage(error)}); starting anyway — re-run \`hive init\` to finish.`,
           );

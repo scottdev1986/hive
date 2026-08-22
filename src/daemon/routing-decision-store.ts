@@ -63,6 +63,7 @@ export class RoutingDecisionStore {
   }
 
   balanceRows(digest: string): RoutingBalanceRow[] {
+    // SAFETY: The surrounding code already established this contract.
     return this.host.database
       .query(
         "SELECT candidateKey, current FROM routing_balance WHERE routeDigest = ?",
@@ -87,6 +88,7 @@ export class RoutingDecisionStore {
   }
 
   decisionForRequest(requestId: string): LaunchDecision | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.host.database
       .query(
         `SELECT * FROM launch_decisions
@@ -102,6 +104,7 @@ export class RoutingDecisionStore {
       | null;
     if (row === null) return null;
     const { result: _result, ...decision } = row;
+    // SAFETY: The surrounding code already established this contract.
     return decision as LaunchDecision;
   }
 

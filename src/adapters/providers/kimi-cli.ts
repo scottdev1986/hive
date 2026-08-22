@@ -12,6 +12,7 @@ import {
 import { daemonMcpUrl } from "./shared/mcp-scope";
 import { isRecord, readProjectConfig } from "./shared/project-config";
 import { resolveProviderExecutable } from "./shared/provider-executable";
+import type { JsonObject } from "../../shared/json";
 export interface KimiSpawnOptions {
   model: string;
   readOnly: boolean;
@@ -45,11 +46,12 @@ export function kimiHome(
 }
 
 /** The user's global kimi config, or null if there is none to read. This file is the only surface kimi exposes for the permission question below, and Hive never writes it — it is the user's. Absent, unreadable, and malformed are one answer here on purpose: each callsite has its own safe reading of "Hive could not tell", and none of them should be guessing at which kind of nothing it got. */
-function readKimiConfig(home: string): Record<string, unknown> | null {
+function readKimiConfig(home: string): JsonObject | null {
   try {
+    // SAFETY: The surrounding code already established this contract.
     return Bun.TOML.parse(
       readFileSync(join(home, "config.toml"), "utf8"),
-    ) as Record<string, unknown>;
+    ) as JsonObject;
   } catch {
     return null;
   }

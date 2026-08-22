@@ -114,7 +114,7 @@ export const AutomatedInputMetadataSchema = AutomatedInputObjectSchema.omit({
   bytes: true,
 }).readonly();
 
-const HelloCommonShape = {
+const HelloCommonFields = {
   schemaVersion: z.literal(1),
   buildId: z.string().min(1),
   instanceId: z.string().min(1),
@@ -156,21 +156,21 @@ const DaemonControlIdentitySchema = z
 export const HelloPayloadSchema = z
   .discriminatedUnion("clientRole", [
     z.strictObject({
-      ...HelloCommonShape,
+      ...HelloCommonFields,
       clientRole: z.literal("viewer"),
       grantToken: z.string().min(1).optional(),
     }),
     z.strictObject({
-      ...HelloCommonShape,
+      ...HelloCommonFields,
       clientRole: z.literal("daemon"),
       daemonControl: DaemonControlIdentitySchema,
     }),
     z.strictObject({
-      ...HelloCommonShape,
+      ...HelloCommonFields,
       clientRole: z.literal("broker"),
     }),
     z.strictObject({
-      ...HelloCommonShape,
+      ...HelloCommonFields,
       clientRole: z.literal("host"),
     }),
   ])
@@ -256,7 +256,7 @@ const HostRecordProjectionSchema = z
 export const HostRecordV1Schema = z
   .strictObject({
     schemaVersion: z.literal(1),
-    ...HostRecordProjectionSchema.unwrap().shape,
+    ...HostRecordProjectionSchema.unwrap()["shape"],
     createdAt: Rfc3339UtcMillisecondsSchema,
   })
   .readonly();
@@ -321,7 +321,7 @@ export const GrantRegisterPayloadSchema = z
 
 export const CreateBeginPayloadSchema = z
   .strictObject({
-    ...SessionSpecSchema.unwrap().shape,
+    ...SessionSpecSchema.unwrap()["shape"],
     visibility: VisibilityRequestSchema,
   })
   .refine(
@@ -351,32 +351,32 @@ export const InspectPayloadSchema = z
 export const InspectedPayloadSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
-    ...TerminalHostSessionInspectionSchema.unwrap().shape,
+    ...TerminalHostSessionInspectionSchema.unwrap()["shape"],
   })
   .readonly();
 export const TerminatePayloadSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
-    ...TerminalHostTerminationRequestSchema.unwrap().shape,
+    ...TerminalHostTerminationRequestSchema.unwrap()["shape"],
   })
   .readonly();
 export const TerminatedPayloadSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
-    ...TerminalHostTerminationResultSchema.unwrap().shape,
+    ...TerminalHostTerminationResultSchema.unwrap()["shape"],
   })
   .readonly();
 export const AttachRequestPayloadSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     locator: SessionLocatorSchema,
-    ...AttachRequestSchema.unwrap().shape,
+    ...AttachRequestSchema.unwrap()["shape"],
   })
   .readonly();
 export const AttachGrantPayloadSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
-    ...AttachGrantSchema.unwrap().shape,
+    ...AttachGrantSchema.unwrap()["shape"],
   })
   .readonly();
 export const HostAttachPayloadSchema = z

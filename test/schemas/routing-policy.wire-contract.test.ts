@@ -8,6 +8,8 @@ import {
   RouterModeSchema,
   RoutingPolicySchema,
 } from "../../src/schemas/routing-policy";
+import type { JsonValue } from "../../src/shared/json";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 
 /**
  * THE DAEMON HALF OF THE WORKSPACE WIRE CONTRACT.
@@ -27,7 +29,7 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
     import.meta.dir,
     "../../workspace/Tests/WorkspaceCoreTests/Fixtures/routing-policy-wire.json",
   );
-  const fixture: unknown = JSON.parse(readFileSync(fixturePath, "utf8"));
+  const fixture: JsonValue = JSON.parse(readFileSync(fixturePath, "utf8"));
 
   test("the fixture is a document the daemon may legitimately emit", () => {
     const parsed = RoutingPolicySchema.safeParse(fixture);
@@ -41,17 +43,19 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
     // Model rows carry the full 5-mode EffortTarget vocabulary, including
     // never-configured (the unanswered row state).
     const rowModes = EffortTargetSchema.options
-      .map((option) => option.shape.mode.value as string)
+      .map((option) => unsafeCast<string>(option["shape"].mode.value))
       .sort();
     const fixtureRowModes = [
-      ...new Set(policy.models.map((row) => row.effort.mode as string)),
+      ...new Set(
+        policy.models.map((row) => unsafeCast<string>(row.effort.mode)),
+      ),
     ].sort();
     expect(fixtureRowModes).toEqual(rowModes);
 
     // Route candidates always answer effort, so their vocabulary is the
     // 4-mode CandidateEffort — never-configured cannot appear on a candidate.
     const candidateModes = CandidateEffortSchema.options
-      .map((option) => option.shape.mode.value as string)
+      .map((option) => unsafeCast<string>(option["shape"].mode.value))
       .sort();
     const routes = [
       ...Object.values(policy.categories),
@@ -60,7 +64,9 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
     const fixtureCandidateModes = [
       ...new Set(
         routes.flatMap((route) =>
-          route.candidates.map((candidate) => candidate.effort.mode as string),
+          route.candidates.map((candidate) =>
+            unsafeCast<string>(candidate.effort.mode),
+          ),
         ),
       ),
     ].sort();

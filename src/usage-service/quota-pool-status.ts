@@ -242,7 +242,7 @@ export function unconfiguredTotals(
   ledger: QuotaLedger,
   scope: QuotaScope,
   now: Date,
-): { reserved: number; fiveHourRecorded: number; weeklyRecorded: number } {
+) {
   const totals = ledger.usageTotals(
     scope,
     subtract(now, 5 * HOUR_MS),

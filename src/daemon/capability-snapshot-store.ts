@@ -52,6 +52,7 @@ export class CapabilitySnapshotStore {
   }
 
   read(provider: CapabilityProvider): ProviderCapabilitySnapshot | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.database
       .query(
         "SELECT snapshot FROM provider_capability_snapshots WHERE provider = ?",

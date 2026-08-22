@@ -5,6 +5,7 @@ import {
   renderStartNotice,
   renderUpdateNotice,
 } from "../../src/update-service/notice";
+import type { JsonObject } from "../../src/shared/json";
 
 const available = (
   over: Partial<Extract<UpdateCheck, { state: "update-available" }>> = {},
@@ -17,10 +18,7 @@ const available = (
   ...over,
 });
 
-const start = (
-  check: UpdateCheck,
-  over: Record<string, unknown> = {},
-): string =>
+const start = (check: UpdateCheck, over: JsonObject = {}): string =>
   plain(renderStartNotice({ check, installMethod: "native", ...over }));
 
 describe("hive init session notice", () => {
@@ -103,7 +101,7 @@ describe("hive init session notice", () => {
   });
 });
 
-const passive = (over: Record<string, unknown> = {}): string | null => {
+const passive = (over: JsonObject = {}): string | null => {
   const line = renderUpdateNotice({
     check: available(),
     installMethod: "native",

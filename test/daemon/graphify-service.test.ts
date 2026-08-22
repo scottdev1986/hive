@@ -165,11 +165,13 @@ describe("GraphifyService", () => {
     await service.start();
     const firstUrl = service.serverUrl();
     expect(firstUrl).not.toBeNull();
+    // SAFETY: The test owns this value and its fields.
     expect((await fetch(firstUrl as string)).status).toBe(406);
 
     service.scheduleRebuild();
     await service.whenIdle();
     expect(service.serverUrl()).toBe(firstUrl);
+    // SAFETY: The test owns this value and its fields.
     expect((await fetch(firstUrl as string)).status).toBe(406);
 
     const pid = required(service.serverPid());

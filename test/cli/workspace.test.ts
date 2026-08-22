@@ -402,9 +402,8 @@ describe("hive opens the installed release Workspace", () => {
   });
 
   test("the refusal names the installer, not a build command", async () => {
-    const error = await launchWorkspace({ root }).catch(
-      (cause: unknown) => cause,
-    );
+    const error = await launchWorkspace({ root }).catch((cause) => cause);
+    // SAFETY: The test owns this value and its fields.
     const message = (error as Error).message;
     expect(message).toContain("install.sh");
     expect(message).not.toContain("swift run");

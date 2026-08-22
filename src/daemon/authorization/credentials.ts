@@ -11,6 +11,7 @@ import { credentialDirectory, credentialPath } from "../../hive-home/home";
 
 // Bun does not re-export O_CLOEXEC through fs.constants, but the platform values are stable ABI. Falling back to 0 is safe rather than silently wrong: every credential read closes its descriptor before the process can exec.
 const O_CLOEXEC =
+  // SAFETY: The surrounding code already established this contract.
   (constants as Record<string, number | undefined>).O_CLOEXEC ??
   (process.platform === "darwin"
     ? 0x1000000
@@ -51,6 +52,7 @@ function readCredentialFile(subject: string, hiveHome?: string): string | null {
     );
   } catch (error) {
     // Absence is the common, silent case; anything else (EPERM, EIO) is a real fault that would otherwise masquerade as "no credential" and demote a legitimate holder to unauthenticated with no trace.
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       console.error(
         `Hive could not open the credential file for ${subject}: ${

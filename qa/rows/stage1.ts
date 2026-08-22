@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { errorMessage } from "../../src/shared/error-message";
+import { isRecord } from "../../src/shared/is-record";
 import {
   type Exec,
   type GateCommand,
@@ -9,6 +11,7 @@ import {
   type RowResult,
   waitFor,
 } from "../runner";
+import type { JsonObject } from "../../src/shared/json";
 
 export interface Stage1Context {
   exec: Exec;
@@ -80,18 +83,15 @@ const candidateOf = (
       candidate.provider === key.provider && candidate.model === key.model,
   ) ?? null;
 
-const sameJson = (a: unknown, b: unknown): boolean =>
+const sameJson = <T>(a: T, b: T): boolean =>
   JSON.stringify(a) === JSON.stringify(b);
 
-function stable(value: unknown): string {
+function stable<T>(value: T): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value !== null && typeof value === "object") {
+  if (isRecord(value)) {
     return `{${Object.keys(value)
       .sort()
-      .map(
-        (key) =>
-          `${JSON.stringify(key)}:${stable((value as Record<string, unknown>)[key])}`,
-      )
+      .map((key) => `${JSON.stringify(key)}:${stable(value[key])}`)
       .join(",")}}`;
   }
   return JSON.stringify(value);
@@ -99,7 +99,8 @@ function stable(value: unknown): string {
 
 /** Canonical comparison for the rig baseline: revision and updatedAt move on every accepted write, so repeatability is judged on policy content alone. */
 export function normalizePolicyExport(exportText: string): string {
-  const doc = JSON.parse(exportText) as Record<string, unknown>;
+  // SAFETY: exportText comes from hive routing export, whose root payload is an object.
+  const doc = JSON.parse(exportText) as JsonObject;
   delete doc.revision;
   delete doc.updatedAt;
   return stable(doc);
@@ -108,22 +109,26 @@ export function normalizePolicyExport(exportText: string): string {
 // Oracles. Any failure to READ is thrown; the row maps it to NO MEASUREMENT,
 // because a row that cannot reach its oracle was not measured.
 async function policyViaHttp(ctx: Stage1Context): Promise<PolicyDoc> {
+  // SAFETY: runStage1Rows rejects a null observe client before invoking any row oracle.
   const result = await (ctx.observe as ObserveClients).httpJson(
     "/routing/policy",
   );
   if (result.status !== 200) {
     throw new Error(`GET /routing/policy answered ${result.status}`);
   }
+  // SAFETY: The successful routing policy endpoint owns the PolicyDoc response contract.
   return result.body as PolicyDoc;
 }
 
 async function snapshotViaHttp(ctx: Stage1Context): Promise<SnapshotDoc> {
+  // SAFETY: runStage1Rows rejects a null observe client before invoking any row oracle.
   const result = await (ctx.observe as ObserveClients).httpJson(
     "/model-control/snapshot",
   );
   if (result.status !== 200) {
     throw new Error(`GET /model-control/snapshot answered ${result.status}`);
   }
+  // SAFETY: The successful model-control endpoint owns the SnapshotDoc response contract.
   return result.body as SnapshotDoc;
 }
 
@@ -140,6 +145,7 @@ async function exportViaCli(ctx: Stage1Context): Promise<string> {
 }
 
 async function exportDoc(ctx: Stage1Context): Promise<PolicyDoc> {
+  // SAFETY: hive routing export owns the serialized PolicyDoc contract.
   return JSON.parse(await exportViaCli(ctx)) as PolicyDoc;
 }
 
@@ -402,7 +408,7 @@ async function plantMember(
     return {
       ok: false,
       status: "NO MEASUREMENT",
-      reason: (error as Error).message,
+      reason: errorMessage(error),
     };
   }
   let routeExists: boolean;
@@ -412,7 +418,7 @@ async function plantMember(
     return {
       ok: false,
       status: "NO MEASUREMENT",
-      reason: (error as Error).message,
+      reason: errorMessage(error),
     };
   }
   if (!routeExists) {
@@ -519,7 +525,7 @@ export async function rowT102MemberApplyWrites(
   try {
     revBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   const shown = await showRouterCategory(ctx, categoryLabel);
   if (!shown.ok) return { id, status: "NO MEASUREMENT", reason: shown.reason };
@@ -535,7 +541,7 @@ export async function rowT102MemberApplyWrites(
       };
     }
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   const applied = await driveMemberToggle(ctx, name);
   if (!applied.ok) {
@@ -569,7 +575,7 @@ export async function rowT102MemberApplyWrites(
   try {
     revAfter = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   return {
     id,
@@ -598,7 +604,7 @@ export async function rowT103WeightWritesThrough(
     weightBefore = candidate.weight;
     revBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   const target = weightBefore === 3 ? 4 : 3;
   const fieldReady = await drivable(ctx, `task-router-weight-${name}`);
@@ -623,7 +629,7 @@ export async function rowT103WeightWritesThrough(
   try {
     revAfter = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   if (revAfter <= revBefore) {
     return {
@@ -669,7 +675,7 @@ export async function rowT104IllegalWeightRefused(
   try {
     revControlBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   // The positive control: planting the member must move the revision, or the
   // unchanged-revision assertion below measures nothing.
@@ -681,7 +687,7 @@ export async function rowT104IllegalWeightRefused(
   try {
     revBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   if (revBefore <= revControlBefore) {
     return {
@@ -724,7 +730,7 @@ export async function rowT104IllegalWeightRefused(
   try {
     revAfter = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   if (revAfter !== revBefore) {
     return {
@@ -770,7 +776,7 @@ export async function rowT105ModeEffortWriteThrough(
     exported = await exportDoc(ctx);
     revBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   const modeBefore = exported.categories[category]?.mode ?? null;
   if (modeBefore === null) {
@@ -850,7 +856,7 @@ export async function rowT105ModeEffortWriteThrough(
   try {
     revAfter = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   if (revAfter <= revBefore) {
     return {
@@ -929,7 +935,7 @@ export async function rowT106ApplyIsTheOnlyWrite(
   try {
     revBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   const ready = await drivable(ctx, `task-router-member-${name}`);
   if (!ready.ok) return { id, status: ready.status, reason: ready.reason };
@@ -942,7 +948,7 @@ export async function rowT106ApplyIsTheOnlyWrite(
   try {
     revDraft = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   if (revDraft !== revBefore) {
     return {
@@ -1017,7 +1023,7 @@ export async function rowT107ProviderToggleIsSpendConsent(
     stateBefore = state;
     revBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   // The export lists only configured providers: an unconfigured provider's
   // first flip configures it enabled, and its restore lands on disabled —
@@ -1051,7 +1057,7 @@ export async function rowT107ProviderToggleIsSpendConsent(
   try {
     revFlipped = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   const backReady = await drivable(ctx, `models-quota-provider-${provider}`);
   if (!backReady.ok) {
@@ -1109,7 +1115,7 @@ export async function rowT108ProbeRefreshIsARead(
     observedBefore = (await snapshotViaHttp(ctx)).observedAt;
     revBefore = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   const ready = await drivable(ctx, "models-quota-probe-refresh");
   if (!ready.ok) return { id, status: ready.status, reason: ready.reason };
@@ -1141,7 +1147,7 @@ export async function rowT108ProbeRefreshIsARead(
   try {
     revAfter = (await policyViaHttp(ctx)).revision;
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   if (revAfter !== revBefore) {
     return {
@@ -1174,13 +1180,13 @@ export async function rowT109RigBaseline(
       }
     }
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   let normalized: string;
   try {
     normalized = normalizePolicyExport(await exportViaCli(ctx));
   } catch (error) {
-    return { id, status: "NO MEASUREMENT", reason: (error as Error).message };
+    return { id, status: "NO MEASUREMENT", reason: errorMessage(error) };
   }
   if (!existsSync(ctx.baselinePath)) {
     mkdirSync(dirname(ctx.baselinePath), { recursive: true });

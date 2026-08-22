@@ -18,8 +18,8 @@ const CodexBillingSchema = z.object({
 });
 
 /** Read Codex's billing facts from `account/rateLimits/read`. False `hasCredits` and `unlimited` values prove only that no paid capacity is currently present. Codex exposes no auto-top-up setting, so false or zero is deliberately unknown as an overflow switch. Headroom resolves to no-spend; exhaustion resolves to ask with the uncertainty named. */
-export function accountBillingFromCodexRateLimits(
-  response: unknown,
+export function accountBillingFromCodexRateLimits<T>(
+  response: T,
   observedAt: string,
 ): AccountBilling {
   const utilization = utilizationFromPools(

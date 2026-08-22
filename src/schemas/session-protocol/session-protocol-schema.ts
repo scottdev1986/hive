@@ -107,7 +107,7 @@ export const SessionVisibilitySchema = z.strictObject({
   expiresAt: Rfc3339UtcMillisecondsSchema,
 });
 
-const ForegroundIdentityShape = {
+const ForegroundIdentityFields = {
   pid: z.number().int().positive(),
   startToken: z.string().min(1),
   foregroundProcessGroupId: z.number().int().positive(),
@@ -121,14 +121,14 @@ const SessionForegroundSchema = z.discriminatedUnion("state", [
     .strictObject({
       state: z.literal("managed"),
       runId: z.string().uuid(),
-      ...ForegroundIdentityShape,
+      ...ForegroundIdentityFields,
     })
     .readonly(),
   z
     .strictObject({
       state: z.literal("unmanaged"),
       runId: z.null(),
-      ...ForegroundIdentityShape,
+      ...ForegroundIdentityFields,
     })
     .readonly(),
   z.strictObject({ state: z.literal("unknown"), runId: z.null() }).readonly(),
@@ -312,7 +312,7 @@ export const SessionEventSchema = z
     kind: z.string().min(1),
     revision: DecimalUint64Schema,
     occurredAt: Rfc3339UtcMillisecondsSchema,
-    data: z.record(z.string(), z.unknown()).readonly(),
+    data: z.record(z.string(), z.json()).readonly(),
   })
   .readonly();
 export type SessionEvent = z.infer<typeof SessionEventSchema>;

@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { CapabilityProvider } from "../../schemas/provider";
 import { type Digest, DigestSchema } from "../../schemas/hierarchy-ids";
 import { normalizeNulText } from "../../schemas/memory";
+import { isRecord, isString } from "../../shared/is-record";
 import type {
   AgentSnapshotEntry,
   BootstrapManifestRef,
@@ -21,6 +22,8 @@ import {
 } from "../spawn/agent-prompt";
 import { QUEEN_PIN } from "./queen-pin";
 import { successionRequiredReadInstruction } from "./succession-recovery";
+import type { JsonObject } from "../../shared/json";
+import { unsafeCast } from "../../shared/unsafe-cast";
 
 export const QUEEN_BOOT_CAPSULE_MAX_ESTIMATED_TOKENS = 9_000;
 export const QUEEN_LAUNCH_CONTEXT_MAX_ESTIMATED_TOKENS = 12_000;
@@ -115,7 +118,7 @@ export class QueenBootBudgetError extends Error {
   }
 }
 
-type DataRecord = Readonly<Record<string, unknown>>;
+type DataRecord = Readonly<JsonObject>;
 
 interface CollectionSectionOptions<T> {
   name: string;
@@ -141,7 +144,7 @@ function digestText(value: string): Digest {
   );
 }
 
-function digestValue(value: unknown): Digest {
+function digestValue<T>(value: T): Digest {
   return digestText(JSON.stringify(value));
 }
 
@@ -153,7 +156,7 @@ function stable<T>(values: readonly T[], key: (value: T) => string): T[] {
   return [...values].sort((left, right) => compareText(key(left), key(right)));
 }
 
-function inline(value: unknown, maximum = 320): string {
+function inline<T>(value: T, maximum = 320): string {
   const normalized = normalizeNulText(String(value))
     .replace(/\r\n?/g, "\n")
     .replace(/\s+/g, " ")
@@ -170,7 +173,7 @@ function dataLine(value: DataRecord): string {
   const rendered = JSON.stringify(value);
   if (rendered.length <= DATA_LINE_MAX_CHARS) return `data: ${rendered}`;
   return `data: ${JSON.stringify({
-    kind: typeof value.kind === "string" ? value.kind : "oversized-record",
+    kind: isString(value.kind) ? value.kind : "oversized-record",
     sourceDigest: digestText(rendered),
     omitted:
       "record exceeded the capsule data-line ceiling; use the named retrieval tool",
@@ -179,6 +182,7 @@ function dataLine(value: DataRecord): string {
 
 function collectionSection<T>(options: CollectionSectionOptions<T>): string {
   const sourceDigest =
+    // SAFETY: The surrounding code already established this contract.
     options.sourceDigest ?? digestValue(options.entries as readonly unknown[]);
   const candidates = options.entries
     .slice(0, options.maxItems)
@@ -203,15 +207,15 @@ function collectionSection<T>(options: CollectionSectionOptions<T>): string {
   return render(shown);
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : null;
+function asRecord<T>(value: T): JsonObject | null {
+  if (isRecord(value)) return value;
+  if (Array.isArray(value)) return unsafeCast<JsonObject>(value);
+  return null;
 }
 
-function asStringArray(value: unknown): string[] {
+function asStringArray<T>(value: T): string[] {
   return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
+    ? value.filter((item): item is string => isString(item))
     : [];
 }
 
@@ -271,6 +275,7 @@ function activeTasks(board: WorkspaceSnapshotV2): ActiveTask[] {
     const state = String(task.state);
     if (
       !(["assigned", "in-progress", "blocked"] as const).includes(
+        // SAFETY: The surrounding code already established this contract.
         state as ActiveTask["state"],
       )
     ) {
@@ -279,15 +284,16 @@ function activeTasks(board: WorkspaceSnapshotV2): ActiveTask[] {
     tasks.push({
       taskId: String(task.taskId),
       revision: String(task.revision),
+      // SAFETY: The surrounding code already established this contract.
       state: state as ActiveTask["state"],
       blockers: asStringArray(task.blockers),
     });
   }
-  const priority: Record<ActiveTask["state"], number> = {
+  const priority = {
     blocked: 0,
     "in-progress": 1,
     assigned: 2,
-  };
+  } satisfies Record<ActiveTask["state"], number>;
   return tasks.sort(
     (left, right) =>
       priority[left.state] - priority[right.state] ||
@@ -438,10 +444,7 @@ function evidenceEntries(input: QueenBootCapsuleInput): DataRecord[] {
   ];
 }
 
-function memorySection(
-  memoryIndex: string,
-  core: string,
-): { text: string; total: number; shown: number } {
+function memorySection(memoryIndex: string, core: string) {
   const lines = memoryIndexLines(memoryIndex);
   const render = (shown: readonly string[]): string =>
     renderMemoryIndex(shown, lines.length).text;

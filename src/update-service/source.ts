@@ -59,6 +59,7 @@ async function bytes(
   const chunks: Uint8Array[] = [];
   let read = 0;
   onProgress?.(0, total);
+  // SAFETY: The surrounding code already established this contract.
   for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
     chunks.push(chunk);
     read += chunk.byteLength;

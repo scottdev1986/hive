@@ -59,6 +59,7 @@ describe("machine mutation lease", () => {
         },
       });
       expect(result.exitCode).toBe(0);
+      // SAFETY: The test owns this value and its fields.
       return JSON.parse(result.stdout.toString()) as {
         tmpdir: string;
         databasePath: string;

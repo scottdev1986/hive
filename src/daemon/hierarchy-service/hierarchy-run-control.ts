@@ -45,7 +45,7 @@ function intentDigest(intent: RunControlIntent): string {
 }
 
 /** The refusal a store race maps to, or null when the error is not a race and belongs to the caller as a fault. Both fences are compare-and-swap failures from the client's point of view: something moved under the intent. */
-function racedWrite(error: unknown): MutationFailure | null {
+function racedWrite<T>(error: T): MutationFailure | null {
   if (error instanceof HierarchyConflictError) {
     return fail(
       RUN_CONTROL_FAILURE_CODES.revisionConflict,

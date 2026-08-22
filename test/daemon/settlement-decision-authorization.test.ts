@@ -6,6 +6,7 @@ import {
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { registerAgentControlTools } from "../../src/daemon/recovery/agent-control-tools";
 import type { SettlementDecision } from "../../src/daemon/worktree-lifecycle-service/settlement-decision-store";
+import type { JsonObject, JsonValue } from "../../src/shared/json";
 
 import { required } from "../required";
 
@@ -46,20 +47,18 @@ async function mintAs(capability: Capability): Promise<{
   readonly mint: () => Promise<object>;
   readonly execute: () => Promise<object>;
 }> {
-  const tools = new Map<
-    string,
-    (args: Record<string, unknown>) => Promise<object>
-  >();
+  const tools = new Map<string, (args: JsonObject) => Promise<object>>();
   const inputs: Array<typeof input & { decisionOwner: string }> = [];
   const executions: Array<{ decisionId: string; executedBy: string }> = [];
   const db = new HiveDatabase(":memory:");
   const capabilities = new CapabilityStore(db, () => null);
   registerAgentControlTools(
+    // SAFETY: The test owns this value and its fields.
     {
       registerTool: (
         name: string,
-        _meta: unknown,
-        handler: (args: Record<string, unknown>) => Promise<object>,
+        _meta: JsonValue,
+        handler: (args: JsonObject) => Promise<object>,
       ) => {
         tools.set(name, handler);
       },
@@ -67,6 +66,7 @@ async function mintAs(capability: Capability): Promise<{
     capability,
     {
       db,
+      // SAFETY: The test owns this value and its fields.
       terminalHost: {} as never,
       authorizeTool: (caller, tool, action) => {
         const authorization = capabilities.authorize(caller, {
@@ -104,6 +104,7 @@ async function mintAs(capability: Capability): Promise<{
 
 describe("settlement decision authorization", () => {
   test("only the user can mint with its audit owner", async () => {
+    // SAFETY: The test owns this value and its fields.
     const mint = await mintAs({
       role: "user",
       subject: "user",
@@ -113,10 +114,12 @@ describe("settlement decision authorization", () => {
   });
 
   test("the queen can mint, and the decision carries the queen as audit owner", async () => {
+    // SAFETY: The test owns this value and its fields.
     const mint = await mintAs({
       role: "orchestrator",
       subject: "queen",
     } as Capability);
+    // SAFETY: The test owns this value and its fields.
     const minted = (await mint.mint()) as {
       structuredContent: { decision: { decisionOwner: string } };
     };
@@ -125,6 +128,7 @@ describe("settlement decision authorization", () => {
   });
 
   test("the queen can execute a user-minted settlement decision", async () => {
+    // SAFETY: The test owns this value and its fields.
     const execute = await mintAs({
       role: "orchestrator",
       subject: "queen",
@@ -136,6 +140,7 @@ describe("settlement decision authorization", () => {
   });
 
   test("a writer cannot mint a settlement decision", async () => {
+    // SAFETY: The test owns this value and its fields.
     const mint = await mintAs({
       role: "writer",
       subject: "maya",

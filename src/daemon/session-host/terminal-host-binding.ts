@@ -11,12 +11,12 @@ import {
 
 export const HiveTerminalCreateEvidenceSchema = z
   .strictObject({
-    expectedExecutable: SessionSpecSchema.unwrap().shape.expectedExecutable,
+    expectedExecutable: SessionSpecSchema.unwrap()["shape"].expectedExecutable,
     executableVerified:
-      SessionInspectionSchema.unwrap().shape.executableVerified,
-    verifiedShellRoot: SessionInspectionSchema.unwrap().shape.shellRoot,
-    geometry: SessionSpecSchema.unwrap().shape.geometry,
-    visibility: SessionInspectionSchema.unwrap().shape.visibility,
+      SessionInspectionSchema.unwrap()["shape"].executableVerified,
+    verifiedShellRoot: SessionInspectionSchema.unwrap()["shape"].shellRoot,
+    geometry: SessionSpecSchema.unwrap()["shape"].geometry,
+    visibility: SessionInspectionSchema.unwrap()["shape"].visibility,
   })
   .readonly();
 
@@ -26,9 +26,9 @@ export type HiveTerminalCreateEvidence = z.infer<
 
 export const HiveTerminalTerminationAuditSchema = z
   .strictObject({
-    reason: TerminationRequestSchema.unwrap().shape.reason,
-    requestId: TerminationRequestSchema.unwrap().shape.requestId,
-    requestedAt: SessionInspectionSchema.unwrap().shape.evidenceAt,
+    reason: TerminationRequestSchema.unwrap()["shape"].reason,
+    requestId: TerminationRequestSchema.unwrap()["shape"].requestId,
+    requestedAt: SessionInspectionSchema.unwrap()["shape"].evidenceAt,
     /** Who ended the session. Absent means `user` for compatibility and for every user writer. Recovery treats a user audit as a deliberate kill and stops resuming the agent; `visibility-expiry` is infrastructure protecting an invariant, not user intent, so it records the cause without suppressing recovery. */
     origin: z.enum(["user", "visibility-expiry"]).optional(),
   })
@@ -40,7 +40,7 @@ export type HiveTerminalTerminationAudit = z.infer<
 
 export const HiveTerminalTerminationEvidenceSchema = z
   .strictObject({
-    completedAt: SessionInspectionSchema.unwrap().shape.evidenceAt,
+    completedAt: SessionInspectionSchema.unwrap()["shape"].evidenceAt,
     result: TerminationResultSchema,
   })
   .readonly();

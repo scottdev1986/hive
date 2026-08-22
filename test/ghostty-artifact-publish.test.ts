@@ -81,13 +81,14 @@ function writeLock(path: string, ghostty: SourceIdentity): void {
 }
 
 function manifestPatchSha(dir: string): string {
+  // SAFETY: The test owns this value and its fields.
   const parsed = JSON.parse(
     readFileSync(join(dir, "artifact-manifest.json"), "utf8"),
   ) as { source: SourceIdentity };
   return parsed.source.patchSeriesSha256;
 }
 
-function run(cmd: string[]): { exitCode: number; stderr: string } {
+function run(cmd: string[]) {
   const result = Bun.spawnSync(cmd, {
     cwd: root,
     stdout: "pipe",
@@ -208,6 +209,7 @@ test("lock check refuses a source-matching Debug artifact", () => {
   writeLock(lock, newIdentity);
   writeArtifact(artifact, newIdentity, "debug-engine");
   const manifest = join(artifact, "artifact-manifest.json");
+  // SAFETY: The test owns this value and its fields.
   const parsed = JSON.parse(readFileSync(manifest, "utf8")) as {
     buildEnvironment: { optimizeMode: string };
   };

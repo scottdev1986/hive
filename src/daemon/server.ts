@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { isString } from "../shared/is-record";
 import {
   type AuthInfo,
   createMcpHandler,
@@ -431,7 +432,7 @@ export interface HiveDaemonOptions {
   };
 }
 
-function json(value: unknown, init?: ResponseInit): Response {
+function json<T>(value: T, init?: ResponseInit): Response {
   return Response.json(value, init);
 }
 
@@ -439,7 +440,7 @@ const ORCHESTRATOR_SESSION_LONG_POLL_TIMEOUT_MS = 30_000;
 
 /** An ACL refusal on the wake ledger is the caller's 403; anything else is
  * the daemon's 500. */
-function mailWakeError(error: unknown): Response {
+function mailWakeError<T>(error: T): Response {
   return json(
     { error: errorMessage(error) },
     { status: error instanceof MailWakeAclError ? 403 : 500 },
@@ -1964,14 +1965,13 @@ export class HiveDaemon {
   private ingestEpisodicEvent(event: WorkspaceEventV2): void {
     if (this.episodic === null) return;
     try {
-      const summary =
-        typeof event.data.summary === "string"
-          ? event.data.summary
-          : event.kind;
+      const summary = isString(event.data.summary)
+        ? event.data.summary
+        : event.kind;
       const agentId =
         event.entity.kind === "agent"
           ? event.entity.id
-          : typeof event.data.agentId === "string"
+          : isString(event.data.agentId)
             ? event.data.agentId
             : null;
       this.episodic.appendEvent({
@@ -3087,6 +3087,7 @@ export class HiveDaemon {
       const denied = allow("memory:write");
       if (denied !== null) return denied;
       const parsed = MemoryJobKindSchema.safeParse(
+        // SAFETY: The surrounding code already established this contract.
         ((await body()) as { kind?: unknown } | null)?.kind,
       );
       if (!parsed.success) {
@@ -3797,7 +3798,7 @@ export class HiveDaemon {
   private async stopEndpoint(request: Request): Promise<Response> {
     const authenticated = this.authenticate(request, "/stop");
     if (!authenticated.ok) return this.denied(authenticated);
-    let rawBody: unknown;
+    let rawBody;
     try {
       rawBody = await request.json();
     } catch {
@@ -4017,7 +4018,7 @@ export class HiveDaemon {
   private async recoverEndpoint(request: Request): Promise<Response> {
     const authenticated = this.authenticate(request, "/recover");
     if (!authenticated.ok) return this.denied(authenticated);
-    let body: unknown;
+    let body;
     try {
       body = await request.json();
     } catch {

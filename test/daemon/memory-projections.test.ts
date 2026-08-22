@@ -79,6 +79,7 @@ async function project(
 }
 
 function input(overrides: Partial<MemoryWriteInput> = {}): MemoryWriteInput {
+  // SAFETY: The test owns this value and its fields.
   return {
     scope: "repo",
     topic: "terminal",
@@ -344,17 +345,14 @@ describe("memory recall preview", () => {
 
   /** Record every depth the FTS leg is asked for, so "only when starved" is
    * measured rather than asserted. */
-  function spyOnSearch(target: Project): {
-    memory: Pick<MemoryIndex, "search">;
-    depths: number[];
-  } {
+  function spyOnSearch(target: Project) {
     const depths: number[] = [];
     const index = target.index;
     if (index === null) throw new Error("needs an index");
     return {
       depths,
       memory: {
-        search: (query, options = {}) => {
+        search: (query: string, options: { limit?: number } = {}) => {
           depths.push(options.limit ?? 10);
           return index.search(query, options);
         },

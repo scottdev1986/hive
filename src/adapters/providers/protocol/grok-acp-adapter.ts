@@ -52,7 +52,7 @@ export const GROK_PROFILE: AcpVendorProfile = {
       citation: "docs/evidence/protocol-terminal/grok/conformance.json",
     },
   },
-  async afterInitialize(client: AcpClient, _handshake: unknown): Promise<void> {
+  async afterInitialize(client: AcpClient, _handshake): Promise<void> {
     await client.request("authenticate", { methodId: "cached_token" });
   },
 };

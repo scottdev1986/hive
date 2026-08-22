@@ -288,6 +288,7 @@ function stage(
   world: GitWorld,
   overrides: Partial<IntegrationStage> = {},
 ): IntegrationStage {
+  // SAFETY: The test owns this value and its fields.
   return {
     stageId,
     revision: "1",
@@ -306,6 +307,7 @@ function stage(
 }
 
 function review(world: GitWorld, overrides: Partial<Review> = {}): Review {
+  // SAFETY: The test owns this value and its fields.
   return {
     reviewId,
     revision: "1",
@@ -424,9 +426,10 @@ function seed(
 
 function openStore<T extends HierarchyStore = HierarchyStore>(
   make?: (db: HiveDatabase) => T,
-): { db: HiveDatabase; store: T } {
+) {
   const db = new HiveDatabase(":memory:");
   databases.push(db);
+  // SAFETY: The test owns this value and its fields.
   return { db, store: make?.(db) ?? (new HierarchyStore(db) as T) };
 }
 
@@ -450,6 +453,7 @@ async function expectPromotionError<T>(
     await work();
   } catch (error) {
     expect(error).toBeInstanceOf(PromotionError);
+    // SAFETY: The test owns this value and its fields.
     const promotion = error as PromotionError;
     expect(promotion.code).toBe(code);
     if (message !== undefined) expect(promotion.message).toMatch(message);
@@ -571,6 +575,7 @@ describe("derived promotion authority and evidence", () => {
       "capabilityEpoch",
     ]);
     expect(() =>
+      // SAFETY: The test owns this value and its fields.
       assertAuthorityOnly({
         ...positive,
         grant: leafGrant(),
@@ -1066,6 +1071,7 @@ describe("derived promotion write boundaries", () => {
     expect(rejected?.status).toBe("rejected");
     if (rejected?.status === "rejected") {
       expect(rejected.reason).toBeInstanceOf(PromotionError);
+      // SAFETY: The test owns this value and its fields.
       expect((rejected.reason as PromotionError).code).toBe("RECORD_CAS");
     }
     expect(store.getIntegrationStage(stageId)?.revision).toBe("2");

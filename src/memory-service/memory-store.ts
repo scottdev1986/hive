@@ -1,4 +1,6 @@
 import type { Dirent } from "node:fs";
+import { isErrnoCode } from "../shared/error-message";
+import { isRecord, isString } from "../shared/is-record";
 import {
   appendFile,
   cp,
@@ -38,6 +40,7 @@ import type {
   MemoryMigrationReport,
   MemoryWriteFileResult,
 } from "./store-records";
+import type { JsonObject, JsonValue } from "../shared/json";
 
 export {
   normalizeTitle,
@@ -52,11 +55,8 @@ export type {
   MemoryWriteFileResult,
 } from "./store-records";
 
-const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  error.code === "ENOENT";
+const isMissingFileError = <T>(error: T): boolean =>
+  isErrnoCode(error, "ENOENT");
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -585,8 +585,12 @@ async function discoverLegacyFacts(
   return facts;
 }
 
+interface LegacyTopicAliases {
+  readonly [tag: string]: string | undefined;
+}
+
 function legacyTopic(fact: LegacyFact): string {
-  const aliases: Record<string, string> = {
+  const aliases: LegacyTopicAliases = {
     router: "routing",
     routing: "routing",
     model: "routing",
@@ -631,22 +635,23 @@ async function migrationMarker(
   scope: MemoryScope,
 ): Promise<{ backup: string; completedAt: string } | null> {
   try {
-    const parsed: unknown = JSON.parse(
+    const parsed: JsonValue = JSON.parse(
       await readFile(
         join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER),
         "utf8",
       ),
     );
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    if (!isRecord(parsed))
       throw new Error("Invalid legacy memory migration marker");
-    const record = parsed as Record<string, unknown>;
+    // SAFETY: The surrounding code already established this contract.
+    const record = parsed as JsonObject;
     if (
       Object.keys(record).some(
         (key) => key !== "backup" && key !== "completedAt",
       ) ||
-      typeof record.backup !== "string" ||
+      !isString(record.backup) ||
       record.backup.length === 0 ||
-      typeof record.completedAt !== "string" ||
+      !isString(record.completedAt) ||
       !Number.isFinite(Date.parse(record.completedAt))
     )
       throw new Error("Invalid legacy memory migration marker");
@@ -676,13 +681,7 @@ async function backupLegacyMemory(
       });
       return destination;
     } catch (error) {
-      if (!(
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ERR_FS_CP_EEXIST"
-      ))
-        throw error;
+      if (!isErrnoCode(error, "ERR_FS_CP_EEXIST")) throw error;
       destination = join(backupRoot, `legacy-v1-${timestamp}-${suffix}`);
       suffix += 1;
     }
@@ -763,13 +762,7 @@ async function migrateLegacyScope(
       try {
         await writeFile(destination, old.contents, { flag: "wx" });
       } catch (error) {
-        if (!(
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code === "EEXIST"
-        ))
-          throw error;
+        if (!isErrnoCode(error, "EEXIST")) throw error;
         if ((await readFile(destination, "utf8")) !== old.contents) {
           throw new Error(
             `Legacy raw destination already contains different evidence: ${destination}`,

@@ -48,6 +48,7 @@ describe("measured provider capabilities", () => {
 
   test("every baseline row must be measured supported to pass", () => {
     for (const missing of BASELINE_CAPABILITIES) {
+      // SAFETY: The test owns this value and its fields.
       const measured = Object.fromEntries(
         BASELINE_CAPABILITIES.filter((name) => name !== missing).map((name) => [
           name,

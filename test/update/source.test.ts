@@ -56,6 +56,7 @@ function fakeGitHub(
   releaseTag = "v0.0.9",
   manifest: typeof MANIFEST = MANIFEST,
 ): typeof fetch {
+  // SAFETY: The test owns this value and its fields.
   return ((url: string) => {
     if (url.includes("api.github.com")) {
       return Promise.resolve(
@@ -88,7 +89,7 @@ function fakeGitHub(
       return Promise.resolve(streamed(asset.chunks, asset.contentLength));
     }
     return Promise.resolve(new Response("not found", { status: 404 }));
-  }) as unknown as typeof fetch;
+  }) as typeof fetch;
 }
 
 const chunk = (text: string): Uint8Array => new TextEncoder().encode(text);

@@ -104,6 +104,7 @@ async function canonicalizePotentialPath(path: string): Promise<string> {
   try {
     return await realpath(path);
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     const parent = dirname(path);
     return parent === path

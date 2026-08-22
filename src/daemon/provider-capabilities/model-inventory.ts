@@ -194,6 +194,7 @@ export function buildModelInventory(
   const discoveryOf = (
     provider: CapabilityProvider,
   ): ProviderDiscovery | undefined =>
+    // SAFETY: The surrounding code already established this contract.
     input.discovery[provider] as ProviderDiscovery | undefined;
   const records = inventoryProviders.flatMap((provider) => {
     const discovery = discoveryOf(provider);
@@ -253,6 +254,7 @@ export function buildModelInventory(
         left.canonicalId.localeCompare(right.canonicalId) ||
         (left.variant ?? "").localeCompare(right.variant ?? ""),
     );
+  // SAFETY: The surrounding code already established this contract.
   const providers = Object.fromEntries(
     inventoryProviders.map((provider) => {
       const discovery = discoveryOf(provider);

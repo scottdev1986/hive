@@ -221,10 +221,7 @@ export class ToolDiffProjectionCache {
   }
 }
 
-function summarizeUnifiedDiff(diff: string): {
-  readonly stats: DiffStats;
-  readonly rows: number;
-} {
+function summarizeUnifiedDiff(diff: string) {
   let files = 0;
   let added = 0;
   let removed = 0;
@@ -241,7 +238,11 @@ export function unifiedDiffStats(diff: string): DiffStats {
   return summarizeUnifiedDiff(diff).stats;
 }
 
-const FILETYPES: Record<string, string> = {
+interface FiletypeTable {
+  readonly [extension: string]: string | undefined;
+}
+
+const FILETYPES: FiletypeTable = {
   ts: "typescript",
   tsx: "typescript",
   mts: "typescript",

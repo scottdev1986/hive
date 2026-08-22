@@ -52,7 +52,7 @@ const effectiveDefault = (provider: "claude" | "codex") => ({
 
 describe("identifyModelVendor", () => {
   test("identifies canonical ids, launch tokens, and aliases from vendor catalogs", () => {
-    const discovery: Partial<Record<"claude" | "codex", ProviderDiscovery>> = {
+    const discovery = {
       claude: {
         status: "ok",
         records: [record("claude", "claude-fable-5", ["best"])],
@@ -63,7 +63,7 @@ describe("identifyModelVendor", () => {
         records: [record("codex", "gpt-5.4")],
         effectiveDefault: effectiveDefault("codex"),
       },
-    };
+    } satisfies Partial<Record<"claude" | "codex", ProviderDiscovery>>;
     expect(identifyModelVendor("best", discovery)).toEqual({
       state: "claimed",
       provider: "claude",
@@ -80,12 +80,7 @@ describe("identifyModelVendor", () => {
     } as const;
     expect(identifyModelVendor("mystery", unreadable).state).toBe("unreadable");
 
-    const collision: Partial<
-      Record<
-        "claude" | "codex" | "grok" | "kimi" | "opencode",
-        ProviderDiscovery
-      >
-    > = {
+    const collision = {
       claude: {
         status: "ok",
         records: [record("claude", "shared")],
@@ -123,7 +118,12 @@ describe("identifyModelVendor", () => {
           effort: unknown<string>("field-absent", "opencode.models", AT),
         },
       },
-    };
+    } satisfies Partial<
+      Record<
+        "claude" | "codex" | "grok" | "kimi" | "opencode",
+        ProviderDiscovery
+      >
+    >;
     expect(identifyModelVendor("shared", collision).state).toBe("unreadable");
     expect(identifyModelVendor("absent", collision)).toEqual({
       state: "unclaimed",

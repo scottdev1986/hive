@@ -76,7 +76,7 @@ class StreamingTextRenderable extends TextRenderable {
   }
 }
 
-const TOOL_LABELS: Record<string, string> = {
+const TOOL_LABELS = {
   read: "Read",
   edit: "Edit",
   delete: "Delete",
@@ -87,7 +87,7 @@ const TOOL_LABELS: Record<string, string> = {
   fetch: "Fetch",
   switch_mode: "Switch mode",
   other: "Tool",
-};
+} satisfies Record<string, string>;
 
 function displayToolName(name: string): string {
   const leaf = name.split("__").at(-1) ?? name;

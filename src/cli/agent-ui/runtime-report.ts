@@ -24,15 +24,17 @@ export function observeAdapterChild(
   };
 }
 
+export type ProviderRuntimeReporter = {
+  reportChild(identity: AdapterChildIdentity): Promise<void>;
+  reportReceipt(receipt: SubmissionReceipt): Promise<void>;
+};
+
 export function providerRuntimeReporter(
   subject: string,
   providerRunId: string,
   port: number,
   fetcher?: RuntimeReportFetcher,
-): {
-  reportChild(identity: AdapterChildIdentity): Promise<void>;
-  reportReceipt(receipt: SubmissionReceipt): Promise<void>;
-} {
+): ProviderRuntimeReporter {
   const daemon = new PaneDaemonClient({
     port,
     subject,

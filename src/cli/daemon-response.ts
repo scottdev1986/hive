@@ -1,9 +1,11 @@
-import type { JsonValue } from "../shared/json";
+import type { JsonValue, JsonObject } from "../shared/json";
+import { isRecord, isString } from "../shared/is-record";
 
 export async function decodeJson(
   response: Response,
 ): Promise<JsonValue | null> {
   return await response.json().then(
+    // SAFETY: The surrounding code already established this contract.
     (value) => value as JsonValue,
     () => null,
   );
@@ -14,16 +16,17 @@ export interface DaemonErrorDetail {
   reason?: string;
 }
 
-export function daemonErrorDetail(
-  body: unknown,
+export function daemonErrorDetail<T>(
+  body: T,
   fallback: string,
 ): DaemonErrorDetail {
-  if (typeof body !== "object" || body === null) return { message: fallback };
-  const value = body as Record<string, unknown>;
+  if (!isRecord(body) && !Array.isArray(body)) return { message: fallback };
+  // SAFETY: The surrounding code already established this contract.
+  const value = body as JsonObject;
   const detail: DaemonErrorDetail = {
-    message: typeof value.error === "string" ? value.error : fallback,
+    message: isString(value.error) ? value.error : fallback,
   };
-  if (typeof value.reason === "string") detail.reason = value.reason;
+  if (isString(value.reason)) detail.reason = value.reason;
   return detail;
 }
 

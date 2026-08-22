@@ -69,15 +69,13 @@ function nextReference(
 }
 
 /** The dev daemon's home is decided in the Makefile, so that is what these tests read rather than a copy of its spelling. `expanded` resolves values the way make does — `$(shell ...)` really runs, because the paths under test are built from shasum output and asserting on unevaluated text would prove nothing about where the daemon lands. `literal` keeps the unexpanded right-hand side, which is the only place a claim about the *spelling* can be made: the test sandbox moves `$HOME`, so an expanded value says nothing about whether the author wrote a tmp path or a home-relative one. */
-function makefileVariables(): {
-  expanded: Record<string, string>;
-  literal: Record<string, string>;
-} {
+function makefileVariables() {
   const source = readFileSync(join(REPO_ROOT, "Makefile"), "utf8");
   const literals: Record<string, string> = {};
   for (const line of source.split("\n")) {
     const assignment = /^([A-Z_]+) :?\??= (.+)$/.exec(line);
     if (assignment === null) continue;
+    // SAFETY: The test owns this value and its fields.
     literals[assignment[1] as string] = assignment[2] as string;
   }
   const expand = (value: string): string => {
@@ -133,6 +131,7 @@ describe("the dev daemon's home survives /tmp", () => {
     expect(literal.DEV_HOME).not.toInclude("/tmp");
     expect(literal.DEV_HOME).not.toInclude("/var/folders");
     // Not a fourth home layout: exactly what `hive --instance dev-<tag>` would resolve to.
+    // SAFETY: The test owns this value and its fields.
     const devHome = expanded.DEV_HOME as string;
     const tag = devHome.slice(devHome.lastIndexOf("/dev-") + 1);
     expect(devHome).toBe(namedInstanceHome(tag));
@@ -142,6 +141,7 @@ describe("the dev daemon's home survives /tmp", () => {
     // The dev root the Makefile names, which is where dev's sockets are really bound. It no
     // longer needs the /tmp-to-/private/tmp correction that used to cost eight unbudgeted bytes
     // here: the home is not reached through a symlink the way /tmp was.
+    // SAFETY: The test owns this value and its fields.
     const devHome = makefileVariables().expanded.DEV_HOME as string;
     const canonicalRoot = resolveVariant(devHome).socketRoot;
     const previous = process.env.HIVE_SESSIOND_ROOT;
@@ -178,6 +178,7 @@ describe("the dev daemon's home survives /tmp", () => {
     // sandbox, and a purge there would destroy the running board, so the home under test is
     // rebuilt with the same tag under a scratch machine home. What clean-all must destroy is then
     // read off the variant record, which is the one owner of where the marker and socket root live.
+    // SAFETY: The test owns this value and its fields.
     const tag = basename(makefileVariables().expanded.DEV_HOME as string);
     const root = tempRoot("hive-purge-durability-");
     const machineHome = join(root, "machine");

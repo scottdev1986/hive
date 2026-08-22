@@ -110,7 +110,7 @@ export function requireSessiondAgentLocator(
       `Agent ${agent.id} has a mismatched sessiond SessionLocator`,
     );
   }
-  return HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+  return HiveTerminalBindingSchema.unwrap()["shape"].locator.parse(locator);
 }
 
 export function requireSessiondRootLocator(
@@ -123,7 +123,7 @@ export function requireSessiondRootLocator(
   ) {
     throw new Error("Queen has a mismatched sessiond SessionLocator");
   }
-  return HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+  return HiveTerminalBindingSchema.unwrap()["shape"].locator.parse(locator);
 }
 
 type TerminalLifecycleHost = Pick<
@@ -269,6 +269,7 @@ export class HiveTerminalHostAdapter {
           process.kill(-processGroupId, 0);
           return "running";
         } catch (error) {
+          // SAFETY: The surrounding code already established this contract.
           const code = (error as NodeJS.ErrnoException).code;
           if (code === "ESRCH") return "gone";
           if (code === "EPERM") return "running";

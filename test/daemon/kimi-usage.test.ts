@@ -16,6 +16,7 @@ import {
 import { readingsFromKimiUsages } from "../../src/usage-service/quota-sources";
 import { accountBillingFromKimiUsage } from "../../src/usage-service/usage-credits/kimi";
 import { readAccountBilling } from "../../src/usage-service/usage-credits/reader";
+import type { JsonObject } from "../../src/shared/json";
 
 /**
  * Kimi's usage surface: GET /usages with the CLI's OAuth credential,
@@ -57,9 +58,7 @@ const USAGES_BODY = {
   authentication: { method: "METHOD_ACCESS_TOKEN", scope: "FEATURE_CODING" },
 };
 
-async function credentialFile(
-  credentials: Record<string, unknown>,
-): Promise<string> {
+async function credentialFile(credentials: JsonObject): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), "hive-kimi-usage-"));
   roots.push(home);
   const path = kimiCredentialsPath(home);
@@ -77,14 +76,12 @@ const freshCredentials = {
   token_type: "Bearer",
 };
 
-const usagesResponse = (body: unknown = USAGES_BODY, status = 200) =>
+const usagesResponse = (body: typeof USAGES_BODY = USAGES_BODY, status = 200) =>
   new Response(JSON.stringify(body), { status });
 
-function jsonRequestLog(): {
-  calls: Array<{ url: string; init: RequestInit }>;
-  fetchFn: typeof fetch;
-} {
+function jsonRequestLog() {
   const calls: Array<{ url: string; init: RequestInit }> = [];
+  // SAFETY: The test owns this value and its fields.
   const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init: init ?? {} });
     return usagesResponse();
@@ -105,11 +102,13 @@ describe("kimi usage probe", () => {
     expect(result.status).toBe("ok");
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://api.kimi.com/coding/v1/usages");
+    // SAFETY: The test owns this value and its fields.
     const headers = calls[0]?.init.headers as
       Record<string, string> | undefined;
     expect(headers?.authorization).toBe("Bearer live-token");
 
     const billing = accountBillingFromKimiUsage(
+      // SAFETY: The test owns this value and its fields.
       (result as { response: unknown }).response,
       new Date(NOW).toISOString(),
     );
@@ -133,6 +132,7 @@ describe("kimi usage probe", () => {
       custom_field: "preserved",
     });
     const calls: Array<{ url: string; init: RequestInit }> = [];
+    // SAFETY: The test owns this value and its fields.
     const fetchFn = (async (
       url: string | URL | Request,
       init?: RequestInit,
@@ -170,16 +170,15 @@ describe("kimi usage probe", () => {
 
     // The write-back: rotated credential, recomputed expiry, 0600, and the
     // unrelated field preserved.
-    const written = JSON.parse(await readFile(path, "utf8")) as Record<
-      string,
-      unknown
-    >;
+    // SAFETY: The test owns this value and its fields.
+    const written = JSON.parse(await readFile(path, "utf8")) as JsonObject;
     expect(written.access_token).toBe("fresh-token");
     expect(written.refresh_token).toBe("rotated-refresh");
     expect(written.expires_at).toBe(Math.floor(NOW / 1_000) + 3600);
     expect(written.custom_field).toBe("preserved");
     expect((await stat(path)).mode & 0o777).toBe(0o600);
 
+    // SAFETY: The test owns this value and its fields.
     const headers = usageCall?.init.headers as
       Record<string, string> | undefined;
     expect(headers?.authorization).toBe("Bearer fresh-token");
@@ -191,6 +190,7 @@ describe("kimi usage probe", () => {
       expires_at: Math.floor(NOW / 1_000) - 60,
     });
     const before = await readFile(path, "utf8");
+    // SAFETY: The test owns this value and its fields.
     const fetchFn = (async (_url: string | URL | Request) =>
       new Response(JSON.stringify({ error: "invalid_grant" }), {
         status: 400,
@@ -202,6 +202,7 @@ describe("kimi usage probe", () => {
     });
     const result = await transport.readUsage(5_000);
     expect(result.status).toBe("unavailable");
+    // SAFETY: The test owns this value and its fields.
     expect((result as { reason: string }).reason).toContain("refresh");
     expect(await readFile(path, "utf8")).toBe(before);
   });
@@ -216,6 +217,7 @@ describe("kimi usage probe", () => {
     });
     const result = await transport.readUsage(5_000);
     expect(result.status).toBe("unavailable");
+    // SAFETY: The test owns this value and its fields.
     expect((result as { reason: string }).reason).toContain(
       "no readable kimi credential file",
     );

@@ -267,6 +267,7 @@ describe("vendor shapes observed on the wire", () => {
     );
 
     expect(event).toMatchObject({ kind: "tool-started" });
+    // SAFETY: The test owns this value and its fields.
     const detail = (event as { detail: string }).detail;
     expect(detail).toContain("Pick one: alpha or beta?");
     expect(detail).toContain("alpha — Choose alpha");

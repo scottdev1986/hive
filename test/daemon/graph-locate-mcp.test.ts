@@ -77,14 +77,16 @@ async function locate(
     name: "graph_locate",
     arguments: { question },
   });
-  const content = (
-    result as {
-      content: Array<{ type: string; text?: string }>;
-    }
-  ).content[0];
+  const content = // SAFETY: The test owns this value and its fields.
+    (
+      result as {
+        content: Array<{ type: string; text?: string }>;
+      }
+    ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
+  // SAFETY: The test owns this value and its fields.
   return JSON.parse(content.text) as { available: boolean; answer: string };
 }
 

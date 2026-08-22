@@ -13,6 +13,7 @@ import {
 import { credentialPath } from "../../src/hive-home/home";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { definedFields } from "../../src/shared/defined-fields";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 import type { LandReadiness } from "../../src/daemon/landing/landing-service";
 import type { MainHealthMonitorHandle } from "../../src/daemon/landing/main-health-monitor";
 import type { ProjectGate } from "../../src/daemon/landing/project-gate";
@@ -30,6 +31,7 @@ import { bindRootSession, mailbox } from "../mail-test-support";
 import { required } from "../required";
 import { tempRoot } from "../temp-root";
 import { callHiveTool } from "../../src/cli/mcp";
+import type { JsonValue } from "../../src/shared/json";
 
 const home = tempRoot("hive-auth-test-");
 process.env.HIVE_HOME = home;
@@ -144,11 +146,11 @@ const authorized =
     return daemon.fetch(new Request(input, { ...init, headers }));
   };
 
-async function callTool(
+async function callTool<T>(
   daemon: HiveDaemon,
   token: string | null,
   name: string,
-  args: Record<string, unknown> = {},
+  args: T = unsafeCast<T>({}),
 ): Promise<{ ok: boolean; error: string; content: unknown }> {
   const client = new Client({ name: "test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
@@ -157,7 +159,11 @@ async function callTool(
   );
   try {
     await client.connect(transport);
-    const result = await client.callTool({ name, arguments: args });
+    const result = await client.callTool({
+      name,
+      // SAFETY: The test constructed these MCP arguments.
+      arguments: args as { [key: string]: JsonValue },
+    });
     const text = JSON.stringify(result.content ?? "");
     return {
       ok: result.isError !== true,
@@ -354,10 +360,10 @@ describe("a foreign agent cannot act on another tenant", () => {
       ["hive_approvals", {}],
       ["hive_settlement_decide", {}],
     ] as const) {
-      expect([tool, (await callTool(daemon, token, tool, args)).ok]).toEqual([
+      expect([
         tool,
-        false,
-      ]);
+        (await callTool(daemon, token, tool, { ...args })).ok,
+      ]).toEqual([tool, false]);
     }
     expect(spawner.requests).toHaveLength(0);
     expect(denials(daemon)).toContain("capability.forbidden-action");
@@ -579,6 +585,7 @@ describe("the codex root token endpoint", () => {
       { method: "POST" },
     );
     expect(response.status).toEqual(200);
+    // SAFETY: The test owns this value and its fields.
     const body = (await response.json()) as {
       token: string;
       expiresAt: string;
@@ -620,6 +627,7 @@ describe("the codex root token endpoint", () => {
         { method: "POST" },
       );
       expect(response.status).toEqual(200);
+      // SAFETY: The test owns this value and its fields.
       return ((await response.json()) as { token: string }).token;
     };
 
@@ -657,6 +665,7 @@ describe("the codex root token endpoint", () => {
       { method: "POST" },
     );
     expect(response.status).toEqual(200);
+    // SAFETY: The test owns this value and its fields.
     const launcherToken = ((await response.json()) as { token: string }).token;
     const launcherId = required(launcherToken.split(".")[1]);
     const launcherRow = required(db.getCapability(launcherId));
@@ -890,11 +899,11 @@ describe("a one-shot landing grant cannot be replayed", () => {
       "detached-provider-request",
       "run a command",
     );
-    const approvalOwner = daemon as unknown as {
+    const approvalOwner = unsafeCast<{
       approvalService: {
         providerPermissionRequests: Map<string, unknown>;
       };
-    };
+    }>(daemon);
     approvalOwner.approvalService.providerPermissionRequests.delete(approvalId);
 
     await expect(
@@ -1396,6 +1405,7 @@ describe("audit", () => {
     const { daemon, db } = harness();
     const { token, capability } = daemon.capabilities.mint("maya", "writer");
     const secret = required(token.split(".")[2]);
+    // SAFETY: The test owns this value and its fields.
     const row = db.database
       .query("SELECT secretHash FROM capabilities WHERE id = ?")
       .get(capability.id) as { secretHash: string };

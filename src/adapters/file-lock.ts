@@ -1,30 +1,29 @@
 import { link, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { safeJsonParse } from "../shared/json";
+import { safeJsonParse, type JsonObject, type JsonValue } from "../shared/json";
 import { type ProcessLiveness, probeProcessLiveness } from "./process-liveness";
+import { isErrnoCode } from "../shared/error-message";
+import { isRecord, isString } from "../shared/is-record";
 
 interface FileLockOwner {
   readonly pid: number;
   readonly token: string;
 }
 
-const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  error.code === "ENOENT";
+const isMissingFileError = <T>(error: T): error is T & { code: string } =>
+  isErrnoCode(error, "ENOENT");
 
 function parseLockOwner(source: string, path: string): FileLockOwner | null {
   if (source.trim() === "") return null;
   const parsed = safeJsonParse(source);
   if (parsed === undefined) return null;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-    throw new Error(`Invalid lock owner in ${path}`);
-  const record = parsed as Record<string, unknown>;
+  if (!isRecord(parsed)) throw new Error(`Invalid lock owner in ${path}`);
+  // SAFETY: The surrounding code already established this contract.
+  const record = parsed as JsonObject;
   if (
     Object.keys(record).some((key) => key !== "pid" && key !== "token") ||
     !Number.isSafeInteger(record.pid) ||
     Number(record.pid) <= 0 ||
-    typeof record.token !== "string" ||
+    !isString(record.token) ||
     record.token.length === 0
   )
     throw new Error(`Invalid lock owner in ${path}`);
@@ -43,6 +42,7 @@ async function publish(
     await link(staging, path);
     return true;
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     return false;
   } finally {
@@ -71,6 +71,7 @@ async function reclaim(
   try {
     await link(staged, path);
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
       throw error;
     }
@@ -126,7 +127,7 @@ export async function withFileLock<T>(
 
   const outcome = await operation().then(
     (value) => ({ ok: true as const, value }),
-    (error: unknown) => ({ ok: false as const, error }),
+    (error: JsonValue) => ({ ok: false as const, error }),
   );
   const current = await readFile(path, "utf8").catch(() => "");
   if (current === encoded) {

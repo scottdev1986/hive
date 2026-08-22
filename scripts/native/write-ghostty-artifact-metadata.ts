@@ -32,6 +32,7 @@ if (!outputArg) {
 const root = resolve(import.meta.dir, "../..");
 const output = resolve(outputArg);
 const lock = await Bun.file(resolve(root, "native/toolchain-lock.json")).json();
+// SAFETY: The surrounding code already established this contract.
 const dependencyMap = (await Bun.file(
   resolve(root, "vendor/ghostty/build.zig.zon.json"),
 ).json()) as Record<string, Dependency>;

@@ -289,6 +289,7 @@ export class HiveRouter {
       balance: this.balanceRows(digest).map((row) => {
         const [provider, model] = row.candidateKey.split("\0");
         return {
+          // SAFETY: The surrounding code already established this contract.
           provider: provider as CapabilityProvider,
           model: model ?? "",
           current: row.current,
@@ -342,7 +343,7 @@ export class HiveRouter {
       gateName: string,
       detail: string,
       retryAt: string | null = null,
-    ): { evaluation: CandidateEvaluation } => ({
+    ) => ({
       evaluation: {
         candidate,
         eligible: false,
@@ -461,18 +462,14 @@ export class HiveRouter {
 }
 
 /** The decision's exact target as a re-gateable candidate, for idempotent retries: the recorded effort is the instruction now. */
-function pinnedCandidate(decision: LaunchDecision): {
-  provider: CapabilityProvider;
-  model: string;
-  effort: CandidateEffort;
-} {
+function pinnedCandidate(decision: LaunchDecision) {
   return {
     provider: decision.provider,
     model: decision.model,
     effort:
       decision.effort === null
-        ? { mode: "none" }
-        : { mode: "exact", value: decision.effort },
+        ? { mode: "none" as const }
+        : { mode: "exact" as const, value: decision.effort },
   };
 }
 

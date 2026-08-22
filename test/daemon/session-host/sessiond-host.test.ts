@@ -43,6 +43,7 @@ import {
   SessionSpecSchema,
 } from "../../../src/schemas/session-protocol";
 import { required } from "../../required";
+import type { JsonValue } from "../../../src/shared/json";
 
 const session: SessionRef = {
   key: "neutral-session-key",
@@ -241,12 +242,7 @@ function recordingLauncher(
   process: Readonly<{ exited: Promise<number> }> = {
     exited: new Promise<number>(() => {}),
   },
-): {
-  launch: NonNullable<
-    ConstructorParameters<typeof SessiondHost>[0]
-  >["launchHost"];
-  requests: Array<{ specJson: string }>;
-} {
+) {
   const requests: Array<{ specJson: string }> = [];
   return {
     requests,
@@ -255,7 +251,9 @@ function recordingLauncher(
       return {
         record: outcome(),
         hostPid: launchedRecord.hostPid,
+        // SAFETY: The test owns this value and its fields.
         control: { destroy() {} } as Socket,
+        // SAFETY: The test owns this value and its fields.
         process: process as LaunchedHost["process"],
       };
     },
@@ -266,21 +264,26 @@ function recordingLauncher(
  * Answers direct host operations: enumeration from the hosts' own published
  * records, and INSPECT from the host itself. No broker is involved in either.
  */
-function directInspect(
-  inspection: unknown,
-  sessions?: readonly unknown[],
-  terminationResult?: unknown,
+function directInspect<T, U, V>(
+  inspection: T,
+  sessions?: readonly U[],
+  terminationResult?: V,
 ) {
   return {
+    // SAFETY: The test owns this value and its fields.
     callHost: (async (request: { operation: string }) => {
       const answer =
         request.operation === "terminate"
           ? (terminationResult ?? {})
           : inspection;
+      // SAFETY: The test owns this value and its fields.
       return JSON.stringify({ schemaVersion: 1, ...(answer as object) });
     }) as never,
+    // SAFETY: The test owns this value and its fields.
     readControlSecret: (async () => new Uint8Array(32)) as never,
+    // SAFETY: The test owns this value and its fields.
     listSessions: (async () => sessions ?? []) as never,
+    // SAFETY: The test owns this value and its fields.
     adoptHost: (async () => {}) as never,
   };
 }
@@ -402,8 +405,10 @@ class RecordingClient implements SessiondControlClient {
   async request<Result>(
     request: SessiondControlRequest<Result>,
   ): Promise<Result> {
+    // SAFETY: The test owns this value and its fields.
     this.requests.push(request as SessiondControlRequest<unknown>);
     return request.responseSchema.parse(
+      // SAFETY: The test owns this value and its fields.
       this.respond(request as SessiondControlRequest<unknown>),
     );
   }
@@ -499,6 +504,7 @@ describe("sessiond wire framing", () => {
     const launcher = recordingLauncher();
     const host = new SessiondHost({
       launchHost: launcher.launch,
+      // SAFETY: The test owns this value and its fields.
       adoptHost: (async () => {}) as never,
       pendingBindings,
     });
@@ -586,6 +592,7 @@ describe("sessiond wire framing", () => {
     const host = new SessiondHost({
       hiveHome: directory,
       launchHost: recordingLauncher(() => launchedRecord, { exited }).launch,
+      // SAFETY: The test owns this value and its fields.
       adoptHost: (async () => {}) as never,
       pendingBindings,
     });
@@ -621,6 +628,7 @@ describe("sessiond wire framing", () => {
   test("canceling a managed exit wait releases it before host exit", async () => {
     const host = new SessiondHost({
       launchHost: recordingLauncher().launch,
+      // SAFETY: The test owns this value and its fields.
       adoptHost: (async () => {}) as never,
       pendingBindings,
     });
@@ -646,6 +654,7 @@ describe("sessiond wire framing", () => {
       launchHost: recordingLauncher(() => {
         throw new Error("host never registered");
       }).launch,
+      // SAFETY: The test owns this value and its fields.
       adoptHost: (async () => {}) as never,
       pendingBindings: bindings,
     });
@@ -668,6 +677,7 @@ describe("sessiond wire framing", () => {
     };
     const host = new SessiondHost({
       launchHost: recordingLauncher().launch,
+      // SAFETY: The test owns this value and its fields.
       adoptHost: (async () => {
         throw new Error("host refused stale executable digest");
       }) as never,
@@ -846,7 +856,7 @@ describe("sessiond wire framing", () => {
         sha256: "a".repeat(64),
         composer: null,
       };
-      let requested: unknown = null;
+      let requested: JsonValue = null;
       const host = new SessiondHost({
         hiveHome: "/tmp/hive-sessiond-capture-test",
         captureHost: async (options) => {

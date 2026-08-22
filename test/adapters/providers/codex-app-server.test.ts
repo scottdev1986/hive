@@ -13,7 +13,7 @@ import type { NormalizedProviderEvent } from "../../../src/adapters/providers/pr
 
 import { type JsonValue, requireJsonValue } from "../../../src/shared/json";
 
-type RequestHandler = (params: unknown) => JsonValue | Promise<JsonValue>;
+type RequestHandler = <T>(params: T) => JsonValue | Promise<JsonValue>;
 
 class Deferred<T> {
   readonly promise: Promise<T>;
@@ -89,19 +89,25 @@ class FakeWire implements CodexAppServerWire {
     this.closed = this.closeResult.promise;
   }
 
-  request(method: string, params?: unknown): Promise<JsonValue> {
+  request<T>(method: string, params?: T): Promise<JsonValue> {
     this.requests.push({ method, params });
     const handler = this.handlers[method];
     return Promise.resolve(
-      handler === undefined ? {} : requireJsonValue(handler(params), method),
+      handler === undefined
+        ? {}
+        : requireJsonValue(
+            // SAFETY: Fake wire handlers return JSON the test constructed.
+            handler(params) as JsonValue,
+            method,
+          ),
     );
   }
 
-  notify(method: string, params?: unknown): void {
+  notify<T>(method: string, params?: T): void {
     this.notifications.push({ method, params });
   }
 
-  respond(id: number | string, result: unknown): void {
+  respond<T>(id: number | string, result: T): void {
     this.responses.push({ id, result });
   }
 
@@ -247,6 +253,7 @@ describe("Codex App Server sessions", () => {
       "thread/read": () => ({ thread: { id: "thread-1", turns: [] } }),
       "thread/resume": (params) => ({
         thread: {
+          // SAFETY: The test owns this value and its fields.
           id: (params as { threadId: string }).threadId,
           turns: [],
         },

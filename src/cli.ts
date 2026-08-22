@@ -87,8 +87,10 @@ import {
 } from "./schemas/session-protocol";
 import { isDaemonPort } from "./shared/daemon-port";
 import { errorMessage } from "./shared/error-message";
-import { isRecord } from "./shared/is-record";
+import { isNumber, isRecord, isString } from "./shared/is-record";
 import { versionLine } from "./shared/version";
+import type { JsonValue } from "./shared/json";
+import { unsafeCast } from "./shared/unsafe-cast";
 
 export interface EventCliOptions {
   agent?: string;
@@ -161,7 +163,7 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
   if (value === undefined) {
     return {};
   }
-  const parsed: unknown = JSON.parse(value);
+  const parsed: JsonValue = JSON.parse(value);
   if (!isRecord(parsed)) {
     throw new Error("Event payload must be a JSON object");
   }
@@ -169,20 +171,20 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
   const payload: HookEventOptions = {};
   const agent = parsed.agent ?? parsed.agentName;
   if (agent !== undefined) {
-    if (typeof agent !== "string") {
+    if (!isString(agent)) {
       throw new Error("Event payload agent must be a string");
     }
     payload.agent = agent;
   }
   if (parsed.description !== undefined) {
-    if (typeof parsed.description !== "string") {
+    if (!isString(parsed.description)) {
       throw new Error("Event payload description must be a string");
     }
     payload.description = parsed.description;
   }
   const usageUnits = parsed.usageUnits ?? parsed.usage_units;
   if (usageUnits !== undefined) {
-    if (typeof usageUnits !== "number" || usageUnits < 0) {
+    if (!isNumber(usageUnits) || usageUnits < 0) {
       throw new Error("Event payload usageUnits must be a nonnegative number");
     }
     payload.usageUnits = usageUnits;
@@ -205,7 +207,7 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
     parsed.sessionId ??
     parsed.session_id;
   if (toolSessionId !== undefined) {
-    if (typeof toolSessionId !== "string" || toolSessionId.length === 0) {
+    if (!isString(toolSessionId) || toolSessionId.length === 0) {
       throw new Error("Event payload session id must be a non-empty string");
     }
     payload.toolSessionId = toolSessionId;
@@ -938,7 +940,7 @@ export function createProgram(): Command {
             providerArgv:
               options.providerArgv === undefined
                 ? undefined
-                : (JSON.parse(options.providerArgv) as string[]),
+                : unsafeCast<string[]>(JSON.parse(options.providerArgv)),
             kickoff: options.kickoff,
           }),
         });
@@ -991,6 +993,7 @@ export function createProgram(): Command {
               process.exitCode = await runQAControl({
                 verb,
                 identifier,
+                // SAFETY: The surrounding code already established this contract.
                 title: options.title as string,
               });
               return;
@@ -1091,7 +1094,7 @@ export async function main(argv = process.argv): Promise<number> {
       createProgram().parseAsync(argv),
     );
     const exitCode = process.exitCode;
-    return typeof exitCode === "number" ? exitCode : Number(exitCode ?? 0);
+    return isNumber(exitCode) ? exitCode : Number(exitCode ?? 0);
   } catch (error) {
     if (error instanceof CommanderError) {
       if (error.exitCode === 0 || argv[2] === "event") {

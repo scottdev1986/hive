@@ -1,5 +1,7 @@
 import { AcpRuntimeAdapter, type AcpVendorProfile } from "./acp-session";
 import type { ProviderSpawn } from "./types";
+import { isRecord } from "../../../shared/is-record";
+import type { JsonObject } from "../../../shared/json";
 
 /** OpenCode ACP profile measured against 1.18.11 (source pin 1882c338). - User config and plugins ENABLED. `--pure` is test-only isolation — never the production spawn argv. - Session surface: new/load/resume/list/close/fork. - Documented ACP gap: /undo and /redo are ABSENT from command catalogs (filtered in parseAvailableCommands; never advertised). - Permission reverse-RPC and usage updates are measured live, not inferred. */
 const OPENCODE_PROFILE: AcpVendorProfile = {
@@ -67,14 +69,8 @@ export function openCodeAcpSpawn(
   };
 }
 
-function capabilitiesFrom(handshake: unknown): {
-  loadSession: boolean;
-  close: boolean;
-  fork: boolean;
-  list: boolean;
-  resume: boolean;
-} {
-  if (typeof handshake !== "object" || handshake === null) {
+function capabilitiesFrom<T>(handshake: T) {
+  if (!isRecord(handshake) && !Array.isArray(handshake)) {
     return {
       loadSession: false,
       close: false,
@@ -83,14 +79,16 @@ function capabilitiesFrom(handshake: unknown): {
       resume: false,
     };
   }
-  const agent = (
-    handshake as {
-      agentCapabilities?: {
-        loadSession?: unknown;
-        sessionCapabilities?: Record<string, unknown>;
-      };
-    }
-  ).agentCapabilities;
+  const agent =
+    // SAFETY: The surrounding code already established this contract.
+    (
+      handshake as {
+        agentCapabilities?: {
+          loadSession?: unknown;
+          sessionCapabilities?: JsonObject;
+        };
+      }
+    ).agentCapabilities;
   const session = agent?.sessionCapabilities ?? {};
   return {
     loadSession: agent?.loadSession === true,

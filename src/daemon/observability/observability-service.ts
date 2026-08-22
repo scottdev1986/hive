@@ -20,7 +20,7 @@ import { systemClock } from "../../shared/clock";
 import { definedFields } from "../../shared/defined-fields";
 import type { DatabaseHost } from "../../shared/database-host";
 import { errorMessage } from "../../shared/error-message";
-import { isRecord } from "../../shared/is-record";
+import { isRecord, isString } from "../../shared/is-record";
 import { redactTerminalEvidence } from "../status-service/status-service";
 import { ObservabilityStore } from "./observability-store";
 
@@ -106,9 +106,9 @@ function mcpResultReason(result: CallToolResult): string {
   return text === "" ? "Hive MCP tool returned an error" : text;
 }
 
-function mcpFailureSeverity(error: unknown): ObservabilitySeverity {
+function mcpFailureSeverity<T>(error: T): ObservabilitySeverity {
   if (error instanceof ZodError) return "warning";
-  if (!isRecord(error) || typeof error.code !== "string") return "error";
+  if (!isRecord(error) || !isString(error.code)) return "error";
   return EXPECTED_REFUSAL_CODES.has(error.code) ? "warning" : "error";
 }
 

@@ -6,6 +6,7 @@ import {
   renderAcceptance,
 } from "../../scripts/release/cutover-acceptance";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 /**
  * The matrix has one job nobody else can do for it: refuse to say "ready" from
@@ -13,7 +14,7 @@ import { required } from "../required";
  * check that the verdict notices.
  */
 
-const conformance = (vendor: string, overrides: Record<string, unknown> = {}) =>
+const conformance = (vendor: string, overrides: JsonObject = {}) =>
   JSON.stringify({
     vendor,
     version: "1.0.0",
@@ -109,6 +110,7 @@ describe("the cutover acceptance matrix", () => {
   test("an unrecorded steady-state unknowns list is missing, not empty", () => {
     const files = complete();
     files.set("kimi/conformance.json", conformance("kimi", {}));
+    // SAFETY: The test owns this value and its fields.
     const kimi = JSON.parse(required(files.get("kimi/conformance.json"))) as {
       steadyStateUnknowns?: unknown;
     };

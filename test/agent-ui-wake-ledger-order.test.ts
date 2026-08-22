@@ -4,6 +4,7 @@ import { deliverMailReadyNotices } from "../src/cli/agent-ui/run";
 import { HiveDatabase } from "../src/daemon/database/hive-database";
 import { MailWakeLedger } from "../src/mail-service/wake-ledger";
 import { MailWakeStore } from "../src/mail-service/wake-store";
+import { isString } from "../src/shared/is-record";
 import {
   deriveWakeId,
   type FrontendWakeReport,
@@ -24,7 +25,8 @@ const NOTICE = {
 };
 
 function reportBody(init?: RequestInit): FrontendWakeReport {
-  if (typeof init?.body !== "string") throw new Error("missing report body");
+  if (!isString(init?.body)) throw new Error("missing report body");
+  // SAFETY: The test owns this value and its fields.
   return JSON.parse(init.body) as FrontendWakeReport;
 }
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { isFunction } from "../../src/shared/is-record";
 import {
   copyFile,
   mkdir,
@@ -812,10 +813,11 @@ test.each([
   }
   expect(() =>
     admission.preflight(
+      // SAFETY: The test owns this value and its fields.
       {
         ...request,
         spawnBrief: { ...request.spawnBrief, ...forged },
-      } as unknown as HierarchySpawnFields,
+      } as HierarchySpawnFields,
       "author",
     ),
   ).toThrow();
@@ -1003,9 +1005,11 @@ test("SpawnBrief is immutable and launch context can be taken exactly once", () 
     graphProvenance: [],
   });
   expect(() => {
+    // SAFETY: The test owns this value and its fields.
     (brief as { agentId: string }).agentId = "mutated";
   }).toThrow();
   expect(() => {
+    // SAFETY: The test owns this value and its fields.
     (brief.written as { goal: string }).goal = "mutated";
   }).toThrow();
   expect(brief.agentId).toBe(workerAgentId);
@@ -1790,10 +1794,11 @@ test("spawner binds after readiness and preserves identities when terminal death
         );
     let launchCalls = 0;
     let locator: SessionLocator | null = null;
-    const launchState: {
+    interface LaunchState {
       issuedCapabilityEpoch: number | null;
       pauseOutcome: string | null;
-    } = {
+    }
+    const launchState: LaunchState = {
       issuedCapabilityEpoch: null,
       pauseOutcome: null,
     };
@@ -2448,8 +2453,9 @@ test("a failed launch leaves the hierarchy task and identity dispatchable for re
           };
         }
         if (!(property in target)) return undefined;
+        // SAFETY: The test owns this value and its fields.
         const value = target[property as keyof HiveDatabase];
-        return typeof value === "function" ? value.bind(target) : value;
+        return isFunction(value) ? value.bind(target) : value;
       },
     });
     const spawner = new HiveSpawner({

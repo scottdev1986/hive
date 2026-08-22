@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { connect } from "node:net";
+import { isRecord, isString } from "../../shared/is-record";
 import {
   CaptureRequestSchema,
   CaptureResultSchema,
@@ -53,10 +54,10 @@ function helloPayload(instanceId: string, buildId: string): BrokerHelloPayload {
   };
 }
 
-async function exchange(
+async function exchange<T>(
   socketPath: string,
   type: FrameTypeName,
-  payload: unknown,
+  payload: T,
   timeoutMilliseconds: number,
   hello: { instanceId: string; buildId: string },
   responseType: FrameTypeName = type,
@@ -109,9 +110,7 @@ async function exchange(
     socket.on("data", (chunk: Buffer | string) => {
       let frames: ReturnType<SessiondFrameDecoder["push"]>;
       try {
-        frames = decoder.push(
-          typeof chunk === "string" ? Buffer.from(chunk) : chunk,
-        );
+        frames = decoder.push(isString(chunk) ? Buffer.from(chunk) : chunk);
       } catch (error) {
         finish(() =>
           reject(
@@ -234,10 +233,7 @@ export async function issueHostAttachGrant(options: {
       buildId: options.engineBuildId,
     },
   );
-  const registered =
-    typeof answer === "object" &&
-    answer !== null &&
-    (answer as { registered?: unknown }).registered === true;
+  const registered = isRecord(answer) && answer.registered === true;
   if (!registered) {
     throw new HostOperationError("host refused the viewer grant");
   }

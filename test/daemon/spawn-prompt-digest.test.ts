@@ -219,6 +219,7 @@ test("crossing the entry cap is named in the delivered prompt, not buried in JSO
   expect(jsonAt).toBeGreaterThan(warningAt);
   expect(prompt).toMatch(/"omitted":[1-9]/);
   const encoded = prompt.match(/knowledgeIndexData: ("(?:[^"\\]|\\.)*")/)?.[1];
+  // SAFETY: The test owns this value and its fields.
   const payload = JSON.parse(encoded ?? '""') as string;
   expect(payload).not.toMatch(/\d+ older articles? omitted/);
 });

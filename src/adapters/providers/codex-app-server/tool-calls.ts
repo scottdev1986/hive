@@ -1,18 +1,19 @@
-import { isRecord } from "../../../shared/is-record";
+import { isRecord, isString } from "../../../shared/is-record";
 import type { ToolKind } from "../protocol/types";
+import type { JsonObject } from "../../../shared/json";
 
-function nonEmptyString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
+function nonEmptyString<T>(value: T): string | null {
+  if (!isString(value)) return null;
   const text = value.trim();
   return text === "" ? null : text;
 }
 
-function contentText(value: unknown): string | null {
-  if (typeof value === "string") return nonEmptyString(value);
+function contentText<T>(value: T): string | null {
+  if (isString(value)) return nonEmptyString(value);
   if (!Array.isArray(value)) return null;
   const text = value
     .flatMap((entry) => {
-      if (typeof entry === "string") return [entry];
+      if (isString(entry)) return [entry];
       if (!isRecord(entry)) return [];
       const line = nonEmptyString(entry.text) ?? nonEmptyString(entry.content);
       return line === null ? [] : [line];
@@ -22,7 +23,7 @@ function contentText(value: unknown): string | null {
   return text === "" ? null : text;
 }
 
-export function commandForItem(item: Record<string, unknown>): {
+export function commandForItem(item: JsonObject): {
   readonly name: string;
   readonly detail: string | null;
   readonly toolKind: ToolKind;
@@ -31,7 +32,7 @@ export function commandForItem(item: Record<string, unknown>): {
     case "commandExecution":
       return {
         name: "commandExecution",
-        detail: typeof item.command === "string" ? item.command : null,
+        detail: isString(item.command) ? item.command : null,
         toolKind: "execute",
       };
     case "fileChange":
@@ -39,7 +40,7 @@ export function commandForItem(item: Record<string, unknown>): {
     case "mcpToolCall":
       return {
         name:
-          typeof item.server === "string" && typeof item.tool === "string"
+          isString(item.server) && isString(item.tool)
             ? `${item.server}/${item.tool}`
             : "mcpToolCall",
         detail: null,
@@ -47,13 +48,13 @@ export function commandForItem(item: Record<string, unknown>): {
       };
     case "dynamicToolCall":
       return {
-        name: typeof item.tool === "string" ? item.tool : "dynamicToolCall",
+        name: isString(item.tool) ? item.tool : "dynamicToolCall",
         detail: null,
         toolKind: "other",
       };
     case "collabAgentToolCall":
       return {
-        name: typeof item.tool === "string" ? item.tool : "collabAgentToolCall",
+        name: isString(item.tool) ? item.tool : "collabAgentToolCall",
         detail: null,
         toolKind: "other",
       };
@@ -62,16 +63,14 @@ export function commandForItem(item: Record<string, unknown>): {
   }
 }
 
-export function toolSucceeded(item: Record<string, unknown>): boolean {
+export function toolSucceeded(item: JsonObject): boolean {
   return item.status === "completed" || item.success === true;
 }
 
 /** Extracts only completion output, never the request detail that started the
  * call. Codex varies the result envelope by tool kind, so the adapter owns the
  * small vocabulary instead of making downstream consumers parse vendor JSON. */
-export function toolFailureReason(
-  item: Record<string, unknown>,
-): string | null {
+export function toolFailureReason(item: JsonObject): string | null {
   const error = item.error;
   const errorRecord = isRecord(error) ? error : null;
   const result = isRecord(item.result) ? item.result : null;

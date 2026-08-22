@@ -26,6 +26,7 @@ import type { RunControlDecision } from "../../src/schemas/run-control";
 import type { TaskDetail } from "../../src/schemas/task-detail";
 import type { WorkManifest } from "../../src/schemas/work-manifest";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 const now = "2026-07-31T12:00:00.000Z";
 const digest = `sha256:${"a".repeat(64)}`;
@@ -261,10 +262,11 @@ function entityOf(
   snapshot: { entities: readonly { kind: string }[] },
   kind: string,
 ) {
+  // SAFETY: The test owns this value and its fields.
   return required(snapshot.entities.find((entity) => entity.kind === kind)) as {
     kind: string;
     id: string;
-    projection: Record<string, unknown>;
+    projection: JsonObject;
   };
 }
 

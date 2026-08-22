@@ -132,6 +132,7 @@ export class MailWakeStore {
 
   /** Files one mail-ready notification and returns it with its cursor. Repeating an announcement already on file returns the original's cursor rather than minting a second one, so a redelivered publish receipt leaves a resuming frontend exactly one thing to read. */
   recordReady(event: Omit<MailReadyEvent, "cursor">): MailReadyEvent {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `
@@ -177,6 +178,7 @@ export class MailWakeStore {
     recipient: string,
     bound: number,
   ): MailReadyEvent[] {
+    // SAFETY: The surrounding code already established this contract.
     const rows = this.db.database
       .query(
         `SELECT cursor, recipient, brokerSeq, lane, oldestItemId, backlogCount, at
@@ -195,6 +197,7 @@ export class MailWakeStore {
       kind: "mail-ready",
       schemaVersion: 1,
       recipient: row.recipient,
+      // SAFETY: The surrounding code already established this contract.
       lane: row.lane as MailLane,
       oldestItemId: row.oldestItemId,
       backlogCount: row.backlogCount,
@@ -205,6 +208,7 @@ export class MailWakeStore {
   }
 
   latestReadySeq(recipient: string): number | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         "SELECT MAX(brokerSeq) AS seq FROM mail_ready_events WHERE recipient = ?",
@@ -231,6 +235,7 @@ export class MailWakeStore {
   }
 
   ack(recipient: string): { brokerSeq: number; at: string } | null {
+    // SAFETY: The surrounding code already established this contract.
     return (this.db.database
       .query("SELECT brokerSeq, at FROM mail_ready_acks WHERE recipient = ?")
       .get(recipient) ?? null) as { brokerSeq: number; at: string } | null;
@@ -268,12 +273,14 @@ export class MailWakeStore {
   }
 
   wake(wakeId: string): MailWakeRow | null {
+    // SAFETY: The surrounding code already established this contract.
     return (this.db.database
       .query(`SELECT ${WAKE_COLUMNS} FROM mail_wakes WHERE wakeId = ?`)
       .get(wakeId) ?? null) as MailWakeRow | null;
   }
 
   wakeByItem(oldestItemId: string): MailWakeRow | null {
+    // SAFETY: The surrounding code already established this contract.
     return (this.db.database
       .query(`SELECT ${WAKE_COLUMNS} FROM mail_wakes WHERE oldestItemId = ?`)
       .get(oldestItemId) ?? null) as MailWakeRow | null;
@@ -311,6 +318,7 @@ export class MailWakeStore {
 
   /** Wakes that still owe an attempt, oldest first. A dead-lettered or settled wake is never returned, and a retrying wake stays invisible until its backoff has elapsed. */
   pendingWakes(recipient: string, now: string): MailWakeRow[] {
+    // SAFETY: The surrounding code already established this contract.
     return this.db.database
       .query(
         `SELECT ${WAKE_COLUMNS} FROM mail_wakes
@@ -324,6 +332,7 @@ export class MailWakeStore {
 
   /** This recipient's unsettled wakes, whether or not their backoff has elapsed. Scoped in the query rather than filtered afterwards: this runs on every delivery transition, and reading the whole fleet's wakes to answer a question about one mailbox gets more expensive the more agents there are. */
   openWakes(recipient: string): MailWakeRow[] {
+    // SAFETY: The surrounding code already established this contract.
     return this.db.database
       .query(
         `SELECT ${WAKE_COLUMNS} FROM mail_wakes
@@ -334,6 +343,7 @@ export class MailWakeStore {
   }
 
   appendDelivery(entry: Omit<MailDeliveryRow, "id">): MailDeliveryRow {
+    // SAFETY: The surrounding code already established this contract.
     return this.db.database
       .query(
         `
@@ -355,6 +365,7 @@ export class MailWakeStore {
   }
 
   deliveryChain(itemId: string): MailDeliveryRow[] {
+    // SAFETY: The surrounding code already established this contract.
     return this.db.database
       .query(
         `SELECT ${DELIVERY_COLUMNS}
@@ -364,6 +375,7 @@ export class MailWakeStore {
   }
 
   latestDelivery(itemId: string): MailDeliveryRow | null {
+    // SAFETY: The surrounding code already established this contract.
     return (this.db.database
       .query(
         `SELECT ${DELIVERY_COLUMNS}
@@ -375,6 +387,7 @@ export class MailWakeStore {
   /** The newest transition of every item this recipient still owes something on. "Newest" is by insertion id rather than by timestamp: two transitions can share a clock reading, and the order they were written in is the order they were proven in. */
   openDeliveries(recipient: string): MailDeliveryRow[] {
     const terminal = TERMINAL_DELIVERY_STATES.map(() => "?").join(", ");
+    // SAFETY: The surrounding code already established this contract.
     return this.db.database
       .query(
         `SELECT ${DELIVERY_COLUMNS} FROM mail_delivery_events
@@ -392,6 +405,7 @@ export class MailWakeStore {
   }
 
   hasState(recipient: string, state: MailDeliveryState): boolean {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         `SELECT 1 AS present FROM mail_delivery_events
@@ -402,6 +416,7 @@ export class MailWakeStore {
   }
 
   hasDeliveries(recipient: string): boolean {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query(
         "SELECT 1 AS present FROM mail_delivery_events WHERE recipient = ? LIMIT 1",

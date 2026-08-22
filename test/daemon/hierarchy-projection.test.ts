@@ -24,6 +24,7 @@ import {
   SCENARIO_BUILDERS,
   type ScenarioName,
 } from "../fixtures/hierarchy-snapshot/builders";
+import type { JsonObject } from "../../src/shared/json";
 
 const FIXTURE_DIR = join(import.meta.dir, "../fixtures/hierarchy-snapshot");
 
@@ -52,11 +53,11 @@ function requireOne<T>(items: readonly T[], label: string): T {
   return items[0];
 }
 
-function parseRun(entity: { projection: Record<string, unknown> }) {
+function parseRun(entity: { projection: JsonObject }) {
   return HierarchyRunProjectionSchema.parse(entity.projection);
 }
 
-function parseNode(entity: { projection: Record<string, unknown> }) {
+function parseNode(entity: { projection: JsonObject }) {
   return HierarchyNodeProjectionSchema.parse(entity.projection);
 }
 
@@ -95,6 +96,7 @@ describe("hierarchy-snapshot-projection", () => {
     for (const scenario of GOLDEN_SCENARIOS) {
       const input = SCENARIO_BUILDERS[scenario]();
       const projected = projectHierarchyEntities(input);
+      // SAFETY: The test owns this value and its fields.
       const golden = JSON.parse(
         readFileSync(join(FIXTURE_DIR, `${scenario}.json`), "utf8"),
       ) as ReturnType<typeof projectHierarchyEntities>;
@@ -167,9 +169,9 @@ describe("hierarchy-snapshot-projection", () => {
         availability: "present",
         value: "hierarchy",
       });
-      expect(run.topologyShape.availability).toBe("present");
-      if (run.topologyShape.availability === "present") {
-        expect(run.topologyShape.value).toBe(scenario);
+      expect(run.topologyKind.availability).toBe("present");
+      if (run.topologyKind.availability === "present") {
+        expect(run.topologyKind.value).toBe(scenario);
       }
 
       const nodes = entitiesByKind(entities, HIERARCHY_ENTITY_KINDS.node).map(
@@ -256,7 +258,7 @@ describe("hierarchy-snapshot-projection", () => {
     const run = parseRun(soleKind(entities, HIERARCHY_ENTITY_KINDS.run));
     expect(run.root.availability).toBe("present");
     expect(run.phase.availability).toBe("present");
-    expect(run.topologyShape).toEqual({
+    expect(run.topologyKind).toEqual({
       availability: "absent",
       reason: "unmeasured",
       detail: "no TopologyDecision supplied for this run",
@@ -291,7 +293,7 @@ describe("hierarchy-snapshot-projection", () => {
     expect(run.phase.availability).toBe("present");
     expect(run.lifecycle.availability).toBe("present");
     expect(run.root.availability).toBe("present");
-    expect(run.topologyShape.availability).toBe("present");
+    expect(run.topologyKind.availability).toBe("present");
 
     const budget = HierarchyBudgetProjectionSchema.parse(
       soleKind(present, HIERARCHY_ENTITY_KINDS.budget).projection,
@@ -322,7 +324,7 @@ describe("hierarchy-snapshot-projection", () => {
       absentRun.root,
       absentRun.phase,
       absentRun.lifecycle,
-      absentRun.topologyShape,
+      absentRun.topologyKind,
       absentRun.topologySource,
     ] as const) {
       expect(field.availability).toBe("absent");

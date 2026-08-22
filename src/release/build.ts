@@ -139,7 +139,7 @@ export function nonSystemMachODependencies(otoolOutput: string): string[] {
     ...new Set(
       otoolOutput
         .split("\n")
-        .filter((line) => /^\s+[\/@]/.test(line))
+        .filter((line) => /^\s+[/@]/.test(line))
         .map((line) => line.trim())
         .map((line) => line.split(" (compatibility version", 1)[0] ?? "")
         .filter(

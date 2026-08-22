@@ -17,6 +17,7 @@ import {
   type CapabilityProvider,
   unknownVendor,
 } from "../schemas/capability";
+import { isErrnoCode } from "../shared/error-message";
 import type { RoutingCategory } from "../schemas/routing-policy";
 import {
   SKILL_CATEGORY_BUCKETS,
@@ -53,11 +54,8 @@ export function nativeSkillDirectory(tool: SkillTool): string {
   }
 }
 
-const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  error.code === "ENOENT";
+const isMissingFileError = <T>(error: T): error is T & { code: string } =>
+  isErrnoCode(error, "ENOENT");
 
 export function globalSkillsRoot(): string {
   return join(getHiveHome(), "skills");
@@ -229,11 +227,12 @@ export async function provisionedSkillLinks(
   const raw = await readFile(
     join(worktreePath, SKILL_LINK_MANIFEST),
     "utf8",
-  ).catch((error: unknown) => {
+  ).catch((error) => {
     if (isMissingFileError(error)) return null;
     throw error;
   });
   if (raw === null) return new Map();
+  // SAFETY: The surrounding code already established this contract.
   return new Map(Object.entries(JSON.parse(raw) as Record<string, string>));
 }
 
@@ -340,7 +339,7 @@ export async function installBaseSkills(
     for (const address of shippedSkillAddresses(skill)) {
       const directory = join(root, address, skill.name);
       const file = join(directory, "SKILL.md");
-      const current = await readFile(file, "utf8").catch((error: unknown) => {
+      const current = await readFile(file, "utf8").catch((error) => {
         if (isMissingFileError(error)) return null;
         throw error;
       });
@@ -399,7 +398,7 @@ export async function installShippedSkillsInto(
       continue;
     }
     const destination = join(nativeRoot, skill.name);
-    const existing = await lstat(destination).catch((error: unknown) => {
+    const existing = await lstat(destination).catch((error) => {
       if (isMissingFileError(error)) return null;
       throw error;
     });
@@ -413,7 +412,7 @@ export async function installShippedSkillsInto(
     const current =
       existing === null
         ? null
-        : await readFile(skillFile, "utf8").catch((error: unknown) => {
+        : await readFile(skillFile, "utf8").catch((error) => {
             if (isMissingFileError(error)) return null;
             throw error;
           });
@@ -514,14 +513,14 @@ async function removeForeignShippedSkillsFrom(
   for (const skill of SHIPPED_SKILLS) {
     if (mine.has(skill.name)) continue;
     const destination = join(nativeRoot, skill.name);
-    const existing = await lstat(destination).catch((error: unknown) => {
+    const existing = await lstat(destination).catch((error) => {
       if (isMissingFileError(error)) return null;
       throw error;
     });
     if (existing === null || existing.isSymbolicLink()) continue;
 
     const current = await readFile(join(destination, "SKILL.md"), "utf8").catch(
-      (error: unknown) => {
+      (error) => {
         if (isMissingFileError(error)) return null;
         throw error;
       },

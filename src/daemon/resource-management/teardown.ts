@@ -132,7 +132,7 @@ export async function stopSessiondAgentSession(
 ): Promise<ReapOutcome> {
   const reap = dependencies.reap ?? defaultReapDependencies();
   const selfPid = dependencies.selfPid ?? process.pid;
-  let terminalError: unknown;
+  let terminalError: Error | undefined;
   // The host pid is read from the host itself, so a host that cannot be reached fails here FIRST — before the terminate below ever runs. There is no pid to capture and nothing to terminate through, so the failure is carried down to the one place that decides what an unreachable host means.
   let hostPid: number | null = null;
   try {
@@ -157,7 +157,7 @@ export async function stopSessiondAgentSession(
   }
   await beforeKill?.();
 
-  let providerError: unknown;
+  let providerError: Error | undefined;
   const run = dependencies.readProviderRun?.(agent) ?? null;
   if (run?.state === "running") {
     if (run.adapterChild === null) {
@@ -181,7 +181,8 @@ export async function stopSessiondAgentSession(
           );
         }
       } catch (error) {
-        providerError = error;
+        providerError =
+          error instanceof Error ? error : new Error(String(error));
       }
     }
   }
@@ -211,7 +212,8 @@ export async function stopSessiondAgentSession(
         error instanceof SessiondWireError &&
         error.code === "NOT_FOUND"
       )) {
-        terminalError = error;
+        terminalError =
+          error instanceof Error ? error : new Error(String(error));
       }
     }
   }

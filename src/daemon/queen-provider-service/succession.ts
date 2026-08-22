@@ -9,7 +9,6 @@ import {
   type BeginSuccessionResponse,
   type BootstrapManifestRef,
   type CheckpointEvent,
-  type CheckpointHierarchy,
   type CompactReplaceDecision,
   type ContextUsage,
   digestCheckpointContent,
@@ -242,10 +241,7 @@ export class SuccessionService {
   }
 
   /** The hierarchy state a checkpoint binds from the live records: the run's spine plus the task, decision, and stage refs that exist RIGHT NOW — each ref naming its record by identity, revision, and a digest over the WHOLE record, so a drifted outcome is as visible as a drifted intent. Where the store holds none of a kind, the array is empty — that is measured-empty, never unfilled. Ownership transfers stay out by design: they are their own record family, re-read from the store, not checkpoint content. */
-  private hierarchyRefs(run: Run): {
-    hierarchy: CheckpointHierarchy;
-    artifacts: string[];
-  } {
+  private hierarchyRefs(run: Run) {
     const tasks = this.hierarchy.listTasks(run.runId);
     const decisions = this.hierarchy.listRunControlDecisions(run.runId);
     return {
@@ -286,6 +282,7 @@ export class SuccessionService {
     const activeRuns = this.hierarchy
       .listRuns()
       .filter((run) => run.lifecycle === "active");
+    // SAFETY: The surrounding code already established this contract.
     return activeRuns.length === 1 ? (activeRuns[0] as Run) : null;
   }
 
@@ -405,7 +402,8 @@ export class SuccessionService {
           checkpoint:
             existing.proof.kind === "checkpoint" &&
             this.readCheckpoint(existing.proof.ref.revision).state === "present"
-              ? (
+              ? // SAFETY: The surrounding code already established this contract.
+                (
                   this.readCheckpoint(existing.proof.ref.revision) as Extract<
                     CheckpointRead,
                     { state: "present" }

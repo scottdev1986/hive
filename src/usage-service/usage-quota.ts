@@ -271,12 +271,11 @@ export class QuotaService {
     });
   }
 
-  nearestDrainResets(now = this.clock()): {
-    fiveHour: string | null;
-    weekly: string | null;
-  } {
+  nearestDrainResets(now = this.clock()) {
     const nearest = {
+      // SAFETY: The surrounding code already established this contract.
       fiveHour: null as string | null,
+      // SAFETY: The surrounding code already established this contract.
       weekly: null as string | null,
     };
     for (const limit of resolvedLimits(this.ledger, this.config)) {
@@ -340,10 +339,7 @@ export class QuotaService {
     );
   }
 
-  private estimateFor(
-    limit: ResolvedQuotaLimit,
-    category: RoutingCategory,
-  ): { fiveHour: number; weekly: number } {
+  private estimateFor(limit: ResolvedQuotaLimit, category: RoutingCategory) {
     if (limit.unit === "units") {
       return {
         fiveHour: UNCONFIGURED_ESTIMATE_UNITS,

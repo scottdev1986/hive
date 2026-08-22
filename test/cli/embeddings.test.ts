@@ -359,7 +359,7 @@ describe("provisionEmbeddingsRuntime — a pinned-runtime build never takes a de
 // release that ships without its key used to fail OPEN, which is a protection that switches itself
 // off exactly when the release is already degraded.
 describe("provisionEmbeddingsRuntime — the two facts, all four build shapes", () => {
-  const SHAPES = [
+  const BUILD_CASES = [
     {
       name: "keyed prod: refused, and the policy is the reason it names first",
       allowsLocalEmbeddingsSource: false,
@@ -386,8 +386,8 @@ describe("provisionEmbeddingsRuntime — the two facts, all four build shapes", 
     },
   ] as const;
 
-  for (const shape of SHAPES) {
-    test(shape.name, async () => {
+  for (const scenario of BUILD_CASES) {
+    test(scenario.name, async () => {
       const root = await makeTempDir("hive-embed-shape-");
       const nm = join(root, "node_modules");
       await plantPackage(nm, "fastembed");
@@ -395,8 +395,8 @@ describe("provisionEmbeddingsRuntime — the two facts, all four build shapes", 
       const deps: EmbeddingsProvisionDeps = {
         runtimeDir: join(root, "runtime"),
         cwd: root,
-        loaderPinsRuntime: shape.loaderPinsRuntime,
-        allowsLocalEmbeddingsSource: shape.allowsLocalEmbeddingsSource,
+        loaderPinsRuntime: scenario.loaderPinsRuntime,
+        allowsLocalEmbeddingsSource: scenario.allowsLocalEmbeddingsSource,
         installFromCheckout: async (source) => {
           calls.push(`checkout:${source}`);
           return { ok: true, detail: "staged from checkout" };
@@ -408,14 +408,14 @@ describe("provisionEmbeddingsRuntime — the two facts, all four build shapes", 
       };
 
       const named = await provisionEmbeddingsRuntime({ from: root }, deps);
-      if (shape.expect === null) {
+      if (scenario.expect === null) {
         expect(named).toEqual({ ok: true, detail: "staged from checkout" });
         expect(calls).toEqual([`checkout:${nm}`]);
       } else {
         expect(named.ok).toBe(false);
         if (!named.ok) {
           expect(named.reason).toContain(EMBEDDINGS_SOURCE_ENV);
-          expect(named.reason).toContain(shape.expect);
+          expect(named.reason).toContain(scenario.expect);
         }
         // A refusal never quietly falls back to the network either.
         expect(calls).toEqual([]);
@@ -428,7 +428,7 @@ describe("provisionEmbeddingsRuntime — the two facts, all four build shapes", 
       const walked = await provisionEmbeddingsRuntime({}, deps);
       expect(walked.ok).toBe(true);
       expect(calls).toEqual(
-        shape.expect === null ? [`checkout:${nm}`] : ["release"],
+        scenario.expect === null ? [`checkout:${nm}`] : ["release"],
       );
     });
   }

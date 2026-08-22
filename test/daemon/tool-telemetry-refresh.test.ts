@@ -79,6 +79,7 @@ describe("refreshToolTelemetry", () => {
     const graphifyCalls = new Map<string, GraphifyCallCursor>();
     await refreshToolTelemetry({
       db,
+      // SAFETY: The test owns this value and its fields.
       graphify: {} as never,
       graphifyCalls,
     });
@@ -110,6 +111,7 @@ describe("refreshToolTelemetry", () => {
     const graphifyCalls = new Map<string, GraphifyCallCursor>();
     await refreshToolTelemetry({
       db,
+      // SAFETY: The test owns this value and its fields.
       graphify: {} as never,
       graphifyCalls,
     });

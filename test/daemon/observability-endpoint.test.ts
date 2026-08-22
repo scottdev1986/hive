@@ -76,6 +76,7 @@ describe("observability endpoints", () => {
         "http://hive/observability/errors?session=codex-session-1&limit=10",
       );
       expect(response.status).toBe(200);
+      // SAFETY: The test owns this value and its fields.
       const body = (await response.json()) as { events: unknown[] };
       expect(body.events).toHaveLength(1);
       expect(ObservabilityEventSchema.parse(body.events[0])).toMatchObject({

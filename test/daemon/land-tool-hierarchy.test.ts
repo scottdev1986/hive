@@ -10,6 +10,8 @@ import {
   NothingToLandError,
 } from "../../src/daemon/landing/landing-service";
 import type { AgentRecord } from "../../src/schemas/agent";
+import { isRecord } from "../../src/shared/is-record";
+import type { JsonValue } from "../../src/shared/json";
 
 type ToolInput = {
   agent: string;
@@ -19,7 +21,7 @@ type ToolInput = {
 type ToolHandler = (args: ToolInput) => Promise<object>;
 
 type InputSchema = {
-  safeParse(input: unknown): { success: boolean };
+  safeParse(input: JsonValue): { success: boolean };
 };
 
 type CapturedTool = {
@@ -71,10 +73,11 @@ function captureTool(deps: LandToolDeps): CapturedTool {
     registerTool: (_name, config, handler) => {
       captured = {
         handler: async (input) => {
+          // SAFETY: The test owns this value and its fields.
           const result = await handler(input, {
             mcpReq: { signal: new AbortController().signal },
           } as Parameters<typeof handler>[1]);
-          if (typeof result !== "object" || result === null) {
+          if (!isRecord(result) && !Array.isArray(result)) {
             throw new Error("hive_land returned a non-object tool result");
           }
           return result;
@@ -174,6 +177,7 @@ describe("land-tool hierarchy routing", () => {
 
     for (const [field, value] of Object.entries(forgeries)) {
       await expect(
+        // SAFETY: The test owns this value and its fields.
         handler({
           agent: "writer",
           capabilityEpoch: 0,
@@ -228,7 +232,7 @@ describe("land-tool hierarchy routing", () => {
       capabilityEpoch: 0,
     }).then(
       () => "",
-      (error: unknown) => (error instanceof Error ? error.message : ""),
+      (error: JsonValue) => (error instanceof Error ? error.message : ""),
     );
 
     expect(message).toContain("Nothing to land for writer");
@@ -394,7 +398,7 @@ describe("land-tool hierarchy routing", () => {
       capabilityEpoch: 0,
     }).then(
       () => "",
-      (error: unknown) => (error instanceof Error ? error.message : ""),
+      (error: JsonValue) => (error instanceof Error ? error.message : ""),
     );
     expect(message).toContain("Nothing to land for writer");
     expect(message).toContain("commits beyond its recorded spawn base");
@@ -452,7 +456,7 @@ describe("land-tool hierarchy routing", () => {
     const refusal = await captureHandler(deps)({
       agent: "writer",
       capabilityEpoch: 0,
-    }).catch((error: unknown) => error);
+    }).catch((error) => error);
 
     // Both true conditions are named: the grant is spent AND the target moved,
     // with both SHAs, and the agent's own next step (rebase) comes first.

@@ -11,6 +11,7 @@ import type { EpisodicStore } from "./episodic";
 import type { MemoryIndex } from "./fts-index";
 import type { RetentionSweepReport } from "./retention";
 import { listMemoryFacts } from "./memory-store";
+import { definedFields } from "../shared/defined-fields";
 
 const RECEIPT_KEY = "memoryJobReceipt:";
 const SEQUENCE_KEY = "memoryJobSequence";
@@ -180,13 +181,14 @@ async function currentCounts(
   deps: MemoryJobDeps,
 ): Promise<Record<string, number | string>> {
   const facts = await listMemoryFacts(deps.repoRoot);
-  const counts: Record<string, number | string> = {
+  const counts = {
     wikiArticles: facts.length,
     ftsRows: deps.index === null ? "absent" : deps.index.count(),
+    ...definedFields({
+      events:
+        deps.episodic === null ? undefined : deps.episodic.rowCounts().events,
+    }),
   };
-  if (deps.episodic !== null) {
-    counts.events = deps.episodic.rowCounts().events;
-  }
   return counts;
 }
 

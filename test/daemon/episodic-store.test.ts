@@ -7,6 +7,7 @@ import { HiveDaemon } from "../../src/daemon/server";
 import { EpisodicStore } from "../../src/memory-service/episodic";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { tempRoot } from "../temp-root";
+import type { JsonObject } from "../../src/shared/json";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
@@ -74,6 +75,7 @@ describe("EpisodicStore location and lifecycle", () => {
     const path = join(tempDir(), "episodic.db");
     const first = track(new EpisodicStore(path));
     const schemaVersion = first.readMeta("schemaVersion");
+    // SAFETY: The test owns this value and its fields.
     expect(["2", "3"]).toContain(schemaVersion as string);
     if (schemaVersion === "2") {
       first.close();
@@ -241,10 +243,11 @@ describe("daemon ingestion into the episodic store", () => {
     expect(events[0]?.type).toBe("agent.status-reported");
     expect(events[0]?.summary).toBe("Halfway through WP1");
     expect(events[0]?.ts).toBe(T1);
+    // SAFETY: The test owns this value and its fields.
     const provenance = JSON.parse(required(events[0]?.provenance)) as {
       eventId: string;
       seq: string;
-      data: Record<string, unknown>;
+      data: JsonObject;
     };
     expect(provenance.eventId).toStartWith("evt_");
     expect(provenance.data.phase).toBe("implementing");

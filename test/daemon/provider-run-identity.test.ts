@@ -90,6 +90,7 @@ describe("C0 provider-run identity", () => {
     };
     const unmanaged = {
       presence: "present" as const,
+      // SAFETY: The test owns this value and its fields.
       diagnosticIds: [] as readonly string[],
       foreground: {
         state: "unmanaged" as const,

@@ -16,6 +16,8 @@ import {
 } from "../../src/skills/knowledge-tool";
 import { SHIPPED_SKILLS } from "../../src/skills/shipped";
 import { realCaller } from "../daemon/hierarchy-tool-fixture";
+import type { JsonValue } from "../../src/shared/json";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 
 type KnowledgeInput = { topic?: string };
 type KnowledgeHandler = (
@@ -28,15 +30,15 @@ function captureKnowledgeHandler(
   authorizeTool: Parameters<typeof registerKnowledgeTool>[2]["authorizeTool"],
 ): KnowledgeHandler {
   let captured: KnowledgeHandler | null = null;
-  const server = {
+  const server = unsafeCast<HiveToolRegistrar>({
     registerTool: (
       _name: string,
-      _config: unknown,
+      _config: JsonValue,
       handler: KnowledgeHandler,
     ) => {
       captured = handler;
     },
-  } as unknown as HiveToolRegistrar;
+  });
   registerKnowledgeTool(server, capability, { authorizeTool });
   if (captured === null) throw new Error("hive_knowledge was not registered");
   return captured;

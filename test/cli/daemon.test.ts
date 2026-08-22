@@ -33,6 +33,7 @@ test("spawnerExecutables carries every vendor's resolved path through, including
 test("production terminal composition constructs sessiond only", () => {
   const constructed: string[] = [];
   const terminalHost =
+    // SAFETY: The test owns this value and its fields.
     {} as import("../../src/daemon/session-host/sessiond-host").SessiondHost;
   const composition = createProductionTerminalComposition(
     { repoRoot: "/repo" },
@@ -139,6 +140,7 @@ test("positive control: broker-start failures still take the fatal handler", asy
       },
       onFatalFailure: async (stage, error) => {
         expect(stage).toBe("broker-start");
+        // SAFETY: The test owns this value and its fields.
         throw new Error(`handled: ${(error as Error).message}`);
       },
     }),
@@ -182,6 +184,7 @@ test("spawn cleanup dispatches a sessiond row by its exact locator", async () =>
       terminalHost: {
         inspect: async (candidate) => {
           inspected.push(candidate);
+          // SAFETY: The test owns this value and its fields.
           return { hostPid: null } as SessionInspection;
         },
         terminate: async (candidate) => {

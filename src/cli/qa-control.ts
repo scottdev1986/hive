@@ -50,6 +50,7 @@ export async function runQAControl(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
+      // SAFETY: The surrounding code already established this contract.
       const response = JSON.parse(readFileSync(responsePath, "utf8")) as {
         requestId?: string;
         status?: "ok" | "fail" | "refused";

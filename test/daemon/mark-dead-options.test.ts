@@ -9,6 +9,7 @@ import type { Capability } from "../../src/schemas/capability";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
+import type { JsonObject, JsonValue } from "../../src/shared/json";
 
 import { required } from "../required";
 
@@ -35,6 +36,7 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   };
 }
 
+// SAFETY: The test owns this value and its fields.
 const userCapability = {
   role: "user",
   subject: "user",
@@ -64,16 +66,14 @@ describe("hive_mark_dead options", () => {
     const calls: Array<{ removeWorktree?: boolean } | undefined> = [];
     const db = new HiveDatabase(":memory:");
     db.insertAgent(agent());
-    const tools = new Map<
-      string,
-      (args: Record<string, unknown>) => Promise<object>
-    >();
+    const tools = new Map<string, (args: JsonObject) => Promise<object>>();
     registerAgentControlTools(
+      // SAFETY: The test owns this value and its fields.
       {
         registerTool: (
           name: string,
-          _meta: unknown,
-          handler: (args: Record<string, unknown>) => Promise<object>,
+          _meta: JsonValue,
+          handler: (args: JsonObject) => Promise<object>,
         ) => {
           tools.set(name, handler);
         },
@@ -81,6 +81,7 @@ describe("hive_mark_dead options", () => {
       userCapability,
       {
         db,
+        // SAFETY: The test owns this value and its fields.
         terminalHost: {} as never,
         authorizeTool: () => {},
         hasNeverBoundSessiondGeneration: () => true,
@@ -107,16 +108,14 @@ describe("hive_mark_dead options", () => {
     const calls: Array<{ removeWorktree?: boolean } | undefined> = [];
     const db = new HiveDatabase(":memory:");
     db.insertAgent(agent());
-    const tools = new Map<
-      string,
-      (args: Record<string, unknown>) => Promise<object>
-    >();
+    const tools = new Map<string, (args: JsonObject) => Promise<object>>();
     registerAgentControlTools(
+      // SAFETY: The test owns this value and its fields.
       {
         registerTool: (
           name: string,
-          _meta: unknown,
-          handler: (args: Record<string, unknown>) => Promise<object>,
+          _meta: JsonValue,
+          handler: (args: JsonObject) => Promise<object>,
         ) => {
           tools.set(name, handler);
         },
@@ -124,6 +123,7 @@ describe("hive_mark_dead options", () => {
       userCapability,
       {
         db,
+        // SAFETY: The test owns this value and its fields.
         terminalHost: {} as never,
         authorizeTool: () => {},
         hasNeverBoundSessiondGeneration: () => true,

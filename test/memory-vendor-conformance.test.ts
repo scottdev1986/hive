@@ -47,6 +47,7 @@ import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
 } from "../src/schemas/capability";
+import type { JsonObject } from "../src/shared/json";
 
 const DAEMON_PORT = 4747;
 const HIVE_URL = `http://127.0.0.1:${DAEMON_PORT}/mcp`;
@@ -164,9 +165,10 @@ const VENDORS: readonly VendorRow[] = [
         readOnly: false,
       }),
     inspectConfig: async (worktree) => {
+      // SAFETY: The test owns this value and its fields.
       const mcp = JSON.parse(
         await readFile(join(worktree, ".mcp.json"), "utf8"),
-      ) as { mcpServers?: Record<string, Record<string, unknown>> };
+      ) as { mcpServers?: Record<string, JsonObject> };
       const hive = mcp.mcpServers?.hive;
       expect(hive).toBeDefined();
       expect(hive?.type).toBe("http");
@@ -174,7 +176,7 @@ const VENDORS: readonly VendorRow[] = [
       // Claude's channel: a headersHelper command run at connect time that
       // reads the 0600 credential file — never a literal header or env var.
       const helper = hive?.headersHelper;
-      expect(typeof helper).toBe("string");
+      expect(helper).toBeTypeOf("string");
       expect(helper).toContain("credential");
       expect(helper).toContain(`--agent ${AGENT}`);
       expect(helper).not.toContain(TOKEN);
@@ -264,9 +266,10 @@ const VENDORS: readonly VendorRow[] = [
         dangerous: false,
       }),
     inspectConfig: async (worktree) => {
+      // SAFETY: The test owns this value and its fields.
       const config = JSON.parse(
         await readFile(join(worktree, ".kimi-code", "mcp.json"), "utf8"),
-      ) as { mcpServers?: Record<string, Record<string, unknown>> };
+      ) as { mcpServers?: Record<string, JsonObject> };
       const hive = config.mcpServers?.hive;
       expect(hive).toBeDefined();
       expect(hive?.url).toBe(HIVE_URL);
@@ -290,9 +293,10 @@ const VENDORS: readonly VendorRow[] = [
         dangerous: false,
       }),
     inspectConfig: async (worktree) => {
+      // SAFETY: The test owns this value and its fields.
       const config = JSON.parse(
         await readFile(join(worktree, "opencode.json"), "utf8"),
-      ) as { mcp?: Record<string, Record<string, unknown>> };
+      ) as { mcp?: Record<string, JsonObject> };
       const hive = config.mcp?.hive;
       expect(hive).toBeDefined();
       expect(hive?.type).toBe("remote");
@@ -303,6 +307,7 @@ const VENDORS: readonly VendorRow[] = [
       // opencode's channel: a {env:} reference it substitutes at config load,
       // with OAuth auto-detection off so the static bearer is what it sends.
       expect(hive?.oauth).toBe(false);
+      // SAFETY: The test owns this value and its fields.
       const headers = hive?.headers as Record<string, string> | undefined;
       expect(headers?.Authorization).toBe(
         `Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}`,

@@ -76,10 +76,11 @@ describe("AuthorizedLaunch", () => {
 
   test("a plain object cannot cross the runtime adapter boundary", () => {
     expect(() =>
+      // SAFETY: The test owns this value and its fields.
       requireAuthorizedLaunch({
         tool: "codex",
         model: "ungated",
-      } as unknown as AuthorizedLaunch),
+      } as AuthorizedLaunch),
     ).toThrow("requires an AuthorizedLaunch");
   });
 

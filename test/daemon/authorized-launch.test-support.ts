@@ -57,6 +57,7 @@ export class CatalogedQuotaLedger extends QuotaLedger {
       ],
       grok: ["grok-4.5"],
     } as const;
+    // SAFETY: The test owns this value and its fields.
     for (const provider of Object.keys(catalogs) as Array<
       keyof typeof catalogs
     >) {

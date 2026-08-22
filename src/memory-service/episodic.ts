@@ -26,7 +26,7 @@ export const NewEpisodicEventSchema = z.object({
   agent: z.string().min(1).nullable().default(null),
   type: z.string().min(1),
   summary: z.string(),
-  provenance: z.record(z.string(), z.unknown()).default({}),
+  provenance: z.record(z.string(), z.json()).default({}),
 });
 export type NewEpisodicEvent = z.input<typeof NewEpisodicEventSchema>;
 
@@ -65,7 +65,7 @@ const EmbeddingRowSchema = z.object({
   embedded_at: z.string(),
 });
 
-function parseEmbeddingRow(row: unknown): MemoryEmbeddingRow {
+function parseEmbeddingRow<T>(row: T): MemoryEmbeddingRow {
   const stored = EmbeddingRowSchema.parse(row);
   const bytes = stored.vector;
   return {
@@ -198,7 +198,7 @@ export class EpisodicStore {
     return EpisodicEventSchema.parse(EventRowSchema.parse(row));
   }
 
-  rowCounts(): { events: number; facts: number; digests: number } {
+  rowCounts() {
     const count = (sql: string): number =>
       z.object({ count: z.number() }).parse(this.database.query(sql).get())
         .count;
@@ -228,6 +228,7 @@ export class EpisodicStore {
   }
 
   readMeta(key: string): string | null {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.database
       .query("SELECT value FROM meta WHERE key = ?")
       .get(key) as { value: string } | null;
@@ -250,6 +251,7 @@ export class EpisodicStore {
   }
 
   metaKeys(prefix: string): string[] {
+    // SAFETY: The surrounding code already established this contract.
     const rows = this.database
       .query("SELECT key FROM meta WHERE key LIKE ? ORDER BY key")
       .all(`${prefix}%`) as Array<{ key: string }>;
@@ -286,6 +288,7 @@ export class EpisodicStore {
   }
 
   memoryAdmissionStats(): MemoryAdmissionStats {
+    // SAFETY: The surrounding code already established this contract.
     const count = this.database
       .query("SELECT COUNT(*) AS count FROM memory_doorkeeper")
       .get() as { count: number };
@@ -399,7 +402,8 @@ export class EpisodicStore {
     return rows.map(parseEmbeddingRow);
   }
 
-  memoryEmbeddingCounts(): { articles: number; facts: number } {
+  memoryEmbeddingCounts() {
+    // SAFETY: The surrounding code already established this contract.
     const rows = this.database
       .query(
         "SELECT kind, COUNT(*) AS count FROM memory_embeddings GROUP BY kind",

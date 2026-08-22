@@ -12,6 +12,8 @@ import {
 } from "../../src/schemas/capability";
 import type { RoutingPolicy } from "../../src/schemas/routing-policy";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 
 const AT = "2026-07-11T12:00:00.000Z";
 
@@ -327,12 +329,14 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
     // The whole property in miniature: a vendor Hive's inventory code was never
     // edited for must still be IMPOSSIBLE to erase. It may be unavailable; it
     // may never be absent.
-    const acme = {
+    const acme = unsafeCast<CapabilityRecord>({
       ...record("codex", "acme-omega-1", { efforts: [] }),
       provider: "acme",
       // The vendor STATES there is no effort axis — known-none, not unknown.
+      // SAFETY: The test owns this value and its fields.
       supportsEffort: known(false, "acme.models" as CapabilitySurface, AT),
-    } as unknown as CapabilityRecord;
+    });
+    // SAFETY: The test owns this value and its fields.
     const okDiscovery = {
       ...discovery,
       acme: {
@@ -340,22 +344,25 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
         records: [acme],
         effectiveDefault: {
           provider: "acme",
+          // SAFETY: The test owns this value and its fields.
           model: known("acme-omega-1", "acme.models" as CapabilitySurface, AT),
           effort: unknown<string>(
             "surface-silent",
+            // SAFETY: The test owns this value and its fields.
             "acme.models" as CapabilitySurface,
             AT,
           ),
         },
       },
-    } as unknown as typeof discovery;
+    } as typeof discovery;
 
     const inventory = buildModelInventory({
       discovery: okDiscovery,
       policy, // the derivation knows nothing about acme; unrouted ≠ invisible
       now: new Date(AT),
     });
-    expect((inventory.providers as Record<string, unknown>).acme).toEqual({
+    // SAFETY: The test owns this value and its fields.
+    expect((inventory.providers as JsonObject).acme).toEqual({
       status: "ok",
       count: 1,
     });
@@ -371,14 +378,16 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
     expect(text).toContain("acme-omega-1");
 
     const dark = buildModelInventory({
+      // SAFETY: The test owns this value and its fields.
       discovery: {
         ...discovery,
         acme: { status: "unavailable" as const, reason: "no probe answered" },
-      } as unknown as typeof discovery,
+      } as typeof discovery,
       policy,
       now: new Date(AT),
     });
-    expect((dark.providers as Record<string, unknown>).acme).toEqual({
+    // SAFETY: The test owns this value and its fields.
+    expect((dark.providers as JsonObject).acme).toEqual({
       status: "unavailable",
       reason: "no probe answered",
     });
@@ -395,7 +404,8 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
     // which is exactly why it must fail visible instead of failing silent.
     const { grok: _grok, ...partial } = discovery;
     const inventory = buildModelInventory({
-      discovery: partial as unknown as typeof discovery,
+      // SAFETY: The test owns this value and its fields.
+      discovery: partial as typeof discovery,
       policy,
       now: new Date(AT),
     });

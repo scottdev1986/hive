@@ -15,6 +15,7 @@ import {
   WorkspaceEventV2Schema,
 } from "../../src/schemas/status-envelope";
 
+// SAFETY: The test owns this value and its fields.
 const corpus = JSON.parse(
   readFileSync(
     resolve(

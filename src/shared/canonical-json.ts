@@ -1,14 +1,18 @@
-export function canonicalJson(value: unknown): string {
+import { isNumber, isRecord } from "./is-record";
+import type { JsonObject } from "./json";
+
+export function canonicalJson<T>(value: T): string {
   if (Array.isArray(value)) {
     return `[${value.map(canonicalJson).join(",")}]`;
   }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
+  if (isRecord(value) || Array.isArray(value)) {
+    // SAFETY: The surrounding code already established this contract.
+    const entries = Object.entries(value as JsonObject)
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
     return `{${entries.join(",")}}`;
   }
-  if (typeof value === "number" && !Number.isFinite(value)) {
+  if (isNumber(value) && !Number.isFinite(value)) {
     throw new TypeError("canonical JSON requires finite numbers");
   }
   const encoded = JSON.stringify(value);

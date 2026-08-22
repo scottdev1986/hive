@@ -34,12 +34,12 @@ function harness(): HiveDaemon {
   });
 }
 
-const request = (
+const request = <T>(
   daemon: HiveDaemon,
   token: string | null,
   method: "GET" | "POST",
   path = "/queen-provider",
-  body?: unknown,
+  body?: T,
 ): Promise<Response> => {
   const headers = new Headers();
   if (token !== null) headers.set("Authorization", `Bearer ${token}`);

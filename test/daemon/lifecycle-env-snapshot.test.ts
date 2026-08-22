@@ -8,6 +8,7 @@ import {
   expectedDaemonHandshake,
   writeLifecycleFiles,
 } from "../../src/daemon/lifecycle/daemon-lifecycle";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 import { IS_RELEASE_BUILD } from "../../src/shared/version";
 
 const PORT = 4319;
@@ -23,6 +24,7 @@ describe("ensureStarted under a concurrent HIVE_HOME mutation", () => {
     // Stand a daemon up in the started home only. The redirect home is empty,
     // so a step that follows the redirect sees no daemon and tries to spawn one.
     const realFetch = globalThis.fetch;
+    // SAFETY: The test owns this value and its fields.
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((
       input: string | URL | Request,
       init?: RequestInit,
@@ -39,13 +41,17 @@ describe("ensureStarted under a concurrent HIVE_HOME mutation", () => {
     // can start and the captured options name the home it would have used.
     const daemonArgv = daemonSpawnArgv(IS_RELEASE_BUILD, process.execPath);
     const spawnedHomes: (string | undefined)[] = [];
-    const spawn = ((
-      _argv: string[],
-      options?: { env?: Record<string, string | undefined> },
-    ) => {
-      spawnedHomes.push(options?.env?.HIVE_HOME);
-      throw new Error(`must not spawn a daemon for ${options?.env?.HIVE_HOME}`);
-    }) as unknown as typeof Bun.spawn;
+    const spawn = unsafeCast<typeof Bun.spawn>(
+      (
+        _argv: string[],
+        options?: { env?: Record<string, string | undefined> },
+      ) => {
+        spawnedHomes.push(options?.env?.HIVE_HOME);
+        throw new Error(
+          `must not spawn a daemon for ${options?.env?.HIVE_HOME}`,
+        );
+      },
+    );
 
     try {
       writeLifecycleFiles(PORT);

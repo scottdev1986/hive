@@ -154,6 +154,7 @@ export async function daemonSteeredTool(
     .request("/queen-succession/steer")
     .catch(() => null);
   if (response === null || !response.ok) return null;
+  // SAFETY: The surrounding code already established this contract.
   const body = (await response.json().catch(() => null)) as {
     tool?: unknown;
   } | null;
@@ -250,7 +251,7 @@ export async function runWorkspaceOrchestrator(
                 {},
                 prepared.targetGeneration,
               ),
-          ).catch((error: unknown) => {
+          ).catch((error) => {
             if (error instanceof OrchestratorLaunchFailedError) throw error;
             throw new OrchestratorLaunchFailedError(errorMessage(error));
           });

@@ -1,33 +1,26 @@
+import { isJsonValue } from "./is-record";
+
+export type JsonObject = { [key: string]: JsonValue | undefined };
+
 export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { readonly [key: string]: JsonValue };
+  string | number | boolean | null | JsonValue[] | JsonObject;
 
 export function safeJsonParse(text: string): JsonValue | undefined {
   try {
+    // SAFETY: JSON.parse of well-formed JSON text yields a JSON value. The catch
+    // branch already dropped anything that did not parse.
     return JSON.parse(text) as JsonValue;
   } catch {
     return undefined;
   }
 }
 
-/** Re-parse an already-decoded value so callers get a JsonValue instead of unknown. */
-export function requireJsonValue(value: unknown, label: string): JsonValue {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(value);
-  } catch {
-    throw new Error(`${label} was not JSON`);
-  }
-  if (serialized === undefined) {
-    throw new Error(`${label} was not JSON`);
-  }
-  const parsed = safeJsonParse(serialized);
-  if (parsed === undefined) {
-    throw new Error(`${label} was not JSON`);
-  }
-  return parsed;
+export function notJson(label: string): never {
+  throw new Error(`${label} was not JSON`);
+}
+
+/** Parse an untrusted value into JsonValue at an I/O boundary. */
+export function requireJsonValue<T>(value: T, label: string): JsonValue {
+  if (!isJsonValue(value)) notJson(label);
+  return value;
 }

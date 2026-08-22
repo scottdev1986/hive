@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isString } from "../../src/shared/is-record";
 import {
   CLIENT_INFO_META_KEY,
   Client,
@@ -18,6 +19,7 @@ import {
   HIVE_MCP_PROTOCOL_VERSION,
   HIVE_MCP_VERSION_NEGOTIATION,
 } from "../../src/shared/mcp-protocol";
+import type { JsonObject } from "../../src/shared/json";
 
 /**
  * The daemon-side half of the reachability signal. A vendor MCP client
@@ -92,7 +94,7 @@ describe("hive MCP reachability (#57)", () => {
       expect(daemon.mcpClientSeen("maya", before)).toBe(false);
 
       const exchanges: Array<{
-        body: Record<string, unknown>;
+        body: JsonObject;
         headers: Headers;
         response: unknown;
       }> = [];
@@ -100,13 +102,14 @@ describe("hive MCP reachability (#57)", () => {
         input: string | URL,
         init?: RequestInit,
       ): Promise<Response> => {
-        if (typeof init?.body !== "string") {
+        if (!isString(init?.body)) {
           throw new Error("MCP request body was not JSON text");
         }
         const headers = new Headers(init.headers);
         headers.set("Host", "127.0.0.1");
         headers.set("Authorization", `Bearer ${token}`);
-        const body = JSON.parse(init.body) as Record<string, unknown>;
+        // SAFETY: The test owns this value and its fields.
+        const body = JSON.parse(init.body) as JsonObject;
         const response = await daemon.fetch(
           new Request(input, { ...init, headers }),
         );
@@ -158,6 +161,7 @@ describe("hive MCP reachability (#57)", () => {
         (exchange) => exchange.body.method === "server/discover",
       );
       expect(
+        // SAFETY: The test owns this value and its fields.
         (
           discovery?.response as {
             result?: { capabilities?: { tools?: { listChanged?: boolean } } };
@@ -166,15 +170,17 @@ describe("hive MCP reachability (#57)", () => {
       ).toBe(false);
       for (const exchange of exchanges) {
         const method = exchange.body.method;
-        if (typeof method !== "string") {
+        if (!isString(method)) {
           throw new Error("MCP exchange is missing its method");
         }
         expect(exchange.headers.get("MCP-Protocol-Version")).toBe(
           HIVE_MCP_PROTOCOL_VERSION,
         );
         expect(exchange.headers.get("Mcp-Method")).toBe(method);
-        const params = exchange.body.params as Record<string, unknown>;
-        const meta = params._meta as Record<string, unknown>;
+        // SAFETY: The test owns this value and its fields.
+        const params = exchange.body.params as JsonObject;
+        // SAFETY: The test owns this value and its fields.
+        const meta = params._meta as JsonObject;
         expect(meta[PROTOCOL_VERSION_META_KEY]).toBe(HIVE_MCP_PROTOCOL_VERSION);
         expect(meta[CLIENT_INFO_META_KEY]).toEqual({
           name: "hive-reachability-test",
@@ -186,6 +192,7 @@ describe("hive MCP reachability (#57)", () => {
       );
       expect(toolCall?.headers.get("Mcp-Name")).toBe("hive_status");
       expect(
+        // SAFETY: The test owns this value and its fields.
         (toolCall?.response as { result?: { resultType?: string } })?.result
           ?.resultType,
       ).toBe("complete");

@@ -13,7 +13,8 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { hiveInstanceSuffix } from "../../hive-home/home";
-import { isRecord } from "../../shared/is-record";
+import { isErrnoCode } from "../../shared/error-message";
+import { isRecord, isString } from "../../shared/is-record";
 import { shellQuote } from "../../shared/shell-quote";
 import { withFileLock } from "../file-lock";
 import { sanitizedGitEnv } from "../git-env";
@@ -21,6 +22,8 @@ import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
 import { graphifyHookPath, writeGraphifyHook } from "./shared/graphify-hook";
 import { daemonMcpUrl } from "./shared/mcp-scope";
 import { resolveProviderExecutable } from "./shared/provider-executable";
+import type { JsonObject } from "../../shared/json";
+import { unsafeCast } from "../../shared/unsafe-cast";
 
 export interface GrokSpawnOptions {
   model: string;
@@ -42,10 +45,7 @@ export interface GrokAgentConfigOptions {
 
 export type GrokProjectTrust = "trusted" | "untrusted" | "unknown";
 
-export const GROK_READ_ONLY_PERMISSION_RULES: {
-  deny: readonly string[];
-  allow: readonly string[];
-} = {
+export const GROK_READ_ONLY_PERMISSION_RULES = {
   deny: ["Bash", "Write", "Edit"],
   allow: ["MCPTool", "Read", "Grep"],
 };
@@ -318,14 +318,8 @@ export async function writeGrokAgentConfig(
   const hooksDirectory = join(directory, "hooks");
   const path = join(directory, "config.toml");
   await mkdir(directory, { recursive: true });
-  const existing = await readFile(path, "utf8").catch((error: unknown) => {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )
-      return "";
+  const existing = await readFile(path, "utf8").catch((error) => {
+    if (isErrnoCode(error, "ENOENT")) return "";
     throw error;
   });
   const prefix = stripHiveMcpTables(existing);
@@ -426,14 +420,8 @@ export async function removeGrokAgentConfig(
 ): Promise<boolean> {
   const hooksRemoved = await removeOwnedGrokHooks(worktreePath);
   const path = join(worktreePath, ".grok", "config.toml");
-  const existing = await readFile(path, "utf8").catch((error: unknown) => {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    )
-      return null;
+  const existing = await readFile(path, "utf8").catch((error) => {
+    if (isErrnoCode(error, "ENOENT")) return null;
     throw error;
   });
   if (existing === null) return hooksRemoved;
@@ -441,15 +429,13 @@ export async function removeGrokAgentConfig(
     mcp_servers?: { hive?: { url?: unknown } };
   };
   try {
+    // SAFETY: The surrounding code already established this contract.
     parsed = Bun.TOML.parse(existing) as typeof parsed;
   } catch {
     return hooksRemoved;
   }
   const hiveUrl = parsed.mcp_servers?.hive?.url;
-  if (
-    typeof hiveUrl !== "string" ||
-    !/^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(hiveUrl)
-  )
+  if (!isString(hiveUrl) || !/^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(hiveUrl))
     return hooksRemoved;
   const remaining = stripHiveMcpTables(existing);
   if (remaining.trim().length === 0) await rm(path, { force: true });
@@ -465,9 +451,7 @@ export function grokSessionsDirectory(home = grokHome()): string {
   return join(home, "sessions");
 }
 
-function renderTrustedFolders(
-  folders: Record<string, Record<string, unknown>>,
-): string {
+function renderTrustedFolders(folders: Record<string, JsonObject>): string {
   return `${Object.entries(folders)
     .map(([path, entry]) => {
       const body = Object.entries(entry)
@@ -476,6 +460,10 @@ function renderTrustedFolders(
       return `[folders.${JSON.stringify(path)}]\n${body}`;
     })
     .join("\n\n")}\n`;
+}
+
+interface GrokTrustedFoldersFile {
+  folders?: Record<string, JsonObject>;
 }
 
 /** Record, in grok's own trust store, the decision the user already made by opening Hive on this repository. Grok will not start repo-local MCP servers — Hive's included — in an untrusted folder, and Hive's own config write is what makes a fresh agent worktree untrusted. Without this a Grok agent can look healthy until it dies on the MCP reporting deadline. The grant is the REPOSITORY, not the worktree, and that is not a choice: grok ignores a trust entry keyed to a nested git root, so an entry for the agent worktree has no effect. The narrowest grant that works is the repository the user pointed Hive at, and it is therefore also broader than Hive's own worktrees: the user's own manual `grok` runs in that repository become trusted too. That is the cost of the assumption "opening Hive here is the trust decision", and it is stated here so it is never a surprise. An entry the user already decided is left exactly as it is, including a deliberate `trusted = false` — this seeds a missing decision, it never overturns one. */
@@ -494,9 +482,7 @@ export async function seedGrokRepositoryTrust(
       const parsed =
         source.trim().length === 0
           ? {}
-          : (Bun.TOML.parse(source) as {
-              folders?: Record<string, Record<string, unknown>>;
-            });
+          : unsafeCast<GrokTrustedFoldersFile>(Bun.TOML.parse(source));
       const folders = parsed.folders ?? {};
       if (folders[key] !== undefined) return "already-decided";
       const next = {
@@ -584,7 +570,7 @@ async function findGrokSummaries(
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
       const info = parsed.info;
-      if (typeof info.id !== "string" || typeof info.cwd !== "string") {
+      if (!isString(info.id) || !isString(info.cwd)) {
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
       if (
@@ -594,14 +580,13 @@ async function findGrokSummaries(
         continue;
       if (
         parsed.current_model_id !== undefined &&
-        typeof parsed.current_model_id !== "string"
+        !isString(parsed.current_model_id)
       ) {
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
-      const model =
-        typeof parsed.current_model_id === "string"
-          ? parsed.current_model_id
-          : null;
+      const model = isString(parsed.current_model_id)
+        ? parsed.current_model_id
+        : null;
       summaries.push({
         id: info.id,
         model,

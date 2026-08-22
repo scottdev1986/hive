@@ -118,6 +118,7 @@ describe("worktree stewardship", () => {
         dirtyFiles: ["wip.ts", "untracked.md"],
         unmergedCommits: 0,
       },
+      // SAFETY: The test owns this value and its fields.
       checkError: null as string | null,
     };
     const settled = await lifecycle.settleTeardownWorktree({

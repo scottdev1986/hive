@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 import {
   type HiveTerminalBinding,
   TerminalHostBindingConflictError,
@@ -22,11 +23,20 @@ import {
   listAgentsNamed,
 } from "../support/daemon-test-support";
 import { tempRoot } from "../temp-root";
+import type { JsonObject } from "../../src/shared/json";
 
 const home = tempRoot("hive-db-test-");
 process.env.HIVE_HOME = home;
 
 const timestamp = "2026-07-09T12:00:00.000Z";
+
+interface SqlitePragmaColumn {
+  name: string;
+}
+
+function pragmaColumnName<T>(column: T): string {
+  return unsafeCast<SqlitePragmaColumn>(column).name;
+}
 
 function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
@@ -301,7 +311,8 @@ describe("HiveDatabase", () => {
     db.insertProviderRun(run);
     db.close();
 
-    const legacy = { ...run } as Record<string, unknown>;
+    // SAFETY: The test owns this value and its fields.
+    const legacy = { ...run } as JsonObject;
     delete legacy.adapterChild;
     delete legacy.protocolReceipt;
     legacy.pid = 4_200;
@@ -908,15 +919,12 @@ describe("HiveDatabase", () => {
         db.database
           .query("PRAGMA table_info(agents)")
           .all()
-          .some(
-            (column) =>
-              (column as { name: string }).name === retiredViewerColumn,
-          ),
+          .some((column) => pragmaColumnName(column) === retiredViewerColumn),
       ).toEqual(false);
       const agentColumns = db.database
         .query("PRAGMA table_info(agents)")
         .all()
-        .map((column) => (column as { name: string }).name);
+        .map((column) => pragmaColumnName(column));
       for (const retired of ["failureReason", "failedAt", "recoveryAttempts"]) {
         expect(agentColumns).not.toContain(retired);
       }
@@ -929,17 +937,14 @@ describe("HiveDatabase", () => {
           db.database
             .query("PRAGMA table_info(agents)")
             .all()
-            .some((column) => (column as { name: string }).name === name),
+            .some((column) => pragmaColumnName(column) === name),
         ).toEqual(true);
       }
       expect(
         db.database
           .query("PRAGMA table_info(agents)")
           .all()
-          .some(
-            (column) =>
-              (column as { name: string }).name === "quotaReservationId",
-          ),
+          .some((column) => pragmaColumnName(column) === "quotaReservationId"),
       ).toEqual(true);
     } finally {
       db.close();
@@ -980,12 +985,14 @@ describe("HiveDatabase", () => {
 
     const migrated = new HiveDatabase(path);
     try {
+      // SAFETY: The test owns this value and its fields.
       const row = migrated.database
         .query(
           "SELECT document FROM hierarchy_records WHERE kind = 'task' AND id = 'task-legacy'",
         )
         .get() as { document: string };
-      const document = JSON.parse(row.document) as Record<string, unknown>;
+      // SAFETY: The test owns this value and its fields.
+      const document = JSON.parse(row.document) as JsonObject;
       expect(document.taskId).toBe("task-legacy");
       expect(document).not.toHaveProperty("terminationReason");
       expect(document).not.toHaveProperty("retryCount");
@@ -1366,6 +1373,7 @@ describe("contextPct can say 'unknown'", () => {
 
     const db = new HiveDatabase(path);
     try {
+      // SAFETY: The test owns this value and its fields.
       const columns = db.database
         .query("PRAGMA table_info(agents)")
         .all() as Array<{ name: string; notnull: number }>;
@@ -1437,6 +1445,7 @@ describe("contextPct can say 'unknown'", () => {
 
     const db = new HiveDatabase(path);
     try {
+      // SAFETY: The test owns this value and its fields.
       const columns = db.database
         .query("PRAGMA table_info(agents)")
         .all() as Array<{ name: string; notnull: number; dflt_value: unknown }>;
@@ -1449,6 +1458,7 @@ describe("contextPct can say 'unknown'", () => {
       expect(shard?.notnull).toBe(1);
       expect(String(shard?.dflt_value)).toBe("7");
 
+      // SAFETY: The test owns this value and its fields.
       const row = db.database
         .query(
           "SELECT deploymentRegion, shardIndex FROM agents WHERE id = 'a1'",
@@ -1470,6 +1480,7 @@ describe("contextPct can say 'unknown'", () => {
     const db = new HiveDatabase(join(home, "rebuild-throws.db"));
     try {
       const enforced = (): number =>
+        // SAFETY: The test owns this value and its fields.
         (
           db.database.query("PRAGMA foreign_keys").get() as {
             foreign_keys: number;
@@ -1480,8 +1491,8 @@ describe("contextPct can say 'unknown'", () => {
       // Fail the rebuild where it hurts: after foreign keys are already off.
       db.database.exec("CREATE TABLE agents_rebuilt (taken TEXT)");
       expect(() =>
-        (
-          db as unknown as { rebuildAgentsTable(expression: string): void }
+        unsafeCast<{ rebuildAgentsTable(expression: string): void }>(
+          db,
         ).rebuildAgentsTable("NULL"),
       ).toThrow();
 

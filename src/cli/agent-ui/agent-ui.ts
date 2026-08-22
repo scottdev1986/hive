@@ -131,6 +131,7 @@ import {
 } from "./view-state";
 import { WakeReportQueue } from "./wake-report-queue";
 import { listWorkspaceFiles } from "./workspace-files";
+import type { JsonValue } from "../../shared/json";
 
 export {
   agentHeaderText,
@@ -294,7 +295,7 @@ export class AgentUi {
   private historyIndex: number | null = null;
   private lastDraft = "";
   private inputWork = Promise.resolve();
-  private inputError: unknown = null;
+  private inputError: JsonValue = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private spinnerTimer: ReturnType<typeof setInterval> | null = null;
   private spinnerTick = 0;
@@ -1198,7 +1199,7 @@ export class AgentUi {
   }
 
   private enqueueInput(action: () => Promise<void>): void {
-    this.inputWork = this.inputWork.then(action).catch((error: unknown) => {
+    this.inputWork = this.inputWork.then(action).catch((error) => {
       this.inputError ??= error;
     });
   }
@@ -1828,7 +1829,7 @@ export class AgentUi {
         await this.pump();
       }
     })()
-      .catch((error: unknown) => {
+      .catch((error) => {
         if (this.detached) return;
         this.reportError(`provider pump failed — ${errorMessage(error)}`);
       })
@@ -2377,7 +2378,7 @@ export class AgentUi {
     this.transcript.scrollBy(lines);
   }
 
-  snapshot(): { readonly draft: string; readonly view: ViewState } {
+  snapshot() {
     return { draft: this.textarea.plainText, view: this.view };
   }
 

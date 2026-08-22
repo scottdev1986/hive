@@ -18,6 +18,13 @@ export interface RoleGrant {
   readonly oneShot: readonly Action[];
 }
 
+interface RoleGrants {
+  readonly user: RoleGrant;
+  readonly orchestrator: RoleGrant;
+  readonly writer: RoleGrant;
+  readonly reader: RoleGrant;
+}
+
 /** A valid caller reached a capability fence it does not hold. The refusal is
  * security working as designed, so observability must not report it as a daemon
  * fault. */
@@ -79,7 +86,7 @@ const USER_ACTIONS: readonly Action[] = [
 ];
 
 // The orchestrator decides what work happens; the writer puts code on main. Neither role is a superset of the other, so a stolen credential of either kind buys a strict subset of the control plane.
-export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
+export const ROLE_GRANTS: RoleGrants = {
   // The user is the Hive CLI and the Workspace acting for them — the root of the local trust chain. Its subject scope is unrestricted because narrowing it would buy nothing: a caller that can already spawn and kill any agent gains no new authority from also being able to name one.
   user: {
     actions: USER_ACTIONS,
@@ -311,7 +318,7 @@ export class CapabilityStore {
       constraints?: Hv1CapabilityConstraints;
       subjects?: readonly string[];
     } = {},
-  ): { token: string; capability: Capability } {
+  ) {
     const issued = this.now();
     const id = crypto.randomUUID();
     const secret = randomBytes(32).toString("base64url");

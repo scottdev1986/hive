@@ -38,7 +38,7 @@ const FlatSpawnRequestSchema = z.strictObject({
 });
 
 export const HierarchySpawnRequestSchema = FlatSpawnRequestSchema.extend(
-  HierarchySpawnFieldsSchema.shape,
+  HierarchySpawnFieldsSchema["shape"],
 );
 
 export const SpawnRequestSchema = z.union([

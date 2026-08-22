@@ -105,7 +105,7 @@ export const HiveGraphifyGate = async () => ({
       const hook = JSON.parse(raw).hookSpecificOutput;
       if (
         hook.permissionDecision === "deny" &&
-        typeof hook.permissionDecisionReason === "string"
+        isString(hook.permissionDecisionReason)
       ) {
         decline = hook.permissionDecisionReason;
       }

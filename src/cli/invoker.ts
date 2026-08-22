@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { isString } from "../shared/is-record";
 
 export interface InvokerIdentity {
   readonly pid: number;
@@ -24,7 +25,7 @@ function readProcess(pid: number): { ppid: number; command: string } | null {
   const result = spawnSync("ps", ["-p", String(pid), "-o", "ppid=,comm="], {
     encoding: "utf8",
   });
-  if (result.status !== 0 || typeof result.stdout !== "string") return null;
+  if (result.status !== 0 || !isString(result.stdout)) return null;
   const line = result.stdout.trim();
   if (line === "") return null;
   const space = line.indexOf(" ");

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { PaneObservabilityReporter } from "../src/cli/agent-ui/observability-reporter";
 import { PaneDaemonClient } from "../src/cli/agent-ui/pane-daemon-client";
+import type { JsonObject } from "../src/shared/json";
 
 const AT = "2026-08-11T12:00:00.000Z";
 
@@ -10,16 +11,14 @@ function providerEvent<T extends object>(event: T, sequence: number) {
 
 describe("pane observability reporter", () => {
   test("tool failures remain agent activity rather than provider incidents", async () => {
-    const reports: Array<Record<string, unknown>> = [];
+    const reports: Array<JsonObject> = [];
     const client = new PaneDaemonClient({
       port: 1,
       subject: "clay",
       retries: 0,
       fetch: async (_input, init) => {
-        const report = JSON.parse(String(init?.body)) as Record<
-          string,
-          unknown
-        >;
+        // SAFETY: The test owns this value and its fields.
+        const report = JSON.parse(String(init?.body)) as JsonObject;
         reports.push(report);
         return Response.json({ event: { ...report, recordedAt: AT } });
       },
@@ -65,16 +64,14 @@ describe("pane observability reporter", () => {
   });
 
   test("does not duplicate a Hive MCP failure already owned by the daemon", async () => {
-    const reports: Array<Record<string, unknown>> = [];
+    const reports: Array<JsonObject> = [];
     const client = new PaneDaemonClient({
       port: 1,
       subject: "clay",
       retries: 0,
       fetch: async (_input, init) => {
-        const report = JSON.parse(String(init?.body)) as Record<
-          string,
-          unknown
-        >;
+        // SAFETY: The test owns this value and its fields.
+        const report = JSON.parse(String(init?.body)) as JsonObject;
         reports.push(report);
         return Response.json({ event: { ...report, recordedAt: AT } });
       },
@@ -118,17 +115,15 @@ describe("pane observability reporter", () => {
   });
 
   test("still records a failed provider turn", async () => {
-    const reports: Array<Record<string, unknown>> = [];
+    const reports: Array<JsonObject> = [];
     const reporter = new PaneObservabilityReporter({
       client: new PaneDaemonClient({
         port: 1,
         subject: "clay",
         retries: 0,
         fetch: async (_input, init) => {
-          const report = JSON.parse(String(init?.body)) as Record<
-            string,
-            unknown
-          >;
+          // SAFETY: The test owns this value and its fields.
+          const report = JSON.parse(String(init?.body)) as JsonObject;
           reports.push(report);
           return Response.json({ event: { ...report, recordedAt: AT } });
         },

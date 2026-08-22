@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { isString } from "../../../shared/is-record";
 import type {
   CapabilityProvider,
   MeasuredProviderCapabilities,
@@ -13,7 +14,7 @@ import {
   type SessionStart,
   type VendorSessionRef,
 } from "./types";
-import { errorMessage } from "../../../shared/error-message";
+import { errorMessage, isErrnoCode } from "../../../shared/error-message";
 import { systemNowIso } from "../../../shared/clock";
 
 /** The adapter a stored ref is bound to. Every field is read from the connected session's own measurements, never from Hive configuration: it has to describe the binary that actually answered. */
@@ -94,12 +95,7 @@ export async function readStoredSession(path: string): Promise<StoredSession> {
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
+    if (isErrnoCode(error, "ENOENT")) {
       return { state: "absent" };
     }
     return {
@@ -116,6 +112,7 @@ export async function readStoredSession(path: string): Promise<StoredSession> {
       detail: errorMessage(error),
     };
   }
+  // SAFETY: The surrounding code already established this contract.
   const record = parsed as Partial<DurableSessionRecord>;
   if (record.schemaVersion !== 1) {
     return {
@@ -125,10 +122,11 @@ export async function readStoredSession(path: string): Promise<StoredSession> {
   }
   if (
     record.identity === undefined ||
-    typeof record.session?.vendorSessionId !== "string"
+    !isString(record.session?.vendorSessionId)
   ) {
     return { state: "unreadable", detail: "missing identity or session ref" };
   }
+  // SAFETY: The surrounding code already established this contract.
   return { state: "present", record: record as DurableSessionRecord };
 }
 

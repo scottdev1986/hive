@@ -28,7 +28,7 @@ export const IntegrationStageLifecycleSchema = z.enum(
   INTEGRATION_STAGE_LIFECYCLES,
 );
 
-const IntegrationStageShape = {
+const IntegrationStageFields = {
   stageId: IntegrationStageIdSchema,
   revision: RevisionSchema,
   runId: RunIdSchema,
@@ -46,12 +46,12 @@ const IntegrationStageShape = {
 
 export const IntegrationStageSchema = z.discriminatedUnion("kind", [
   z.strictObject({
-    ...IntegrationStageShape,
+    ...IntegrationStageFields,
     kind: z.literal("run"),
     ownerNodeId: z.null(),
   }),
   z.strictObject({
-    ...IntegrationStageShape,
+    ...IntegrationStageFields,
     kind: z.literal("lead"),
     ownerNodeId: NodeIdSchema,
   }),

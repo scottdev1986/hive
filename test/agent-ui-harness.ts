@@ -20,11 +20,12 @@ import {
 } from "../src/cli/agent-ui/agent-ui";
 import { OutboundJournal } from "../src/cli/agent-ui/outbound-journal";
 import { definedFields } from "../src/shared/defined-fields";
+import { unsafeCast } from "../src/shared/unsafe-cast";
 
 /** Keeps UI tests deterministic without starting OpenTUI's shared parser worker. */
-export const testSyntaxHighlighter = {
+export const testSyntaxHighlighter = unsafeCast<TreeSitterClient>({
   highlightOnce: async () => ({ highlights: [] }),
-} as unknown as TreeSitterClient;
+});
 
 export interface AgentUiHarness {
   readonly directory: string;

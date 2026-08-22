@@ -32,6 +32,7 @@ import {
   type MailRelease,
   type MailStore,
 } from "./store";
+import type { JsonValue } from "../shared/json";
 
 /** What the daemon knows about a name a sender addressed. `canonical` is the name mail is actually filed under, which is not always the one the sender typed — the root answers to two. Every other case is a reason the mailbox cannot accept work, kept distinct so the refusal can say which. */
 export type MailRecipientState =
@@ -100,9 +101,12 @@ export type MailActor = Readonly<{
 export const MAIL_SYSTEM_SENDER = "hive-mail";
 
 /** The lane and topic each of the daemon's own senders publishes on. The daemon's senders are fixed names rather than agents, so their lane comes from what kind of sender they are, not from each call site deciding again. Alerts and progress ride the work lane, where repeated updates from the same sender merge instead of stacking up; only what an agent must act on rides the control lane. A sender that is not named here fails loudly rather than defaulting to a lane nobody chose. */
-export const SYSTEM_MAIL_ROUTES: Readonly<
-  Record<string, Readonly<{ lane: MailLane; topic: string }>>
-> = {
+interface SystemMailRoutes {
+  readonly [sender: string]:
+    Readonly<{ lane: MailLane; topic: string }> | undefined;
+}
+
+export const SYSTEM_MAIL_ROUTES: SystemMailRoutes = {
   "hive-approvals": { lane: "work", topic: "approvals" },
   "hive-control": { lane: "control", topic: "control" },
   "hive-effort": { lane: "work", topic: "effort" },
@@ -127,15 +131,15 @@ export class MailService {
     return this.deps.store;
   }
 
-  publish(actor: MailActor, request: unknown, now: Date): MailPublishReceipt {
+  publish(actor: MailActor, request: JsonValue, now: Date): MailPublishReceipt {
     return hiveMailPublish(this.deps, actor, request, now);
   }
 
-  poll(actor: MailActor, request: unknown, now: Date): MailPollResult {
+  poll(actor: MailActor, request: JsonValue, now: Date): MailPollResult {
     return hiveMailPoll(this.deps, actor, request, now);
   }
 
-  claim(actor: MailActor, request: unknown, now: Date): MailClaimReceipt {
+  claim(actor: MailActor, request: JsonValue, now: Date): MailClaimReceipt {
     return hiveMailClaim(
       this.deps,
       actor,
@@ -145,7 +149,11 @@ export class MailService {
     );
   }
 
-  complete(actor: MailActor, request: unknown, now: Date): MailCompleteReceipt {
+  complete(
+    actor: MailActor,
+    request: JsonValue,
+    now: Date,
+  ): MailCompleteReceipt {
     return hiveMailComplete(
       this.deps,
       actor,
@@ -155,7 +163,7 @@ export class MailService {
     );
   }
 
-  status(actor: MailActor, request: unknown, now: Date): MailStatusResult {
+  status(actor: MailActor, request: JsonValue, now: Date): MailStatusResult {
     return hiveMailStatus(this.deps, actor, request, now);
   }
 
@@ -461,9 +469,9 @@ export class MailGenerationMismatchError extends Error {
   }
 }
 
-const parseRequest = <T extends z.ZodTypeAny>(
+const parseRequest = <T extends z.ZodTypeAny, U>(
   schema: T,
-  request: unknown,
+  request: U,
 ): z.infer<T> => {
   const parsed = schema.safeParse(request);
   if (!parsed.success) {
@@ -509,10 +517,10 @@ const ageSeconds = (from: string, now: Date): number =>
   Math.max(0, Math.round((now.getTime() - new Date(from).getTime()) / 1_000));
 
 /** Accepts an envelope, or says no. Shape, size and topic are settled before the store is touched, so an oversized or malformed publish never opens a transaction. Everything that does open one — the item, its journal entry, and the idempotency key that identifies it — commits together, and this returns only after that commit, so a sender holding a receipt is holding a durable fact. */
-export function hiveMailPublish(
+export function hiveMailPublish<T>(
   deps: MailBrokerDeps,
   actor: MailActor,
-  request: unknown,
+  request: T,
   now: Date,
 ): MailPublishReceipt {
   const input = parseRequest(MailPublishRequestSchema, request);
@@ -583,10 +591,10 @@ export function announceMailWaiting(
 }
 
 /** Hands the recipient one attention item and a bounded index of everything else. The control offer is at most one because a control item is meant to be acted on before the agent resumes; the work half is a digest of headers, so a thousand queued updates cost the same to read as one. Nothing here writes: a diagnostic read that repaired what it measured would make the mailbox's health depend on who looked at it. */
-export function hiveMailPoll(
+export function hiveMailPoll<T>(
   deps: MailBrokerDeps,
   actor: MailActor,
-  request: unknown,
+  request: T,
   now: Date,
 ): MailPollResult {
   const input = parseRequest(MailPollRequestSchema, request);
@@ -642,10 +650,10 @@ export function hiveMailPoll(
 }
 
 /** Leases one item to this incarnation and handler. A message addressed to a generation that has since been replaced can never be handled, so it is quarantined here rather than left to be re-offered at every poll. The claim itself refuses the mismatch a second time inside its write. */
-export function hiveMailClaim(
+export function hiveMailClaim<T>(
   deps: MailBrokerDeps,
   actor: MailActor,
-  request: unknown,
+  request: T,
   now: Date,
   maxAttempts = MAIL_MAX_ATTEMPTS,
 ): MailClaimReceipt {
@@ -702,10 +710,10 @@ export function hiveMailClaim(
 }
 
 /** Settles a claimed item, once. The same call repeated after a lost response returns the settlement already recorded instead of taking a second attempt off the item, and a handler whose lease lapsed while it worked is refused rather than allowed to settle work another claimant now owns. */
-export function hiveMailComplete(
+export function hiveMailComplete<T>(
   deps: MailBrokerDeps,
   actor: MailActor,
-  request: unknown,
+  request: T,
   now: Date,
   maxAttempts = MAIL_MAX_ATTEMPTS,
 ): MailCompleteReceipt {
@@ -763,10 +771,10 @@ function announceNextWaiting(
 }
 
 /** Reports the mailbox without changing it. A lapsed lease is reported as expired rather than swept, because the sweep is the daemon's job and a status call that quietly performed it would hide how long recovery actually took. */
-export function hiveMailStatus(
+export function hiveMailStatus<T>(
   deps: MailBrokerDeps,
   actor: MailActor,
-  request: unknown,
+  request: T,
   now: Date,
 ): MailStatusResult {
   const input = parseRequest(MailStatusRequestSchema, request);

@@ -186,13 +186,16 @@ async function readStatus(client: Client): Promise<{
     arguments: { detail: "full" },
   });
   return (
-    result as unknown as {
-      structuredContent: {
-        agents: AgentRecord[];
-        credentialReporting: Record<string, CredentialReport>;
-      };
-    }
-  ).structuredContent;
+    // SAFETY: The test owns this value and its fields.
+    (
+      result as {
+        structuredContent: {
+          agents: AgentRecord[];
+          credentialReporting: Record<string, CredentialReport>;
+        };
+      }
+    ).structuredContent
+  );
 }
 
 /** Identity and its consequences, dropped so the comparison is about reporting rather than about which fixture is which. */
@@ -255,7 +258,7 @@ test("hive_status separates a mute agent from a reporting one, and only there", 
       since: launchedAt,
     });
     expect(status.credentialReporting.chatty?.state).toBe("authenticated");
-    expect(typeof status.credentialReporting.chatty?.lastAuthenticatedAt).toBe(
+    expect(status.credentialReporting.chatty?.lastAuthenticatedAt).toBeTypeOf(
       "string",
     );
     // When it was last checked, so a caller can tell a fresh answer from a stale one.

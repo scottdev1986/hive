@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { wakePrompt } from "../src/cli/agent-ui/agent-ui-exports";
 import { OutboundJournal } from "../src/cli/agent-ui/outbound-journal";
 import {
+  type AnnouncedWake,
   canSubmitUser,
   commitDispatch,
   EMPTY_SCHEDULER,
@@ -15,6 +16,7 @@ import {
   onTurnStarted,
   pendingWakeCount,
 } from "../src/cli/agent-ui/turn-scheduler";
+import { unsafeCast } from "../src/shared/unsafe-cast";
 import {
   MAIL_WAKE_MAX_ATTEMPTS,
   MAIL_WAKE_MAX_DISPATCHES,
@@ -32,6 +34,7 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 
+// SAFETY: The test owns this value and its fields.
 const DRAFT = { text: "refactor the parser", attachments: [] as string[] };
 
 test("mail wakes are explicitly silent internal operations", () => {
@@ -309,17 +312,11 @@ describe("the turn scheduler", () => {
    * that omits it must not read as "newer than everything" and disable the cap.
    */
   test("an announcement with no sequence fails closed onto the cap", () => {
-    const malformed = {
+    const malformed = unsafeCast<AnnouncedWake>({
       wakeId: "w1",
       lane: "control" as const,
       oldestItemId: "m1",
-    } as unknown as {
-      wakeId: string;
-      lane: "control";
-      oldestItemId: string;
-      brokerSeq: number;
-      backlogCount: number;
-    };
+    });
     let state = EMPTY_SCHEDULER;
     let dispatches = 0;
     for (let attempt = 0; attempt < MAIL_WAKE_MAX_ATTEMPTS + 7; attempt += 1) {

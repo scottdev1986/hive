@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { runGit } from "../../adapters/git";
 import { type AgentRecord, isOrchestratorName } from "../../schemas/agent";
+import { isString } from "../../shared/is-record";
 import {
   type HandoffBundle,
   type HandoffSummary,
@@ -83,15 +84,15 @@ function fallbackSummary(
   output: SessiondOutputObservation | null,
 ): HandoffSummary {
   const summary =
-    report !== null && typeof report.data.summary === "string"
+    report !== null && isString(report.data.summary)
       ? report.data.summary
       : null;
   const blocker =
-    report !== null && typeof report.data.blocker === "string"
+    report !== null && isString(report.data.blocker)
       ? report.data.blocker
       : null;
   const nextAction =
-    report !== null && typeof report.data.nextCheckpoint === "string"
+    report !== null && isString(report.data.nextCheckpoint)
       ? report.data.nextCheckpoint
       : null;
   const tail = redactedTail(redactTerminalEvidence(output?.screen ?? ""));
@@ -118,8 +119,8 @@ function explicitMemoryRefs(
 ): HandoffBundle["memoryRefs"] {
   const evidence =
     report !== null && Array.isArray(report.data.evidenceRefs)
-      ? report.data.evidenceRefs.filter(
-          (value): value is string => typeof value === "string",
+      ? report.data.evidenceRefs.filter((value): value is string =>
+          isString(value),
         )
       : [];
   return memory

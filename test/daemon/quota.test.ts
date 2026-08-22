@@ -335,6 +335,7 @@ describe("quota persistence and reservations", () => {
     `);
     new QuotaLedger(db);
     const columns = new Set(
+      // SAFETY: The test owns this value and its fields.
       (
         db.database
           .query("PRAGMA table_info(quota_reservations)")

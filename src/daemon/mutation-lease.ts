@@ -3,6 +3,7 @@ import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { probeProcessLiveness } from "../adapters/process-liveness";
+import { isFunction } from "../shared/is-record";
 import {
   hiveInstanceSuffix,
   machineHiveHome,
@@ -63,7 +64,7 @@ type OperationRow = z.infer<typeof OperationRowSchema>;
 export function getMachineMutationDatabasePath(
   runtimeRoot = `${machineHiveHome()}.runtime`,
 ): string {
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  const uid = isFunction(process.getuid) ? process.getuid() : null;
   const runtimeDirectory = join(runtimeRoot, `hive-${uid ?? "user"}`);
   mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 });
   const state = lstatSync(runtimeDirectory);

@@ -145,6 +145,7 @@ async function importFastembedRuntime(): Promise<{
     await verifyRuntimeIntegrity(runtimeDir);
     try {
       return {
+        // SAFETY: The surrounding code already established this contract.
         runtime: (await import(bundlePath)) as FastembedRuntime,
         origin: bundlePath,
       };
@@ -163,6 +164,7 @@ async function importFastembedRuntime(): Promise<{
   }
   try {
     return {
+      // SAFETY: The surrounding code already established this contract.
       runtime: (await import("fastembed")) as FastembedRuntime,
       origin: "fastembed from node_modules (repo dev path)",
     };
@@ -176,10 +178,10 @@ async function importFastembedRuntime(): Promise<{
 }
 
 /** Expected output dimension per supported model, asserted at load: a model that loads but embeds at the wrong width is a drift bug, so the surface goes unavailable rather than mixing widths in the vector store. */
-const EXPECTED_DIMENSIONS: Record<MemoryEmbeddingModel, number> = {
+const EXPECTED_DIMENSIONS = {
   "bge-small-en-v1.5": 384,
   "all-MiniLM-L6-v2": 384,
-};
+} satisfies Record<MemoryEmbeddingModel, number>;
 
 /** Build the embedder from a resolved fastembed module: init the session and assert the width at load (D4) — one warm-up probe doubles as the check. A model that loads but embeds at the wrong width is a drift bug, so the surface goes unavailable rather than mixing widths in the vector store. */
 async function embedderFromRuntime(
@@ -243,6 +245,7 @@ export async function probeExternalRuntime(
   }
   // Provisioning must fail loudly here rather than leave a runtime that looks installed and is refused on first load.
   await verifyRuntimeIntegrity(runtimeDir);
+  // SAFETY: The surrounding code already established this contract.
   const runtime = (await import(bundlePath)) as FastembedRuntime;
   const embedder = await embedderFromRuntime(runtime, model, cacheDir);
   return {

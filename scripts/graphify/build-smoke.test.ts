@@ -29,6 +29,7 @@ function processIsLive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
     throw error;
   }
@@ -53,14 +54,7 @@ async function stopFixtureProcess(pidPath: string): Promise<void> {
   }
 }
 
-function createScratchBundle(
-  root: string,
-  smokePasses: boolean,
-): {
-  dist: string;
-  pidPath: string;
-  fixturePathRecord: string;
-} {
+function createScratchBundle(root: string, smokePasses: boolean) {
   const dist = join(root, "dist");
   const pidPath = join(root, "server.pid");
   const fixturePathRecord = join(root, "fixture-path");

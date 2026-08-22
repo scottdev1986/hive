@@ -8,6 +8,7 @@ const SERVER = join(import.meta.dir, "protocol-kimi-fake-server.ts");
 
 function connect(): Promise<AcpProviderSession> {
   const adapter = new KimiAcpAdapter();
+  // SAFETY: The test owns this value and its fields.
   return adapter.connect({
     provider: "kimi",
     executable: process.execPath,

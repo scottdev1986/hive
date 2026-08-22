@@ -15,8 +15,8 @@ const CONTROL_META_KEY = "queen-provider-control";
 const ControlStateSchema = z.strictObject({
   version: z.literal(1),
   // The revision and the change state are handed to clients and compared against what they send back, so both are the wire's own: a value this store accepted but the wire rejects could never be echoed to a client.
-  revision: QueenProviderChangeSchema.shape.revision,
-  state: QueenProviderChangeSchema.shape.state,
+  revision: QueenProviderChangeSchema["shape"].revision,
+  state: QueenProviderChangeSchema["shape"].state,
   desired: CapabilityProviderSchema.nullable(),
   prior: CapabilityProviderSchema.nullable(),
   operationId: z.string().nullable(),
@@ -54,6 +54,7 @@ export class QueenProviderControlStore {
   ) {}
 
   read(): QueenProviderControlState {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query("SELECT value FROM meta WHERE key = ?")
       .get(CONTROL_META_KEY) as { value: string } | null;

@@ -10,12 +10,13 @@ import {
   MAIL_MAX_ATTEMPTS,
 } from "../../src/schemas/mail";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 const T0 = new Date("2026-08-01T12:00:00.000Z");
 const at = (seconds: number): string =>
   new Date(T0.getTime() + seconds * 1_000).toISOString();
 
-const envelope = (overrides: Record<string, unknown> = {}) => ({
+const envelope = (overrides: JsonObject = {}) => ({
   recipient: "ada",
   sender: "queen",
   lane: "control" as const,
@@ -30,7 +31,7 @@ const envelope = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const rig = (): { db: HiveDatabase; store: MailStore } => {
+const rig = () => {
   const db = new HiveDatabase(":memory:");
   return { db, store: new MailStore(db) };
 };
@@ -176,12 +177,14 @@ describe("mail_events", () => {
     for (let index = 0; index < MAIL_CONTROL_LANE_CAPACITY; index += 1) {
       store.publish(envelope({ idempotencyKey: `queen-${index}` }));
     }
+    // SAFETY: The test owns this value and its fields.
     const before = db.database
       .query("SELECT COUNT(*) AS total FROM mail_events")
       .get() as { total: number };
     expect(() =>
       store.publish(envelope({ idempotencyKey: "queen-overflow" })),
     ).toThrow(MailControlLaneFullError);
+    // SAFETY: The test owns this value and its fields.
     const after = db.database
       .query("SELECT COUNT(*) AS total FROM mail_events")
       .get() as { total: number };
@@ -434,7 +437,7 @@ describe("mail_dead_letters", () => {
 });
 
 describe("standing conditions", () => {
-  const standing = (overrides: Record<string, unknown> = {}) =>
+  const standing = (overrides: JsonObject = {}) =>
     envelope({
       sender: "hive-quota",
       lane: "work",

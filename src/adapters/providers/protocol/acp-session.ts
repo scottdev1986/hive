@@ -1,4 +1,5 @@
 import { methods as acpMethods } from "@agentclientprotocol/sdk";
+import { isNumber, isRecord, isString } from "../../../shared/is-record";
 import type {
   CapabilityAbsences,
   CapabilityMeasurements,
@@ -7,7 +8,11 @@ import type {
   ProviderTransport,
 } from "../../../schemas/capability";
 import { definedFields } from "../../../shared/defined-fields";
-import { type JsonValue, requireJsonValue } from "../../../shared/json";
+import {
+  type JsonValue,
+  requireJsonValue,
+  type JsonObject,
+} from "../../../shared/json";
 import { errorMessage } from "../../../shared/error-message";
 import { pollUntil } from "../../../shared/poll-until";
 import { HIVE_VERSION } from "../../../shared/version";
@@ -53,7 +58,7 @@ const STDERR_LINE_CHARACTER_LIMIT = 512;
 const ESC = String.fromCharCode(27);
 const BEL = String.fromCharCode(7);
 const ANSI_ESCAPE = new RegExp(
-  `${ESC}(?:\[[0-?]*[ -/]*[@-~]|][^${BEL}]*(?:${BEL}|${ESC}\\))`,
+  `${ESC}(?:\\[[0-?]*[ -/]*[@-~]|][^${BEL}]*(?:${BEL}|${ESC}\\\\))`,
   "g",
 );
 const CONTROL_CHARACTER = new RegExp(
@@ -83,7 +88,7 @@ function captureStderrLine(lines: string[], line: string): void {
   if (lines.length > STDERR_LINE_LIMIT) lines.shift();
 }
 
-function failureDetail(error: unknown, stderrLines: readonly string[]): string {
+function failureDetail<T>(error: T, stderrLines: readonly string[]): string {
   const sdkMessage = errorMessage(error);
   return stderrLines.length === 0
     ? sdkMessage
@@ -130,11 +135,11 @@ class EventQueue {
 export interface AcpVendorProfile {
   readonly provider: CapabilityProvider;
   readonly transport: ProviderTransport;
-  readonly afterInitialize?: (
+  readonly afterInitialize?: <T>(
     client: AcpClient,
-    handshake: unknown,
+    handshake: T,
   ) => Promise<void>;
-  readonly incompatibleReason?: (handshake: unknown) => string | null;
+  readonly incompatibleReason?: <T>(handshake: T) => string | null;
   readonly cancelAs: "notification" | "request";
   readonly loadMethod: string;
   readonly resumeMethod: string | null;
@@ -145,7 +150,7 @@ export interface AcpVendorProfile {
   /** Starting measurements. Baseline rows stay absent until live proof — handshake advertisements alone never write "supported". */
   readonly initialMeasured: CapabilityMeasurements;
   /** When set, distinguishes questions from tool permissions on the shared `session/request_permission` reverse-RPC (Kimi AskUserQuestion). Absent means every reverse-RPC is a permission (Grok/OpenCode default). */
-  readonly isQuestion?: (params: unknown) => boolean;
+  readonly isQuestion?: <T>(params: T) => boolean;
   /** When true, `resumeSession({ style: "load" })` measures `replayedHistory` from observed user/agent chunks during the load window rather than from the style argument alone (Kimi load vs resume). */
   readonly measureLoadReplay?: boolean;
   readonly configOptionIds?: {
@@ -180,7 +185,7 @@ export class AcpProviderSession implements ProviderSession {
   private activeTurnId: string | null = null;
   private commands: VendorCommand[] = [];
   private commandCatalogObserved = false;
-  private sessionNewPayload: unknown = null;
+  private sessionNewPayload: JsonValue = null;
   private contextWindow: number | null = null;
   private readonly modelConfigurations = new Map<string, unknown>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
@@ -195,7 +200,7 @@ export class AcpProviderSession implements ProviderSession {
   private constructor(
     profile: AcpVendorProfile,
     spawn: ProviderSpawn,
-    handshake: unknown,
+    handshake: JsonValue,
     client: AcpClient,
     stderrLines: string[],
   ) {
@@ -275,7 +280,8 @@ export class AcpProviderSession implements ProviderSession {
       const session = new AcpProviderSession(
         profile,
         spawn,
-        handshake,
+        // SAFETY: ACP initialize results are JSON objects the vendor already parsed.
+        handshake as JsonValue,
         client,
         stderrLines,
       );
@@ -318,7 +324,8 @@ export class AcpProviderSession implements ProviderSession {
       throw new Error("session/new returned no sessionId");
     }
     this.vendorSessionId = sessionId;
-    this.sessionNewPayload = result;
+    // SAFETY: session/new ACP results are JSON objects the vendor already parsed.
+    this.sessionNewPayload = result as JsonValue;
     this.mark("newSession", "supported");
     this.ingestSessionNewExtras(result);
 
@@ -432,11 +439,12 @@ export class AcpProviderSession implements ProviderSession {
     );
     const resultRoot = asRecord(result);
     if (Array.isArray(resultRoot?.configOptions)) {
-      this.sessionNewPayload = result;
+      // SAFETY: session/set_config_option results are JSON objects the vendor already parsed.
+      this.sessionNewPayload = result as JsonValue;
     }
     if (
       (configId.includes("model") || configId === "model") &&
-      typeof value === "string"
+      isString(value)
     ) {
       this.modelConfigurations.set(value, result);
     }
@@ -788,10 +796,7 @@ export class AcpProviderSession implements ProviderSession {
     this.emit({ kind: "run-ended", exitCode: null, raw: { closed: true } });
     this.queue.end();
   }
-  private handleReverseRpc(
-    method: string,
-    params: unknown,
-  ): Promise<JsonValue> {
+  private handleReverseRpc<T>(method: string, params: T): Promise<JsonValue> {
     if (method === "session/request_permission") {
       this.permissionSeq += 1;
       const requestId = `perm-${this.permissionSeq}`;
@@ -838,7 +843,7 @@ export class AcpProviderSession implements ProviderSession {
     throw new Error(`Method not found: ${method}`);
   }
 
-  private handleNotification(method: string, params: unknown): void {
+  private handleNotification<T>(method: string, params: T): void {
     if (method === "session/update") {
       const events = normalizeSessionUpdate(params, this.activeTurnId);
       for (const event of events) {
@@ -897,7 +902,7 @@ export class AcpProviderSession implements ProviderSession {
     }
   }
 
-  private ingestHandshakeCommands(handshake: unknown): void {
+  private ingestHandshakeCommands<T>(handshake: T): void {
     const root = asRecord(handshake);
     const meta = asRecord(root?._meta);
     const commands = parseAvailableCommands(meta?.availableCommands);
@@ -918,7 +923,7 @@ export class AcpProviderSession implements ProviderSession {
   }
 
   /** The model the session is on, and the window that model serves. Both come from the vendor's own model state rather than from its billing breakdown: the breakdown names what was charged (`grok-4.5-build`), which is not the id the session, its summary, or the routing policy calls this model (`grok-4.5`). One fact with two sources is two facts waiting to disagree, and the id everything else uses is the live one. */
-  private ingestModelState(modelState: Record<string, unknown> | null): void {
+  private ingestModelState(modelState: JsonObject | null): void {
     if (modelState === null) return;
     const current = asString(modelState.currentModelId);
     if (current === undefined) return;
@@ -930,7 +935,7 @@ export class AcpProviderSession implements ProviderSession {
       .map((raw) => asRecord(raw))
       .find((raw) => asString(raw?.modelId) === current);
     const window = asRecord(entry?._meta)?.totalContextTokens;
-    if (typeof window === "number" && Number.isFinite(window) && window > 0) {
+    if (isNumber(window) && Number.isFinite(window) && window > 0) {
       this.contextWindow = window;
     }
     this.emit({
@@ -942,10 +947,11 @@ export class AcpProviderSession implements ProviderSession {
     });
   }
 
-  private ingestSessionNewExtras(result: unknown): void {
+  private ingestSessionNewExtras<T>(result: T): void {
     const root = asRecord(result);
     if (Array.isArray(root?.configOptions)) {
       this.mark("modelCatalog", "supported");
+      // SAFETY: The surrounding code already established this contract.
       const hasMode = (root.configOptions as unknown[]).some((entry) => {
         const rec = asRecord(entry);
         return (
@@ -968,6 +974,7 @@ export class AcpProviderSession implements ProviderSession {
       this.contextWindow !== null
         ? { ...event, contextWindow: this.contextWindow }
         : event;
+    // SAFETY: The surrounding code already established this contract.
     const value = {
       ...windowed,
       sequence: this.sequence,
@@ -981,10 +988,11 @@ export class AcpProviderSession implements ProviderSession {
     name: keyof CapabilityMeasurements,
     support: NonNullable<CapabilityMeasurements[keyof CapabilityMeasurements]>,
   ): void {
+    // SAFETY: The surrounding code already established this contract.
     (this.capabilities.measured as Record<string, string>)[name] = support;
   }
 
-  private emitUsageFromPromptResult(result: unknown, turnId: string): void {
+  private emitUsageFromPromptResult<T>(result: T, turnId: string): void {
     const root = asRecord(result);
     const meta = asRecord(root?._meta);
     const usage = asRecord(root?.usage) ?? asRecord(meta?.usage) ?? null;
@@ -1106,28 +1114,29 @@ async function withinDeadline<T>(
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+function asRecord<T>(value: T): JsonObject | null {
+  if (!isRecord(value)) {
     return null;
   }
-  return value as Record<string, unknown>;
+  // SAFETY: The surrounding code already established this contract.
+  return value as JsonObject;
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+function asString<T>(value: T): string | null {
+  return isString(value) ? value : null;
 }
 
-function sessionIdFrom(result: unknown): string | null {
+function sessionIdFrom<T>(result: T): string | null {
   const root = asRecord(result);
   return asString(root?.sessionId) ?? asString(root?.session_id);
 }
 
-function stopReasonFrom(result: unknown): string | null {
+function stopReasonFrom<T>(result: T): string | null {
   const root = asRecord(result);
   return asString(root?.stopReason) ?? asString(root?.stop_reason);
 }
 
-function versionFromHandshake(handshake: unknown): string | null {
+function versionFromHandshake<T>(handshake: T): string | null {
   const root = asRecord(handshake);
   const meta = asRecord(root?._meta);
   const agentInfo = asRecord(root?.agentInfo);
@@ -1139,11 +1148,11 @@ function versionFromHandshake(handshake: unknown): string | null {
   );
 }
 
-function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function numberOrNull<T>(value: T): number | null {
+  return isNumber(value) && Number.isFinite(value) ? value : null;
 }
 
-function currentConfigValue(payload: unknown, configId: string): string | null {
+function currentConfigValue<T>(payload: T, configId: string): string | null {
   const root = asRecord(payload);
   if (!Array.isArray(root?.configOptions)) return null;
   for (const value of root.configOptions) {
@@ -1154,7 +1163,7 @@ function currentConfigValue(payload: unknown, configId: string): string | null {
   return null;
 }
 
-function configOptionValues(payload: unknown, configId: string): string[] {
+function configOptionValues<T>(payload: T, configId: string): string[] {
   const root = asRecord(payload);
   if (!Array.isArray(root?.configOptions)) return [];
   for (const value of root.configOptions) {

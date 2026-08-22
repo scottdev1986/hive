@@ -205,10 +205,12 @@ export async function assertSpawnMemoryIndexAccounting(): Promise<void> {
       /knowledgeIndexData: ("(?:[^"\\]|\\.)*")/,
     )?.[1];
     expect(encoded).toBeDefined();
+    // SAFETY: The test owns this value and its fields.
     const payload = JSON.parse(encoded ?? '""') as string;
     const delivered = payload
       .split(/\r?\n/)
       .filter((line) => line.startsWith("- [")).length;
+    // SAFETY: The test owns this value and its fields.
     const records = JSON.parse(
       prompt.match(/records: (\{.*?\})/)?.[1] ?? "{}",
     ) as { omitted?: number };

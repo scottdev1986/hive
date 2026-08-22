@@ -44,6 +44,7 @@ function importsOf(sources: Sources, file: string): string[] {
   const found: string[] = [];
   for (const match of text.matchAll(/from\s+"(\.[^"]+)"/g)) {
     const directory = file.split("/").slice(0, -1);
+    // SAFETY: This regex always captures the relative import path in group 1.
     for (const segment of (match[1] as string).split("/")) {
       if (segment === ".") continue;
       if (segment === "..") directory.pop();
@@ -57,6 +58,7 @@ function importsOf(sources: Sources, file: string): string[] {
   }
   for (const match of text.matchAll(/import\("(\.[^"]+)"\)/g)) {
     const directory = file.split("/").slice(0, -1);
+    // SAFETY: This regex always captures the relative dynamic-import path in group 1.
     for (const segment of (match[1] as string).split("/")) {
       if (segment === ".") continue;
       if (segment === "..") directory.pop();
@@ -122,6 +124,7 @@ function unownedDaemonRequests(sources: Sources): string[] {
     for (const match of text.matchAll(
       /http:\/\/127\.0\.0\.1:\$\{[^}]*\}([^`"'\s$\\]*)/g,
     )) {
+      // SAFETY: This regex always captures the interpolated URL path in group 1.
       const path = match[1] as string;
       if (SEPARATELY_OWNED_PROTOCOLS.includes(path)) continue;
       found.push(`${file} ${path === "" ? "(interpolated path)" : path}`);
@@ -202,7 +205,7 @@ const COMPILED_ARTICLE_WRITER = "src/memory-service/write-service.ts";
  * indexing, and widening the invariant to satisfy the rule that guards it is
  * the rule defeating itself.
  */
-const DIRECT_WRITER_EXCEPTIONS: Readonly<Record<string, string>> = {
+const DIRECT_WRITER_EXCEPTIONS = {
   // Bootstrap writer: no index exists yet, indexing deferred via reindexMemory.
   "src/cli/init.ts": "hive init runs before any daemon or index exists",
   // Drives the file write and the index upsert as SEPARATE steps against its
@@ -215,7 +218,7 @@ const DIRECT_WRITER_EXCEPTIONS: Readonly<Record<string, string>> = {
   // no index, while the live branch supplies the daemon's writer.
   "src/memory-service/consolidate.ts":
     "offline consolidation has no index in process",
-};
+} satisfies Readonly<Record<string, string>>;
 
 /** Modules that write a compiled article without being the writer or an
  * acknowledged exception. */
@@ -231,6 +234,7 @@ function unownedArticleWriters(sources: Sources): string[] {
     for (const match of text.matchAll(
       /import\s*\{([^}]*)\}\s*from\s*"[^"]*\/store"/g,
     )) {
+      // SAFETY: This regex always captures the named-import list in group 1.
       if (/\bwriteMemoryFact\b/.test(match[1] as string)) found.push(file);
     }
   }
@@ -294,7 +298,7 @@ describe("R2 — who may write a compiled article", () => {
  * Directories under `src/` that are not named here (config, release, skills,
  * update-service) are unowned by this rule and neither constrain nor are constrained.
  */
-const LAYER_MAY_IMPORT: Readonly<Record<string, readonly string[]>> = {
+const LAYER_MAY_IMPORT = {
   shared: [],
   persistence: ["shared"],
   schemas: ["shared"],
@@ -327,14 +331,18 @@ const LAYER_MAY_IMPORT: Readonly<Record<string, readonly string[]>> = {
     "shared",
     "daemon",
   ],
-};
+} satisfies Readonly<Record<string, readonly string[]>>;
+
+function isLayer(name: string): name is keyof typeof LAYER_MAY_IMPORT {
+  return Object.hasOwn(LAYER_MAY_IMPORT, name);
+}
 
 /** The named layer a module belongs to, or null when the rule does not own it. */
-function layerOf(path: string): string | null {
+function layerOf(path: string): keyof typeof LAYER_MAY_IMPORT | null {
   const parts = path.split("/");
   if (parts[0] !== "src" || parts.length < 3) return null;
-  const directory = parts[1] as string;
-  return directory in LAYER_MAY_IMPORT ? directory : null;
+  const directory = parts[1];
+  return directory !== undefined && isLayer(directory) ? directory : null;
 }
 
 /** Every edge the layer map forbids, as `from -> to`, sorted. */
@@ -346,7 +354,7 @@ function forbiddenLayerEdges(sources: Sources): string[] {
     for (const target of importsOf(sources, file)) {
       const to = layerOf(target);
       if (to === null || to === from) continue;
-      if ((LAYER_MAY_IMPORT[from] as readonly string[]).includes(to)) continue;
+      if (LAYER_MAY_IMPORT[from].some((layer) => layer === to)) continue;
       found.add(`${file} -> ${target}`);
     }
   }
@@ -430,9 +438,11 @@ function layerSpanningCycles(sources: Sources): string[][] {
     stack.push(root);
     onStack.add(root);
     while (work.length > 0) {
+      // SAFETY: The loop condition establishes a final work frame.
       const frame = work.at(-1) as { node: string; edge: number };
       const edges = importsOf(sources, frame.node);
       if (frame.edge < edges.length) {
+        // SAFETY: The edge bound check establishes an entry at frame.edge.
         const next = edges[frame.edge] as string;
         frame.edge += 1;
         if (!index.has(next)) {
@@ -443,6 +453,7 @@ function layerSpanningCycles(sources: Sources): string[][] {
           onStack.add(next);
           work.push({ node: next, edge: 0 });
         } else if (onStack.has(next)) {
+          // SAFETY: Both nodes were indexed before they entered the active Tarjan stack.
           low.set(
             frame.node,
             Math.min(low.get(frame.node) as number, index.get(next) as number),
@@ -453,6 +464,7 @@ function layerSpanningCycles(sources: Sources): string[][] {
       work.pop();
       const parent = work.at(-1);
       if (parent !== undefined) {
+        // SAFETY: Active child and parent frames both have initialized low-link values.
         low.set(
           parent.node,
           Math.min(
@@ -464,6 +476,7 @@ function layerSpanningCycles(sources: Sources): string[][] {
       if (low.get(frame.node) === index.get(frame.node)) {
         const component: string[] = [];
         for (;;) {
+          // SAFETY: Tarjan leaves the component root on the stack until this pop loop reaches it.
           const member = stack.pop() as string;
           onStack.delete(member);
           component.push(member);
@@ -480,6 +493,7 @@ function layerSpanningCycles(sources: Sources): string[][] {
   };
 
   for (const file of sources.keys()) if (!index.has(file)) connect(file);
+  // SAFETY: Only non-empty strongly connected components are pushed above.
   return components.sort((a, b) =>
     (a[0] as string).localeCompare(b[0] as string),
   );

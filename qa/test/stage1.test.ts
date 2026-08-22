@@ -58,12 +58,16 @@ const emptyDraft = (): Draft => ({
   efforts: new Map(),
 });
 
+interface FakeProviderStates {
+  [provider: string]: string;
+}
+
 class FakeRig {
   route = "shell";
   revision = 1;
   updatedAtTick = 0;
   observedTick = 0;
-  providers: Record<string, string> = { alpha: "enabled", beta: "enabled" };
+  providers: FakeProviderStates = { alpha: "enabled", beta: "enabled" };
   knownProviders: string[] = ["alpha", "beta"];
   categoriesPolicy: Record<string, { mode: string; candidates: Candidate[] }> =
     {};
@@ -94,6 +98,7 @@ class FakeRig {
   seedK0(): void {
     this.categoriesPolicy[CATEGORY] = {
       mode: "user-weighted",
+      // SAFETY: The test owns this value and its fields.
       candidates: [{ ...K0, weight: 1, effort: EFFORTS[0]?.effort as unknown }],
     };
   }
@@ -130,6 +135,7 @@ class FakeRig {
       ...(this.categoriesPolicy[this.currentCategory]?.candidates ?? []),
     ];
     for (const [key, on] of this.draft.members) {
+      // SAFETY: The test owns this value and its fields.
       const [provider, model] = key.split("/") as [string, string];
       const index = base.findIndex(
         (candidate) => this.key(candidate.provider, candidate.model) === key,
@@ -139,6 +145,7 @@ class FakeRig {
           provider,
           model,
           weight: 1,
+          // SAFETY: The test owns this value and its fields.
           effort: EFFORTS[0]?.effort as unknown,
         });
       }
@@ -774,7 +781,9 @@ describe("T1-05 mode and effort write through", () => {
     const rig = new FakeRig();
     rig.seedK0();
     rig.catalog = [
+      // SAFETY: The test owns this value and its fields.
       rig.catalog[0] as (typeof rig.catalog)[number],
+      // SAFETY: The test owns this value and its fields.
       { ...K1, effortOptions: [EFFORTS[0] as (typeof EFFORTS)[number]] },
     ];
     const row = await rowT105ModeEffortWriteThrough(
@@ -954,6 +963,7 @@ describe("the stage as a suite", () => {
 
   test("rows needing a second model go NO MEASUREMENT when the catalog offers one", async () => {
     const rig = new FakeRig();
+    // SAFETY: The test owns this value and its fields.
     rig.catalog = [rig.catalog[0] as (typeof rig.catalog)[number]];
     const rows = await runStage1Rows(ctx(rig));
     const byId = new Map(rows.map((row) => [row.id, row.status]));

@@ -4,7 +4,11 @@ import { claudeQuestionText } from "./claude-stream-questions";
 import { asString } from "./claude-stream-wire";
 
 /** Claude Code names its tools rather than classifying them, so the kind is read off the name. An unrecognized tool is left unclassified instead of being called `other`, which would claim the vendor said something it did not. */
-const CLAUDE_TOOL_KINDS: Record<string, ToolKind> = {
+interface ClaudeToolKindTable {
+  readonly [toolName: string]: ToolKind | undefined;
+}
+
+const CLAUDE_TOOL_KINDS: ClaudeToolKindTable = {
   Read: "read",
   NotebookRead: "read",
   Edit: "edit",
@@ -25,7 +29,7 @@ export function claudeToolKind(toolName: string): ToolKind | null {
   return CLAUDE_TOOL_KINDS[toolName] ?? null;
 }
 
-export function claudeToolLocations(input: unknown): readonly string[] {
+export function claudeToolLocations<T>(input: T): readonly string[] {
   if (!isRecord(input)) return [];
   const path =
     asString(input.file_path) ??
@@ -35,9 +39,9 @@ export function claudeToolLocations(input: unknown): readonly string[] {
 }
 
 /** The file changes a Claude tool call describes. Edit reports the fragment it is replacing rather than the whole file, so the change carries that fragment: a patch of the part that changed is honest about what was reported, where padding it out to a whole-file diff would not be. */
-export function claudeToolChanges(
+export function claudeToolChanges<T>(
   toolName: string,
-  input: unknown,
+  input: T,
 ): readonly ToolFileChange[] {
   if (!isRecord(input)) return [];
   const path = asString(input.file_path);
@@ -68,10 +72,7 @@ export function claudeToolChanges(
 }
 
 /** A line a person can read, rather than the call's arguments as JSON. The whole input is still carried on the event's `raw`, so nothing is lost by choosing the readable field here. */
-export function claudeToolDetail(
-  toolName: string,
-  input: unknown,
-): string | null {
+export function claudeToolDetail<T>(toolName: string, input: T): string | null {
   if (input === undefined) return null;
   if (!isRecord(input)) return JSON.stringify(input);
   const readable =

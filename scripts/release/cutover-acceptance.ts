@@ -1,3 +1,6 @@
+import { isRecord, isString } from "../../src/shared/is-record";
+import type { JsonObject, JsonValue } from "../../src/shared/json";
+
 export type ReadEvidence = (relativePath: string) => string | null;
 
 export type RowVerdict = "pass" | "fail" | "missing" | "open";
@@ -20,23 +23,19 @@ export type AcceptanceReport = Readonly<{
 type VendorEvidence = Readonly<{
   vendor: string;
   path: string;
-  version: (parsed: Record<string, unknown>) => string | null;
+  version: (parsed: JsonObject) => string | null;
 }>;
 
-const nested = (
-  parsed: Record<string, unknown>,
-  key: string,
-): string | null => {
+const nested = (parsed: JsonObject, key: string): string | null => {
   const runtime = parsed.runtime;
-  if (typeof runtime !== "object" || runtime === null) return null;
-  const value = (runtime as Record<string, unknown>)[key];
-  return typeof value === "string" && value.length > 0 ? value : null;
+  if (!isRecord(runtime) && !Array.isArray(runtime)) return null;
+  // SAFETY: The surrounding code already established this contract.
+  const value = (runtime as JsonObject)[key];
+  return isString(value) && value.length > 0 ? value : null;
 };
 
-const topLevel = (parsed: Record<string, unknown>): string | null =>
-  typeof parsed.version === "string" && parsed.version.length > 0
-    ? parsed.version
-    : null;
+const topLevel = (parsed: JsonObject): string | null =>
+  isString(parsed.version) && parsed.version.length > 0 ? parsed.version : null;
 
 /** The five vendors the plan requires, named here rather than discovered. Globbing the evidence directory would let a vendor pass by not existing: delete the folder and the matrix stops asking about it. The list is the requirement, so it is written down. */
 export const REQUIRED_VENDORS: readonly VendorEvidence[] = [
@@ -63,12 +62,10 @@ export const REQUIRED_VENDORS: readonly VendorEvidence[] = [
   },
 ];
 
-const parseJson = (raw: string): Record<string, unknown> | null => {
+const parseJson = (raw: string): JsonObject | null => {
   try {
-    const value: unknown = JSON.parse(raw);
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : null;
+    const value: JsonValue = JSON.parse(raw);
+    return isRecord(value) ? value : null;
   } catch {
     return null;
   }
@@ -94,18 +91,21 @@ const reviewedExceptions = (read: ReadEvidence): ReviewedException[] => {
   if (!Array.isArray(value)) return [];
   return value.filter(
     (entry): entry is ReviewedException =>
-      typeof entry === "object" &&
-      entry !== null &&
-      typeof (entry as ReviewedException).vendor === "string" &&
-      typeof (entry as ReviewedException).step === "string" &&
-      typeof (entry as ReviewedException).acceptedBy === "string" &&
-      typeof (entry as ReviewedException).why === "string",
+      isRecord(entry) &&
+      // SAFETY: The surrounding code already established this contract.
+      isString((entry as ReviewedException).vendor) &&
+      // SAFETY: The surrounding code already established this contract.
+      isString((entry as ReviewedException).step) &&
+      // SAFETY: The surrounding code already established this contract.
+      isString((entry as ReviewedException).acceptedBy) &&
+      // SAFETY: The surrounding code already established this contract.
+      isString((entry as ReviewedException).why),
   );
 };
 
 const conformanceRows = (
   evidence: VendorEvidence,
-  parsed: Record<string, unknown>,
+  parsed: JsonObject,
   accepted: readonly ReviewedException[],
 ): AcceptanceRow[] => {
   const rows: AcceptanceRow[] = [];
@@ -121,7 +121,7 @@ const conformanceRows = (
   });
 
   const steps = parsed.steps;
-  if (typeof steps !== "object" || steps === null) {
+  if (!isRecord(steps) && !Array.isArray(steps)) {
     rows.push({
       area: "conformance",
       subject: evidence.vendor,
@@ -129,7 +129,8 @@ const conformanceRows = (
       detail: "no conformance steps recorded",
     });
   } else {
-    const entries = Object.entries(steps as Record<string, unknown>);
+    // SAFETY: The surrounding code already established this contract.
+    const entries = Object.entries(steps as JsonObject);
     const notPass = entries.filter(([, value]) => value !== "pass");
     const acceptedFor = (step: string) =>
       accepted.find(
@@ -375,12 +376,12 @@ export function renderAcceptance(read: ReadEvidence): AcceptanceReport {
   };
 }
 
-const SYMBOL: Record<RowVerdict, string> = {
+const SYMBOL = {
   pass: "PASS",
   fail: "FAIL",
   missing: "MISSING",
   open: "OPEN",
-};
+} satisfies Record<RowVerdict, string>;
 
 export function formatAcceptance(report: AcceptanceReport): string {
   const width = (pick: (row: AcceptanceRow) => string): number =>

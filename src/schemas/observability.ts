@@ -14,7 +14,7 @@ export const ObservabilitySourceSchema = z.enum([
 ]);
 export type ObservabilitySource = z.infer<typeof ObservabilitySourceSchema>;
 
-const CorrelationShape = {
+const CorrelationFields = {
   subject: z.string().min(1).max(128).nullable(),
   agentId: z.string().min(1).max(128).nullable(),
   provider: CapabilityProviderSchema.nullable(),
@@ -35,7 +35,7 @@ export const ObservabilityReportSchema = z
     source: ObservabilitySourceSchema,
     operation: z.string().trim().min(1).max(256),
     reason: z.string().trim().min(1).max(32_768),
-    ...CorrelationShape,
+    ...CorrelationFields,
   })
   .readonly();
 export type ObservabilityReport = z.infer<typeof ObservabilityReportSchema>;
@@ -44,7 +44,7 @@ export type ObservabilityReport = z.infer<typeof ObservabilityReportSchema>;
  * clients. `recordedAt` is daemon time; `occurredAt` remains source time. */
 export const ObservabilityEventSchema = z
   .strictObject({
-    ...ObservabilityReportSchema.unwrap().shape,
+    ...ObservabilityReportSchema.unwrap()["shape"],
     recordedAt: z.iso.datetime({ offset: true }),
   })
   .readonly();

@@ -2,6 +2,7 @@ import type { NormalizedProviderEvent } from "../adapters/providers/protocol/typ
 import type { TokenUsageEventIngest } from "../schemas/token-usage-schema";
 import { clampPct } from "./context-occupancy";
 import { protocolTokenEvent } from "./token-usage";
+import { isNumber } from "../shared/is-record";
 
 export type AgentSessionFactPatch = {
   liveModel?: string;
@@ -28,14 +29,14 @@ export function agentFactsFromProtocolEvent(
     case "usage-updated": {
       const patch: AgentSessionFactPatch = {};
       if (
-        typeof event.contextWindow === "number" &&
+        isNumber(event.contextWindow) &&
         Number.isFinite(event.contextWindow) &&
         event.contextWindow > 0
       ) {
         patch.contextWindow = Math.floor(event.contextWindow);
       }
       if (
-        typeof event.contextPercent === "number" &&
+        isNumber(event.contextPercent) &&
         Number.isFinite(event.contextPercent)
       ) {
         patch.contextPct = clampPct(event.contextPercent);

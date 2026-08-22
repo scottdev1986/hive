@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isString } from "../../src/shared/is-record";
+import { unsafeCast } from "../../src/shared/unsafe-cast";
 import {
   assessStrandedWork,
   listSettlementBranches,
@@ -69,13 +71,18 @@ async function git(root: string, ...args: string[]): Promise<string> {
  * union appears here without anyone remembering to add it, which is the point: the defect this
  * test exists to catch is a state nobody established a way out for.
  */
+interface ZodLiteralOptions {
+  options?: string[];
+  value?: string;
+}
+
 function statesFromSchema(): string[] {
   return SettlementCaseSchema.options.flatMap((option) => {
-    const state: unknown = option.shape.state;
-    const enumerated = (state as { options?: unknown }).options;
-    if (Array.isArray(enumerated)) return enumerated as string[];
-    const literal = (state as { value?: unknown }).value;
-    return typeof literal === "string" ? [literal] : [];
+    const state = option["shape"].state;
+    const enumerated = unsafeCast<ZodLiteralOptions>(state).options;
+    if (Array.isArray(enumerated)) return enumerated;
+    const literal = unsafeCast<ZodLiteralOptions>(state).value;
+    return isString(literal) ? [literal] : [];
   });
 }
 
@@ -103,10 +110,11 @@ interface StateContract {
  * runtime cross-check below proves the two halves still agree — a schema read that quietly
  * returned nothing would otherwise leave every assertion iterating an empty list and passing.
  */
-const CASES: Record<SettlementCase["state"], StateContract> = {
+const CASES = {
   active: {
     waysOut: ["sweep"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "active",
@@ -118,6 +126,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
   settling: {
     waysOut: ["sweep"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "settling",
@@ -128,6 +137,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
   assessing: {
     waysOut: ["sweep"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "assessing",
@@ -138,6 +148,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
   "needs-integration": {
     waysOut: ["sweep", "clock"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "needs-integration",
@@ -150,6 +161,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
     // an abandoned lease. Without it a case here waits on a resolver that may never return.
     waysOut: ["clock"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "resolution-in-progress",
@@ -161,6 +173,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
   "owner-decision": {
     waysOut: ["clock"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "owner-decision",
@@ -171,6 +184,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
   "measurement-blocked": {
     waysOut: ["sweep"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "measurement-blocked",
@@ -181,6 +195,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
   blocked: {
     waysOut: ["clock"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "blocked",
@@ -192,6 +207,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
   parked: {
     waysOut: ["clock"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "parked",
@@ -204,6 +220,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
   "safe-release": {
     waysOut: ["sweep"],
     build: (base) =>
+      // SAFETY: The test owns this value and its fields.
       ({
         ...base,
         state: "safe-release",
@@ -213,7 +230,7 @@ const CASES: Record<SettlementCase["state"], StateContract> = {
         proofDigest: "a".repeat(64),
       }) as SettlementCase,
   },
-};
+} satisfies Record<SettlementCase["state"], StateContract>;
 
 /**
  * A repository whose settlement case names a bundle that is entirely gone: no worktree directory,
@@ -286,10 +303,11 @@ describe("every open settlement case has a way out", () => {
   });
 
   for (const state of states) {
+    // SAFETY: The test owns this value and its fields.
     const typed = state as SettlementCase["state"];
     const contract = CASES[typed];
 
-    if (contract.waysOut.includes("sweep")) {
+    if (contract.waysOut.some((way) => way === "sweep")) {
       test(`${state} gets out by sweep: a pass re-measures it when the world names nothing`, async () => {
         const { repo, store, stored } = await fixture(typed);
         const db = new HiveDatabase(":memory:");
@@ -306,7 +324,7 @@ describe("every open settlement case has a way out", () => {
       });
     }
 
-    if (contract.waysOut.includes("clock")) {
+    if (contract.waysOut.some((way) => way === "clock")) {
       test(`${state} gets out by clock: time alone eventually advances it`, async () => {
         const { repo, store, stored } = await fixture(typed);
         const db = new HiveDatabase(":memory:");

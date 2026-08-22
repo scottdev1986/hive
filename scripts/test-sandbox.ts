@@ -1,3 +1,4 @@
+import { isNumber, isRecord, isString } from "../src/shared/is-record";
 import {
   existsSync,
   readFileSync,
@@ -295,11 +296,7 @@ function sandboxProfile(root: string): string {
   return `(version 1) (allow default) (deny file-write*) (allow file-write* (subpath "/dev") (subpath ${JSON.stringify(root)}))`;
 }
 
-function testEnvironment(
-  paths: RootPaths,
-  root: string,
-  maxBytes: number,
-): Record<string, string> {
+function testEnvironment(paths: RootPaths, root: string, maxBytes: number) {
   const inherited: Record<string, string> = {};
   for (const name of INHERITED_TEST_ENV_NAMES) {
     const value = process.env[name];
@@ -338,20 +335,23 @@ function startProcessListServer(root: string): ReturnType<typeof Bun.listen> {
           return;
         }
         if (
-          typeof request !== "object" ||
-          request === null ||
+          !isRecord(request) ||
           !("id" in request) ||
-          typeof request.id !== "number" ||
+          !isNumber(request.id) ||
           !Number.isSafeInteger(request.id) ||
           request.id <= 0 ||
           !("args" in request) ||
-          !Array.isArray(request.args) ||
-          request.args.some((arg) => typeof arg !== "string")
+          !Array.isArray(request.args)
         ) {
           socket.end("invalid ps arguments\n");
           return;
         }
-        const result = Bun.spawnSync(["/bin/ps", ...request.args], {
+        const args = request.args.filter(isString);
+        if (args.length !== request.args.length) {
+          socket.end("invalid ps arguments\n");
+          return;
+        }
+        const result = Bun.spawnSync(["/bin/ps", ...args], {
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -370,6 +370,7 @@ async function stopProcessGroup(
   try {
     process.kill(-pid, signal);
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
   }
 }

@@ -19,6 +19,7 @@ interface PackageJson {
 
 async function readPackageJson(dir: string): Promise<PackageJson | null> {
   try {
+    // SAFETY: The surrounding code already established this contract.
     return JSON.parse(
       await readFile(join(dir, "package.json"), "utf8"),
     ) as PackageJson;

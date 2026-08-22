@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
+import { isString } from "../../src/shared/is-record";
 import {
   fetchAgentStatus,
   HiveMcpSession,
@@ -23,11 +24,7 @@ class StubSpawner implements Spawner {
   }
 }
 
-const harness = (): {
-  daemon: HiveDaemon;
-  db: HiveDatabase;
-  token: string;
-} => {
+const harness = () => {
   const db = new HiveDatabase(":memory:");
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
@@ -56,14 +53,7 @@ const harness = (): {
 };
 
 /** Records the JSON-RPC method of every request the client sends, and can make one `tools/call` fail the way a dropped connection does. */
-const recordingFetch = (
-  daemon: HiveDaemon,
-  token: string,
-): {
-  methods: string[];
-  failNextToolCall: () => void;
-  fetcher: (input: string | URL, init?: RequestInit) => Promise<Response>;
-} => {
+const recordingFetch = (daemon: HiveDaemon, token: string) => {
   const methods: string[] = [];
   let failNext = false;
   return {
@@ -72,7 +62,7 @@ const recordingFetch = (
       failNext = true;
     },
     fetcher: async (input: string | URL, init?: RequestInit) => {
-      const body = typeof init?.body === "string" ? init.body : "";
+      const body = isString(init?.body) ? init.body : "";
       const method = /"method":"([^"]+)"/.exec(body)?.[1];
       if (method !== undefined) methods.push(method);
       if (failNext && method === "tools/call") {

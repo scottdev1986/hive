@@ -7,8 +7,8 @@ import { utilizationFromPools } from "./utilization";
 const KIMI_USAGES = "kimi.usages" as const;
 
 /** One /usages response → an AccountBilling. The numbers arrive as strings. The quota reader owns window parsing; this projection takes the most-used account-wide window because that is the first pool that can block a launch. The payload carries no paid-overflow rail, so creditsEnabled is surface-silent unknown, never a guessed false. */
-export function accountBillingFromKimiUsage(
-  response: unknown,
+export function accountBillingFromKimiUsage<T>(
+  response: T,
   observedAt: string,
 ): AccountBilling {
   const quiet = (): AccountBilling => ({

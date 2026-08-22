@@ -80,6 +80,7 @@ describe("renderProgressLine", () => {
         read: 34_100_000,
         total: 65_200_000,
         bytesPerSecond: 9_600_000,
+        // SAFETY: The test owns this value and its fields.
         columns: columns as number | undefined,
       });
       expect(line).toContain("52%");

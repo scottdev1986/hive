@@ -104,6 +104,7 @@ describe("the checked-in audit evidence", () => {
     const checkedIn = await Bun.file(`${ROOT}${EVIDENCE}`).json();
 
     expect(checkedIn).toEqual(
+      // SAFETY: The test owns this value and its fields.
       JSON.parse(JSON.stringify(auditEvidence())) as unknown,
     );
   });

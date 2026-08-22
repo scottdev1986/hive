@@ -1,3 +1,4 @@
+import { isBoolean, isRecord, isString } from "../../../shared/is-record";
 import {
   type CapabilityDiscoveryResult,
   type CapabilityRecord,
@@ -8,6 +9,7 @@ import {
   unknownVendor,
 } from "../../../schemas/capability";
 import type { ProviderModel } from "./types";
+import type { JsonObject } from "../../../shared/json";
 
 export interface AcpCatalogPayload {
   readonly handshake: unknown;
@@ -87,7 +89,7 @@ export function discoveryFromAcp(
   };
 }
 
-export function modelIdsFromAcpCatalog(sessionNew: unknown): string[] {
+export function modelIdsFromAcpCatalog<T>(sessionNew: T): string[] {
   const model = configOption(sessionNew, "model");
   if (model !== null) return optionValues(model);
   const modelState = object(object(sessionNew)?.models);
@@ -98,10 +100,10 @@ export function modelIdsFromAcpCatalog(sessionNew: unknown): string[] {
   });
 }
 
-export function modelsFromAcpCatalog(
+export function modelsFromAcpCatalog<T>(
   provider: "grok" | "kimi" | "opencode",
-  handshake: unknown,
-  sessionNew: unknown,
+  handshake: T,
+  sessionNew: T,
   modelConfigurations?: ReadonlyMap<string, unknown>,
 ): readonly ProviderModel[] {
   const models =
@@ -135,7 +137,7 @@ function acpSurface(provider: "grok" | "kimi" | "opencode"): CapabilitySurface {
   }
 }
 
-function grokModels(handshake: unknown, sessionNew: unknown): ModelEntry[] {
+function grokModels<T>(handshake: T, sessionNew: T): ModelEntry[] {
   const handshakeRoot = object(handshake);
   const handshakeMeta = object(handshakeRoot?._meta);
   const sessionRoot = object(sessionNew);
@@ -168,10 +170,9 @@ function grokModels(handshake: unknown, sessionNew: unknown): ModelEntry[] {
       {
         id,
         name: string(entry?.name),
-        supportsEffort:
-          typeof meta?.supportsReasoningEffort === "boolean"
-            ? meta.supportsReasoningEffort
-            : null,
+        supportsEffort: isBoolean(meta?.supportsReasoningEffort)
+          ? meta.supportsReasoningEffort
+          : null,
         efforts,
         defaultEffort:
           string(meta?.reasoningEffort) ??
@@ -182,8 +183,8 @@ function grokModels(handshake: unknown, sessionNew: unknown): ModelEntry[] {
   });
 }
 
-function configModels(
-  sessionNew: unknown,
+function configModels<T>(
+  sessionNew: T,
   modelConfigurations: ReadonlyMap<string, unknown> | undefined,
 ): ModelEntry[] {
   const modelOption = configOption(sessionNew, "model");
@@ -206,11 +207,11 @@ function configModels(
   });
 }
 
-function acpDefaults(
+function acpDefaults<T>(
   provider: "grok" | "kimi" | "opencode",
-  handshake: unknown,
-  sessionNew: unknown,
-): { model: string | null; effort: string | null } {
+  handshake: T,
+  sessionNew: T,
+) {
   if (provider === "grok") {
     const handshakeRoot = object(handshake);
     const modelState = object(object(handshakeRoot?._meta)?.modelState);
@@ -233,10 +234,10 @@ function acpDefaults(
   };
 }
 
-function configOption(
-  payload: unknown,
+function configOption<T>(
+  payload: T,
   kind: "model" | "effort",
-): Record<string, unknown> | null {
+): JsonObject | null {
   const options = object(payload)?.configOptions;
   if (!Array.isArray(options)) return null;
   return (
@@ -251,7 +252,7 @@ function configOption(
 }
 
 function optionEntries(
-  config: Record<string, unknown>,
+  config: JsonObject,
 ): Array<{ value: string; name: string | null }> {
   if (!Array.isArray(config.options)) return [];
   return config.options.flatMap(
@@ -268,16 +269,14 @@ function optionEntries(
   );
 }
 
-function optionValues(config: Record<string, unknown>): string[] {
+function optionValues(config: JsonObject): string[] {
   return optionEntries(config).map((option) => option.value);
 }
 
-function object(value: unknown): Record<string, unknown> | null {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+function object<T>(value: T): JsonObject | null {
+  return isRecord(value) ? value : null;
 }
 
-function string(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
+function string<T>(value: T): string | null {
+  return isString(value) && value.length > 0 ? value : null;
 }

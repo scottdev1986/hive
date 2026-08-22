@@ -283,6 +283,7 @@ describe("graceful shutdown checkpoint", () => {
     jest
       .spyOn(db, "recordTerminalHostTermination")
       .mockImplementation((sessionLocator, audit) => {
+        // SAFETY: The test owns this value and its fields.
         const row = db.database
           .query(
             "SELECT document FROM run_checkpoints ORDER BY CAST(revision AS INTEGER) DESC LIMIT 1",

@@ -5,10 +5,13 @@ import { normalizeTitle } from "./article-format";
 import type { MemoryWriteFileResult } from "./store-records";
 import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
+import { isNumber, isRecord, isString } from "../shared/is-record";
+import type { JsonObject, JsonValue } from "../shared/json";
+import { unsafeCast } from "../shared/unsafe-cast";
 
 export function isHarvestBoundaryEvent(
   kind: string,
-  data: Record<string, unknown>,
+  data: JsonObject,
 ): boolean {
   return /land|complete/i.test(kind) || data.phase === "complete";
 }
@@ -79,20 +82,16 @@ function writeHarvestHighWater(
   store.writeMeta(harvestHighWaterKey(agent), String(eventId));
 }
 
-function eventData(event: EpisodicEvent): Record<string, unknown> {
+function eventData(event: EpisodicEvent): JsonObject {
   try {
-    const provenance: unknown = JSON.parse(event.provenance);
-    if (
-      typeof provenance !== "object" ||
-      provenance === null ||
-      !("data" in provenance)
-    ) {
+    const provenance: JsonValue = JSON.parse(event.provenance);
+    if (!isRecord(provenance) || !("data" in provenance)) {
       return {};
     }
     const data = provenance.data;
-    return typeof data === "object" && data !== null
-      ? (data as Record<string, unknown>)
-      : {};
+    if (isRecord(data)) return data;
+    if (Array.isArray(data)) return unsafeCast<JsonObject>(data);
+    return {};
   } catch {
     return {};
   }
@@ -110,10 +109,10 @@ function episodeOutcome(event: EpisodicEvent): EpisodeOutcome {
     if (data.value === "failed") return "failed";
     if (data.value === "done") return "succeeded";
   }
-  if (typeof data.error === "string" && data.error.trim() !== "") {
+  if (isString(data.error) && data.error.trim() !== "") {
     return "failed";
   }
-  if (typeof data.exitCode === "number" && Number.isInteger(data.exitCode)) {
+  if (isNumber(data.exitCode) && Number.isInteger(data.exitCode)) {
     return data.exitCode === 0 ? "succeeded" : "failed";
   }
   return "unknown";
@@ -174,8 +173,8 @@ function sanitizeLabel(text: string): string {
     .trim();
 }
 
-function nonEmptyString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
+function nonEmptyString<T>(value: T): string | null {
+  if (!isString(value)) return null;
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
 }
@@ -198,7 +197,7 @@ function failureSignature(event: EpisodicEvent): FailureSignature | null {
     return { key: `error:${label.toLowerCase()}`, label };
   }
 
-  if (typeof data.exitCode === "number" && Number.isInteger(data.exitCode)) {
+  if (isNumber(data.exitCode) && Number.isInteger(data.exitCode)) {
     // Never mint an "(exit code 0)" title from prose or from a zero code.
     if (data.exitCode === 0) return null;
     const subject =

@@ -12,11 +12,7 @@ import {
 
 const CORRUPT = '{"schemaVersion":3,"revision":9,';
 
-function fixture(): {
-  root: string;
-  db: HiveDatabase;
-  store: RoutingPolicyStore;
-} {
+function fixture() {
   const root = mkdtempSync(join(tmpdir(), "hive-startup-policy-"));
   const db = new HiveDatabase(join(root, "hive.db"));
   return { root, db, store: new RoutingPolicyStore(db) };
@@ -40,6 +36,7 @@ test("a corrupt stored policy stops the boot and is never seeded over", async ()
 
     // No seed was even contemplated, and the user's bytes are untouched.
     expect(probedVendors).toBeFalse();
+    // SAFETY: The test owns this value and its fields.
     const stored = db.database
       .query("SELECT revision, document FROM routing_policy WHERE id = 1")
       .get() as { revision: number; document: string };

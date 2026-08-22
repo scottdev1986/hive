@@ -39,14 +39,14 @@ export const COLORS = {
   headerEdge: "#303746",
 } as const;
 
-const ATTENTION_COLOR: Record<AttentionLevel, string> = {
+const ATTENTION_COLOR = {
   none: COLORS.gray,
   info: COLORS.blue,
   approval: COLORS.orange,
   failure: COLORS.red,
-};
+} satisfies Record<AttentionLevel, string>;
 
-const TURN_LABEL: Record<ViewState["turn"], string> = {
+const TURN_LABEL = {
   unknown: "—",
   idle: "Idle",
   queued: "Queued",
@@ -57,7 +57,7 @@ const TURN_LABEL: Record<ViewState["turn"], string> = {
   cancelling: "Stopping",
   done: "Done",
   failed: "Failed",
-};
+} satisfies Record<ViewState["turn"], string>;
 
 function foregroundLabel(view: ViewState): string {
   switch (view.foregroundOperation?.status) {
@@ -72,37 +72,41 @@ function foregroundLabel(view: ViewState): string {
   }
 }
 
-const RUNTIME_LABEL: Record<ViewState["runtime"], string> = {
+const RUNTIME_LABEL = {
   starting: "connecting",
   connecting: "connecting",
   ready: "connected",
   degraded: "degraded",
   disconnected: "disconnected",
   exited: "exited",
-};
+} satisfies Record<ViewState["runtime"], string>;
 
-const RUNTIME_COLOR: Record<ViewState["runtime"], string> = {
+const RUNTIME_COLOR = {
   starting: COLORS.blue,
   connecting: COLORS.blue,
   ready: COLORS.green,
   degraded: COLORS.yellow,
   disconnected: COLORS.red,
   exited: COLORS.red,
-};
+} satisfies Record<ViewState["runtime"], string>;
 
-const MAIL_LABEL: Record<ViewState["mail"], string> = {
+const MAIL_LABEL = {
   none: "—",
   waiting: "waiting",
   waking: "waking",
   retrying: "retrying",
-};
+} satisfies Record<ViewState["mail"], string>;
 
 interface VendorBrand {
   readonly mark: string;
   readonly accent: string;
 }
 
-const VENDOR_BRAND: Record<string, VendorBrand> = {
+interface VendorBrandTable {
+  readonly [vendorId: string]: VendorBrand | undefined;
+}
+
+const VENDOR_BRAND: VendorBrandTable = {
   claude: { mark: "✻", accent: "#d97757" },
   codex: { mark: "◎", accent: "#74aa9c" },
   grok: { mark: "𝕏", accent: "#f2f2f2" },
@@ -382,7 +386,11 @@ export function modelPickerHeight(picker: ModelPickerState): number {
   return Math.min(MODEL_PICKER_ROWS, 2 + Math.max(1, Math.min(count, 4)) * 2);
 }
 
-const MODE_DESCRIPTION: Readonly<Record<string, string>> = {
+interface ModeDescriptionTable {
+  readonly [mode: string]: string | undefined;
+}
+
+const MODE_DESCRIPTION: ModeDescriptionTable = {
   default: "Ask before protected actions",
   acceptEdits: "Approve file edits automatically",
   auto: "Let the agent decide without asking",

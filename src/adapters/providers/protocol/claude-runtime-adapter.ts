@@ -83,7 +83,11 @@ export class ClaudeStreamJsonAdapter implements ProviderRuntimeAdapter {
         executable,
         argv: [],
         cwd: process.cwd(),
-        env: { ...process.env } as Record<string, string>,
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
       },
       version,
       this.processFactory,

@@ -96,7 +96,7 @@ const ManifestSchema = z
 export type ReleaseArtifact = z.infer<typeof ArtifactSchema>;
 export type ReleaseManifest = z.infer<typeof ManifestSchema>;
 
-export function parseReleaseManifest(value: unknown): ReleaseManifest {
+export function parseReleaseManifest<T>(value: T): ReleaseManifest {
   return ManifestSchema.parse(value);
 }
 

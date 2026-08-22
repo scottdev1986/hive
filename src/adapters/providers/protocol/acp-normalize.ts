@@ -1,5 +1,6 @@
 import { definedFields } from "../../../shared/defined-fields";
 import { percentOfWindow } from "../../../usage-service/context-occupancy";
+import { isNumber, isRecord, isString } from "../../../shared/is-record";
 import type {
   ElicitationOption,
   NormalizedProviderEvent,
@@ -7,25 +8,27 @@ import type {
   ToolKind,
   VendorCommand,
 } from "./types";
+import type { JsonObject } from "../../../shared/json";
 
 export type EmittableNormalizedEvent<T = NormalizedProviderEvent> =
   T extends NormalizedProviderEvent
     ? Omit<T, "sequence" | "occurredAt" | "raw"> & { raw?: unknown }
     : never;
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+function asRecord<T>(value: T): JsonObject | null {
+  if (!isRecord(value)) {
     return null;
   }
-  return value as Record<string, unknown>;
+  // SAFETY: The surrounding code already established this contract.
+  return value as JsonObject;
 }
 
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+function asString<T>(value: T): string | null {
+  return isString(value) ? value : null;
 }
 
 /** Preserve a vendor's own terminal explanation across the shared ACP path. */
-export function vendorFailureReason(value: unknown, fallback: string): string {
+export function vendorFailureReason<T>(value: T, fallback: string): string {
   const root = asRecord(value);
   const error = asRecord(root?.error);
   return (
@@ -36,10 +39,10 @@ export function vendorFailureReason(value: unknown, fallback: string): string {
   );
 }
 
-function contentText(content: unknown): string {
+function contentText<T>(content: T): string {
   const record = asRecord(content);
   if (record === null) return "";
-  if (typeof record.text === "string") return record.text;
+  if (isString(record.text)) return record.text;
   return "";
 }
 
@@ -56,20 +59,21 @@ const TOOL_KINDS = new Set<string>([
   "other",
 ]);
 
-function toolKind(value: unknown): ToolKind | null {
+function toolKind<T>(value: T): ToolKind | null {
   const kind = asString(value)?.toLowerCase() ?? null;
+  // SAFETY: The surrounding code already established this contract.
   return kind !== null && TOOL_KINDS.has(kind) ? (kind as ToolKind) : null;
 }
 
 /** The kind of work a tool call is doing, from wherever the vendor states it. Grok omits ACP's `kind` and puts its own under `_meta["x.ai/tool"]`, where the vocabulary is close but not identical — `list` has no ACP equivalent and stays unclassified rather than being forced into `other`. */
-function resolvedToolKind(update: Record<string, unknown>): ToolKind | null {
+function resolvedToolKind(update: JsonObject): ToolKind | null {
   const declared = toolKind(update.kind);
   if (declared !== null) return declared;
   const meta = asRecord(asRecord(update._meta)?.["x.ai/tool"]);
   return toolKind(meta?.kind);
 }
 
-function toolLocations(value: unknown): readonly string[] {
+function toolLocations<T>(value: T): readonly string[] {
   if (!Array.isArray(value)) return [];
   const paths: string[] = [];
   for (const entry of value) {
@@ -80,7 +84,7 @@ function toolLocations(value: unknown): readonly string[] {
 }
 
 /** A question asked as an ordinary tool call, rendered as text. Grok's `ask_user_question` arrives as a `tool_call` rather than a `session/request_permission`, and it does not block on a reply — the turn runs on and the call completes on its own. There is no answer channel to offer, so the question and its choices are shown as the call's detail: a person can read what was asked and reply in the composer, which is the only route the vendor left open. */
-function askedQuestionText(rawInput: unknown): string | null {
+function askedQuestionText<T>(rawInput: T): string | null {
   const questions = asRecord(rawInput)?.questions;
   if (!Array.isArray(questions)) return null;
   const blocks: string[] = [];
@@ -106,10 +110,7 @@ function askedQuestionText(rawInput: unknown): string | null {
   return blocks.length === 0 ? null : blocks.join("\n\n");
 }
 
-function namedLocations(
-  locations: unknown,
-  content: unknown,
-): readonly string[] {
+function namedLocations<T>(locations: T, content: T): readonly string[] {
   const named = toolLocations(locations);
   if (named.length > 0) return named;
   const paths: string[] = [];
@@ -119,7 +120,7 @@ function namedLocations(
   return paths;
 }
 
-export function toolOutputText(value: unknown): string | null {
+export function toolOutputText<T>(value: T): string | null {
   if (!Array.isArray(value)) return null;
   const texts: string[] = [];
   for (const entry of value) {
@@ -132,7 +133,7 @@ export function toolOutputText(value: unknown): string | null {
 }
 
 /** The `type: "diff"` members of an ACP `ToolCallContent[]`. ACP sends whole file contents rather than a patch, so the rendering side is what turns these into a diff — this only stops them being thrown away. */
-export function toolFileChanges(value: unknown): readonly ToolFileChange[] {
+export function toolFileChanges<T>(value: T): readonly ToolFileChange[] {
   if (!Array.isArray(value)) return [];
   const changes: ToolFileChange[] = [];
   for (const entry of value) {
@@ -150,8 +151,8 @@ export function toolFileChanges(value: unknown): readonly ToolFileChange[] {
   return changes;
 }
 
-export function normalizeSessionUpdate(
-  params: unknown,
+export function normalizeSessionUpdate<T>(
+  params: T,
   turnId: string | null,
 ): EmittableNormalizedEvent[] {
   const root = asRecord(params);
@@ -298,8 +299,8 @@ export function normalizeSessionUpdate(
             update.used !== undefined && update.size !== undefined
               ? // used/size → percent when both are finite numbers
                 percentOfWindow(
-                  typeof update.used === "number" ? update.used : null,
-                  typeof update.size === "number" ? update.size : null,
+                  isNumber(update.used) ? update.used : null,
+                  isNumber(update.size) ? update.size : null,
                 )
               : (update.contextPercent ?? update.context_percent),
           ),
@@ -315,7 +316,7 @@ export function normalizeSessionUpdate(
     case "plan_update": {
       const entries = Array.isArray(update.entries)
         ? update.entries.map((entry) => {
-            if (typeof entry === "string") return entry;
+            if (isString(entry)) return entry;
             const rec = asRecord(entry);
             return (
               asString(rec?.content) ??
@@ -338,9 +339,9 @@ export function normalizeSessionUpdate(
   }
 }
 
-export function normalizeVendorNotification(
+export function normalizeVendorNotification<T>(
   method: string,
-  params: unknown,
+  params: T,
   turnId: string | null,
 ): EmittableNormalizedEvent[] {
   const root = asRecord(params);
@@ -419,9 +420,7 @@ export function normalizeVendorNotification(
   return [{ kind: "unrecognized", raw: params }];
 }
 
-export function parseAvailableCommands(
-  value: unknown,
-): readonly VendorCommand[] {
+export function parseAvailableCommands<T>(value: T): readonly VendorCommand[] {
   if (!Array.isArray(value)) return [];
   const out: VendorCommand[] = [];
   for (const entry of value) {
@@ -451,17 +450,11 @@ export function parseAvailableCommands(
   return out;
 }
 
-function numberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function numberOrNull<T>(value: T): number | null {
+  return isNumber(value) && Number.isFinite(value) ? value : null;
 }
 
-export function decodeUsageTokens(usage: Record<string, unknown>): {
-  readonly inputTokens: number | null;
-  readonly outputTokens: number | null;
-  readonly cachedInputTokens: number | null;
-  readonly cacheCreationInputTokens: number | null;
-  readonly reasoningTokens: number | null;
-} {
+export function decodeUsageTokens(usage: JsonObject) {
   return {
     inputTokens: numberOrNull(usage.inputTokens ?? usage.input_tokens),
     outputTokens: numberOrNull(usage.outputTokens ?? usage.output_tokens),
@@ -477,8 +470,8 @@ export function decodeUsageTokens(usage: Record<string, unknown>): {
   };
 }
 
-export function permissionOptions(
-  params: unknown,
+export function permissionOptions<T>(
+  params: T,
 ): readonly { optionId: string; kind: string; name: string }[] {
   const root = asRecord(params);
   const options = root?.options;
@@ -498,7 +491,7 @@ export function permissionOptions(
   return out;
 }
 
-export function toolNameFromPermission(params: unknown): string | null {
+export function toolNameFromPermission<T>(params: T): string | null {
   const root = asRecord(params);
   const toolCall = asRecord(root?.toolCall) ?? asRecord(root?.tool_call);
   if (toolCall === null) return null;
@@ -511,7 +504,7 @@ export function toolNameFromPermission(params: unknown): string | null {
   );
 }
 
-export function permissionSummary(params: unknown): string {
+export function permissionSummary<T>(params: T): string {
   const root = asRecord(params);
   const toolCall = asRecord(root?.toolCall) ?? asRecord(root?.tool_call);
   if (toolCall === null) return "permission request";
@@ -523,7 +516,7 @@ export function permissionSummary(params: unknown): string {
   return "permission request";
 }
 
-export function permissionDetail(params: unknown): string | null {
+export function permissionDetail<T>(params: T): string | null {
   const root = asRecord(params);
   const toolCall = asRecord(root?.toolCall) ?? asRecord(root?.tool_call);
   if (toolCall === null) return null;
@@ -542,9 +535,7 @@ export function permissionDetail(params: unknown): string | null {
 }
 
 /** The answers the vendor will accept, in the shape the screen shows them. An option list Hive cannot read stays empty rather than being filled with a plausible allow/deny pair: the picker offers nothing sooner than it offers a choice the vendor never made. */
-export function elicitationOptions(
-  params: unknown,
-): readonly ElicitationOption[] {
+export function elicitationOptions<T>(params: T): readonly ElicitationOption[] {
   return permissionOptions(params).map((option) => ({
     optionId: option.optionId,
     name: option.name === "" ? option.optionId : option.name,

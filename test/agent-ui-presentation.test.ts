@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Renderable, ScrollBoxRenderable } from "@opentui/core";
 import { type AgentUiHarness, createAgentUiHarness } from "./agent-ui-harness";
+import type { JsonValue } from "../src/shared/json";
+import { unsafeCast } from "../src/shared/unsafe-cast";
 
 let harness: AgentUiHarness;
 
@@ -425,14 +427,16 @@ describe("the pane chrome stays quiet and responsive", () => {
       }),
     );
     await Bun.sleep(10);
-    const stream = harness.testRenderer.renderer.root.findDescendantById(
-      "agent-ui-stream-t1",
-    ) as unknown as {
+    const stream = unsafeCast<{
       readonly textBuffer: {
         append(text: string): void;
-        setStyledText(value: unknown): void;
+        setStyledText(value: JsonValue): void;
       };
-    };
+    }>(
+      harness.testRenderer.renderer.root.findDescendantById(
+        "agent-ui-stream-t1",
+      ),
+    );
     expect(stream).toBeDefined();
     const originalAppend = stream.textBuffer.append.bind(stream.textBuffer);
     const originalSetStyledText = stream.textBuffer.setStyledText.bind(

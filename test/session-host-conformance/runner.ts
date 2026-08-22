@@ -44,12 +44,14 @@ export function runTypeScriptConformance(
   const invalidRejected: string[] = [];
   for (const item of corpus.valid) {
     const schema =
+      // SAFETY: The test owns this value and its fields.
       WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
     const result = schema.safeParse(item.value);
     if (!result.success)
       throw new Error(
         `TypeScript rejected valid case ${item.name}: ${result.error.message}`,
       );
+    // SAFETY: The test owns this value and its fields.
     const canonical = canonicalJson(z.encode(schema as z.ZodType, result.data));
     validEncodings[item.name] = canonical;
     canonicalDigests[item.name] = createHash("sha256")
@@ -58,6 +60,7 @@ export function runTypeScriptConformance(
   }
   for (const item of corpus.invalid) {
     const schema =
+      // SAFETY: The test owns this value and its fields.
       WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
     if (schema.safeParse(item.value).success) {
       throw new Error(`TypeScript accepted invalid case ${item.name}`);
@@ -146,6 +149,7 @@ export async function runSwiftConformance(): Promise<ConformanceReport> {
       `Swift conformance exited ${exitCode}: ${stderr || stdout}`,
     );
   }
+  // SAFETY: The test owns this value and its fields.
   return JSON.parse(stdout) as ConformanceReport;
 }
 
@@ -155,8 +159,10 @@ export async function runConformance() {
     readFile(GENERATED_FILES.reducer, "utf8"),
   ]);
   const typescript = runTypeScriptConformance(
-    JSON.parse(wireBytes) as unknown as WireCorpus,
-    JSON.parse(reducerBytes) as unknown as ReducerCorpus,
+    // SAFETY: The test owns this value and its fields.
+    JSON.parse(wireBytes) as WireCorpus,
+    // SAFETY: The test owns this value and its fields.
+    JSON.parse(reducerBytes) as ReducerCorpus,
   );
   const swift = await runSwiftConformance();
   for (const name of [

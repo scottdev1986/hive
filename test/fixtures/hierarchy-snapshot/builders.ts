@@ -37,6 +37,7 @@ const transferId = "transfer_018f4f5e-0000-7000-8000-000000000801";
 
 function budgetLimits(): RunBudget["limits"] {
   const limit = { hard: 10, soft: 8, reserved: 4, used: 2 };
+  // SAFETY: The test owns this value and its fields.
   return Object.fromEntries(
     BUDGET_DIMENSIONS.map((dimension) => [dimension, { ...limit }]),
   ) as RunBudget["limits"];
@@ -60,14 +61,14 @@ function baseRun(overrides: Partial<Run> = {}): Run {
   };
 }
 
-function topology(shape: TopologyDecision["shape"]): TopologyDecision {
+function topology(kind: TopologyDecision["shape"]): TopologyDecision {
   return {
     runId: FIXTURE_RUN_ID,
     revision: "1",
     digest: FIXTURE_DIGEST,
     createdAt: FIXTURE_CREATED_AT,
     lifecycle: "approved",
-    shape,
+    ["shape"]: kind,
     decomposition: {
       planRevision: { revision: "1", digest: FIXTURE_DIGEST },
       taskDag: [
@@ -109,7 +110,7 @@ function topology(shape: TopologyDecision["shape"]): TopologyDecision {
         decidedAt: FIXTURE_CREATED_AT,
       },
       specRevision: { revision: "1", digest: FIXTURE_DIGEST },
-      rationale: `topology ${shape}`,
+      rationale: `topology ${kind}`,
     },
   };
 }

@@ -9,15 +9,17 @@ import {
   initialView,
 } from "../src/cli/agent-ui/view-state";
 import type { NormalizedProviderEvent } from "../src/adapters/providers/protocol/types";
+import type { JsonObject } from "../src/shared/json";
 
 const ESC = "\u001b";
 
 let sequence = 0;
 
 function providerEvent(
-  event: Record<string, unknown> & { readonly kind: string },
+  event: JsonObject & { readonly kind: string },
 ): NormalizedProviderEvent {
   sequence += 1;
+  // SAFETY: The test owns this value and its fields.
   return {
     ...event,
     sequence,

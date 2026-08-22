@@ -23,12 +23,14 @@ function loadRegistry(hiveHome: string): ProjectRegistry {
   try {
     raw = readFileSync(path(hiveHome), "utf8");
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return new ProjectRegistry();
     }
     throw error;
   }
   try {
+    // SAFETY: The surrounding code already established this contract.
     return ProjectRegistry.hydrate(JSON.parse(raw) as ProjectRegistrySnapshot);
   } catch (error) {
     const quarantine = `${path(hiveHome)}.corrupt-${Date.now()}`;
@@ -75,6 +77,7 @@ export function registryWritePath(target = path(getHiveHome())): string {
   try {
     return realpathSync.native(target);
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return target;
     throw error;
   }

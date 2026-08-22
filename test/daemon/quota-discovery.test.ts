@@ -228,6 +228,7 @@ const pool = (quota: QuotaService, name: string, at = now): QuotaPoolStatus => {
 // SuperGrok account, captured off the wire on 2026-07-13 (session-free ACP
 // probe: initialize → initialized → `_x.ai/billing` {}).
 describe("the real Grok payload, verbatim off the wire", () => {
+  // SAFETY: The test owns this value and its fields.
   const raw = JSON.parse(
     readFileSync(
       join(import.meta.dir, "fixtures/grok-billing-supergrok.json"),
@@ -279,6 +280,7 @@ describe("the real Grok payload, verbatim off the wire", () => {
   });
 
   test("a misspelled gauge key does not invent a reading", () => {
+    // SAFETY: The test owns this value and its fields.
     const broken = {
       ...raw,
       config: {
@@ -317,6 +319,7 @@ describe("the real Grok payload, verbatim off the wire", () => {
     // survives — with an unknown meter.
     for (const bad of [150, -1]) {
       const [routable] = readingsFromGrokBilling(
+        // SAFETY: The test owns this value and its fields.
         {
           ...raw,
           config: { ...raw.config, creditUsagePercent: bad },
@@ -333,6 +336,7 @@ describe("the real Grok payload, verbatim off the wire", () => {
     for (const bad of [Number.NaN, "42"]) {
       expect(
         readingsFromGrokBilling(
+          // SAFETY: The test owns this value and its fields.
           {
             ...raw,
             config: { ...raw.config, creditUsagePercent: bad },
@@ -349,6 +353,7 @@ describe("the real Grok payload, verbatim off the wire", () => {
     // confident "0% used". The surface has to be recognisable first.
     expect(
       readingsFromGrokBilling(
+        // SAFETY: The test owns this value and its fields.
         { config: {} } as GrokBillingResponse,
         "default",
         now.toISOString(),
@@ -417,6 +422,7 @@ describe("the real Grok payload, verbatim off the wire", () => {
 // This payload is the verbatim `account/rateLimits/read` reply from codex-cli
 // 0.144.1 on a `prolite` account, captured off the wire on 2026-07-13.
 describe("the real Codex payload, verbatim off the wire", () => {
+  // SAFETY: The test owns this value and its fields.
   const raw = JSON.parse(
     readFileSync(
       join(import.meta.dir, "fixtures/codex-rate-limits-prolite.json"),
@@ -1748,6 +1754,7 @@ describe("pools gate the models they actually meter", () => {
     // booking must follow it onto the Fable cap even though that cap is full —
     // refusing would not stop the burn, it would only hide it.
     await quota.reconcileAgentModel("drifter", "claude-fable-5");
+    // SAFETY: The test owns this value and its fields.
     const active = db.database
       .query(
         "SELECT pool, model FROM quota_reservations WHERE agentName = ? AND status = 'active' ORDER BY pool",

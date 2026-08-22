@@ -9,7 +9,7 @@ async function runtime(
   overrides: Record<string, string> = {},
 ): Promise<string> {
   const dir = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-digest-"));
-  const files: Record<string, string> = {
+  const files = {
     "dist/entry.js": 'export const x = "bundle";\n',
     "dist/tokenizers.darwin-universal-abc.node": "native-bytes\n",
     "bin/napi-v3/darwin/arm64/onnxruntime_binding.node": "onnx-bytes\n",
@@ -17,7 +17,7 @@ async function runtime(
     "INSTALL.json": '{"installedAt":"2026-07-25T00:00:00.000Z"}\n',
     "entry.ts": 'export {} from "fastembed";\n',
     ...overrides,
-  };
+  } satisfies Record<string, string>;
   for (const [path, body] of Object.entries(files)) {
     const full = join(dir, path);
     await mkdir(join(full, ".."), { recursive: true });

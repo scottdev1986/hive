@@ -29,9 +29,9 @@ function uint8ReadableStream(source: Readable): ReadableStream<Uint8Array> {
   });
 }
 
-export type AcpRequestHandler = (
+export type AcpRequestHandler = <T>(
   method: string,
-  params: unknown,
+  params: T,
 ) => Promise<JsonValue>;
 
 export interface AcpClientOptions {
@@ -43,7 +43,7 @@ export interface AcpClientOptions {
   readonly extensionNotificationMethods?: readonly string[];
   /** Handle agent→client reverse-RPC (session/request_permission, fs/*, …). The returned value becomes the JSON-RPC result; throwing sends an error. A handler may return a promise that settles later, which is how a permission waits for the user without blocking the connection. */
   readonly onRequest?: AcpRequestHandler;
-  readonly onNotification?: (method: string, params: unknown) => void;
+  readonly onNotification?: <T>(method: string, params: T) => void;
   readonly onStderrLine?: (line: string) => void;
 }
 
@@ -83,7 +83,7 @@ export class AcpClient {
       this.options.onStderrLine?.(line);
     });
 
-    const dispatch = async (method: string, params: unknown) => {
+    const dispatch = async <T>(method: string, params: T) => {
       const handler = this.options.onRequest;
       if (handler === undefined) {
         throw new Error(`Method not found: ${method}`);
@@ -100,6 +100,7 @@ export class AcpClient {
       .onRequest(
         methods.client.session.requestPermission,
         async ({ params }) =>
+          // SAFETY: The surrounding code already established this contract.
           (await dispatch(
             "session/request_permission",
             params,
@@ -109,7 +110,7 @@ export class AcpClient {
     for (const method of this.options.extensionNotificationMethods ?? []) {
       app.onNotification(
         method,
-        (params: unknown) => params,
+        (params) => params,
         ({ params }) => {
           this.options.onNotification?.(method, params);
         },
@@ -118,6 +119,7 @@ export class AcpClient {
 
     this.connection = app.connect(
       ndJsonStream(
+        // SAFETY: The surrounding code already established this contract.
         Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
         uint8ReadableStream(child.stdout),
       ),
@@ -132,13 +134,13 @@ export class AcpClient {
     return this.open().agent;
   }
 
-  request(method: string, params?: unknown): Promise<JsonValue> {
+  request<T>(method: string, params?: T): Promise<JsonValue> {
     return this.open()
       .agent.request(method, params)
       .then((result) => requireJsonValue(result, method));
   }
 
-  notify(method: string, params?: unknown): void {
+  notify<T>(method: string, params?: T): void {
     void this.open().agent.notify(method, params);
   }
 

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { definedFields } from "../../shared/defined-fields";
 import { runGit } from "../../adapters/git";
 import { resolveWorkingClaudeExecutable } from "../../adapters/providers/claude-cli";
+import { isFunction } from "../../shared/is-record";
 import {
   probeGrokCliVersion,
   wrapGrokSpawnWithCompatibilityEnv,
@@ -229,7 +230,7 @@ export class HiveSpawner implements Spawner {
 
   private daemonPort(): number {
     const configured = this.dependencies.port;
-    const port = typeof configured === "function" ? configured() : configured;
+    const port = isFunction(configured) ? configured() : configured;
     if (!isDaemonPort(port)) {
       throw new Error(`Hive daemon has no listening port (resolved ${port})`);
     }
@@ -494,7 +495,7 @@ export class HiveSpawner implements Spawner {
             error,
           )}); open the Model Control Center and enable it before launching`;
         }
-        if (enabled !== null && typeof enabled === "object") {
+        if (enabled !== null && enabled !== true && enabled !== false) {
           return enabled.refusal;
         }
         if (enabled !== true) {
@@ -636,7 +637,7 @@ export class HiveSpawner implements Spawner {
     if (held === null) return;
     try {
       quota.cancel(held.id);
-    } catch (error: unknown) {
+    } catch (error) {
       console.error(
         `Hive failed to settle the stranded quota reservation for ${name}: ${
           error instanceof Error ? error.message : "unknown error"
@@ -868,7 +869,7 @@ export class HiveSpawner implements Spawner {
               error,
             )}); open the Model Control Center and enable it before launching`;
           }
-          if (enabled !== null && typeof enabled === "object") {
+          if (enabled !== null && enabled !== true && enabled !== false) {
             return enabled.refusal;
           }
           if (enabled !== true) {
@@ -1108,16 +1109,14 @@ export class HiveSpawner implements Spawner {
       }),
       this.dependencies.graphifyBrief === undefined
         ? Promise.resolve(null)
-        : this.dependencies
-            .graphifyBrief(request.task)
-            .catch((error: unknown) => {
-              console.error(
-                `Hive could not build a graph brief for ${name}; spawning without one: ${
-                  error instanceof Error ? error.message : "unknown error"
-                }`,
-              );
-              return null;
-            }),
+        : this.dependencies.graphifyBrief(request.task).catch((error) => {
+            console.error(
+              `Hive could not build a graph brief for ${name}; spawning without one: ${
+                error instanceof Error ? error.message : "unknown error"
+              }`,
+            );
+            return null;
+          }),
       readMemoryFact(
         this.dependencies.repoRoot,
         "repo",
@@ -1176,7 +1175,7 @@ export class HiveSpawner implements Spawner {
     );
     await this.dependencies.settlement
       ?.open(record, planned, baseOid)
-      .catch((error: unknown) => {
+      .catch((error) => {
         console.error(
           `Hive could not open ${name}'s settlement case before worktree creation; the recovery sweep will adopt it: ${errorMessage(error)}`,
         );
@@ -1573,7 +1572,7 @@ export class HiveSpawner implements Spawner {
             (ms) => this.wait(ms),
             this.dependencies.mcpReportingTimeoutMs,
           )
-            .catch((error: unknown) => errorMessage(error))
+            .catch((error) => errorMessage(error))
             .then((reportingFailure) => {
               if (reportingFailure !== null) {
                 console.warn(`Hive ${name}: ${reportingFailure}`);
@@ -1593,7 +1592,7 @@ export class HiveSpawner implements Spawner {
     };
     stranded.launchOwnsName = true;
     void launch()
-      .catch((error: unknown) => {
+      .catch((error) => {
         let reason =
           error instanceof Error ? error.message : "unknown background failure";
         if (hierarchyIdentity !== null && hierarchyAdmission !== null) {

@@ -32,6 +32,7 @@ function daemonIsRunning(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ESRCH") return false;
     if (code === "EPERM") return true;
@@ -169,7 +170,7 @@ if (import.meta.main) {
       console.error("usage: verify-dev-run --memory <dev-home>");
       process.exitCode = 2;
     } else {
-      await verifyMemoryLeg(devHome).catch((error: unknown) => {
+      await verifyMemoryLeg(devHome).catch((error) => {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
       });
@@ -195,7 +196,7 @@ if (import.meta.main) {
         repoRoot,
         daemonPid,
         devHome,
-      ).catch((error: unknown) => {
+      ).catch((error) => {
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = 1;
       });

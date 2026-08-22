@@ -33,6 +33,8 @@ import {
   FRAME_FLAGS,
   TERMINAL_LIMITS,
 } from "../../../src/schemas/session-protocol";
+import type { JsonObject, JsonValue } from "../../../src/shared/json";
+import { unsafeCast } from "../../../src/shared/unsafe-cast";
 
 const observedAt = "2026-07-18T12:00:00.000Z";
 
@@ -222,9 +224,10 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
     try {
       writeLifecycleFiles(handshakePort);
       lifecycleWritten = true;
+      // SAFETY: The test owns this value and its fields.
       const daemonLock = JSON.parse(
         await readFile(join(home, "daemon.lock"), "utf8"),
-      ) as Record<string, unknown>;
+      ) as JsonObject;
       const daemonIdentity = macProcessIdentity(process.pid);
       expect(daemonLock).toMatchObject({
         pid: process.pid,
@@ -580,14 +583,14 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         try {
           // The attach client's public surface is automation-only; a user
           // submission speaks the same INPUT_SUBMIT frame directly.
-          const wire = viewer as unknown as {
+          const wire = unsafeCast<{
             request(
               requestType: string,
               responseType: string,
               flags: number,
-              payload: unknown,
+              payload: JsonValue,
             ): Promise<{ payload: Uint8Array }>;
-          };
+          }>(viewer);
           const appliedFrame = await wire.request(
             "INPUT_SUBMIT",
             "APPLIED",
@@ -614,6 +617,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
               },
             },
           );
+          // SAFETY: The test owns this value and its fields.
           const applied = JSON.parse(
             new TextDecoder().decode(appliedFrame.payload),
           ) as {
@@ -658,6 +662,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         // no daemon, so the injected transport performs the same teardown the
         // daemon's commit path would — the live proof (real host process
         // absence, termination audit) is unchanged.
+        // SAFETY: The test owns this value and its fields.
         const stopped = { survivors: null as readonly unknown[] | null };
         const daemonStates: Array<"live" | "dead"> = ["live", "dead"];
         await stopHive({

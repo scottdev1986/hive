@@ -311,6 +311,7 @@ describe("Codex adapter", () => {
       join(worktreePath, ".codex", "config.toml"),
       "utf8",
     );
+    // SAFETY: The test owns this value and its fields.
     const config = Bun.TOML.parse(configSource) as {
       mcp_servers: Record<string, { url: string }>;
     };

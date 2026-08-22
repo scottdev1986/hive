@@ -44,10 +44,7 @@ function readEnvironment(): Record<string, string> {
 }
 
 /** Drains a session's events into an array for the life of the session. */
-function startReader(session: ProviderSession): {
-  seen: NormalizedProviderEvent[];
-  done: Promise<void>;
-} {
+function startReader(session: ProviderSession) {
   const seen: NormalizedProviderEvent[] = [];
   const done = (async () => {
     for await (const event of session.events) seen.push(event);
@@ -128,7 +125,7 @@ async function ask(
     .join("");
 }
 
-function writeEvidence(vendor: string, payload: Record<string, unknown>): void {
+function writeEvidence<T>(vendor: string, payload: T): void {
   writeEvidenceFile(
     join("docs/evidence/protocol-terminal", vendor, "durable-resume.json"),
     `${JSON.stringify(payload, null, 2)}\n`,

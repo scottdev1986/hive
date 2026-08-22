@@ -18,6 +18,7 @@ import {
   type QueenKnowledgeEntry,
 } from "../src/skills/knowledge";
 import { SHIPPED_SKILLS, type ShippedSkill } from "../src/skills/shipped";
+import { unsafeCast } from "../src/shared/unsafe-cast";
 import {
   MAIL_CONTROL_BUSY,
   MAIL_CONTROL_LANE_FULL,
@@ -76,6 +77,7 @@ function roleCatalogDrift(
   policies: typeof HIVE_TOOL_POLICIES = HIVE_TOOL_POLICIES,
 ): string[] {
   const action = policies[tool].action;
+  // SAFETY: The test owns this value and its fields.
   return (Object.keys(ROLE_GRANTS) as Role[]).flatMap((role) => {
     const visible = ROLE_GRANTS[role].actions.includes(action);
     return visible === (role === expectedRole)
@@ -196,12 +198,12 @@ describe("compiled queen knowledge drift", () => {
       expect(resolveQueenKnowledge(entry.topic)?.entry).toBe(entry);
     }
 
-    const mutant = {
+    const mutant = unsafeCast<QueenKnowledgeEntry>({
       ...QUEEN_KNOWLEDGE[0],
       skillName: "missing-md-module",
       summary: "",
       roles: ["agent"],
-    } as unknown as QueenKnowledgeEntry;
+    });
     expect(registryDrift([mutant], SHIPPED_SKILLS)).toEqual([
       `${mutant.topic} has no summary`,
       `${mutant.topic} has invalid roles`,

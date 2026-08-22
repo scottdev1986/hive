@@ -37,9 +37,7 @@ const rig = (): HiveDaemon =>
   });
 
 /** One control item, claimed by a handler whose lease then lapses. */
-function abandonedClaim(
-  daemon: HiveDaemon,
-): Readonly<{ itemId: string; seq: number }> {
+function abandonedClaim(daemon: HiveDaemon) {
   const receipt = hiveMailPublish(
     {
       store: daemon.mail,

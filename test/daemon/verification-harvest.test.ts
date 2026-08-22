@@ -11,7 +11,6 @@ import {
   verificationCommandFromTitle,
 } from "../../src/memory-service/harvest";
 import { readMemoryFact } from "../../src/memory-service/memory-store";
-import type { MemoryWriteFileResult } from "../../src/memory-service/store-records";
 import { MemoryWriteService } from "../../src/memory-service/write-service";
 import type { MemoryWriteInput } from "../../src/schemas/memory";
 
@@ -36,15 +35,13 @@ async function repo(): Promise<string> {
   return root;
 }
 
-function writer(repoRoot: string): {
-  write: (input: MemoryWriteInput) => Promise<MemoryWriteFileResult>;
-} {
+function writer(repoRoot: string) {
   const service = new MemoryWriteService({
     repoRoot,
     index: new MemoryIndex(new Database(":memory:")),
     embeddingIndex: null,
   });
-  return { write: (input) => service.write(input) };
+  return { write: (input: MemoryWriteInput) => service.write(input) };
 }
 
 describe("harvestVerification", () => {

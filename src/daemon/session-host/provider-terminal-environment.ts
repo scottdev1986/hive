@@ -12,9 +12,13 @@ import { bundledTerminfoPath } from "./terminfo";
  *
  * NO_COLOR is stripped so agents see color by default.
  */
+interface ProviderTerminalEnv {
+  readonly [key: string]: string | undefined;
+}
+
 export function providerTerminalEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
-): Record<string, string> {
+): ProviderTerminalEnv {
   const base = Object.fromEntries(
     Object.entries(environment).filter(
       (entry): entry is [string, string] =>

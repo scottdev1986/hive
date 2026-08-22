@@ -297,6 +297,7 @@ export class TranscriptBuffer extends Array<TranscriptEntry> {
       offset >= 0;
       offset -= 1
     ) {
+      // SAFETY: The surrounding code already established this contract.
       const entry = this[this.elicitationOrder[offset] as number];
       if (entry?.kind === "elicitation" && !entry.settled) return entry;
     }
@@ -713,10 +714,7 @@ function updatePending(
   return view.transcript.replace(index, change(current)) ? { ...view } : view;
 }
 
-export function chooseOption(
-  view: ViewState,
-  label: string,
-): { readonly view: ViewState; readonly complete: boolean } {
+export function chooseOption(view: ViewState, label: string) {
   const pending = pendingElicitation(view);
   if (pending === null) return { view, complete: false };
   const question = currentQuestion(pending);
@@ -742,10 +740,7 @@ export function chooseOption(
   };
 }
 
-export function chooseCustomAnswer(
-  view: ViewState,
-  answer: string,
-): { readonly view: ViewState; readonly complete: boolean } {
+export function chooseCustomAnswer(view: ViewState, answer: string) {
   const pending = pendingElicitation(view);
   if (pending === null) return { view, complete: false };
   const question = currentQuestion(pending);
@@ -771,10 +766,7 @@ export function chooseCustomAnswer(
   };
 }
 
-export function confirmQuestion(view: ViewState): {
-  readonly view: ViewState;
-  readonly complete: boolean;
-} {
+export function confirmQuestion(view: ViewState) {
   const pending = pendingElicitation(view);
   if (pending === null) return { view, complete: false };
   const next = pending.questionIndex + 1;
@@ -788,9 +780,7 @@ export function confirmQuestion(view: ViewState): {
   };
 }
 
-export function collectedAnswers(
-  pending: PendingElicitation,
-): Readonly<Record<string, string | readonly string[]>> {
+export function collectedAnswers(pending: PendingElicitation) {
   const answers: Record<string, string | readonly string[]> = {};
   for (const question of pending.questions) {
     const labels = pending.chosen[question.questionId];

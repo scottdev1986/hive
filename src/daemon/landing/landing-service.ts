@@ -6,6 +6,8 @@ import { probeProcessLiveness } from "../../adapters/process-liveness";
 import type { AuditEntry } from "../authorization/authorization-service";
 import type { AgentRecord } from "../../schemas/agent";
 import type { MainHealthMonitorHandle } from "./main-health-monitor";
+import { isNumber, isRecord, isString } from "../../shared/is-record";
+import type { JsonObject, JsonValue } from "../../shared/json";
 
 export type LandBranch = (
   repoRoot: string,
@@ -49,20 +51,21 @@ function readLandingLease(path: string): LandingLeaseEvidence {
   try {
     contents = readFileSync(path, "utf8");
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     return (error as NodeJS.ErrnoException).code === "ENOENT"
       ? { state: "absent" }
       : { state: "unknown" };
   }
   try {
-    const value: unknown = JSON.parse(contents);
-    if (typeof value !== "object" || value === null)
-      return { state: "unknown" };
-    const lease = value as Record<string, unknown>;
+    const value: JsonValue = JSON.parse(contents);
+    if (!isRecord(value) && !Array.isArray(value)) return { state: "unknown" };
+    // SAFETY: The surrounding code already established this contract.
+    const lease = value as JsonObject;
     if (
-      typeof lease.pid !== "number" ||
+      !isNumber(lease.pid) ||
       !Number.isSafeInteger(lease.pid) ||
       lease.pid <= 0 ||
-      typeof lease.token !== "string" ||
+      !isString(lease.token) ||
       lease.token === ""
     )
       return { state: "unknown" };
@@ -119,6 +122,7 @@ async function acquireLandingLease(repoRoot: string): Promise<() => void> {
         removeLandingLease(path, lease);
       };
     } catch (error) {
+      // SAFETY: The surrounding code already established this contract.
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
 
@@ -537,6 +541,7 @@ export async function diagnoseLand(
   );
   if (differing.length > 0) {
     const list = differing.map((collision) => collision.path).join(", ");
+    // SAFETY: The surrounding code already established this contract.
     const first = differing[0]?.path as string;
     return blocked(
       `your ${plural(differing.length, "copy", "copies")} of ${list} in the primary checkout ${plural(

@@ -1,19 +1,20 @@
 import { createHash } from "node:crypto";
 import { definedFields } from "../../../shared/defined-fields";
-import { isRecord } from "../../../shared/is-record";
+import { isFiniteNumber, isRecord, isString } from "../../../shared/is-record";
+import type { JsonObject } from "../../../shared/json";
 import type { VendorCommand } from "./types";
 
-export type JsonObject = Record<string, unknown>;
+export type { JsonObject };
 
-export function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
+export function asString<T>(value: T | undefined): string | null {
+  return isString(value) ? value : null;
 }
 
-export function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+export function asNumber<T>(value: T | undefined): number | null {
+  return isFiniteNumber(value) ? value : null;
 }
 
-export function accountFingerprint(account: unknown): string | undefined {
+export function accountFingerprint<T>(account: T): string | undefined {
   if (!isRecord(account)) return undefined;
   return createHash("sha256")
     .update(JSON.stringify(account))
@@ -21,15 +22,13 @@ export function accountFingerprint(account: unknown): string | undefined {
     .slice(0, 16);
 }
 
-export function commandFrom(value: unknown): VendorCommand | null {
-  if (!isRecord(value) || typeof value.name !== "string") return null;
+export function commandFrom<T>(value: T): VendorCommand | null {
+  if (!isRecord(value) || !isString(value.name)) return null;
   return {
     name: value.name,
-    description:
-      typeof value.description === "string" ? value.description : null,
+    description: asString(value.description),
     ...definedFields({
-      argumentHint:
-        typeof value.argumentHint === "string" ? value.argumentHint : undefined,
+      argumentHint: asString(value.argumentHint) ?? undefined,
     }),
   };
 }

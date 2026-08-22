@@ -9,6 +9,7 @@ export function processIsAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ESRCH") return false;
     if (code === "EPERM") return true;

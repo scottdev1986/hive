@@ -21,6 +21,7 @@ export function bumpCapabilityEpoch(
 }
 
 export function bumpHierarchyRevision(db: HiveDatabase, runId: string): void {
+  // SAFETY: The test owns this value and its fields.
   const row = db.database
     .query("SELECT hierarchyRevision FROM hierarchy_fences WHERE runId = ?")
     .get(runId) as { hierarchyRevision: string } | null;

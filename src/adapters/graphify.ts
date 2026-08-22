@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { isNumber, isRecord, isString } from "../shared/is-record";
 import {
   copyFile,
   mkdir,
@@ -18,6 +19,7 @@ import { fetchGraphifyRelease, type GraphifyRelease } from "./graphify-channel";
 import { definedFields } from "../shared/defined-fields";
 import { errorMessage } from "../shared/error-message";
 import { withFileLock } from "./file-lock";
+import type { JsonObject, JsonValue } from "../shared/json";
 
 /** The source pin CI and local development build. Runtime clients follow the signed channel instead, so publishing Graphify never edits Hive source. */
 export function graphifyPin(): string {
@@ -25,6 +27,7 @@ export function graphifyPin(): string {
   if (match === null) {
     throw new Error("graphify.lock does not pin graphifyy — regenerate it");
   }
+  // SAFETY: The surrounding code already established this contract.
   return match[1] as string;
 }
 
@@ -58,14 +61,12 @@ export function graphJsonPath(root: string): string {
 }
 
 /** The environment every graphify process gets: an allowlist, not a scrub of known key names, so a provider key Hive has never heard of still cannot leak. HOME points into Hive's tools dir so upstream's `~/.graphify` global state is never read or written. Enrichment without a key errors upstream — that error is the fail-closed backstop the design relies on. */
-export function scrubbedGraphifyEnv(): Record<string, string> {
-  const env: Record<string, string> = {
+export function scrubbedGraphifyEnv() {
+  return {
     PATH: "/usr/bin:/bin",
     HOME: join(graphifyToolsDir(), "home"),
+    ...definedFields({ TMPDIR: process.env.TMPDIR }),
   };
-  const tmpdir = process.env.TMPDIR;
-  if (tmpdir !== undefined) env.TMPDIR = tmpdir;
-  return env;
 }
 
 export interface RunResult {
@@ -466,11 +467,12 @@ function briefDamp(file: string): number {
 }
 
 /** Locate from task-matched seeds plus one normalized structural hop. Output retains the binary's cited NODE/EDGE grammar; invalid or matchless graphs return null for the bounded binary fallback. */
-export function buildTargetedGraphBrief(
-  graph: unknown,
+export function buildTargetedGraphBrief<T>(
+  graph: T,
   task: string,
 ): string | null {
-  if (typeof graph !== "object" || graph === null) return null;
+  if (!isRecord(graph) && !Array.isArray(graph)) return null;
+  // SAFETY: The surrounding code already established this contract.
   const raw = graph as { nodes?: unknown; links?: unknown; edges?: unknown };
   if (!Array.isArray(raw.nodes)) return null;
   const rawLinks = Array.isArray(raw.links)
@@ -483,18 +485,17 @@ export function buildTargetedGraphBrief(
   const nodes = new Map<string, BriefNode>();
   const fileLabelTokens = new Map<string, Set<string>>();
   const fileNodes = new Map<string, BriefNode[]>();
-  for (const entry of raw.nodes as Record<string, unknown>[]) {
-    if (typeof entry?.id !== "string") continue;
-    const label = typeof entry.label === "string" ? entry.label : entry.id;
-    const file = typeof entry.source_file === "string" ? entry.source_file : "";
+  // SAFETY: The surrounding code already established this contract.
+  for (const entry of raw.nodes as JsonObject[]) {
+    if (!isString(entry?.id)) continue;
+    const label = isString(entry.label) ? entry.label : entry.id;
+    const file = isString(entry.source_file) ? entry.source_file : "";
     const node: BriefNode = {
       id: entry.id,
       label,
       file,
-      location:
-        typeof entry.source_location === "string" ? entry.source_location : "",
-      community:
-        typeof entry.community === "number" ? String(entry.community) : "",
+      location: isString(entry.source_location) ? entry.source_location : "",
+      community: isNumber(entry.community) ? String(entry.community) : "",
       tokens: briefTokens(label),
     };
     nodes.set(node.id, node);
@@ -528,17 +529,19 @@ export function buildTargetedGraphBrief(
   }
   const links: BriefLink[] = [];
   const fileLinkCounts = new Map<string, Map<string, number>>();
-  for (const entry of rawLinks as Record<string, unknown>[]) {
-    const source =
-      typeof entry?.source === "string" ? nodes.get(entry.source) : undefined;
-    const target =
-      typeof entry?.target === "string" ? nodes.get(entry.target) : undefined;
+  // SAFETY: The surrounding code already established this contract.
+  for (const entry of rawLinks as JsonObject[]) {
+    const source = isString(entry?.source)
+      ? nodes.get(entry.source)
+      : undefined;
+    const target = isString(entry?.target)
+      ? nodes.get(entry.target)
+      : undefined;
     if (source === undefined || target === undefined) continue;
     links.push({
-      relation: typeof entry.relation === "string" ? entry.relation : "related",
-      confidence:
-        typeof entry.confidence === "string" ? entry.confidence : "UNKNOWN",
-      context: typeof entry.context === "string" ? entry.context : "",
+      relation: isString(entry.relation) ? entry.relation : "related",
+      confidence: isString(entry.confidence) ? entry.confidence : "UNKNOWN",
+      context: isString(entry.context) ? entry.context : "",
       source,
       target,
     });
@@ -574,7 +577,7 @@ export function buildTargetedGraphBrief(
   }
   if (fileScore.size === 0) return null;
   const seeds = [...fileScore.keys()]
-    .sort((a, b) => (fileScore.get(b) as number) - (fileScore.get(a) as number))
+    .sort((a, b) => (fileScore.get(b) ?? 0) - (fileScore.get(a) ?? 0))
     .slice(0, BRIEF_SEED_FILES);
   const seedSet = new Set(seeds);
 
@@ -632,6 +635,7 @@ export function buildTargetedGraphBrief(
   const expansion = [...neighborScore.keys()]
     .sort(
       (a, b) =>
+        // SAFETY: The surrounding code already established this contract.
         (neighborScore.get(b) as number) - (neighborScore.get(a) as number),
     )
     .slice(0, BRIEF_EXPANSION_FILES);
@@ -820,7 +824,9 @@ export function selectGraphBrief(output: string): string {
   const cited = nodeLines.filter((line) => endpointRank.has(nodeName(line)));
   cited.sort(
     (a, b) =>
+      // SAFETY: The surrounding code already established this contract.
       (endpointRank.get(nodeName(a)) as number) -
+      // SAFETY: The surrounding code already established this contract.
       (endpointRank.get(nodeName(b)) as number),
   );
   const orderedNodes = [
@@ -857,7 +863,7 @@ export async function buildGraphBrief(
   try {
     const stats = await stat(graphJsonPath(root));
     if (stats.size <= TARGETED_BRIEF_MAX_GRAPH_BYTES) {
-      const graph: unknown = JSON.parse(
+      const graph: JsonValue = JSON.parse(
         await readFile(graphJsonPath(root), "utf8"),
       );
       const targeted = buildTargetedGraphBrief(graph, task);

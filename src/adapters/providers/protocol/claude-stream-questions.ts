@@ -1,13 +1,11 @@
-import { isRecord } from "../../../shared/is-record";
+import { isRecord, isString } from "../../../shared/is-record";
 import { asString, type JsonObject } from "./claude-stream-wire";
 import type { ElicitationOption, ElicitationQuestion } from "./types";
 
 export const ASK_USER_QUESTION = "AskUserQuestion";
 
 /** Claude Code's AskUserQuestion input as structured questions. The tool arrives as an ordinary `can_use_tool` permission request rather than on a question-specific channel, so the questions have to be read out of the tool input. The answer goes back the same way — see `answersInput` — keyed by the question text, which is why `questionId` is that text verbatim. */
-export function claudeQuestions(
-  input: unknown,
-): readonly ElicitationQuestion[] {
+export function claudeQuestions<T>(input: T): readonly ElicitationQuestion[] {
   if (!isRecord(input) || !Array.isArray(input.questions)) return [];
   const questions: ElicitationQuestion[] = [];
   for (const entry of input.questions) {
@@ -43,21 +41,26 @@ export function claudeQuestions(
 }
 
 /** The tool input to allow with, carrying the person's selections. Claude Code reads answers off the input the permission layer returns and matches them against each question's labels; anything it cannot match reads to the model as "the user did not answer". A question with no selection is left out rather than sent empty, so a partial answer stays partial instead of being reported as a refusal of the questions that were answered. */
-export function answersInput(
-  input: unknown,
+export function answersInput<T>(
+  input: T,
   answers: Readonly<Record<string, string | readonly string[]>>,
 ): JsonObject {
   const base = isRecord(input) ? input : {};
-  const chosen: Record<string, unknown> = {};
+  const chosen: JsonObject = {};
   for (const [questionId, value] of Object.entries(answers)) {
-    if (Array.isArray(value) ? value.length === 0 : value === "") continue;
+    if (!isString(value)) {
+      if (value.length === 0) continue;
+      chosen[questionId] = [...value];
+      continue;
+    }
+    if (value === "") continue;
     chosen[questionId] = value;
   }
   return { ...base, answers: chosen };
 }
 
 /** Claude Code's AskUserQuestion input, rendered as text, for surfaces that show an elicitation as a line rather than a picker. */
-export function claudeQuestionText(input: unknown): string | null {
+export function claudeQuestionText<T>(input: T): string | null {
   if (!isRecord(input) || !Array.isArray(input.questions)) return null;
   const blocks: string[] = [];
   for (const entry of input.questions) {

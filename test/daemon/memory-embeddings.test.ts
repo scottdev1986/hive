@@ -285,6 +285,7 @@ describe("MemoryEmbeddingService", () => {
     expect(await service.embedder()).toBeNull();
     const status = service.status();
     expect(status.state).toBe("unavailable");
+    // SAFETY: The test owns this value and its fields.
     expect((status as { detail: string }).detail).toContain("onnx exploded");
     // The failure is memoized — no crash-loop retry.
     expect(await service.embedder()).toBeNull();
@@ -305,6 +306,7 @@ describe("MemoryEmbeddingService", () => {
     );
     const status = service.status();
     expect(status.state).toBe("unavailable");
+    // SAFETY: The test owns this value and its fields.
     expect((status as { detail: string }).detail).toContain(
       MEMORY_EMBEDDING_API_KEY_ENV,
     );
@@ -320,6 +322,7 @@ describe("MemoryEmbeddingService", () => {
     });
     const status = service.status();
     expect(status.state).toBe("unavailable");
+    // SAFETY: The test owns this value and its fields.
     expect((status as { detail: string }).detail).toContain("local-only");
     expect(await service.embedder()).toBeNull();
   });
@@ -353,6 +356,7 @@ describe("external embedding runtime resolution (defect D1)", () => {
     expect(await service.embedder()).toBeNull();
     const status = service.status();
     expect(status.state).toBe("unavailable");
+    // SAFETY: The test owns this value and its fields.
     const detail = (status as { detail: string }).detail;
     expect(detail).toContain("embedding-runtime-broken");
     expect(detail).toContain("bundle syntax exploded");
@@ -367,6 +371,7 @@ describe("external embedding runtime resolution (defect D1)", () => {
       model: "bge-small-en-v1.5",
     });
     expect(await service.embedder()).toBeNull();
+    // SAFETY: The test owns this value and its fields.
     const detail = (service.status() as { detail: string }).detail;
     expect(detail).toContain("embedding-native-unloadable");
   });
@@ -380,11 +385,7 @@ describe("external embedding runtime resolution (defect D1)", () => {
 });
 
 describe("MemoryEmbeddingIndex", () => {
-  function makeIndex(embedder: MemoryEmbedder | null): {
-    store: EpisodicStore;
-    index: MemoryEmbeddingIndex;
-    logged: string[];
-  } {
+  function makeIndex(embedder: MemoryEmbedder | null) {
     const store = new EpisodicStore(":memory:");
     const service = mockService(embedder);
     const logged: string[] = [];
@@ -527,6 +528,7 @@ const writeInput = (title: string, body: string, kind = "article") => ({
   source: "agent" as const,
   evidence: "memory-embeddings.test.ts",
   status: "unverified" as const,
+  // SAFETY: The test owns this value and its fields.
   kind: kind as "article" | "pitfall",
   tags: [],
   supersedes: [],

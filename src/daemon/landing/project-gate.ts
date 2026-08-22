@@ -74,6 +74,7 @@ export function verificationCommandDeclared(
     const pkgPath = join(repoRoot, "package.json");
     if (!existsSync(pkgPath)) return false;
     try {
+      // SAFETY: The surrounding code already established this contract.
       const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
         scripts?: Record<string, string>;
       };

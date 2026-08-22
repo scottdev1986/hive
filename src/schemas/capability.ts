@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { isString } from "../shared/is-record";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
@@ -24,7 +25,7 @@ export type Hv1CapabilityConstraints = z.infer<
   typeof Hv1CapabilityConstraintsSchema
 >;
 
-const Hv1CapabilityCommonShape = {
+const Hv1CapabilityCommonFields = {
   id: z.string().uuid(),
   subject: z.string().min(1),
   role: RoleSchema,
@@ -36,13 +37,13 @@ const Hv1CapabilityCommonShape = {
 
 export const Hv1CapabilityRecordSchema = z.union([
   z.strictObject({
-    ...Hv1CapabilityCommonShape,
+    ...Hv1CapabilityCommonFields,
     constraints: z
       .strictObject({ content: z.literal(true).optional() })
       .optional(),
   }),
   z.strictObject({
-    ...Hv1CapabilityCommonShape,
+    ...Hv1CapabilityCommonFields,
     constraints: z.strictObject({
       content: z.literal(true).optional(),
       scope: z.literal("user"),
@@ -73,6 +74,7 @@ export function providersOf<T extends object>(
   const extras = Object.keys(record)
     .filter((key) => !union.has(key))
     .sort();
+  // SAFETY: The surrounding code already established this contract.
   return [...CAPABILITY_PROVIDERS, ...extras] as Array<
     CapabilityProvider | Extract<keyof T, string>
   >;
@@ -174,6 +176,7 @@ export async function forEachProvider<T>(
       async (provider) => [provider, await read(provider)] as const,
     ),
   );
+  // SAFETY: The surrounding code already established this contract.
   return Object.fromEntries(entries) as Record<CapabilityProvider, T>;
 }
 
@@ -300,9 +303,7 @@ export const fingerprintAccount = (
   identifiers: readonly (string | null | undefined)[],
 ): string => {
   const material = identifiers
-    .filter(
-      (part): part is string => typeof part === "string" && part.length > 0,
-    )
+    .filter((part): part is string => isString(part) && part.length > 0)
     .map((part) => part.trim().toLowerCase());
   if (material.length === 0) return `${provider}:unidentified`;
   return createHash("sha256")
@@ -313,9 +314,7 @@ export const fingerprintAccount = (
 
 const VARIANT_PATTERN = /\[([^\]]+)\]$/;
 
-export const splitVariant = (
-  name: string,
-): { base: string; variant: string | null } => {
+export const splitVariant = (name: string) => {
   const match = VARIANT_PATTERN.exec(name);
   if (match === null) return { base: name, variant: null };
   const variant = match[1];

@@ -18,7 +18,7 @@ function runMake(
   target: "build-qa" | "qa" | "qa-clean",
   vars: Record<string, string>,
   env: NodeJS.ProcessEnv = process.env,
-): { exitCode: number; output: string } {
+) {
   const result = Bun.spawnSync(
     [
       "make",

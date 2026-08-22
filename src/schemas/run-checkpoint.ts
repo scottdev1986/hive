@@ -155,7 +155,7 @@ export const RunCheckpointInputSchema = RunCheckpointSchema.omit({
 });
 export type RunCheckpointInput = z.infer<typeof RunCheckpointInputSchema>;
 
-export function digestCheckpointContent(value: unknown): Digest {
+export function digestCheckpointContent<T>(value: T): Digest {
   const hex = createHash("sha256").update(canonicalJson(value), "utf8");
   return DigestSchema.parse(`sha256:${hex.digest("hex")}`);
 }

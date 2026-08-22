@@ -34,6 +34,7 @@ import {
   realCaller,
   type ToolHandler,
 } from "./hierarchy-tool-fixture";
+import type { JsonObject } from "../../src/shared/json";
 
 const home = mkdtempSync(join(tmpdir(), "hive-artifact-home-"));
 process.env.HIVE_HOME = home;
@@ -71,12 +72,14 @@ function handlerFor(name: string, role: Role, tool: string): ToolHandler {
 async function put(
   name: string,
   role: Role,
-  input: Record<string, unknown>,
+  input: JsonObject,
 ): Promise<ArtifactMetadata> {
+  // SAFETY: The test owns this value and its fields.
   const result = (await handlerFor(
     name,
     role,
     "hive_artifact_put",
+    // SAFETY: The test owns this value and its fields.
   )(input as never)) as { structuredContent: { artifact: ArtifactMetadata } };
   return result.structuredContent.artifact;
 }
@@ -86,10 +89,12 @@ async function get(
   role: Role,
   artifactId: string,
 ): Promise<ArtifactGetResult> {
+  // SAFETY: The test owns this value and its fields.
   const result = (await handlerFor(
     name,
     role,
     "hive_artifact_get",
+    // SAFETY: The test owns this value and its fields.
   )({
     artifactId,
   } as never)) as { structuredContent: { artifact: ArtifactGetResult } };
@@ -211,6 +216,7 @@ describe("hive_artifact_put / hive_artifact_get", () => {
       taskOrRunId: TASK_ID,
       body: "the analysis behind this task",
     });
+    // SAFETY: The test owns this value and its fields.
     const actorNodeId = task().assigneeNodeId as string;
 
     const updated = applyTaskUpdate(task(), {

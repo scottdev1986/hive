@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { which } from "bun";
 import { ClaudeStreamJsonAdapter } from "../src/adapters/providers/protocol/claude-runtime-adapter";
+import { isString } from "../src/shared/is-record";
 import type {
   ClaudeProcess,
   ClaudeProcessFactory,
@@ -24,8 +25,8 @@ const EVIDENCE_PATH = "docs/evidence/protocol-terminal/claude/conformance.json";
 
 function environment(): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
+    Object.entries(process.env).filter((entry): entry is [string, string] =>
+      isString(entry[1]),
     ),
   );
 }
@@ -56,10 +57,7 @@ async function waitForEvent(
   throw new Error(`timed out waiting for Claude ${label}`);
 }
 
-function record(session: ProviderSession): {
-  readonly events: NormalizedProviderEvent[];
-  readonly finished: Promise<void>;
-} {
+function record(session: ProviderSession) {
   const events: NormalizedProviderEvent[] = [];
   const finished = (async () => {
     for await (const event of session.events) events.push(event);
@@ -122,6 +120,7 @@ function capturingProcessFactory(
       const tail = decoder.decode();
       if (tail.length > 0) stderrOutput.push(tail);
     })();
+    // SAFETY: The test owns this value and its fields.
     return {
       pid: child.pid,
       stdin: child.stdin,
@@ -301,6 +300,7 @@ test.skipIf(!LIVE)(
         : "fail";
 
     const commands = await session.listCommands();
+    // SAFETY: The test owns this value and its fields.
     const handshake = session.capabilities.handshake as {
       models?: unknown[];
     };

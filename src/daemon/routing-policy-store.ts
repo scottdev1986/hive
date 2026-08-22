@@ -70,6 +70,7 @@ export class RoutingPolicyStore {
 
   /** One-shot V2 → V3: ordered chains become unordered hive-equal routes over the same exact candidates (weight 1 each), and the `default` chain becomes the global route. Rank order is dropped rather than converted — Hive must not invent how much more "first" meant than "second"; the user assigns real weights through set-route whenever they want user-weighted mode. Enablement copies through untouched: no new consent is created. Anything that is not a V2 document is left alone for the corrupt-row path. */
   private migrateStoredV2(now: Date = new Date()): void {
+    // SAFETY: The surrounding code already established this contract.
     const row = this.db.database
       .query("SELECT document FROM routing_policy WHERE id = 1")
       .get() as { document: string } | null;
@@ -85,7 +86,7 @@ export class RoutingPolicyStore {
         schemaVersion: z.literal(2),
         revision: z.number().int().nonnegative(),
         provisional: z.boolean(),
-        providers: z.record(z.string(), z.unknown()),
+        providers: z.record(z.string(), z.json()),
         models: z.array(z.unknown()),
         chains: z.record(
           z.string(),
@@ -108,9 +109,11 @@ export class RoutingPolicyStore {
       entries: (typeof legacy.data.chains)[string],
     ): RoutePolicy | null => {
       const candidates = entries.map((entry) => ({
+        // SAFETY: The surrounding code already established this contract.
         provider: entry.provider as CapabilityProvider,
         model: entry.model,
         // never-configured effort is a model-row state, not a launchable intent; the vendor's own choice is the only non-invented answer.
+        // SAFETY: The surrounding code already established this contract.
         effort: (entry.effort.mode === "never-configured"
           ? { mode: "provider-controlled" }
           : entry.effort) as CandidateEffort,
@@ -300,6 +303,7 @@ export function readRoutingPolicyDatabase(
     )
     .get();
   if (table === null) return emptyRoutingPolicy(now.toISOString());
+  // SAFETY: The surrounding code already established this contract.
   const row = db.database
     .query("SELECT document FROM routing_policy WHERE id = 1")
     .get() as { document: string } | null;

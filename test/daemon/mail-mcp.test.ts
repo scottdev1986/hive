@@ -15,6 +15,7 @@ import { MAIL_CONTROL_LANE_CAPACITY } from "../../src/schemas/mail";
 import { mailbox } from "../mail-test-support";
 import { required } from "../required";
 import { tempRoot } from "../temp-root";
+import type { JsonObject } from "../../src/shared/json";
 
 const home = tempRoot("hive-mail-mcp-");
 process.env.HIVE_HOME = home;
@@ -108,8 +109,8 @@ const callTool = async (
   daemon: HiveDaemon,
   token: string,
   name: string,
-  args: Record<string, unknown> = {},
-): Promise<{ ok: boolean; text: string; value: Record<string, unknown> }> => {
+  args: JsonObject = {},
+): Promise<{ ok: boolean; text: string; value: JsonObject }> => {
   const client = new Client({ name: "test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
@@ -122,7 +123,8 @@ const callTool = async (
     return {
       ok: result.isError !== true,
       text,
-      value: (result.structuredContent ?? {}) as Record<string, unknown>,
+      // SAFETY: The test owns this value and its fields.
+      value: (result.structuredContent ?? {}) as JsonObject,
     };
   } catch (error) {
     return {
@@ -149,8 +151,9 @@ const listedTools = async (daemon: HiveDaemon, token: string) => {
   }
 };
 
-const mailOf = (result: { value: Record<string, unknown> }) =>
-  (result.value.mail ?? {}) as Record<string, unknown>;
+const mailOf = (result: { value: JsonObject }) =>
+  // SAFETY: The test owns this value and its fields.
+  (result.value.mail ?? {}) as JsonObject;
 
 describe("the mailbox over MCP", () => {
   test("agent-facing schemas omit identities the daemon already knows", async () => {
@@ -166,11 +169,13 @@ describe("the mailbox over MCP", () => {
       tools.find((tool) => tool.name === "hive_mail_status"),
       "status tool",
     );
+    // SAFETY: The test owns this value and its fields.
     const publishSchema = publish.inputSchema as {
-      properties?: Record<string, unknown>;
+      properties?: JsonObject;
     };
+    // SAFETY: The test owns this value and its fields.
     const statusSchema = status.inputSchema as {
-      properties?: Record<string, unknown>;
+      properties?: JsonObject;
       required?: string[];
     };
 

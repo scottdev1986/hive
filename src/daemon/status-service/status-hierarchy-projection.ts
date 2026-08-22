@@ -39,6 +39,7 @@ import type { Review } from "../../schemas/integration-stage";
 import type { OwnershipTransfer } from "../../schemas/ownership-transfer";
 import type { RunControlDecision } from "../../schemas/run-control";
 import type { TaskDetail } from "../../schemas/task-detail";
+import type { JsonObject } from "../../shared/json";
 
 export const BREAKER_SOURCE_ABSENT =
   "no anomaly circuit-breaker record exists in the daemon";
@@ -67,16 +68,30 @@ function entity(
   kind: string,
   id: string,
   entityRevision: string,
-  projection: Record<string, unknown>,
+  projection: JsonObject,
   generation?: number,
 ): HierarchySnapshotEntity {
   return generation === undefined
-    ? { kind, id, entityRevision, projection }
-    : { kind, id, entityRevision, projection, generation };
+    ? {
+        kind,
+        id,
+        entityRevision,
+        // SAFETY: Hierarchy snapshot projections are JSON objects the projector just built.
+        projection: projection as HierarchySnapshotEntity["projection"],
+      }
+    : {
+        kind,
+        id,
+        entityRevision,
+        // SAFETY: Hierarchy snapshot projections are JSON objects the projector just built.
+        projection: projection as HierarchySnapshotEntity["projection"],
+        generation,
+      };
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+function asRecord<T>(value: T): JsonObject {
+  // SAFETY: The surrounding code already established this contract.
+  return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
 function projectRun(
@@ -89,9 +104,9 @@ function projectRun(
     instanceId: run.instanceId,
     repo: run.repo,
   };
-  const shape: AvailableField<TopologyDecision["shape"]> =
+  const kind: AvailableField<TopologyDecision["shape"]> =
     topology !== null && topology !== undefined
-      ? presentField(topology.shape)
+      ? presentField(topology["shape"])
       : absentField("unmeasured", "no TopologyDecision supplied for this run");
 
   return HierarchyRunProjectionSchema.parse({
@@ -101,7 +116,7 @@ function projectRun(
     root: presentField(root),
     phase: presentField(run.phase),
     lifecycle: presentField(run.lifecycle),
-    topologyShape: shape,
+    topologyKind: kind,
     topologySource: presentField("hierarchy"),
   });
 }
@@ -308,7 +323,7 @@ function projectAllAbsent(): HierarchySnapshotEntity[] {
     root: absentField("unmeasured", "no Run record supplied"),
     phase: absentField("unmeasured", "no Run record supplied"),
     lifecycle: absentField("unmeasured", "no Run record supplied"),
-    topologyShape: absentField("unmeasured", "no TopologyDecision supplied"),
+    topologyKind: absentField("unmeasured", "no TopologyDecision supplied"),
     topologySource: absentField(
       "unmeasured",
       "no hierarchy or legacy source supplied",

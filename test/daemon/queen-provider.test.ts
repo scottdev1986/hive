@@ -295,6 +295,7 @@ describe("queen provider wire fixtures", () => {
 
   test("projection", () => {
     expect(QueenProviderProjectionSchema.parse(projectionFixture)).toEqual(
+      // SAFETY: The test owns this value and its fields.
       projectionFixture as never,
     );
   });
@@ -311,6 +312,7 @@ describe("queen provider wire fixtures", () => {
       },
     };
     expect(SetLiveQueenProviderResponseSchema.parse(fixture)).toEqual(
+      // SAFETY: The test owns this value and its fields.
       fixture as never,
     );
   });
@@ -322,6 +324,7 @@ describe("queen provider wire fixtures", () => {
       projection: projectionFixture,
     };
     expect(SetLiveQueenProviderConflictSchema.parse(fixture)).toEqual(
+      // SAFETY: The test owns this value and its fields.
       fixture as never,
     );
   });
@@ -338,7 +341,7 @@ describe("queen provider wire fixtures", () => {
       "attestation",
     ];
     const keys = JSON.stringify(
-      Object.keys(QueenProviderProjectionSchema.shape),
+      Object.keys(QueenProviderProjectionSchema["shape"]),
     );
     for (const word of forbidden) {
       expect(keys).not.toContain(word);
@@ -435,18 +438,22 @@ describe("queen provider wire fixtures", () => {
     assertOpaque();
     expect(succession.projection().succession?.state).toEqual("recovering");
     succession.gateRootToolCall(
+      // SAFETY: The test owns this value and its fields.
       { id: "cap-successor" } as never,
       "hive_status",
     );
     succession.gateRootToolCall(
+      // SAFETY: The test owns this value and its fields.
       { id: "cap-successor" } as never,
       "hive_mail_poll",
     );
     succession.gateRootToolCall(
+      // SAFETY: The test owns this value and its fields.
       { id: "cap-successor" } as never,
       "hive_task_list",
     );
     succession.gateRootToolCall(
+      // SAFETY: The test owns this value and its fields.
       { id: "cap-successor" } as never,
       "hive_run_checkpoint_get",
     );

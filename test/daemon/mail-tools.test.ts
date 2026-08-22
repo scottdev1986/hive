@@ -26,6 +26,7 @@ import {
 } from "../../src/mail-service/wake-ledger";
 import { MailWakeStore } from "../../src/mail-service/wake-store";
 import { required } from "../required";
+import type { JsonObject } from "../../src/shared/json";
 
 const T0 = new Date("2026-08-01T12:00:00.000Z");
 
@@ -102,10 +103,7 @@ const rig = (
   return { store, wake, calls, tools: new MailTools(deps) };
 };
 
-const publishControl = (
-  tools: MailTools,
-  overrides: Record<string, unknown> = {},
-) =>
+const publishControl = (tools: MailTools, overrides: JsonObject = {}) =>
   tools.publish(capability("queen"), {
     from: "queen",
     to: "ada",
@@ -116,6 +114,7 @@ const publishControl = (
     ...overrides,
   });
 
+// SAFETY: MailTools.publish owns a structured mail result containing itemId.
 const itemIdOf = (result: ReturnType<MailTools["publish"]>): string =>
   (result.structuredContent.mail as { itemId: string }).itemId;
 
@@ -198,6 +197,7 @@ describe("capability checks at the boundary", () => {
       itemId,
       handlerId: "h1",
     });
+    // SAFETY: MailTools.claim owns the structured mail result and supplies ownerGeneration.
     expect(
       (claimed.structuredContent.mail as { ownerGeneration: number })
         .ownerGeneration,
@@ -223,6 +223,7 @@ describe("capability checks at the boundary", () => {
     const behind = itemIdOf(
       publishControl(tools, { topic: "second", idempotencyKey: "q-5" }),
     );
+    // SAFETY: MailTools.poll owns the structured control-lane result contract.
     const offered = () =>
       (
         tools.poll(capability("ada"), { recipient: "ada" }).structuredContent
@@ -276,6 +277,7 @@ describe("tool results", () => {
   test("each result carries the value for a model and for a program", () => {
     const { tools } = rig();
     const result = publishControl(tools);
+    // SAFETY: MailTools.publish owns a structured mail result containing itemId.
     const structured = result.structuredContent.mail as { itemId: string };
     expect(structured.itemId).toStartWith("mit_");
     expect(JSON.parse(required(result.content[0]).text)).toEqual(structured);
@@ -292,10 +294,11 @@ describe("tool results", () => {
       body: "10%",
       idempotencyKey: "w-1",
     });
+    // SAFETY: MailTools.poll owns this bounded structured mailbox contract.
     const polled = tools.poll(capability("ada"), { recipient: "ada" })
       .structuredContent.mail as {
       control: { itemId: string } | null;
-      workDigest: Record<string, unknown>[];
+      workDigest: JsonObject[];
       backlog: Record<string, number>;
       cursor: number | null;
     };
@@ -308,6 +311,7 @@ describe("tool results", () => {
   test("the five tools carry a publish through to a settlement", async () => {
     const { tools, store, wake } = rig();
     const itemId = itemIdOf(publishControl(tools));
+    // SAFETY: MailTools.poll owns the structured control-lane result contract.
     const offered = tools.poll(capability("ada"), { recipient: "ada" })
       .structuredContent.mail as { control: { itemId: string } };
     expect(offered.control.itemId).toBe(itemId);
@@ -316,6 +320,7 @@ describe("tool results", () => {
       itemId,
       handlerId: "h1",
     });
+    // SAFETY: MailTools.complete owns the structured settlement result contract.
     const settled = (
       await tools.complete(capability("ada"), {
         recipient: "ada",
@@ -332,6 +337,7 @@ describe("tool results", () => {
       "mail_claimed",
       "completed",
     ]);
+    // SAFETY: MailTools.status owns the structured lane-status result contract.
     const status = tools.status(capability("ada"), { recipient: "ada" })
       .structuredContent.mail as { lanes: { control: { available: number } } };
     expect(status.lanes.control.available).toBe(0);
@@ -436,10 +442,7 @@ describe("tool results", () => {
 });
 
 describe("the work lane", () => {
-  const publishWork = (
-    tools: MailTools,
-    overrides: Record<string, unknown> = {},
-  ) =>
+  const publishWork = (tools: MailTools, overrides: JsonObject = {}) =>
     tools.publish(capability("worker"), {
       from: "worker",
       to: "ada",
@@ -453,10 +456,12 @@ describe("the work lane", () => {
   test("a digest entry can be claimed and read by the recipient it was shown to", async () => {
     const { tools, wake } = rig();
     const itemId = itemIdOf(publishWork(tools));
+    // SAFETY: MailTools.poll owns the structured work-digest result contract.
     const polled = tools.poll(capability("ada"), { recipient: "ada" })
       .structuredContent.mail as { workDigest: { itemId: string }[] };
     expect(polled.workDigest.map((entry) => entry.itemId)).toEqual([itemId]);
 
+    // SAFETY: MailTools.claim owns the structured claimed-mail result contract.
     const claimed = tools.claim(capability("ada"), {
       recipient: "ada",
       itemId,
@@ -485,6 +490,7 @@ describe("the work lane", () => {
     );
     // The bound is what makes this a control rather than a coincidence: the
     // poll returns one entry, and the one it withheld stays unclaimable.
+    // SAFETY: MailTools.poll owns the structured work-digest result contract.
     const polled = tools.poll(capability("ada"), {
       recipient: "ada",
       workDigestLimit: 1,
@@ -515,6 +521,7 @@ describe("honest refusals", () => {
       itemId,
       handlerId: "h1",
     });
+    // SAFETY: MailTools.complete owns the structured settlement result contract.
     const settled = (
       await tools.complete(capability("ada"), {
         recipient: "ada",
@@ -538,6 +545,7 @@ describe("honest refusals", () => {
       body: "10%",
       idempotencyKey: "w-1",
     });
+    // SAFETY: MailTools.poll owns this bounded structured mailbox contract.
     const polled = tools.poll(capability("ada"), {
       recipient: "ada",
       workDigestLimit: 0,
@@ -584,6 +592,7 @@ describe("an item whose published row never landed", () => {
       controlLaneCapacity: 64,
     });
 
+  // SAFETY: MailTools.poll owns the structured control-lane result contract.
   const polledControl = (tools: MailTools) =>
     tools.poll(capability("ada"), { recipient: "ada" }).structuredContent
       .mail as { control: { itemId: string } | null };
@@ -646,6 +655,7 @@ describe("an item whose published row never landed", () => {
       }),
     );
 
+    // SAFETY: MailTools.poll owns the structured work-digest result contract.
     const polled = tools.poll(capability("ada"), { recipient: "ada" })
       .structuredContent.mail as { workDigest: { itemId: string }[] };
     expect(polled.workDigest.map((entry) => entry.itemId)).toEqual([
@@ -656,6 +666,7 @@ describe("an item whose published row never landed", () => {
       "published",
       "mail_presented",
     ]);
+    // SAFETY: MailTools.claim owns the structured claimed-mail result contract.
     const claimed = tools.claim(capability("ada"), {
       recipient: "ada",
       itemId: wedged.itemId,
@@ -788,10 +799,7 @@ describe("registration", () => {
 });
 
 describe("owner control complete requires a memory citation", () => {
-  const publishOwnerControl = (
-    tools: MailTools,
-    overrides: Record<string, unknown> = {},
-  ) =>
+  const publishOwnerControl = (tools: MailTools, overrides: JsonObject = {}) =>
     tools.publish(capability("user"), {
       from: "user",
       to: "queen",
@@ -836,6 +844,7 @@ describe("owner control complete requires a memory citation", () => {
       handlerId: "queen-h1",
       disposition: "completed",
     });
+    // SAFETY: MailTools.complete owns the structured settlement result contract.
     expect(
       (settled.structuredContent.mail as { disposition: string }).disposition,
     ).toBe("completed");
@@ -854,6 +863,7 @@ describe("owner control complete requires a memory citation", () => {
       handlerId: "queen-h1",
       disposition: "deferred",
     });
+    // SAFETY: MailTools.complete owns the structured settlement result contract.
     expect(
       (settled.structuredContent.mail as { disposition: string }).disposition,
     ).toBe("deferred");

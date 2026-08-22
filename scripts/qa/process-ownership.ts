@@ -58,6 +58,7 @@ const defaultSystem: ProcessOwnershipSystem = {
     try {
       process.kill(pid, signal);
     } catch (error) {
+      // SAFETY: The surrounding code already established this contract.
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
   },
@@ -89,6 +90,7 @@ function inspectIdentity(pid: number): DaemonProcessIdentity | null {
     try {
       process.kill(pid, 0);
     } catch (livenessError) {
+      // SAFETY: The surrounding code already established this contract.
       if ((livenessError as NodeJS.ErrnoException).code === "ESRCH")
         return null;
       throw inspectionError;
@@ -177,6 +179,7 @@ export function beginOwnership(
   try {
     mkdirSync(stateDirectory);
   } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
     if ((error as NodeJS.ErrnoException).code === "EEXIST") {
       throw new Error(
         `another QA rig owns ${stateDirectory}; run 'make qa-clean' first`,

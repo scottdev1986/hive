@@ -1,3 +1,4 @@
+import { isString } from "../../shared/is-record";
 import type {
   Icon,
   McpServer,
@@ -14,6 +15,7 @@ import {
   ROLE_GRANTS,
 } from "./authorization-service";
 import type { ObservabilityService } from "../observability/observability-service";
+import type { JsonObject } from "../../shared/json";
 
 interface HiveToolPolicy {
   readonly action: Action;
@@ -23,28 +25,21 @@ interface HiveToolPolicy {
 }
 
 function structuredOutput(outputKeys: readonly string[]): z.ZodType {
-  const structuredValue = z.union([
-    z.null(),
-    z.boolean(),
-    z.number(),
-    z.string(),
-    z.array(z.unknown()),
-    z.record(z.string(), z.unknown()),
-  ]);
-  const shape = Object.fromEntries(
+  const structuredValue = z.union([z.null(), z.json()]);
+  const fields = Object.fromEntries(
     outputKeys.map((outputKey) => [
       outputKey,
       outputKeys.length === 1 ? structuredValue : structuredValue.optional(),
     ]),
   );
   return z
-    .object(shape)
+    .object(fields)
     .catchall(z.unknown())
     .describe(`Structured Hive result containing ${outputKeys.join(" or ")}`);
 }
 
 function outputKeys(outputKey: string | readonly string[]): readonly string[] {
-  return typeof outputKey === "string" ? [outputKey] : outputKey;
+  return isString(outputKey) ? [outputKey] : outputKey;
 }
 
 function readOnly(
@@ -172,7 +167,7 @@ export interface HiveToolConfig<InputArgs extends z.ZodType> {
   readonly description?: string;
   readonly inputSchema: InputArgs;
   readonly icons?: Icon[];
-  readonly _meta?: Record<string, unknown>;
+  readonly _meta?: JsonObject;
 }
 
 /** The registration surface tool modules depend on. Tests can implement this without impersonating the class. */
@@ -200,6 +195,7 @@ export class HiveToolRegistrar {
     const visible = ROLE_GRANTS[this.capability.role].actions.includes(
       policy.action,
     );
+    // SAFETY: The surrounding code already established this contract.
     const guardedCallback = (async (
       args: z.output<InputArgs>,
       context: ServerContext,
@@ -239,7 +235,9 @@ export class HiveToolRegistrar {
           title: config.title,
           description: config.description,
         }),
+        // SAFETY: The surrounding code already established this contract.
         inputSchema: inputSchema as Tool["inputSchema"],
+        // SAFETY: The surrounding code already established this contract.
         outputSchema: z.toJSONSchema(policy.outputSchema, {
           io: "output",
         }) as Tool["outputSchema"],

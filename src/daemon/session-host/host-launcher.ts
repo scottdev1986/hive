@@ -3,6 +3,7 @@ import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import type { z } from "zod";
+import { isString } from "../../shared/is-record";
 import {
   machineHiveHome,
   sessiondRuntimeRoot,
@@ -195,9 +196,10 @@ export async function launchHost(
   request: HostLaunchRequest,
 ): Promise<LaunchedHost> {
   // `sun_path` is 104 bytes on macOS, and a HIVE_HOME under /var/folders is most of that before any suffix — a socket named inside the hive home dies as NameTooLong, surfacing as a host that never dialed. The listener therefore lives in its own short directory: unique per launch, 0700, and removed as soon as the host is on the stream. The host writes its record under this tree and fails closed if it is absent, so the launcher creates it before starting the host. A host whose working directory is gone fails deep inside its own boot as a bare FileNotFound, naming nothing. The directory belongs to the caller, so the check belongs here, where the answer can say which path was missing.
+  // SAFETY: The surrounding code already established this contract.
   const workingDirectory = (JSON.parse(request.specJson) as { cwd?: unknown })
     .cwd;
-  if (typeof workingDirectory !== "string") {
+  if (!isString(workingDirectory)) {
     throw new HostLaunchError("create spec has no working directory");
   }
   try {

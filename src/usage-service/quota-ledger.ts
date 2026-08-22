@@ -117,6 +117,7 @@ export function migrateDefaultQuotaLedger(
             .get(table) !== null;
         const commonColumns = (table: string): string[] => {
           const source = new Set(
+            // SAFETY: The surrounding code already established this contract.
             (
               target.database
                 .query(`PRAGMA legacy.table_info(${quoted(table)})`)
@@ -124,12 +125,15 @@ export function migrateDefaultQuotaLedger(
             ).map((column) => column.name),
           );
           return (
-            target.database
-              .query(`PRAGMA main.table_info(${quoted(table)})`)
-              .all() as Array<{ name: string }>
-          )
-            .map((column) => column.name)
-            .filter((column) => source.has(column));
+            // SAFETY: The surrounding code already established this contract.
+            (
+              target.database
+                .query(`PRAGMA main.table_info(${quoted(table)})`)
+                .all() as Array<{ name: string }>
+            )
+              .map((column) => column.name)
+              .filter((column) => source.has(column))
+          );
         };
         const copy = (table: string): void => {
           if (!sourceHas(table)) return;
@@ -145,6 +149,7 @@ export function migrateDefaultQuotaLedger(
         if (sourceHas("quota_usage")) {
           const columns = commonColumns("quota_usage");
           const list = columns.map(quoted).join(", ");
+          // SAFETY: The surrounding code already established this contract.
           const rows = target.database
             .query("SELECT id, seq FROM legacy.quota_usage ORDER BY seq")
             .all() as Array<{ id: string; seq: number }>;

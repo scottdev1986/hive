@@ -56,6 +56,7 @@ async function probe(hostile: Record<string, string>): Promise<ProbeResult> {
     child.exited,
   ]);
   if (exitCode !== 0) throw new Error(`probe failed: ${stderr}`);
+  // SAFETY: The test owns this value and its fields.
   return JSON.parse(stdout) as ProbeResult;
 }
 

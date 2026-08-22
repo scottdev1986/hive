@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isErrnoCode } from "../../shared/error-message";
 import {
   ROUTING_CATEGORIES,
   type RoutingCategory,
@@ -104,11 +105,7 @@ export async function promoteVerificationToStandards(
   try {
     source = await readFile(path, "utf8");
   } catch (error) {
-    const code =
-      error instanceof Error && "code" in error
-        ? (error as NodeJS.ErrnoException).code
-        : undefined;
-    if (code !== "ENOENT") throw error;
+    if (!isErrnoCode(error, "ENOENT")) throw error;
     source = scaffoldAgentStandardsMd();
   }
   const next = withPromotedVerification(source, command);
@@ -155,11 +152,7 @@ export async function loadAgentStandards(
   try {
     source = await readFile(path, "utf8");
   } catch (error) {
-    const code =
-      error instanceof Error && "code" in error
-        ? (error as NodeJS.ErrnoException).code
-        : undefined;
-    if (code === "ENOENT") {
+    if (isErrnoCode(error, "ENOENT")) {
       return parseAgentStandards(scaffoldAgentStandardsMd(), path);
     }
     throw new Error(
@@ -323,6 +316,7 @@ function parseAgentStandards(source: string, path: string): AgentStandards {
   return {
     sections: [...sections].map(([name, text]) => ({
       heading: name,
+      // SAFETY: The surrounding code already established this contract.
       audience: declarations.get(name) as StandardsAudience,
       text,
     })),

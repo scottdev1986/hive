@@ -21,7 +21,7 @@ import {
   BudgetLimitSchema,
   RunLifecycleSchema,
   RunPhaseSchema,
-  TopologyShapeSchema,
+  TopologyKindSchema,
 } from "./hierarchy-run";
 import {
   ReviewIdSchema,
@@ -93,7 +93,7 @@ export const HierarchyRunProjectionSchema = z.strictObject({
   root: availableFieldSchema(HierarchyRootIdentitySchema),
   phase: availableFieldSchema(RunPhaseSchema),
   lifecycle: availableFieldSchema(RunLifecycleSchema),
-  topologyShape: availableFieldSchema(TopologyShapeSchema),
+  topologyKind: availableFieldSchema(TopologyKindSchema),
   /** How this topology was produced: a TopologyDecision on a hierarchy Run is the only producer there is. The vocabulary lists exactly that one, because a value nothing emits is a claim the daemon cannot back — a second source arrives with a schemaVersion bump, not with a name reserved in advance. */
   topologySource: availableFieldSchema(z.enum(["hierarchy"])),
 });
@@ -253,7 +253,7 @@ export const HierarchySnapshotEntitySchema = z.strictObject({
   id: z.string().min(1),
   generation: PositiveGenerationSchema.optional(),
   entityRevision: DecimalUint64Schema,
-  projection: z.record(z.string(), z.unknown()),
+  projection: z.record(z.string(), z.json()),
 });
 export type HierarchySnapshotEntity = z.infer<
   typeof HierarchySnapshotEntitySchema

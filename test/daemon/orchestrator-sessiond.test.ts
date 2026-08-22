@@ -223,11 +223,7 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 20; index += 1) await Promise.resolve();
 }
 
-function terminalWaitHarness(): Readonly<{
-  controller: OrchestratorSessiondController;
-  finishExit: () => void;
-  inspections: () => number;
-}> {
+function terminalWaitHarness() {
   const bindings = new MemoryBindings();
   let exit:
     ((value: { kind: "managed-exit"; exitCode: number }) => void) | null = null;
@@ -878,11 +874,7 @@ function shellIdleInspection(
 }
 
 /** Wires OrchestratorSessiondController.startHeadless against a real, in-memory HiveDatabase so getActiveRootProviderRun is the genuine daemon query, not a fake. The fake terminalHost's reconcileProviderRun ends the run in that same real database exactly as HiveTerminalHostAdapter's does on a detected exit — simulating that reconciliation already ran, not re-testing it; HiveTerminalHostAdapter's own exit detection is pre-existing and out of this task's scope. */
-function headlessHarness(): Readonly<{
-  db: HiveDatabase;
-  controller: OrchestratorSessiondController;
-  finishExit: () => void;
-}> {
+function headlessHarness() {
   const db = new HiveDatabase(":memory:");
   let exit:
     ((value: { kind: "managed-exit"; exitCode: number }) => void) | null = null;

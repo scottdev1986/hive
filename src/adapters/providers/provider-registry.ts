@@ -15,25 +15,26 @@ import { kimiAgentAdapter } from "./kimi-adapter";
 import { opencodeAgentAdapter } from "./opencode-adapter";
 import type { AgentAdapter } from "./provider-adapter";
 
-const AGENT_ADAPTERS: Record<CapabilityProvider, AgentAdapter> = {
+const AGENT_ADAPTERS = {
   claude: claudeAgentAdapter,
   codex: codexAgentAdapter,
   grok: grokAgentAdapter,
   kimi: kimiAgentAdapter,
   opencode: opencodeAgentAdapter,
-};
+} satisfies Record<CapabilityProvider, AgentAdapter>;
 
-const RUNTIME_ADAPTERS: Record<CapabilityProvider, ProviderRuntimeAdapter> = {
+const RUNTIME_ADAPTERS = {
   claude: new ClaudeStreamJsonAdapter(),
   codex: codexAppServerAdapter,
   grok: new GrokAcpAdapter(),
   kimi: new KimiAcpAdapter(),
   opencode: new OpenCodeAcpAdapter(),
-};
+} satisfies Record<CapabilityProvider, ProviderRuntimeAdapter>;
 
 export function getAgentAdapter(provider: CapabilityProvider): AgentAdapter {
   const adapter: AgentAdapter | undefined = AGENT_ADAPTERS[provider];
   if (adapter === undefined) {
+    // SAFETY: The surrounding code already established this contract.
     return unknownVendor(provider as never, "agent adapter registry");
   }
   return adapter;
@@ -45,6 +46,7 @@ export function getProviderRuntimeAdapter(
   const adapter = RUNTIME_ADAPTERS[provider];
   if (adapter === undefined) {
     return unknownVendor(
+      // SAFETY: The surrounding code already established this contract.
       provider as never,
       "provider runtime adapter registry",
     );

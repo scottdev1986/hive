@@ -183,7 +183,7 @@ describe("the billing reader heals itself", () => {
         new Date(Date.parse(AT) + (BILLING_MEMORY_TTL_MINUTES + 1) * 60_000),
       warn: () => {},
     });
-    // Not a confident guess dressed as a measurement: unknown, so the guard asks.
+    // Not a confident guess dressed as a measurement: JsonValue, so the guard asks.
     expect(stale?.creditsEnabled.state).toBe("unknown");
   });
 

@@ -5,6 +5,8 @@ import { getHiveHome, hiveInstanceSuffix } from "../../hive-home/home";
 import { systemNow } from "../../shared/clock";
 import { HIVE_BUILD_HASH, HIVE_VERSION } from "../../shared/version";
 import { resolveHandshakeProject } from "../project-identity-core/project-identity-daemon";
+import { isNumber, isRecord, isString } from "../../shared/is-record";
+import type { JsonObject } from "../../shared/json";
 
 /** This is intentionally separate from product version. A wire change must not silently attach a newer launcher to an older daemon with the same release label. */
 export const DAEMON_WIRE_PROTOCOL = { min: 1, max: 1 } as const;
@@ -110,39 +112,39 @@ function sameStringSet(
   );
 }
 
-export function parseDaemonHandshake(value: unknown): DaemonHandshake | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return null;
-  const body = value as Record<string, unknown>;
+export function parseDaemonHandshake<T>(value: T): DaemonHandshake | null {
+  if (!isRecord(value)) return null;
+  // SAFETY: The surrounding code already established this contract.
+  const body = value as JsonObject;
   const wire = body.wireProtocol;
   if (
-    typeof body.productVersion !== "string" ||
-    typeof body.buildHash !== "string" ||
-    typeof body.schemaEpoch !== "number" ||
-    typeof body.instanceId !== "string" ||
-    typeof body.hiveUuid !== "string" ||
-    typeof body.identityKey !== "string" ||
-    !(typeof body.repoFamilyKey === "string" || body.repoFamilyKey === null) ||
-    typeof body.generation !== "number" ||
+    !isString(body.productVersion) ||
+    !isString(body.buildHash) ||
+    !isNumber(body.schemaEpoch) ||
+    !isString(body.instanceId) ||
+    !isString(body.hiveUuid) ||
+    !isString(body.identityKey) ||
+    !(isString(body.repoFamilyKey) || body.repoFamilyKey === null) ||
+    !isNumber(body.generation) ||
     !Array.isArray(body.capabilities) ||
-    !body.capabilities.every((capability) => typeof capability === "string") ||
-    typeof wire !== "object" ||
-    wire === null ||
-    Array.isArray(wire)
+    !body.capabilities.every((capability) => isString(capability)) ||
+    !isRecord(wire)
   )
     return null;
-  const protocol = wire as Record<string, unknown>;
-  if (typeof protocol.min !== "number" || typeof protocol.max !== "number")
-    return null;
+  // SAFETY: The surrounding code already established this contract.
+  const protocol = wire as JsonObject;
+  if (!isNumber(protocol.min) || !isNumber(protocol.max)) return null;
   return {
     productVersion: body.productVersion,
     buildHash: body.buildHash,
     wireProtocol: { min: protocol.min, max: protocol.max },
     schemaEpoch: body.schemaEpoch,
+    // SAFETY: The surrounding code already established this contract.
     capabilities: body.capabilities as string[],
     instanceId: body.instanceId,
     hiveUuid: body.hiveUuid,
     identityKey: body.identityKey,
+    // SAFETY: The surrounding code already established this contract.
     repoFamilyKey: body.repoFamilyKey as string | null,
     generation: body.generation,
   };

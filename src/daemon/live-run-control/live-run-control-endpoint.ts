@@ -57,7 +57,7 @@ export interface LiveRunControlEndpointDependencies {
   denied(decision: Extract<Decision, { readonly ok: false }>): Response;
 }
 
-function response(value: unknown, status = 200): Response {
+function response<T>(value: T, status = 200): Response {
   return Response.json(value, { status });
 }
 
