@@ -968,12 +968,13 @@ export async function buildMemoryIndex(
     );
 
     // Convert recall results to index rows (preserve recall order)
+    // Format: - [scope/topic] id (date) [status] [pitfall]?: title
     const rowsByKey = new Map<string, string>();
     for (const item of allRows) {
-      const match = item.row.match(/^\[([^\]]+)\]\s+([^:]+):/);
+      const match = item.row.match(/^- \[([^\]]+)\]\s+(\S+)/);
       if (match !== null) {
         const scopeTopic = match[1];
-        const id = match[2].trim();
+        const id = match[2];
         const scope = scopeTopic.split("/")[0];
         rowsByKey.set(`${scope}/${id}`, item.row);
       }

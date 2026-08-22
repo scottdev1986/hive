@@ -17,7 +17,7 @@ export interface WakePayloadServiceDeps {
 
 const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
 
-/** P0: Build named wake query from context. */
+/** Build named wake query from available context. Returns lane-only query when topic/objective/lastMailSnippet are all absent or empty. */
 function buildWakeQuery(request: WakePayloadRequest): string {
   const parts: string[] = [];
 
@@ -31,11 +31,11 @@ function buildWakeQuery(request: WakePayloadRequest): string {
   return parts.filter((p) => p.trim().length > 0).join(" ");
 }
 
-/** Builds the wake payload: mail counts by lane + memory recall from named query. P0: Uses real buildMemoryRecallBundle with hybrid recall, not newest-10 date slice. */
+/** Builds the wake payload: mail counts by lane + memory recall from named query. Uses buildMemoryRecallBundle with hybrid recall when semantic is available, otherwise lexical-only. */
 export class WakePayloadService {
   constructor(private readonly deps: WakePayloadServiceDeps) {}
 
-  /** P0: Build wake payload with real recall (named query + hybrid). Not newest-10 date slice; not hardcoded semantic disabled. */
+  /** Build wake payload with memory recall. Semantic recall used when available, otherwise lexical-only. Query built from lane + mail topic + snippet. */
   async build(request: WakePayloadRequest): Promise<WakePayload> {
     const { recipient, wakeId, oldestItemId, lane } = request;
 
@@ -51,8 +51,18 @@ export class WakePayloadService {
       "available",
     );
 
+    // Populate wake context from mail if not provided by caller
+    const enrichedRequest = { ...request };
+    if (!request.topic && !request.objective && !request.lastMailSnippet) {
+      const mailItem = this.deps.mailStore.getItem(oldestItemId);
+      if (mailItem !== null) {
+        enrichedRequest.topic = mailItem.topic;
+        enrichedRequest.lastMailSnippet = mailItem.body.slice(0, 300);
+      }
+    }
+
     // P0: Named query construction from wake context
-    const query = buildWakeQuery(request);
+    const query = buildWakeQuery(enrichedRequest);
 
     // P0: Real buildMemoryRecallBundle with hybrid (not newest-10)
     const bundle = await buildMemoryRecallBundle(
