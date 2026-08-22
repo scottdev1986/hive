@@ -261,6 +261,7 @@ export interface HarvestPitfallsDeps {
 function candidateBody(input: {
   cluster: EpisodicEvent[];
   label: string;
+  signature: string;
   agent: string;
   sessionId: string | null;
   related: Array<{ scope: MemoryScope; id: string; title: string }>;
@@ -292,6 +293,7 @@ function candidateBody(input: {
     "## Context",
     "",
     `- Failure signature: ${label}`,
+    `- Recurrence key: ${input.signature}`,
     `- Agent: ${agent}`,
     `- Session: ${sessionId ?? "unknown"}`,
     `- Failure events in admitted session: ${cluster.length}`,
@@ -455,6 +457,7 @@ async function harvestPitfallsLocked(
       const body = candidateBody({
         cluster: cluster.events,
         label: cluster.label,
+        signature,
         agent: deps.agent,
         sessionId: deps.sessionId,
         related,

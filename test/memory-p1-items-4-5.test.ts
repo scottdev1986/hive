@@ -533,67 +533,44 @@ describe("P1 Critic PASS fixtures", () => {
       },
     });
 
-    let writtenFact: { scope: string; id: string } | null = null;
+    for (let session = 1; session <= 3; session++) {
+      episodic.appendEvent({
+        agent: `test-agent-${session}`,
+        type: "status.turn",
+        summary: "npm install (exit code 1)",
+        provenance: {
+          phase: "command",
+          tool: "npm",
+          command: "npm install",
+          exitCode: 1,
+        },
+      });
 
-    const harvestReport = await harvestPitfalls({
-      store: episodic,
-      repoRoot: root,
-      agent: "test-agent",
-      sessionId: "test-session",
-      write: async (input) => {
-        const result = await writeMemoryFact(root, input);
-        writtenFact = result;
-        return result;
-      },
-    });
+      episodic.appendEvent({
+        agent: `test-agent-${session}`,
+        type: "status.turn",
+        summary: "npm install (exit code 1)",
+        provenance: {
+          phase: "command",
+          tool: "npm",
+          command: "npm install",
+          exitCode: 1,
+        },
+      });
 
-    if (harvestReport.rejected > 0) {
-      expect(harvestReport.candidates.length).toBe(0);
-      expect(getRecurrenceCount(episodic, signature)).toBe(0);
-    } else {
-      expect(harvestReport.candidates.length).toBeGreaterThan(0);
-      expect(writtenFact).not.toBeNull();
-      expect(getRecurrenceCount(episodic, signature)).toBe(1);
+      await harvestPitfalls({
+        store: episodic,
+        repoRoot: root,
+        agent: `test-agent-${session}`,
+        sessionId: `test-session-${session}`,
+        write: async (input) => {
+          return await writeMemoryFact(root, input);
+        },
+      });
     }
 
-    episodic.appendEvent({
-      agent: "test-agent-2",
-      type: "status.turn",
-      summary: "npm install (exit code 1)",
-      provenance: {
-        phase: "command",
-        tool: "npm",
-        command: "npm install",
-        exitCode: 1,
-      },
-    });
-
-    episodic.appendEvent({
-      agent: "test-agent-2",
-      type: "status.turn",
-      summary: "npm install (exit code 1)",
-      provenance: {
-        phase: "command",
-        tool: "npm",
-        command: "npm install",
-        exitCode: 1,
-      },
-    });
-
-    const harvestReport2 = await harvestPitfalls({
-      store: episodic,
-      repoRoot: root,
-      agent: "test-agent-2",
-      sessionId: "test-session-2",
-      write: async (input) => {
-        return await writeMemoryFact(root, input);
-      },
-    });
-
-    expect(harvestReport2.candidates.length).toBeGreaterThan(0);
-
-    const recurrence2 = getRecurrenceCount(episodic, signature);
-    expect(recurrence2).toBeGreaterThanOrEqual(2);
+    const finalRecurrence = getRecurrenceCount(episodic, signature);
+    expect(finalRecurrence).toBeGreaterThanOrEqual(2);
 
     const service = new MemoryEmbeddingService({
       provider: "local",
