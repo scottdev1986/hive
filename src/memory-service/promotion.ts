@@ -121,36 +121,56 @@ export async function autoPromoteMistakes(options: {
     belowThreshold: 0,
   };
 
+  const allKeys = episodic.metaKeys(RECURRENCE_PROMOTION_KEY_PREFIX);
+  const factsById = new Map<string, MemoryFact>();
   const pitfalls = (await discoverMemoryFacts(repoRoot, "repo")).filter(
     (fact) => fact.kind === "pitfall",
   );
+  for (const fact of pitfalls) {
+    factsById.set(fact.id, fact);
+  }
 
-  for (const pitfall of pitfalls) {
+  for (const key of allKeys) {
+    const data = episodic.readMeta(key);
+    if (!data) continue;
+
+    let recurrenceData: {
+      count: number;
+      factId: string;
+      lastSeenAt: string;
+      promoted?: boolean;
+    };
+    try {
+      recurrenceData = JSON.parse(data);
+    } catch {
+      continue;
+    }
+
     report.scanned += 1;
 
-    const signature = extractSignatureFromPitfall(pitfall);
-    if (!signature) continue;
+    const signature = key.replace(RECURRENCE_PROMOTION_KEY_PREFIX, "");
 
-    const recurrence = getRecurrenceCount(episodic, signature);
-
-    if (isPromoted(episodic, signature)) {
+    if (recurrenceData.promoted === true) {
       report.alreadyPromoted += 1;
       continue;
     }
 
-    if (recurrence < 2) {
+    if (recurrenceData.count < 2) {
       report.belowThreshold += 1;
       continue;
     }
 
-    await promoteToAlwaysOn(repoRoot, pitfall);
+    const pitfall = factsById.get(recurrenceData.factId);
+    if (!pitfall) continue;
+
+    await promoteToAlwaysOn(repoRoot, pitfall, signature);
     markPromoted(episodic, signature);
 
     report.promoted.push({
       signature,
-      count: recurrence,
+      count: recurrenceData.count,
       factId: pitfall.id,
-      lastSeenAt: pitfall.date,
+      lastSeenAt: recurrenceData.lastSeenAt,
       promoted: true,
     });
   }
