@@ -50,7 +50,7 @@ export async function generateAndAppendProposals(options: {
       title: `Consolidate: ${older.title} and ${newer.title}`,
       rationale: `These articles are similar (cosine ${candidate.score.toFixed(3)}) and may represent repeated patterns or conventions that should be documented.`,
       proposedChange: `Consider merging these articles:\n\nOlder (${older.id}):\n${older.body.slice(0, 200)}...\n\nNewer (${newer.id}):\n${newer.body.slice(0, 200)}...`,
-      source: "orchestrator",
+      source: "consolidator",
     };
 
     proposals.push(proposal);
