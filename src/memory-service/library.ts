@@ -273,5 +273,8 @@ export async function applyMemoryMutation(
   request: MemoryMutationRequest,
 ): Promise<MemoryMutationResult> {
   const parsed = MemoryMutationRequestSchema.parse(request);
-  return await deps.serialize(() => mutateLocked(deps, parsed));
+  // P0: Extract scope from the input for per-scope locking
+  const scope: MemoryScope =
+    parsed.action === "delete" ? parsed.scope : parsed.input.scope;
+  return await deps.serialize(scope, () => mutateLocked(deps, parsed));
 }

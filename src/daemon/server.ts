@@ -3027,7 +3027,7 @@ export class HiveDaemon {
       const result = await applyMemoryMutation(
         {
           repoRoot: this.repoRoot,
-          serialize: (operation) => this.memoryWrites.serialize("repo", operation),
+          serialize: (scope, operation) => this.memoryWrites.serialize(scope, operation),
           writeMemoryFact: (input) => this.memoryWrites.writeLocked(input),
           deleteMemoryFact: (scope, id) =>
             this.memoryWrites.deleteLocked(scope, id),
