@@ -194,7 +194,7 @@ async function promoteToAlwaysOn(
     title: `[AUTO-PROMOTED] ${pitfall.title}`,
     body: `${pitfall.body}\n\n---\n\n**AUTO-PROMOTED**: This mistake recurred ≥2 times and has been promoted to always-on memory. All agents will see this in their wake pack without needing to search.\n\n**Recurrence key**: ${signature}`,
     tags: [...pitfall.tags, "promoted", "always-on"],
-    source: "consolidator",
+    source: "orchestrator",
     evidence: `Auto-promoted from ${pitfall.id} due to recurrence ≥2`,
     status: pitfall.status,
     kind: "pitfall",

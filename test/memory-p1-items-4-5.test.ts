@@ -41,13 +41,11 @@ async function makeTempDir(prefix: string): Promise<string> {
 describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
   test("recurrence=1 does not promote", async () => {
     const root = await makeTempDir("hive-recurrence-1-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const episodic = new EpisodicStore(":memory:");
 
     const signature = "test:failure:npm-install";
 
-    await writeMemoryFact(root, {
+    const written = await writeMemoryFact(root, {
       scope: "repo",
       topic: "pitfalls",
       title: "Pitfall: npm install failed",
@@ -64,7 +62,7 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact-1",
+      written.id,
       "2026-08-20T10:00:00Z",
     );
 
@@ -79,13 +77,11 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
 
   test("recurrence≥2 promotes to always-on", async () => {
     const root = await makeTempDir("hive-recurrence-2-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const episodic = new EpisodicStore(":memory:");
 
     const signature = "test:failure:build-error";
 
-    await writeMemoryFact(root, {
+    const written = await writeMemoryFact(root, {
       scope: "repo",
       topic: "pitfalls",
       title: "Pitfall: build error",
@@ -102,13 +98,13 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact-2",
+      written.id,
       "2026-08-20T10:00:00Z",
     );
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact-2",
+      written.id,
       "2026-08-20T11:00:00Z",
     );
 
@@ -125,13 +121,11 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
 
   test("recurrence=3 promotes once", async () => {
     const root = await makeTempDir("hive-recurrence-3-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const episodic = new EpisodicStore(":memory:");
 
     const signature = "test:failure:lint-error";
 
-    await writeMemoryFact(root, {
+    const written = await writeMemoryFact(root, {
       scope: "repo",
       topic: "pitfalls",
       title: "Pitfall: lint error",
@@ -148,19 +142,19 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact-3",
+      written.id,
       "2026-08-20T10:00:00Z",
     );
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact-3",
+      written.id,
       "2026-08-20T11:00:00Z",
     );
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact-3",
+      written.id,
       "2026-08-20T12:00:00Z",
     );
 
@@ -179,14 +173,11 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
 
   test("promoted mistakes include always-on tag", async () => {
     const root = await makeTempDir("hive-promoted-tag-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const episodic = new EpisodicStore(":memory:");
 
     const signature = "test:failure:test-error";
-    const factId = "test-fact-4";
 
-    await writeMemoryFact(root, {
+    const written = await writeMemoryFact(root, {
       scope: "repo",
       topic: "pitfalls",
       title: "Pitfall: test error",
@@ -200,8 +191,8 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
       supersedes: [],
     });
 
-    incrementRecurrence(episodic, signature, factId, "2026-08-20T10:00:00Z");
-    incrementRecurrence(episodic, signature, factId, "2026-08-20T11:00:00Z");
+    incrementRecurrence(episodic, signature, written.id, "2026-08-20T10:00:00Z");
+    incrementRecurrence(episodic, signature, written.id, "2026-08-20T11:00:00Z");
 
     await autoPromoteMistakes({ repoRoot: root, episodic });
 
@@ -403,13 +394,11 @@ describe("P1 Item #5: Proposals inbox", () => {
 describe("P1 Critic PASS fixtures", () => {
   test("Fixture #4: promoted mistakes appear in always-on pack floor", async () => {
     const root = await makeTempDir("hive-pack-floor-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const episodic = new EpisodicStore(":memory:");
 
     const signature = "test:failure:critical-error";
 
-    await writeMemoryFact(root, {
+    const written = await writeMemoryFact(root, {
       scope: "repo",
       topic: "pitfalls",
       title: "Pitfall: critical error",
@@ -426,13 +415,13 @@ describe("P1 Critic PASS fixtures", () => {
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact",
+      written.id,
       "2026-08-20T10:00:00Z",
     );
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact",
+      written.id,
       "2026-08-20T11:00:00Z",
     );
 
@@ -458,13 +447,11 @@ describe("P1 Critic PASS fixtures", () => {
 
   test("Fixture #4: single failure does not appear in always-on pack floor", async () => {
     const root = await makeTempDir("hive-single-failure-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const episodic = new EpisodicStore(":memory:");
 
     const signature = "test:failure:single";
 
-    await writeMemoryFact(root, {
+    const written = await writeMemoryFact(root, {
       scope: "repo",
       topic: "pitfalls",
       title: "Pitfall: single failure",
@@ -481,7 +468,7 @@ describe("P1 Critic PASS fixtures", () => {
     incrementRecurrence(
       episodic,
       signature,
-      "test-fact",
+      written.id,
       "2026-08-20T10:00:00Z",
     );
 
@@ -497,9 +484,7 @@ describe("P1 Critic PASS fixtures", () => {
 
   test("Integration: harvest → increment → consolidate → pack-floor", async () => {
     const root = await makeTempDir("hive-integration-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const episodic = new EpisodicStore(":memory:");
 
     const signature = "exit:1:npm install";
 
@@ -514,10 +499,12 @@ describe("P1 Critic PASS fixtures", () => {
       type: "status.turn",
       summary: "npm install (exit code 1)",
       provenance: {
-        phase: "command",
-        tool: "npm",
-        command: "npm install",
-        exitCode: 1,
+        data: {
+          phase: "command",
+          tool: "npm",
+          command: "npm install",
+          exitCode: 1,
+        },
       },
     });
 
@@ -526,10 +513,12 @@ describe("P1 Critic PASS fixtures", () => {
       type: "status.turn",
       summary: "npm install (exit code 1)",
       provenance: {
-        phase: "command",
-        tool: "npm",
-        command: "npm install",
-        exitCode: 1,
+        data: {
+          phase: "command",
+          tool: "npm",
+          command: "npm install",
+          exitCode: 1,
+        },
       },
     });
 
@@ -539,10 +528,12 @@ describe("P1 Critic PASS fixtures", () => {
         type: "status.turn",
         summary: "npm install (exit code 1)",
         provenance: {
-          phase: "command",
-          tool: "npm",
-          command: "npm install",
-          exitCode: 1,
+          data: {
+            phase: "command",
+            tool: "npm",
+            command: "npm install",
+            exitCode: 1,
+          },
         },
       });
 
@@ -551,10 +542,12 @@ describe("P1 Critic PASS fixtures", () => {
         type: "status.turn",
         summary: "npm install (exit code 1)",
         provenance: {
-          phase: "command",
-          tool: "npm",
-          command: "npm install",
-          exitCode: 1,
+          data: {
+            phase: "command",
+            tool: "npm",
+            command: "npm install",
+            exitCode: 1,
+          },
         },
       });
 
