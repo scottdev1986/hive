@@ -3,7 +3,7 @@
  */
 
 import { join } from "node:path";
-import { getHiveHome } from "../daemon/hive-home/home";
+import { getHiveHome } from "../hive-home/home";
 
 /** P0: Load constitution (always-on core principles). */
 export function loadConstitution(): string {
