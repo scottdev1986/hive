@@ -43,7 +43,7 @@ This is why Hive neither picks the filename nor injects the contents: the vendor
 - **Before use, each memory's citations are re-validated against the current branch.** Only validated facts are applied; if the code contradicts a memory, the agent is prompted to store a corrected version.
 - **Any unused fact is auto-deleted after 28 days**, the timer resetting on validated use.
 
-**Citation-validation-before-use is the pattern to steal for anything load-bearing.**
+**Citation-validation-before-use is the pattern to steal for anything load-bearing.** Hive's minimum viable version: a path-exists check (and command-exists for binaries) against the worktree before applying a recalled fact that names a concrete path or command.
 
 ## Open frameworks and stores
 
@@ -67,13 +67,13 @@ This is why Hive neither picks the filename nor injects the contents: the vendor
 
 A spec that lets agents silently write shared, load-bearing facts is out of step with every shipped product. This is why Hive's silent auto-extraction stays deferred until its write policy is trusted.
 
-**Retrieval — a tiny index plus pull-on-demand.** The hybrid worth copying for a file-backed tool is Letta MemFS / Claude auto-memory: a small always-loaded index (path + title + status) with full content pulled only on match. **You cannot pull what you cannot see exists** — the index is what makes search-on-demand actually fire. Hive implements exactly this: `buildMemoryIndex` (`src/memory-service/memory-store.ts: buildMemoryIndex`) rebuilds and reads each scope's `wiki/index.md`, capped at `MEMORY_INDEX_MAX_ENTRIES = 30` rows (`src/memory-service/memory-store.ts: MEMORY_INDEX_MAX_ENTRIES`), and article bodies never enter the spawn brief. Full articles are pulled through `memory_read` (`src/daemon/server.ts:4005-4017`).
+**Retrieval — a tiny index plus pull-on-demand.** The hybrid worth copying for a file-backed tool is Letta MemFS / Claude auto-memory: a small always-loaded index (path + title + status) with full content pulled only on match. **You cannot pull what you cannot see exists** — the index is what makes search-on-demand actually fire. Hive implements exactly this: `buildMemoryIndex` (`src/memory-service/memory-store.ts: buildMemoryIndex`) rebuilds and reads each scope's `wiki/index.md`, capped at `MEMORY_INDEX_MAX_ENTRIES = 30` rows (`src/memory-service/memory-store.ts: MEMORY_INDEX_MAX_ENTRIES`), and article bodies never enter the spawn brief. Full articles are pulled on-demand through the memory tools.
 
 **Staleness — the sharpest differentiator and the biggest shipped gap.** Zep's bi-temporal supersede-don't-delete is the strongest *primitive*; Copilot's citation-validation-before-use + 28-day TTL is the strongest *shipped* one. Everyone else handles staleness only by contradiction-driven overwrite, losing the audit trail; Devin and Windsurf have essentially none. The load-bearing rule across the rigorous systems:
 
 > **A recalled fact must be re-checked against current reality before it drives an action.** Facts age. A recalled fact is a claim, not truth.
 
-Hive's version of this is enforced rather than hoped for: the index is a pointer, the article is a claim, and the repo plus linked raw evidence are truth — **a recalled article that names a concrete path, command, or flag is re-checked against the repo before it drives an action**. Hive gets Zep's point-in-time reconstruction free from git-committed markdown, without the knowledge-graph weight.
+Hive's design targets this: the index is a pointer, the article is a claim, and the repo plus linked raw evidence are truth. P0 includes a minimum viable citation check (path-exists and command-exists stubs) before load-bearing apply. Hive gets Zep's point-in-time reconstruction free from git-committed markdown, without the knowledge-graph weight.
 
 **Token budget is also an accuracy budget.** This is the argument that decides the whole shape, and it is *not* a price argument:
 

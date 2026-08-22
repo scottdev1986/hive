@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { definedFields } from "../../shared/defined-fields";
 import { runGit } from "../../adapters/git";
+import { loadAndValidateWakePack } from "./pack-assembly";
 import { resolveWorkingClaudeExecutable } from "../../adapters/providers/claude-cli";
 import { isFunction } from "../../shared/is-record";
 import {
@@ -188,6 +189,7 @@ export class HiveSpawner implements Spawner {
     );
   }
 
+  /** P0: Hive constitution (project-agnostic factory principles). */
   private router(): HiveRouter {
     if (this.routerInstance === undefined) {
       const quota =
@@ -1322,6 +1324,34 @@ export class HiveSpawner implements Spawner {
           hierarchyIdentity === null || hierarchyAdmission === null
             ? undefined
             : hierarchyAdmission.takeLaunchContext(hierarchyIdentity);
+
+        // P0.12: Dual-read pack+index (gate with wake_pack_enabled sunset flag)
+        const wakePackEnabled =
+          this.dependencies.config.memory?.wake_pack_enabled ?? true;
+        let constitution: string | undefined;
+        let profile: string | undefined;
+        let handoffText: string | undefined;
+        let projectDoc: string | undefined;
+        let recentMistakes: readonly string[] | undefined;
+
+        if (wakePackEnabled) {
+          // P0: Load and validate wake pack floor (throws SpawnFailedError if handoff unsynthable)
+          const pack = await loadAndValidateWakePack({
+            db: this.dependencies.db,
+            episodic: this.dependencies.episodic,
+            repoRoot: this.dependencies.repoRoot,
+            handoffId: request.handoffId,
+            agentName: name,
+            task: request.task,
+          });
+
+          constitution = pack.constitution;
+          profile = pack.profile;
+          projectDoc = pack.projectDoc;
+          handoffText = pack.handoffText;
+          recentMistakes = pack.recentMistakes;
+        }
+
         const prompt = buildAgentPrompt(
           name,
           request.task,
@@ -1346,6 +1376,12 @@ export class HiveSpawner implements Spawner {
                       command: learnedCommand,
                       status: verificationFact.status,
                     },
+              constitution,
+              profile,
+              handoffText,
+              projectDoc,
+              recentMistakes:
+                recentMistakes.length > 0 ? recentMistakes : undefined,
             }),
           },
         );

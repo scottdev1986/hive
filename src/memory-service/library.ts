@@ -130,8 +130,8 @@ export async function buildMemoryListPage(
 
 export interface MemoryMutationDeps {
   repoRoot: string;
-  /** Run an operation inside the daemon's memory critical section — the same one every other memory write takes. The fence read and the write it guards MUST happen inside one of these. Checking the revision and then writing outside the lock is a time-of-check-to-time-of-use hole: two editors read the same revision, both fences pass, both write, and the second silently discards the first while reporting success. The operations below therefore receive the UNSERIALIZED write and delete primitives — taking the lock again inside would deadlock against the one already held. */
-  serialize: <T>(operation: () => Promise<T>) => Promise<T>;
+  /** P0: Run an operation inside the daemon's memory critical section per scope. The fence read and the write it guards MUST happen inside one of these. Checking the revision and then writing outside the lock is a time-of-check-to-time-of-use hole: two editors read the same revision, both fences pass, both write, and the second silently discards the first while reporting success. The operations below therefore receive the UNSERIALIZED write and delete primitives — taking the lock again inside would deadlock against the one already held. */
+  serialize: <T>(scope: MemoryScope, operation: () => Promise<T>) => Promise<T>;
   writeMemoryFact: (
     input: MemoryWriteInput,
   ) => Promise<{ scope: MemoryScope; id: string }>;
@@ -273,5 +273,8 @@ export async function applyMemoryMutation(
   request: MemoryMutationRequest,
 ): Promise<MemoryMutationResult> {
   const parsed = MemoryMutationRequestSchema.parse(request);
-  return await deps.serialize(() => mutateLocked(deps, parsed));
+  // P0: Extract scope from the input for per-scope locking
+  const scope: MemoryScope =
+    parsed.action === "delete" ? parsed.scope : parsed.input.scope;
+  return await deps.serialize(scope, () => mutateLocked(deps, parsed));
 }

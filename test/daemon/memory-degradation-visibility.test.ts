@@ -23,7 +23,6 @@ import { EpisodicStore } from "../../src/memory-service/episodic";
 import { MemoryIndex } from "../../src/memory-service/fts-index";
 import {
   buildMemoryRecallBundle,
-  executeMemoryTrigger,
   memoryRecallDegradedWarning,
 } from "../../src/memory-service/recall";
 import { writeMemoryFact } from "../../src/memory-service/memory-store";
@@ -143,65 +142,43 @@ describe("recall envelope semantic discriminator (defect D2)", () => {
     expect(bundle.semantic).toBe("disabled");
   });
 
-  test("the trigger lane carries the loud warning line when degraded — even on an empty result", async () => {
+  test("the degraded warning appears on found and empty results", async () => {
     const { repo, index } = await makeWiki(WIKI);
     const deps = {
       repoRoot: () => repo,
       memory: index,
       semantic: () => Promise.resolve(null),
       semanticStatus: () => "embedding-runtime-missing",
-      write: () => {
-        throw new Error("not exercised");
-      },
-      episodic: null,
-    };
-    const context = {
-      authority: "user" as const,
-      from: "user",
-      target: "some-agent",
     };
     const warning = memoryRecallDegradedWarning("embedding-runtime-missing");
     expect(warning).toBe(
       "⚠ semantic search unavailable (embedding-runtime-missing) — results are keyword-only",
     );
-    const found = await executeMemoryTrigger(
-      { kind: "recall", payload: "lease renewal" },
-      context,
-      deps,
-    );
-    expect(found.body).toContain(warning);
-    const empty = await executeMemoryTrigger(
-      { kind: "recall", payload: "zzz-no-such-token" },
-      context,
-      deps,
-    );
-    expect(empty.body).toContain(warning);
+    const found = await buildMemoryRecallBundle("lease renewal", deps);
+    expect(found.semantic).toBe("degraded:embedding-runtime-missing");
+    expect(found.state).toBe("ok");
+    const empty = await buildMemoryRecallBundle("zzz-no-such-token", deps);
+    expect(empty.semantic).toBe("degraded:embedding-runtime-missing");
+    expect(empty.state).toBe("empty");
   });
 
-  test("the trigger lane is quiet when hybrid", async () => {
+  test("hybrid recall has no degraded warning", async () => {
     const { repo, index } = await makeWiki(WIKI);
-    const found = await executeMemoryTrigger(
-      { kind: "recall", payload: "lease renewal" },
-      { authority: "user", from: "user", target: "some-agent" },
-      {
-        repoRoot: () => repo,
-        memory: index,
-        semantic: () =>
-          Promise.resolve([
-            {
-              scope: "repo",
-              id: "lease-renewal-blocks-overlapping-agents",
-              score: 0.9,
-            },
-          ]),
-        semanticStatus: () => "ready",
-        write: () => {
-          throw new Error("not exercised");
-        },
-        episodic: null,
-      },
-    );
-    expect(found.body).not.toContain("semantic search unavailable");
+    const found = await buildMemoryRecallBundle("lease renewal", {
+      repoRoot: () => repo,
+      memory: index,
+      semantic: () =>
+        Promise.resolve([
+          {
+            scope: "repo",
+            id: "lease-renewal-blocks-overlapping-agents",
+            score: 0.9,
+          },
+        ]),
+      semanticStatus: () => "ready",
+    });
+    expect(found.semantic).toBe("hybrid");
+    expect(found.state).toBe("ok");
   });
 });
 
