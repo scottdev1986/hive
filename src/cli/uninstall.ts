@@ -1,4 +1,3 @@
-/** `hive uninstall` removes Hive-owned integration without treating the command as authority to discard unsettled work. Repo uninstall asks the live settlement service to close exact-safe cases before stopping it, then removes byte-identical skills and standards, Hive's marked `.gitignore` entries, leaked runtime config, graph output, and derived project state. Any remaining worktree, branch, edited Hive file, or user file stays and is named. Machine uninstall removes the shared Hive home and managed install only after its separate live-team and mutation-lease checks. */
 import { existsSync } from "node:fs";
 import { readdir, readFile, rm, rmdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";

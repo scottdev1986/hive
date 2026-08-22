@@ -1,7 +1,3 @@
-/**
- * Wave-2 milestone 9: protocol session facts are the only source for live
- * model and context after statusline/transcript scrapers are deleted.
- */
 import { describe, expect, test } from "bun:test";
 import type { NormalizedProviderEvent } from "../../src/adapters/providers/protocol/types";
 import {

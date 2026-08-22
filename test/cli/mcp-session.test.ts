@@ -1,6 +1,3 @@
-// What a held MCP session costs and what it survives, measured against a real
-// daemon: the client and the server here are the production ones, and every
-// count below is of the JSON-RPC traffic the client actually sent.
 import { describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

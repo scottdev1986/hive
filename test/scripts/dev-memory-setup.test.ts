@@ -1,4 +1,3 @@
-// Unit tests for the `make run` dev-home memory sharing: the shared paths are linked dev → real, pre-existing dev state is never touched, stale links are refreshed, the real dirs are created when absent, and daemon runtime state is never linked.
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   lstat,

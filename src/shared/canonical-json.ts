@@ -1,7 +1,5 @@
 import { isNumber, isRecord } from "./is-record";
 import type { JsonObject } from "./json";
-// Deterministic JSON serialization for content comparison and hashing.
-// Object keys use JavaScript code-unit order so results do not depend on locale.
 
 export function canonicalJson<T>(value: T): string {
   if (Array.isArray(value)) {

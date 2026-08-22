@@ -1,7 +1,3 @@
-// GET /routing/escalations: the measured wrong-model claims, read by the
-// `hive routing` audit table from the daemon that owns the store. User-only
-// — same audience as /routing/policy, because the escalation record is
-// spend-governance evidence.
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";

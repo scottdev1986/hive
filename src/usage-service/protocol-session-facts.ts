@@ -1,4 +1,3 @@
-/** Connected-session protocol events → agent-row facts and token readings. Statusline and transcript scrapers are gone. Live model, context window, and occupancy reach Hive only through normalized protocol events. A field the vendor never named stays absent: null is not zero. */
 import type { NormalizedProviderEvent } from "../adapters/providers/protocol/types";
 import type { TokenUsageEventIngest } from "../schemas/token-usage-schema";
 import { clampPct } from "./context-occupancy";

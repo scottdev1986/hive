@@ -1,8 +1,3 @@
-// Agents read their own stories: hive_task_get returns the full TaskDetail
-// (including delegationSpec.objective) to writer, reader, and orchestrator;
-// hive_spawn(taskId) injects the story-of-record instruction into the launch
-// prompt and refuses unknown task ids with a Fix: line naming hive_task_list.
-
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import {

@@ -1,7 +1,3 @@
-// The wire source of truth is split by domain under session-protocol/. This
-// facade is the only import surface: the conformance generator and
-// SESSION_PROTOCOL_PATHS pin this exact path, so the domain modules are
-// reached exclusively through these re-exports.
 export * from "./session-protocol/session-protocol-version";
 export * from "./session-protocol/session-protocol-paths";
 export * from "./session-protocol/limits";

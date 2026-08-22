@@ -1,5 +1,3 @@
-// Run control: create, delegate, pause, resume, and abort. Every write goes through HierarchyStore, so the store's compare-and-swap and its three authority fences stay the only concurrency control. A refusal is a normal result carrying the state that stayed in force, not an exception. Pause and abort advance runEpoch, which is what makes in-flight work holding the prior epoch fail its fence check on the next authority-bearing write. Resume advances it again so work reconciled during the pause cannot resume under the epoch it was suspended at.
-
 import { createHash, randomUUID } from "node:crypto";
 import {
   type Run,

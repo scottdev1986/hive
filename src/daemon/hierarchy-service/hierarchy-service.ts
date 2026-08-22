@@ -1,5 +1,3 @@
-// The hierarchy subsystem's one public boundary. Everything that reads or writes hierarchy state goes through this object: the store instance, run-scoped fence derivation, authenticated record writes, promotion, the land classification that pairs with it, and run control. Callers hold the service and never the store, so there is one thing that IS the hierarchy rather than six that each own a piece. Every write method here authorizes the capability and resolves the caller's live binding INSIDE the same store transaction as the write. That ordering is the subsystem's rule, not an adapter's: a check that finishes before the transaction opens can be true at the check and false at the write.
-
 import type { AgentRecord } from "../../schemas/agent";
 import { definedFields } from "../../shared/defined-fields";
 import {

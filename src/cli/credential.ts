@@ -1,4 +1,3 @@
-// Credential plumbing for every process that talks to the daemon. Claude Code runs `hive credential --agent NAME` at MCP connect time (`headersHelper`) and reads a JSON header map from stdout. Nothing is passed through the environment, so an agent's descendants inherit no token; nothing is passed through argv, so `ps` reveals no secret. The agent name is not a secret and is the only thing on the command line.
 import {
   readCredential,
   USER_SUBJECT,

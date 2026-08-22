@@ -1,10 +1,3 @@
-// Owns the queen-provider control store, the succession service built over
-// it, and the queen-provider/succession HTTP surfaces. HiveDaemon supplies
-// its stores, host handles, and narrow authorization callbacks; the service
-// never reaches back into the daemon. The store and the succession service
-// stay lazily resolved: their initialization timing is succession behavior,
-// not an accident of construction order.
-
 import { z } from "zod";
 import { hiveInstanceSuffix } from "../../hive-home/home";
 import type { MailStore } from "../../mail-service/store";

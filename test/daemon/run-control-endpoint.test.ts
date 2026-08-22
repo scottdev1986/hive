@@ -1,6 +1,3 @@
-// `/run-control`: create, delegate, and run lifecycle over HTTP. The
-// adversarial case is the queen approving the package she proposed, so the
-// role checks matter as much as the happy path.
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";

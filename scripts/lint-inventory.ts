@@ -1,7 +1,4 @@
 #!/usr/bin/env bun
-// Summarizes oxlint unix output by rule. The anti-slop sweep's check is this
-// count going to zero, not a green exit code we inferred from somewhere else.
-
 import { spawnSync } from "node:child_process";
 
 const result = spawnSync(

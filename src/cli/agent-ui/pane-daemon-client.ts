@@ -1,4 +1,3 @@
-// The agent-ui pane's HTTP boundary to the daemon. It accepts one agent subject and can never select the user credential path. The user CLI intentionally has a separate request client with no shared request helper.
 import pRetry, { AbortError } from "p-retry";
 import { isDaemonPort } from "../../shared/daemon-port";
 import { agentFetch } from "../credential";

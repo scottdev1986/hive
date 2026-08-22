@@ -1,10 +1,3 @@
-// Bun runs every test file in one process, so `process.env` is shared mutable
-// state: another test file can point HIVE_HOME somewhere else while this one is
-// suspended at an await. `ensureStarted` must therefore act on the home it was
-// called with from its first statement to its last, rather than asking
-// `process.env` again after every await. The test below is the positive control
-// for that: it redirects HIVE_HOME while `ensureStarted` is suspended, and
-// fails if any later step follows the redirect.
 import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

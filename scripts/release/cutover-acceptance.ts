@@ -1,6 +1,5 @@
 import { isRecord, isString } from "../../src/shared/is-record";
 import type { JsonObject, JsonValue } from "../../src/shared/json";
-/** The cutover acceptance matrix, rendered from evidence rather than from opinion. Nothing here decides whether the cutover is ready. It reads what each agent actually measured and reports what is there, what disagrees, and what nobody has answered yet. The one rule that shapes everything: a missing input is never a pass. An absent file, an absent key and an empty list are three different facts, and collapsing them is how a matrix certifies a cutover that never happened. */
 
 export type ReadEvidence = (relativePath: string) => string | null;
 

@@ -1,11 +1,4 @@
 import { isString } from "../src/shared/is-record";
-/**
- * Stage D — five-vendor fresh-session wire assertions for queen/root launch.
- *
- * Seeds a queen session ref with a sentinel vendor id and a provider-authored
- * "compaction summary", drives the real agent-ui open path (openAgentUiProviderSession),
- * and asserts per vendor that a root never resumes while a worker still can.
- */
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

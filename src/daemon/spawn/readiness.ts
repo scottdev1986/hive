@@ -1,5 +1,3 @@
-/** Determines whether a launch is alive without treating slow reasoning as death. Codex rollout activity begins only when the model emits, so it cannot prove life during reasoning. A redrawing screen can, but only while the launched provider process is also present; a live wrapper can redraw after its provider exits. Keep these states distinct: reasoning pane redraws ~1/s, agent running ALIVE prompt wait pane frozen, agent process running ALIVE (process signal) idle at rest pane frozen, a turn-end event landed ALIVE (event signal) dead pane frozen, no agent process DEAD (fail loud) dead behind pane redraws ~1/s, no agent process DEAD a live wrapper The middle rows are why a frozen pane can never mean death on its own: a run whose turn simply ended or is waiting for permission can remain pane-static. Death requires an explicit failure, a vanished session, or failure to prove that the launched process is still present. */
-
 import { formatRoundedSeconds } from "../../shared/duration";
 import { pollUntil } from "../../shared/poll-until";
 

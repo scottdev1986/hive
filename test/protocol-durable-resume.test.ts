@@ -1,9 +1,3 @@
-/**
- * Durable provider resume: the conversation identity survives a crash because
- * it was written down when the vendor issued it. Provider, transport, and
- * workspace bind the ref; a marketing version does not override the protocol.
- */
-
 import { describe, expect, test } from "bun:test";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";

@@ -1,7 +1,3 @@
-// The daemon-owned memory contracts: overview, library, recall preview, and
-// the maintenance projection. These pin the properties the prototypes under
-// prototypes/memory/ established, so the ones that matter cannot regress
-// silently once the prototypes are gone.
 import { Database } from "bun:sqlite";
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";

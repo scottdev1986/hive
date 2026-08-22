@@ -1,12 +1,4 @@
 import { isNumber } from "../../shared/is-record";
-/** Locates the `hive-sessiond` binary, and holds the AF_UNIX peer-identity helpers its test exercises.
-
-Nothing here supervises a broker process any more: `resolveSessiondBinary` is the only export production uses, from `cli/daemon.ts` and `sessiond-host.ts`. No code in this repository opens a `broker.sock`, and no code spawns `hive-sessiond serve`.
-
-Peer identity is proved on the sessiond side instead, and in the opposite direction to what a supervisor-checks-its-child arrangement would do: `inspectPeer` in `native/sessiond/src/daemon_identity.zig` reads uid and gid via `getpeereid` and the pid via `LOCAL_PEERPID` straight from the kernel before any HELLO is parsed, so a JSON claim can never populate an identity field. `session_host.zig` then matches that observed peer against the role the connection asks for. It is a stronger check than comparing a pid: the observed identity carries the peer's process start time, so a recycled pid resolves as a different process rather than impersonating the earlier one.
-
-`socketFileDescriptor`, `readLocalPeerPid` and `connectUnixSocket` below have no production caller left — only `test/daemon/sessiond-broker.test.ts` reaches them. They are kept rather than deleted because that test still proves the macOS `getsockopt` binding works; retire them together with it, not separately. */
-
 import { dlopen, FFIType, suffix } from "bun:ffi";
 import { accessSync, constants } from "node:fs";
 import { connect, type Socket } from "node:net";

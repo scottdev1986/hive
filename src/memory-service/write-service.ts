@@ -1,5 +1,3 @@
-// write-service.ts The one writer for compiled memory articles, and the lock that makes it a transaction. An article exists in three places at once — the Markdown file on disk, the FTS row that keyword search reads, and the vector the semantic leg reads — and this module is the only thing that keeps all three agreeing. It lives here rather than in the daemon because the invariant belongs to the module that owns the data. When the transaction lived on the daemon class, `src/memory-service/` could not express its own consistency rule, and a second, weaker writer grew inside this directory that wrote the file and neither index: same input, same store, an article no search could reach. The file is the truth and both indexes are projections of it, which is why a failed embedding is reported rather than thrown: a write that lands on disk and misses its vector is degraded, not lost.
-
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { withFileLock } from "../adapters/file-lock";

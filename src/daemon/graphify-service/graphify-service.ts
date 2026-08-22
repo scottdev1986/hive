@@ -1,5 +1,3 @@
-/** The daemon-owned per-repo graphify MCP server. One HTTP instance per repository, held (not detached) so it dies with the daemon and can never leak; restarted after each successful rebuild so every agent queries the current graph. The contract callers rely on: - `serverUrl()` is the only thing spawns read: a URL when the server is up, null otherwise. A spawn that gets null attaches nothing — a dead server in an agent's MCP config would cost every agent a connect-timeout, so absence is the honest degradation. - Nothing here is awaited by spawn or landing paths. `start()` and `scheduleRebuild()` are fire-and-forget; failures land in `lastError` and the daemon log, never in a caller's latency. */
-
 import { existsSync } from "node:fs";
 import type { Subprocess } from "bun";
 import {

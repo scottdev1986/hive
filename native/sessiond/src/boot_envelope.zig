@@ -1,5 +1,3 @@
-// ! Private broker↔host bootstrap codec for `hive-sessiond host`. ! This is not an endpoint protocol. It is the single byte-level authority ! for the bounded inherited-fd handoff used before the child's READY result.
-
 const std = @import("std");
 const generated = @import("session_protocol_generated");
 

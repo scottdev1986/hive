@@ -1,5 +1,3 @@
-/** The one line the user reads. Two surfaces, deliberately different. A Workspace launch is a session boundary and the last moment Hive owns the terminal, so it answers out loud — including "I could not check", which is the whole point of asking. Every other user command gets the passive notice: at most one dim line, only when there is something to do, rate-limited to once a day per version. Do not show a "you are N versions behind" counter. At a patch-per-push cadence the number is noise, and the security flag plus the staged-and-waiting line already say everything the count would imply. */
-
 import type { UpdateCache, UpdateCheck } from "./check";
 import { CHECK_INTERVAL_MS, isDismissed } from "./check";
 import type { InstallMethod } from "./paths";

@@ -1,5 +1,3 @@
-// ! One HOST process owns one provider generation. ! This module composes the landed PTY, process-inspection, input-arbiter, and ! terminal-state leaves for the directly launched host process.
-
 const std = @import("std");
 const boot_envelope = @import("boot_envelope");
 const daemon_identity = @import("daemon_identity");

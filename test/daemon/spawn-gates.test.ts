@@ -1,6 +1,3 @@
-// The gated spawner IS the spawn policy: these tests stand in for a third,
-// hypothetical caller that was just handed the spawner, and prove it cannot
-// launch around the gates no matter which door-shaped call it makes.
 import { describe, expect, test } from "bun:test";
 import { GatedSpawner } from "../../src/daemon/spawn/gates";
 import type {

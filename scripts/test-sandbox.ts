@@ -1,11 +1,3 @@
-// Runs tests on a unique size-capped volume and denies writes anywhere else.
-// Every invocation owns its image and mount, so cleanup trouble can leave
-// bounded residue but cannot block another worktree or test mode.
-// This boundary covers commands launched through this runner. It cannot contain
-// arbitrary shell commands an agent runs outside it, and it does not wrap the
-// native Zig suite that package.json starts after the guarded Bun suite. The
-// native gate routes its Bun-only tail through this runner separately.
-
 import { isNumber, isRecord, isString } from "../src/shared/is-record";
 import {
   existsSync,

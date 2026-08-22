@@ -1,15 +1,5 @@
 import { isRecord, isString } from "../src/shared/is-record";
 import type { JsonObject } from "../src/shared/json";
-/**
- * Live ACP baseline conformance (§2.3) against installed Grok, OpenCode, and
- * Kimi.
- *
- * A live run fails when a binary or declared credential file is missing.
- * Evidence writes remain opt-in.
- *
- * Honest support: only marks baseline rows that this run measured.
- */
-
 import { describe, expect, test } from "bun:test";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";

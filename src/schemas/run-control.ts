@@ -1,5 +1,3 @@
-// The typed run-control wire: create, delegate, pause, resume, and abort. The envelope half mirrors workspace/Sources/WorkspaceCore/MutationEnvelope.swift field for field, including its JSON key names, so one intent encoded by the Swift client decodes here and one result encoded here decodes there. Body and observed post-state are generic on both sides; run control binds them to the operations below and to the Run record.
-
 import { z } from "zod";
 import {
   DigestSchema,

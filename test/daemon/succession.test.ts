@@ -1,10 +1,3 @@
-// Succession in-process: the store, the three convergence paths, the explicit
-// attestation, admission control, and the compact/replace decision. The
-// biting cases are the ones where honesty costs something: a corrupt
-// checkpoint must be named, a stale one must show every divergence, unknown
-// usage must refuse, an attestation that was never measured must be refused,
-// and a bootstrap must come from the journal and measured replies — never
-// the agent table.
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";

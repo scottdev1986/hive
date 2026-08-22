@@ -1,7 +1,3 @@
-// Refuse `bun test` unless the suite runner has installed a unique bounded
-// filesystem and a runtime write sandbox. Loading this through bunfig makes
-// the ordinary local command fail closed instead of bypassing containment.
-
 import {
   accessSync,
   constants,

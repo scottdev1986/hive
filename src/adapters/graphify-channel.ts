@@ -1,5 +1,3 @@
-// Where Hive learns which Graphify build to install, and the only place that decides whether an answer from the network is allowed to be believed. This is a supply-chain boundary: what this module returns becomes a binary that runs on the user's machine. Everything here is therefore arranged so that a compromised or merely wrong GitHub response fails the install rather than redirecting it. The manifest is signed and verified before it is parsed, the download URLs are re-derived from the signed contents rather than trusted as written, and the schemas are strict so an unrecognised field is a rejection instead of something silently ignored. graphify.ts is the consumer: it takes the artifact named here and unpacks it only after the size and hash match.
-
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { verifyManifest } from "../release/manifest";

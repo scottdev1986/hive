@@ -1,5 +1,3 @@
-// Where a conversation's identity survives a crash. The vendor hands back a `VendorSessionRef` from `newSession`/`resumeSession`; that ref is written down and read back on the next start, so reconnecting never means searching a transcript directory, a rollout file, a SQLite database, or a process table for something that looks like the right conversation. The stored ref is meaningful only for the same provider, transport, and workspace. Its version is retained as evidence, not used as a compatibility gate: the vendor protocol is the authority on whether an older session id can still resume after an upgrade.
-
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isString } from "../../../shared/is-record";

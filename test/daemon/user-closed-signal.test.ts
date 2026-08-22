@@ -1,8 +1,3 @@
-// A kill the USER ordered from the Workspace sidebar has to be distinguishable
-// from a kill the orchestrator ordered, because she may hold work in flight
-// with the agent that just vanished. POST /agents/<name>/kill is the one place
-// the two callers meet, so the flag that separates them lives on its request
-// body and the notification is emitted there.
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";

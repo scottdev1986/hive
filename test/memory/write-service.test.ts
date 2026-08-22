@@ -1,11 +1,3 @@
-// The three-way write invariant, asserted directly against the service that
-// owns it: one write must leave an article in all three stores — the Markdown
-// file, the FTS row keyword search reads, and the vector the semantic leg
-// reads. A test that only checks the file cannot tell a healthy write from one
-// that is invisible to search.
-//
-// The embedder is mocked; `bun test` never downloads a model.
-
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

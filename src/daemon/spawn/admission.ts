@@ -1,5 +1,3 @@
-// Hierarchy-run spawn admission. This module owns the authority check that happens before a provider starts, the generation-bound launch brief, and the binding written only after the provider proves ready. Flat spawns never enter this module.
-
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AgentRecord } from "../../schemas/agent";

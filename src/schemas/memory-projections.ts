@@ -1,6 +1,3 @@
-// Memory client wire contracts. Clients consume these envelopes instead of
-// reading stores directly. Every store distinguishes not built (`absent`),
-// built with no rows (`empty`), and populated (`ok`).
 import { z } from "zod";
 import {
   MemoryScopeSchema,

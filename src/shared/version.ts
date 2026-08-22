@@ -1,5 +1,3 @@
-/** Who this binary is. One module, imported by everything; nothing else may declare a version string. The values are inlined at release-build time by `bun build --compile --define 'process.env.HIVE_BUILD_VERSION="0.0.7"' ...`. A `--define` rewrites the member expression into a string literal *before* the bundle is written, so a release binary cannot be relabelled by exporting an environment variable at it. That immutability is the point: the build hash below is what a running daemon presents in its handshake, and a value the caller could forge would make that handshake a decoration. Running from a source checkout (`bun run src/cli.ts`) leaves the defines unset, so the fallbacks below identify the process honestly as a dev build. A dev build never claims a release version, never nags about updates, and refuses to self-update. */
-
 const defined = (value: string | undefined): string | null =>
   value === undefined || value.length === 0 ? null : value;
 

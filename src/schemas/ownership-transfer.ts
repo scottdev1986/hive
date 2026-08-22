@@ -1,5 +1,3 @@
-// ownership-transfer.ts The OwnershipTransfer: the explicit record that moves a lost owner's subtree to a live successor. A transfer is never implied — a reused agent name or a fresh binding on the same node is not recovery, only this record is. The caller proposes the shape of the transfer (which node was lost, which node succeeds it, under which successor grant the crew's authority lands). What the caller can never supply is the death fact: the input schema has no field for it, so a caller-authored reason is refused at the door. The stored record's reason is derived by the store from its own binding records — every binding on the lost node unbound — and the transfer is refused when that evidence is absent.
-
 import { z } from "zod";
 import {
   CreatedAtSchema,

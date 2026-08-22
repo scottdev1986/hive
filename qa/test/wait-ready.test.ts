@@ -1,6 +1,3 @@
-// Unit tests for qa/wait-ready.ts. No QA daemon: each test plants a fake
-// daemon.port (or withholds it) and a fake liveness probe so the wait can
-// prove the three outcomes — ready, daemon died, bound expired — without a rig.
 import { describe, expect, test } from "bun:test";
 import { daemonHomesToWatch, waitForDaemonPort } from "../wait-ready";
 

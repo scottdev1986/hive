@@ -1,4 +1,3 @@
-/** Killing an agent means positively terminating its entire process tree. A terminal host may stop the shell while detached children survive: MCP stdio children the vendor CLI spawned and anything an agent backgrounded, `nohup`ed or `setsid`ed away from its shell. Those processes hold model sessions open and cost real money, and the only trace they leave is a pid nobody is looking at. So the kill walks the real tree from real roots and SIGKILLs it, and then it LOOKS AGAIN. A signal delivered is an act; a process gone is a state, and treating the first as the second can leak processes. Whatever is still standing after the second look is reported as a survivor rather than rounded down to success. */
 import type { AgentRecord } from "../../schemas/agent";
 import type { ProviderRun } from "../../schemas/provider-run";
 import { HostOperationError } from "../session-host/host-operations";

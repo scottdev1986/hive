@@ -1,6 +1,3 @@
-// Classifies Codex tool items and whether they finished successfully without
-// inventing fields the provider did not report.
-
 import { isRecord, isString } from "../../../shared/is-record";
 import type { ToolKind } from "../protocol/types";
 import type { JsonObject } from "../../../shared/json";

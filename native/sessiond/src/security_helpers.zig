@@ -1,9 +1,3 @@
-// ! Shared ownership, socket-naming and socket-timeout helpers for host and
-// ! neutral runtime.
-// ! Directory checks take an explicit posture so every call site states assert
-// ! vs harden — the two former requireOwnedDirectory implementations disagreed
-// ! under the same name.
-
 const std = @import("std");
 
 const c = @cImport({

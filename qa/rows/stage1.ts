@@ -1,23 +1,3 @@
-// Stage 1 rows T1-01..T1-09 of the QA plan of record (qa-plan-v2.md §4). Every
-// row drives a real product door — the qa-control gate for UI, the installed
-// CLI for export — and reads an independent oracle: GET /routing/policy and
-// GET /model-control/snapshot over the observe clients, or `hive routing
-// export` as a second process. Driving and reading never share a code path.
-//
-// The Task Router edits one CATEGORY route: the membership, weight and effort
-// controls act on the route of the category the screen shows, and Apply POSTs
-// that category's route. A category with no configured route has its member
-// checkboxes disabled, so every mutating row first ensures the category route
-// exists (mode select creates the draft) — an unplantable precondition is NO
-// MEASUREMENT by plan rule 6.
-//
-// Three disciplines hold the stage together:
-// - A row that cannot reach its oracle is NO MEASUREMENT, never FAIL; only the
-//   row's own assertion leg can FAIL.
-// - The negative rows (T1-04, T1-08) are meaningless unless the revision is
-//   proven to move in the same run, so each names its positive control.
-// - Every mutating row restores what it changed, so the suite is convergent:
-//   T1-09 can then promise that a second consecutive run diffs empty.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { errorMessage } from "../../src/shared/error-message";

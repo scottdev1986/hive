@@ -1,11 +1,3 @@
-// The assembler half of the hierarchy rail: what StatusStore reads out of the
-// database and hands to the projector.
-//
-// The projector's own tests prove what a record projects to. These prove the
-// records reach it: every field the projection can render is fed from a store
-// read, so a field that says "nothing supplied this" is never covering for a
-// record that was sitting in the database the whole time.
-
 import { afterEach, describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HierarchyStore } from "../../src/daemon/hierarchy-store";

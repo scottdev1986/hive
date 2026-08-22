@@ -1,5 +1,3 @@
-// ! Process-inspection and termination algorithm — standalone module. ! Snapshot a verified root + descendants (proc_listchildpids / proc_pidinfo) ! until two consecutive passes match or a 250 ms deadline expires. Record ! PID / start-token / parent / pgid / session / executable. Graceful and ! immediate termination signal deepest-first, re-validating each start token ! at signal time (snapshot tokens are up to 250 ms stale; PID reuse in that ! window must never be signalled), with positive wait/absence readback. ! NEVER report terminated without wait/absence evidence. ! Timeouts: 250 ms inspection, TERM-after-2s, KILL-after-2s.
-
 const std = @import("std");
 const posix = std.posix;
 const builtin = @import("builtin");

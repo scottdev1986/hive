@@ -1,8 +1,3 @@
-// The daemon start reports how many rendezvous nodes sit under the resolved
-// socket root, so the sweep threshold can be seen to cross instead of passing
-// unnoticed. These tests pin the count's correctness against a fixture whose
-// total cannot arise by accident, the absent-root case reading as zero rather
-// than failing, and the wiring that lands the number in the daemon log.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

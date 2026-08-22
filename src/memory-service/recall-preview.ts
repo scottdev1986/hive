@@ -1,5 +1,3 @@
-// A read-only preview of the exact bounded recall bundle Hive would produce. Two properties make this safe to point at a live daemon, and both are enforced here rather than promised in a comment: 1. It never touches the episodic store — it has no reference to one — so it cannot persist a per-agent mark. 2. It never treats an agent-authored trigger phrase as authority. Text like "note this: …" pasted into the query box is reported and then run as an ordinary search string. Executing it would hand the write path to whoever authored the text, which is precisely what the trigger protocol's authority check exists to prevent. The bundle itself and its budget arithmetic come from the same functions `memory_recall` calls, so the preview shows what an agent would actually receive rather than a second implementation that can drift.
-
 import type { MemoryIndex } from "../memory-service/fts-index";
 import { withMemoryEnvelope } from "../memory-service/projections";
 import {

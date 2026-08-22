@@ -1,5 +1,3 @@
-// ! terminal_state — headless VT + durable journal/checkpoint. ! Owns: feed every PTY output byte through an injected VT engine, write back ! ONLY PTY-bound effects (GHOSTTY_TERMINAL_OPT_WRITE_PTY), maintain journal.bin, ! assemble the 116-byte HVTCP001 envelope AROUND the bridge's opaque export, ! dual-retain verified checkpoints, and import-verify into a FRESH terminal + ! digest BEFORE atomic rename. ! Does NOT own: input arbitration, process kill, viewer grants, PTY open/spawn. ! Incomplete / failed checkpoint yields CHECKPOINT_UNAVAILABLE — never a ! silent "mostly restored" path. Envelope + journal paths are testable with ! an export double (injected via VtEngine). Wire sequences are exclusive ! high-water; checkpoints import-verify into a fresh terminal before rename. ! Header layout source: CHECKPOINT_HEADER in session_protocol.generated.zig.
-
 const std = @import("std");
 const builtin = @import("builtin");
 const generated = @import("session_protocol_generated");

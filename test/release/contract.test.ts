@@ -1,10 +1,3 @@
-/**
- * The versioning contract, enforced by CI rather than by anyone remembering it.
- *
- * The tests pin the tag format, package version, workflow triggers, release
- * source, and build runtime. They run in the same `bun test` step the release
- * workflow gates on, so breaking the contract fails the release.
- */
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {

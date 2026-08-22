@@ -1,4 +1,3 @@
-// Test-only credential plumbing for embedded daemons. A production caller reads its token from a 0600 credential file the daemon wrote at spawn. An in-process test has no such file, so it mints directly against the daemon's store and presents the token exactly as a real client would: an `Authorization: Bearer` header on every request.
 import type { AgentRecord } from "../../src/schemas/agent";
 import type { Role } from "../../src/daemon/authorization/authorization-service";
 import { AuditRowSchema, type AuditRow } from "../../src/schemas/audit";

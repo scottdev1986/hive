@@ -1,7 +1,3 @@
-// The durable daemon warning sink: timestamped appends to
-// $HIVE_HOME/logs/daemon.log, size-capped single-rollover rotation, and the
-// never-break-the-daemon contract (an unwritable log dir is a no-op), plus
-// the daemon-level wiring that lands embedding state transitions in the file.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

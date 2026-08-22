@@ -1,5 +1,3 @@
-// Decodes shared scalar fields from Claude's untrusted stream-json records.
-
 import { createHash } from "node:crypto";
 import { definedFields } from "../../../shared/defined-fields";
 import { isFiniteNumber, isRecord, isString } from "../../../shared/is-record";

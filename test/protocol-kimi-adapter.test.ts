@@ -1,8 +1,3 @@
-/**
- * Kimi ACP adapter against a fixture-driven fake `kimi acp` server
- * (test/protocol-kimi-fake-server.ts). No live binary, no network: every
- * frame the adapter consumes is one the fixtures chose to replay.
- */
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { AcpProviderSession } from "../src/adapters/providers/protocol/acp-session";

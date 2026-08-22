@@ -1,7 +1,3 @@
-// Owns approval state and the approval surfaces exposed over MCP and HTTP.
-// HiveDaemon supplies stores and narrow boundary callbacks; the service never
-// reaches back into the daemon.
-
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { SystemMailPublish } from "../../mail-service/service";

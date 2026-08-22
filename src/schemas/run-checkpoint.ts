@@ -1,6 +1,3 @@
-// Durable checkpoints and succession evidence for replacing the queen root.
-// Records point to revisioned sources instead of copying transcripts or files.
-
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonicalJson } from "../shared/canonical-json";

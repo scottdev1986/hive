@@ -1,6 +1,3 @@
-// The `/autonomy` dial: readable by the surfaces that display it, writable by
-// the user alone. The adversarial cases matter most — an agent that can
-// raise its own autonomy has escaped its sandbox through the control plane.
 import { describe, expect, test } from "bun:test";
 import type { Autonomy, AutonomyControl } from "../../src/config/autonomy";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";

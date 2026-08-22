@@ -1,5 +1,3 @@
-// manifest-journal.ts The daemon-owned manifest journal: an append-only, per-agent history of WorkManifest captures, written BEFORE teardown destroys anything. The teardown doctrine is capture-before-destroy for the same reason the process tree is captured before the kill: afterwards, the things that made the state knowable — the live agent, the worktree, the branch — may be gone, and no later measurement can reconstruct what was lost. The journal lives in the daemon's own database. The daemon is the only writer, and no client reads the table directly: stranded manifests reach the outside world through projectStrandedManifestAttention, which maps a journal entry onto the frozen stranded-manifest attention shape.
-
 import type { StrandedManifestAttention } from "../schemas/hierarchy-projection";
 import {
   digestWorkManifest,

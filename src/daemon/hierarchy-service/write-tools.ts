@@ -1,5 +1,3 @@
-// Authenticated MCP doors for the hierarchy records agents are allowed to write. Caller identity never comes from a record field. HierarchyService resolves the authenticated session's live hierarchy identity inside the transaction that writes the record; these handlers only name the tool, shape its input, and render what the service returns.
-
 import { z } from "zod";
 import { RevisionSchema, TaskIdSchema } from "../../schemas/hierarchy-ids";
 import { DelegationGrantSchema } from "../../schemas/hierarchy-node";

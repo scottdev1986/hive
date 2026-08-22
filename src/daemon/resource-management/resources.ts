@@ -1,5 +1,3 @@
-// A runaway process inside one agent session can exhaust system memory and kill every agent. The daemon samples each Hive-owned process tree, kills processes over the per-process ceiling, and pauses spawns while memory is scarce. Parsing `ps` and `vm_stat` output keeps detection testable without spawning processes.
-
 import type { ResourceLimits } from "../../schemas/config-schema";
 
 export type { ResourceLimits };

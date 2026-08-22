@@ -1,7 +1,3 @@
-/** Quote unconditionally. Use when the result is compared byte-for-byte
- * later — an entry Hive writes and then recognises again — because a value
- * that starts safe and later gains a space would otherwise change spelling
- * and stop matching what is already on disk. */
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }

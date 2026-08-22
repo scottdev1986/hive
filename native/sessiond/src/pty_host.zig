@@ -1,5 +1,3 @@
-// ! PTY host leaf — openpty/fork/execve, process group, geometry, start-token ! at spawn, ordered write-queue drain, raw read loop. ! Does NOT own VT parse, checkpoint, attach protocol, or broker grants. ! Integrates process_inspector for spawn-time root identity snapshot. ! Child path after fork is async-signal-safe only (descriptor setup + execve).
-
 const std = @import("std");
 const posix = std.posix;
 const builtin = @import("builtin");

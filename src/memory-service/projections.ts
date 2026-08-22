@@ -1,4 +1,3 @@
-// The daemon-owned Memory Overview and Maintenance projections. Both answers are assembled HERE, in one pass, from the stores themselves. The alternative — a client that counts files in `.hive/memory`, reads `episodic.db`, scrapes a benchmark script for the embedding state, and tails a log for the last sweep — produces a number nobody can reproduce and cannot tell a store that was never built from one that is simply empty. Every count below names the store it came from and its own absent/empty/ok state.
 import { createHash } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";

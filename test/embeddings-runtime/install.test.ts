@@ -1,10 +1,3 @@
-/**
- * The no-checkout install path: download the pinned runtime from the running
- * binary's own release, verify it against the (signed) manifest, unpack into
- * a staging sibling, probe, and swap. Tests run a real Ed25519 keypair and a
- * real tar fixture against a fake ReleaseSource — no network, no model; the
- * probe is injected (its contract is "throws on any failure").
- */
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";

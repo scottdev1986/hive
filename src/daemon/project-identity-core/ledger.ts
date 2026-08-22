@@ -1,5 +1,3 @@
-/** Step 2 of the resolver: authenticated Hive-managed-worktree ownership. The blueprint's constraint is one sentence long and does all the work: "A repository file cannot assert this ownership." So the ledger is reachable only through a capability the Supervisor issues, and its answers come from Supervisor-side state. Nothing under the resolved directory is ever read. This is why the type below takes a `LedgerCapability` rather than a path to a manifest: there is no code path that could be made to consult `.hive/owner.json`. */
-
 export interface ManagedWorktree {
   /** Canonical path of the managed worker worktree. */
   canonicalPath: string;

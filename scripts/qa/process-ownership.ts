@@ -1,7 +1,3 @@
-// Owns the processes started by one `make qa` run. The registry records the
-// macOS process start token and executable path alongside each PID, so cleanup
-// can prove it still addresses the same process before sending a signal.
-
 import { spawnSync } from "node:child_process";
 import {
   mkdirSync,

@@ -1,5 +1,3 @@
-// At session boundaries, the mistake-harvest pipeline proposes pitfall candidates for the REPO wiki. A signature observed once sets the episodic store's doorkeeper bit and writes no article; only a later boundary may create one. Admitted candidates remain unverified and require a different session to promote them. Titles and cluster keys come only from typed provenance fields (exit code, phase, blocker, command, tool, error). An absent field is unknown, never false: without a typed label the event is skipped and counted, never filled in from summary prose. The harvest read advances a per-agent high-water mark so each boundary only considers events not yet examined. Like every other memory projection, harvest is a derived write off the hot path: per-candidate failures are captured in the report, never thrown into the lifecycle path that triggered the harvest.
-
 import type { MemoryScope, MemoryWriteInput } from "../schemas/memory";
 import type { EpisodicEvent, EpisodicStore } from "./episodic";
 import { discoverMemoryFacts, readMemoryFact } from "./memory-store";

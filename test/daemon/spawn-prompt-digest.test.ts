@@ -1,18 +1,3 @@
-// The prompt an agent is launched with and the files it was assembled from are
-// two different generations whenever the daemon loaded before the last edit.
-// That gap is silent: an agent reading old rules and a repo holding new ones
-// look identical from either side, and it closes on a restart just as quietly.
-//
-// The stamp is what makes the gap comparable. Each injected block carries the
-// digest of exactly the text the daemon injected, so "the prompt agrees with
-// disk" is something a test can decide instead of something a reader has to
-// notice.
-//
-// Every positive assertion here is paired with a stale-input probe, and each
-// probe first asserts the same helper passes on the same inputs with only the
-// staleness removed. A digest test that never sees a mismatching pair cannot
-// tell a real comparison from a constant `true`, and a probe with no positive
-// control cannot tell a real failure from a fixture that never loaded.
 import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

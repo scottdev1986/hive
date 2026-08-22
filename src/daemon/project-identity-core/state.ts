@@ -1,4 +1,3 @@
-// Where Hive keeps a project's derived state: the per-project directory keyed by project *identity* that graphify, `hive init`, and `hive uninstall` all need. It is deliberately independent of a repo's contents — nothing here depends on what the repo holds or how anything about it is produced.
 import { dirname, join } from "node:path";
 import { getHiveHome } from "../../hive-home/home";
 import { resolveHandshakeProject } from "./project-identity-daemon";

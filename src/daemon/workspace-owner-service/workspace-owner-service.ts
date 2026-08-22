@@ -1,9 +1,3 @@
-// Owns workspace-owner registration watch and the /workspace-owner HTTP
-// surface. HiveDaemon supplies visibility authority and narrow shutdown
-// callbacks; the service never reaches back into the daemon. stopInProgress
-// stays on HiveDaemon — the service only reads isStopping and calls
-// requestShutdown.
-
 import type {
   Action,
   RouteAuthorization,

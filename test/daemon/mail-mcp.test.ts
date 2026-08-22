@@ -1,8 +1,3 @@
-// The mailbox as an agent actually reaches it: over the daemon's MCP server,
-// through the registered tools and the capability layer, not by calling the
-// broker directly. A broker test proves the rules; this proves the wiring that
-// puts them in front of an agent, including the two seams the cutover fills —
-// which name a mailbox belongs to, and which incarnation is asking.
 import { describe, expect, test } from "bun:test";
 import {
   Client,

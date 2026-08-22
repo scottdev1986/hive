@@ -1,7 +1,3 @@
-// The `/queen-provider` control surface over the daemon's real HTTP handlers:
-// projection readable by status readers, compare-and-set writable by the
-// user alone. The adversarial case matters most — a queen choosing her
-// own successor would be self-authorization.
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";

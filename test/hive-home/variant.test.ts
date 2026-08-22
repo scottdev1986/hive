@@ -1,5 +1,3 @@
-// The home module owns filesystem identity; the variant record adds build-specific install and
-// retention policy. These tests prove both views stay aligned without duplicating the derivation.
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";

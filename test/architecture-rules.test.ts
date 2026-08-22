@@ -1,15 +1,3 @@
-// Architecture rules, enforced as tests because tests already gate landing.
-//
-// Each rule here traces to a defect that actually happened. A rule nobody has
-// seen refuse anything is indistinguishable from a rule that does nothing, so
-// every rule is paired with a deliberate violation it MUST reject. The scanners
-// therefore take a source tree as an argument instead of reading the repo
-// directly: that is what lets a refusal be proved against a synthetic tree
-// without breaking the real one.
-//
-// The rules read the import graph as text rather than through a linter. This
-// repo has oxlint and tsc and no ESLint, and three rules do not justify adding a
-// toolchain and its configuration to the tree.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";

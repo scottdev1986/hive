@@ -1,6 +1,3 @@
-// Captures an agent's measured work state before teardown and binds it to a
-// revision and digest so recovery never depends on a moving worktree.
-
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonicalJson } from "../shared/canonical-json";

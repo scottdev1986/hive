@@ -1,13 +1,3 @@
-// Port 0 is the bind-time "let the OS choose" sentinel. It is never an address
-// a client can connect to, and every `--port` on this CLI names a daemon to
-// connect to — so the parse boundary has to refuse it.
-//
-// It used to be admitted: the CLI's own port check rejected only negatives, and
-// because `0 ?? fallback` is 0 rather than the fallback, a zero also suppressed
-// the port-file discovery that would otherwise have found the real daemon. Each
-// consumer was then left to re-defend itself, and the ones that did not would
-// build `http://127.0.0.1:0/...` — including the orchestrator path that writes
-// the Hive MCP url into the user's own vendor config.
 import { describe, expect, test } from "bun:test";
 import { createProgram } from "../../src/cli";
 import { isDaemonPort } from "../../src/shared/daemon-port";

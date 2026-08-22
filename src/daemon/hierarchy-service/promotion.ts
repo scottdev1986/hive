@@ -1,5 +1,3 @@
-// Serialized daemon-only ref writer: the single door hierarchy work reaches a stage ref through. Promotion accepts only the hierarchy binding resolved from the authenticated session. The assigned task, its delegation-grant chain, reviews, candidate commit, and stage all come from durable records or git. The engine repeats those reads at every write boundary so a retired binding or rewritten grant cannot land on facts that were true only during a precheck.
-
 import {
   type AgentBinding,
   type AgentBindingRef,
