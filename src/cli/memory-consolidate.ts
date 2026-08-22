@@ -121,6 +121,8 @@ async function runOfflineConsolidation(
       episodic,
       service,
       ...definedFields({ apply }),
+      autoPromote: apply,
+      generateProposals: apply,
     });
   } finally {
     episodic.close();

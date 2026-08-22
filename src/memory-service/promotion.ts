@@ -38,7 +38,17 @@ export function incrementRecurrence(
 ): number {
   const key = promotionKey(signature);
   const existing = episodic.readMeta(key);
-  const current = existing ? parseInt(existing, 10) : 0;
+  let current = 0;
+
+  if (existing) {
+    try {
+      const parsed = JSON.parse(existing);
+      current = parsed.count ?? 0;
+    } catch {
+      current = 0;
+    }
+  }
+
   const newCount = current + 1;
 
   episodic.writeMeta(
@@ -156,12 +166,13 @@ function extractSignatureFromPitfall(pitfall: MemoryFact): string | null {
 async function promoteToAlwaysOn(
   repoRoot: string,
   pitfall: MemoryFact,
+  signature: string,
 ): Promise<void> {
   const promoted = await writeMemoryFact(repoRoot, {
     scope: "repo",
     topic: "mistakes-promoted",
     title: `[AUTO-PROMOTED] ${pitfall.title}`,
-    body: `${pitfall.body}\n\n---\n\n**AUTO-PROMOTED**: This mistake recurred ≥2 times and has been promoted to always-on memory. All agents will see this in their wake pack without needing to search.`,
+    body: `${pitfall.body}\n\n---\n\n**AUTO-PROMOTED**: This mistake recurred ≥2 times and has been promoted to always-on memory. All agents will see this in their wake pack without needing to search.\n\n**Recurrence key**: ${signature}`,
     tags: [...pitfall.tags, "promoted", "always-on"],
     source: "consolidator",
     evidence: `Auto-promoted from ${pitfall.id} due to recurrence ≥2`,

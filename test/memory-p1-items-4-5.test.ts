@@ -494,4 +494,95 @@ describe("P1 Critic PASS fixtures", () => {
 
     expect(promoted.length).toBe(0);
   });
+
+  test("Integration: harvest → increment → consolidate → pack-floor", async () => {
+    const root = await makeTempDir("hive-integration-");
+    const db = new Database(":memory:");
+    const database = new HiveDatabase(db);
+    const episodic = new EpisodicStore(database);
+
+    const signature = "exit:1:npm-install";
+
+    const { harvestPitfalls } = await import("../src/memory-service/harvest");
+
+    episodic.appendEvent({
+      agent: "test-agent",
+      type: "status.turn",
+      summary: "npm install (exit code 1)",
+      provenance: {
+        phase: "command",
+        tool: "npm",
+        command: "npm install",
+        exitCode: 1,
+      },
+    });
+
+    const ep2 = episodic.appendEvent({
+      agent: "test-agent",
+      type: "status.turn",
+      summary: "npm install (exit code 1)",
+      provenance: {
+        phase: "command",
+        tool: "npm",
+        command: "npm install",
+        exitCode: 1,
+      },
+    });
+
+    let writtenFact: { scope: string; id: string } | null = null;
+
+    const harvestReport = await harvestPitfalls({
+      store: episodic,
+      repoRoot: root,
+      agent: "test-agent",
+      sessionId: "test-session",
+      write: async (input) => {
+        const result = await writeMemoryFact(root, input);
+        writtenFact = result;
+        return result;
+      },
+    });
+
+    expect(harvestReport.candidates.length).toBeGreaterThan(0);
+    expect(writtenFact).not.toBeNull();
+
+    const recurrence = getRecurrenceCount(episodic, signature);
+    expect(recurrence).toBe(1);
+
+    const ep3 = episodic.appendEvent({
+      agent: "test-agent-2",
+      type: "status.turn",
+      summary: "npm install (exit code 1)",
+      provenance: {
+        phase: "command",
+        tool: "npm",
+        command: "npm install",
+        exitCode: 1,
+      },
+    });
+
+    const harvestReport2 = await harvestPitfalls({
+      store: episodic,
+      repoRoot: root,
+      agent: "test-agent-2",
+      sessionId: "test-session-2",
+      write: async (input) => {
+        return await writeMemoryFact(root, input);
+      },
+    });
+
+    const recurrence2 = getRecurrenceCount(episodic, signature);
+    expect(recurrence2).toBe(2);
+
+    await autoPromoteMistakes({ repoRoot: root, episodic });
+
+    const { loadRecentMistakes } = await import(
+      "../src/memory-service/pack-floor",
+    );
+    const mistakes = await loadRecentMistakes(episodic, root);
+    const promoted = mistakes.filter((m) => m.includes("[PROMOTED]"));
+
+    expect(promoted.length).toBeGreaterThan(0);
+    expect(promoted[0]).toContain("npm install");
+  });
 });

@@ -263,13 +263,25 @@ async function runConsolidation(
     service: embeddingService,
     apply,
     writeMemoryFact: deps.writeMemoryFact,
+    autoPromote: apply,
+    generateProposals: apply,
   });
   report({ step: "reading back", done: 1, total: 1 });
+
+  const promotionSummary = result.promoted
+    ? `, ${result.promoted.promoted} promoted (${result.promoted.belowThreshold} below threshold)`
+    : "";
+  const proposalsSummary = result.proposals
+    ? `, ${result.proposals.appended} proposals appended`
+    : "";
+
   return {
     summary:
       `${result.scanned} vectors scanned, ${result.identical.length} ` +
       `identical and ${result.similar.length} similar pairs, ` +
-      `${result.applied.length} applied`,
+      `${result.applied.length} applied` +
+      promotionSummary +
+      proposalsSummary,
     readback: {
       ...(await currentCounts(deps)),
       scanned: result.scanned,
