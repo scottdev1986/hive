@@ -41,7 +41,7 @@ final class ActionButton: NSButton {
         heightAnchor.constraint(
             greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight).isActive = true
         heightAnchor.constraint(
-            equalToConstant: Theme.Metric.chromeControlHeight).isActive = true
+            equalToConstant: Theme.Metric.actionButtonHeight).isActive = true
 
         if let symbol {
             // Sized off the button's own label token so the glyph and the
@@ -50,6 +50,7 @@ final class ActionButton: NSButton {
                 .withSymbolConfiguration(
                     .init(pointSize: Theme.Font.chromeControl.pointSize, weight: .semibold))
             imagePosition = title.isEmpty ? .imageOnly : .imageLeading
+            imageHugsTitle = true
         }
 
         setAccessibilityIdentifier("hds-action-button")
@@ -58,6 +59,17 @@ final class ActionButton: NSButton {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override var intrinsicContentSize: NSSize {
+        let contentSize = super.intrinsicContentSize
+        let height = Theme.Metric.actionButtonHeight
+        guard !title.isEmpty else {
+            return NSSize(width: height, height: height)
+        }
+        return NSSize(
+            width: ceil(contentSize.width + Theme.Space.m * 2),
+            height: height)
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

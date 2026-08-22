@@ -371,6 +371,69 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
   }
 });
 
+test("make qa-clean retries repo uninstall from this checkout when the qa binary fails", () => {
+  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-clean-retry-"));
+  try {
+    const qa = join(fixture, "qa");
+    const project = join(fixture, "project");
+    const home = join(fixture, "home");
+    const userHive = join(home, ".hive");
+    const argvLog = join(fixture, "uninstall-argv");
+    initRepo(project);
+    mkdirSync(userHive, { recursive: true });
+    writeFileSync(join(userHive, "sentinel"), "untouched\n");
+    writeExec(
+      join(qa, "root", "current", "hive"),
+      [
+        "#!/bin/sh",
+        `log=${JSON.stringify(argvLog)}`,
+        'printf "%s\\n" "$*" >> "$log"',
+        'if [ "$1" = "uninstall" ] && [ "$2" = "--repo" ]; then',
+        '  echo "hive: ENOENT: no such file or directory, open \\"$PWD/.mcp.json\\"" >&2',
+        "  exit 1",
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    mkdirSync(join(qa, "state"), { recursive: true });
+    const captureHive = Bun.spawnSync(
+      [
+        join(root, "scripts", "qa", "isolation-inventory.sh"),
+        userHive,
+        join(qa, "state", "hive-before"),
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    expect(captureHive.exitCode, captureHive.stderr.toString()).toBe(0);
+
+    const result = runMake(
+      "qa-clean",
+      {
+        PROJECT: project,
+        QA: qa,
+        QA_HOME: join(qa, "home"),
+        USER_HIVE: userHive,
+      },
+      { ...process.env, HOME: home },
+    );
+    expect(result.exitCode, result.output).toBe(0);
+    expect(result.output).toContain(
+      "qa-clean: product repo uninstall failed; retrying with this checkout",
+    );
+    expect(result.output).toContain("user Hive isolation preserved");
+    expect(readFileSync(argvLog, "utf8")).toBe(
+      "stop --force\nuninstall --repo --yes\nuninstall --yes --purge\n",
+    );
+    expect(existsSync(qa)).toBe(false);
+    expect(readFileSync(join(userHive, "sentinel"), "utf8")).toBe(
+      "untouched\n",
+    );
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test("make qa-clean finishes isolation when the qa binary is already gone", () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-clean-gone-"));
   try {

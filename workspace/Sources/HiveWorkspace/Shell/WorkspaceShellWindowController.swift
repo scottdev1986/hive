@@ -517,7 +517,8 @@ private final class ShellTopBarView: NSView {
         appearanceButton.setAccessibilityIdentifier("shell-appearance")
         appearanceButton.setAccessibilityLabel("Appearance")
         appearanceButton.toolTip = "Appearance"
-        appearanceButton.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        appearanceButton.widthAnchor.constraint(
+            equalToConstant: Theme.Metric.actionButtonHeight).isActive = true
 
         let statusRow = NSStackView(views: [queenStatus, attentionStatus, appearanceButton])
         statusRow.translatesAutoresizingMaskIntoConstraints = false

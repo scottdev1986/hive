@@ -4,8 +4,9 @@
 // the page, every card editable in place. A card is that task's current
 // route: one row per member candidate with vendor, exact model, effort,
 // stored weight, the daemon's expected share, and Remove. Models that are
-// not members stay off the card — they join through "Add model…", which
-// lists the live routing catalog by vendor. The design source is the
+// not members stay off the card — they join through "Add model…", a
+// single pull-down grouped by vendor with compact marks. Effort is set
+// on the card after joining, not in the picker. The design source is the
 // `.task-route-list` card list in docs/design/split-horizon-transition.html.
 //
 // This is a dumb view over the routing projection. Expected share is the
@@ -592,22 +593,28 @@ final class TaskRouterScreenView: NSView {
         return button
     }
 
-    /// Pull-down of the live routing catalog, one submenu per vendor, models
-    /// already on the route left out. Joining takes the daemon's starting
-    /// effort and default weight; it changes membership, not consent.
+    /// Pull-down of the live routing catalog, grouped by vendor in one list so
+    /// adding a model is a click rather than a hover into a submenu. Models
+    /// already on the route stay out. Joining takes the daemon's starting
+    /// effort and default weight; it changes membership, not consent. Effort
+    /// is not listed here — the card's effort control is where that is set.
     private func addControl(for category: TaskCategory, index: Int) -> NSView {
         let popup = NSPopUpButton(frame: .zero, pullsDown: true)
         popup.font = Theme.Font.chromeControl
         popup.addItem(withTitle: "Add model…")
+        popup.menu?.autoenablesItems = false
         let members = Set((draftRoute(category)?.candidates ?? []).map { "\($0.provider)/\($0.model)" })
         var addable = 0
+        var isFirstVendor = true
         for provider in providers {
             let entries = routing.catalog
                 .filter { $0.provider == provider && !members.contains("\($0.provider)/\($0.model)") }
                 .sorted { $0.model < $1.model }
-            let vendor = NSMenuItem(title: providerTitle(provider), action: nil, keyEquivalent: "")
-            vendor.image = ProviderMarkView.markImage(for: ProviderID(provider))
-            let submenu = NSMenu(title: providerTitle(provider))
+            if !isFirstVendor {
+                popup.menu?.addItem(.separator())
+            }
+            isFirstVendor = false
+            popup.menu?.addItem(addMenuVendorHeader(provider, available: entries.count))
             if entries.isEmpty {
                 let none = NSMenuItem(
                     title: routing.catalog.contains { $0.provider == provider }
@@ -615,8 +622,11 @@ final class TaskRouterScreenView: NSView {
                         : "No enabled models",
                     action: nil, keyEquivalent: "")
                 none.isEnabled = false
-                submenu.addItem(none)
+                none.indentationLevel = 1
+                popup.menu?.addItem(none)
+                continue
             }
+            let mark = ProviderMarkView.menuMarkImage(for: ProviderID(provider))
             for entry in entries {
                 let item = NSMenuItem(
                     title: entry.model,
@@ -624,14 +634,12 @@ final class TaskRouterScreenView: NSView {
                     keyEquivalent: "")
                 item.target = self
                 item.tag = index
+                item.indentationLevel = 1
+                item.image = mark
                 item.representedObject = "\(entry.provider)/\(entry.model)"
-                item.toolTip = "Starts at \(effortPresentation(entry.startingEffort)) "
-                    + "with weight \(routing.weightRange.defaultValue)"
-                submenu.addItem(item)
+                popup.menu?.addItem(item)
                 addable += 1
             }
-            vendor.submenu = submenu
-            popup.menu?.addItem(vendor)
         }
         popup.isEnabled = editor.mutationsAllowed && draftRoute(category) != nil && addable > 0
         if draftRoute(category) == nil {
@@ -642,6 +650,18 @@ final class TaskRouterScreenView: NSView {
         popup.setAccessibilityIdentifier("task-router-add-\(category.rawValue)")
         popup.setAccessibilityLabel("Add model to \(category.label)")
         return popup
+    }
+
+    /// Native section label. Compact marks sit on the model rows, which are
+    /// enabled — disabled header images are what went missing last time.
+    private func addMenuVendorHeader(_ provider: String, available: Int) -> NSMenuItem {
+        let header = NSMenuItem.sectionHeader(title: providerTitle(provider))
+        header.toolTip = available == 0
+            ? (routing.catalog.contains { $0.provider == provider }
+                ? "Every enabled model is on this route"
+                : "No enabled models")
+            : "\(available) model\(available == 1 ? "" : "s") available"
+        return header
     }
 
     // MARK: Header controls and status

@@ -80,7 +80,7 @@ final class ShellPolicyEditingTests: XCTestCase {
     private let complexCoding = "complex_coding"
 
     /// Joins a catalog model the way a user does: the card's "Add model…"
-    /// pull-down, one submenu per vendor.
+    /// pull-down, grouped by vendor in one list.
     private func addModel(
         _ key: String,
         to category: String,
@@ -89,9 +89,7 @@ final class ShellPolicyEditingTests: XCTestCase {
         let popup = try view(controller, "task-router-add-\(category)", as: NSPopUpButton.self)
         XCTAssertTrue(popup.isEnabled, "add model must be offered on \(category)")
         let item = try XCTUnwrap(
-            popup.menu?.items.compactMap(\.submenu).flatMap(\.items).first {
-                $0.representedObject as? String == key
-            },
+            popup.menu?.items.first { $0.representedObject as? String == key },
             "\(key) must be offered by the \(category) add menu")
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))
     }

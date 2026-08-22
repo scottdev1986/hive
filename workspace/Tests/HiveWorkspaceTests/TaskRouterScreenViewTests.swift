@@ -143,10 +143,18 @@ final class TaskRouterScreenViewTests: XCTestCase {
         let popup = try XCTUnwrap(
             find(view, "task-router-add-\(category)") as? NSPopUpButton)
         return try XCTUnwrap(
-            popup.menu?.items.compactMap(\.submenu).flatMap(\.items).first {
-                $0.representedObject as? String == key
-            },
+            addableMenuItems(in: popup).first { $0.representedObject as? String == key },
             "\(key) must be offered on \(category)")
+    }
+
+    private func addableMenuItems(in popup: NSPopUpButton) -> [NSMenuItem] {
+        popup.menu?.items.filter { $0.representedObject is String } ?? []
+    }
+
+    private func vendorHeaders(in popup: NSPopUpButton) -> [NSMenuItem] {
+        Array((popup.menu?.items ?? []).dropFirst()).filter {
+            !$0.isSeparatorItem && $0.indentationLevel == 0 && $0.representedObject == nil
+        }
     }
 
     private let complexCoding = TaskCategory.complexCoding.rawValue
@@ -329,17 +337,41 @@ final class TaskRouterScreenViewTests: XCTestCase {
         XCTAssertTrue(popup.pullsDown)
         XCTAssertEqual(popup.itemTitles.first, "Add model…")
         XCTAssertEqual(
-            popup.menu?.items.dropFirst().map(\.title),
-            ["Claude", "Codex", "Grok", "Kimi", "OpenCode"])
+            vendorHeaders(in: popup).map(\.title),
+            ["Claude", "Codex", "Grok", "Kimi", "OpenCode"],
+            popup.menu?.items.map { item in
+                "\(item.isSeparatorItem ? "—" : item.title)"
+                    + " indent=\(item.indentationLevel)"
+                    + " image=\(item.image != nil)"
+                    + " obj=\(item.representedObject as? String ?? "-")"
+            }.joined(separator: " | ") ?? "no menu")
+        XCTAssertTrue(
+            (popup.menu?.items ?? []).allSatisfy { $0.submenu == nil },
+            "one list, no vendor submenus")
 
-        let offered = Set(popup.menu?.items.compactMap(\.submenu).flatMap(\.items)
-            .compactMap { $0.representedObject as? String } ?? [])
+        for header in vendorHeaders(in: popup) {
+            XCTAssertTrue(
+                header.isSectionHeader,
+                "\(header.title) is a group label, not a model you can add")
+        }
+
+        let offeredItems = addableMenuItems(in: popup)
+        let offered = Set(offeredItems.compactMap { $0.representedObject as? String })
         let members = Set(try XCTUnwrap(routing.policy.categories[complexCoding])
             .candidates.map { "\($0.provider)/\($0.model)" })
         let expected = Set(routing.catalog.map { "\($0.provider)/\($0.model)" })
             .subtracting(members)
         XCTAssertEqual(offered, expected, "offers the catalog minus the members")
         XCTAssertFalse(offered.isEmpty)
+        for item in offeredItems {
+            XCTAssertEqual(item.indentationLevel, 1)
+            let key = try XCTUnwrap(item.representedObject as? String)
+            let model = try XCTUnwrap(key.split(separator: "/").last).description
+            XCTAssertEqual(item.title, model, "the picker names the model, not its default effort")
+            let image = try XCTUnwrap(item.image, "\(model) needs a compact vendor mark")
+            XCTAssertEqual(image.size.width, Theme.Metric.menuMarkSize, accuracy: 0.5)
+            XCTAssertEqual(image.size.height, Theme.Metric.menuMarkSize, accuracy: 0.5)
+        }
 
         let item = try addMenuItem(in: view, category: complexCoding, key: "grok/grok-composer-2.5-fast")
         XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item))

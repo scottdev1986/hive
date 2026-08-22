@@ -67,6 +67,52 @@ final class ProviderMarkView: NSImageView {
             .withSymbolConfiguration(.init(pointSize: 15, weight: .medium))
     }
 
+    /// A 16pt template bitmap of the vendor mark for `NSMenuItem.image`.
+    /// Setting `NSImage.size` on the SVG is not enough: the menu draws the
+    /// representation, and shrinking that representation without redrawing
+    /// clips the glyph to empty. Rasterize into a new bitmap instead.
+    static func menuMarkImage(
+        for provider: ProviderID,
+        size: CGFloat = Theme.Metric.menuMarkSize
+    ) -> NSImage? {
+        guard let source = markImage(for: provider),
+              let drawn = source.copy() as? NSImage else { return nil }
+        drawn.isTemplate = false
+        let pointSize = NSSize(width: size, height: size)
+        let scale: CGFloat = 2
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int((pointSize.width * scale).rounded()),
+            pixelsHigh: Int((pointSize.height * scale).rounded()),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ) else { return nil }
+        rep.size = pointSize
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        guard let context = NSGraphicsContext(bitmapImageRep: rep) else { return nil }
+        NSGraphicsContext.current = context
+        context.imageInterpolation = .high
+        NSColor.clear.setFill()
+        NSRect(origin: .zero, size: pointSize).fill()
+        drawn.draw(
+            in: NSRect(origin: .zero, size: pointSize),
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high])
+        let image = NSImage(size: pointSize)
+        image.addRepresentation(rep)
+        image.isTemplate = true
+        return image
+    }
+
     static func bundledMarkImage(for provider: ProviderID) -> NSImage? {
         if let asset = ProviderBranding.markAssetName(for: provider),
            let url = Bundle.module.url(

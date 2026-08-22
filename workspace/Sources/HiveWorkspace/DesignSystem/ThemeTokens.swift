@@ -29,8 +29,12 @@ extension Theme {
         static let meterTrackHeight: CGFloat = 5
         static let markSize: CGFloat = 20
         static let chainMarkSize: CGFloat = 16
+        /// NSMenuItem draws the image representation's size. Compact so the
+        /// bundled vendor SVGs (intrinsic 94–517 pt) cannot take over a menu.
+        static let menuMarkSize: CGFloat = 16
         static let controlMinHeight: CGFloat = 28
         static let chromeControlHeight: CGFloat = 30
+        static let actionButtonHeight: CGFloat = 36
         static let minContentWidth: CGFloat = 540
     }
 

@@ -48,7 +48,11 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         XCTAssertEqual(Theme.Metric.sidebarWidth, 188)
         XCTAssertEqual(Theme.Metric.liveRunRailWidth, 280)
         XCTAssertEqual(Theme.Metric.topBarHeight, 59)
+        XCTAssertEqual(Theme.Metric.markSize, 20)
+        XCTAssertEqual(Theme.Metric.chainMarkSize, 16)
+        XCTAssertEqual(Theme.Metric.menuMarkSize, 16)
         XCTAssertEqual(Theme.Metric.controlMinHeight, 28)
+        XCTAssertEqual(Theme.Metric.actionButtonHeight, 36)
     }
 
     // MARK: - Type ramp
@@ -187,6 +191,29 @@ final class WorkspaceDesignSystemTests: XCTestCase {
         let inline = ShellBannerView(banner: banner, presentation: .inline)
         XCTAssertEqual(global.accessibilityIdentifier(), "shell-banner-test")
         XCTAssertEqual(inline.accessibilityIdentifier(), "shell-banner-test")
+    }
+
+    func testActionButtonsKeepTheirLabelsAwayFromTheEdges() {
+        let title = "Refresh"
+        let button = ActionButton(title: title)
+        let titleWidth = (title as NSString).size(withAttributes: [
+            .font: Theme.Font.chromeControl,
+        ]).width
+
+        XCTAssertGreaterThanOrEqual(
+            button.intrinsicContentSize.width - titleWidth,
+            Theme.Space.m * 2)
+        XCTAssertEqual(
+            button.intrinsicContentSize.height,
+            Theme.Metric.actionButtonHeight)
+
+        let iconButton = ActionButton(title: "", symbol: "gearshape")
+        XCTAssertEqual(
+            iconButton.intrinsicContentSize.width,
+            Theme.Metric.actionButtonHeight)
+        XCTAssertEqual(
+            iconButton.intrinsicContentSize.height,
+            Theme.Metric.actionButtonHeight)
     }
 
     func testLiveRunSupportSurfacesUseSharedControlsAndCards() throws {

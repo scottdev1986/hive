@@ -488,6 +488,9 @@ qa-run:
 # executable remains under its staging root. If a previous qa-clean already
 # removed the binary (isolation compare failed after uninstall), skip product
 # uninstall and finish the isolation checks.
+# An older qa binary can die on a missing .mcp.json during --repo uninstall
+# and leave QA_STATE in place, which then blocks `make qa`. Retry --repo from
+# this checkout so fixture teardown can finish.
 qa-clean:
 	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa-clean "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
@@ -508,7 +511,10 @@ qa-clean:
 	  fi; \
 	fi; \
 	if [ -x "$(QA_BIN)" ]; then \
-	  env $(QA_ENV) "$(QA_BIN)" uninstall --repo --yes; \
+	  if ! env $(QA_ENV) "$(QA_BIN)" uninstall --repo --yes; then \
+	    echo "qa-clean: product repo uninstall failed; retrying with this checkout"; \
+	    env $(QA_ENV) bun "$(ROOT)/src/cli.ts" uninstall --repo --yes; \
+	  fi; \
 	  env $(QA_ENV) "$(QA_BIN)" uninstall --yes --purge; \
 	else \
 	  echo "qa-clean: qa binary already gone; skipping product uninstall"; \
