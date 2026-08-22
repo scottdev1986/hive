@@ -5,6 +5,7 @@ import { daemonMcpUrl } from "../adapters/providers/shared/mcp-scope";
 import { readDaemonPort } from "../daemon/lifecycle/daemon-lifecycle";
 import { listInstances } from "../daemon/lifecycle/instances";
 import { hiveInstanceSuffix, isDefaultHiveHome } from "../hive-home/home";
+import { isErrnoCode } from "../shared/error-message";
 import { isRecord, isString } from "../shared/is-record";
 import { safeJsonParse, type JsonObject, type JsonValue } from "../shared/json";
 
@@ -18,7 +19,7 @@ async function readText(path: string): Promise<string | null> {
   try {
     return await readFile(path, "utf8");
   } catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") return null;
+    if (isErrnoCode(error, "ENOENT")) return null;
     throw error;
   }
 }

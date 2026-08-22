@@ -11,6 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { hiveInstanceSuffix } from "../../hive-home/home";
 import { definedFields } from "../../shared/defined-fields";
+import { isErrnoCode } from "../../shared/error-message";
 import { isNumber, isRecord, isString } from "../../shared/is-record";
 import { shellToken } from "../../shared/shell-quote";
 import { withFileLock } from "../file-lock";
@@ -140,7 +141,7 @@ const hook = (
 const claudeHome = (): string => process.env.HOME ?? homedir();
 
 const isMissingFileError = <T>(error: T): boolean =>
-  isRecord(error) && error.code === "ENOENT";
+  isErrnoCode(error, "ENOENT");
 
 async function readJsonObject(path: string): Promise<JsonObject> {
   let source: string;

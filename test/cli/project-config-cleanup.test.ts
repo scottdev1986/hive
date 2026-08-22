@@ -160,6 +160,15 @@ describe("repairLeakedProjectConfig", () => {
     }
   });
 
+  test("treats missing project config files as already clean", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-config-repair-"));
+    try {
+      expect(await repairLeakedProjectConfig(root, TEST_SCOPE)).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("does not remove similarly named user servers", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-config-repair-"));
     try {
