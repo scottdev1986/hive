@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Database } from "bun:sqlite";
-import { HiveDatabase } from "../src/daemon/database/hive-database";
 import { EpisodicStore } from "../src/memory-service/episodic";
 import {
   incrementRecurrence,
