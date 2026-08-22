@@ -58,13 +58,30 @@ export type {
 const isMissingFileError = <T>(error: T): boolean =>
   isErrnoCode(error, "ENOENT");
 
-async function pathExists(path: string): Promise<boolean> {
+// P0 citation check: path-exists validation before load-bearing apply
+export async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
   } catch (error) {
     if (isMissingFileError(error)) return false;
     throw error;
+  }
+}
+
+// P0 citation check: command-exists validation for claims naming binaries
+export async function commandExists(command: string): Promise<boolean> {
+  try {
+    const result = await new Promise<{ exitCode: number | null }>((resolve) => {
+      const proc = Bun.spawn(["which", command], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      proc.exited.then((exitCode) => resolve({ exitCode }));
+    });
+    return result.exitCode === 0;
+  } catch {
+    return false;
   }
 }
 
