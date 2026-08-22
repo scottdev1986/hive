@@ -942,7 +942,7 @@ export async function buildMemoryIndex(
 
   if (allRows.length === 0) return "";
 
-  // P0: Use buildMemoryRecallBundle for real RRF/hybrid ranking
+  // P0: Use buildMemoryRecallBundle for FTS-only ranking (semantic explicitly disabled)
   if (options.brief !== undefined && options.brief.trim() !== "") {
     const { buildMemoryRecallBundle } = await import("./recall");
     const { MemoryIndex } = await import("./fts-index");
@@ -955,7 +955,7 @@ export async function buildMemoryIndex(
     const tempIndex = new MemoryIndex(database);
     await tempIndex.rebuild(root);
 
-    // Use buildMemoryRecallBundle with RRF/hybrid (semantic disabled in buildMemoryIndex context)
+    // Use buildMemoryRecallBundle with FTS-only (semantic disabled)
     const bundle = await buildMemoryRecallBundle(
       options.brief,
       {
