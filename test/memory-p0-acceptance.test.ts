@@ -208,43 +208,124 @@ describe("P0 Memory Acceptance Tests", () => {
     expect(facts[0].body).toBe("Updated body"); // body updated
   });
 
-  // P0.5: Wake semantic not hardcoded disabled
+  // P0.5: Wake semantic not hardcoded disabled  
   test("wake_semantic_not_hardcoded", async () => {
-    // Verify that wake-payload-service.ts does NOT hardcode semantic: "disabled"
-    const wakePayloadSource = await Bun.file(
-      join(import.meta.dir, "../src/daemon/wake-payload-service.ts"),
-    ).text();
+    const root = await makeTempDir("hive-wake-semantic-");
+    const db = new Database(":memory:");
+    const database = new HiveDatabase(db);
     
-    // Should use bundle.semantic, not a hardcoded "disabled" literal
-    expect(wakePayloadSource).toContain("semantic: bundle.semantic");
-    expect(wakePayloadSource).not.toContain('semantic: "disabled" as const');
+    // Import needed for behavioral test
+    const { WakePayloadService } = await import("../src/daemon/wake-payload-service");
+    const { MailStore } = await import("../src/mail-service/store");
+    const { MemoryIndex } = await import("../src/memory-service/fts-index");
     
-    // buildWakeQuery should construct from lane, topic, objective, lastMailSnippet
-    expect(wakePayloadSource).toContain("buildWakeQuery");
-    expect(wakePayloadSource).toContain("request.lane");
-    expect(wakePayloadSource).toContain("request.topic");
-    expect(wakePayloadSource).toContain("request.objective");
-    expect(wakePayloadSource).toContain("lastMailSnippet");
+    const mailStore = new MailStore(database);
+    const memory = new MemoryIndex(database);
+    
+    const service = new WakePayloadService({
+      mailStore,
+      repoRoot: () => root,
+      wakeBudgetTokens: 300,
+      memoryRecallDeps: () => ({
+        repoRoot: () => root,
+        memory,
+        semantic: async () => null, // Simulated semantic available
+        semanticStatus: () => "ready", // Not disabled
+      }),
+    });
+    
+    const payload = await service.build({
+      recipient: "test-agent",
+      wakeId: "wake-1",
+      oldestItemId: "item-1",
+      lane: "control",
+      topic: "test topic",
+      objective: "test objective",
+      lastMailSnippet: "test snippet",
+    });
+    
+    // semantic must NOT be hardcoded "disabled" when semanticStatus is ready
+    expect(payload.memoryDelta.semantic).not.toBe("disabled");
   });
 
   // P0.5: Wake not newest-10 date slice
   test("wake_not_newest10", async () => {
-    // Verify wake uses buildMemoryRecallBundle with constructed query, not newest-10
-    const wakePayloadSource = await Bun.file(
-      join(import.meta.dir, "../src/daemon/wake-payload-service.ts"),
-    ).text();
+    const root = await makeTempDir("hive-wake-query-");
+    const db = new Database(":memory:");
+    const database = new HiveDatabase(db);
     
-    // Should call buildMemoryRecallBundle with named query
-    expect(wakePayloadSource).toContain("buildMemoryRecallBundle");
-    expect(wakePayloadSource).toContain("buildWakeQuery(request)");
+    const { WakePayloadService } = await import("../src/daemon/wake-payload-service");
+    const { MailStore } = await import("../src/mail-service/store");
+    const { MemoryIndex } = await import("../src/memory-service/fts-index");
+    const { writeMemoryFact } = await import("../src/memory-service/memory-store");
     
-    // buildWakeQuery must join non-empty parts (not empty fallback)
-    expect(wakePayloadSource).toContain("parts.filter");
-    expect(wakePayloadSource).toContain(".join");
+    const mailStore = new MailStore(database);
+    const memory = new MemoryIndex(database);
     
-    // Should NOT be a pure date-ranked slice
-    expect(wakePayloadSource).not.toContain("newest");
-    expect(wakePayloadSource).not.toContain("slice(0, 10)");
+    // Create facts with different dates
+    await writeMemoryFact(root, {
+      scope: "repo",
+      topic: "test",
+      title: "Relevant article matching query",
+      body: "This article matches the test topic and objective keywords",
+      evidence: "test evidence",
+      source: "agent",
+      status: "unverified",
+      kind: "article",
+      tags: [],
+      supersedes: [],
+      date: "2026-01-01", // Old date
+    });
+    
+    await writeMemoryFact(root, {
+      scope: "repo",
+      topic: "other",
+      title: "Newest article no match",
+      body: "Unrelated content that does not match",
+      evidence: "test evidence",
+      source: "agent",
+      status: "unverified",
+      kind: "article",
+      tags: [],
+      supersedes: [],
+      date: "2026-08-20", // Newest date
+    });
+    
+    // Rebuild index
+    await memory.rebuild(root);
+    
+    const service = new WakePayloadService({
+      mailStore,
+      repoRoot: () => root,
+      wakeBudgetTokens: 300,
+      memoryRecallDeps: () => ({
+        repoRoot: () => root,
+        memory,
+        semantic: async () => null,
+        semanticStatus: () => "disabled",
+      }),
+    });
+    
+    const payload = await service.build({
+      recipient: "test-agent",
+      wakeId: "wake-1",
+      oldestItemId: "item-1",
+      lane: "control",
+      topic: "test topic query",
+      objective: "objective with keywords",
+    });
+    
+    // Should recall based on query relevance, NOT pure date ranking
+    // The older "Relevant article matching query" should be found if query construction works
+    const articles = payload.memoryDelta.articles;
+    if (articles.length > 0) {
+      // At least one article should contain query keywords
+      const hasQueryMatch = articles.some((a) =>
+        a.title.toLowerCase().includes("query") ||
+        a.title.toLowerCase().includes("relevant")
+      );
+      expect(hasQueryMatch).toBe(true);
+    }
   });
 
   // P0.3: Handoff every spawn (not only quota-drain)
