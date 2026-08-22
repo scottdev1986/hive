@@ -594,6 +594,105 @@ export class HiveSpawner implements Spawner {
     }
   }
 
+  /** P0: Load project documentation from AGENTS.md, CLAUDE.md, docs/README.md, or fallback stub. */
+  private async loadProjectDoc(): Promise<string> {
+    const candidates = [
+      "AGENTS.md",
+      "CLAUDE.md",
+      join("docs", "README.md"),
+      "README.md",
+    ];
+    
+    for (const candidate of candidates) {
+      const candidatePath = join(this.dependencies.repoRoot, candidate);
+      try {
+        const { readFile } = await import("node:fs/promises");
+        const content = await readFile(candidatePath, "utf8");
+        const trimmed = content.trim();
+        if (trimmed.length > 0) {
+          const preview = trimmed.slice(0, 2000);
+          return `Project documentation from ${candidate}:\n\n${preview}${trimmed.length > 2000 ? "\n\n(truncated)" : ""}`;
+        }
+      } catch {
+        // File missing or unreadable, try next candidate
+      }
+    }
+    
+    return "Project documentation not found. This repository has no AGENTS.md, CLAUDE.md, or docs/README.md.";
+  }
+
+  /** P0: Load recent mistakes from episodic ledger (last N). */
+  private loadRecentMistakes(): readonly string[] {
+    if (this.dependencies.episodic === undefined) return [];
+    
+    const events = this.dependencies.episodic
+      .listEvents()
+      .filter((e) => e.type === "pitfall" || e.type === "mistake")
+      .slice(-10);
+    
+    return events.map((event) => {
+      const date = event.ts.slice(0, 10);
+      return `- E${event.id} (${date}): ${event.summary}`;
+    });
+  }
+
+  /** P0: Load or synthesize handoff for EVERY specialist spawn (not just when handoffId present). */
+  private loadHandoffText(
+    handoffId: string | undefined,
+    agentName: string,
+    taskDescription: string,
+  ): string {
+    if (handoffId !== undefined) {
+      const stored = this.dependencies.db.getHandoff(handoffId);
+      if (stored !== null) {
+        const summary = stored.bundle.summary;
+        if (summary !== null) {
+          const sections: string[] = [
+            `Handoff ${handoffId} from run ${stored.bundle.sourceRunId}`,
+            `Reason: ${stored.bundle.reason}`,
+            `Branch: ${stored.bundle.branch.name}`,
+            "",
+            `**Goal**: ${summary.goal}`,
+          ];
+          
+          if (summary.done.length > 0) {
+            sections.push("\n**Done**:");
+            summary.done.forEach(item => sections.push(`- ${item}`));
+          }
+          
+          if (summary.remaining.length > 0) {
+            sections.push("\n**Remaining**:");
+            summary.remaining.forEach(item => sections.push(`- ${item}`));
+          }
+          
+          if (summary.decisions.length > 0) {
+            sections.push("\n**Decisions**:");
+            summary.decisions.forEach(item => sections.push(`- ${item}`));
+          }
+          
+          if (summary.nextAction !== null) {
+            sections.push(`\n**Next Action**: ${summary.nextAction}`);
+          }
+          
+          return sections.join("\n");
+        }
+      }
+    }
+    
+    // Synthesize handoff from task assignment
+    return [
+      "No durable handoff found. Synthesized handoff from assignment:",
+      "",
+      `**Task**: ${taskDescription}`,
+      `**Agent**: ${agentName}`,
+      "",
+      "**Goal**: Complete the assigned task.",
+      "**Remaining**: All work from the task description above.",
+      "",
+      "Proceed with the task as assigned.",
+    ].join("\n");
+  }
+
   async spawn(request: SpawnRequest): Promise<AgentRecord> {
     const blocked = new Set<string>();
     for (;;) {
@@ -1322,6 +1421,14 @@ export class HiveSpawner implements Spawner {
           hierarchyIdentity === null || hierarchyAdmission === null
             ? undefined
             : hierarchyAdmission.takeLaunchContext(hierarchyIdentity);
+        
+        // P0: Load pack floor slots (handoff, project, mistakes)
+        const [projectDoc, handoffText] = await Promise.all([
+          this.loadProjectDoc(),
+          Promise.resolve(this.loadHandoffText(request.handoffId, name, request.task)),
+        ]);
+        const recentMistakes = this.loadRecentMistakes();
+        
         const prompt = buildAgentPrompt(
           name,
           request.task,
@@ -1346,6 +1453,9 @@ export class HiveSpawner implements Spawner {
                       command: learnedCommand,
                       status: verificationFact.status,
                     },
+              handoffText,
+              projectDoc,
+              recentMistakes: recentMistakes.length > 0 ? recentMistakes : undefined,
             }),
           },
         );

@@ -141,6 +141,12 @@ export interface AgentPromptOptions {
     readonly command: string;
     readonly status: string;
   };
+  /** P0: Handoff text (durable, synthesized, or fallback) for EVERY specialist spawn. */
+  handoffText?: string;
+  /** P0: Project documentation seed from AGENTS.md/CLAUDE.md/docs or explicit empty stub. */
+  projectDoc?: string;
+  /** P0: Recent mistakes from episodic ledger (last N). */
+  recentMistakes?: readonly string[];
 }
 
 /** Standing instruction when this repo has a harvested verification command. Exported so tests can assert the exact prompt bytes. */
@@ -282,11 +288,21 @@ export function buildAgentPrompt(
     ...(options.spawnBrief === undefined
       ? []
       : [`Hierarchy launch context:\n${JSON.stringify(options.spawnBrief)}`]),
-    ...(options.handoffId === undefined
+    ...(options.handoffText === undefined
       ? []
       : [
-          `Before writing, call hive_pickup_handoff with agent=${JSON.stringify(name)} and handoffId=${JSON.stringify(options.handoffId)}. Verify its branch and evidence; pickup resumes the exact task and does not mark it complete.`,
+          `## Handoff Context\n\n${options.handoffText}`,
         ]),
+    ...(options.projectDoc === undefined
+      ? []
+      : [
+          `## Project Context\n\n${options.projectDoc}`,
+        ]),
+    ...(options.recentMistakes !== undefined && options.recentMistakes.length > 0
+      ? [
+          `## Recent Mistakes\n\nLearn from these recent pitfalls (most recent last):\n${options.recentMistakes.join("\n")}`,
+        ]
+      : []),
     // Standards travel in the prompt, not in a skill. Skills are progressively disclosed — an agent reads a name and a description and chooses whether to open the body — so a rule delivered as a skill reaches only the agents that elect to receive it, and nothing fails when one declines. These go to every agent before its first turn, on every vendor, in every category: the trimmed prompt drops narration, never a rule, and a small model is the one that can least afford to infer them. standardsFor emits each delivered section as `## heading` plus body so the section name is always citable; the digest below still stamps the full loaded set (including sections this role did not receive), which is a different contract.
     ...standardsFor(standards, { readOnly, category: options.category }).filter(
       (section) => {

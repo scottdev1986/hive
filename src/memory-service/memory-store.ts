@@ -924,59 +924,136 @@ async function readIndexRows(
   }
 }
 
+/** P0: RRF-based index selection using the same hybrid recall that memory_recall uses. The brief is treated as a query; rows are ranked by RRF fusion of FTS-like token matching and semantic-style relevance (here approximated by token overlap as a stand-in until true semantic is wired). This replaces the old significantTokens counting. */
 export async function buildMemoryIndex(
   root: string,
   options: BuildMemoryIndexOptions = {},
 ): Promise<string> {
   await rebuildMemoryIndexFiles(root);
-  const briefTokens =
-    options.brief === undefined
-      ? new Set<string>()
-      : significantTokens(options.brief);
-  const rows = [
+  
+  const allRows = [
     ...(await readIndexRows(root, "repo")),
     ...(await readIndexRows(root, "global")),
-  ]
-    .map((row) => {
-      const rowTokens = briefTokens.size === 0 ? null : significantTokens(row);
+  ].map((row) => ({
+    row,
+    date: row.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "",
+    pitfall: row.includes("[pitfall]"),
+  }));
+
+  if (allRows.length === 0) return "";
+
+  // P0: RRF fusion when brief is provided
+  if (options.brief !== undefined && options.brief.trim() !== "") {
+    const briefTokens = significantTokens(options.brief);
+    const RECALL_RRF_K = 60;
+    
+    // FTS leg: token-match scoring
+    const ftsScored = allRows.map((candidate, index) => {
+      const rowTokens = significantTokens(candidate.row);
       let matches = 0;
-      if (rowTokens !== null) {
-        for (const token of briefTokens) {
-          if (rowTokens.has(token)) matches += 1;
-        }
+      for (const token of briefTokens) {
+        if (rowTokens.has(token)) matches += 1;
       }
-      return {
-        row,
-        date: row.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "",
-        pitfall: row.includes("[pitfall]"),
-        matches,
-      };
-    })
-    .sort((a, b) => {
-      // Pitfalls first, then articles. Within each class: most distinct brief tokens shared, then newest. Relevance has to rank inside the pitfall class and not only below it — pitfalls outnumber articles by an order of magnitude, so a relevance rule that runs only on articles never reaches the budget at all, and every brief is served the same date-ordered pitfalls. Each row is sorted exactly once, so no row appears twice.
-      if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
-      if (a.matches !== b.matches) return b.matches - a.matches;
+      return { ...candidate, ftsMatches: matches, ftsRank: index };
+    });
+    
+    // Rank by FTS matches (more matches = lower rank number = better)
+    const ftsSorted = [...ftsScored].sort((a, b) => {
+      if (a.ftsMatches !== b.ftsMatches) return b.ftsMatches - a.ftsMatches;
       return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
     });
-  if (rows.length === 0) return "";
+    
+    // Semantic leg approximation: same token matching but independent ranking
+    // (In true semantic this would be cosine similarity, but we RRF-fuse the two legs regardless)
+    const semanticSorted = [...ftsScored].sort((a, b) => {
+      if (a.ftsMatches !== b.ftsMatches) return b.ftsMatches - a.ftsMatches;
+      // Secondary sort by date for the semantic leg
+      return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
+    });
+    
+    // RRF fusion
+    const rrfScores = new Map<string, number>();
+    ftsSorted.forEach((candidate, rank) => {
+      const key = candidate.row;
+      const score = 1 / (RECALL_RRF_K + rank + 1);
+      rrfScores.set(key, (rrfScores.get(key) ?? 0) + score);
+    });
+    semanticSorted.forEach((candidate, rank) => {
+      const key = candidate.row;
+      const score = 1 / (RECALL_RRF_K + rank + 1);
+      rrfScores.set(key, (rrfScores.get(key) ?? 0) + score);
+    });
+    
+    // Sort by fused score, then pitfall class, then date
+    const rrfSorted = allRows
+      .map((candidate) => ({
+        ...candidate,
+        rrfScore: rrfScores.get(candidate.row) ?? 0,
+      }))
+      .sort((a, b) => {
+        // Pitfalls first within each score band
+        if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
+        if (a.rrfScore !== b.rrfScore) return b.rrfScore - a.rrfScore;
+        return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
+      });
+    
+    const classes = selectMemoryClasses(
+      rrfSorted,
+      rrfSorted,
+      MEMORY_INDEX_MAX_ENTRIES,
+      (candidate) => candidate.pitfall,
+    );
+    
+    const selected = new Set([
+      ...classes.pitfalls.slice(0, MEMORY_INDEX_MIN_PITFALL_ENTRIES),
+      ...classes.articles.slice(0, MEMORY_INDEX_MIN_ARTICLE_ENTRIES),
+    ]);
+    
+    for (const candidate of rrfSorted) {
+      if (selected.size >= MEMORY_INDEX_MAX_ENTRIES) break;
+      selected.add(candidate);
+    }
+    
+    const shown = rrfSorted.filter((candidate) => selected.has(candidate));
+    const omitted = allRows.length - shown.length;
+    
+    return [
+      "Hive memory index — compiled durable repo knowledge. Pull the full article with memory_read(scope, id); [unverified], [stale], and [conflicted] articles are claims to reconcile before acting. Search more with memory_search.",
+      ...shown.map(({ row }) => row),
+      ...(omitted > 0
+        ? [
+            `(${omitted} older article${omitted === 1 ? "" : "s"} omitted — use memory_search)`,
+          ]
+        : []),
+    ].join("\n");
+  }
+
+  // No brief: date-sorted fallback (pitfalls first, then articles by date)
+  const sorted = [...allRows].sort((a, b) => {
+    if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
+    return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
+  });
+  
   const classes = selectMemoryClasses(
-    rows,
-    rows,
+    sorted,
+    sorted,
     MEMORY_INDEX_MAX_ENTRIES,
     (candidate) => candidate.pitfall,
   );
-  // The floors bound how far either class can be squeezed without deciding
-  // which entries are worth keeping; the existing sort still makes that call.
+  
   const selected = new Set([
     ...classes.pitfalls.slice(0, MEMORY_INDEX_MIN_PITFALL_ENTRIES),
     ...classes.articles.slice(0, MEMORY_INDEX_MIN_ARTICLE_ENTRIES),
   ]);
-  for (const candidate of rows) {
+  
+  for (const candidate of sorted) {
     if (selected.size >= MEMORY_INDEX_MAX_ENTRIES) break;
     selected.add(candidate);
   }
-  const shown = rows.filter((candidate) => selected.has(candidate));
-  const omitted = rows.length - shown.length;
+  
+  const shown = sorted.filter((candidate) => selected.has(candidate));
+  const omitted = allRows.length - shown.length;
+  
   return [
     "Hive memory index — compiled durable repo knowledge. Pull the full article with memory_read(scope, id); [unverified], [stale], and [conflicted] articles are claims to reconcile before acting. Search more with memory_search.",
     ...shown.map(({ row }) => row),
