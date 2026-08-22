@@ -35,11 +35,14 @@ export async function loadAndValidateWakePack(options: {
     await import("../../memory-service/pack-floor");
 
   // P0: Load pack floor slots using shared loaders
-  const [constitution, profile, projectDoc] = await Promise.all([
-    Promise.resolve(loadConstitution()),
-    loadProfile(),
-    loadProjectDoc(options.repoRoot),
-  ]);
+  const [constitution, profile, projectDoc, recentMistakes] = await Promise.all(
+    [
+      Promise.resolve(loadConstitution()),
+      loadProfile(),
+      loadProjectDoc(options.repoRoot),
+      loadRecentMistakes(options.episodic, options.repoRoot),
+    ],
+  );
 
   // P0: Load or synthesize handoff (fail-closed if unsynthable)
   const handoffText = loadHandoffText(
@@ -58,8 +61,6 @@ export async function loadAndValidateWakePack(options: {
       "Cannot spawn specialist without handoff: no durable handoff provided and task description insufficient for synthesis",
     );
   }
-
-  const recentMistakes = loadRecentMistakes(options.episodic);
 
   return {
     constitution,

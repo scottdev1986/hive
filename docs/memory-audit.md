@@ -443,17 +443,28 @@ wake_pack_enabled: z.boolean().default(true),
 
 **Fix**: Implemented in commit 3514f5dd. `preWriteCheck` now returns `"noop"` when body is identical to existing fact (same normalized title + same body). `writeLocked` honors NOOP result by reading existing fact and returning it without writing, marking embedding as `"skipped:noop"`. Test `prewrite_noop` validates NOOP is reachable and skips write (no new raw observation file created).
 
-**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)** — **LOCKED P1 not yet shipped**
+**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)** — **P1 in progress (PR #136)**
 
-**Evidence**: `docs/memory-plan.md` requires auto-promote after recurrence≥2; harvest writes unverified pitfalls (`harvest.ts` ~470–478) and stops. No consolidator/job path promotes into always-on mistakes floor.
+**Evidence**: Implementation in progress via `src/memory-service/promotion.ts` with recurrence tracking, auto-promotion when count≥2, and promotion markers in episodic store. Harvest (`harvest.ts`) calls `incrementRecurrence` on every admitted pitfall. Consolidator (`consolidate.ts`) runs `autoPromoteMistakes` when `autoPromote: true`. Promoted mistakes written to `mistakes-promoted` topic with `promoted` and `always-on` tags. Pack floor (`pack-floor.ts`) loads promoted mistakes into always-on wake pack.
 
-**Strategy**: Sleep consolidator counts recurrence → promote to always-on mistakes slot; deadly rules → hooks.
+**Implementation**: 
+- `promotion.ts`: Recurrence tracking (incrementRecurrence, getRecurrenceCount), promotion logic (autoPromoteMistakes), and promotion markers (markPromoted, isPromoted)
+- `harvest.ts`: Tracks recurrence on every pitfall write
+- `consolidate.ts`: Runs auto-promotion during consolidation passes with autoPromote flag
+- `jobs.ts` + `memory-consolidate.ts`: Wire autoPromote=apply in consolidator job and CLI
+- `pack-floor.ts`: Loads promoted mistakes into always-on pack
+- Tests in `test/memory-p1-items-4-5.test.ts` verify recurrence=1 does not promote, recurrence≥2 promotes
 
-**#5: Proposals inbox unwired** — **LOCKED P1 not yet shipped**
+**#5: Proposals inbox unwired** — **P1 in progress (PR #136)**
 
-**Evidence**: `docs/memory-proposals.md` is review-policy stub only; `consolidate.ts` merges similar articles only — never appends profile/project proposals.
+**Evidence**: Implementation in progress via `src/memory-service/proposals.ts` with deterministic read/write/consume paths. Consolidator (`consolidate.ts`) generates proposals from similar articles via `proposal-generator.ts` and appends to `docs/memory-proposals.md`. Proposals include id, category (profile/project/mistake), title, rationale, proposed change, and source.
 
-**Strategy**: Consolidator writes proposals → inbox; human apply to `~/.hive/profile.md` / committed docs; no silent shared-tier writes.
+**Implementation**:
+- `proposals.ts`: Core inbox functions (appendProposal, readProposals, removeProposal, generateProposalId, parseProposals)
+- `proposal-generator.ts`: Generates proposals from consolidation candidates and similar articles
+- `consolidate.ts`: Wires proposal generation when `generateProposals: true`
+- `jobs.ts` + `memory-consolidate.ts`: Wire generateProposals=apply in consolidator job and CLI
+- Tests in `test/memory-p1-items-4-5.test.ts` verify append, read, remove, and format preservation
 
 **#6: Spawn index FTS-only + throwaway `:memory:` rebuild**
 
