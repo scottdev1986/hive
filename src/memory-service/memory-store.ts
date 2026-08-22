@@ -34,7 +34,7 @@ import {
   serializeList,
   serializeMemoryFile,
 } from "./article-format";
-import { selectMemoryClasses, significantTokens } from "./ranking";
+import { selectMemoryClasses } from "./ranking";
 import type {
   BuildMemoryIndexOptions,
   MemoryMigrationReport,
@@ -924,7 +924,7 @@ async function readIndexRows(
   }
 }
 
-/** P0: RRF-based index selection using the same hybrid recall that memory_recall uses. The brief is treated as a query; rows are ranked by RRF fusion of FTS-like token matching and semantic-style relevance (here approximated by token overlap as a stand-in until true semantic is wired). This replaces the old significantTokens counting. */
+/** P0: RRF-based index selection using buildMemoryRecallBundle from recall.ts. Uses FTS-only ranking (semantic leg disabled in buildMemoryIndex context). */
 export async function buildMemoryIndex(
   root: string,
   options: BuildMemoryIndexOptions = {},
@@ -969,13 +969,13 @@ export async function buildMemoryIndex(
 
     // Convert recall results to index rows (preserve recall order)
     const rowsByKey = new Map<string, string>();
-    for (const row of allRows) {
-      const match = row.match(/^\[([^\]]+)\]\s+([^:]+):/);
+    for (const item of allRows) {
+      const match = item.row.match(/^\[([^\]]+)\]\s+([^:]+):/);
       if (match !== null) {
         const scopeTopic = match[1];
         const id = match[2].trim();
         const scope = scopeTopic.split("/")[0];
-        rowsByKey.set(`${scope}/${id}`, row);
+        rowsByKey.set(`${scope}/${id}`, item.row);
       }
     }
 

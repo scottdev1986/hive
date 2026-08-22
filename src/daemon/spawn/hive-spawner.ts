@@ -189,31 +189,6 @@ export class HiveSpawner implements Spawner {
   }
 
   /** P0: Hive constitution (project-agnostic factory principles). */
-  private constitution(): string {
-    return [
-      "# Hive Constitution",
-      "",
-      "## Core Principles",
-      "- Project-agnostic software factory",
-      "- Learn from verified mistakes",
-      "- Human-approved profile and conventions",
-      "- Citation-validation before load-bearing use",
-      "- Fail-closed on unimplemented features",
-    ].join("\n");
-  }
-
-  /** P0: Load profile from ~/.hive/profile.md or return empty string for stub. */
-  private async loadProfile(): Promise<string> {
-    const profilePath = join(getHiveHome(), "profile.md");
-    try {
-      const { readFile } = await import("node:fs/promises");
-      return await readFile(profilePath, "utf8");
-    } catch {
-      // Profile not found or unreadable - return empty for stub
-      return "";
-    }
-  }
-
   private router(): HiveRouter {
     if (this.routerInstance === undefined) {
       const quota =
@@ -618,48 +593,6 @@ export class HiveSpawner implements Spawner {
     } catch {
       return null;
     }
-  }
-
-  /** P0: Load project documentation from AGENTS.md, CLAUDE.md, docs/README.md, or fallback stub. */
-  private async loadProjectDoc(): Promise<string> {
-    const candidates = [
-      "AGENTS.md",
-      "CLAUDE.md",
-      join("docs", "README.md"),
-      "README.md",
-    ];
-
-    for (const candidate of candidates) {
-      const candidatePath = join(this.dependencies.repoRoot, candidate);
-      try {
-        const { readFile } = await import("node:fs/promises");
-        const content = await readFile(candidatePath, "utf8");
-        const trimmed = content.trim();
-        if (trimmed.length > 0) {
-          const preview = trimmed.slice(0, 2000);
-          return `Project documentation from ${candidate}:\n\n${preview}${trimmed.length > 2000 ? "\n\n(truncated)" : ""}`;
-        }
-      } catch {
-        // File missing or unreadable, try next candidate
-      }
-    }
-
-    return "Project documentation not found. This repository has no AGENTS.md, CLAUDE.md, or docs/README.md.";
-  }
-
-  /** P0: Load recent mistakes from episodic ledger (last N). */
-  private loadRecentMistakes(): readonly string[] {
-    if (this.dependencies.episodic === undefined) return [];
-
-    const events = this.dependencies.episodic
-      .listEvents()
-      .filter((e) => e.type === "pitfall" || e.type === "mistake")
-      .slice(-10);
-
-    return events.map((event) => {
-      const date = event.ts.slice(0, 10);
-      return `- E${event.id} (${date}): ${event.summary}`;
-    });
   }
 
   /** P0: Load or synthesize handoff for EVERY specialist spawn. Returns null if unsynthable (no task/assignment). */
@@ -1467,11 +1400,20 @@ export class HiveSpawner implements Spawner {
         let recentMistakes: readonly string[] | undefined;
 
         if (wakePackEnabled) {
-          // P0: Load pack floor slots (constitution, profile, handoff, project, mistakes)
-          [profile, projectDoc] = await Promise.all([
-            this.loadProfile(),
-            this.loadProjectDoc(),
+          // P0: Load pack floor slots using shared loaders
+          const {
+            loadConstitution,
+            loadProfile,
+            loadProjectDoc,
+            loadRecentMistakes,
+          } = await import("../../memory-service/pack-floor");
+
+          [constitution, profile, projectDoc] = await Promise.all([
+            Promise.resolve(loadConstitution()),
+            loadProfile(),
+            loadProjectDoc(this.dependencies.repoRoot),
           ]);
+
           const loadedHandoff = this.loadHandoffText(
             request.handoffId,
             name,
@@ -1488,8 +1430,7 @@ export class HiveSpawner implements Spawner {
             );
           }
           handoffText = loadedHandoff;
-          constitution = this.constitution();
-          recentMistakes = this.loadRecentMistakes();
+          recentMistakes = loadRecentMistakes(this.dependencies.episodic);
         }
 
         const prompt = buildAgentPrompt(

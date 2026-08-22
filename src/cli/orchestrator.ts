@@ -198,16 +198,15 @@ export async function buildQueenLaunchContext(
   ]);
   const recentMistakes = loadRecentMistakes(undefined); // No episodic in CLI context
 
+  // P0: Flatten pack floor (composeLaunchContext expects flat fields, not nested packFloor)
   return queenBootCapsules.composeLaunchContext({
     policy: QUEEN_POLICY,
     memoryIndex: input.memoryIndex,
     bootCapsule: input.bootCapsule,
-    packFloor: {
-      constitution,
-      profile,
-      projectDoc,
-      recentMistakes,
-    },
+    constitution,
+    profile,
+    projectDoc,
+    recentMistakes,
   }).text;
 }
 
