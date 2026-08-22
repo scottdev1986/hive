@@ -54,16 +54,17 @@ export async function runRetentionSweep(options: {
     consolidationCandidates: 0,
   };
 
-  // P0: Build real keep-set from active ledger/pitfall provenance
+  const cutoff = new Date(
+    now.getTime() - config.events_hot_days * DAY_MS,
+  ).toISOString();
+  
+  // P0: Build real keep-set from active ledger/pitfall provenance before sweep
   const allFacts = [
     ...(await discoverMemoryFacts(repoRoot, "repo")),
     ...(await discoverMemoryFacts(repoRoot, "global")),
   ];
   const keepIds = extractReferencedEpisodeIds(allFacts);
-
-  const cutoff = new Date(
-    now.getTime() - config.events_hot_days * DAY_MS,
-  ).toISOString();
+  
   report.eventsDeleted = episodic.sweepEvents(cutoff, keepIds);
 
   // (3) Verified wiki articles whose verification aged out demote to stale.

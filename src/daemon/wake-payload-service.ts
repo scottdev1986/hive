@@ -1,10 +1,9 @@
 import type { MailStore } from "../mail-service/store";
+import { factVerificationFlag } from "../memory-service/memory-store";
 import {
-  factVerificationFlag,
-  listMemoryFacts,
-} from "../memory-service/memory-store";
-import {
+  buildMemoryRecallBundle,
   partitionMemoryRecall,
+  type MemoryRecallDeps,
   type MemoryRecallRow,
 } from "../memory-service/recall";
 import type { WakePayload, WakePayloadRequest } from "../schemas/wake-payload";
@@ -13,18 +12,30 @@ export interface WakePayloadServiceDeps {
   readonly mailStore: MailStore;
   readonly repoRoot: () => string;
   readonly wakeBudgetTokens: number;
+  readonly memoryRecallDeps: () => MemoryRecallDeps;
 }
 
 const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
 
-/** Date-ranked recent wiki slice, not a since-last-wake delta. Cap is same order of magnitude as recall limit (8). */
-const RECENT_WIKI_LIMIT = 10;
+/** P0: Build named wake query from context. */
+function buildWakeQuery(request: WakePayloadRequest): string {
+  const parts: string[] = [];
+  
+  if (request.lane) parts.push(request.lane);
+  if (request.topic) parts.push(request.topic);
+  if (request.objective) parts.push(request.objective);
+  if (request.lastMailSnippet) {
+    parts.push(request.lastMailSnippet.slice(0, 200));
+  }
+  
+  return parts.filter((p) => p.trim().length > 0).join(" ");
+}
 
-/** Builds the wake payload: mail counts by lane + recent wiki slice clamped to wake_budget_tokens. This is the last-mile wiring that turns a wake schedule into the structured prompt that reaches the model. */
+/** Builds the wake payload: mail counts by lane + memory recall from named query. P0: Uses real buildMemoryRecallBundle with hybrid recall, not newest-10 date slice. */
 export class WakePayloadService {
   constructor(private readonly deps: WakePayloadServiceDeps) {}
 
-  /** Build the complete wake payload for submission. Queries current mail counts by lane and builds a date-ranked recent wiki slice clamped to wake_budget_tokens. This is NOT a since-last-wake delta - there is no per-agent cursor. It's an honest date-ranked slice of the wiki. */
+  /** P0: Build wake payload with real recall (named query + hybrid). Not newest-10 date slice; not hardcoded semantic disabled. */
   async build(request: WakePayloadRequest): Promise<WakePayload> {
     const { recipient, wakeId, oldestItemId, lane } = request;
 
@@ -40,44 +51,21 @@ export class WakePayloadService {
       "available",
     );
 
-    // Build recent wiki slice (date-ranked, not a delta)
-    const facts = await listMemoryFacts(this.deps.repoRoot());
-    // Sort by date descending, then id for stability (copy to avoid mutating store array)
-    const sorted = [...facts].sort((a, b) => {
-      const dateComp = b.date.localeCompare(a.date);
-      return dateComp !== 0 ? dateComp : a.id.localeCompare(b.id);
-    });
-    const recent = sorted.slice(0, RECENT_WIKI_LIMIT);
-
-    let state: "ok" | "empty" | "absent";
-    let rows: MemoryRecallRow[];
-
-    if (facts.length === 0) {
-      state = "empty";
-      rows = [];
-    } else if (recent.length === 0) {
-      state = "empty";
-      rows = [];
-    } else {
-      state = "ok";
-      rows = recent.map((fact): MemoryRecallRow => ({
-        scope: fact.scope,
-        topic: fact.topic,
-        id: fact.id,
-        date: fact.date,
-        title: fact.title,
-        snippet: oneLine(fact.body).slice(0, 160),
-        status: fact.status,
-        flag: factVerificationFlag(fact),
-        pitfall: fact.kind === "pitfall",
-      }));
-    }
+    // P0: Named query construction from wake context
+    const query = buildWakeQuery(request);
+    
+    // P0: Real buildMemoryRecallBundle with hybrid (not newest-10)
+    const bundle = await buildMemoryRecallBundle(
+      query,
+      this.deps.memoryRecallDeps(),
+      8, // same limit as before
+    );
 
     // Partition into pitfalls and articles, clamped to budget
     const partition = partitionMemoryRecall(
       {
-        pitfalls: rows.filter((r) => r.pitfall),
-        articles: rows.filter((r) => !r.pitfall),
+        pitfalls: bundle.pitfalls,
+        articles: bundle.articles,
       },
       this.deps.wakeBudgetTokens,
     );
@@ -91,8 +79,8 @@ export class WakePayloadService {
         workAvailable,
       },
       memoryDelta: {
-        state,
-        semantic: "disabled" as const,
+        state: bundle.state,
+        semantic: bundle.semantic, // P0: Real semantic status, not hardcoded "disabled"
         pitfalls: partition.pitfalls,
         articles: partition.articles,
         tokens: partition.tokens,
