@@ -633,12 +633,12 @@ export class QueenBootCapsuleService {
   }): QueenLaunchContext {
     // P0: Build pack floor sections (constitution, profile, project, mistakes, handoff)
     const packFloorSections: string[] = [];
-    
+
     // Constitution (always floor)
     if (input.constitution !== undefined && input.constitution.trim() !== "") {
       packFloorSections.push(`## Hive Constitution\n\n${input.constitution}`);
     }
-    
+
     // Profile (~/.hive/profile.md or reserved empty stub)
     if (input.profile !== undefined) {
       if (input.profile.trim() !== "") {
@@ -649,7 +649,7 @@ export class QueenBootCapsuleService {
         );
       }
     }
-    
+
     // Project documentation (or explicit empty stub)
     if (input.projectDoc !== undefined) {
       if (input.projectDoc.trim() !== "") {
@@ -660,7 +660,7 @@ export class QueenBootCapsuleService {
         );
       }
     }
-    
+
     // Recent mistakes from episodic ledger
     if (input.recentMistakes !== undefined && input.recentMistakes.length > 0) {
       packFloorSections.push(
@@ -671,19 +671,14 @@ export class QueenBootCapsuleService {
         "## Recent Mistakes\n\n(Mistakes ledger empty - no verified pitfalls yet)",
       );
     }
-    
+
     // Handoff (when spawning specialist or on succession)
     if (input.handoff !== undefined && input.handoff.trim() !== "") {
       packFloorSections.push(`## Handoff Context\n\n${input.handoff}`);
     }
-    
+
     const core = normalizeNulText(
-      [
-        input.policy,
-        QUEEN_PIN,
-        input.bootCapsule ?? "",
-        ...packFloorSections,
-      ]
+      [input.policy, QUEEN_PIN, input.bootCapsule ?? "", ...packFloorSections]
         .filter((part) => part !== "")
         .join("\n\n"),
     );

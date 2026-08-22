@@ -294,33 +294,26 @@ export function buildAgentPrompt(
       : [`Hierarchy launch context:\n${JSON.stringify(options.spawnBrief)}`]),
     ...(options.constitution === undefined
       ? []
-      : [
-          `## Hive Constitution\n\n${options.constitution}`,
-        ]),
+      : [`## Hive Constitution\n\n${options.constitution}`]),
     ...(options.profile === undefined
       ? []
       : options.profile.trim() === ""
         ? [
             "## Profile\n\n(Profile slot reserved but empty - create ~/.hive/profile.md for personal preferences)",
           ]
-        : [
-            `## Profile\n\n${options.profile}`,
-          ]),
+        : [`## Profile\n\n${options.profile}`]),
     ...(options.handoffText === undefined
       ? []
-      : [
-          `## Handoff Context\n\n${options.handoffText}`,
-        ]),
+      : [`## Handoff Context\n\n${options.handoffText}`]),
     ...(options.projectDoc === undefined
       ? []
       : options.projectDoc.trim() === ""
         ? [
             "## Project Context\n\n(Project conventions slot: no AGENTS.md, CLAUDE.md, or docs/conventions.md found. Create one for project-specific rules.)",
           ]
-        : [
-            `## Project Context\n\n${options.projectDoc}`,
-          ]),
-    ...(options.recentMistakes !== undefined && options.recentMistakes.length > 0
+        : [`## Project Context\n\n${options.projectDoc}`]),
+    ...(options.recentMistakes !== undefined &&
+    options.recentMistakes.length > 0
       ? [
           `## Recent Mistakes\n\nLearn from these recent pitfalls (most recent last):\n${options.recentMistakes.join("\n")}`,
         ]

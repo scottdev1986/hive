@@ -17,7 +17,7 @@ const DAY_MS = 24 * 3_600_000;
 function extractReferencedEpisodeIds(facts: MemoryFact[]): Set<number> {
   const episodeIds = new Set<number>();
   const episodePattern = /\b(?:episode|event|E)\s*#?(\d+)\b/gi;
-  
+
   for (const fact of facts) {
     // Check evidence field for episode references
     if (fact.evidence) {
@@ -26,7 +26,7 @@ function extractReferencedEpisodeIds(facts: MemoryFact[]): Set<number> {
         if (!Number.isNaN(id)) episodeIds.add(id);
       }
     }
-    
+
     // Check raw observation strings for episode references
     for (const rawText of fact.raw) {
       for (const match of rawText.matchAll(episodePattern)) {
@@ -35,7 +35,7 @@ function extractReferencedEpisodeIds(facts: MemoryFact[]): Set<number> {
       }
     }
   }
-  
+
   return episodeIds;
 }
 
@@ -57,14 +57,14 @@ export async function runRetentionSweep(options: {
   const cutoff = new Date(
     now.getTime() - config.events_hot_days * DAY_MS,
   ).toISOString();
-  
+
   // P0: Build real keep-set from active ledger/pitfall provenance before sweep
   const allFacts = [
     ...(await discoverMemoryFacts(repoRoot, "repo")),
     ...(await discoverMemoryFacts(repoRoot, "global")),
   ];
   const keepIds = extractReferencedEpisodeIds(allFacts);
-  
+
   report.eventsDeleted = episodic.sweepEvents(cutoff, keepIds);
 
   // (3) Verified wiki articles whose verification aged out demote to stale.

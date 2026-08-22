@@ -61,15 +61,19 @@ async function validateFactCitations(
 ): Promise<void> {
   const { join, resolve, isAbsolute } = await import("node:path");
   const textToCheck = [fact.title, fact.body, fact.evidence].join("\n");
-  
+
   // Extract potential file paths (simple heuristic: words that look like paths)
-  const pathPattern = /(?:^|\s)([.~]?\/[^\s]+|[a-zA-Z0-9_-]+\/[^\s]+\.[a-zA-Z0-9]+)/g;
+  const pathPattern =
+    /(?:^|\s)([.~]?\/[^\s]+|[a-zA-Z0-9_-]+\/[^\s]+\.[a-zA-Z0-9]+)/g;
   const paths = Array.from(textToCheck.matchAll(pathPattern), (m) => m[1]);
-  
+
   // Extract potential commands (simple heuristic: backtick-wrapped words or common commands)
   const commandPattern = /`([a-zA-Z0-9_-]+)`/g;
-  const commands = Array.from(textToCheck.matchAll(commandPattern), (m) => m[1]);
-  
+  const commands = Array.from(
+    textToCheck.matchAll(commandPattern),
+    (m) => m[1],
+  );
+
   // Check paths relative to repoRoot
   for (const path of paths) {
     const resolved = isAbsolute(path) ? path : resolve(repoRoot, path);
@@ -80,11 +84,25 @@ async function validateFactCitations(
       );
     }
   }
-  
+
   // Check commands (only common binaries, not all backticked words)
   const commonCommands = new Set([
-    "git", "npm", "bun", "node", "cargo", "make", "docker", "kubectl",
-    "python", "ruby", "go", "rustc", "gcc", "clang", "tsc", "eslint",
+    "git",
+    "npm",
+    "bun",
+    "node",
+    "cargo",
+    "make",
+    "docker",
+    "kubectl",
+    "python",
+    "ruby",
+    "go",
+    "rustc",
+    "gcc",
+    "clang",
+    "tsc",
+    "eslint",
   ]);
   for (const cmd of commands) {
     if (commonCommands.has(cmd)) {
@@ -225,12 +243,12 @@ export function registerMemoryTools(
       if (fact === null) {
         throw new Error(`Memory fact not found: [${scope}] ${id}`);
       }
-      
+
       // P0: Citation path-exists check on load-bearing facts (verified/stale)
       if (fact.status === "verified" || fact.status === "stale") {
         await validateFactCitations(fact, deps.repoRoot);
       }
-      
+
       return toolResult(fact, "fact");
     },
   );

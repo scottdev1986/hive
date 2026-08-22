@@ -20,14 +20,14 @@ const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
 /** P0: Build named wake query from context. */
 function buildWakeQuery(request: WakePayloadRequest): string {
   const parts: string[] = [];
-  
+
   if (request.lane) parts.push(request.lane);
   if (request.topic) parts.push(request.topic);
   if (request.objective) parts.push(request.objective);
   if (request.lastMailSnippet) {
     parts.push(request.lastMailSnippet.slice(0, 200));
   }
-  
+
   return parts.filter((p) => p.trim().length > 0).join(" ");
 }
 
@@ -53,7 +53,7 @@ export class WakePayloadService {
 
     // P0: Named query construction from wake context
     const query = buildWakeQuery(request);
-    
+
     // P0: Real buildMemoryRecallBundle with hybrid (not newest-10)
     const bundle = await buildMemoryRecallBundle(
       query,

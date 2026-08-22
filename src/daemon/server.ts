@@ -891,7 +891,8 @@ export class HiveDaemon {
       repoRoot: this.repoRoot,
       config: options.retention ?? null,
       episodic: this.episodic,
-      serializeMemory: (operation) => this.memoryWrites.serialize("repo", operation),
+      serializeMemory: (operation) =>
+        this.memoryWrites.serialize("repo", operation),
       rebuildMemoryIndex: () => this.rebuildMemoryIndex(),
       runSweep: (reason) => this.runMemoryRetentionSweep(reason),
       sweepArtifacts: () =>
@@ -3033,7 +3034,8 @@ export class HiveDaemon {
       const result = await applyMemoryMutation(
         {
           repoRoot: this.repoRoot,
-          serialize: (scope, operation) => this.memoryWrites.serialize(scope, operation),
+          serialize: (scope, operation) =>
+            this.memoryWrites.serialize(scope, operation),
           writeMemoryFact: (input) => this.memoryWrites.writeLocked(input),
           deleteMemoryFact: (scope, id) =>
             this.memoryWrites.deleteLocked(scope, id),

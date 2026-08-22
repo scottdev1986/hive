@@ -36,7 +36,6 @@ export function detectMemoryTrigger(text: string): MemoryTrigger | null {
   return null;
 }
 
-
 export interface MemoryRecallRow {
   scope: string;
   topic: string;
