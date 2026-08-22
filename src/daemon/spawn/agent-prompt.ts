@@ -141,6 +141,16 @@ export interface AgentPromptOptions {
     readonly command: string;
     readonly status: string;
   };
+  /** P0: Handoff text (durable, synthesized, or fallback) for EVERY specialist spawn. */
+  handoffText?: string;
+  /** P0: Project documentation seed from AGENTS.md/CLAUDE.md/docs or explicit empty stub. */
+  projectDoc?: string;
+  /** P0: Recent mistakes from episodic ledger (last N). */
+  recentMistakes?: readonly string[];
+  /** P0: Constitution content (project-agnostic factory principles). */
+  constitution?: string;
+  /** P0: Profile content from ~/.hive/profile.md or explicit empty stub. */
+  profile?: string;
 }
 
 /** Standing instruction when this repo has a harvested verification command. Exported so tests can assert the exact prompt bytes. */
@@ -282,11 +292,36 @@ export function buildAgentPrompt(
     ...(options.spawnBrief === undefined
       ? []
       : [`Hierarchy launch context:\n${JSON.stringify(options.spawnBrief)}`]),
-    ...(options.handoffId === undefined
+    ...(options.constitution === undefined
       ? []
-      : [
-          `Before writing, call hive_pickup_handoff with agent=${JSON.stringify(name)} and handoffId=${JSON.stringify(options.handoffId)}. Verify its branch and evidence; pickup resumes the exact task and does not mark it complete.`,
-        ]),
+      : [`## Hive Constitution\n\n${options.constitution}`]),
+    ...(options.profile === undefined
+      ? []
+      : options.profile.trim() === ""
+        ? [
+            "## Profile\n\n(Profile slot reserved but empty - create ~/.hive/profile.md for personal preferences)",
+          ]
+        : [`## Profile\n\n${options.profile}`]),
+    ...(options.handoffText === undefined
+      ? []
+      : [`## Handoff Context\n\n${options.handoffText}`]),
+    ...(options.projectDoc === undefined
+      ? []
+      : options.projectDoc.trim() === ""
+        ? [
+            "## Project Context\n\n(Project conventions slot: no AGENTS.md, CLAUDE.md, or docs/conventions.md found. Create one for project-specific rules.)",
+          ]
+        : [`## Project Context\n\n${options.projectDoc}`]),
+    ...(options.recentMistakes !== undefined &&
+    options.recentMistakes.length > 0
+      ? [
+          `## Recent Mistakes\n\nLearn from these recent pitfalls (most recent last):\n${options.recentMistakes.join("\n")}`,
+        ]
+      : options.recentMistakes !== undefined
+        ? [
+            "## Recent Mistakes\n\n(Mistakes ledger empty - no verified pitfalls yet)",
+          ]
+        : []),
     // Standards travel in the prompt, not in a skill. Skills are progressively disclosed — an agent reads a name and a description and chooses whether to open the body — so a rule delivered as a skill reaches only the agents that elect to receive it, and nothing fails when one declines. These go to every agent before its first turn, on every vendor, in every category: the trimmed prompt drops narration, never a rule, and a small model is the one that can least afford to infer them. standardsFor emits each delivered section as `## heading` plus body so the section name is always citable; the digest below still stamps the full loaded set (including sections this role did not receive), which is a different contract.
     ...standardsFor(standards, { readOnly, category: options.category }).filter(
       (section) => {

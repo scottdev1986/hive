@@ -182,13 +182,33 @@ export async function prepareOrchestratorConfig(
   }
 }
 
-export function buildQueenLaunchContext(
-  input: { memoryIndex?: string; bootCapsule?: string } = {},
-): string {
+export async function buildQueenLaunchContext(
+  input: { memoryIndex?: string; bootCapsule?: string; repoRoot: string } = {
+    repoRoot: process.cwd(),
+  },
+): Promise<string> {
+  // P0: Load pack floor for queen launch
+  const { loadConstitution, loadProfile, loadProjectDoc, loadRecentMistakes } =
+    await import("../memory-service/pack-floor");
+
+  const [constitution, profile, projectDoc, recentMistakes] = await Promise.all(
+    [
+      Promise.resolve(loadConstitution()),
+      loadProfile(),
+      loadProjectDoc(input.repoRoot),
+      loadRecentMistakes(undefined, input.repoRoot),
+    ],
+  );
+
+  // P0: Flatten pack floor (composeLaunchContext expects flat fields, not nested packFloor)
   return queenBootCapsules.composeLaunchContext({
     policy: QUEEN_POLICY,
     memoryIndex: input.memoryIndex,
     bootCapsule: input.bootCapsule,
+    constitution,
+    profile,
+    projectDoc,
+    recentMistakes,
   }).text;
 }
 
@@ -502,7 +522,11 @@ export async function launchOrchestrator(
     );
   }
   const memoryIndex = await buildMemoryIndex(cwd).catch(() => "");
-  const launchContext = buildQueenLaunchContext({ memoryIndex, bootCapsule });
+  const launchContext = await buildQueenLaunchContext({
+    memoryIndex,
+    bootCapsule,
+    repoRoot: cwd,
+  });
   await writeLaunchPrompt(orchestratorSessionKey(), launchContext);
   await prepareOrchestratorConfig(tool, port, cwd);
   if (tool === "codex") {

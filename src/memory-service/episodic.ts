@@ -227,6 +227,20 @@ export class EpisodicStore {
       .map((row) => EpisodicEventSchema.parse(EventRowSchema.parse(row)));
   }
 
+  listEvents(): Array<{
+    id: string;
+    type: string;
+    ts: string;
+    summary: string;
+  }> {
+    return this.eventsFor().map((event) => ({
+      id: String(event.id),
+      type: event.type,
+      ts: event.ts,
+      summary: event.summary,
+    }));
+  }
+
   readMeta(key: string): string | null {
     // SAFETY: The surrounding code already established this contract.
     const row = this.database

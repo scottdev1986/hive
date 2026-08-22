@@ -624,9 +624,61 @@ export class QueenBootCapsuleService {
     policy: string;
     bootCapsule?: string;
     memoryIndex?: string;
+    /** P0: Pack floor slots for queen boot */
+    constitution?: string;
+    profile?: string;
+    projectDoc?: string;
+    recentMistakes?: readonly string[];
+    handoff?: string;
   }): QueenLaunchContext {
+    // P0: Build pack floor sections (constitution, profile, project, mistakes, handoff)
+    const packFloorSections: string[] = [];
+
+    // Constitution (always floor)
+    if (input.constitution !== undefined && input.constitution.trim() !== "") {
+      packFloorSections.push(`## Hive Constitution\n\n${input.constitution}`);
+    }
+
+    // Profile (~/.hive/profile.md or reserved empty stub)
+    if (input.profile !== undefined) {
+      if (input.profile.trim() !== "") {
+        packFloorSections.push(`## Profile\n\n${input.profile}`);
+      } else {
+        packFloorSections.push(
+          "## Profile\n\n(Profile slot reserved but empty - create ~/.hive/profile.md for personal preferences)",
+        );
+      }
+    }
+
+    // Project documentation (or explicit empty stub)
+    if (input.projectDoc !== undefined) {
+      if (input.projectDoc.trim() !== "") {
+        packFloorSections.push(`## Project Context\n\n${input.projectDoc}`);
+      } else {
+        packFloorSections.push(
+          "## Project Context\n\n(Project conventions slot: no AGENTS.md, CLAUDE.md, or docs/conventions.md found. Create one for project-specific rules.)",
+        );
+      }
+    }
+
+    // Recent mistakes from episodic ledger
+    if (input.recentMistakes !== undefined && input.recentMistakes.length > 0) {
+      packFloorSections.push(
+        `## Recent Mistakes\n\nLearn from these recent pitfalls (most recent last):\n${input.recentMistakes.join("\n")}`,
+      );
+    } else if (input.recentMistakes !== undefined) {
+      packFloorSections.push(
+        "## Recent Mistakes\n\n(Mistakes ledger empty - no verified pitfalls yet)",
+      );
+    }
+
+    // Handoff (when spawning specialist or on succession)
+    if (input.handoff !== undefined && input.handoff.trim() !== "") {
+      packFloorSections.push(`## Handoff Context\n\n${input.handoff}`);
+    }
+
     const core = normalizeNulText(
-      [input.policy, QUEEN_PIN, input.bootCapsule ?? ""]
+      [input.policy, QUEEN_PIN, input.bootCapsule ?? "", ...packFloorSections]
         .filter((part) => part !== "")
         .join("\n\n"),
     );

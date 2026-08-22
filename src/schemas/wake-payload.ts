@@ -35,5 +35,9 @@ export const WakePayloadRequestSchema = z.strictObject({
   wakeId: z.string().min(1),
   oldestItemId: z.string().min(1),
   lane: MailLaneSchema,
+  // P0: Named query construction fields
+  topic: z.string().optional(),
+  objective: z.string().optional(),
+  lastMailSnippet: z.string().optional(),
 });
 export type WakePayloadRequest = z.infer<typeof WakePayloadRequestSchema>;

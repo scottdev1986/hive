@@ -17,6 +17,7 @@ export const MemorySourceSchema = z.enum([
   "agent",
   "orchestrator",
   "user",
+  "consolidator",
   "legacy",
 ]);
 export type MemorySource = z.infer<typeof MemorySourceSchema>;
@@ -31,6 +32,7 @@ export const MemoryWriterSourceSchema = z.enum([
   "agent",
   "orchestrator",
   "user",
+  "consolidator",
 ]);
 
 export const MemoryVerificationStatusSchema = z.enum([

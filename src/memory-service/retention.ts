@@ -1,5 +1,5 @@
 import type { MemoryRetentionConfig } from "../schemas/config-schema";
-import type { MemoryScope } from "../schemas/memory";
+import type { MemoryFact, MemoryScope } from "../schemas/memory";
 import { countConsolidationCandidates } from "./consolidate";
 import type { EpisodicStore } from "./episodic";
 import { demoteMemoryFact, discoverMemoryFacts } from "./memory-store";
@@ -13,12 +13,38 @@ export interface RetentionSweepReport {
 
 const DAY_MS = 24 * 3_600_000;
 
+/** P0: Extract episode IDs referenced in memory fact provenance (evidence, raw fields) to build the retention keep-set. Episode references like "episode E123" or "event #456" are parsed from evidence strings. */
+function extractReferencedEpisodeIds(facts: MemoryFact[]): Set<number> {
+  const episodeIds = new Set<number>();
+  const episodePattern = /\b(?:episode|event|E)\s*#?(\d+)\b/gi;
+
+  for (const fact of facts) {
+    // Check evidence field for episode references
+    if (fact.evidence) {
+      for (const match of fact.evidence.matchAll(episodePattern)) {
+        const id = Number(match[1]);
+        if (!Number.isNaN(id)) episodeIds.add(id);
+      }
+    }
+
+    // Check raw observation strings for episode references
+    for (const rawText of fact.raw) {
+      for (const match of rawText.matchAll(episodePattern)) {
+        const id = Number(match[1]);
+        if (!Number.isNaN(id)) episodeIds.add(id);
+      }
+    }
+  }
+
+  return episodeIds;
+}
+
 export async function runRetentionSweep(options: {
   episodic: EpisodicStore;
   repoRoot: string;
   config: MemoryRetentionConfig;
   now: Date;
-  /** Pairwise vector scan. Skip it on a kill-time sweep: the count is a diagnostic, and running it on the request thread is what made /handshake miss its 1s budget. */
+  /** Pairwise vector scan. Skip it on a kill-time sweep: the count is a diagnostic, and running it on the request thread is what made /handshave miss its 1s budget. */
   countCandidates?: boolean;
 }): Promise<RetentionSweepReport> {
   const { episodic, repoRoot, config, now } = options;
@@ -31,7 +57,15 @@ export async function runRetentionSweep(options: {
   const cutoff = new Date(
     now.getTime() - config.events_hot_days * DAY_MS,
   ).toISOString();
-  report.eventsDeleted = episodic.sweepEvents(cutoff, new Set());
+
+  // P0: Build real keep-set from active ledger/pitfall provenance before sweep
+  const allFacts = [
+    ...(await discoverMemoryFacts(repoRoot, "repo")),
+    ...(await discoverMemoryFacts(repoRoot, "global")),
+  ];
+  const keepIds = extractReferencedEpisodeIds(allFacts);
+
+  report.eventsDeleted = episodic.sweepEvents(cutoff, keepIds);
 
   // (3) Verified wiki articles whose verification aged out demote to stale.
   const staleCutoff = new Date(now.getTime() - config.stale_after_days * DAY_MS)
