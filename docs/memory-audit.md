@@ -435,11 +435,13 @@ wake_pack_enabled: z.boolean().default(true),
 
 ### HIGH
 
-**#3: Mem0 write-gate incomplete (NOOP dead)** — **P0 residual**
+**#3: Mem0 write-gate incomplete (NOOP dead)** — **CLOSED**
 
 **Evidence**: `preWriteCheck` return type includes `"noop"` but only returns `add|update` (`write-service.ts:78–125`); `writeLocked` discards the return (`:129–132`); title collision mutates into forced UPDATE. `findSimilarMemoryCandidates` is post-write advisory only (`memory-tools.ts:185`).
 
 **Strategy**: Mem0 ADD/UPDATE/DELETE/NOOP with pre-write similar retrieve; identical body → NOOP; honor gate result.
+
+**Fix**: Implemented in commit 3514f5dd. `preWriteCheck` now returns `"noop"` when body is identical to existing fact (same normalized title + same body). `writeLocked` honors NOOP result by reading existing fact and returning it without writing, marking embedding as `"skipped:noop"`. Test `prewrite_noop` validates NOOP is reachable and skips write (no new raw observation file created).
 
 **#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)** — **LOCKED P1 not yet shipped**
 

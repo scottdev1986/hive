@@ -50,9 +50,12 @@ export function embeddingStateLabelFromDetail(
   return "unavailable";
 }
 
-/** What actually happened to a write's vector projection: "indexed" — the vector is stored; "queued" — the first-ever embed is loading the model, so the projection runs in the background rather than blocking the write inside the memory lock; "unavailable:<state>" — the semantic leg is down and the write is keyword-searchable only. */
+/** What actually happened to a write's vector projection: "indexed" — the vector is stored; "queued" — the first-ever embed is loading the model, so the projection runs in the background rather than blocking the write inside the memory lock; "skipped:noop" — the write was skipped because the body is identical to the existing fact (NOOP); "unavailable:<state>" — the semantic leg is down and the write is keyword-searchable only. */
 export type MemoryEmbeddingWriteOutcome =
-  "indexed" | "queued" | `unavailable:${MemoryEmbeddingStateLabel}`;
+  | "indexed"
+  | "queued"
+  | "skipped:noop"
+  | `unavailable:${MemoryEmbeddingStateLabel}`;
 
 export interface MemoryEmbeddingConfig {
   provider: "local" | "api";

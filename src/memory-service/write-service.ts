@@ -112,7 +112,17 @@ export class MemoryWriteService {
       return "add";
     }
 
-    // Found duplicate with same normalized title - this becomes an update
+    // Check if body is identical - if so, this is a NOOP (no write needed)
+    if (duplicate.body === input.body) {
+      // Mutate input to reference the existing fact for consistent return
+      if (input.id === undefined) {
+        input.id = duplicate.id;
+      }
+      input.topic = duplicate.topic;
+      return "noop";
+    }
+
+    // Found duplicate with same normalized title but different body - this becomes an update
     // Mutate input to target the existing id and supersede it
     if (input.id === undefined) {
       input.id = duplicate.id;
@@ -127,7 +137,30 @@ export class MemoryWriteService {
 
   async writeLocked(input: MemoryWriteInput): Promise<MemoryWriteResult> {
     // P0: Pre-write gate determines ADD/UPDATE/NOOP
-    await this.preWriteCheck(input);
+    const action = await this.preWriteCheck(input);
+
+    // NOOP: identical body, skip write and return existing fact
+    if (action === "noop") {
+      const { readMemoryFact } = await import("./memory-store");
+      const existing = await readMemoryFact(
+        this.repoRoot,
+        input.scope,
+        input.id!,
+      );
+      if (existing === null) {
+        throw new Error(
+          `NOOP gate expected existing fact [${input.scope}] ${input.id} but not found`,
+        );
+      }
+      // Return existing fact without writing - mark embedding as skipped
+      return {
+        ...existing,
+        path: existing.path,
+        rawPath: "", // NOOP doesn't create a new raw observation
+        supersededIds: [],
+        embedding: "skipped:noop",
+      };
+    }
 
     const written = await writeMemoryFactFile(this.repoRoot, input);
     for (const id of written.supersededIds) {

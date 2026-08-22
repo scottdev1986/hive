@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -213,6 +213,75 @@ describe("P0 Memory Acceptance Tests", () => {
     expect(facts.length).toBe(1);
     expect(facts[0].id).toBe(first.id);
     expect(facts[0].body).toBe("Updated body"); // body updated
+  });
+
+  // Hole #3: NOOP write-gate returns and honors NOOP when body is identical
+  test("prewrite_noop", async () => {
+    const root = await makeTempDir("hive-noop-");
+    const db = new Database(":memory:");
+    const database = new HiveDatabase(db);
+    const index = new MemoryIndex(database);
+
+    const service = new MemoryWriteService({
+      repoRoot: root,
+      index,
+      embeddingIndex: null,
+    });
+
+    // Write first fact
+    const first = await service.write({
+      scope: "repo",
+      topic: "test",
+      title: "NOOP Test Article",
+      body: "Identical body content",
+      evidence: "Test evidence",
+      source: "agent",
+      status: "unverified",
+      kind: "article",
+      tags: [],
+      supersedes: [],
+      date: "2026-08-20",
+    });
+
+    // Count raw observation files before NOOP write
+    const rawRoot = join(root, ".hive", "memory", "repo", "raw", "test");
+    const rawFilesBefore = await readdir(rawRoot).catch(() => []);
+    const rawCountBefore = rawFilesBefore.length;
+
+    // Write exact duplicate (same normalized title AND same body)
+    const noop = await service.write({
+      scope: "repo",
+      topic: "test",
+      title: "NOOP Test Article!", // Same normalized title
+      body: "Identical body content", // IDENTICAL body
+      evidence: "Different evidence",
+      source: "agent",
+      status: "unverified",
+      kind: "article",
+      tags: [],
+      supersedes: [],
+      date: "2026-08-20",
+    });
+
+    // Should return same id (NOOP, not a new write)
+    expect(noop.id).toBe(first.id);
+    // Embedding should be marked as skipped
+    expect(noop.embedding).toBe("skipped:noop");
+    // Raw path should be empty (no new observation)
+    expect(noop.rawPath).toBe("");
+    // No supersedes for NOOP
+    expect(noop.supersededIds).toEqual([]);
+
+    // No new raw observation file should have been created
+    const rawFilesAfter = await readdir(rawRoot).catch(() => []);
+    const rawCountAfter = rawFilesAfter.length;
+    expect(rawCountAfter).toBe(rawCountBefore);
+
+    // Only one fact file should exist on disk
+    const facts = await discoverMemoryFacts(root, "repo");
+    expect(facts.length).toBe(1);
+    expect(facts[0].id).toBe(first.id);
+    expect(facts[0].body).toBe("Identical body content"); // body unchanged
   });
 
   // P0.5: Wake semantic not hardcoded disabled
