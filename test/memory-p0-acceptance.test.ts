@@ -341,75 +341,12 @@ describe("P0 Memory Acceptance Tests", () => {
 
   // P0.3: Handoff every spawn - validates production loadHandoffText fail-closed behavior
   test("handoff_every_spawn", async () => {
-    // Production loadHandoffText logic (same as HiveSpawner private method)
-    function loadHandoffText(
-      db: HiveDatabase,
-      handoffId: string | undefined,
-      agentName: string,
-      taskDescription: string | undefined,
-    ): string | null {
-      if (handoffId !== undefined) {
-        const stored = db.getHandoff(handoffId);
-        if (stored !== null) {
-          const summary = stored.bundle.summary;
-          if (summary !== null) {
-            const sections: string[] = [
-              `Handoff ${handoffId} from run ${stored.bundle.sourceRunId}`,
-              `Reason: ${stored.bundle.reason}`,
-              `Branch: ${stored.bundle.branch.name}`,
-              "",
-              `**Goal**: ${summary.goal}`,
-            ];
-
-            if (summary.done.length > 0) {
-              sections.push("\n**Done**:");
-              summary.done.forEach((item) => sections.push(`- ${item}`));
-            }
-
-            if (summary.remaining.length > 0) {
-              sections.push("\n**Remaining**:");
-              summary.remaining.forEach((item) => sections.push(`- ${item}`));
-            }
-
-            if (summary.decisions.length > 0) {
-              sections.push("\n**Decisions**:");
-              summary.decisions.forEach((item) => sections.push(`- ${item}`));
-            }
-
-            if (summary.nextAction !== null) {
-              sections.push(`\n**Next Action**: ${summary.nextAction}`);
-            }
-
-            return sections.join("\n");
-          }
-        }
-      }
-
-      // P0: Fail-closed when synthesis is impossible (no task/assignment)
-      if (
-        taskDescription === undefined ||
-        taskDescription.trim() === "" ||
-        agentName.trim() === ""
-      ) {
-        return null;
-      }
-
-      // Synthesize handoff from task assignment
-      return [
-        "No durable handoff found. Synthesized handoff from assignment:",
-        "",
-        `**Task**: ${taskDescription}`,
-        `**Agent**: ${agentName}`,
-        "",
-        "**Goal**: Complete the assigned task.",
-        "**Remaining**: All work from the task description above.",
-        "",
-        "Proceed with the task as assigned.",
-      ].join("\n");
-    }
-
     const db = new Database(":memory:");
     const database = new HiveDatabase(db);
+
+    // Import the REAL production loadHandoffText that HiveSpawner uses
+    const { loadHandoffText } =
+      await import("../src/daemon/spawn/handoff-loader");
 
     // Test 1: Fail-closed when task undefined (production fail-closed)
     const handoffUndefined = loadHandoffText(
@@ -698,20 +635,12 @@ describe("P0 Memory Acceptance Tests", () => {
     ]);
     const recentMistakes = loadRecentMistakes(episodic);
 
-    // Synthesize handoff the same way HiveSpawner.loadHandoffText does (production path)
+    // Use REAL production loadHandoffText (same function HiveSpawner calls)
+    const { loadHandoffText } =
+      await import("../src/daemon/spawn/handoff-loader");
     const task = "Review this code";
     const agentName = "silent-specialist";
-    const handoffText = [
-      "No durable handoff found. Synthesized handoff from assignment:",
-      "",
-      `**Task**: ${task}`,
-      `**Agent**: ${agentName}`,
-      "",
-      "**Goal**: Complete the assigned task.",
-      "**Remaining**: All work from the task description above.",
-      "",
-      "Proceed with the task as assigned.",
-    ].join("\n");
+    const handoffText = loadHandoffText(database, undefined, agentName, task);
 
     // Build prompt with real pack floor for read-only specialist (production path)
     const silentSpecialistPrompt = buildAgentPrompt(
