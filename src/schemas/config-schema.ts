@@ -63,6 +63,8 @@ export const HiveConfigSchema = z.strictObject({
       // P0: "api" provider fails config parse until implemented. "local" runs an ONNX model in the daemon, models cached under the Hive-owned models dir.
       embedding_provider: z.enum(["local"]).default("local"),
       embedding_model: MemoryEmbeddingModelSchema.default("bge-small-en-v1.5"),
+      // P0.12: Dual-read pack+index sunset flag
+      wake_pack_enabled: z.boolean().default(true),
     })
     .prefault({}),
 });

@@ -930,7 +930,7 @@ export async function buildMemoryIndex(
   options: BuildMemoryIndexOptions = {},
 ): Promise<string> {
   await rebuildMemoryIndexFiles(root);
-  
+
   const allRows = [
     ...(await readIndexRows(root, "repo")),
     ...(await readIndexRows(root, "global")),
@@ -942,86 +942,60 @@ export async function buildMemoryIndex(
 
   if (allRows.length === 0) return "";
 
-  // P0: DEPRECATED significantTokens×2 fake RRF - sunset flag for P1 replacement
-  // TODO P1: Wire buildMemoryRecallBundle for real hybrid RRF when FTS/semantic deps available
-  // This token-based approximation remains as fallback until buildMemoryRecallBundle integration
+  // P0: Use buildMemoryRecallBundle for real RRF/hybrid ranking
   if (options.brief !== undefined && options.brief.trim() !== "") {
-    const briefTokens = significantTokens(options.brief);
-    const RECALL_RRF_K = 60;
-    
-    // FTS leg: token-match scoring
-    const ftsScored = allRows.map((candidate, index) => {
-      const rowTokens = significantTokens(candidate.row);
-      let matches = 0;
-      for (const token of briefTokens) {
-        if (rowTokens.has(token)) matches += 1;
-      }
-      return { ...candidate, ftsMatches: matches, ftsRank: index };
-    });
-    
-    // Rank by FTS matches (more matches = lower rank number = better)
-    const ftsSorted = [...ftsScored].sort((a, b) => {
-      if (a.ftsMatches !== b.ftsMatches) return b.ftsMatches - a.ftsMatches;
-      return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
-    });
-    
-    // Semantic leg approximation: same token matching but independent ranking
-    // (In true semantic this would be cosine similarity, but we RRF-fuse the two legs regardless)
-    const semanticSorted = [...ftsScored].sort((a, b) => {
-      if (a.ftsMatches !== b.ftsMatches) return b.ftsMatches - a.ftsMatches;
-      // Secondary sort by date for the semantic leg
-      return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
-    });
-    
-    // RRF fusion
-    const rrfScores = new Map<string, number>();
-    ftsSorted.forEach((candidate, rank) => {
-      const key = candidate.row;
-      const score = 1 / (RECALL_RRF_K + rank + 1);
-      rrfScores.set(key, (rrfScores.get(key) ?? 0) + score);
-    });
-    semanticSorted.forEach((candidate, rank) => {
-      const key = candidate.row;
-      const score = 1 / (RECALL_RRF_K + rank + 1);
-      rrfScores.set(key, (rrfScores.get(key) ?? 0) + score);
-    });
-    
-    // Sort by fused score, then pitfall class, then date
-    const rrfSorted = allRows
-      .map((candidate) => ({
-        ...candidate,
-        rrfScore: rrfScores.get(candidate.row) ?? 0,
-      }))
-      .sort((a, b) => {
-        // Pitfalls first within each score band
-        if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
-        if (a.rrfScore !== b.rrfScore) return b.rrfScore - a.rrfScore;
-        return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
-      });
-    
-    const classes = selectMemoryClasses(
-      rrfSorted,
-      rrfSorted,
+    const { buildMemoryRecallBundle } = await import("./recall");
+    const { MemoryIndex } = await import("./fts-index");
+    const { HiveDatabase } = await import("../daemon/database/hive-database");
+    const Database = (await import("bun:sqlite")).Database;
+
+    // Build temporary in-memory index for recall
+    const tempDb = new Database(":memory:");
+    const database = new HiveDatabase(tempDb);
+    const tempIndex = new MemoryIndex(database);
+    await tempIndex.rebuild(root);
+
+    // Use buildMemoryRecallBundle with RRF/hybrid (semantic disabled in buildMemoryIndex context)
+    const bundle = await buildMemoryRecallBundle(
+      options.brief,
+      {
+        repoRoot: () => root,
+        memory: tempIndex,
+        semantic: null,
+        semanticStatus: () => "disabled",
+      },
       MEMORY_INDEX_MAX_ENTRIES,
-      (candidate) => candidate.pitfall,
     );
-    
-    const selected = new Set([
-      ...classes.pitfalls.slice(0, MEMORY_INDEX_MIN_PITFALL_ENTRIES),
-      ...classes.articles.slice(0, MEMORY_INDEX_MIN_ARTICLE_ENTRIES),
-    ]);
-    
-    for (const candidate of rrfSorted) {
-      if (selected.size >= MEMORY_INDEX_MAX_ENTRIES) break;
-      selected.add(candidate);
+
+    // Convert recall results to index rows (preserve recall order)
+    const rowsByKey = new Map<string, string>();
+    for (const row of allRows) {
+      const match = row.match(/^\[([^\]]+)\]\s+([^:]+):/);
+      if (match !== null) {
+        const scopeTopic = match[1];
+        const id = match[2].trim();
+        const scope = scopeTopic.split("/")[0];
+        rowsByKey.set(`${scope}/${id}`, row);
+      }
     }
-    
-    const shown = rrfSorted.filter((candidate) => selected.has(candidate));
+
+    const shown: string[] = [];
+    for (const pitfall of bundle.pitfalls) {
+      const key = `${pitfall.scope}/${pitfall.id}`;
+      const row = rowsByKey.get(key);
+      if (row !== undefined) shown.push(row);
+    }
+    for (const article of bundle.articles) {
+      const key = `${article.scope}/${article.id}`;
+      const row = rowsByKey.get(key);
+      if (row !== undefined) shown.push(row);
+    }
+
     const omitted = allRows.length - shown.length;
-    
+
     return [
       "Hive memory index — compiled durable repo knowledge. Pull the full article with memory_read(scope, id); [unverified], [stale], and [conflicted] articles are claims to reconcile before acting. Search more with memory_search.",
-      ...shown.map(({ row }) => row),
+      ...shown,
       ...(omitted > 0
         ? [
             `(${omitted} older article${omitted === 1 ? "" : "s"} omitted — use memory_search)`,
@@ -1035,27 +1009,27 @@ export async function buildMemoryIndex(
     if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
     return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
   });
-  
+
   const classes = selectMemoryClasses(
     sorted,
     sorted,
     MEMORY_INDEX_MAX_ENTRIES,
     (candidate) => candidate.pitfall,
   );
-  
+
   const selected = new Set([
     ...classes.pitfalls.slice(0, MEMORY_INDEX_MIN_PITFALL_ENTRIES),
     ...classes.articles.slice(0, MEMORY_INDEX_MIN_ARTICLE_ENTRIES),
   ]);
-  
+
   for (const candidate of sorted) {
     if (selected.size >= MEMORY_INDEX_MAX_ENTRIES) break;
     selected.add(candidate);
   }
-  
+
   const shown = sorted.filter((candidate) => selected.has(candidate));
   const omitted = allRows.length - shown.length;
-  
+
   return [
     "Hive memory index — compiled durable repo knowledge. Pull the full article with memory_read(scope, id); [unverified], [stale], and [conflicted] articles are claims to reconcile before acting. Search more with memory_search.",
     ...shown.map(({ row }) => row),

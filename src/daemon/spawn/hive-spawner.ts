@@ -628,7 +628,7 @@ export class HiveSpawner implements Spawner {
       join("docs", "README.md"),
       "README.md",
     ];
-    
+
     for (const candidate of candidates) {
       const candidatePath = join(this.dependencies.repoRoot, candidate);
       try {
@@ -643,31 +643,31 @@ export class HiveSpawner implements Spawner {
         // File missing or unreadable, try next candidate
       }
     }
-    
+
     return "Project documentation not found. This repository has no AGENTS.md, CLAUDE.md, or docs/README.md.";
   }
 
   /** P0: Load recent mistakes from episodic ledger (last N). */
   private loadRecentMistakes(): readonly string[] {
     if (this.dependencies.episodic === undefined) return [];
-    
+
     const events = this.dependencies.episodic
       .listEvents()
       .filter((e) => e.type === "pitfall" || e.type === "mistake")
       .slice(-10);
-    
+
     return events.map((event) => {
       const date = event.ts.slice(0, 10);
       return `- E${event.id} (${date}): ${event.summary}`;
     });
   }
 
-  /** P0: Load or synthesize handoff for EVERY specialist spawn (not just when handoffId present). Fail-closed when unsynthable (missing required data). */
+  /** P0: Load or synthesize handoff for EVERY specialist spawn. Returns null if unsynthable (no task/assignment). */
   private loadHandoffText(
     handoffId: string | undefined,
     agentName: string,
-    taskDescription: string,
-  ): string {
+    taskDescription: string | undefined,
+  ): string | null {
     if (handoffId !== undefined) {
       const stored = this.dependencies.db.getHandoff(handoffId);
       if (stored !== null) {
@@ -680,43 +680,40 @@ export class HiveSpawner implements Spawner {
             "",
             `**Goal**: ${summary.goal}`,
           ];
-          
+
           if (summary.done.length > 0) {
             sections.push("\n**Done**:");
-            summary.done.forEach(item => sections.push(`- ${item}`));
+            summary.done.forEach((item) => sections.push(`- ${item}`));
           }
-          
+
           if (summary.remaining.length > 0) {
             sections.push("\n**Remaining**:");
-            summary.remaining.forEach(item => sections.push(`- ${item}`));
+            summary.remaining.forEach((item) => sections.push(`- ${item}`));
           }
-          
+
           if (summary.decisions.length > 0) {
             sections.push("\n**Decisions**:");
-            summary.decisions.forEach(item => sections.push(`- ${item}`));
+            summary.decisions.forEach((item) => sections.push(`- ${item}`));
           }
-          
+
           if (summary.nextAction !== null) {
             sections.push(`\n**Next Action**: ${summary.nextAction}`);
           }
-          
+
           return sections.join("\n");
         }
       }
     }
-    
-    // P0: Fail-closed when synthesis is impossible (missing required data)
-    if (taskDescription.trim() === "") {
-      throw new Error(
-        `Cannot synthesize handoff: task description is empty (agent ${agentName})`,
-      );
+
+    // P0: Fail-closed when synthesis is impossible (no task/assignment)
+    if (
+      taskDescription === undefined ||
+      taskDescription.trim() === "" ||
+      agentName.trim() === ""
+    ) {
+      return null;
     }
-    if (agentName.trim() === "") {
-      throw new Error(
-        "Cannot synthesize handoff: agent name is empty",
-      );
-    }
-    
+
     // Synthesize handoff from task assignment
     return [
       "No durable handoff found. Synthesized handoff from assignment:",
@@ -1459,16 +1456,42 @@ export class HiveSpawner implements Spawner {
           hierarchyIdentity === null || hierarchyAdmission === null
             ? undefined
             : hierarchyAdmission.takeLaunchContext(hierarchyIdentity);
-        
-        // P0: Load pack floor slots (constitution, profile, handoff, project, mistakes)
-        const [profile, projectDoc, handoffText] = await Promise.all([
-          this.loadProfile(),
-          this.loadProjectDoc(),
-          Promise.resolve(this.loadHandoffText(request.handoffId, name, request.task)),
-        ]);
-        const constitution = this.constitution();
-        const recentMistakes = this.loadRecentMistakes();
-        
+
+        // P0.12: Dual-read pack+index (gate with wake_pack_enabled sunset flag)
+        const wakePackEnabled =
+          this.dependencies.config.memory?.wake_pack_enabled ?? true;
+        let constitution: string | undefined;
+        let profile: string | undefined;
+        let handoffText: string | undefined;
+        let projectDoc: string | undefined;
+        let recentMistakes: readonly string[] | undefined;
+
+        if (wakePackEnabled) {
+          // P0: Load pack floor slots (constitution, profile, handoff, project, mistakes)
+          [profile, projectDoc] = await Promise.all([
+            this.loadProfile(),
+            this.loadProjectDoc(),
+          ]);
+          const loadedHandoff = this.loadHandoffText(
+            request.handoffId,
+            name,
+            request.task,
+          );
+
+          // P0: Fail-closed if handoff cannot be synthesized
+          if (loadedHandoff === null) {
+            throw new SpawnFailedError(
+              name,
+              "transport",
+              "failed",
+              "Cannot spawn specialist without handoff: no durable handoff provided and task description insufficient for synthesis",
+            );
+          }
+          handoffText = loadedHandoff;
+          constitution = this.constitution();
+          recentMistakes = this.loadRecentMistakes();
+        }
+
         const prompt = buildAgentPrompt(
           name,
           request.task,
@@ -1497,7 +1520,8 @@ export class HiveSpawner implements Spawner {
               profile,
               handoffText,
               projectDoc,
-              recentMistakes: recentMistakes.length > 0 ? recentMistakes : undefined,
+              recentMistakes:
+                recentMistakes.length > 0 ? recentMistakes : undefined,
             }),
           },
         );
