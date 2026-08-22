@@ -147,7 +147,7 @@ describe("buildMemoryIndex with brief-ranked recall", () => {
     expect(pitfallRow).toContain("[pitfall]");
   });
 
-  test("empty result when no matches for brief query", async () => {
+  test("no matches for brief query returns header with omit message", async () => {
     const root = await makeRoot();
     await writeMemoryFact(
       root,
@@ -164,6 +164,11 @@ describe("buildMemoryIndex with brief-ranked recall", () => {
       brief: "nonexistent query terms",
     });
 
-    expect(index).toBe("");
+    const lines = index.split("\n");
+    const articleRows = lines.filter((line) => line.startsWith("- ["));
+
+    expect(articleRows.length).toBe(0);
+    expect(index).toContain("Hive memory index");
+    expect(index).toContain("1 older article");
   });
 });

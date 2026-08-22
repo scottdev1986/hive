@@ -946,13 +946,10 @@ export async function buildMemoryIndex(
   if (options.brief !== undefined && options.brief.trim() !== "") {
     const { buildMemoryRecallBundle } = await import("./recall");
     const { MemoryIndex } = await import("./fts-index");
-    const { HiveDatabase } = await import("../daemon/database/hive-database");
     const Database = (await import("bun:sqlite")).Database;
 
     // Build temporary in-memory index for recall
-    const tempDb = new Database(":memory:");
-    const database = new HiveDatabase(tempDb);
-    const tempIndex = new MemoryIndex(database);
+    const tempIndex = new MemoryIndex(new Database(":memory:"));
     await tempIndex.rebuild(root);
 
     // Use buildMemoryRecallBundle with FTS-only (semantic disabled)
@@ -961,7 +958,6 @@ export async function buildMemoryIndex(
       {
         repoRoot: () => root,
         memory: tempIndex,
-        semantic: null,
         semanticStatus: () => "disabled",
       },
       MEMORY_INDEX_MAX_ENTRIES,
