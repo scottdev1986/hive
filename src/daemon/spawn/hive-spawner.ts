@@ -188,6 +188,32 @@ export class HiveSpawner implements Spawner {
     );
   }
 
+  /** P0: Hive constitution (project-agnostic factory principles). */
+  private constitution(): string {
+    return [
+      "# Hive Constitution",
+      "",
+      "## Core Principles",
+      "- Project-agnostic software factory",
+      "- Learn from verified mistakes",
+      "- Human-approved profile and conventions",
+      "- Citation-validation before load-bearing use",
+      "- Fail-closed on unimplemented features",
+    ].join("\n");
+  }
+
+  /** P0: Load profile from ~/.hive/profile.md or return empty string for stub. */
+  private async loadProfile(): Promise<string> {
+    const profilePath = join(getHiveHome(), "profile.md");
+    try {
+      const { readFile } = await import("node:fs/promises");
+      return await readFile(profilePath, "utf8");
+    } catch {
+      // Profile not found or unreadable - return empty for stub
+      return "";
+    }
+  }
+
   private router(): HiveRouter {
     if (this.routerInstance === undefined) {
       const quota =
@@ -636,7 +662,7 @@ export class HiveSpawner implements Spawner {
     });
   }
 
-  /** P0: Load or synthesize handoff for EVERY specialist spawn (not just when handoffId present). */
+  /** P0: Load or synthesize handoff for EVERY specialist spawn (not just when handoffId present). Fail-closed when unsynthable (missing required data). */
   private loadHandoffText(
     handoffId: string | undefined,
     agentName: string,
@@ -677,6 +703,18 @@ export class HiveSpawner implements Spawner {
           return sections.join("\n");
         }
       }
+    }
+    
+    // P0: Fail-closed when synthesis is impossible (missing required data)
+    if (taskDescription.trim() === "") {
+      throw new Error(
+        `Cannot synthesize handoff: task description is empty (agent ${agentName})`,
+      );
+    }
+    if (agentName.trim() === "") {
+      throw new Error(
+        "Cannot synthesize handoff: agent name is empty",
+      );
     }
     
     // Synthesize handoff from task assignment
@@ -1422,11 +1460,13 @@ export class HiveSpawner implements Spawner {
             ? undefined
             : hierarchyAdmission.takeLaunchContext(hierarchyIdentity);
         
-        // P0: Load pack floor slots (handoff, project, mistakes)
-        const [projectDoc, handoffText] = await Promise.all([
+        // P0: Load pack floor slots (constitution, profile, handoff, project, mistakes)
+        const [profile, projectDoc, handoffText] = await Promise.all([
+          this.loadProfile(),
           this.loadProjectDoc(),
           Promise.resolve(this.loadHandoffText(request.handoffId, name, request.task)),
         ]);
+        const constitution = this.constitution();
         const recentMistakes = this.loadRecentMistakes();
         
         const prompt = buildAgentPrompt(
@@ -1453,6 +1493,8 @@ export class HiveSpawner implements Spawner {
                       command: learnedCommand,
                       status: verificationFact.status,
                     },
+              constitution,
+              profile,
               handoffText,
               projectDoc,
               recentMistakes: recentMistakes.length > 0 ? recentMistakes : undefined,

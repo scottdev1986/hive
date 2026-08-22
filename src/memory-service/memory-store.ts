@@ -942,7 +942,9 @@ export async function buildMemoryIndex(
 
   if (allRows.length === 0) return "";
 
-  // P0: RRF fusion when brief is provided
+  // P0: DEPRECATED significantTokens×2 fake RRF - sunset flag for P1 replacement
+  // TODO P1: Wire buildMemoryRecallBundle for real hybrid RRF when FTS/semantic deps available
+  // This token-based approximation remains as fallback until buildMemoryRecallBundle integration
   if (options.brief !== undefined && options.brief.trim() !== "") {
     const briefTokens = significantTokens(options.brief);
     const RECALL_RRF_K = 60;
