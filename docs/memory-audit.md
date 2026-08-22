@@ -443,9 +443,9 @@ wake_pack_enabled: z.boolean().default(true),
 
 **Fix**: Implemented in commit 3514f5dd. `preWriteCheck` now returns `"noop"` when body is identical to existing fact (same normalized title + same body). `writeLocked` honors NOOP result by reading existing fact and returning it without writing, marking embedding as `"skipped:noop"`. Test `prewrite_noop` validates NOOP is reachable and skips write (no new raw observation file created).
 
-**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)** — **P1 in progress (PR #136)**
+**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)** — **CLOSED on `dev` @ `04a797e3` via PR #136 (Critic PASS @ 268b477a)**
 
-**Evidence**: Implementation in progress via `src/memory-service/promotion.ts` with recurrence tracking, auto-promotion when count≥2, and promotion markers in episodic store. Harvest (`harvest.ts`) calls `incrementRecurrence` on every admitted pitfall. Consolidator (`consolidate.ts`) runs `autoPromoteMistakes` when `autoPromote: true`. Promoted mistakes written to `mistakes-promoted` topic with `promoted` and `always-on` tags. Pack floor (`pack-floor.ts`) loads promoted mistakes into always-on wake pack.
+**Evidence**: Recurrence≥2 auto-promote via consolidator/job landed in PR #136, merged to `dev` @ `04a797e3`. Implementation via `src/memory-service/promotion.ts` with recurrence tracking, auto-promotion when count≥2, and promotion markers in episodic store. Harvest (`harvest.ts`) calls `incrementRecurrence` on every admitted pitfall. Consolidator (`consolidate.ts`) runs `autoPromoteMistakes` when `autoPromote: true`. Promoted mistakes written to `mistakes-promoted` topic with `promoted` and `always-on` tags. Pack floor (`pack-floor.ts`) loads promoted mistakes into always-on wake pack.
 
 **Implementation**: 
 - `promotion.ts`: Recurrence tracking (incrementRecurrence, getRecurrenceCount), promotion logic (autoPromoteMistakes), and promotion markers (markPromoted, isPromoted)
@@ -455,9 +455,11 @@ wake_pack_enabled: z.boolean().default(true),
 - `pack-floor.ts`: Loads promoted mistakes into always-on pack
 - Tests in `test/memory-p1-items-4-5.test.ts` verify recurrence=1 does not promote, recurrence≥2 promotes
 
-**#5: Proposals inbox unwired** — **P1 in progress (PR #136)**
+**Soft residual** (non-blocking follow-up): `loadRecentMistakes(EpisodicStore)` calls `listEvents` but store exposes `eventsFor` — duck-adapt follow-up, not a reopen of #4.
 
-**Evidence**: Implementation in progress via `src/memory-service/proposals.ts` with deterministic read/write/consume paths. Consolidator (`consolidate.ts`) generates proposals from similar articles via `proposal-generator.ts` and appends to `docs/memory-proposals.md`. Proposals include id, category (profile/project/mistake), title, rationale, proposed change, and source.
+**#5: Proposals inbox unwired** — **CLOSED on `dev` @ `04a797e3` via PR #136**
+
+**Evidence**: Proposals inbox appends `docs/memory-proposals.md` only (no silent profile/docs apply), merged in PR #136 @ `04a797e3`. Implementation via `src/memory-service/proposals.ts` with deterministic read/write/consume paths. Consolidator (`consolidate.ts`) generates proposals from similar articles via `proposal-generator.ts` and appends to `docs/memory-proposals.md`. Proposals include id, category (profile/project/mistake), title, rationale, proposed change, and source.
 
 **Implementation**:
 - `proposals.ts`: Core inbox functions (appendProposal, readProposals, removeProposal, generateProposalId, parseProposals)
@@ -536,12 +538,12 @@ wake_pack_enabled: z.boolean().default(true),
 - §7 named acceptance tests: 8 tests in `test/memory-p0-acceptance.test.ts`
 
 **What remains** (open work, not gaps):
-- Consolidator: P1 (idle/sweep, not every-turn, recurrence≥2 auto-promote, profile/docs proposals) — Critic #4, #5
+- Consolidator: Core idle/sweep infrastructure shipped (recurrence≥2 auto-promote and proposals inbox CLOSED via PR #136 @ `04a797e3`) — Critic #4, #5 CLOSED
 - Result card: P1 (inbound handoff is P0)
 - Hybrid recall: P0 ships FTS-only index pick (honest); hybrid when embeddings ready — Critic #6
 - Preference learning: P1 (profile extraction → review-gated proposals) — Critic #8
 
-**Remaining work**: See §6 Critic's ranked hole list above. P0 closed feed/honesty/continuity/seed phase. Holes #1+#2 CLOSED on `dev` @ `a44b5196` via PR #132.
+**Remaining work**: See §6 Critic's ranked hole list above. P0 closed feed/honesty/continuity/seed phase. Holes #1+#2 CLOSED on `dev` @ `a44b5196` via PR #132. Holes #4+#5 CLOSED on `dev` @ `04a797e3` via PR #136.
 
 ---
 
