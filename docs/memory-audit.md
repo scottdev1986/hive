@@ -21,7 +21,7 @@ Post-P0, Hive memory moved toward **wake feed** architecture: specialist agents 
 2. **Queen launch context** uses flat pack fields (constitution, profile, project doc, mistakes)
 3. **Retention keep-set** fixed (no longer empty Set)
 4. **Citation validation** on load-bearing memory_read (pathExists/commandExists)
-5. **Prewrite gate** in write-service (ADD/UPDATE/NOOP dedup)
+5. **Prewrite gate** in write-service (partial add|update gate; NOOP dead)
 6. **executeMemoryTrigger deleted** (no orphan body)
 7. **Index pick via RRF** using buildMemoryRecallBundle with semantic null (FTS-only, documented honestly)
 8. **wake_pack_enabled flag** gates pack+index concurrent vs index-only (dual-read sunset path)
@@ -73,7 +73,7 @@ Post-P0, Hive memory moved toward **wake feed** architecture: specialist agents 
 
 **Write Path** (P0 change: prewrite gate):
 1. Agent calls `memory_write` MCP tool
-2. **P0**: `MemoryWriteService.preWriteCheck` normalizes title, searches for duplicates → returns ADD/UPDATE/NOOP (`write-service.ts:79-130`)
+2. **P0**: `MemoryWriteService.preWriteCheck` normalizes title, searches for duplicates → returns add|update (partial gate; NOOP dead) (`write-service.ts:79-130`)
 3. Daemon validates schema, applies action
 4. Writes to `wiki/<topic>/<id>.md` with frontmatter
 5. Appends observation to `raw/<topic>/`
@@ -409,23 +409,27 @@ wake_pack_enabled: z.boolean().default(true),
 **Pinned**: `dev` @ `dfc55968` (file-backed only)  
 **Status**: P0 PASS still stands for pack/handoff/honesty; these are post-merge residuals + one ship-blocker the brief path introduced
 
-**Note**: CEO is launching a separate fix for #1+#2 — fix in flight / Critic will re-score.
+**Note**: Holes #1 and #2 CLOSED on `dev` @ `a44b5196` via PR #132 (Critic PASS @ 269ddcbf).
 
 ---
 
 ### CRITICAL
 
-**#1: Brief-ranked spawn index wipe (prompt-theater → empty knowledge)** — **P0 residual**
+**#1: Brief-ranked spawn index wipe (prompt-theater → empty knowledge)** — **CLOSED on `dev` @ `a44b5196` via PR #132 (Critic PASS @ 269ddcbf)**
 
 **Evidence**: `src/memory-service/memory-store.ts:973` parses index lines with `/^\[([^\]]+)\]\s+([^:]+):/` but real rows are `- [scope/topic] id (date) [status]...: title` (`rebuildScopeIndex` ~286–288). Regex never matches → `rowsByKey` empty → `shown=[]` while omitted=N. Every specialist spawn calls `buildMemoryIndex(..., { brief: request.task })` (`hive-spawner.ts:1109–1111`), so production injection is header + "N older articles omitted" with zero rows. Bun repro on tip: match=null. Adapter tests that assert brief ranking would catch this if run.
 
 **Strategy**: Parse stable `scope`+`id` from the real line shape (or map recall hits→rows without regex); fixture: brief path must emit real `- [` rows, not omit-everything.
 
-**#2: Named wake-query theater** — **P0 residual**
+**Fix**: Index wipe fixed and merged via PR #132.
+
+**#2: Named wake-query theater** — **CLOSED on `dev` @ `a44b5196` via PR #132 (Critic PASS @ 269ddcbf)**
 
 **Evidence**: `WakePayloadRequestSchema` optional `topic`/`objective`/`lastMailSnippet` (`schemas/wake-payload.ts:39–41`); `buildWakeQuery` concatenates them (`wake-payload-service.ts:20–31`). Sole caller `agent-ui.ts:2066–2071` sends only recipient/wakeId/oldestItemId/lane → query collapses to lane string. Comments still say "hybrid named query".
 
 **Strategy**: Populate query from wake mail topic + snippet at the only caller; reject empty meaningful query or fall back honestly.
+
+**Fix**: Wake query fixed and merged via PR #132.
 
 ---
 
@@ -509,7 +513,7 @@ wake_pack_enabled: z.boolean().default(true),
 - Wake pack floor: constitution, profile, project doc, handoff card, recent mistakes (always-on slots)
 - Handoff: every specialist spawn (not escalation-only)
 - Retention keep-set: real (episodes cited by wiki preserved)
-- Prewrite gate: ADD/UPDATE/NOOP dedup before write
+- Prewrite gate: partial add|update gate (NOOP dead)
 - Index pick: RRF via buildMemoryRecallBundle (FTS-only, semantic null — documented honestly)
 - Per-scope locks: global vs repo separation
 - Citation validation: pathExists/commandExists before load-bearing use (stub in P0)
@@ -524,7 +528,7 @@ wake_pack_enabled: z.boolean().default(true),
 - Hybrid recall: P0 ships FTS-only index pick (honest); hybrid when embeddings ready — Critic #6
 - Preference learning: P1 (profile extraction → review-gated proposals) — Critic #8
 
-**Remaining work**: See §6 Critic's ranked hole list above. P0 closed feed/honesty/continuity/seed phase. Holes #1+#2 have fixes in flight from CEO.
+**Remaining work**: See §6 Critic's ranked hole list above. P0 closed feed/honesty/continuity/seed phase. Holes #1+#2 CLOSED on `dev` @ `a44b5196` via PR #132.
 
 ---
 
