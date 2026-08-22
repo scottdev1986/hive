@@ -59,7 +59,8 @@ async function validateFactCitations(
   fact: MemoryFact,
   repoRoot: string,
 ): Promise<void> {
-  const textToCheck = [fact.title, fact.body, ...fact.evidence].join("\n");
+  const { join, resolve, isAbsolute } = await import("node:path");
+  const textToCheck = [fact.title, fact.body, fact.evidence].join("\n");
   
   // Extract potential file paths (simple heuristic: words that look like paths)
   const pathPattern = /(?:^|\s)([.~]?\/[^\s]+|[a-zA-Z0-9_-]+\/[^\s]+\.[a-zA-Z0-9]+)/g;
@@ -69,9 +70,10 @@ async function validateFactCitations(
   const commandPattern = /`([a-zA-Z0-9_-]+)`/g;
   const commands = Array.from(textToCheck.matchAll(commandPattern), (m) => m[1]);
   
-  // Check paths
+  // Check paths relative to repoRoot
   for (const path of paths) {
-    const exists = await pathExists(path);
+    const resolved = isAbsolute(path) ? path : resolve(repoRoot, path);
+    const exists = await pathExists(resolved);
     if (!exists) {
       throw new Error(
         `Citation validation failed: path '${path}' not found (fact: ${fact.id})`,
