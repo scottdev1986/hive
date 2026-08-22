@@ -178,11 +178,6 @@ export async function autoPromoteMistakes(options: {
   return report;
 }
 
-function extractSignatureFromPitfall(pitfall: MemoryFact): string | null {
-  const match = pitfall.body.match(/- Failure signature: (.+)/);
-  return match?.[1] ?? null;
-}
-
 async function promoteToAlwaysOn(
   repoRoot: string,
   pitfall: MemoryFact,

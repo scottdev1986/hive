@@ -492,35 +492,7 @@ describe("P1 Critic PASS fixtures", () => {
     const { runMemoryConsolidation } =
       await import("../src/memory-service/consolidate");
 
-    episodic.appendEvent({
-      agent: "test-agent",
-      type: "status.turn",
-      summary: "npm install (exit code 1)",
-      provenance: {
-        data: {
-          phase: "command",
-          tool: "npm",
-          command: "npm install",
-          exitCode: 1,
-        },
-      },
-    });
-
-    episodic.appendEvent({
-      agent: "test-agent",
-      type: "status.turn",
-      summary: "npm install (exit code 1)",
-      provenance: {
-        data: {
-          phase: "command",
-          tool: "npm",
-          command: "npm install",
-          exitCode: 1,
-        },
-      },
-    });
-
-    for (let session = 1; session <= 3; session++) {
+    for (let session = 1; session <= 4; session++) {
       episodic.appendEvent({
         agent: `test-agent-${session}`,
         type: "status.turn",
