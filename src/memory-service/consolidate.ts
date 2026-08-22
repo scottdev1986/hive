@@ -30,6 +30,16 @@ export interface ConsolidationReport {
   applied: ConsolidationCandidate[];
   skipped: ConsolidationCandidate[];
   failures: string[];
+  promoted?: {
+    scanned: number;
+    promoted: number;
+    alreadyPromoted: number;
+    belowThreshold: number;
+  };
+  proposals?: {
+    generated: number;
+    appended: number;
+  };
 }
 
 interface ScannedSource {
@@ -129,6 +139,10 @@ export async function runMemoryConsolidation(options: {
   writeMemoryFact?: (
     input: MemoryWriteInput,
   ) => Promise<{ scope: MemoryFact["scope"]; id: string }>;
+  /** P1 #4: Run auto-promotion for mistakes with recurrence ≥2 */
+  autoPromote?: boolean;
+  /** P1 #5: Generate and append proposals for profile/project changes */
+  generateProposals?: boolean;
 }): Promise<ConsolidationReport> {
   const { repoRoot, episodic, service } = options;
   const offline = options.writeMemoryFact === undefined;
@@ -265,5 +279,37 @@ export async function runMemoryConsolidation(options: {
       report.skipped.push(candidate);
     }
   }
+
+  // P1 #4: Auto-promote mistakes with recurrence ≥2
+  if (options.autoPromote === true && options.apply === true) {
+    const { autoPromoteMistakes } = await import("./promotion");
+    const promotionReport = await autoPromoteMistakes({
+      repoRoot,
+      episodic,
+    });
+
+    report.promoted = {
+      scanned: promotionReport.scanned,
+      promoted: promotionReport.promoted.length,
+      alreadyPromoted: promotionReport.alreadyPromoted,
+      belowThreshold: promotionReport.belowThreshold,
+    };
+  }
+
+  // P1 #5: Generate proposals for review-gated changes
+  if (options.generateProposals === true && options.apply === true) {
+    const { generateAndAppendProposals } = await import("./proposal-generator");
+    const proposalsReport = await generateAndAppendProposals({
+      repoRoot,
+      episodic,
+      similar: report.similar,
+    });
+
+    report.proposals = {
+      generated: proposalsReport.generated,
+      appended: proposalsReport.appended,
+    };
+  }
+
   return report;
 }

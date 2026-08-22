@@ -483,6 +483,16 @@ async function harvestPitfallsLocked(
       if (duplicate === undefined) {
         articles.push({ id: written.id, title });
       }
+
+      // P1 #4: Track recurrence for auto-promotion
+      const { incrementRecurrence } = await import("./promotion");
+      const recurrenceCount = incrementRecurrence(
+        deps.store,
+        signature,
+        written.id,
+        persistedThroughEvent?.ts ?? new Date().toISOString(),
+      );
+
       report.candidates.push({
         id: written.id,
         title,

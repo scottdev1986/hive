@@ -191,12 +191,14 @@ export async function buildQueenLaunchContext(
   const { loadConstitution, loadProfile, loadProjectDoc, loadRecentMistakes } =
     await import("../memory-service/pack-floor");
 
-  const [constitution, profile, projectDoc] = await Promise.all([
-    Promise.resolve(loadConstitution()),
-    loadProfile(),
-    loadProjectDoc(input.repoRoot),
-  ]);
-  const recentMistakes = loadRecentMistakes(undefined); // No episodic in CLI context
+  const [constitution, profile, projectDoc, recentMistakes] = await Promise.all(
+    [
+      Promise.resolve(loadConstitution()),
+      loadProfile(),
+      loadProjectDoc(input.repoRoot),
+      loadRecentMistakes(undefined, input.repoRoot),
+    ],
+  );
 
   // P0: Flatten pack floor (composeLaunchContext expects flat fields, not nested packFloor)
   return queenBootCapsules.composeLaunchContext({

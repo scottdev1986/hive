@@ -531,12 +531,13 @@ describe("P0 Memory Acceptance Tests", () => {
     };
 
     // Load real pack floor
-    const [constitution, profile, projectDoc] = await Promise.all([
-      Promise.resolve(loadConstitution()),
-      loadProfile(),
-      loadProjectDoc(root),
-    ]);
-    const recentMistakes = loadRecentMistakes(undefined);
+    const [constitution, profile, projectDoc, recentMistakes] =
+      await Promise.all([
+        Promise.resolve(loadConstitution()),
+        loadProfile(),
+        loadProjectDoc(root),
+        loadRecentMistakes(undefined),
+      ]);
 
     // Production buildMemoryIndex path - creates memory store and builds index
     const db = new Database(":memory:");
