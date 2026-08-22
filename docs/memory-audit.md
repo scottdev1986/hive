@@ -256,11 +256,12 @@ return queenBootCapsules.composeLaunchContext({
 
 **File**: `src/memory-service/write-service.ts:79-130`
 
-**P0**: `MemoryWriteService.preWriteCheck` implements ADD/UPDATE/NOOP write-gate:
+**P0**: `MemoryWriteService.preWriteCheck` implements partial write-gate — ADD/UPDATE exist, but NOOP is dead/incomplete (see §6 Critic hole #3, HIGH P0 residual):
 1. Normalize title (lowercase, strip punctuation)
 2. Search for existing fact with same normalized title
 3. If found → return `"update"` (set supersedes field)
 4. Else → return `"add"`
+5. NOOP path (identical body → skip write) is type-declared but never returned
 
 **Test**: `prewrite_dedup` in `test/memory-p0-acceptance.test.ts:164-216` writes "Test Article" then "Test Article!" (same normalized title), verifies second write returns same id with supersedes field set, and only one fact file exists on disk.
 
@@ -414,13 +415,13 @@ wake_pack_enabled: z.boolean().default(true),
 
 ### CRITICAL
 
-**#1: Brief-ranked spawn index wipe (prompt-theater → empty knowledge)**
+**#1: Brief-ranked spawn index wipe (prompt-theater → empty knowledge)** — **P0 residual**
 
 **Evidence**: `src/memory-service/memory-store.ts:973` parses index lines with `/^\[([^\]]+)\]\s+([^:]+):/` but real rows are `- [scope/topic] id (date) [status]...: title` (`rebuildScopeIndex` ~286–288). Regex never matches → `rowsByKey` empty → `shown=[]` while omitted=N. Every specialist spawn calls `buildMemoryIndex(..., { brief: request.task })` (`hive-spawner.ts:1109–1111`), so production injection is header + "N older articles omitted" with zero rows. Bun repro on tip: match=null. Adapter tests that assert brief ranking would catch this if run.
 
 **Strategy**: Parse stable `scope`+`id` from the real line shape (or map recall hits→rows without regex); fixture: brief path must emit real `- [` rows, not omit-everything.
 
-**#2: Named wake-query theater**
+**#2: Named wake-query theater** — **P0 residual**
 
 **Evidence**: `WakePayloadRequestSchema` optional `topic`/`objective`/`lastMailSnippet` (`schemas/wake-payload.ts:39–41`); `buildWakeQuery` concatenates them (`wake-payload-service.ts:20–31`). Sole caller `agent-ui.ts:2066–2071` sends only recipient/wakeId/oldestItemId/lane → query collapses to lane string. Comments still say "hybrid named query".
 
@@ -430,19 +431,19 @@ wake_pack_enabled: z.boolean().default(true),
 
 ### HIGH
 
-**#3: Mem0 write-gate incomplete (NOOP dead)**
+**#3: Mem0 write-gate incomplete (NOOP dead)** — **P0 residual**
 
 **Evidence**: `preWriteCheck` return type includes `"noop"` but only returns `add|update` (`write-service.ts:78–125`); `writeLocked` discards the return (`:129–132`); title collision mutates into forced UPDATE. `findSimilarMemoryCandidates` is post-write advisory only (`memory-tools.ts:185`).
 
 **Strategy**: Mem0 ADD/UPDATE/DELETE/NOOP with pre-write similar retrieve; identical body → NOOP; honor gate result.
 
-**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)**
+**#4: Mistakes recurrence≥2 auto-promote missing (LOCKED STM→LTM)** — **LOCKED P1 not yet shipped**
 
 **Evidence**: `docs/memory-plan.md` requires auto-promote after recurrence≥2; harvest writes unverified pitfalls (`harvest.ts` ~470–478) and stops. No consolidator/job path promotes into always-on mistakes floor.
 
 **Strategy**: Sleep consolidator counts recurrence → promote to always-on mistakes slot; deadly rules → hooks.
 
-**#5: Proposals inbox unwired**
+**#5: Proposals inbox unwired** — **LOCKED P1 not yet shipped**
 
 **Evidence**: `docs/memory-proposals.md` is review-policy stub only; `consolidate.ts` merges similar articles only — never appends profile/project proposals.
 
