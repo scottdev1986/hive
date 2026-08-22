@@ -789,6 +789,12 @@ export class HiveDaemon {
       mailStore: this.mail,
       repoRoot: () => this.repoRoot,
       wakeBudgetTokens: this.wakeBudgetTokens ?? 300,
+      memoryRecallDeps: () => ({
+        repoRoot: () => this.repoRoot,
+        memory: this.memory,
+        semantic: this.semanticRecall(),
+        semanticStatus: () => this.embeddingService?.status() ?? "disabled",
+      }),
     });
     this.psSample = options.resourceRunners?.ps ?? runPs;
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;

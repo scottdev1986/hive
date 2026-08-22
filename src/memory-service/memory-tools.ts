@@ -162,7 +162,7 @@ export function registerMemoryTools(
     {
       title: "Read a compiled Hive memory article",
       description:
-        "Read one compiled memory article by scope and id, as referenced by the injected wiki index or memory_search. The result includes topic, evidence, verification status, supersedes relationships, and links to immutable raw observations. Reconcile unverified, stale, or conflicted knowledge before acting.",
+        "Read one compiled memory article by scope and id, as referenced by the injected wiki index or memory_search. The result includes topic, evidence, verification status, supersedes relationships, and links to immutable raw observations. Reconcile unverified, stale, or conflicted knowledge before acting. P0: Citation check validates paths exist before load-bearing use.",
       inputSchema: MemoryFactRequestSchema,
     },
     async ({ scope, id }) => {
@@ -174,6 +174,11 @@ export function registerMemoryTools(
         false,
       );
       const fact = await readMemoryFact(deps.repoRoot, scope, id);
+      
+      // P0: Citation path-exists check on load-bearing facts
+      if (fact.status === "verified" || fact.status === "stale") {
+        await validateFactCitations(fact, deps.repoRoot);
+      }
       if (fact === null) {
         throw new Error(`Memory fact not found: [${scope}] ${id}`);
       }
