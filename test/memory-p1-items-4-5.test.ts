@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EpisodicStore } from "../src/memory-service/episodic";
+import { type MemoryEmbedder } from "../src/memory-service/embeddings";
 import {
   incrementRecurrence,
   getRecurrenceCount,
@@ -189,8 +190,18 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
       supersedes: [],
     });
 
-    incrementRecurrence(episodic, signature, written.id, "2026-08-20T10:00:00Z");
-    incrementRecurrence(episodic, signature, written.id, "2026-08-20T11:00:00Z");
+    incrementRecurrence(
+      episodic,
+      signature,
+      written.id,
+      "2026-08-20T10:00:00Z",
+    );
+    incrementRecurrence(
+      episodic,
+      signature,
+      written.id,
+      "2026-08-20T11:00:00Z",
+    );
 
     await autoPromoteMistakes({ repoRoot: root, episodic });
 
@@ -535,10 +546,17 @@ describe("P1 Critic PASS fixtures", () => {
     const finalRecurrence = getRecurrenceCount(episodic, signature);
     expect(finalRecurrence).toBeGreaterThanOrEqual(2);
 
-    const service = new MemoryEmbeddingService({
-      provider: "local",
-      model: "BAAI/bge-small-en-v1.5",
-    });
+    const mockEmbedder: MemoryEmbedder = {
+      model: "mock-integration",
+      dimensions: 4,
+      embed: () => Promise.resolve([[1, 0, 0, 0]]),
+      embedQuery: () => Promise.resolve([1, 0, 0, 0]),
+    };
+
+    const service = new MemoryEmbeddingService(
+      { provider: "local", model: "bge-small-en-v1.5" },
+      { load: () => Promise.resolve(mockEmbedder) },
+    );
 
     const consolidationReport = await runMemoryConsolidation({
       repoRoot: root,
