@@ -19,6 +19,9 @@ import { selectMemoryClasses } from "./ranking";
 import type { MemoryWriteFileResult } from "./store-records";
 import type { JsonObject } from "../shared/json";
 
+// P0: detectMemoryTrigger preserved for preview UX only (literal-query detection)
+// No daemon delivery execution.
+
 export type MemoryTriggerKind = "recall" | "note" | "document";
 
 export interface MemoryTrigger {
@@ -44,55 +47,6 @@ export function detectMemoryTrigger(text: string): MemoryTrigger | null {
   return null;
 }
 
-/** Who may trigger. Queen (the orchestrator, any alias) and the user subject carry authority; every other sender — agent names, hive-control and the other system senders — does not, so agent-to-agent trigger text is delivered verbatim and never executed. */
-export type MemoryTriggerAuthority = "queen" | "user";
-
-export function memoryTriggerAuthority(
-  from: string,
-): MemoryTriggerAuthority | null {
-  if (isOrchestratorName(from)) return "queen";
-  if (from === USER_SUBJECT) return "user";
-  return null;
-}
-
-export interface MemoryTriggerDeps {
-  repoRoot: () => string;
-  /** The daemon's FTS index over the wiki; null degrades recall to an honest "surface absent" block (writes still execute). */
-  memory: Pick<MemoryIndex, "search"> | null;
-  /** The semantic leg: cosine top-k over the vector store, or null when embeddings are unavailable. Undefined degrades to the FTS-only bundle. */
-  semantic?: (
-    query: string,
-    limit: number,
-  ) => Promise<Array<{
-    scope: string;
-    id: string;
-    score: number;
-  }> | null>;
-  /** The semantic leg's one-word state, consulted when the leg answered null so the recall envelope can name WHY it is FTS-only (degraded:embedding-runtime-missing, not a silent keyword-only result). */
-  semanticStatus?: () => string;
-  /** The daemon's serialized writeMemoryFact (file lock + FTS upsert). The optional embedding outcome says what happened to the write's vector projection so the confirmation can say when it is keyword-only. */
-  write: (
-    input: MemoryWriteInput,
-  ) => Promise<MemoryWriteFileResult & { embedding?: string }>;
-  episodic: Pick<EpisodicStore, "appendEvent"> | null;
-  log?: (message: string) => void;
-}
-
-export interface MemoryTriggerContext {
-  authority: MemoryTriggerAuthority;
-  from: string;
-  target: string;
-}
-
-export interface MemoryTriggerExecution {
-  body: string;
-  summary: string;
-  provenance: JsonObject;
-}
-
-const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
-
-const todayIsoDate = (): string => new Date().toISOString().slice(0, 10);
 
 export interface MemoryRecallRow {
   scope: string;
@@ -140,13 +94,27 @@ const RECALL_RRF_K = 60;
 /** How deep the rescue pass looks when one class is missing from the base pool. Used ONLY for that pass — never for the base pool, whose depth stays the caller's `limit` so ordinary recall returns exactly the rows it always has. Generous rather than tuned: the FTS index is local SQLite over a compiled wiki of at most a few hundred articles, so a second scan costs nothing worth optimizing. The ceiling exists only so a pathological corpus cannot turn one recall into unbounded work. */
 const RECALL_CANDIDATE_CEILING = 200;
 
+export interface MemoryRecallDeps {
+  repoRoot: () => string;
+  /** The daemon's FTS index over the wiki; null degrades recall to an honest "surface absent" block. */
+  memory: Pick<MemoryIndex, "search"> | null;
+  /** The semantic leg: cosine top-k over the vector store, or null when embeddings are unavailable. Undefined degrades to the FTS-only bundle. */
+  semantic?: (
+    query: string,
+    limit: number,
+  ) => Promise<Array<{
+    scope: string;
+    id: string;
+    score: number;
+  }> | null>;
+  /** The semantic leg's one-word state, consulted when the leg answered null so the recall envelope can name WHY it is FTS-only (degraded:embedding-runtime-missing, not a silent keyword-only result). */
+  semanticStatus?: () => string;
+}
+
 /** Search the wiki for `query` and partition the hits into the pitfall class and ordinary articles, each row carrying its verification label. The FTS row carries no kind, so kinds resolve from the on-disk articles (the same pattern as memory_query pitfall-check). When deps.semantic is wired and answers (non-null), its cosine top-k is RRF-blended with the FTS ranking — a paraphrase the porter tokenizer cannot match still ranks. When the semantic leg is absent or unavailable (null), the bundle's ROWS are byte-identical to the FTS-only output — a test pins this — while the envelope's `semantic` field says out loud that the leg did not run, and why. */
 export async function buildMemoryRecallBundle(
   query: string,
-  deps: Pick<
-    MemoryTriggerDeps,
-    "memory" | "repoRoot" | "semantic" | "semanticStatus"
-  >,
+  deps: MemoryRecallDeps,
   limit = 8,
 ): Promise<MemoryRecallBundle> {
   // The envelope discriminator names what the semantic leg contributed, so "FTS-only because embeddings are down" is never indistinguishable from a genuine keyword-only result. In the absent state nothing was searched at all; the field then reports the leg's wiring/health, not a search outcome.
@@ -334,21 +302,10 @@ export function partitionMemoryRecall(
   };
 }
 
-function deriveTopic(payload: string): string {
-  const topic = payload
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/-+$/g, "");
-  return topic.length > 0 ? topic : "notes";
-}
+// P0: Deleted executeRecall, executeWrite, writeTriggerArticle, deriveTopic, SYSTEM_NOTE
+// These were only used by the deleted executeMemoryTrigger.
 
-const SYSTEM_NOTE = (from: string, trigger: string) =>
-  `system-injected by the Hive daemon: ${from} invoked the "${trigger}" ` +
-  "trigger; this is durable-memory machinery, not part of any sender's message.";
-
-async function executeRecall(
+type Assert<T extends true> = T;
   query: string,
   context: MemoryTriggerContext,
   deps: MemoryTriggerDeps,
@@ -501,39 +458,6 @@ async function executeWrite(
   };
 }
 
-/** Execute one detected trigger. Throws on failure — the delivery seam isolates that (original text plus a failure note, never a dropped message). The audit event is appended here, after the action it records actually happened; an audit failure is logged, never thrown into delivery. */
-export async function executeMemoryTrigger(
-  trigger: MemoryTrigger,
-  context: MemoryTriggerContext,
-  deps: MemoryTriggerDeps,
-): Promise<MemoryTriggerExecution> {
-  const execution =
-    trigger.kind === "recall"
-      ? await executeRecall(trigger.payload, context, deps)
-      : await executeWrite(trigger.kind, trigger.payload, context, deps);
-  if (deps.episodic !== null) {
-    try {
-      deps.episodic.appendEvent({
-        agent: context.target,
-        type: "memory-trigger",
-        summary: execution.summary,
-        provenance: {
-          sender: context.from,
-          target: context.target,
-          kind: trigger.kind,
-          ...execution.provenance,
-        },
-      });
-    } catch (error) {
-      const message = `Hive could not audit the memory trigger from ${context.from} to ${context.target}: ${
-        error instanceof Error ? error.message : "unknown error"
-      }`;
-      console.error(message);
-      deps.log?.(message);
-    }
-  }
-  return execution;
-}
 
 type Assert<T extends true> = T;
 type Equals<Left, Right> =

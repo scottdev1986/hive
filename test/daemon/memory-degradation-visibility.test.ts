@@ -23,7 +23,6 @@ import { EpisodicStore } from "../../src/memory-service/episodic";
 import { MemoryIndex } from "../../src/memory-service/fts-index";
 import {
   buildMemoryRecallBundle,
-  executeMemoryTrigger,
   memoryRecallDegradedWarning,
 } from "../../src/memory-service/recall";
 import { writeMemoryFact } from "../../src/memory-service/memory-store";
