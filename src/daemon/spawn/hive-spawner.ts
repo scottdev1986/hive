@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { definedFields } from "../../shared/defined-fields";
 import { runGit } from "../../adapters/git";
-import { loadHandoffText } from "./handoff-loader";
+import { loadAndValidateWakePack } from "./pack-assembly";
 import { resolveWorkingClaudeExecutable } from "../../adapters/providers/claude-cli";
 import { isFunction } from "../../shared/is-record";
 import {
@@ -1335,38 +1335,21 @@ export class HiveSpawner implements Spawner {
         let recentMistakes: readonly string[] | undefined;
 
         if (wakePackEnabled) {
-          // P0: Load pack floor slots using shared loaders
-          const {
-            loadConstitution,
-            loadProfile,
-            loadProjectDoc,
-            loadRecentMistakes,
-          } = await import("../../memory-service/pack-floor");
+          // P0: Load and validate wake pack floor (throws SpawnFailedError if handoff unsynthable)
+          const pack = await loadAndValidateWakePack({
+            db: this.dependencies.db,
+            episodic: this.dependencies.episodic,
+            repoRoot: this.dependencies.repoRoot,
+            handoffId: request.handoffId,
+            agentName: name,
+            task: request.task,
+          });
 
-          [constitution, profile, projectDoc] = await Promise.all([
-            Promise.resolve(loadConstitution()),
-            loadProfile(),
-            loadProjectDoc(this.dependencies.repoRoot),
-          ]);
-
-          const loadedHandoff = loadHandoffText(
-            this.dependencies.db,
-            request.handoffId,
-            name,
-            request.task,
-          );
-
-          // P0: Fail-closed if handoff cannot be synthesized
-          if (loadedHandoff === null) {
-            throw new SpawnFailedError(
-              name,
-              "transport",
-              "failed",
-              "Cannot spawn specialist without handoff: no durable handoff provided and task description insufficient for synthesis",
-            );
-          }
-          handoffText = loadedHandoff;
-          recentMistakes = loadRecentMistakes(this.dependencies.episodic);
+          constitution = pack.constitution;
+          profile = pack.profile;
+          projectDoc = pack.projectDoc;
+          handoffText = pack.handoffText;
+          recentMistakes = pack.recentMistakes;
         }
 
         const prompt = buildAgentPrompt(

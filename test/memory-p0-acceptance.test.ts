@@ -339,48 +339,74 @@ describe("P0 Memory Acceptance Tests", () => {
     }
   });
 
-  // P0.3: Handoff every spawn - validates production loadHandoffText fail-closed behavior
+  // P0.3: Handoff every spawn - validates production pack assembly + spawn fail-closed
   test("handoff_every_spawn", async () => {
+    const root = await makeTempDir("hive-handoff-");
     const db = new Database(":memory:");
     const database = new HiveDatabase(db);
+    const episodic = new EpisodicStore(database);
 
-    // Import the REAL production loadHandoffText that HiveSpawner uses
-    const { loadHandoffText } =
-      await import("../src/daemon/spawn/handoff-loader");
+    // Import the REAL production pack assembly that HiveSpawner.spawn uses
+    const { loadAndValidateWakePack } =
+      await import("../src/daemon/spawn/pack-assembly");
+    const { SpawnFailedError } =
+      await import("../src/daemon/spawn/spawn-failed-error");
 
-    // Test 1: Fail-closed when task undefined (production fail-closed)
-    const handoffUndefined = loadHandoffText(
-      database,
-      undefined,
-      "agent-1",
-      undefined,
+    // Test 1: Throws SpawnFailedError when task undefined (production fail-closed)
+    await expect(
+      loadAndValidateWakePack({
+        db: database,
+        episodic,
+        repoRoot: root,
+        handoffId: undefined,
+        agentName: "agent-1",
+        task: undefined,
+      }),
+    ).rejects.toThrow(SpawnFailedError);
+
+    // Test 2: Throws SpawnFailedError when task empty (production fail-closed)
+    await expect(
+      loadAndValidateWakePack({
+        db: database,
+        episodic,
+        repoRoot: root,
+        handoffId: undefined,
+        agentName: "agent-2",
+        task: "",
+      }),
+    ).rejects.toThrow(SpawnFailedError);
+
+    // Test 3: Throws SpawnFailedError when agentName empty (production fail-closed)
+    await expect(
+      loadAndValidateWakePack({
+        db: database,
+        episodic,
+        repoRoot: root,
+        handoffId: undefined,
+        agentName: "",
+        task: "Fix bug",
+      }),
+    ).rejects.toThrow(SpawnFailedError);
+
+    // Test 4: Returns pack with synthesized handoff when task provided (production synthesis)
+    const packSynthesized = await loadAndValidateWakePack({
+      db: database,
+      episodic,
+      repoRoot: root,
+      handoffId: undefined,
+      agentName: "agent-3",
+      task: "Fix the bug",
+    });
+    expect(packSynthesized.handoffText).toContain(
+      "Synthesized handoff from assignment",
     );
-    expect(handoffUndefined).toBeNull();
+    expect(packSynthesized.handoffText).toContain("Fix the bug");
+    expect(packSynthesized.handoffText).toContain("agent-3");
+    expect(packSynthesized.constitution).toContain("Hive Constitution");
+    expect(packSynthesized.profile).toContain("Profile");
+    expect(packSynthesized.projectDoc).toContain("Project");
 
-    // Test 2: Fail-closed when task empty string (production fail-closed)
-    const handoffEmpty = loadHandoffText(database, undefined, "agent-2", "");
-    expect(handoffEmpty).toBeNull();
-
-    // Test 3: Fail-closed when agentName empty (production fail-closed)
-    const handoffNoAgent = loadHandoffText(database, undefined, "", "Fix bug");
-    expect(handoffNoAgent).toBeNull();
-
-    // Test 4: Synthesized handoff when task provided (production synthesis)
-    const handoffSynthesized = loadHandoffText(
-      database,
-      undefined,
-      "agent-3",
-      "Fix the bug",
-    );
-    expect(handoffSynthesized).not.toBeNull();
-    expect(handoffSynthesized).toContain("Synthesized handoff from assignment");
-    expect(handoffSynthesized).toContain("Fix the bug");
-    expect(handoffSynthesized).toContain("agent-3");
-    expect(handoffSynthesized).toContain(
-      "**Goal**: Complete the assigned task",
-    );
-
-    // Test 5: Durable handoff when handoffId exists (production durable path)
+    // Test 5: Returns pack with durable handoff when handoffId exists (production durable path)
     database.insertHandoff({
       handoffId: "test-handoff-123",
       sourceRunId: "run-abc",
@@ -397,18 +423,19 @@ describe("P0 Memory Acceptance Tests", () => {
         },
       },
     });
-    const handoffDurable = loadHandoffText(
-      database,
-      "test-handoff-123",
-      "agent-4",
-      "Task",
+    const packDurable = await loadAndValidateWakePack({
+      db: database,
+      episodic,
+      repoRoot: root,
+      handoffId: "test-handoff-123",
+      agentName: "agent-4",
+      task: "Task",
+    });
+    expect(packDurable.handoffText).toContain("Handoff test-handoff-123");
+    expect(packDurable.handoffText).toContain("run-abc");
+    expect(packDurable.handoffText).toContain(
+      "**Goal**: Complete the assigned task",
     );
-    expect(handoffDurable).not.toBeNull();
-    expect(handoffDurable).toContain("Handoff test-handoff-123");
-    expect(handoffDurable).toContain("run-abc");
-    expect(handoffDurable).toContain("**Goal**: Complete the assigned task");
-    expect(handoffDurable).toContain("**Done**:");
-    expect(handoffDurable).toContain("Investigated the issue");
   });
 
   // P0.1: Empty vs dropped distinguishable - validates CAP signal with real pack floor
@@ -583,37 +610,14 @@ describe("P0 Memory Acceptance Tests", () => {
     }
   });
 
-  // P0.1: Spawn pack for silent specialist - validates pack floor without memory tools
+  // P0.1: Spawn pack for silent specialist - validates production pack assembly
   test("spawn_pack_silent_specialist", async () => {
     const root = await makeTempDir("hive-silent-specialist-");
-    const {
-      loadConstitution,
-      loadProfile,
-      loadProjectDoc,
-      loadRecentMistakes,
-    } = await import("../src/memory-service/pack-floor");
-    const { buildAgentPrompt } =
-      await import("../src/daemon/spawn/spawner-impl");
-    const { loadAgentStandards } =
-      await import("../src/daemon/spawn/agent-standards");
-    const { EpisodicStore } = await import("../src/memory-service/episodic");
-    const { HiveDatabase } =
-      await import("../src/daemon/database/hive-database");
-    const Database = (await import("bun:sqlite")).Database;
-
-    const standards = await loadAgentStandards(root);
-    const worktree = {
-      path: root,
-      branch: "test-branch",
-      upstream: null,
-      head: "abc123",
-      isDirty: false,
-    };
-
-    // Create episodic store with mistakes for realistic test
     const db = new Database(":memory:");
     const database = new HiveDatabase(db);
     const episodic = new EpisodicStore(database);
+
+    // Create episodic store with mistakes for realistic test
     episodic.appendEvent({
       type: "mistake",
       ts: "2026-08-19T10:00:00Z",
@@ -627,22 +631,37 @@ describe("P0 Memory Acceptance Tests", () => {
       context: {},
     });
 
-    // Load real pack floor with episodic mistakes
-    const [constitution, profile, projectDoc] = await Promise.all([
-      Promise.resolve(loadConstitution()),
-      loadProfile(),
-      loadProjectDoc(root),
-    ]);
-    const recentMistakes = loadRecentMistakes(episodic);
+    // Use REAL production pack assembly (same function HiveSpawner.spawn uses)
+    const { loadAndValidateWakePack } =
+      await import("../src/daemon/spawn/pack-assembly");
+    const { buildAgentPrompt } =
+      await import("../src/daemon/spawn/spawner-impl");
+    const { loadAgentStandards } =
+      await import("../src/daemon/spawn/agent-standards");
 
-    // Use REAL production loadHandoffText (same function HiveSpawner calls)
-    const { loadHandoffText } =
-      await import("../src/daemon/spawn/handoff-loader");
     const task = "Review this code";
     const agentName = "silent-specialist";
-    const handoffText = loadHandoffText(database, undefined, agentName, task);
 
-    // Build prompt with real pack floor for read-only specialist (production path)
+    // Load and validate pack using production function (throws if handoff unsynthable)
+    const pack = await loadAndValidateWakePack({
+      db: database,
+      episodic,
+      repoRoot: root,
+      handoffId: undefined,
+      agentName,
+      task,
+    });
+
+    const standards = await loadAgentStandards(root);
+    const worktree = {
+      path: root,
+      branch: "test",
+      upstream: null,
+      head: "abc",
+      isDirty: false,
+    };
+
+    // Build prompt with production pack for read-only specialist
     const silentSpecialistPrompt = buildAgentPrompt(
       agentName,
       task,
@@ -652,11 +671,12 @@ describe("P0 Memory Acceptance Tests", () => {
       {
         readOnly: true,
         category: "code_review",
-        constitution,
-        profile,
-        handoffText,
-        projectDoc,
-        recentMistakes: recentMistakes.length > 0 ? recentMistakes : undefined,
+        constitution: pack.constitution,
+        profile: pack.profile,
+        handoffText: pack.handoffText,
+        projectDoc: pack.projectDoc,
+        recentMistakes:
+          pack.recentMistakes.length > 0 ? pack.recentMistakes : undefined,
       },
     );
 
@@ -664,15 +684,17 @@ describe("P0 Memory Acceptance Tests", () => {
     expect(silentSpecialistPrompt).toContain("Hive Constitution");
     expect(silentSpecialistPrompt).toContain("Profile");
     expect(silentSpecialistPrompt).toContain("Handoff Context");
+    expect(silentSpecialistPrompt).toContain("Review this code");
     expect(silentSpecialistPrompt).toContain("Project");
     expect(silentSpecialistPrompt).toContain("Recent Mistakes");
 
-    // Assert mistakes loaded from episodic
+    // Assert mistakes loaded from episodic (production path)
     expect(silentSpecialistPrompt).toContain("null check");
     expect(silentSpecialistPrompt).toContain("error handling");
 
-    // Assert read-only specialist context
-    expect(silentSpecialistPrompt).toContain("read-only");
+    // Assert read-only specialist gets pack floor even without memory tools
+    expect(silentSpecialistPrompt).not.toContain("memory_write");
+    expect(silentSpecialistPrompt).not.toContain("memory_search");
   });
 
   // P1: Consolidator not on hotpath

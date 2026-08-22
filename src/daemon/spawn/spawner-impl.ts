@@ -15,6 +15,9 @@ export type {
   HiveSpawnerDependencies,
   SessiondSpawnAdmission,
 } from "./hive-spawner-contract";
+export { loadHandoffText } from "./handoff-loader";
+export { loadAndValidateWakePack } from "./pack-assembly";
+export type { WakePackFloor } from "./pack-assembly";
 export {
   agentUiLaunchArgv,
   protocolProviderArgv,
