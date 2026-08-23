@@ -47,6 +47,7 @@ describe("HiveConfigSchema", () => {
         wake_budget_tokens: 300,
         embedding_provider: "local",
         embedding_model: "bge-small-en-v1.5",
+        wake_pack_enabled: true,
       },
     });
   });

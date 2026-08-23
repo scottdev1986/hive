@@ -1,10 +1,3 @@
-/**
- * P1 #4: Mistakes recurrence≥2 auto-promote
- *
- * When the same mistake/pitfall recurs ≥2 times, auto-promote into durable LTM / pack-relevant memory
- * so new sessions know it without tool lookup.
- */
-
 import type { EpisodicStore } from "./episodic";
 import { discoverMemoryFacts, writeMemoryFact } from "./memory-store";
 import type { MemoryFact } from "../schemas/memory";
@@ -183,7 +176,7 @@ async function promoteToAlwaysOn(
   pitfall: MemoryFact,
   signature: string,
 ): Promise<void> {
-  const promoted = await writeMemoryFact(repoRoot, {
+  await writeMemoryFact(repoRoot, {
     scope: "repo",
     topic: "mistakes-promoted",
     title: `[AUTO-PROMOTED] ${pitfall.title}`,
@@ -196,6 +189,4 @@ async function promoteToAlwaysOn(
     date: new Date().toISOString().split("T")[0],
     supersedes: [pitfall.id],
   });
-
-  return;
 }

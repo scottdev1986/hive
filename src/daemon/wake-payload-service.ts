@@ -1,10 +1,8 @@
 import type { MailStore } from "../mail-service/store";
-import { factVerificationFlag } from "../memory-service/memory-store";
 import {
   buildMemoryRecallBundle,
   partitionMemoryRecall,
   type MemoryRecallDeps,
-  type MemoryRecallRow,
 } from "../memory-service/recall";
 import type { WakePayload, WakePayloadRequest } from "../schemas/wake-payload";
 
@@ -14,8 +12,6 @@ export interface WakePayloadServiceDeps {
   readonly wakeBudgetTokens: number;
   readonly memoryRecallDeps: () => MemoryRecallDeps;
 }
-
-const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
 
 /** Build named wake query from available context. Returns lane-only query when topic/objective/lastMailSnippet are all absent or empty. */
 function buildWakeQuery(request: WakePayloadRequest): string {

@@ -59,20 +59,23 @@ async function validateFactCitations(
   fact: MemoryFact,
   repoRoot: string,
 ): Promise<void> {
-  const { join, resolve, isAbsolute } = await import("node:path");
+  const { resolve, isAbsolute } = await import("node:path");
   const textToCheck = [fact.title, fact.body, fact.evidence].join("\n");
 
   // Extract potential file paths (simple heuristic: words that look like paths)
   const pathPattern =
     /(?:^|\s)([.~]?\/[^\s]+|[a-zA-Z0-9_-]+\/[^\s]+\.[a-zA-Z0-9]+)/g;
-  const paths = Array.from(textToCheck.matchAll(pathPattern), (m) => m[1]);
+  const paths = Array.from(
+    textToCheck.matchAll(pathPattern),
+    (m) => m[1],
+  ).filter((path): path is string => path !== undefined);
 
   // Extract potential commands (simple heuristic: backtick-wrapped words or common commands)
   const commandPattern = /`([a-zA-Z0-9_-]+)`/g;
   const commands = Array.from(
     textToCheck.matchAll(commandPattern),
     (m) => m[1],
-  );
+  ).filter((cmd): cmd is string => cmd !== undefined);
 
   // Check paths relative to repoRoot
   for (const path of paths) {

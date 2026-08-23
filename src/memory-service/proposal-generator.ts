@@ -1,14 +1,8 @@
-/**
- * P1 #5: Proposal generator for consolidator
- *
- * Generates proposals for profile and project changes based on similar articles
- * and repeated patterns in the memory store.
- */
-
 import type { EpisodicStore } from "./episodic";
 import type { ConsolidationCandidate } from "./consolidate";
 import { appendProposal, generateProposalId, type Proposal } from "./proposals";
 import { discoverMemoryFacts } from "./memory-store";
+import { MemoryScopeSchema } from "../schemas/memory";
 
 export interface ProposalGenerationReport {
   generated: number;
@@ -31,10 +25,9 @@ export async function generateAndAppendProposals(options: {
   const proposals: Proposal[] = [];
 
   for (const candidate of similar.slice(0, 5)) {
-    const facts = await discoverMemoryFacts(
-      repoRoot,
-      candidate.scope as "repo" | "global",
-    );
+    const scope = MemoryScopeSchema.safeParse(candidate.scope);
+    if (!scope.success) continue;
+    const facts = await discoverMemoryFacts(repoRoot, scope.data);
     const older = facts.find((f) => f.id === candidate.olderId);
     const newer = facts.find((f) => f.id === candidate.newerId);
 

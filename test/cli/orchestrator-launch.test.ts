@@ -216,10 +216,11 @@ describe("orchestrator launch", () => {
     }
   });
 
-  test("silent instructions stay out of the visible command arguments", () => {
-    const instruction = buildQueenLaunchContext({
+  test("silent instructions stay out of the visible command arguments", async () => {
+    const instruction = await buildQueenLaunchContext({
       memoryIndex: "memory material",
       bootCapsule: "capsule material",
+      repoRoot: process.cwd(),
     });
     const command = buildOrchestratorCommand({
       tool: "codex",
@@ -232,9 +233,10 @@ describe("orchestrator launch", () => {
     expect(command.join("\n")).not.toContain("capsule material");
   });
 
-  test("NUL bytes are normalized before instructions are written", () => {
-    const instructions = buildQueenLaunchContext({
+  test("NUL bytes are normalized before instructions are written", async () => {
+    const instructions = await buildQueenLaunchContext({
       memoryIndex: "memory before\0memory after",
+      repoRoot: process.cwd(),
     });
     expect(instructions).not.toContain("\0");
     expect(instructions).toContain("memory before\uFFFDmemory after");

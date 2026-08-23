@@ -7,7 +7,7 @@ import type { HiveDatabase } from "../database/hive-database";
  * This is the production handoff loading logic used by HiveSpawner.spawn.
  */
 export function loadHandoffText(
-  db: HiveDatabase,
+  db: Pick<HiveDatabase, "getHandoff">,
   handoffId: string | undefined,
   agentName: string,
   taskDescription: string | undefined,

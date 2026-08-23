@@ -1,8 +1,10 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { formatWakePrompt } from "../../src/cli/agent-ui/wake-prompt";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { WakePayloadService } from "../../src/daemon/wake-payload-service";
 import { MailStore } from "../../src/mail-service/store";
+import { MemoryIndex } from "../../src/memory-service/fts-index";
 import { writeMemoryFact } from "../../src/memory-service/memory-store";
 import type { MemoryWriteInput } from "../../src/schemas/memory";
 import { tempRoot } from "../temp-root";
@@ -10,6 +12,24 @@ import { tempRoot } from "../temp-root";
 const T0 = new Date("2026-08-02T12:00:00.000Z");
 const at = (secondsFromStart: number): string =>
   new Date(T0.getTime() + secondsFromStart * 1_000).toISOString();
+
+async function wakeService(
+  root: string,
+  mailStore: MailStore,
+  wakeBudgetTokens: number,
+): Promise<WakePayloadService> {
+  const index = new MemoryIndex(new Database(":memory:"));
+  await index.rebuild(root);
+  return new WakePayloadService({
+    mailStore,
+    repoRoot: () => root,
+    wakeBudgetTokens,
+    memoryRecallDeps: () => ({
+      repoRoot: () => root,
+      memory: index,
+    }),
+  });
+}
 
 describe("WakePayloadService", () => {
   test("builds payload with mail counts by lane", async () => {
@@ -58,11 +78,7 @@ describe("WakePayloadService", () => {
       controlLaneCapacity: 64,
     });
 
-    const service = new WakePayloadService({
-      mailStore,
-      repoRoot: () => root,
-      wakeBudgetTokens: 300,
-    });
+    const service = await wakeService(root, mailStore, 300);
 
     const payload = await service.build({
       recipient: "ada",
@@ -134,11 +150,7 @@ describe("WakePayloadService", () => {
       await writeMemoryFact(root, article);
     }
 
-    const service = new WakePayloadService({
-      mailStore,
-      repoRoot: () => root,
-      wakeBudgetTokens: 300,
-    });
+    const service = await wakeService(root, mailStore, 300);
 
     const payload = await service.build({
       recipient: "test",
@@ -188,11 +200,7 @@ describe("WakePayloadService", () => {
       await writeMemoryFact(root, article);
     }
 
-    const service = new WakePayloadService({
-      mailStore,
-      repoRoot: () => root,
-      wakeBudgetTokens: 150, // Small budget to force truncation
-    });
+    const service = await wakeService(root, mailStore, 150);
 
     const payload = await service.build({
       recipient: "test",
@@ -212,11 +220,7 @@ describe("WakePayloadService", () => {
     const db = new HiveDatabase(":memory:");
     const mailStore = new MailStore(db);
 
-    const service = new WakePayloadService({
-      mailStore,
-      repoRoot: () => root,
-      wakeBudgetTokens: 300,
-    });
+    const service = await wakeService(root, mailStore, 300);
 
     const payload = await service.build({
       recipient: "test",

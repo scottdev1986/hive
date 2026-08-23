@@ -1381,7 +1381,9 @@ export class HiveSpawner implements Spawner {
               handoffText,
               projectDoc,
               recentMistakes:
-                recentMistakes.length > 0 ? recentMistakes : undefined,
+                recentMistakes !== undefined && recentMistakes.length > 0
+                  ? recentMistakes
+                  : undefined,
             }),
           },
         );

@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { HiveDatabase } from "../src/daemon/database/hive-database";
-import { parseHiveConfig } from "../src/daemon/config-loader";
+import { HiveConfigSchema } from "../src/schemas/config-schema";
 import { MemoryWriteService } from "../src/memory-service/write-service";
 import { MemoryIndex } from "../src/memory-service/fts-index";
 import {
@@ -35,22 +35,18 @@ async function makeTempDir(prefix: string): Promise<string> {
 describe("P0 Memory Acceptance Tests", () => {
   // P0.9: embedding_provider: "api" fails config parse
   test("api_provider_fail_closed", () => {
-    const configWithApi = {
-      autonomy: "sandboxed" as const,
-      memory: {
-        embedding_provider: "api" as const,
-      },
-    };
-
-    expect(() => parseHiveConfig(configWithApi)).toThrow();
+    // SAFETY: "api" is not an accepted provider; this object exists only to prove parse rejects it.
+    expect(() =>
+      HiveConfigSchema.parse({
+        memory: { embedding_provider: "api" },
+      } as never),
+    ).toThrow();
   });
 
   // P0.6: Real keepIds from ledger/pitfall provenance
   test("retention_keepset", async () => {
     const root = await makeTempDir("hive-retention-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const episodic = new EpisodicStore(":memory:");
 
     // Add episodes with specific IDs (appendEvent returns the id)
     const ep1 = episodic.appendEvent({
@@ -106,18 +102,16 @@ describe("P0 Memory Acceptance Tests", () => {
     const events = episodic.listEvents();
     const eventIds = events.map((e) => e.id);
 
-    expect(eventIds).toContain(ep1.id);
-    expect(eventIds).toContain(ep2.id);
-    expect(eventIds).not.toContain(ep3.id);
+    expect(eventIds).toContain(String(ep1.id));
+    expect(eventIds).toContain(String(ep2.id));
+    expect(eventIds).not.toContain(String(ep3.id));
     expect(report.eventsDeleted).toBe(1); // Only ep3 deleted
   });
 
   // P0.8: Global writes use global lock, repo writes use repo lock
   test("scope_lock", async () => {
     const root = await makeTempDir("hive-scope-lock-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const index = new MemoryIndex(database);
+    const index = new MemoryIndex(new Database(":memory:"));
 
     const service = new MemoryWriteService({
       repoRoot: root,
@@ -163,9 +157,7 @@ describe("P0 Memory Acceptance Tests", () => {
   // P0.7: Pre-write gate prevents duplicate titles
   test("prewrite_dedup", async () => {
     const root = await makeTempDir("hive-prewrite-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const index = new MemoryIndex(database);
+    const index = new MemoryIndex(new Database(":memory:"));
 
     const service = new MemoryWriteService({
       repoRoot: root,
@@ -211,16 +203,14 @@ describe("P0 Memory Acceptance Tests", () => {
     // Only one fact file should exist on disk
     const facts = await discoverMemoryFacts(root, "repo");
     expect(facts.length).toBe(1);
-    expect(facts[0].id).toBe(first.id);
-    expect(facts[0].body).toBe("Updated body"); // body updated
+    expect(facts[0]?.id).toBe(first.id);
+    expect(facts[0]?.body).toBe("Updated body"); // body updated
   });
 
   // Hole #3: NOOP write-gate returns and honors NOOP when body is identical
   test("prewrite_noop", async () => {
     const root = await makeTempDir("hive-noop-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const index = new MemoryIndex(database);
+    const index = new MemoryIndex(new Database(":memory:"));
 
     const service = new MemoryWriteService({
       repoRoot: root,
@@ -280,15 +270,14 @@ describe("P0 Memory Acceptance Tests", () => {
     // Only one fact file should exist on disk
     const facts = await discoverMemoryFacts(root, "repo");
     expect(facts.length).toBe(1);
-    expect(facts[0].id).toBe(first.id);
-    expect(facts[0].body).toBe("Identical body content"); // body unchanged
+    expect(facts[0]?.id).toBe(first.id);
+    expect(facts[0]?.body).toBe("Identical body content"); // body unchanged
   });
 
   // P0.5: Wake semantic not hardcoded disabled
   test("wake_semantic_not_hardcoded", async () => {
     const root = await makeTempDir("hive-wake-semantic-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
+    const database = new HiveDatabase(":memory:");
 
     // Import needed for behavioral test
     const { WakePayloadService } =
@@ -297,7 +286,7 @@ describe("P0 Memory Acceptance Tests", () => {
     const { MemoryIndex } = await import("../src/memory-service/fts-index");
 
     const mailStore = new MailStore(database);
-    const memory = new MemoryIndex(database);
+    const memory = new MemoryIndex(new Database(":memory:"));
 
     const service = new WakePayloadService({
       mailStore,
@@ -328,8 +317,7 @@ describe("P0 Memory Acceptance Tests", () => {
   // P0.5: Wake not newest-10 date slice
   test("wake_not_newest10", async () => {
     const root = await makeTempDir("hive-wake-query-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
+    const database = new HiveDatabase(":memory:");
 
     const { WakePayloadService } =
       await import("../src/daemon/wake-payload-service");
@@ -339,7 +327,7 @@ describe("P0 Memory Acceptance Tests", () => {
       await import("../src/memory-service/memory-store");
 
     const mailStore = new MailStore(database);
-    const memory = new MemoryIndex(database);
+    const memory = new MemoryIndex(new Database(":memory:"));
 
     // Create facts with different dates
     await writeMemoryFact(root, {
@@ -411,9 +399,8 @@ describe("P0 Memory Acceptance Tests", () => {
   // P0.3: Handoff every spawn - validates production pack assembly + spawn fail-closed
   test("handoff_every_spawn", async () => {
     const root = await makeTempDir("hive-handoff-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const database = new HiveDatabase(":memory:");
+    const episodic = new EpisodicStore(":memory:");
 
     // Import the REAL production pack assembly that HiveSpawner.spawn uses
     const { loadAndValidateWakePack } =
@@ -476,32 +463,68 @@ describe("P0 Memory Acceptance Tests", () => {
     expect(packSynthesized.projectDoc).toContain("Project");
 
     // Test 5: Returns pack with durable handoff when handoffId exists (production durable path)
+    const handoffId = "018f1e90-7b5a-7cc0-8000-000000000180";
+    const sourceRunId = "018f1e90-7b5a-7cc0-8000-000000000181";
     database.insertHandoff({
-      handoffId: "test-handoff-123",
-      sourceRunId: "run-abc",
-      bundle: {
-        sourceRunId: "run-abc",
-        reason: "escalation",
-        branch: { name: "main" },
-        summary: {
-          goal: "Complete the assigned task",
-          done: ["Investigated the issue"],
-          remaining: ["Apply the fix", "Write tests"],
-          decisions: ["Use approach A over B"],
-          nextAction: "Start with the fix",
-        },
+      handoffId,
+      sourceRunId,
+      runOutcome: {
+        decisionId: "grant-fixture",
+        providerRunId: sourceRunId,
+        provider: "codex",
+        model: "gpt-5-codex",
+        taskCategory: "simple_coding",
+        outcome: "quota-drained",
+        handoffId,
+        startedAt: "2026-08-20T11:00:00.000Z",
+        endedAt: "2026-08-20T12:00:00.000Z",
       },
+      reason: "quota-drain",
+      originalTaskRef: {
+        kind: "agent-task",
+        agentId: "agent-maya",
+        content: "Complete the assigned task",
+        digest: "a".repeat(64),
+      },
+      requirementRefs: [],
+      branch: { name: "main", base: "base", head: "head" },
+      worktree: {
+        dirtyPaths: [],
+        untrackedPaths: [],
+        commits: [],
+      },
+      messagesThrough: 0,
+      pendingMessageIds: [],
+      memoryRefs: [],
+      activity: {
+        providerEventRefs: [],
+        terminalOutputRanges: [],
+        providerTranscriptRefs: [],
+        statusReportRef: null,
+      },
+      summary: {
+        goal: "Complete the assigned task",
+        done: ["Investigated the issue"],
+        remaining: ["Apply the fix", "Write tests"],
+        decisions: ["Use approach A over B"],
+        failedApproaches: [],
+        uncertainty: [],
+        nextAction: "Start with the fix",
+        provenance: "generated",
+      },
+      completeness: "complete",
+      createdAt: "2026-08-20T12:00:00.000Z",
     });
     const packDurable = await loadAndValidateWakePack({
       db: database,
       episodic,
       repoRoot: root,
-      handoffId: "test-handoff-123",
+      handoffId,
       agentName: "agent-4",
       task: "Task",
     });
-    expect(packDurable.handoffText).toContain("Handoff test-handoff-123");
-    expect(packDurable.handoffText).toContain("run-abc");
+    expect(packDurable.handoffText).toContain(`Handoff ${handoffId}`);
+    expect(packDurable.handoffText).toContain(sourceRunId);
     expect(packDurable.handoffText).toContain(
       "**Goal**: Complete the assigned task",
     );
@@ -525,9 +548,6 @@ describe("P0 Memory Acceptance Tests", () => {
     const worktree = {
       path: root,
       branch: "test-branch",
-      upstream: null,
-      head: "abc123",
-      isDirty: false,
     };
 
     // Load real pack floor
@@ -536,15 +556,11 @@ describe("P0 Memory Acceptance Tests", () => {
         Promise.resolve(loadConstitution()),
         loadProfile(),
         loadProjectDoc(root),
-        loadRecentMistakes(undefined),
+        loadRecentMistakes(undefined, root),
       ]);
 
-    // Production buildMemoryIndex path - creates memory store and builds index
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
     const { buildMemoryIndex } =
       await import("../src/memory-service/memory-store");
-    const { MemoryIndex } = await import("../src/memory-service/fts-index");
 
     // Test 1: Empty store (no facts) = no index section
     const emptyRoot = await makeTempDir("hive-empty-store-");
@@ -566,26 +582,26 @@ describe("P0 Memory Acceptance Tests", () => {
     expect(emptyPrompt).toContain("Hive Constitution"); // Pack floor present
 
     // Test 2: Non-empty store with multiple facts = index present (may trigger CAP)
-    const memoryIndex = new MemoryIndex(database);
-    await memoryIndex.rebuild(root);
-    const writeService = new MemoryWriteService(database, memoryIndex);
+    const writeService = new MemoryWriteService({
+      repoRoot: root,
+      index: new MemoryIndex(new Database(":memory:")),
+      embeddingIndex: null,
+    });
 
     // Write multiple facts to create a non-empty store
     for (let i = 1; i <= 10; i++) {
-      await writeService.serialize(
-        {
-          kind: "episodic",
-          scope: "repo",
-          topic: "test",
-          id: `fact-${i}`,
-          title: `Test fact ${i}`,
-          description: `Description for fact ${i}`,
-          status: "verified",
-          evidence: "test.txt",
-          tags: [],
-        },
-        "repo",
-      );
+      await writeService.write({
+        scope: "repo",
+        topic: "test",
+        title: `Test fact ${i}`,
+        body: `Description for fact ${i}`,
+        status: "unverified",
+        evidence: "test.txt",
+        source: "agent",
+        kind: "article",
+        tags: [],
+        supersedes: [],
+      });
     }
 
     // Build index from non-empty store (production path)
@@ -624,34 +640,31 @@ describe("P0 Memory Acceptance Tests", () => {
   // P0.1: Queen budget CAP signal present - validates production buildQueenLaunchContext
   test("queen_budget_cap_signal", async () => {
     const root = await makeTempDir("hive-budget-cap-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
 
     const { buildMemoryIndex } =
       await import("../src/memory-service/memory-store");
-    const { MemoryIndex } = await import("../src/memory-service/fts-index");
     const { buildQueenLaunchContext } = await import("../src/cli/orchestrator");
 
     // Create memory store with many facts to potentially trigger CAP
-    const memoryIndex = new MemoryIndex(database);
-    await memoryIndex.rebuild(root);
-    const writeService = new MemoryWriteService(database, memoryIndex);
+    const writeService = new MemoryWriteService({
+      repoRoot: root,
+      index: new MemoryIndex(new Database(":memory:")),
+      embeddingIndex: null,
+    });
 
     for (let i = 1; i <= 50; i++) {
-      await writeService.serialize(
-        {
-          kind: "episodic",
-          scope: "repo",
-          topic: "test",
-          id: `queen-fact-${i}`,
-          title: `Queen test fact ${i}`,
-          description: `Description for queen fact ${i}`,
-          status: "verified",
-          evidence: "test.txt",
-          tags: [],
-        },
-        "repo",
-      );
+      await writeService.write({
+        scope: "repo",
+        topic: "test",
+        title: `Queen test fact ${i}`,
+        body: `Description for queen fact ${i}`,
+        status: "unverified",
+        evidence: "test.txt",
+        source: "agent",
+        kind: "article",
+        tags: [],
+        supersedes: [],
+      });
     }
 
     // Build memory index from non-empty store (production path)
@@ -683,22 +696,21 @@ describe("P0 Memory Acceptance Tests", () => {
   // P0.1: Spawn pack for silent specialist - validates production pack assembly
   test("spawn_pack_silent_specialist", async () => {
     const root = await makeTempDir("hive-silent-specialist-");
-    const db = new Database(":memory:");
-    const database = new HiveDatabase(db);
-    const episodic = new EpisodicStore(database);
+    const database = new HiveDatabase(":memory:");
+    const episodic = new EpisodicStore(":memory:");
 
     // Create episodic store with mistakes for realistic test
     episodic.appendEvent({
       type: "mistake",
       ts: "2026-08-19T10:00:00Z",
       summary: "Previous review missed null check",
-      context: {},
+      agent: "test-agent",
     });
     episodic.appendEvent({
       type: "pitfall",
       ts: "2026-08-20T11:00:00Z",
       summary: "Forgot to check error handling",
-      context: {},
+      agent: "test-agent",
     });
 
     // Use REAL production pack assembly (same function HiveSpawner.spawn uses)
@@ -726,9 +738,6 @@ describe("P0 Memory Acceptance Tests", () => {
     const worktree = {
       path: root,
       branch: "test",
-      upstream: null,
-      head: "abc",
-      isDirty: false,
     };
 
     // Build prompt with production pack for read-only specialist
@@ -771,11 +780,11 @@ describe("P0 Memory Acceptance Tests", () => {
   test("consolidator_not_hotpath", async () => {
     // Validates consolidator is idle/sweep only, not called from memory_write hotpath
     // Architecture: consolidate.ts exports are for CLI/jobs, not write-service
-    const { consolidate } = await import("../src/memory-service/consolidate");
+    const { runMemoryConsolidation } =
+      await import("../src/memory-service/consolidate");
 
-    // Consolidate function exists and is async (for offline use)
-    expect(typeof consolidate).toBe("function");
-    expect(consolidate.constructor.name).toBe("AsyncFunction");
+    // Consolidate is an async function for offline/sweep use, not the write hotpath.
+    expect(runMemoryConsolidation.constructor.name).toBe("AsyncFunction");
 
     // Write service does NOT import consolidate
     const writeServiceSource = await Bun.file(

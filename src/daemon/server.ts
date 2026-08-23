@@ -793,7 +793,7 @@ export class HiveDaemon {
         repoRoot: () => this.repoRoot,
         memory: this.memory,
         semantic: this.semanticRecall(),
-        semanticStatus: () => this.embeddingService?.status() ?? "disabled",
+        semanticStatus: () => this.embeddingService?.stateLabel() ?? "disabled",
       }),
     });
     this.psSample = options.resourceRunners?.ps ?? runPs;

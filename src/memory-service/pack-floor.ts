@@ -1,7 +1,3 @@
-/**
- * P0: Shared pack floor loaders for HiveSpawner and queen launch
- */
-
 import { join } from "node:path";
 import { getHiveHome } from "../hive-home/home";
 

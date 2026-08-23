@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EpisodicStore } from "../src/memory-service/episodic";
@@ -113,8 +113,8 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
 
     expect(report.scanned).toBe(1);
     expect(report.promoted.length).toBe(1);
-    expect(report.promoted[0].signature).toBe(signature);
-    expect(report.promoted[0].count).toBe(2);
+    expect(report.promoted[0]?.signature).toBe(signature);
+    expect(report.promoted[0]?.count).toBe(2);
     expect(isPromoted(episodic, signature)).toBe(true);
   });
 
@@ -213,7 +213,7 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
     );
 
     expect(promoted.length).toBeGreaterThan(0);
-    expect(promoted[0].topic).toBe("mistakes-promoted");
+    expect(promoted[0]?.topic).toBe("mistakes-promoted");
   });
 });
 
@@ -236,9 +236,9 @@ describe("P1 Item #5: Proposals inbox", () => {
 
     const inbox = await readProposals(root);
     expect(inbox.proposals.length).toBe(1);
-    expect(inbox.proposals[0].id).toBe(proposal.id);
-    expect(inbox.proposals[0].title).toBe(proposal.title);
-    expect(inbox.proposals[0].category).toBe("profile");
+    expect(inbox.proposals[0]?.id).toBe(proposal.id);
+    expect(inbox.proposals[0]?.title).toBe(proposal.title);
+    expect(inbox.proposals[0]?.category).toBe("profile");
   });
 
   test("append multiple proposals", async () => {
@@ -270,8 +270,8 @@ describe("P1 Item #5: Proposals inbox", () => {
 
     const inbox = await readProposals(root);
     expect(inbox.proposals.length).toBe(2);
-    expect(inbox.proposals[0].id).toBe(proposal1.id);
-    expect(inbox.proposals[1].id).toBe(proposal2.id);
+    expect(inbox.proposals[0]?.id).toBe(proposal1.id);
+    expect(inbox.proposals[1]?.id).toBe(proposal2.id);
   });
 
   test("remove proposal from inbox", async () => {
@@ -359,7 +359,7 @@ describe("P1 Item #5: Proposals inbox", () => {
       readFile: fsReadFile,
     } = await import("node:fs/promises");
     const { constants } = await import("node:fs");
-    const { getHiveHome } = await import("../src/daemon/hive-home/home");
+    const { getHiveHome } = await import("../src/hive-home/home");
 
     const agentsContent = "# AGENTS.md\n\nExisting project conventions";
     await writeFile(join(root, "AGENTS.md"), agentsContent, "utf-8");
@@ -396,7 +396,7 @@ describe("P1 Item #5: Proposals inbox", () => {
 
     const inbox = await readProposals(root);
     expect(inbox.proposals.length).toBe(1);
-    expect(inbox.proposals[0].category).toBe("profile");
+    expect(inbox.proposals[0]?.category).toBe("profile");
   });
 });
 

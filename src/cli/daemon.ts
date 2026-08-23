@@ -387,6 +387,7 @@ export async function runDaemon(): Promise<void> {
       close: (agentId, closedAt) => status.closeAssignment(agentId, closedAt),
     },
     newestAgentEventSeq: (agentId) => status.newestAgentEventSeq(agentId),
+    episodic: episodicStore,
     config,
     // Every live spawn is governed by the user's routing policy: the spawn's category resolves to the user-authored route, every candidate passes the launch gate, and a corrupt or absent policy refuses rather than routes.
     readRoutingPolicy: () => routingPolicy.read(),

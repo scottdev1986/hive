@@ -1,24 +1,49 @@
-/**
- * P1 #5: Proposals inbox
- *
- * Wire docs/memory-proposals.md from stub into a real inbox path agents/consolidator can append
- * proposals to, and a deterministic read/consume path.
- */
-
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { isErrnoCode } from "../shared/error-message";
 
 const PROPOSALS_FILE = "docs/memory-proposals.md";
 const PROPOSAL_MARKER = "## Pending Proposals";
+const PROPOSAL_CATEGORIES = ["profile", "project", "mistake"] as const;
 
 export interface Proposal {
   id: string;
   createdAt: string;
-  category: "profile" | "project" | "mistake";
+  category: (typeof PROPOSAL_CATEGORIES)[number];
   title: string;
   rationale: string;
   proposedChange: string;
   source: string;
+}
+
+function parseProposalCategory(value: string): Proposal["category"] | null {
+  for (const category of PROPOSAL_CATEGORIES) {
+    if (value === category) return category;
+  }
+  return null;
+}
+
+function completeProposal(partial: Partial<Proposal>): Proposal | null {
+  if (
+    partial.id === undefined ||
+    partial.createdAt === undefined ||
+    partial.category === undefined ||
+    partial.title === undefined ||
+    partial.rationale === undefined ||
+    partial.proposedChange === undefined ||
+    partial.source === undefined
+  ) {
+    return null;
+  }
+  return {
+    id: partial.id,
+    createdAt: partial.createdAt,
+    category: partial.category,
+    title: partial.title,
+    rationale: partial.rationale,
+    proposedChange: partial.proposedChange,
+    source: partial.source,
+  };
 }
 
 export interface ProposalsInbox {
@@ -53,7 +78,7 @@ export async function readProposals(repoRoot: string): Promise<ProposalsInbox> {
     const proposals = parseProposals(raw);
     return { proposals, raw };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrnoCode(error, "ENOENT")) {
       return { proposals: [], raw: "" };
     }
     throw error;
@@ -69,9 +94,7 @@ function parseProposals(content: string): Proposal[] {
   let inProposedChange = false;
   let proposedChangeLines: string[] = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
+  for (const line of lines) {
     if (line.trim() === PROPOSAL_MARKER) {
       inPending = true;
       continue;
@@ -80,20 +103,23 @@ function parseProposals(content: string): Proposal[] {
     if (!inPending) continue;
 
     if (line.startsWith("### ")) {
-      if (currentProposal && currentProposal.id) {
+      if (currentProposal !== null) {
         if (inProposedChange) {
           currentProposal.proposedChange = proposedChangeLines
             .join("\n")
             .trim();
         }
-        proposals.push(currentProposal as Proposal);
+        const completed = completeProposal(currentProposal);
+        if (completed !== null) proposals.push(completed);
       }
 
-      const match = line.match(/^### ([^:]+): (.+)$/);
-      if (match) {
+      const match = /^### ([^:]+): (.+)$/.exec(line);
+      const id = match?.[1];
+      const title = match?.[2];
+      if (id !== undefined && title !== undefined) {
         currentProposal = {
-          id: match[1].trim(),
-          title: match[2].trim(),
+          id: id.trim(),
+          title: title.trim(),
         };
         inProposedChange = false;
         proposedChangeLines = [];
@@ -103,10 +129,10 @@ function parseProposals(content: string): Proposal[] {
 
     if (currentProposal) {
       if (line.startsWith("**Category**: ")) {
-        const category = line
-          .replace("**Category**: ", "")
-          .trim() as Proposal["category"];
-        currentProposal.category = category;
+        const category = parseProposalCategory(
+          line.replace("**Category**: ", "").trim(),
+        );
+        if (category !== null) currentProposal.category = category;
       } else if (line.startsWith("**Created**: ")) {
         currentProposal.createdAt = line.replace("**Created**: ", "").trim();
       } else if (line.startsWith("**Source**: ")) {
@@ -120,7 +146,6 @@ function parseProposals(content: string): Proposal[] {
         line === "```" &&
         proposedChangeLines.length === 0
       ) {
-        continue;
       } else if (inProposedChange && line === "```") {
         currentProposal.proposedChange = proposedChangeLines.join("\n").trim();
         inProposedChange = false;
@@ -131,11 +156,12 @@ function parseProposals(content: string): Proposal[] {
     }
   }
 
-  if (currentProposal && currentProposal.id) {
+  if (currentProposal !== null) {
     if (inProposedChange) {
       currentProposal.proposedChange = proposedChangeLines.join("\n").trim();
     }
-    proposals.push(currentProposal as Proposal);
+    const completed = completeProposal(currentProposal);
+    if (completed !== null) proposals.push(completed);
   }
 
   return proposals;
@@ -151,7 +177,7 @@ export async function appendProposal(
   try {
     content = await readFile(proposalsPath, "utf-8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrnoCode(error, "ENOENT")) {
       content = [
         "# Hive Memory Proposals",
         "",
@@ -203,9 +229,7 @@ export async function removeProposal(
   const newLines: string[] = [];
   let skipUntilNextSection = false;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
+  for (const line of lines) {
     if (line.startsWith(`### ${proposalId}:`)) {
       skipUntilNextSection = true;
       continue;
@@ -236,6 +260,6 @@ export async function removeProposal(
 }
 
 export function generateProposalId(category: string, index: number): string {
-  const timestamp = new Date().toISOString().split("T")[0].replace(/-/g, "");
+  const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
   return `${category}-${timestamp}-${index}`;
 }

@@ -24,7 +24,7 @@ export interface WakePackFloor {
  * @throws SpawnFailedError if handoff cannot be loaded/synthesized (fail-closed)
  */
 export async function loadAndValidateWakePack(options: {
-  db: HiveDatabase;
+  db: Pick<HiveDatabase, "getHandoff">;
   episodic: EpisodicStore | undefined;
   repoRoot: string;
   handoffId: string | undefined;

@@ -3,6 +3,7 @@ import type {
   CreatedWorktree,
   unavailableAgentNames,
 } from "../../adapters/worktrees";
+import type { EpisodicStore } from "../../memory-service/episodic";
 import type { buildMemoryIndex } from "../../memory-service/memory-store";
 import type { AgentRecord } from "../../schemas/agent";
 import type {
@@ -33,6 +34,7 @@ type AgentStore = Pick<
   | "discardSpawn"
   | "getAgentById"
   | "getActiveProviderRunByTerminal"
+  | "getHandoff"
   | "getRunOutcome"
   | "getLiveAgentByName"
   | "insertAgent"
@@ -101,6 +103,8 @@ export interface SessiondSpawnAdmission {
 export interface HiveSpawnerDependencies {
   db: AgentStore;
   repoRoot: string;
+  /** Per-project episodic store for wake-pack mistakes. Absent means the pack floor loads without ledger history. */
+  episodic?: EpisodicStore;
   newestAgentEventSeq?: (agentId: string) => string | null;
   /** Present only for hierarchy-run requests. Flat spawns never read it. */
   /** Read late, never held: the daemon owns spawn admission and is constructed after the spawner. Returning undefined means this composition has no hierarchy at all, and hierarchy spawns are refused. */
@@ -122,6 +126,7 @@ export interface HiveSpawnerDependencies {
   }>;
   config: {
     autonomy?: HiveConfig["autonomy"];
+    memory?: { wake_pack_enabled?: boolean };
   };
   /** The user's routing policy — the ONLY route source. A spawn names a task category; the policy's ordered chain for that category decides what runs. Absent (unwired embedders) or throwing (corrupt store) REFUSES the spawn: not-configured is never a route. */
   readRoutingPolicy?: () => RoutingPolicy;

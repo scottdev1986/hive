@@ -107,14 +107,17 @@ describe("config schema ([memory] embedding knobs, D4)", () => {
     expect(memory.embedding_model).toBe("bge-small-en-v1.5");
   });
 
-  test("api provider and all-MiniLM-L6-v2 parse", () => {
+  test("api provider is fail-closed; all-MiniLM-L6-v2 still parses", () => {
+    // SAFETY: "api" is not an accepted provider; this object exists only to prove parse rejects it.
+    expect(() =>
+      HiveConfigSchema.parse({
+        memory: { embedding_provider: "api" },
+      } as never),
+    ).toThrow();
     const memory = HiveConfigSchema.parse({
-      memory: {
-        embedding_provider: "api",
-        embedding_model: "all-MiniLM-L6-v2",
-      },
+      memory: { embedding_model: "all-MiniLM-L6-v2" },
     }).memory;
-    expect(memory.embedding_provider).toBe("api");
+    expect(memory.embedding_provider).toBe("local");
     expect(memory.embedding_model).toBe("all-MiniLM-L6-v2");
   });
 

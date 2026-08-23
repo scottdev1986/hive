@@ -260,13 +260,12 @@ export interface HarvestPitfallsDeps {
 
 function candidateBody(input: {
   cluster: EpisodicEvent[];
-  label: string;
   signature: string;
   agent: string;
   sessionId: string | null;
   related: Array<{ scope: MemoryScope; id: string; title: string }>;
 }): string {
-  const { cluster, label, agent, sessionId, related } = input;
+  const { cluster, agent, sessionId, related } = input;
   const eventIds = cluster.map((event) => event.id);
   const exactValues: ExactValue[] = [];
   for (const event of cluster) extractExactValues(event, exactValues);
@@ -455,7 +454,6 @@ async function harvestPitfallsLocked(
       }
       const body = candidateBody({
         cluster: cluster.events,
-        label: cluster.label,
         signature,
         agent: deps.agent,
         sessionId: deps.sessionId,
@@ -488,7 +486,7 @@ async function harvestPitfallsLocked(
 
       // P1 #4: Track recurrence for auto-promotion
       const { incrementRecurrence } = await import("./promotion");
-      const recurrenceCount = incrementRecurrence(
+      incrementRecurrence(
         deps.store,
         signature,
         written.id,
