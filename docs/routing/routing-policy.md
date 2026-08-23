@@ -292,6 +292,6 @@ not place — and **both callers read that null as PERMISSION.**
 - [quota-and-headroom.md](quota-and-headroom.md) — the facts quota feeds the router, and what a meter honestly says
 - [model-control-center.md](model-control-center.md) — the UI that edits this document
 - [rejected-approaches.md](rejected-approaches.md) — tiers, chains, strict/spread, quota-owned selection, and why each died
-- [../design/hive-router.html](../design/hive-router.html) — the router design spec this implementation follows
+- [../design/hive-router.html](../design/Done/hive-router.html) — the router design spec this implementation follows
 - [../providers/capability-discovery.md](../providers/capability-discovery.md) — where exact model ids and effort axes come from
 - [../providers/quota-surfaces.md](../providers/quota-surfaces.md) — the vendor wire facts

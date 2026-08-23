@@ -292,5 +292,5 @@ outcomes to the user; only the user changes preference.*
 - [routing-policy.md](routing-policy.md) — what replaced all of this
 - [quota-and-headroom.md](quota-and-headroom.md) — including the headroom-sort that also lost
 - [model-control-center.md](model-control-center.md) — the surface where the user does the weighting
-- [../design/hive-router.html](../design/hive-router.html) — the design spec that retired 7–9
+- [../design/hive-router.html](../design/Done/hive-router.html) — the design spec that retired 7–9
 - [../providers/capability-discovery.md](../providers/capability-discovery.md) — what a catalog can and cannot tell you

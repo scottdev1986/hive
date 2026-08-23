@@ -76,7 +76,7 @@ What remains is exactly what the router and the drain handler consume:
   spent.
 
 The invariant this layout enforces, verbatim from the router's design spec
-(`docs/design/hive-router.html` §08): *quota provides observations and proven
+(`../design/Done/hive-router.html` §08): *quota provides observations and proven
 exclusions; it never supplies a preference multiplier.* 20%, 50%, or 90% used is
 ignored for selection — continuous headroom ranking is a hidden second weighting
 system. Unknown or unmetered remains eligible — unknown is not zero and not
@@ -226,6 +226,6 @@ because the V3 router landed several of them under different names:
 - [routing-policy.md](routing-policy.md) — the routes, the router, and the gate quota is downstream of
 - [model-control-center.md](model-control-center.md) — how a meter may and may not be rendered
 - [rejected-approaches.md](rejected-approaches.md) — headroom sorting and quota-owned selection, and why they lost
-- [../design/hive-router.html](../design/hive-router.html) — the router design spec, §08 quota contract
+- [../design/hive-router.html](../design/Done/hive-router.html) — the router design spec, §08 quota contract
 - [../providers/quota-surfaces.md](../providers/quota-surfaces.md) — the vendor wire contracts
 - [../providers/grok.md](../providers/grok.md) — the vendor, end to end
