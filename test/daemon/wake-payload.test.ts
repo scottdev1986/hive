@@ -62,6 +62,7 @@ describe("WakePayloadService", () => {
       mailStore,
       repoRoot: () => root,
       wakeBudgetTokens: 300,
+      memoryRecallDeps: () => ({ repoRoot: () => root, memory: null }),
     });
 
     const payload = await service.build({
@@ -138,6 +139,7 @@ describe("WakePayloadService", () => {
       mailStore,
       repoRoot: () => root,
       wakeBudgetTokens: 300,
+      memoryRecallDeps: () => ({ repoRoot: () => root, memory: null }),
     });
 
     const payload = await service.build({
@@ -192,6 +194,7 @@ describe("WakePayloadService", () => {
       mailStore,
       repoRoot: () => root,
       wakeBudgetTokens: 150, // Small budget to force truncation
+      memoryRecallDeps: () => ({ repoRoot: () => root, memory: null }),
     });
 
     const payload = await service.build({
@@ -216,6 +219,7 @@ describe("WakePayloadService", () => {
       mailStore,
       repoRoot: () => root,
       wakeBudgetTokens: 300,
+      memoryRecallDeps: () => ({ repoRoot: () => root, memory: null }),
     });
 
     const payload = await service.build({

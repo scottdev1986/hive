@@ -372,7 +372,9 @@ test("make qa-clean runs repo uninstall then purge and preserves isolation", () 
 });
 
 test("make qa-clean retries repo uninstall from this checkout when the qa binary fails", () => {
-  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-qa-clean-retry-"));
+  const fixture = mkdtempSync(
+    join(OUTSIDE_REPO_TMPDIR, "hive-qa-clean-retry-"),
+  );
   try {
     const qa = join(fixture, "qa");
     const project = join(fixture, "project");
