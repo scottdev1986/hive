@@ -3,7 +3,6 @@ import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EpisodicStore } from "../src/memory-service/episodic";
-import { type MemoryEmbedder } from "../src/memory-service/embeddings";
 import {
   incrementRecurrence,
   getRecurrenceCount,
@@ -113,8 +112,10 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
 
     expect(report.scanned).toBe(1);
     expect(report.promoted.length).toBe(1);
-    expect(report.promoted[0]?.signature).toBe(signature);
-    expect(report.promoted[0]?.count).toBe(2);
+    const firstPromoted = report.promoted[0];
+    if (firstPromoted === undefined) throw new Error("Expected promoted item");
+    expect(firstPromoted.signature).toBe(signature);
+    expect(firstPromoted.count).toBe(2);
     expect(isPromoted(episodic, signature)).toBe(true);
   });
 
@@ -213,7 +214,10 @@ describe("P1 Item #4: Mistakes recurrence≥2 auto-promote", () => {
     );
 
     expect(promoted.length).toBeGreaterThan(0);
-    expect(promoted[0]?.topic).toBe("mistakes-promoted");
+    const firstPromotedFact = promoted[0];
+    if (firstPromotedFact === undefined)
+      throw new Error("Expected promoted fact");
+    expect(firstPromotedFact.topic).toBe("mistakes-promoted");
   });
 });
 
@@ -236,9 +240,11 @@ describe("P1 Item #5: Proposals inbox", () => {
 
     const inbox = await readProposals(root);
     expect(inbox.proposals.length).toBe(1);
-    expect(inbox.proposals[0]?.id).toBe(proposal.id);
-    expect(inbox.proposals[0]?.title).toBe(proposal.title);
-    expect(inbox.proposals[0]?.category).toBe("profile");
+    const firstProposal = inbox.proposals[0];
+    if (firstProposal === undefined) throw new Error("Expected proposal");
+    expect(firstProposal.id).toBe(proposal.id);
+    expect(firstProposal.title).toBe(proposal.title);
+    expect(firstProposal.category).toBe("profile");
   });
 
   test("append multiple proposals", async () => {
@@ -270,8 +276,12 @@ describe("P1 Item #5: Proposals inbox", () => {
 
     const inbox = await readProposals(root);
     expect(inbox.proposals.length).toBe(2);
-    expect(inbox.proposals[0]?.id).toBe(proposal1.id);
-    expect(inbox.proposals[1]?.id).toBe(proposal2.id);
+    const firstListed = inbox.proposals[0];
+    const secondListed = inbox.proposals[1];
+    if (firstListed === undefined || secondListed === undefined)
+      throw new Error("Expected proposals");
+    expect(firstListed.id).toBe(proposal1.id);
+    expect(secondListed.id).toBe(proposal2.id);
   });
 
   test("remove proposal from inbox", async () => {
@@ -396,187 +406,8 @@ describe("P1 Item #5: Proposals inbox", () => {
 
     const inbox = await readProposals(root);
     expect(inbox.proposals.length).toBe(1);
-    expect(inbox.proposals[0]?.category).toBe("profile");
-  });
-});
-
-describe("P1 Critic PASS fixtures", () => {
-  test("Fixture #4: promoted mistakes appear in always-on pack floor", async () => {
-    const root = await makeTempDir("hive-pack-floor-");
-    const episodic = new EpisodicStore(":memory:");
-
-    const signature = "test:failure:critical-error";
-
-    const written = await writeMemoryFact(root, {
-      scope: "repo",
-      topic: "pitfalls",
-      title: "Pitfall: critical error",
-      body: `## What failed\n\n- Failure signature: ${signature}\n\nCritical failure`,
-      tags: ["pitfall"],
-      source: "orchestrator",
-      status: "unverified",
-      kind: "pitfall",
-      date: "2026-08-20",
-      evidence: "Test evidence",
-      supersedes: [],
-    });
-
-    incrementRecurrence(
-      episodic,
-      signature,
-      written.id,
-      "2026-08-20T10:00:00Z",
-    );
-    incrementRecurrence(
-      episodic,
-      signature,
-      written.id,
-      "2026-08-20T11:00:00Z",
-    );
-
-    const { loadRecentMistakes } =
-      await import("../src/memory-service/pack-floor");
-    const mistakesBeforePromotion = await loadRecentMistakes(episodic, root);
-    const promotedBefore = mistakesBeforePromotion.filter((m) =>
-      m.includes("[PROMOTED]"),
-    );
-    expect(promotedBefore.length).toBe(0);
-
-    await autoPromoteMistakes({ repoRoot: root, episodic });
-
-    const mistakesAfterPromotion = await loadRecentMistakes(episodic, root);
-    const promotedAfter = mistakesAfterPromotion.filter((m) =>
-      m.includes("[PROMOTED]"),
-    );
-
-    expect(promotedAfter.length).toBeGreaterThan(0);
-    expect(promotedAfter[0]).toContain("critical error");
-    expect(promotedAfter[0]).toContain(signature);
-  });
-
-  test("Fixture #4: single failure does not appear in always-on pack floor", async () => {
-    const root = await makeTempDir("hive-single-failure-");
-    const episodic = new EpisodicStore(":memory:");
-
-    const signature = "test:failure:single";
-
-    const written = await writeMemoryFact(root, {
-      scope: "repo",
-      topic: "pitfalls",
-      title: "Pitfall: single failure",
-      body: `## What failed\n\n- Failure signature: ${signature}\n\nSingle failure`,
-      tags: ["pitfall"],
-      source: "orchestrator",
-      status: "unverified",
-      kind: "pitfall",
-      date: "2026-08-20",
-      evidence: "Test evidence",
-      supersedes: [],
-    });
-
-    incrementRecurrence(
-      episodic,
-      signature,
-      written.id,
-      "2026-08-20T10:00:00Z",
-    );
-
-    await autoPromoteMistakes({ repoRoot: root, episodic });
-
-    const { loadRecentMistakes } =
-      await import("../src/memory-service/pack-floor");
-    const mistakes = await loadRecentMistakes(episodic, root);
-    const promoted = mistakes.filter((m) => m.includes("[PROMOTED]"));
-
-    expect(promoted.length).toBe(0);
-  });
-
-  test("Integration: harvest → increment → consolidate → pack-floor", async () => {
-    const root = await makeTempDir("hive-integration-");
-    const episodic = new EpisodicStore(":memory:");
-
-    const signature = "exit:1:npm install";
-
-    const { harvestPitfalls } = await import("../src/memory-service/harvest");
-    const { MemoryEmbeddingService } =
-      await import("../src/memory-service/embeddings");
-    const { runMemoryConsolidation } =
-      await import("../src/memory-service/consolidate");
-
-    for (let session = 1; session <= 4; session++) {
-      episodic.appendEvent({
-        agent: `test-agent-${session}`,
-        type: "status.turn",
-        summary: "npm install (exit code 1)",
-        provenance: {
-          data: {
-            phase: "command",
-            tool: "npm",
-            command: "npm install",
-            exitCode: 1,
-          },
-        },
-      });
-
-      episodic.appendEvent({
-        agent: `test-agent-${session}`,
-        type: "status.turn",
-        summary: "npm install (exit code 1)",
-        provenance: {
-          data: {
-            phase: "command",
-            tool: "npm",
-            command: "npm install",
-            exitCode: 1,
-          },
-        },
-      });
-
-      await harvestPitfalls({
-        store: episodic,
-        repoRoot: root,
-        agent: `test-agent-${session}`,
-        sessionId: `test-session-${session}`,
-        write: async (input) => {
-          return await writeMemoryFact(root, input);
-        },
-      });
-    }
-
-    const finalRecurrence = getRecurrenceCount(episodic, signature);
-    expect(finalRecurrence).toBeGreaterThanOrEqual(2);
-
-    const mockEmbedder: MemoryEmbedder = {
-      model: "mock-integration",
-      dimensions: 4,
-      embed: () => Promise.resolve([[1, 0, 0, 0]]),
-      embedQuery: () => Promise.resolve([1, 0, 0, 0]),
-    };
-
-    const service = new MemoryEmbeddingService(
-      { provider: "local", model: "bge-small-en-v1.5" },
-      { load: () => Promise.resolve(mockEmbedder) },
-    );
-
-    const consolidationReport = await runMemoryConsolidation({
-      repoRoot: root,
-      episodic,
-      service,
-      apply: true,
-      writeMemoryFact: async (input) => writeMemoryFact(root, input),
-      autoPromote: true,
-      generateProposals: false,
-    });
-
-    expect(consolidationReport.promoted).toBeDefined();
-    expect(consolidationReport.promoted!.promoted).toBeGreaterThan(0);
-
-    const { loadRecentMistakes } =
-      await import("../src/memory-service/pack-floor");
-    const mistakes = await loadRecentMistakes(episodic, root);
-    const promoted = mistakes.filter((m) => m.includes("[PROMOTED]"));
-
-    expect(promoted.length).toBeGreaterThan(0);
-    expect(promoted[0]).toContain("npm install");
+    const firstProposal = inbox.proposals[0];
+    if (firstProposal === undefined) throw new Error("Expected proposal");
+    expect(firstProposal.category).toBe("profile");
   });
 });

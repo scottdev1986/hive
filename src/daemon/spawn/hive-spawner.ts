@@ -1332,7 +1332,7 @@ export class HiveSpawner implements Spawner {
         let profile: string | undefined;
         let handoffText: string | undefined;
         let projectDoc: string | undefined;
-        let recentMistakes: readonly string[] | undefined;
+        let recentMistakes: readonly string[];
 
         if (wakePackEnabled) {
           // P0: Load and validate wake pack floor (throws SpawnFailedError if handoff unsynthable)
@@ -1349,7 +1349,10 @@ export class HiveSpawner implements Spawner {
           profile = pack.profile;
           projectDoc = pack.projectDoc;
           handoffText = pack.handoffText;
-          recentMistakes = pack.recentMistakes;
+          recentMistakes = pack.recentMistakes ?? [];
+        } else {
+          // Pack-off path: normalize to empty array (no mistakes loaded)
+          recentMistakes = [];
         }
 
         const prompt = buildAgentPrompt(

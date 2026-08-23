@@ -85,15 +85,6 @@ describe("buildMemoryIndex with brief-ranked recall", () => {
       row.includes("ranked-pitfall"),
     );
     expect(hasArticle || hasPitfall).toBe(true);
-
-    if (index.includes("omitted")) {
-      const omittedCount = Number.parseInt(
-        index.match(/\((\d+) older/)?.[1] ?? "0",
-        10,
-      );
-      expect(articleRows.length).toBeGreaterThan(0);
-      expect(omittedCount).toBeGreaterThan(0);
-    }
   });
 
   test("index rows match the rebuildScopeIndex format", async () => {

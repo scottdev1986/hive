@@ -28,23 +28,6 @@ import type {
 } from "../session-host/workspace-visibility";
 import type { SpawnAdmission } from "./admission";
 
-type AgentStore = Pick<
-  HiveDatabase,
-  | "database"
-  | "discardSpawn"
-  | "getAgentById"
-  | "getActiveProviderRunByTerminal"
-  | "getHandoff"
-  | "getRunOutcome"
-  | "getLiveAgentByName"
-  | "insertAgent"
-  | "insertProviderRun"
-  | "recordRunOutcome"
-  | "listAgents"
-  | "releaseAgentName"
-  | "reserveAgentName"
->;
-
 export type WorktreeCreator = (
   repoRoot: string,
   agentName: string,
@@ -101,7 +84,7 @@ export interface SessiondSpawnAdmission {
 }
 
 export interface HiveSpawnerDependencies {
-  db: AgentStore;
+  db: HiveDatabase;
   repoRoot: string;
   /** Per-project episodic store for wake-pack mistakes. Absent means the pack floor loads without ledger history. */
   episodic?: EpisodicStore;
@@ -126,7 +109,7 @@ export interface HiveSpawnerDependencies {
   }>;
   config: {
     autonomy?: HiveConfig["autonomy"];
-    memory?: { wake_pack_enabled?: boolean };
+    memory?: HiveConfig["memory"];
   };
   /** The user's routing policy — the ONLY route source. A spawn names a task category; the policy's ordered chain for that category decides what runs. Absent (unwired embedders) or throwing (corrupt store) REFUSES the spawn: not-configured is never a route. */
   readRoutingPolicy?: () => RoutingPolicy;

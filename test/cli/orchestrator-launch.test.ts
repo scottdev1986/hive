@@ -220,7 +220,7 @@ describe("orchestrator launch", () => {
     const instruction = await buildQueenLaunchContext({
       memoryIndex: "memory material",
       bootCapsule: "capsule material",
-      repoRoot: process.cwd(),
+      repoRoot: "/tmp/test-repo",
     });
     const command = buildOrchestratorCommand({
       tool: "codex",
@@ -236,7 +236,7 @@ describe("orchestrator launch", () => {
   test("NUL bytes are normalized before instructions are written", async () => {
     const instructions = await buildQueenLaunchContext({
       memoryIndex: "memory before\0memory after",
-      repoRoot: process.cwd(),
+      repoRoot: "/tmp/test-repo",
     });
     expect(instructions).not.toContain("\0");
     expect(instructions).toContain("memory before\uFFFDmemory after");
