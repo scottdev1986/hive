@@ -120,6 +120,17 @@ final class WorkspaceShellViewTests: XCTestCase {
         return nil
     }
 
+    private func findViews(
+        in view: NSView,
+        identifier: String
+    ) -> [NSView] {
+        var matches = view.accessibilityIdentifier() == identifier ? [view] : []
+        for subview in view.subviews {
+            matches.append(contentsOf: findViews(in: subview, identifier: identifier))
+        }
+        return matches
+    }
+
     // MARK: Fixture-driven rendering
 
     func testShellRendersTheSnapshotFixtureThroughTheProjectionTypes() throws {
@@ -215,6 +226,18 @@ final class WorkspaceShellViewTests: XCTestCase {
         let current = try makeController(scenario: .current)
         let banners = findView(in: current.window!.contentView!, identifier: "shell-banners")
         XCTAssertEqual(banners?.isHidden, true, "a current projection raises no banner")
+    }
+
+    func testTaskRouterRendersItsAvailabilityBannerOnce() throws {
+        let controller = try makeController(scenario: .stale)
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let router = try XCTUnwrap(findView(
+            in: content, identifier: "shell-nav-router") as? NSButton)
+        router.performClick(nil)
+
+        XCTAssertEqual(
+            findViews(in: content, identifier: "shell-banner-screen-stale").count,
+            1)
     }
 
     func testAScreenWithNoHonestContractIsOnNoSurfaceAtAll() throws {

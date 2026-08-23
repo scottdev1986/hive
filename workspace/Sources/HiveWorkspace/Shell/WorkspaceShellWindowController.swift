@@ -21,6 +21,7 @@ final class WorkspaceShellWindowController: NSWindowController {
     private let topBar = ShellTopBarView()
     private let bannerStack = NSStackView()
     private var emptyBannerHeightConstraint: NSLayoutConstraint?
+    private var bannerContentBottomConstraint: NSLayoutConstraint?
     private let mainRow = NSStackView()
     private let screenScrollView = NSScrollView()
     private let screenHost = ShellScreenDocumentView()
@@ -233,6 +234,8 @@ final class WorkspaceShellWindowController: NSWindowController {
     }
 
     private func renderBanners() {
+        bannerContentBottomConstraint?.isActive = false
+        bannerContentBottomConstraint = nil
         for view in bannerStack.arrangedSubviews {
             bannerStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -262,6 +265,12 @@ final class WorkspaceShellWindowController: NSWindowController {
             ).isActive = true
         }
         emptyBannerHeightConstraint?.isActive = banners.isEmpty
+        if let lastBanner = bannerStack.arrangedSubviews.last {
+            let constraint = bannerStack.bottomAnchor.constraint(
+                equalTo: lastBanner.bottomAnchor)
+            constraint.isActive = true
+            bannerContentBottomConstraint = constraint
+        }
         bannerStack.isHidden = banners.isEmpty
     }
 

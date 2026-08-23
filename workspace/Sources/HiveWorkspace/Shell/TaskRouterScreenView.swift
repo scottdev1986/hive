@@ -106,12 +106,6 @@ final class TaskRouterScreenView: NSView {
             status.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
 
-        if let banner = screen.banner {
-            let bannerView = ShellBannerView(banner: banner, presentation: .inline)
-            stack.addArrangedSubview(bannerView)
-            bannerView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-
         for status in statusLabels() { stack.addArrangedSubview(status) }
         weightRefusal.font = Theme.Font.callout
         weightRefusal.textColor = Theme.warning

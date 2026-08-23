@@ -325,19 +325,28 @@ final class WorkspaceDesignSystemTests: XCTestCase {
                 projectPath: "/Users/test/Projects/hive",
                 instanceLabel: "instance · fixture"),
             state: state)
+        controller.installLiveRunWorkbench(LiveRunWorkbenchView(terminalFactory: nil))
         let window = try XCTUnwrap(controller.window)
         window.setContentSize(NSSize(width: 1_100, height: 720))
         window.contentView?.layoutSubtreeIfNeeded()
         let content = try XCTUnwrap(window.contentView)
         let topBar = try XCTUnwrap(findView(in: content, identifier: "shell-top-bar"))
+        let bannerStack = try XCTUnwrap(findView(
+            in: content, identifier: "shell-banners"))
+        let mainRow = try XCTUnwrap(findView(
+            in: content, identifier: "shell-main-row"))
         let banner = try XCTUnwrap(findView(
             in: content, identifier: "shell-banner-command-unavailable"))
         let topBarFrame = topBar.convert(topBar.bounds, to: content)
+        let bannerStackFrame = bannerStack.convert(bannerStack.bounds, to: content)
+        let mainRowFrame = mainRow.convert(mainRow.bounds, to: content)
         let bannerFrame = banner.convert(banner.bounds, to: content)
 
         XCTAssertEqual(bannerFrame.width, content.bounds.width, accuracy: 1)
         XCTAssertEqual(bannerFrame.minX, content.bounds.minX, accuracy: 1)
         XCTAssertEqual(bannerFrame.maxY, topBarFrame.minY, accuracy: 1)
+        XCTAssertEqual(bannerStackFrame.height, bannerFrame.height, accuracy: 1)
+        XCTAssertEqual(mainRowFrame.maxY, bannerFrame.minY, accuracy: 1)
     }
 
 
