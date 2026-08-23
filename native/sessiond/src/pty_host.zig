@@ -910,7 +910,11 @@ fn geometryFromWinsize(ws: c.struct_winsize) Geometry {
 }
 
 fn profileMatches(term: c.struct_termios, profile: TerminalProfile) bool {
-    return (term.c_lflag & c.ICANON != 0) == (profile.input_mode == .canonical) and
+    const canonical = profile.input_mode == .canonical;
+    return (term.c_lflag & c.ICANON != 0) == canonical and
+        (term.c_lflag & c.IEXTEN != 0) == canonical and
+        (term.c_lflag & c.ECHOE != 0) == canonical and
+        (term.c_iflag & c.ICRNL != 0) == canonical and
         (term.c_lflag & c.ECHO != 0) == profile.echo and
         (term.c_lflag & c.ISIG != 0) == profile.signal_characters and
         (term.c_iflag & c.IXON != 0) == profile.software_flow_control and
@@ -926,12 +930,28 @@ fn profileMatches(term: c.struct_termios, profile: TerminalProfile) bool {
 fn applyTerminalProfile(fd: c_int, profile: TerminalProfile) ?c_int {
     var term: c.struct_termios = undefined;
     if (c.tcgetattr(fd, &term) != 0) return std.c._errno().*;
-    c.cfmakeraw(&term);
+
+    // openpty supplies the platform's complete cooked profile. Preserve it for
+    // canonical sessions; cfmakeraw has no inverse and rebuilding only a few
+    // flags loses CR translation, extended editing, and visible erase.
+    if (profile.input_mode == .literal) c.cfmakeraw(&term);
     term.c_oflag |= c.OPOST | c.ONLCR;
-    if (profile.input_mode == .canonical) term.c_lflag |= c.ICANON;
-    if (profile.echo) term.c_lflag |= c.ECHO;
-    if (profile.signal_characters) term.c_lflag |= c.ISIG;
-    if (profile.software_flow_control) term.c_iflag |= c.IXON | c.IXOFF;
+    if (profile.input_mode == .canonical)
+        term.c_lflag |= c.ICANON
+    else
+        term.c_lflag &= ~@as(@TypeOf(term.c_lflag), c.ICANON);
+    if (profile.echo)
+        term.c_lflag |= c.ECHO
+    else
+        term.c_lflag &= ~@as(@TypeOf(term.c_lflag), c.ECHO);
+    if (profile.signal_characters)
+        term.c_lflag |= c.ISIG
+    else
+        term.c_lflag &= ~@as(@TypeOf(term.c_lflag), c.ISIG);
+    if (profile.software_flow_control)
+        term.c_iflag |= c.IXON | c.IXOFF
+    else
+        term.c_iflag &= ~@as(@TypeOf(term.c_iflag), c.IXON | c.IXOFF);
     if (profile.hangup_on_last_close)
         term.c_cflag |= c.HUPCL
     else
@@ -1155,13 +1175,49 @@ test "spawn default profile is a login tty with ICANON ECHO ISIG" {
     var applied: c.struct_termios = undefined;
     try testing.expectEqual(@as(c_int, 0), c.tcgetattr(host.master_fd, &applied));
 
-    // Verify login-tty defaults: ICANON + ECHO + ISIG
+    // A cooked login tty needs the companion input and echo flags too. Checking
+    // only ICANON/ECHO/ISIG misses a raw profile that was only partly rebuilt.
     try testing.expect(applied.c_lflag & c.ICANON != 0);
     try testing.expect(applied.c_lflag & c.ECHO != 0);
     try testing.expect(applied.c_lflag & c.ISIG != 0);
+    try testing.expect(applied.c_lflag & c.IEXTEN != 0);
+    try testing.expect(applied.c_lflag & c.ECHOE != 0);
+    try testing.expect(applied.c_iflag & c.ICRNL != 0);
     try testing.expect(applied.c_oflag & c.OPOST != 0);
     try testing.expect(applied.c_oflag & c.ONLCR != 0);
     try testing.expect(applied.c_cflag & c.HUPCL != 0);
+    try testing.expectEqual(@as(u8, 0x7f), applied.c_cc[c.VERASE]);
+}
+
+test "spawn default login profile accepts Return and visually erases Backspace" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    _ = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{
+            "/bin/sh",
+            "-c",
+            "IFS= read -r line; printf '<%s>\\n' \"$line\"",
+        },
+        .geometry = defaultGeometry(),
+    }));
+
+    // Ghostty encodes Return as CR and Backspace as DEL. The tty must turn CR
+    // into the canonical delimiter and echo the DEL erase visibly.
+    _ = try host.writeAccept("ab\x7f\r");
+    try host.writeDrainAll();
+
+    var got: std.ArrayList(u8) = .{};
+    defer got.deinit(testing.allocator);
+    var attempts: usize = 0;
+    while (attempts < 250) : (attempts += 1) {
+        if (!try appendAvailableChunk(&host, &got)) break;
+        if (std.mem.indexOf(u8, got.items, "<a>\r\n") != null) break;
+    }
+
+    try testing.expect(std.mem.indexOf(u8, got.items, "\x08 \x08") != null);
+    try testing.expect(std.mem.indexOf(u8, got.items, "<a>\r\n") != null);
 }
 
 test "child signal handlers are reset to SIG_DFL before exec" {

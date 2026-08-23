@@ -81,6 +81,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         wireBridgeEvents()
         wireAccessibilitySignals()
         wireWorkspaceEvents()
+        _ = makeAttachClient()
     }
 
     public init(frame frameRect: NSRect, viewerId: String = "viewer-local") throws {
@@ -109,6 +110,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         wireAccessibilitySignals()
         wireWorkspaceEvents()
         synchronizeRenderingState()
+        _ = makeAttachClient()
     }
 
     @available(*, unavailable)
@@ -227,6 +229,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     func makeAttachClient() -> AttachReplayClient {
+        if let attachClient { return attachClient }
         let client = AttachReplayClient(viewerId: viewerId, engine: engine)
         client.onInputSubmissionStateChange = { [weak self] state in
             guard let self else { return }

@@ -32,6 +32,7 @@ public final class AttachReplayClient {
     private var pendingResizeRequests: [UInt64: PendingResizeRequest] = [:]
     private let inputRouteLock = NSLock()
     private var inputTransport: HostTransport?
+    private var pendingInput = Data()
     /// Last host answer to a RESIZE, e.g. "applied 61x39" or "stale currentRevision=2" — the host refuses resizes silently on the wire, so the outcome must be observable here.
     public private(set) var lastResizeResult: String?
 
@@ -107,9 +108,9 @@ public final class AttachReplayClient {
         snapshotStarted = false
 
         let binding = SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId)
+        prepareInputRoute(for: grant.locator)
         self.binding = binding
         resetInputState()
-        setInputTransport(transport)
         applicator.bind(binding, highWater: afterSeq)
         highWater = afterSeq
 
@@ -182,7 +183,7 @@ public final class AttachReplayClient {
         defer { stateLock.unlock() }
         transport?.close()
         transport = nil
-        setInputTransport(nil)
+        prepareInputRoute(for: newBinding.locator)
         binding = newBinding
         resetInputState()
         applicator.bind(newBinding, highWater: highWater)
@@ -198,7 +199,7 @@ public final class AttachReplayClient {
         defer { stateLock.unlock() }
         transport?.close()
         transport = nil
-        setInputTransport(nil)
+        deactivateInputRoute()
         state = failure
         resetInputState()
     }
@@ -216,20 +217,14 @@ public final class AttachReplayClient {
     public func handleEncodedWrite(_ bytes: Data) {
         guard !bytes.isEmpty else { return }
         inputRouteLock.lock()
-        let transport = inputTransport
-        inputRouteLock.unlock()
-        guard let transport, !transport.isClosed else { return }
-
-        if bytes.count <= FrameCodec.streamChunkMaxBytes {
-            try? transport.sendInput(bytes)
+        defer { inputRouteLock.unlock() }
+        guard let transport = inputTransport, !transport.isClosed else {
+            pendingInput.append(bytes)
             return
         }
-
-        var offset = 0
-        while offset < bytes.count {
-            let end = min(offset + FrameCodec.streamChunkMaxBytes, bytes.count)
-            try? transport.sendInput(bytes.subdata(in: offset..<end))
-            offset = end
+        if let unsent = sendInput(bytes, through: transport) {
+            inputTransport = nil
+            pendingInput.append(unsent)
         }
     }
 
@@ -443,6 +438,9 @@ public final class AttachReplayClient {
     private func presentFirstCorrectFrame(binding: SurfaceBinding) -> AttachReplayOutcome {
         firstCorrectFramePresented = true
         state = .live
+        if let transport, transport.connectionId == binding.connectionId {
+            activateInputRoute(through: transport)
+        }
         return .firstCorrectFrame(highWater: highWater, connectionId: binding.connectionId)
     }
 
@@ -459,10 +457,50 @@ public final class AttachReplayClient {
         lastResizeResult = nil
     }
 
-    private func setInputTransport(_ transport: HostTransport?) {
+    private func prepareInputRoute(for locator: SessionLocator) {
         inputRouteLock.lock()
-        inputTransport = transport
+        inputTransport = nil
+        if let currentLocator = binding?.locator, currentLocator != locator {
+            pendingInput.removeAll(keepingCapacity: false)
+        }
         inputRouteLock.unlock()
+    }
+
+    private func deactivateInputRoute() {
+        inputRouteLock.lock()
+        inputTransport = nil
+        inputRouteLock.unlock()
+    }
+
+    private func activateInputRoute(through transport: HostTransport) {
+        inputRouteLock.lock()
+        defer { inputRouteLock.unlock() }
+        guard !transport.isClosed else { return }
+        inputTransport = transport
+        guard !pendingInput.isEmpty else { return }
+
+        let queued = pendingInput
+        pendingInput.removeAll(keepingCapacity: true)
+        if let unsent = sendInput(queued, through: transport) {
+            inputTransport = nil
+            pendingInput.append(unsent)
+        }
+    }
+
+    /// Returns the suffix that was not accepted so reconnect can retry it
+    /// without duplicating chunks already handed to the transport.
+    private func sendInput(_ bytes: Data, through transport: HostTransport) -> Data? {
+        var offset = 0
+        while offset < bytes.count {
+            let end = min(offset + FrameCodec.streamChunkMaxBytes, bytes.count)
+            do {
+                try transport.sendInput(bytes.subdata(in: offset..<end))
+            } catch {
+                return bytes.subdata(in: offset..<bytes.count)
+            }
+            offset = end
+        }
+        return nil
     }
 
     private func setInputSubmissionState(_ newState: InputSubmissionState) {

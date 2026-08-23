@@ -12,6 +12,47 @@ final class AttachInputTests: XCTestCase {
         cellHeightPx: 20
     )
 
+    func testInputBeforeAttachIsBufferedUntilHostIsReady() throws {
+        let host = FakeHost(connectionId: "input-before-attach")
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 800, height: 480),
+            engine: engine,
+            viewerId: "input-before-attach-viewer"
+        )
+        let earlyInput = Data("early\r\u{7f}".utf8)
+
+        view.insertText(
+            "early\r\u{7f}",
+            replacementRange: NSRange(location: NSNotFound, length: 0),
+            associatedEvent: nil
+        )
+        try host.harvestViewerFrames()
+        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .userInput })
+
+        let locator = makeTestLocator()
+        try host.enqueueWelcome(
+            instanceId: locator.instanceId,
+            connectionId: host.hostTransport.connectionId
+        )
+        host.enqueueAttachReady()
+        _ = try view.attach(
+            grant: host.makeGrant(locator: locator),
+            geometry: geometry,
+            transport: host.clientTransport
+        )
+        try host.harvestViewerFrames()
+
+        let hostAttachIndex = try XCTUnwrap(
+            host.receivedFromViewer.firstIndex { $0.type == .hostAttach }
+        )
+        let inputIndex = try XCTUnwrap(
+            host.receivedFromViewer.firstIndex { $0.type == .userInput }
+        )
+        XCTAssertLessThan(hostAttachIndex, inputIndex)
+        XCTAssertEqual(host.receivedFromViewer[inputIndex].payload, earlyInput)
+    }
+
     func testTextSendsOneRawInputFrame() throws {
         let host = FakeHost(connectionId: "input-conn")
         let engine = FakeManualSurface()
