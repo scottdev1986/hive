@@ -65,14 +65,17 @@ async function validateFactCitations(
   // Extract potential file paths (simple heuristic: words that look like paths)
   const pathPattern =
     /(?:^|\s)([.~]?\/[^\s]+|[a-zA-Z0-9_-]+\/[^\s]+\.[a-zA-Z0-9]+)/g;
-  const paths = Array.from(textToCheck.matchAll(pathPattern), (m) => m[1]);
+  const paths = Array.from(
+    textToCheck.matchAll(pathPattern),
+    (m) => m[1],
+  ).filter((p): p is string => p !== undefined);
 
   // Extract potential commands (simple heuristic: backtick-wrapped words or common commands)
   const commandPattern = /`([a-zA-Z0-9_-]+)`/g;
   const commands = Array.from(
     textToCheck.matchAll(commandPattern),
     (m) => m[1],
-  );
+  ).filter((c): c is string => c !== undefined);
 
   // Check paths relative to repoRoot
   for (const path of paths) {

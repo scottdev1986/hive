@@ -433,7 +433,8 @@ describe("library mutations", () => {
       repoRoot: target.root,
       // The rig has no daemon lock; running the operation directly is the
       // same critical section, since nothing else touches this temp root.
-      serialize: <T>(operation: () => Promise<T>) => operation(),
+      serialize: <T>(_scope: "global" | "repo", operation: () => Promise<T>) =>
+        operation(),
       writeMemoryFact: async (write: MemoryWriteInput) =>
         await writeMemoryFact(target.root, write),
       deleteMemoryFact: async (scope: MemoryScope, id: string) =>

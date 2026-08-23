@@ -7,6 +7,7 @@ import type { MemoryIndex } from "./fts-index";
 import { estimateTokens } from "./query";
 import { factVerificationFlag, listMemoryFacts } from "./memory-store";
 import { selectMemoryClasses } from "./ranking";
+import { oneLine } from "./article-format";
 
 // P0: detectMemoryTrigger preserved for preview UX only (literal-query detection)
 // No daemon delivery execution.

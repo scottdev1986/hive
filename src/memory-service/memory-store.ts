@@ -968,11 +968,13 @@ export async function buildMemoryIndex(
     const rowsByKey = new Map<string, string>();
     for (const item of allRows) {
       const match = item.row.match(/^- \[([^\]]+)\]\s+(\S+)/);
-      if (match !== null) {
+      if (match !== null && match[1] !== undefined && match[2] !== undefined) {
         const scopeTopic = match[1];
         const id = match[2];
         const scope = scopeTopic.split("/")[0];
-        rowsByKey.set(`${scope}/${id}`, item.row);
+        if (scope !== undefined) {
+          rowsByKey.set(`${scope}/${id}`, item.row);
+        }
       }
     }
 

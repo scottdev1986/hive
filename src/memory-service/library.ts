@@ -275,6 +275,6 @@ export async function applyMemoryMutation(
   const parsed = MemoryMutationRequestSchema.parse(request);
   // P0: Extract scope from the input for per-scope locking
   const scope: MemoryScope =
-    parsed.action === "delete" ? parsed.scope : parsed.input.scope;
+    parsed.action === "create" ? parsed.input.scope : parsed.scope;
   return await deps.serialize(scope, () => mutateLocked(deps, parsed));
 }

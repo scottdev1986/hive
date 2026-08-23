@@ -71,6 +71,7 @@ function parseProposals(content: string): Proposal[] {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (line === undefined) continue;
 
     if (line.trim() === PROPOSAL_MARKER) {
       inPending = true;
@@ -90,7 +91,7 @@ function parseProposals(content: string): Proposal[] {
       }
 
       const match = line.match(/^### ([^:]+): (.+)$/);
-      if (match) {
+      if (match && match[1] !== undefined && match[2] !== undefined) {
         currentProposal = {
           id: match[1].trim(),
           title: match[2].trim(),
@@ -205,6 +206,7 @@ export async function removeProposal(
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (line === undefined) continue;
 
     if (line.startsWith(`### ${proposalId}:`)) {
       skipUntilNextSection = true;
@@ -236,6 +238,8 @@ export async function removeProposal(
 }
 
 export function generateProposalId(category: string, index: number): string {
-  const timestamp = new Date().toISOString().split("T")[0].replace(/-/g, "");
+  const datePart = new Date().toISOString().split("T")[0];
+  if (datePart === undefined) throw new Error("Invalid ISO date format");
+  const timestamp = datePart.replace(/-/g, "");
   return `${category}-${timestamp}-${index}`;
 }
