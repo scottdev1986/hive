@@ -3,6 +3,7 @@ import type {
   MemoryRecallRowSchema,
   MemoryRecallSemanticSchema,
 } from "../schemas/memory-projections";
+import { oneLine } from "./article-format";
 import type { MemoryIndex } from "./fts-index";
 import { estimateTokens } from "./query";
 import { factVerificationFlag, listMemoryFacts } from "./memory-store";
