@@ -69,7 +69,6 @@ async function makeTempDir(prefix: string): Promise<string> {
 async function makeTempHome(): Promise<string> {
   const home = await makeTempDir("hive-home-");
   process.env.HIVE_HOME = home;
-  await mkdir(join(home, ".hive"), { recursive: true });
   return home;
 }
 
@@ -264,7 +263,7 @@ describe("Preference learning", () => {
     const inbox = await readProposals(root);
     expect(inbox.proposals.length).toBe(1);
 
-    const profilePath = join(getHiveHome(), ".hive", "profile.md");
+    const profilePath = join(getHiveHome(), "profile.md");
     const baseProfile = "# User Profile\n";
     const updatedProfile = applyProposalToProfile(
       inbox.proposals[0]!,
@@ -390,8 +389,13 @@ describe("Preference learning", () => {
 
       const prompt = await readFile(join(promptDirectory, promptName), "utf8");
 
-      expect(prompt).toContain("CLOSED_LOOP_MARKER");
-      expect(prompt).toContain("Use bun for testing");
+      const profileMatch = prompt.match(
+        /(?:^|\n)(?:## )?Profile(?:[^\n]*)\n([\s\S]*?)(?=\n(?:##|$))/i,
+      );
+      expect(profileMatch).toBeDefined();
+      const profileSection = profileMatch?.[1] ?? "";
+      expect(profileSection).toContain("CLOSED_LOOP_MARKER");
+      expect(profileSection).toContain("Use bun for testing");
     } finally {
       db.close();
       episodic.close();
@@ -402,7 +406,7 @@ describe("Preference learning", () => {
     const root = await makeTempDir("pref-queen-");
     await makeTempHome();
 
-    const profilePath = join(getHiveHome(), ".hive", "profile.md");
+    const profilePath = join(getHiveHome(), "profile.md");
     await writeFile(
       profilePath,
       [
@@ -418,8 +422,13 @@ describe("Preference learning", () => {
 
     const context = await buildQueenLaunchContext({ repoRoot: root });
 
-    expect(context).toContain("QUEEN_MARKER");
-    expect(context).toContain("write tests before implementation");
+    const profileMatch = context.match(
+      /(?:^|\n)(?:## )?Profile(?:[^\n]*)\n([\s\S]*?)(?=\n(?:##|$))/i,
+    );
+    expect(profileMatch).toBeDefined();
+    const profileSection = profileMatch?.[1] ?? "";
+    expect(profileSection).toContain("QUEEN_MARKER");
+    expect(profileSection).toContain("write tests before implementation");
   });
 
   test("empty_profile_fail_closed: empty profile returns stub", async () => {
