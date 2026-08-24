@@ -31,13 +31,6 @@ export interface PreferenceHarvestReport {
   errors: string[];
 }
 
-interface PreferenceCluster {
-  category: PreferenceSignal["category"];
-  preference: string;
-  events: EpisodicEvent[];
-  confidence: PreferenceSignal["confidence"];
-}
-
 function eventData(event: EpisodicEvent): Partial<Record<string, JsonValue>> {
   try {
     const provenance: JsonValue = JSON.parse(event.provenance);
@@ -110,28 +103,6 @@ function extractPreferenceSignal(
     }
   }
 
-  // Repeated tool/command patterns (recurrence signals preference)
-  if (
-    event.type === "agent.tool-used" ||
-    event.type === "command.executed" ||
-    event.type === "tool.success"
-  ) {
-    const tool = isString(data.tool) ? data.tool.trim() : null;
-    const command = isString(data.command) ? data.command.trim() : null;
-    const target = tool ?? command;
-
-    if (target && target.length > 0) {
-      return {
-        category: "tool",
-        preference: `Use ${target}`,
-        rationale: `Observed successful use of ${target}`,
-        confidence: "low",
-        observedAt: event.ts,
-        eventIds: [event.id],
-      };
-    }
-  }
-
   return null;
 }
 
@@ -145,8 +116,11 @@ function normalizePreference(pref: string): string {
 
 function clusterPreferences(
   signals: PreferenceSignal[],
-): Map<string, PreferenceCluster> {
-  const clusters = new Map<string, PreferenceCluster>();
+): Map<string, { signal: PreferenceSignal; eventIds: number[] }> {
+  const clusters = new Map<
+    string,
+    { signal: PreferenceSignal; eventIds: number[] }
+  >();
 
   for (const signal of signals) {
     const key = `${signal.category}:${normalizePreference(signal.preference)}`;
@@ -154,11 +128,11 @@ function clusterPreferences(
     const existing = clusters.get(key);
     if (!existing) {
       clusters.set(key, {
-        category: signal.category,
-        preference: signal.preference,
-        events: [],
-        confidence: signal.confidence,
+        signal,
+        eventIds: [...signal.eventIds],
       });
+    } else {
+      existing.eventIds.push(...signal.eventIds);
     }
   }
 
@@ -232,48 +206,34 @@ export async function harvestPreferences(
     }
   }
 
-  // Cluster by normalized preference
+  // Cluster by normalized preference and count actual events
   const clusters = clusterPreferences(signals);
 
-  // Count recurrences for each cluster
-  const recurrenceCounts = new Map<string, number>();
-  for (const [key] of clusters) {
-    const persistedKey = harvestedPreferenceKey(key);
-    const persisted = store.readMeta(persistedKey);
-    const count = persisted ? Number(persisted) + 1 : 1;
-    recurrenceCounts.set(key, count);
-  }
-
-  // Emit signals for clusters with recurrence ≥ minRecurrence
+  // Emit signals for clusters with event count ≥ minRecurrence
   for (const [key, cluster] of clusters) {
-    const count = recurrenceCounts.get(key) ?? 0;
-    if (count >= minRecurrence) {
+    const eventCount = cluster.eventIds.length;
+    if (eventCount >= minRecurrence) {
       // Check if already proposed
       const proposedKey = `preference-harvest.proposed.${key}`;
       if (!store.readMeta(proposedKey)) {
         report.signals.push({
-          category: cluster.category,
-          preference: cluster.preference,
-          rationale: `Observed ${count} times`,
+          category: cluster.signal.category,
+          preference: cluster.signal.preference,
+          rationale: `Observed ${eventCount} times`,
           confidence:
-            count >= 5 ? "high" : count >= 3 ? "medium" : cluster.confidence,
+            eventCount >= 5
+              ? "high"
+              : eventCount >= 3
+                ? "medium"
+                : cluster.signal.confidence,
           observedAt: new Date().toISOString(),
-          eventIds: signals
-            .filter(
-              (s) =>
-                `${s.category}:${normalizePreference(s.preference)}` === key,
-            )
-            .flatMap((s) => s.eventIds),
+          eventIds: cluster.eventIds,
         });
 
         // Mark as proposed
         store.writeMeta(proposedKey, "true");
       }
     }
-
-    // Update recurrence count
-    const persistedKey = harvestedPreferenceKey(key);
-    store.writeMeta(persistedKey, String(count));
   }
 
   writeHarvestHighWater(store, maxExaminedId);

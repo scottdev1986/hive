@@ -2,9 +2,9 @@
  * Preference learning tests: harvest → proposals → pack floor → spawn/queen
  *
  * Proves:
- * 1. Preferences appear in real HiveSpawner.spawn prompt (file-backed)
- * 2. Preferences appear in real buildQueenLaunchContext (file-backed)
- * 3. Harvest → proposal append path (file-backed)
+ * 1. Harvest → proposal append path (file-backed)
+ * 2. Closed-loop: harvest → proposals → apply → spawn sees it
+ * 3. Real queen launch sees preferences
  * 4. Empty prefs fail-closed (no TypeError)
  */
 
@@ -29,6 +29,7 @@ import { appendProposal, readProposals } from "../src/memory-service/proposals";
 import { loadProfile } from "../src/memory-service/pack-floor";
 import { HiveDatabase } from "../src/daemon/database/hive-database";
 import { HiveSpawner } from "../src/daemon/spawn/spawner-impl";
+import { getHiveHome } from "../src/hive-home/home";
 import type { RoutingPolicy } from "../src/schemas/routing-policy";
 import {
   type CapabilityRecord,
@@ -38,6 +39,7 @@ import {
 
 const tempRoots: string[] = [];
 const originalHome = process.env.HOME;
+const originalHiveHome = process.env.HIVE_HOME;
 const originalCodexHome = process.env.CODEX_HOME;
 
 afterEach(async () => {
@@ -48,7 +50,10 @@ afterEach(async () => {
   );
 
   if (originalHome) process.env.HOME = originalHome;
+  if (originalHiveHome) process.env.HIVE_HOME = originalHiveHome;
+  else delete process.env.HIVE_HOME;
   if (originalCodexHome) process.env.CODEX_HOME = originalCodexHome;
+  else delete process.env.CODEX_HOME;
 });
 
 async function makeTempDir(prefix: string): Promise<string> {
@@ -59,7 +64,7 @@ async function makeTempDir(prefix: string): Promise<string> {
 
 async function makeTempHome(): Promise<string> {
   const home = await makeTempDir("hive-home-");
-  process.env.HOME = home;
+  process.env.HIVE_HOME = home;
   await mkdir(join(home, ".hive"), { recursive: true });
   return home;
 }
@@ -119,11 +124,12 @@ describe("Preference learning", () => {
       minRecurrence: 2,
     });
 
-    expect(harvestReport.signals.length).toBeGreaterThan(0);
+    expect(harvestReport.signals.length).toBe(1);
     const signal = harvestReport.signals[0];
     if (!signal) throw new Error("Expected signal");
 
     expect(signal.preference).toContain("TypeScript strict mode");
+    expect(signal.eventIds.length).toBe(2);
 
     const proposal = {
       id: "profile-test-1",
@@ -147,27 +153,64 @@ describe("Preference learning", () => {
     episodic.close();
   });
 
-  test("real_spawn_has_preferences: profile appears in HiveSpawner.spawn prompt (file-backed)", async () => {
-    const root = await makeTempDir("pref-spawn-");
+  test("closed_loop: harvest → proposals → apply → spawn sees it", async () => {
+    const root = await makeTempDir("pref-closed-loop-");
     const home = await makeTempHome();
     const worktree = join(root, "test-agent");
     await mkdir(worktree, { recursive: true });
+    await mkdir(join(root, "docs"), { recursive: true });
 
     await copyFile(
       join(import.meta.dir, "../AGENT_STANDARDS.md"),
       join(root, "AGENT_STANDARDS.md"),
     );
 
-    const profilePath = join(home, ".hive", "profile.md");
+    const episodic = new EpisodicStore(":memory:");
+
+    const preference = "CLOSED_LOOP_MARKER: Use bun for testing";
+
+    episodic.appendEvent({
+      type: "user.preference",
+      summary: preference,
+      provenance: { data: { preference, category: "tool" } },
+    });
+
+    episodic.appendEvent({
+      type: "user.preference",
+      summary: preference,
+      provenance: { data: { preference, category: "tool" } },
+    });
+
+    const harvestReport = await harvestPreferences({
+      store: episodic,
+      minRecurrence: 2,
+    });
+
+    expect(harvestReport.signals.length).toBe(1);
+    const signal = harvestReport.signals[0];
+    if (!signal) throw new Error("Expected signal");
+
+    const proposal = {
+      id: "profile-closed-1",
+      createdAt: new Date().toISOString(),
+      category: "profile" as const,
+      title: `User preference: ${signal.preference.slice(0, 60)}`,
+      rationale: signal.rationale,
+      proposedChange: formatPreferenceProposal(signal),
+      source: "consolidator",
+    };
+
+    await appendProposal(root, proposal);
+
+    const inbox = await readProposals(root);
+    expect(inbox.proposals.length).toBe(1);
+
+    const profilePath = join(getHiveHome(), ".hive", "profile.md");
     await writeFile(
       profilePath,
-      [
-        "# User Profile",
-        "",
-        "## Code Style",
-        "- PREFERENCE_MARKER: Always use TypeScript strict mode",
-        "- Prefer functional programming patterns",
-      ].join("\n"),
+      ["# User Profile", "", "## Tool Preferences", `- ${preference}`].join(
+        "\n",
+      ),
       "utf-8",
     );
 
@@ -259,13 +302,13 @@ describe("Preference learning", () => {
 
     try {
       const admitted = await spawner.spawn({
-        task: "Test with preferences",
+        task: "Test closed loop",
         category: "simple_coding",
       });
 
       expect(admitted.status).toBe("spawning");
 
-      const promptDirectory = join(home, "runtime", "prompts");
+      const promptDirectory = join(getHiveHome(), "runtime", "prompts");
       for (let attempt = 0; attempt < 100; attempt += 1) {
         if (
           (await readdir(promptDirectory).catch(() => [])).some((name) =>
@@ -286,19 +329,19 @@ describe("Preference learning", () => {
 
       const prompt = await readFile(join(promptDirectory, promptName), "utf8");
 
-      expect(prompt).toContain("PREFERENCE_MARKER");
-      expect(prompt).toContain("TypeScript strict mode");
-      expect(prompt).toContain("functional programming patterns");
+      expect(prompt).toContain("CLOSED_LOOP_MARKER");
+      expect(prompt).toContain("Use bun for testing");
     } finally {
       db.close();
+      episodic.close();
     }
   });
 
-  test("queen_has_preferences: profile appears in buildQueenLaunchContext (file-backed)", async () => {
+  test("queen_has_preferences: profile appears in buildQueenLaunchContext", async () => {
     const root = await makeTempDir("pref-queen-");
     const home = await makeTempHome();
 
-    const profilePath = join(home, ".hive", "profile.md");
+    const profilePath = join(getHiveHome(), ".hive", "profile.md");
     await writeFile(
       profilePath,
       [
@@ -319,7 +362,7 @@ describe("Preference learning", () => {
   });
 
   test("empty_profile_fail_closed: empty profile returns stub (no TypeError)", async () => {
-    const home = await makeTempHome();
+    await makeTempHome();
 
     const profile = await loadProfile();
 
@@ -328,18 +371,13 @@ describe("Preference learning", () => {
     expect(profile.length).toBeGreaterThan(0);
   });
 
-  test("recurrence_threshold: recurrence=1 does not emit", async () => {
+  test("recurrence_counts_events: recurrence=1 does not emit", async () => {
     const episodic = new EpisodicStore(":memory:");
 
     episodic.appendEvent({
       type: "user.preference",
       summary: "Use Prettier",
-      provenance: {
-        data: {
-          preference: "Use Prettier",
-          category: "tool",
-        },
-      },
+      provenance: { data: { preference: "Use Prettier", category: "tool" } },
     });
 
     const harvestReport = await harvestPreferences({
@@ -348,6 +386,34 @@ describe("Preference learning", () => {
     });
 
     expect(harvestReport.signals.length).toBe(0);
+    episodic.close();
+  });
+
+  test("recurrence_counts_events: 2 events emit signal", async () => {
+    const episodic = new EpisodicStore(":memory:");
+
+    episodic.appendEvent({
+      type: "user.preference",
+      summary: "Use ESLint",
+      provenance: { data: { preference: "Use ESLint", category: "tool" } },
+    });
+
+    episodic.appendEvent({
+      type: "user.preference",
+      summary: "Use ESLint",
+      provenance: { data: { preference: "Use ESLint", category: "tool" } },
+    });
+
+    const harvestReport = await harvestPreferences({
+      store: episodic,
+      minRecurrence: 2,
+    });
+
+    expect(harvestReport.signals.length).toBe(1);
+    const signal = harvestReport.signals[0];
+    if (!signal) throw new Error("Expected signal");
+    expect(signal.eventIds.length).toBe(2);
+
     episodic.close();
   });
 });
