@@ -211,6 +211,74 @@ describe("Preference learning", () => {
     episodic.close();
   });
 
+  test("recurrence_across_passes: eventIds accumulate across harvest passes", async () => {
+    const root = await makeTempDir("pref-multi-pass-");
+    const dbPath = join(root, "episodic.db");
+    const store = new EpisodicStore(dbPath);
+
+    // Pass 1: Insert event 1, harvest (should NOT emit - count=1)
+    store.appendEvent({
+      type: "user.preference",
+      summary: "CROSS_PASS_PREF: Use strict types",
+      provenance: {
+        data: {
+          preference: "CROSS_PASS_PREF: Use strict types",
+          category: "style",
+        },
+      },
+    });
+
+    const harvestReport1 = await harvestPreferences({
+      store,
+      minRecurrence: 2,
+    });
+    expect(harvestReport1.signals.length).toBe(0);
+
+    // Pass 2: Insert event 2 (same pref), harvest (SHOULD emit - count=2)
+    store.appendEvent({
+      type: "user.feedback",
+      summary: "CROSS_PASS_PREF: Use strict types",
+      provenance: {
+        data: {
+          feedback: "CROSS_PASS_PREF: Use strict types",
+          category: "style",
+        },
+      },
+    });
+
+    const harvestReport2 = await harvestPreferences({
+      store,
+      minRecurrence: 2,
+    });
+    expect(harvestReport2.signals.length).toBe(1);
+
+    const signal = harvestReport2.signals[0];
+    if (!signal) throw new Error("Expected signal");
+    expect(signal.preference).toContain("CROSS_PASS_PREF");
+    expect(signal.eventIds.length).toBe(2);
+    expect(signal.eventIds).toEqual([1, 2]);
+
+    // Pass 3: Same pref again, should NOT emit again (already proposed)
+    store.appendEvent({
+      type: "user.preference",
+      summary: "CROSS_PASS_PREF: Use strict types",
+      provenance: {
+        data: {
+          preference: "CROSS_PASS_PREF: Use strict types",
+          category: "style",
+        },
+      },
+    });
+
+    const harvestReport3 = await harvestPreferences({
+      store,
+      minRecurrence: 2,
+    });
+    expect(harvestReport3.signals.length).toBe(0);
+
+    store.close();
+  });
+
   test("closed_loop_apply: harvest → proposals → apply → spawn sees it", async () => {
     const root = await makeTempDir("pref-closed-loop-");
     const home = await makeTempHome();

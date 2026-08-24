@@ -210,8 +210,21 @@ export async function harvestPreferences(
   const clusters = clusterPreferences(signals);
 
   // Emit signals for clusters with event count ≥ minRecurrence
+  // Accumulate eventIds across passes for recurrence persistence
   for (const [key, cluster] of clusters) {
-    const eventCount = cluster.eventIds.length;
+    const persistedKey = harvestedPreferenceKey(key);
+    const priorIdsRaw = store.readMeta(persistedKey);
+    const priorIds: number[] = priorIdsRaw ? JSON.parse(priorIdsRaw) : [];
+
+    // Merge new eventIds with prior eventIds
+    const allEventIds = Array.from(
+      new Set([...priorIds, ...cluster.eventIds]),
+    ).sort((a, b) => a - b);
+    const eventCount = allEventIds.length;
+
+    // Persist accumulated eventIds for next pass
+    store.writeMeta(persistedKey, JSON.stringify(allEventIds));
+
     if (eventCount >= minRecurrence) {
       // Check if already proposed
       const proposedKey = `preference-harvest.proposed.${key}`;
@@ -227,7 +240,7 @@ export async function harvestPreferences(
                 ? "medium"
                 : cluster.signal.confidence,
           observedAt: new Date().toISOString(),
-          eventIds: cluster.eventIds,
+          eventIds: allEventIds,
         });
 
         // Mark as proposed
