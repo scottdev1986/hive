@@ -1,11 +1,11 @@
 /**
- * Preference learning tests: harvest → proposals → pack floor → spawn/queen
+ * Preference learning tests: harvest → proposals → apply → pack floor → spawn/queen
  *
  * Proves:
- * 1. Harvest → proposal append path (file-backed)
- * 2. Closed-loop: harvest → proposals → apply → spawn sees it
+ * 1. Harvest counts events (2 events → emit)
+ * 2. Closed-loop: harvest → proposals → parse/apply → spawn sees it
  * 3. Real queen launch sees preferences
- * 4. Empty prefs fail-closed (no TypeError)
+ * 4. Empty prefs fail-closed
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -25,7 +25,11 @@ import {
   harvestPreferences,
   formatPreferenceProposal,
 } from "../src/memory-service/preference-harvest";
-import { appendProposal, readProposals } from "../src/memory-service/proposals";
+import {
+  appendProposal,
+  readProposals,
+  type Proposal,
+} from "../src/memory-service/proposals";
 import { loadProfile } from "../src/memory-service/pack-floor";
 import { HiveDatabase } from "../src/daemon/database/hive-database";
 import { HiveSpawner } from "../src/daemon/spawn/spawner-impl";
@@ -69,6 +73,41 @@ async function makeTempHome(): Promise<string> {
   return home;
 }
 
+function applyProposalToProfile(
+  proposal: Proposal,
+  existingProfile: string,
+): string {
+  const change = proposal.proposedChange;
+  const lines = change.split("\n");
+  const prefLines: string[] = [];
+
+  let inContent = false;
+  for (const line of lines) {
+    if (line.startsWith("- ") && !line.startsWith("**")) {
+      prefLines.push(line);
+      inContent = true;
+    } else if (inContent && line.trim() === "") {
+      break;
+    }
+  }
+
+  if (prefLines.length === 0) return existingProfile;
+
+  const category =
+    lines.find((l) => l.startsWith("## "))?.replace("## ", "") ?? "Preferences";
+
+  const profileLines = existingProfile.split("\n");
+  let categoryIndex = profileLines.findIndex((l) => l === `## ${category}`);
+
+  if (categoryIndex === -1) {
+    return `${existingProfile}\n\n## ${category}\n${prefLines.join("\n")}`;
+  }
+
+  const insertIndex = categoryIndex + 1;
+  profileLines.splice(insertIndex, 0, ...prefLines);
+  return profileLines.join("\n");
+}
+
 const AT = "2026-08-24T00:00:00.000Z";
 
 const testCodexRecord: CapabilityRecord = {
@@ -89,34 +128,21 @@ const testCodexRecord: CapabilityRecord = {
 };
 
 describe("Preference learning", () => {
-  test("harvest_to_proposal: harvest → proposal append (file-backed)", async () => {
-    const root = await makeTempDir("pref-harvest-");
+  test("harvest_counts_events: 2 events with minRecurrence 2 emits signal", async () => {
     const episodic = new EpisodicStore(":memory:");
-
-    await mkdir(join(root, "docs"), { recursive: true });
 
     const preference = "Always use TypeScript strict mode";
 
     episodic.appendEvent({
       type: "user.preference",
       summary: preference,
-      provenance: {
-        data: {
-          preference,
-          category: "style",
-        },
-      },
+      provenance: { data: { preference, category: "style" } },
     });
 
     episodic.appendEvent({
       type: "user.preference",
       summary: preference,
-      provenance: {
-        data: {
-          preference,
-          category: "style",
-        },
-      },
+      provenance: { data: { preference, category: "style" } },
     });
 
     const harvestReport = await harvestPreferences({
@@ -130,6 +156,39 @@ describe("Preference learning", () => {
 
     expect(signal.preference).toContain("TypeScript strict mode");
     expect(signal.eventIds.length).toBe(2);
+    expect(signal.rationale).toContain("Observed 2 times");
+
+    episodic.close();
+  });
+
+  test("harvest_to_proposal: harvest → proposal append (file-backed)", async () => {
+    const root = await makeTempDir("pref-harvest-");
+    const episodic = new EpisodicStore(":memory:");
+
+    await mkdir(join(root, "docs"), { recursive: true });
+
+    const preference = "Use ESLint for linting";
+
+    episodic.appendEvent({
+      type: "user.preference",
+      summary: preference,
+      provenance: { data: { preference, category: "tool" } },
+    });
+
+    episodic.appendEvent({
+      type: "user.preference",
+      summary: preference,
+      provenance: { data: { preference, category: "tool" } },
+    });
+
+    const harvestReport = await harvestPreferences({
+      store: episodic,
+      minRecurrence: 2,
+    });
+
+    expect(harvestReport.signals.length).toBe(1);
+    const signal = harvestReport.signals[0];
+    if (!signal) throw new Error("Expected signal");
 
     const proposal = {
       id: "profile-test-1",
@@ -148,12 +207,12 @@ describe("Preference learning", () => {
     const firstProposal = inbox.proposals[0];
     if (!firstProposal) throw new Error("Expected proposal");
     expect(firstProposal.category).toBe("profile");
-    expect(firstProposal.title).toContain("TypeScript strict mode");
+    expect(firstProposal.proposedChange).toContain("ESLint");
 
     episodic.close();
   });
 
-  test("closed_loop: harvest → proposals → apply → spawn sees it", async () => {
+  test("closed_loop_apply: harvest → proposals → apply → spawn sees it", async () => {
     const root = await makeTempDir("pref-closed-loop-");
     const home = await makeTempHome();
     const worktree = join(root, "test-agent");
@@ -190,10 +249,10 @@ describe("Preference learning", () => {
     const signal = harvestReport.signals[0];
     if (!signal) throw new Error("Expected signal");
 
-    const proposal = {
+    const proposal: Proposal = {
       id: "profile-closed-1",
       createdAt: new Date().toISOString(),
-      category: "profile" as const,
+      category: "profile",
       title: `User preference: ${signal.preference.slice(0, 60)}`,
       rationale: signal.rationale,
       proposedChange: formatPreferenceProposal(signal),
@@ -206,13 +265,15 @@ describe("Preference learning", () => {
     expect(inbox.proposals.length).toBe(1);
 
     const profilePath = join(getHiveHome(), ".hive", "profile.md");
-    await writeFile(
-      profilePath,
-      ["# User Profile", "", "## Tool Preferences", `- ${preference}`].join(
-        "\n",
-      ),
-      "utf-8",
+    const baseProfile = "# User Profile\n";
+    const updatedProfile = applyProposalToProfile(
+      inbox.proposals[0]!,
+      baseProfile,
     );
+    await writeFile(profilePath, updatedProfile, "utf-8");
+
+    const profileContent = await readFile(profilePath, "utf-8");
+    expect(profileContent).toContain("CLOSED_LOOP_MARKER");
 
     process.env.CODEX_HOME = join(home, "codex");
 
@@ -339,7 +400,7 @@ describe("Preference learning", () => {
 
   test("queen_has_preferences: profile appears in buildQueenLaunchContext", async () => {
     const root = await makeTempDir("pref-queen-");
-    const home = await makeTempHome();
+    await makeTempHome();
 
     const profilePath = join(getHiveHome(), ".hive", "profile.md");
     await writeFile(
@@ -361,7 +422,7 @@ describe("Preference learning", () => {
     expect(context).toContain("write tests before implementation");
   });
 
-  test("empty_profile_fail_closed: empty profile returns stub (no TypeError)", async () => {
+  test("empty_profile_fail_closed: empty profile returns stub", async () => {
     await makeTempHome();
 
     const profile = await loadProfile();
@@ -371,7 +432,7 @@ describe("Preference learning", () => {
     expect(profile.length).toBeGreaterThan(0);
   });
 
-  test("recurrence_counts_events: recurrence=1 does not emit", async () => {
+  test("recurrence_rejects_single_event", async () => {
     const episodic = new EpisodicStore(":memory:");
 
     episodic.appendEvent({
@@ -386,34 +447,6 @@ describe("Preference learning", () => {
     });
 
     expect(harvestReport.signals.length).toBe(0);
-    episodic.close();
-  });
-
-  test("recurrence_counts_events: 2 events emit signal", async () => {
-    const episodic = new EpisodicStore(":memory:");
-
-    episodic.appendEvent({
-      type: "user.preference",
-      summary: "Use ESLint",
-      provenance: { data: { preference: "Use ESLint", category: "tool" } },
-    });
-
-    episodic.appendEvent({
-      type: "user.preference",
-      summary: "Use ESLint",
-      provenance: { data: { preference: "Use ESLint", category: "tool" } },
-    });
-
-    const harvestReport = await harvestPreferences({
-      store: episodic,
-      minRecurrence: 2,
-    });
-
-    expect(harvestReport.signals.length).toBe(1);
-    const signal = harvestReport.signals[0];
-    if (!signal) throw new Error("Expected signal");
-    expect(signal.eventIds.length).toBe(2);
-
     episodic.close();
   });
 });
