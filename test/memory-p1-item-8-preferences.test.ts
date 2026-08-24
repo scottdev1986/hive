@@ -179,11 +179,13 @@ describe("P1 Item #8: Preference learning", () => {
       "utf-8",
     );
 
-    const profile = await loadProfile();
+    const { buildQueenLaunchContext } = await import("../src/cli/orchestrator");
 
-    expect(profile).toContain("write tests before implementation");
-    expect(profile).toContain("small, focused commits");
-    expect(profile).not.toContain("Profile slot reserved but empty");
+    const context = await buildQueenLaunchContext({ repoRoot: root });
+
+    expect(context).toContain("write tests before implementation");
+    expect(context).toContain("small, focused commits");
+    expect(context).not.toContain("Profile slot reserved but empty");
   });
 
   test("empty_profile_fail_closed: empty profile returns explicit stub (no TypeError)", async () => {
