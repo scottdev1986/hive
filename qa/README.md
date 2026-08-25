@@ -25,7 +25,7 @@ The older `docs/qa/` rig is gone. Git history keeps it.
 
 Four verbs, one job each. Do not collapse them.
 
-    make qa-clean     tear the isolated install down; prove user Hive untouched
+    make qa-clean     stop leftover QA processes and remove staging; succeeds if already gone
     make build-qa     compile one QA candidate from this tree into /tmp/hvqa-<tag>
     make qa           install that candidate, init the test project, bring the daemon up
     make qa-run       run this harness against the rig `make qa` left running

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -102,9 +103,16 @@ function inspectIdentity(pid: number): DaemonProcessIdentity | null {
 function canonicalIdentity(
   identity: DaemonProcessIdentity,
 ): DaemonProcessIdentity {
+  let executablePath = identity.executablePath;
+  try {
+    executablePath = realpathSync.native(identity.executablePath);
+  } catch {
+    // A deleted-but-still-running binary keeps the path macOS reported;
+    // that spelling is enough to decide whether it sits under the QA root.
+  }
   return {
     startToken: identity.startToken,
-    executablePath: realpathSync.native(identity.executablePath),
+    executablePath,
   };
 }
 
@@ -344,6 +352,61 @@ export function assertRootEmpty(
   }
 }
 
+async function signalRootUntilEmpty(
+  qaRoot: string,
+  signal: NodeJS.Signals,
+  attempts: number,
+  system: ProcessOwnershipSystem,
+): Promise<readonly OwnedProcess[]> {
+  const signalled = new Set<string>();
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const live = rootProcesses(qaRoot, system);
+    if (live.length === 0) return [];
+    for (const owned of live) {
+      const key = `${owned.pid}:${owned.startToken}`;
+      if (signalled.has(key)) continue;
+      system.signal(owned.pid, signal);
+      signalled.add(key);
+    }
+    await system.sleep(100);
+  }
+  return rootProcesses(qaRoot, system);
+}
+
+/** Stops every process whose executable is under the QA root. A missing
+ * registry or a failed registered teardown still reaps leftovers; `make qa`
+ * is the one that must refuse an active rig, not `make qa-clean`. */
+export async function reapRootProcesses(
+  qaRootPath: string,
+  registryPath: string | undefined = undefined,
+  system: ProcessOwnershipSystem = defaultSystem,
+): Promise<void> {
+  let qaRoot: string;
+  try {
+    qaRoot = realpathSync.native(qaRootPath);
+  } catch (error) {
+    // SAFETY: The surrounding code already established this contract.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (registryPath !== undefined && existsSync(registryPath)) {
+    try {
+      await stopOwnedProcesses(registryPath, system);
+    } catch {
+      // Registered identity may be stale; fall through and reap by path.
+    }
+  }
+  let remaining = await signalRootUntilEmpty(qaRoot, "SIGTERM", 50, system);
+  if (remaining.length > 0) {
+    remaining = await signalRootUntilEmpty(qaRoot, "SIGKILL", 20, system);
+  }
+  if (remaining.length > 0) {
+    throw new Error(
+      `refusing: processes remain under ${qaRoot}: ${remaining.map((process) => process.pid).join(",")}`,
+    );
+  }
+}
+
 function parseRole(value: string | undefined): ProcessRole {
   return processRoleSchema.parse(value);
 }
@@ -379,6 +442,12 @@ async function main(argv: readonly string[]): Promise<number> {
       if (qaRoot === undefined)
         throw new Error("assert-empty requires QA root");
       assertRootEmpty(qaRoot);
+      return 0;
+    }
+    case "reap": {
+      const [qaRoot, registryPath] = args;
+      if (qaRoot === undefined) throw new Error("reap requires QA root");
+      await reapRootProcesses(qaRoot, registryPath, defaultSystem);
       return 0;
     }
     default:

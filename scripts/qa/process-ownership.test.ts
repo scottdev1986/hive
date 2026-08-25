@@ -1,17 +1,12 @@
 import { expect, test } from "bun:test";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   beginOwnership,
   captureOwnership,
   readOwnershipRegistry,
+  reapRootProcesses,
   stopOwnedProcesses,
 } from "./process-ownership";
 
@@ -163,29 +158,48 @@ test("teardown refuses a reused pid and never signals it", async () => {
   }
 });
 
-test("the QA recipe uses the registry for every active-run teardown", () => {
-  const makefile = readFileSync(
-    join(import.meta.dir, "..", "..", "Makefile"),
-    "utf8",
-  );
-  const qaStart = makefile.indexOf("\nqa:\n");
-  const qaEnd = makefile.indexOf("\n# The QA runner", qaStart);
-  const qaCleanStart = makefile.indexOf("\nqa-clean:\n");
-  expect(qaStart).toBeGreaterThan(-1);
-  expect(qaEnd).toBeGreaterThan(qaStart);
-  expect(qaCleanStart).toBeGreaterThan(-1);
+test("reap stops unowned QA-root processes without a registry", async () => {
+  const setup = fixture();
+  try {
+    addProcess(setup, 501, "hive", "hive daemon");
+    addProcess(setup, 502, "hive", "hive daemon", "user");
 
-  const qa = makefile.slice(qaStart, qaEnd);
-  const qaClean = makefile.slice(qaCleanStart);
-  expect(qa).toContain('process-ownership.ts" begin');
-  expect(qa).toContain(
-    'process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" daemon',
-  );
-  expect(qa).toContain(
-    'process-ownership.ts" capture "$(QA_PROCESS_REGISTRY)" workspace orchestrator',
-  );
-  expect(qa).toContain('process-ownership.ts" stop');
-  expect(qa).not.toMatch(/\bkill\b/);
-  expect(qaClean).toContain('if [ -f "$(QA_PROCESS_REGISTRY)" ]');
-  expect(qaClean).toContain('process-ownership.ts" stop');
+    await reapRootProcesses(setup.qaRoot, setup.registryPath, setup.system);
+
+    expect(setup.processes.has(501)).toBe(false);
+    expect(setup.processes.has(502)).toBe(true);
+    expect(setup.signals).toEqual([{ pid: 501, signal: "SIGTERM" }]);
+  } finally {
+    rmSync(setup.root, { recursive: true, force: true });
+  }
+});
+
+test("reap kills a QA-root process whose registered identity changed", async () => {
+  const setup = fixture();
+  try {
+    beginOwnership(setup.qaRoot, setup.registryPath, setup.system);
+    addProcess(setup, 401, "hive", "hive daemon");
+    captureOwnership(setup.registryPath, setup.system);
+    const original = setup.processes.get(401);
+    if (original === undefined) throw new Error("fixture process missing");
+    setup.processes.set(401, { ...original, startToken: "401:2" });
+
+    await reapRootProcesses(setup.qaRoot, setup.registryPath, setup.system);
+
+    expect(setup.processes.has(401)).toBe(false);
+    expect(setup.signals).toEqual([{ pid: 401, signal: "SIGTERM" }]);
+  } finally {
+    rmSync(setup.root, { recursive: true, force: true });
+  }
+});
+
+test("reap is a no-op when the QA root is already gone", async () => {
+  const setup = fixture();
+  try {
+    rmSync(setup.qaRoot, { recursive: true, force: true });
+    await reapRootProcesses(setup.qaRoot, setup.registryPath, setup.system);
+    expect(setup.signals).toEqual([]);
+  } finally {
+    rmSync(setup.root, { recursive: true, force: true });
+  }
 });

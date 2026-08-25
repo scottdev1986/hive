@@ -92,6 +92,39 @@ test("isolation inventory ignores nested mutation and reds a new instance name",
   }
 });
 
+test("isolation compare ignores live-fleet run suffixes and reds a new instance", () => {
+  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-isolation-run-"));
+  const isolation = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "scripts",
+    "qa",
+    "isolation-inventory.sh",
+  );
+  try {
+    const hive = join(fixture, ".hive");
+    mkdirSync(join(hive, "instances", "dev-live"), { recursive: true });
+    mkdirSync(join(hive, "run", "abc123"), { recursive: true });
+    const before = join(fixture, "before");
+    const afterRun = join(fixture, "after-run");
+    const afterLeak = join(fixture, "after-leak");
+    expect(run([isolation, hive, before]).exitCode).toBe(0);
+    rmSync(join(hive, "run", "abc123"), { recursive: true, force: true });
+    mkdirSync(join(hive, "run", "def456"), { recursive: true });
+    expect(run([isolation, hive, afterRun]).exitCode).toBe(0);
+    const churn = run([isolation, "compare", before, afterRun]);
+    expect(churn.exitCode, churn.stderr + churn.stdout).toBe(0);
+    mkdirSync(join(hive, "instances", "qa-leaked"));
+    expect(run([isolation, hive, afterLeak]).exitCode).toBe(0);
+    const leaked = run([isolation, "compare", before, afterLeak]);
+    expect(leaked.exitCode).toBe(1);
+    expect(leaked.stdout + leaked.stderr).toContain("qa-leaked");
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
 test("isolation inventory ignores vendor bin entries and reds hive-qa", () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-isolation-bin-"));
   const isolation = join(

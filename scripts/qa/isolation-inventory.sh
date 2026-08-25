@@ -4,9 +4,13 @@
 # A live fleet writes hive.db-wal, logs, and mail while this runs. Hashing
 # those bytes would make every compare red and hide a real leak. This
 # listing is the names a leaked QA install would add or remove: top-level
-# entries, named instances, run/ and db-identity/ suffixes, and Hive's own
+# entries, named instances, db-identity/ suffixes, and Hive's own
 # default install names (hive, hive-dev, hive-qa) under ~/.local/bin and
 # ~/.local/share. Content of live databases is not hashed.
+#
+# run/ is captured but stripped on compare. The live daemon creates and
+# deletes its run suffix while QA is up, and treating that as a leak left
+# QA_STATE in place so the next `make qa` refused to start.
 #
 # Those two directories are a shared user PATH and share root. Other
 # products install and update there. Isolation probes only Hive's names; it
@@ -79,6 +83,7 @@ canonicalize() {
   /usr/bin/awk '
     BEGIN { FS = OFS = "\t" }
     $1 == "section" { section = $2; print; next }
+    section == "run" { next }
     section == "local-bin" || section == "local-share" {
       if ($1 == "state") { print; next }
       if ($1 == "L" || $1 == "F" || $1 == "D" || $1 == "O") {

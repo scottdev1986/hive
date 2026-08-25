@@ -12,7 +12,7 @@
 #
 # QA lifecycle (separate from the five; they keep their meaning):
 #
-#   make qa-clean     uninstall from the test project and remove qa
+#   make qa-clean     stop leftover QA processes and remove qa; succeeds if already gone
 #   make build-qa     build a standalone qa release without changing .dev/
 #   make qa           install the qa release, init the test project, bring the rig up
 #   make qa-run       run the harness in qa/ against the rig `make qa` left up
@@ -483,51 +483,66 @@ qa-run:
 	  HIVE_QA_RUNNER_PROJECT="$(QA_PROJECT)" \
 	  bun run "$(ROOT)/qa/run.ts"
 
-# Product uninstall runs only after exact teardown; isolation checks follow it.
-# A registry-free old fixture may use product stop only after proving no
-# executable remains under its staging root. If a previous qa-clean already
-# removed the binary (isolation compare failed after uninstall), skip product
-# uninstall and finish the isolation checks.
-# An older qa binary can die on a missing .mcp.json during --repo uninstall
-# and leave QA_STATE in place, which then blocks `make qa`. Retry --repo from
-# this checkout so fixture teardown can finish.
+# Idempotent: a second call, a build-only tree, or a half-finished previous
+# clean must still leave no QA staging. Isolation compare is skipped when
+# `make qa` never recorded hive-before; the staging tree is removed even if
+# that compare is red so the next `make qa` is not blocked by leftover state.
+# An older qa binary can die on a missing .mcp.json during --repo uninstall;
+# retry --repo from this checkout, and do not stop on a purge failure after
+# processes are already gone.
 qa-clean:
 	@sh "$(ROOT)/scripts/qa/validate-isolation.sh" qa-clean "$(ROOT)" "$(QA)" "$(HOME)/.hive" "$(QA_HOME)" "$(DEV_HOME)" "$(USER_HIVE)" "$(QA_PROJECT)"
 	@set -e; \
-	[ -f "$(QA_STATE)/hive-before" ] || { echo "no pre-run isolation inventory at $(QA_STATE)/hive-before; run 'make qa' first" >&2; exit 2; }; \
-	cd "$(QA_PROJECT)"; \
-	if [ -f "$(QA_PROCESS_REGISTRY)" ]; then \
-	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" stop "$(QA_PROCESS_REGISTRY)"; \
-	else \
-	  bun run "$(ROOT)/scripts/qa/process-ownership.ts" assert-empty "$(QA)"; \
-	  if [ -x "$(QA_BIN)" ]; then \
-	    env $(QA_ENV) "$(QA_BIN)" stop --force || true; \
-	    if [ -d "$(QA_HOME)/instances" ]; then \
-	      for inst in "$(QA_HOME)/instances"/*; do \
-	        [ -d "$$inst" ] || continue; \
-	        env $(QA_ENV) "$(QA_BIN)" --instance "$${inst##*/}" stop --force || true; \
-	      done; \
-	    fi; \
-	  fi; \
+	if [ ! -e "$(QA)" ]; then \
+	  echo "qa-clean: nothing to remove"; \
+	  exit 0; \
 	fi; \
+	cd "$(QA_PROJECT)"; \
+	bun run "$(ROOT)/scripts/qa/process-ownership.ts" reap "$(QA)" "$(QA_PROCESS_REGISTRY)"; \
 	if [ -x "$(QA_BIN)" ]; then \
+	  env $(QA_ENV) "$(QA_BIN)" stop --force || true; \
+	  if [ -d "$(QA_HOME)/instances" ]; then \
+	    for inst in "$(QA_HOME)/instances"/*; do \
+	      [ -d "$$inst" ] || continue; \
+	      env $(QA_ENV) "$(QA_BIN)" --instance "$${inst##*/}" stop --force || true; \
+	    done; \
+	  fi; \
 	  if ! env $(QA_ENV) "$(QA_BIN)" uninstall --repo --yes; then \
 	    echo "qa-clean: product repo uninstall failed; retrying with this checkout"; \
-	    env $(QA_ENV) bun "$(ROOT)/src/cli.ts" uninstall --repo --yes; \
+	    env $(QA_ENV) bun "$(ROOT)/src/cli.ts" uninstall --repo --yes || \
+	      echo "qa-clean: repo uninstall failed; removing staging files anyway"; \
 	  fi; \
-	  env $(QA_ENV) "$(QA_BIN)" uninstall --yes --purge; \
+	  env $(QA_ENV) "$(QA_BIN)" uninstall --yes --purge || \
+	    echo "qa-clean: product purge failed; removing staging files anyway"; \
 	else \
 	  echo "qa-clean: qa binary already gone; skipping product uninstall"; \
+	  env $(QA_ENV) bun "$(ROOT)/src/cli.ts" uninstall --repo --yes || \
+	    echo "qa-clean: repo uninstall skipped"; \
 	fi; \
 	bun run "$(ROOT)/scripts/qa/process-ownership.ts" assert-empty "$(QA)"; \
 	/bin/rm -rf "$(QA_HOME)" "$(QA_HOME).runtime" "$(QA_INSTALL_ROOT)" "$(QA_DIST)" "$(QA)/bin" "$(QA)/tmp" "$(QA_DAEMON_STARTUP_LOG)"; \
 	"$(ROOT)/scripts/qa/assert-qa-gone.sh" \
 	  "$(QA_HOME)" "$(QA_BIN)" "$(QA_BIN_LINK)" \
 	  "$(HOME)/.local/bin/hive-qa" "$(HOME)/.local/share/hive-qa"; \
-	"$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_STATE)/hive-after"; \
-	"$(ROOT)/scripts/qa/isolation-inventory.sh" compare "$(QA_STATE)/hive-before" "$(QA_STATE)/hive-after"; \
-	echo "qa-clean: Hive and the qa variant removed; user Hive isolation preserved"; \
-	/bin/rm -rf "$(QA_STATE)" "$(QA)"
+	isolation_status=0; \
+	isolation_checked=0; \
+	if [ -f "$(QA_STATE)/hive-before" ]; then \
+	  isolation_checked=1; \
+	  "$(ROOT)/scripts/qa/isolation-inventory.sh" "$(USER_HIVE)" "$(QA_STATE)/hive-after"; \
+	  "$(ROOT)/scripts/qa/isolation-inventory.sh" compare "$(QA_STATE)/hive-before" "$(QA_STATE)/hive-after" || isolation_status=$$?; \
+	else \
+	  echo "qa-clean: no pre-run isolation inventory; skipped isolation compare"; \
+	fi; \
+	/bin/rm -rf "$(QA_STATE)" "$(QA)"; \
+	if [ "$$isolation_status" -ne 0 ]; then \
+	  echo "qa-clean: QA staging removed; user Hive isolation changed" >&2; \
+	  exit "$$isolation_status"; \
+	fi; \
+	if [ "$$isolation_checked" -eq 1 ]; then \
+	  echo "qa-clean: Hive and the qa variant removed; user Hive isolation preserved"; \
+	else \
+	  echo "qa-clean: QA staging removed"; \
+	fi
 
 # No pipes anywhere: a red suite must exit red. The real-CLI e2e suite is already
 # inside `bun run test` and self-skips unless HIVE_E2E=1; opting in is
