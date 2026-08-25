@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
   type LaunchDeps,
   launchWorkspace,
+  orchestratorProcessPid,
   resolveWorkspaceApp,
   runningCommandPid,
   runWorkspace,
@@ -236,6 +237,15 @@ describe("hive opens the installed release Workspace", () => {
         () => "  99 HiveWorkspace --instance-home /tmp/hv-other\n",
       ),
     ).toBeNull();
+  });
+
+  test("a supervisor on a previous daemon port is not treated as live", () => {
+    const listing =
+      "34984 /opt/hive workspace-orchestrator --tool claude --port 59413 --instance-id 5a55821e7d\n";
+    expect(orchestratorProcessPid("5a55821e7d", 61234, () => listing)).toBeNull();
+    expect(orchestratorProcessPid("5a55821e7d", 59413, () => listing)).toBe(
+      34984,
+    );
   });
 
   test("with a session it hands the app the project, port, and hive binary", async () => {

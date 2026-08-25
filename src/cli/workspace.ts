@@ -54,7 +54,10 @@ export interface LaunchDeps {
     session: NonNullable<LaunchDeps["session"]>,
   ) => Promise<void>;
   readonly runningWorkspacePid?: (instanceHome: string) => number | null;
-  readonly runningOrchestratorPid?: (instanceId: string) => number | null;
+  readonly runningOrchestratorPid?: (
+    instanceId: string,
+    port: number,
+  ) => number | null;
   readonly activateWorkspace?: (app: string) => Promise<number>;
 }
 
@@ -85,12 +88,23 @@ export function workspaceProcessPid(instanceHome: string): number | null {
   ]);
 }
 
-export function orchestratorProcessPid(instanceId: string): number | null {
-  return runningCommandPid([
-    "workspace-orchestrator",
-    `--instance-id`,
-    instanceId,
-  ]);
+/** The live Queen supervisor for this daemon. Instance id is not enough: a
+ * supervisor that lost its daemon keeps retrying the old port forever, and
+ * treating that process as live leaves the new daemon with no Queen. */
+export function orchestratorProcessPid(
+  instanceId: string,
+  port: number,
+  listCommands: () => string = listProcessCommands,
+): number | null {
+  return runningCommandPid(
+    [
+      "workspace-orchestrator",
+      `--instance-id`,
+      instanceId,
+      `--port ${port}`,
+    ],
+    listCommands,
+  );
 }
 
 /** Starts the session's Queen supervisor outside the Workspace process. The
@@ -242,7 +256,7 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
     const instanceId = hiveInstanceSuffix();
     const existingOrchestrator = (
       deps.runningOrchestratorPid ?? orchestratorProcessPid
-    )(instanceId);
+    )(instanceId, deps.session.port);
     if (existingOrchestrator === null) {
       await (deps.startOrchestrator ?? startWorkspaceOrchestrator)(
         deps.session,
