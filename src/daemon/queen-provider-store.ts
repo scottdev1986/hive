@@ -97,7 +97,28 @@ export class QueenProviderControlStore {
 
   reconcileObserved(observed: CapabilityProvider | null): void {
     const current = this.read();
-    if (current.state !== "pending" || observed !== current.desired) return;
+    if (current.state === "pending") {
+      if (observed === null || observed !== current.desired) return;
+      this.settleIdle(current, observed);
+      return;
+    }
+    // failed is a latch for "the swap did not produce the requested queen,
+    // and the prior one is what is running." It is not a tombstone: a later
+    // boot that is not that preserved prior (including a hole-fill when prior
+    // was null) means no change is in flight.
+    if (
+      current.state === "failed" &&
+      observed !== null &&
+      observed !== current.prior
+    ) {
+      this.settleIdle(current, observed);
+    }
+  }
+
+  private settleIdle(
+    current: QueenProviderControlState,
+    observed: CapabilityProvider,
+  ): void {
     this.write({
       ...current,
       state: "idle",

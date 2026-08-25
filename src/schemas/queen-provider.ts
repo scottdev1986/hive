@@ -27,7 +27,7 @@ export const QueenVendorCapabilitySchema = z.strictObject({
   available: z.boolean(),
 });
 
-/** The one change state a client ever sees. idle — no provider change is in flight. pending — a compare-and-set was accepted and the daemon has not yet OBSERVED the requested provider running as the root. failed — the last accepted change could not produce a running queen on the requested provider; the prior provider was preserved. The failure text says why. Sticky until the next accepted change. */
+/** The one change state a client ever sees. idle — no provider change is in flight. pending — a compare-and-set was accepted and the daemon has not yet OBSERVED the requested provider running as the root. failed — the last accepted change could not produce a running queen on the requested provider; the prior provider was preserved. The failure text says why. Sticky while that preserved prior is what is running, or while nothing is. Observation of a live queen that is not that prior settles to idle; observation never bumps revision. */
 export const QUEEN_PROVIDER_CHANGE_STATES = [
   "idle",
   "pending",

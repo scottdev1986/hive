@@ -119,13 +119,45 @@ describe("queen provider control store", () => {
     // The steer goes back to the provider that was live when the change was
     // accepted — relaunching it is the preservation.
     expect(control.launchTool()).toEqual("codex");
-    // Observation of the preserved queen does not clear the failure; only
-    // the next accepted change does.
+    // Observation of the preserved queen does not clear the failure; the
+    // next accepted change does, or a later boot that is not that prior.
     control.reconcileObserved("codex");
     expect(control.read().state).toEqual("failed");
     const receipt = control.accept("grok", "2", "codex");
     expect(receipt.revision).toEqual("3");
     expect(control.read()).toMatchObject({ state: "pending", failure: null });
+  });
+
+  test("a failed change with no prior queen settles once a queen is observed", () => {
+    const control = store();
+    control.accept("claude", "0", null);
+    control.reportLaunchFailure(
+      "claude",
+      "ORCHESTRATOR_LAUNCH_FAILED: Hive bundled terminfo not found",
+    );
+    expect(control.read()).toMatchObject({ state: "failed", prior: null });
+    control.reconcileObserved(null);
+    expect(control.read().state).toEqual("failed");
+    control.reconcileObserved("claude");
+    expect(control.read()).toMatchObject({
+      state: "idle",
+      prior: "claude",
+      failure: null,
+    });
+  });
+
+  test("a failed change settles when a later boot is not the preserved prior", () => {
+    const control = store();
+    control.accept("kimi", "0", "claude");
+    control.reportLaunchFailure("kimi", "kimi CLI is broken");
+    control.reconcileObserved("claude");
+    expect(control.read().state).toEqual("failed");
+    control.reconcileObserved("grok");
+    expect(control.read()).toMatchObject({
+      state: "idle",
+      prior: "grok",
+      failure: null,
+    });
   });
 
   test("a failure of the preserving relaunch itself is appended, not lost", () => {

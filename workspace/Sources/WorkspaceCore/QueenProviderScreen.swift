@@ -93,6 +93,8 @@ public enum QueenProviderChangeState: Equatable, Sendable {
     case idle
     /// A compare-and-set was accepted and the daemon has not yet OBSERVED the requested provider running as the root.
     case pending
+    /// The last accepted change did not produce the requested queen. Sticky
+    /// while the preserved prior is what is running, or while nothing is.
     case failed
     case unknown(String)
 
