@@ -131,7 +131,7 @@ function inspectArchive(path: string): MachORecord[] {
     if (line.endsWith(":")) {
       const archMatch = line.match(/\(architecture ([^)]+)\)/);
       const memberMatch = line.match(
-        /\(([^()]+\.(?:o|a))\)(?: \(architecture [^)]+\))?:$/,
+        /\(([^()]+\.[oa])\)(?: \(architecture [^)]+\))?:$/,
       );
       architecture =
         archMatch?.[1] ??
