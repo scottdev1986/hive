@@ -2863,6 +2863,7 @@ export class HiveDaemon {
       { auditAllow: false },
     );
     if (!authorized.ok) return authorized.response;
+    this.queenProviderService.reconcileLiveRoot();
     const host = this.orchestratorSessiond?.snapshot() ?? null;
     const providerRun = this.rootProviderRun();
     const providerStatus =

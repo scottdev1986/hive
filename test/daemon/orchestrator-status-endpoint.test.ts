@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { OrchestratorHostStatusSchema } from "../../src/daemon/orchestrator-host/orchestrator-host-contract";
+import { QueenProviderControlStore } from "../../src/daemon/queen-provider-store";
 import { HiveDaemon } from "../../src/daemon/server";
 import { ORCHESTRATOR_NAME } from "../../src/schemas/agent";
+import type { CapabilityProvider } from "../../src/schemas/capability";
 
 const observedAt = "2026-08-18T12:00:00.000Z";
 const questionAt = "2026-08-18T12:01:00.000Z";
@@ -76,6 +78,42 @@ describe("GET /orchestrator-status provider identity", () => {
     expect(status.tool).toBe("codex");
     expect(status.model).toBe("gpt-5.6-sol");
     expect(status).not.toHaveProperty("taskDescription");
+    await daemon.stop();
+  });
+
+  test("settles a failed queen-provider latch when the live queen is observed", async () => {
+    const observed: CapabilityProvider | null = "claude";
+    const db = new HiveDatabase(":memory:");
+    const daemon = new HiveDaemon({
+      db,
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      queenRootObservation: () => observed,
+      spawner: {
+        spawn: async () => {
+          throw new Error("no spawns in this test");
+        },
+      },
+      repoRoot: "/tmp/hive-orchestrator-status-reconcile-test",
+    });
+    const control = new QueenProviderControlStore(db);
+    control.accept("claude", "0", null);
+    control.reportLaunchFailure(
+      "claude",
+      "ORCHESTRATOR_LAUNCH_FAILED: Hive bundled terminfo not found",
+    );
+    expect(control.read().state).toBe("failed");
+    const token = daemon.capabilities.mint("user", "user").token;
+    const response = await daemon.fetch(
+      new Request("http://hive/orchestrator-status", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(control.read()).toMatchObject({
+      state: "idle",
+      prior: "claude",
+      failure: null,
+    });
     await daemon.stop();
   });
 

@@ -198,4 +198,19 @@ final class QueenProviderScreenTests: XCTestCase {
         XCTAssertEqual(editor.observed.change.revision, "8")
         XCTAssertEqual(editor.body()?.expectedRevision, "8")
     }
+
+    func testALiveObservationReplacesAFailedLatch() throws {
+        var failed = try projection()
+        failed.change = QueenProviderChange(
+            state: .failed, revision: "1",
+            failure: "ORCHESTRATOR_LAUNCH_FAILED: Hive bundled terminfo not found")
+        var editor = QueenProviderEditor(projection: failed)
+        var live = try projection()
+        live.liveProvider = ProviderID("claude")
+        live.change = QueenProviderChange(state: .idle, revision: "1", failure: nil)
+        editor.observe(QueenProviderEditor(projection: live))
+        XCTAssertEqual(editor.observed.change.state, .idle)
+        XCTAssertNil(editor.observed.change.failure)
+        XCTAssertEqual(editor.observed.liveProvider, ProviderID("claude"))
+    }
 }

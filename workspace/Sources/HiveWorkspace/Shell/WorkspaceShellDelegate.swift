@@ -10,6 +10,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     private let shellTour: ((any WorkspaceShellQASurface) -> Void)?
     private var controller: WorkspaceShellWindowController?
     private var liveRunFeed: FeedClient?
+    private var queenProviderLiveRefresh: Task<Void, Never>?
     private var liveRunControlGateway: LiveRunControlGateway?
     private var agentKillGateway: AgentKillGateway?
 #if HIVE_QA_BUILD
@@ -70,7 +71,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                 } catch {
                     workbench.showControlUnavailable(error.localizedDescription)
                 }
-                startLiveRunFeed(workbench: workbench)
+                startLiveRunFeed(workbench: workbench, controller: controller)
                 controller.memoryRecallHandler = { [weak self, weak controller] request in
                     guard let self else { return }
                     Task { @MainActor in
@@ -343,7 +344,10 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    func startLiveRunFeed(workbench: LiveRunWorkbenchView) {
+    func startLiveRunFeed(
+        workbench: LiveRunWorkbenchView,
+        controller: WorkspaceShellWindowController
+    ) {
         guard let invocation = config.feedInvocation(
             workspaceSessionID: liveRunWorkspaceSessionID)
         else {
@@ -371,9 +375,10 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
                 closeAgent(session, gateway: agentKillGateway, workbench: workbench)
             }
         }
-        feed.onLine = { [weak workbench] line in
+        feed.onLine = { [weak self, weak workbench, weak controller] line in
             do {
                 workbench?.apply(try LiveRunProjection(feedLine: line))
+                self?.refreshQueenProviderFromLive(controller: controller)
             } catch {
                 workbench?.showUnavailable(error.localizedDescription)
             }
@@ -390,9 +395,38 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             try feed.start()
             // Agent creation needs a live Workspace identity before the first terminal exists, so the initial full inventory is intentionally empty.
             publishVisibility(nil, workbench: workbench)
+            refreshQueenProviderFromLive(controller: controller)
         } catch {
             workbench.showUnavailable(
                 "workspace-feed could not start: \(error.localizedDescription)")
+        }
+    }
+
+    /// Queen Provider is a durable CAS latch. Live Run follows the feed; this
+    /// re-reads the latch on that same live path so a Queen that is up cannot
+    /// keep a launch-time failed snapshot on screen.
+    @MainActor
+    private func refreshQueenProviderFromLive(
+        controller: WorkspaceShellWindowController?
+    ) {
+        guard queenProviderLiveRefresh == nil, let controller else { return }
+        queenProviderLiveRefresh = Task { @MainActor [weak self, weak controller] in
+            defer { self?.queenProviderLiveRefresh = nil }
+            guard let self, let controller else { return }
+            do {
+                let client = try await ShellLiveStore(config: self.config).makeClient()
+                let projection = await QueenProviderGateway(client: client).fetch()
+                guard let value = projection.value else { return }
+                controller.apply { current in
+                    current.refresh(queenProvider: QueenProviderEditor(
+                        projection: value, availability: projection.availability))
+                    current.apply(
+                        screen: projection.frozenScreen(facts: value.facts),
+                        for: .queen)
+                }
+            } catch {
+                // Live Run still owns the Queen process; keep the last observation.
+            }
         }
     }
 

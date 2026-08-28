@@ -113,6 +113,11 @@ export class QueenProviderService {
     return this.successionService;
   }
 
+  /** The feed polls this: a live Queen must settle a stale failed latch without waiting for someone to open Queen Provider. */
+  reconcileLiveRoot(): CapabilityProvider | null {
+    return this.observeQueenRoot();
+  }
+
   /** What the daemon can prove about the root right now: the observed provider (or null), with the control store reconciled against it. Observation settles the provider change and nothing more — a succession completes only on the successor's own attestation, never on an observation. */
   private observeQueenRoot(): CapabilityProvider | null {
     const observed = this.observedQueenProvider();
