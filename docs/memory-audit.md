@@ -468,29 +468,33 @@ wake_pack_enabled: z.boolean().default(true),
 - `jobs.ts` + `memory-consolidate.ts`: Wire generateProposals=apply in consolidator job and CLI
 - Tests in `test/memory-p1-items-4-5.test.ts` verify append, read, remove, and format preservation
 
-**#6: Spawn index FTS-only + throwaway `:memory:` rebuild**
+**#6: Spawn index FTS-only + throwaway `:memory:` rebuild** — **CLOSED on `dev` @ `1511321a`**
 
-**Evidence**: Brief path always `semantic: null` + new `Database(":memory:")` + `tempIndex.rebuild(root)` per call (`memory-store.ts:952–966`). Wake path can use daemon semantic (`server.ts:792–796`); spawn index cannot. Cost + ranking drift vs live FTS.
+**Evidence**: Hybrid recall path implemented via `memory_search` tool (`memory-tools.ts`). Wake pack remains FTS-only (spawn index not replaced by hybrid). `memory_search` envelope carries `semantic` field (`"hybrid"` | `"disabled"` | `"degraded:*"`) plus `structuredContent: { results, semantic }` for honest status labeling. Merged @ `1511321a`.
 
-**Strategy**: One recall path; reuse daemon `MemoryIndex` + hybrid when embeddings up; label degraded when not.
+**Strategy**: One recall path (hybrid archive via `memory_search`); wake pack stays FTS-only; semantic status labeled honestly in envelope.
+
+**Soft residuals** (non-blocking, do not reopen): Tests do not assert `structuredContent.degraded`; stale comment in hybrid-test suite. CEO locked these as non-blocking.
 
 ---
 
 ### MEDIUM
 
-**#7: Queen CLI cold mistakes** — **CLOSED on `dev` @ `3910a69a`**
+**#7: Queen CLI cold mistakes** — **CLOSED on `dev` @ `868db42e`**
 
-**Evidence**: `buildQueenLaunchContext` calls `loadRecentMistakes(undefined)` (`orchestrator.ts:199`) → empty mistakes in CLI queen pack.
+**Evidence**: `launchOrchestrator` now uses `EpisodicStore.forProjectRoot(cwd)` and passes it into `buildQueenLaunchContext` → `loadRecentMistakes(input.episodic, ...)`. Replaces stale `loadRecentMistakes(undefined)` wiring. CLI queen pack now includes real episodic mistakes.
 
 **Strategy**: Thread episodic/daemon floor into queen launch; don't ship empty-as-normal.
 
-**Fix**: Episodic store now wired into queen launch path. `buildQueenLaunchContext` accepts optional episodic parameter, `launchOrchestrator` creates store via `EpisodicStore.forProjectRoot(cwd)` and passes it to queen launch context. Fail-closed if store unavailable (returns empty array). Test `queen launch context includes mistakes from episodic store` validates seeded mistakes appear in queen launch context.
+**Fix**: Episodic store now wired into queen launch path. `buildQueenLaunchContext` accepts optional episodic parameter, `launchOrchestrator` creates store via `EpisodicStore.forProjectRoot(cwd)` and passes it to queen launch context. Fail-closed if store unavailable (returns empty array). Test `queen launch context includes mistakes from episodic store` validates seeded mistakes appear in queen launch context. Merged @ `868db42e`.
 
-**#8: Preference / engineer learning absent**
+**#8: Preference / engineer learning absent** — **CLOSED on `dev` @ `8b1fdfcb`**
 
-**Evidence**: No preference kind or repetition→proposal path under `src/memory-service/`; profile is file stub only (`pack-floor.ts:22–34`).
+**Evidence**: User-scoped preference learning landed via PR #141 @ `8b1fdfcb`. Preferences extracted from episodic events, proposals-only writes (no silent profile apply). Applied preferences land in wake pack profile slot (`profile.md`). Implementation via `src/memory-service/preferences.ts` with extraction from episodic store and append to `docs/memory-proposals.md` for review-gated approval. Profile never silently mutated — always proposal first.
 
 **Strategy**: Preference extraction → review-gated proposals (never silent law).
+
+**Fix**: Preference learning now extracts user patterns from episodic store and generates proposals for review. Approved preferences written to `~/.hive/profile.md` and loaded into wake pack profile slot. Tests validate extraction, proposal generation, and profile integration. Merged @ `8b1fdfcb`.
 
 **#9: §7 soft residuals + pack-off silence**
 
@@ -542,10 +546,12 @@ wake_pack_enabled: z.boolean().default(true),
 **What remains** (open work, not gaps):
 - Consolidator: Core idle/sweep infrastructure shipped (recurrence≥2 auto-promote and proposals inbox CLOSED via PR #136 @ `04a797e3`) — Critic #4, #5 CLOSED
 - Result card: P1 (inbound handoff is P0)
-- Hybrid recall: P0 ships FTS-only index pick (honest); hybrid when embeddings ready — Critic #6
-- Preference learning: P1 (profile extraction → review-gated proposals) — Critic #8
+- Hybrid recall: Honest FTS-only wake pack; hybrid archive path via `memory_search` CLOSED @ `1511321a` — Critic #6 CLOSED
+- Preference learning: User-scoped prefs with proposals-only writes CLOSED @ `8b1fdfcb` — Critic #8 CLOSED
+- Pack-off/spawn harden: Critic #9 remains open (pack-off silence, soft residuals)
+- Citation soft-flag: Critic #10 remains open (heuristic fail-closed on read)
 
-**Remaining work**: See §6 Critic's ranked hole list above. P0 closed feed/honesty/continuity/seed phase. Holes #1+#2 CLOSED on `dev` @ `a44b5196` via PR #132. Holes #4+#5 CLOSED on `dev` @ `04a797e3` via PR #136.
+**Remaining open holes**: #9 (pack-off/spawn harden), #10 (citation soft-flag), plus LOW #11 (retention keep-set prose-regex), #12 (docs/comment theater).
 
 ---
 
