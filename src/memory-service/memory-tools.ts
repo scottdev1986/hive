@@ -15,11 +15,7 @@ import {
 import type { MemoryEmbeddingWriteOutcome } from "./embeddings";
 import { findSimilarMemoryCandidates, type MemoryIndex } from "./fts-index";
 import { readMemoryFact, pathExists, commandExists } from "./memory-store";
-import {
-  buildMemoryRecallBundle,
-  memoryRecallDegradedWarning,
-  type MemoryRecallRow,
-} from "./recall";
+import { buildMemoryRecallBundle, memoryRecallDegradedWarning } from "./recall";
 import type { MemoryWriteFileResult } from "./store-records";
 
 export const MemoryIdSchema = z

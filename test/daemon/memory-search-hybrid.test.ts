@@ -1,4 +1,3 @@
-import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,13 +12,8 @@ import type {
   Spawner,
   SpawnRequest,
 } from "../../src/daemon/spawn/spawn-service";
-import {
-  type MemoryEmbedder,
-  MemoryEmbeddingIndex,
-  MemoryEmbeddingService,
-} from "../../src/memory-service/embeddings";
+import { type MemoryEmbedder } from "../../src/memory-service/embeddings";
 import { EpisodicStore } from "../../src/memory-service/episodic";
-import { MemoryIndex } from "../../src/memory-service/fts-index";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { actingAs } from "../support/daemon-test-support";
 
@@ -60,18 +54,6 @@ function mockEmbedder(
   };
 }
 
-function mockService(embedder: MemoryEmbedder | null): MemoryEmbeddingService {
-  return new MemoryEmbeddingService(
-    { provider: "local", model: "bge-small-en-v1.5" },
-    {
-      load: () =>
-        embedder === null
-          ? Promise.reject(new Error("mock load failure"))
-          : Promise.resolve(embedder),
-    },
-  );
-}
-
 class UnusedSpawner implements Spawner {
   async spawn(_request: SpawnRequest): Promise<AgentRecord> {
     throw new Error("not exercised by memory_search tests");
@@ -98,6 +80,7 @@ function parseSearchResult<T>(result: {
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool result");
   }
+  // SAFETY: JSON.parse returns unknown; type guard above ensures content.text exists
   const payload = JSON.parse(content.text) as {
     results: T;
     semantic: string;
@@ -112,6 +95,7 @@ function parseWriteResult<T>(result: {
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool result");
   }
+  // SAFETY: JSON.parse returns unknown; type guard above ensures content.text exists
   return JSON.parse(content.text) as T;
 }
 
