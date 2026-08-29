@@ -470,7 +470,7 @@ wake_pack_enabled: z.boolean().default(true),
 
 **#6: Spawn index FTS-only + throwaway `:memory:` rebuild** — **CLOSED on `dev` @ `1511321a`**
 
-**Evidence**: Hybrid recall path implemented via `memory_search` tool (`memory-tools.ts`). Wake pack remains FTS-only (spawn index not replaced by hybrid). `memory_search` envelope carries `semantic` field (`"hybrid"` | `"disabled"` | `"degraded:*"`) plus `structuredContent: { results, semantic }` for honest status labeling. Merged via PR #139 @ `1511321a`.
+**Evidence**: Hybrid recall path implemented via `memory_search` tool (`memory-tools.ts`). Wake pack remains FTS-only (spawn index not replaced by hybrid). `memory_search` envelope carries `semantic` field (`"hybrid"` | `"disabled"` | `"degraded:*"`) plus `structuredContent: { results, semantic }` for honest status labeling. Merged @ `1511321a`.
 
 **Strategy**: One recall path (hybrid archive via `memory_search`); wake pack stays FTS-only; semantic status labeled honestly in envelope.
 
