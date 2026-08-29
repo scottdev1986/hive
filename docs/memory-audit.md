@@ -522,11 +522,15 @@ wake_pack_enabled: z.boolean().default(true),
 
 **Residual** (do not reopen): `harvest-keep` test is harvest-shaped `writeMemoryFact`, not a live `harvestPitfalls` invoke.
 
-**#12: Docs/comment theater left for Hive Memory**
+**#12: Docs/comment theater left for Hive Memory** — **CLOSED on `dev` @ `d271b6b8`**
 
-**Evidence**: Wake-payload JSDoc still says "hybrid" unconditionally; `docs/agents/memory.md` still says citation "stubs".
+**Evidence**: Wake-payload JSDoc still said "hybrid" unconditionally; `docs/agents/memory.md` still said citation "stubs".
 
 **Strategy**: Honest labels in code; this audit writeup should correct docs claims.
+
+**Fix**: Docs and comments now say hybrid when semantic/embeddings available, FTS-only otherwise. Wake-payload JSDoc (`wake-payload.ts`) updated to describe conditional hybrid vs FTS-only behavior. `docs/agents/memory.md` now describes citation as heuristic path-exists and command-exists with soft-fail warnings, not stubs. This was a docs/comments-only change — no behavior change. Merged @ `d271b6b8`.
+
+**Residual** (do not reopen): The phrase before load-bearing apply still reads like a hard gate; #10 is warn-not-throw.
 
 ---
 
@@ -555,9 +559,11 @@ wake_pack_enabled: z.boolean().default(true),
 - Pack-off/spawn harden: Critic #9 CLOSED @ `8f6591f2` (empty vs dropped vs pack-off distinguishable, pack-off fail-closed)
 - Citation soft-flag: Critic #10 CLOSED @ `8f6591f2` (validateFactCitations soft-flags heuristic misses instead of throwing)
 
-**Closed holes**: LOW #11 CLOSED @ `d9a671d1` (retention keep-set now structured provenance, prose-regex fallback deleted).
+**Closed holes**: 
+- LOW #11 CLOSED @ `d9a671d1` (retention keep-set now structured provenance, prose-regex fallback deleted)
+- LOW #12 CLOSED @ `d271b6b8` (docs/comment theater fixed: wake-payload JSDoc now says hybrid when semantic/embeddings available, FTS-only otherwise; `docs/agents/memory.md` citation is heuristic path-exists and command-exists with soft-fail warnings, not stubs)
 
-**Remaining open holes**: LOW #12 (docs/comment theater: wake-payload JSDoc still says hybrid unconditionally; `docs/agents/memory.md` still says citation stubs).
+**Remaining open holes**: None. The Critic 12-hole ranked list is stamped CLOSED.
 
 ---
 
