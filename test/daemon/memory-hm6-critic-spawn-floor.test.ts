@@ -1,20 +1,47 @@
-import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getHiveHome } from "../../src/hive-home/home";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveSpawner } from "../../src/daemon/spawn/hive-spawner";
-import { buildMemoryIndex, writeMemoryFact } from "../../src/memory-service/memory-store";
-import { MemoryIndex } from "../../src/memory-service/fts-index";
+import { writeMemoryFact } from "../../src/memory-service/memory-store";
 import { buildQueenLaunchContext } from "../../src/cli/orchestrator";
+import {
+  type CapabilityRecord,
+  known,
+  unknown,
+} from "../../src/schemas/capability";
+import type { RoutingPolicy } from "../../src/schemas/routing-policy";
+
+const AT = "2026-08-29T00:00:00.000Z";
+
+const unmeasuredCodexRecord: CapabilityRecord = {
+  provider: "codex",
+  accountFingerprint: "codex:hm6-test",
+  cliVersion: "test",
+  canonicalId: "gpt-test",
+  variant: null,
+  launchToken: "gpt-test",
+  displayName: "gpt-test",
+  aliases: [],
+  entitled: known(true, "codex.model/list", AT),
+  hidden: known(false, "codex.model/list", AT),
+  supportsEffort: unknown("surface-silent", "codex.model/list", AT),
+  supportedEffortLevels: unknown("surface-silent", "codex.model/list", AT),
+  defaultEffort: unknown("surface-silent", "codex.model/list", AT),
+  observedAt: AT,
+};
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
+let previousCodexHome: string | undefined;
 
 afterEach(async () => {
-  if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
-  else Bun.env.HIVE_HOME = previousHiveHome;
+  if (previousHiveHome === undefined) delete process.env.HIVE_HOME;
+  else process.env.HIVE_HOME = previousHiveHome;
+  if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = previousCodexHome;
   await Promise.all(
     tempRoots
       .splice(0)
@@ -28,22 +55,23 @@ async function makeTempDir(prefix: string): Promise<string> {
   return dir;
 }
 
-function emptyPolicy() {
-  return {
-    version: 1 as const,
-    default: "claude",
-    category: {},
-    model: {},
-  };
-}
-
 describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => {
-  test("REAL HiveSpawner.spawn gets pack floor without embeddings", async () => {
-    previousHiveHome = Bun.env.HIVE_HOME;
+  test("REAL HiveSpawner.spawn writes prompt with pack floor (FTS-only)", async () => {
+    previousHiveHome = process.env.HIVE_HOME;
+    previousCodexHome = process.env.CODEX_HOME;
     const home = await makeTempDir("hive-hm6-spawn-");
-    Bun.env.HIVE_HOME = home;
     const repoRoot = await makeTempDir("hive-hm6-repo-");
-    const worktree = await makeTempDir("hive-hm6-worktree-");
+    const worktree = join(repoRoot, "hive-test-worktree");
+    await mkdir(worktree, { recursive: true });
+    process.env.HIVE_HOME = home;
+    process.env.CODEX_HOME = join(home, "codex");
+
+    // Copy AGENT_STANDARDS.md (required for spawn)
+    await copyFile(
+      join(import.meta.dir, "../../AGENT_STANDARDS.md"),
+      join(repoRoot, "AGENT_STANDARDS.md"),
+    );
+
     const db = new HiveDatabase(":memory:");
 
     // Write memory articles (pack floor)
@@ -51,7 +79,7 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
       scope: "repo",
       topic: "testing",
       title: "Spawn floor fact",
-      body: "This fact is in the spawn pack floor.",
+      body: "This fact is in the spawn pack floor without embeddings.",
       source: "agent",
       evidence: "spawn-test",
       status: "unverified",
@@ -60,88 +88,137 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
       supersedes: [],
     });
 
-    let builtMemoryIndex: string | null = null;
+    const policy: RoutingPolicy = {
+      schemaVersion: 3,
+      revision: 1,
+      updatedAt: AT,
+      provisional: false,
+      providers: {},
+      models: [],
+      global: null,
+      categories: {
+        code_review: {
+          mode: "user-weighted",
+          candidates: [
+            {
+              provider: "codex",
+              model: "gpt-test",
+              effort: { mode: "provider-controlled" },
+              weight: 1,
+            },
+          ],
+        },
+      },
+    };
+
+    const admission = {
+      engineBuildId: "hm6-test",
+      visibility: {
+        workspaceSessionId: "hm6-test",
+        workspacePid: 12345,
+        workspaceStartToken: "12345:1",
+        openTerminalRevision: "1",
+      },
+    };
+
     const spawner = new HiveSpawner({
       db,
       repoRoot,
       port: 4317,
       config: {},
-      readRoutingPolicy: () => emptyPolicy(),
+      readRoutingPolicy: () => policy,
       isModelEnabled: async () => true,
+      discoverCapabilities: async (provider) =>
+        provider === "codex"
+          ? {
+              status: "ok",
+              records: [unmeasuredCodexRecord],
+              effectiveDefault: {
+                provider: "codex",
+                model: unknown("field-absent", "codex.config/read", AT),
+                effort: unknown("field-absent", "codex.config/read", AT),
+              },
+            }
+          : { status: "unavailable", reason: "not in fixture" },
       readBilling: async () => null,
-      createWorktree: async () => ({ path: worktree, branch: "hive/test" }),
+      createWorktree: async () => ({
+        path: worktree,
+        branch: "hive/test",
+      }),
       unavailableAgentNames: async () => new Set(),
       stopSession: async () => ({ killed: [], survivors: [] }),
-      buildMemoryIndex: async (root, options) => {
-        const index = await buildMemoryIndex(root, options);
-        builtMemoryIndex = index;
-        return index;
-      },
+      listCodexMcpServers: async () => [],
       claudeExecutable: "claude",
       codexExecutable: "codex",
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
       sessiond: {
-        prepareAgentCreation: async () => ({
-          engineBuildId: "test",
-          visibility: {
-            workspaceSessionId: "test",
-            workspacePid: 123,
-            workspaceStartToken: "123:1",
-            openTerminalRevision: "1",
-          },
-        }),
+        prepareAgentCreation: async () => admission,
         admit: async () => null,
         terminalHost: {
           create: async () => {
-            throw new Error("spawn refused before terminal");
+            throw new Error("terminal creation stopped after prompt assembly");
           },
-          inspect: async () => ({ state: "absent" }),
+          inspect: async () => ({ state: "absent" as const }),
           terminate: async () => {},
         },
       },
-      discoverCapabilities: async () => ({
-        status: "unavailable",
-        reason: "test",
-      }),
     });
 
-    // Spawn will fail (no capabilities), but it builds memory index first
-    await spawner
-      .spawn({
-        id: "test-spawn",
-        name: "test",
+    try {
+      const admitted = await spawner.spawn({
         task: "test task",
         category: "code_review",
-        effort: { target: "best", instruction: null },
-      })
-      .catch(() => {
-        /* expected */
       });
+      expect(admitted.status).toBe("spawning");
 
-    // Verify pack floor was built via FTS-only (no embeddings)
-    expect(builtMemoryIndex).not.toBeNull();
-    expect(builtMemoryIndex).toContain("Spawn floor fact");
-    expect(builtMemoryIndex).toContain("memory_search");
-    expect(builtMemoryIndex).toContain("memory_read");
+      // Read the actual prompt file from getHiveHome()/runtime/prompts/
+      const promptDirectory = join(getHiveHome(), "runtime", "prompts");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (
+          (await readdir(promptDirectory).catch(() => [])).some((name) =>
+            name.endsWith(".txt"),
+          )
+        ) {
+          break;
+        }
+        await Bun.sleep(5);
+      }
+      const promptName = (await readdir(promptDirectory)).find((name) =>
+        name.endsWith(".txt"),
+      );
+      expect(promptName).toBeDefined();
+      if (promptName === undefined)
+        throw new Error("launch prompt was not written");
 
-    // Verify buildMemoryIndex used FTS-only (no semantic)
-    // It worked without embeddings being initialized
+      const prompt = await readFile(join(promptDirectory, promptName), "utf8");
+
+      // Verify pack floor is in the prompt WITHOUT requiring memory_search
+      expect(prompt).toContain("Spawn floor fact");
+      expect(prompt).toContain("Knowledge index data");
+      expect(prompt).toContain("memory_search");
+      expect(prompt).toContain("memory_read");
+
+      // This proves spawn got pack floor via buildMemoryIndex (FTS-only)
+      // memory_search is mentioned as an ARCHIVE tool, not required for pack
+    } finally {
+      db.close();
+    }
   });
 
-  test("REAL buildQueenLaunchContext gets pack floor without embeddings", async () => {
-    previousHiveHome = Bun.env.HIVE_HOME;
+  test("REAL buildQueenLaunchContext includes pack floor (FTS-only)", async () => {
+    previousHiveHome = process.env.HIVE_HOME;
     const home = await makeTempDir("hive-hm6-queen-");
-    Bun.env.HIVE_HOME = home;
     const repoRoot = await makeTempDir("hive-hm6-queen-repo-");
+    process.env.HIVE_HOME = home;
 
     // Write memory articles (pack floor)
     await writeMemoryFact(repoRoot, {
       scope: "repo",
       topic: "testing",
       title: "Queen floor fact",
-      body: "This fact is in the queen pack floor.",
+      body: "This fact is in the queen pack floor without embeddings.",
       source: "agent",
       evidence: "queen-test",
       status: "unverified",
@@ -150,62 +227,25 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
       supersedes: [],
     });
 
-    // Build memory index (FTS-only, no embeddings)
-    const memoryIndex = await buildMemoryIndex(repoRoot, {
-      brief: "queen test",
-    });
-
-    // Call REAL buildQueenLaunchContext
+    // Call REAL buildQueenLaunchContext WITHOUT pre-built index
+    // It will build the index internally via buildMemoryIndex (FTS-only)
     const launchText = await buildQueenLaunchContext({
-      memoryIndex,
       repoRoot,
     });
 
-    // Verify pack floor present
+    // Verify pack floor present WITHOUT requiring memory_search
     expect(launchText).toContain("Hive Constitution");
     expect(launchText).toContain("Profile");
     expect(launchText).toContain("Project");
 
-    // Verify memory index present
+    // Verify memory index present (built via FTS-only path)
     expect(launchText).toContain("Knowledge index data");
     expect(launchText).toContain("Queen floor fact");
 
-    // Verify memory_search mentioned as archive tool
+    // memory_search is mentioned as archive tool, not required for pack
     expect(launchText).toContain("memory_search");
     expect(launchText).toContain("memory_read");
 
-    // Queen got pack floor without embeddings
-  });
-
-  test("buildMemoryIndex (spawn/queen path) always FTS-only", async () => {
-    previousHiveHome = Bun.env.HIVE_HOME;
-    const home = await makeTempDir("hive-hm6-fts-");
-    Bun.env.HIVE_HOME = home;
-    const repoRoot = await makeTempDir("hive-hm6-fts-repo-");
-
-    await writeMemoryFact(repoRoot, {
-      scope: "repo",
-      topic: "testing",
-      title: "FTS-only verification",
-      body: "This proves buildMemoryIndex uses FTS-only.",
-      source: "agent",
-      evidence: "fts-test",
-      status: "unverified",
-      kind: "article",
-      tags: [],
-      supersedes: [],
-    });
-
-    // buildMemoryIndex is what spawn/queen call (not memory_search)
-    const index = await buildMemoryIndex(repoRoot, {
-      brief: "fts verification",
-    });
-
-    // Verify it worked without embeddings
-    expect(index).toContain("FTS-only verification");
-    expect(index).toContain("memory_search");
-
-    // This proves spawn/queen path never requires semantic
-    // memory_search is ARCHIVE (extra), not required for pack floor
+    // Queen got pack floor via buildMemoryIndex (FTS-only, no embeddings)
   });
 });

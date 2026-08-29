@@ -222,14 +222,22 @@ export function registerMemoryTools(
             : `~/.hive/memory/wiki/${row.topic}/${row.id}.md`,
       }));
 
-      // Include degraded warning if applicable
+      // Label semantic status so client can tell FTS-only vs hybrid
       if (bundle.semantic.startsWith("degraded:")) {
         const state = bundle.semantic.slice("degraded:".length);
         const warning = memoryRecallDegradedWarning(state);
         return toolResult(results, "results", warning);
       }
 
-      return toolResult(results, "results");
+      // Return semantic status label for hybrid or disabled
+      const semanticLabel =
+        bundle.semantic === "hybrid"
+          ? "semantic: hybrid"
+          : bundle.semantic === "disabled"
+            ? "semantic: disabled"
+            : null;
+
+      return toolResult(results, "results", semanticLabel);
     },
   );
 
