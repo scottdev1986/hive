@@ -83,6 +83,7 @@ export async function createAgentUiHarness(
     height: 30,
     kittyKeyboard: true,
     exitOnCtrlC: false,
+    autoFocus: false,
   });
   const reportedReceipts: SubmissionReceipt[] = [];
   const reportedWakes: FrontendWakeReport[] = [];

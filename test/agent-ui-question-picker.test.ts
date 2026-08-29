@@ -198,7 +198,7 @@ describe("a question is readable and answerable", () => {
 
     expect(harness.ui.snapshot().draft).toBe("");
     expect(harness.testRenderer.captureCharFrame()).toContain(
-      "Type your answer",
+      "Type your own answer",
     );
     await harness.testRenderer.mockInput.typeText("Svelte");
     harness.testRenderer.mockInput.pressEnter();
@@ -473,16 +473,37 @@ describe("a multi-question ask is answered one question at a time", () => {
     ]);
   });
 
-  test("the card lists an Other row that typing highlights", async () => {
+  test("the Other row is the text field: typing shows there and the composer folds away", async () => {
     askTwo();
     await settle();
-    expect(harness.testRenderer.captureCharFrame()).toContain(
-      "Other — type your own below",
+    const opened = harness.testRenderer.captureCharFrame();
+    expect(opened).toContain("✎  Other — type your own");
+    expect(opened).not.toContain("Type an answer or choose above");
+
+    await harness.testRenderer.mockInput.typeText("gRPC");
+    await settle();
+    const typing = harness.testRenderer.captureCharFrame();
+    expect(typing).toContain("❯ ✎  gRPC▏");
+    expect(typing.match(/gRPC/g)).toHaveLength(1);
+    expect(harness.ui.snapshot().draft).toBe("gRPC");
+  });
+
+  test("the composer comes back once the custom-text question is gone", async () => {
+    askTwo();
+    await settle();
+    harness.ui.onProviderEvent(
+      harness.driver.emit({
+        kind: "approval-waiting",
+        requestId: "allow-1",
+        turnId: "t1",
+        toolName: "bash",
+        summary: "run tests",
+      }),
     );
-    await harness.testRenderer.mockInput.typeText("g");
+    await Bun.sleep(10);
     await settle();
     expect(harness.testRenderer.captureCharFrame()).toContain(
-      "❯ ✎  Other — type your own below",
+      "Choose an approval above",
     );
   });
 
@@ -547,6 +568,98 @@ describe("a multi-question ask is answered one question at a time", () => {
         },
       },
     ]);
+  });
+});
+
+describe("the mouse never takes the keyboard away from the composer", () => {
+  function rowAt(text: string): number {
+    const row = harness.testRenderer
+      .captureCharFrame()
+      .split("\n")
+      .findIndex((line) => line.includes(text));
+    if (row === -1) throw new Error(`no row shows ${text}`);
+    return row;
+  }
+
+  test("a click on a card leaves typing where it was", async () => {
+    harness.ui.onProviderEvent(
+      harness.driver.emit({ kind: "turn-started", turnId: "t1" }),
+    );
+    harness.ui.onProviderEvent(
+      harness.driver.emit({
+        kind: "approval-waiting",
+        requestId: "allow-1",
+        turnId: "t1",
+        toolName: "bash",
+        summary: "run tests",
+      }),
+    );
+    await Bun.sleep(10);
+    await settle();
+    await harness.testRenderer.mockMouse.click(20, rowAt("run tests"));
+    await settle();
+    await harness.testRenderer.mockInput.typeText("still typing");
+    await settle();
+
+    expect(harness.ui.snapshot().draft).toBe("still typing");
+  });
+
+  test("clicking an option chooses it and clicking Other readies it for typing", async () => {
+    harness.ui.onProviderEvent(
+      harness.driver.emit({ kind: "turn-started", turnId: "t1" }),
+    );
+    harness.ui.onProviderEvent(
+      harness.driver.emit({
+        kind: "question-waiting",
+        requestId: "perm-2",
+        turnId: "t1",
+        summary: "Transport",
+        options: [],
+        questions: [
+          {
+            questionId: "Which transport?",
+            text: "Which transport?",
+            header: "Transport",
+            multiSelect: false,
+            allowCustom: true,
+            secret: false,
+            options: [
+              { optionId: "HTTP/2", name: "HTTP/2", kind: "allow" },
+              { optionId: "WebSocket", name: "WebSocket", kind: "allow" },
+            ],
+          },
+          {
+            questionId: "Which environments?",
+            text: "Which environments?",
+            header: "Rollout",
+            multiSelect: true,
+            allowCustom: true,
+            secret: false,
+            options: [{ optionId: "staging", name: "staging", kind: "allow" }],
+          },
+        ],
+      }),
+    );
+    await Bun.sleep(10);
+    await settle();
+    await harness.testRenderer.mockMouse.click(12, rowAt("2  WebSocket"));
+    await settle();
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "✓ Transport: WebSocket",
+    );
+
+    await harness.testRenderer.mockMouse.click(
+      12,
+      rowAt("Other — type your own"),
+    );
+    await settle();
+    await harness.testRenderer.mockInput.typeText("canary");
+    await settle();
+    // The multi-select row sits under its checkboxes, hence the wider lead.
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "❯     ✎  canary▏",
+    );
+    expect(harness.driver.permissionDecisions).toEqual([]);
   });
 });
 

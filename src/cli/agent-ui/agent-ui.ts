@@ -124,6 +124,8 @@ import {
   selectedMode,
   selectedModel,
   selectedModelEffort,
+  setElicitationDraft,
+  setElicitationSelection,
   setModelPickerApplying,
   setModePickerApplying,
   settleCompaction,
@@ -317,6 +319,7 @@ export class AgentUi {
   private readonly onPaste: (event: PasteEvent) => void;
   private composerPlaceholder: string | null = null;
   private composerBorder: string = COLORS.headerEdge;
+  private composerInline = false;
   private parkedDraft: string | null = null;
   private secretQuestionKey: string | null = null;
   private secretAnswer: string[] = [];
@@ -406,6 +409,8 @@ export class AgentUi {
         paddingBottom: 1,
       },
     });
+    // A scroll box is focusable by default so it can take j/k scrolling; here the composer owns every key and paging is routed by hand, so the box must never be able to take focus from it.
+    this.transcript.focusable = false;
     // The pane scrolls like a terminal, not a web page: wheel and paging keys work, but no scrollbar column sits over the text. Only the property setter latches manual visibility — passed as a constructor option it is erased by a field initializer, and the bar re-shows itself on overflow.
     this.transcript.verticalScrollBar.visible = false;
     for (const surface of [this.transcript.content, this.transcript.viewport]) {
@@ -443,6 +448,8 @@ export class AgentUi {
       },
       banner,
     );
+    this.transcriptView.onPickRow = (requestId, row) =>
+      this.pickRow(requestId, row);
     this.queueStatus = new TextRenderable(renderer, {
       id: "agent-ui-queue",
       width: "100%",
@@ -561,6 +568,7 @@ export class AgentUi {
         this.historyIndex = null;
       }
       this.view = onDraftChanged(this.view, this.lastDraft, draft);
+      this.view = setElicitationDraft(this.view, draft);
       if (this.lastDraft === "" && draft !== "") {
         this.view = focusCustomRow(this.view);
       }
@@ -1479,6 +1487,21 @@ export class AgentUi {
     return Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0;
   }
 
+  /** A click on a row does what its key does: an option is chosen (or ticked), the "Other" row is highlighted for typing. */
+  private pickRow(requestId: string, row: number): void {
+    const pending = pendingElicitation(this.view);
+    if (pending === null || pending.requestId !== requestId) return;
+    const option = pickerOptions(pending)[row];
+    if (option !== undefined) {
+      this.enqueueInput(() => this.answerPending(option.optionId));
+      return;
+    }
+    if (customRowIndex(pending) === row) {
+      this.view = setElicitationSelection(this.view, row);
+      this.refresh();
+    }
+  }
+
   /** Answer the pending ask with one of the options it lists. The id is echoed back as sent; nothing here derives one. A vendor that asks several questions at once is answered once, at the end: the choice is recorded and the card moves on until every question has one, because the tool call cannot be settled a question at a time. */
   async answerPending(optionId: string): Promise<void> {
     await this.stepPending(chooseOption(this.view, optionId));
@@ -2145,6 +2168,14 @@ export class AgentUi {
     if (placeholder !== this.composerPlaceholder) {
       this.composerPlaceholder = placeholder;
       this.textarea.placeholder = placeholder;
+    }
+    // A custom-text question takes its answer on its own "Other" row, Claude Code style, so the composer folds away rather than showing the same text twice. Hiding a renderable blurs it, so the textarea is focused again straight after: it must keep receiving the keys while unseen, and the card draws the caret in its place.
+    const inline = question?.allowCustom === true;
+    if (inline !== this.composerInline) {
+      this.composerInline = inline;
+      this.composer.visible = !inline;
+      this.textarea.showCursor = !inline;
+      if (inline) this.textarea.focus();
     }
     const border =
       pending === null

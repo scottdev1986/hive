@@ -167,6 +167,8 @@ export type TranscriptEntry =
       /** Highlighted row within the focused question; the row after the last option is "Other" when the question takes custom text. */
       readonly selection: number;
       readonly chosen: Readonly<Record<string, readonly string[]>>;
+      /** Mirror of the composer while a custom-text question is up, so the "Other" row can show the answer being typed where it will land. The composer still owns the text; this is only what the card draws. */
+      readonly draft: string;
       /** Questions a person has confirmed, in the order confirmed. A multi-select confirmed with nothing ticked counts; one merely looked at does not. */
       readonly answered: readonly string[];
       readonly settled: boolean;
@@ -775,6 +777,34 @@ export function moveElicitationSelection(
   if (rows === 0) return view;
   const selection = Math.max(0, Math.min(rows - 1, pending.selection + lines));
   if (selection === pending.selection) return view;
+  return updatePending(view, pending.requestId, (entry) => ({
+    ...entry,
+    selection,
+  }));
+}
+
+export function setElicitationDraft(view: ViewState, draft: string): ViewState {
+  const pending = pendingElicitation(view);
+  if (pending === null || pending.draft === draft) return view;
+  return updatePending(view, pending.requestId, (entry) => ({
+    ...entry,
+    draft,
+  }));
+}
+
+export function setElicitationSelection(
+  view: ViewState,
+  selection: number,
+): ViewState {
+  const pending = pendingElicitation(view);
+  if (
+    pending === null ||
+    pending.selection === selection ||
+    selection < 0 ||
+    selection >= pickerRowCount(pending)
+  ) {
+    return view;
+  }
   return updatePending(view, pending.requestId, (entry) => ({
     ...entry,
     selection,
@@ -1959,6 +1989,7 @@ function reduceProviderEvent(
         focus: 0,
         selection: 0,
         chosen: {},
+        draft: "",
         answered: [],
         settled: false,
         outcome: null,

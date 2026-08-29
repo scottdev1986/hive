@@ -295,6 +295,8 @@ export async function runAgentUi(options: AgentUiOptions): Promise<number> {
       clearOnShutdown: true,
       screenMode: "alternate-screen",
       useMouse: true,
+      // The composer is the only thing that ever reads the keyboard. OpenTUI would otherwise move focus to whatever a click lands on — the transcript's scroll box is focusable — and a person selecting text or an option would find their typing silently dropped.
+      autoFocus: false,
       useKittyKeyboard: { disambiguate: true },
       ...AGENT_UI_CONSOLE_OPTIONS,
     });

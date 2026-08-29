@@ -17,6 +17,7 @@ import {
   TextRenderable,
   type TreeSitterClient,
 } from "@opentui/core";
+import type { ElicitationOption } from "../../adapters/providers/protocol/types";
 import { definedFields } from "../../shared/defined-fields";
 import {
   filetypeFor,
@@ -34,6 +35,13 @@ import {
 } from "./view-state";
 
 type ElicitationEntry = Extract<TranscriptEntry, { kind: "elicitation" }>;
+
+/** A renderable of its own paints a final newline as an empty row, where the same chunks inside a longer text would not. */
+function withoutTrailingNewline(chunks: TextChunk[]): TextChunk[] {
+  const last = chunks.at(-1);
+  if (last === undefined || !last.text.endsWith("\n")) return chunks;
+  return [...chunks.slice(0, -1), { ...last, text: last.text.slice(0, -1) }];
+}
 
 export interface TranscriptColors {
   readonly text: string;
@@ -165,6 +173,9 @@ export class TranscriptView {
   dispose(): void {
     this.toolDiffs.clear();
   }
+
+  /** Set by the owner: a click on an elicitation row, by request id and row index. */
+  onPickRow: ((requestId: string, row: number) => void) | null = null;
 
   private readonly toggleOnClick = (event: { preventDefault(): void }) => {
     const selected = this.renderer.getSelection()?.getSelectedText() ?? "";
@@ -833,14 +844,45 @@ export class TranscriptView {
       box.add(this.styledLines(this.settledSummary(entry), true));
       return box;
     }
-    const chunks: TextChunk[] = [];
+    const head: TextChunk[] = [];
     if (entry.questions.length > 1)
-      chunks.push(...this.questionTabs(entry, accent));
-    chunks.push(...this.prompt(entry));
-    chunks.push(...this.optionRows(entry, accent));
-    chunks.push(...this.keyHints(entry));
-    box.add(this.styledLines(chunks, true));
+      head.push(...this.questionTabs(entry, accent));
+    head.push(...this.prompt(entry));
+    box.add(this.styledLines(head, true));
+    const rows = this.optionRows(entry, accent);
+    for (const row of rows) box.add(row);
+    const hints = this.keyHints(entry);
+    if (hints.length > 0) {
+      box.add(
+        this.styledLines(
+          rows.length > 0 ? [fg(this.colors.dim)("\n"), ...hints] : hints,
+          true,
+        ),
+      );
+    }
     return box;
+  }
+
+  /** One renderable per row so a click can name the row it landed on; the highlight still lives in view state, never in the renderable. */
+  private pickableRow(
+    requestId: string,
+    row: number,
+    chunks: TextChunk[],
+  ): TextRenderable {
+    const text = new TextRenderable(this.renderer, {
+      width: "100%",
+      height: "auto",
+      wrapMode: "word",
+      selectable: true,
+      onMouseUp: (event) => {
+        const selected = this.renderer.getSelection()?.getSelectedText() ?? "";
+        if (selected !== "") return;
+        event.preventDefault();
+        this.onPickRow?.(requestId, row);
+      },
+    });
+    text.content = new StyledText(withoutTrailingNewline(chunks));
+    return text;
   }
 
   private styledLines(
@@ -853,7 +895,7 @@ export class TranscriptView {
       wrapMode: "word",
       selectable,
     });
-    text.content = new StyledText(chunks);
+    text.content = new StyledText(withoutTrailingNewline(chunks));
     return text;
   }
 
@@ -911,19 +953,20 @@ export class TranscriptView {
   }
 
   /** The option rows, drawn as text rather than a focusable Select. The composer keeps focus the whole time a question is up, so a person can still type instead of choosing, and OpenTUI delivers arrow keys to the focused renderable. Owning the highlight here keeps one component reading the keyboard rather than two negotiating over it. */
-  private optionRows(entry: ElicitationEntry, accent: string): TextChunk[] {
+  private optionRows(entry: ElicitationEntry, accent: string): Renderable[] {
     const question = currentQuestion(entry);
     const options = pickerOptions(entry);
     const multi = question?.multiSelect === true;
     const picked = new Set(
       question === null ? [] : (entry.chosen[question.questionId] ?? []),
     );
-    const chunks: TextChunk[] = [];
+    const rows: Renderable[] = [];
     const rowStyle = (focused: boolean, on: boolean, text: string) =>
       focused
         ? bold(fg(accent)(text))
         : fg(on ? this.colors.green : this.colors.text)(text);
     for (const [index, option] of options.entries()) {
+      const chunks: TextChunk[] = [];
       const focused = index === entry.selection;
       const on = picked.has(option.optionId);
       const mark = multi ? (on ? "[x] " : "[ ] ") : "";
@@ -947,34 +990,69 @@ export class TranscriptView {
           chunks.push(fg(this.colors.text)(`${indent}│ ${line}\n`));
         }
       }
+      rows.push(this.pickableRow(entry.requestId, index, chunks));
     }
     const customRow = customRowIndex(entry);
     if (customRow !== null) {
-      const focused = customRow === entry.selection;
-      const typed =
-        question === null
-          ? []
-          : (entry.chosen[question.questionId] ?? []).filter(
-              (label) => !options.some((option) => option.optionId === label),
-            );
-      const shown =
-        question?.secret === true && typed.length > 0
-          ? "••••••"
-          : typed.join(", ");
-      const label =
-        shown === "" ? "Other — type your own below" : `Other: ${shown}`;
-      chunks.push(
-        focused
-          ? bold(fg(accent)(`❯ ${multi ? "    " : ""}✎  ${label}\n`))
-          : italic(
-              fg(typed.length > 0 ? this.colors.green : this.colors.dim)(
-                `  ${multi ? "    " : ""}✎  ${label}\n`,
-              ),
-            ),
+      rows.push(
+        this.pickableRow(
+          entry.requestId,
+          customRow,
+          this.customRow(
+            entry,
+            options,
+            customRow === entry.selection,
+            multi,
+            accent,
+          ),
+        ),
       );
     }
-    if (chunks.length > 0) chunks.push(fg(this.colors.dim)("\n"));
-    return chunks;
+    return rows;
+  }
+
+  /** The "Other" row is the text field: what is being typed shows here, with a caret, in place of a prompt below the card. */
+  private customRow(
+    entry: ElicitationEntry,
+    options: readonly ElicitationOption[],
+    focused: boolean,
+    multi: boolean,
+    accent: string,
+  ): TextChunk[] {
+    const question = currentQuestion(entry);
+    const typed =
+      question === null
+        ? []
+        : (entry.chosen[question.questionId] ?? []).filter(
+            (label) => !options.some((option) => option.optionId === label),
+          );
+    const answered =
+      question?.secret === true && typed.length > 0
+        ? "••••••"
+        : typed.join(", ");
+    const lead = `${focused ? "❯" : " "} ${multi ? "    " : ""}✎  `;
+    if (entry.draft !== "") {
+      return [
+        focused ? bold(fg(accent)(lead)) : fg(this.colors.dim)(lead),
+        fg(this.colors.text)(entry.draft),
+        focused ? fg(accent)("▏\n") : fg(this.colors.dim)("\n"),
+      ];
+    }
+    if (answered !== "") {
+      return [
+        focused
+          ? bold(fg(accent)(`${lead}${answered}▏\n`))
+          : fg(this.colors.green)(`${lead}${answered}\n`),
+      ];
+    }
+    return [
+      focused
+        ? [
+            bold(fg(accent)(lead)),
+            italic(fg(this.colors.dim)("Type your own answer…▏\n")),
+          ]
+        : [italic(fg(this.colors.dim)(`${lead}Other — type your own\n`))],
+    ].flat();
   }
 
   private keyHints(entry: ElicitationEntry): TextChunk[] {
