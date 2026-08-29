@@ -492,10 +492,10 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
 
       const prompt = await readFile(join(promptDirectory, promptName), "utf8");
 
-      // Dropped scenario: omitted slice visible (REQUIRED, not optional)
+      // Dropped scenario: CAP CROSSED (REQUIRED, not optional)
       expect(prompt).toContain("Knowledge index data");
-      // Require the actual omitted line from memory-store.ts:998
-      expect(prompt).toContain("omitted — use memory_search");
+      // Require the actual CAP warning from agent-prompt.ts:60
+      expect(prompt).toContain("CAP CROSSED");
     } finally {
       db.close();
     }
@@ -565,10 +565,10 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       episodic,
     });
 
-    // Dropped scenario: memory index truncated (REQUIRED, not optional)
+    // Dropped scenario: CAP CROSSED (REQUIRED, not optional)
     expect(droppedLaunch).toContain("Knowledge index data");
-    // Require the actual omitted line from memory-store.ts:998
-    expect(droppedLaunch).toContain("omitted — use memory_search");
+    // Require the actual CAP warning from agent-prompt.ts:60
+    expect(droppedLaunch).toContain("CAP CROSSED");
   });
 
   test("queen: pack always present (no pack-off path)", async () => {
