@@ -267,6 +267,7 @@ import {
   mintSessionRequestId,
   sameSessionLocator,
 } from "./session-host/locators";
+import { readTerminalLaunchSpec } from "./session-host/shell-session";
 import type {
   SessionHost,
   SessionLocator,
@@ -2901,6 +2902,10 @@ export class HiveDaemon {
       hostState: host?.state ?? null,
       hostDiagnostic: host?.diagnostic ?? null,
       sessionLocator: host?.locator ?? null,
+      terminalLaunch:
+        host?.locator === undefined
+          ? null
+          : readTerminalLaunchSpec(host.locator.sessionId),
     };
     return json(body);
   }

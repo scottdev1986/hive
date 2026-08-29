@@ -1,6 +1,6 @@
 import AppKit
 import XCTest
-import HiveGhosttyC
+import GhosttyKit
 @testable import HiveTerminalKit
 
 /// Gate 3 (M1-B1) positive control: `wakeup_cb` must schedule a REAL
@@ -21,7 +21,12 @@ import HiveGhosttyC
 final class AppWakeupLifecycleTests: XCTestCase {
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
-            return try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hive-wakeup-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            return try GhosttyBridgeFactory.makeOwnedSurfaceForTesting(
+                workingDirectory: directory.path
+            )
         } catch {
             XCTFail("real manual surface required for gate 3 live proof, got: \(error)")
             throw error

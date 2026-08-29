@@ -1,29 +1,31 @@
 import AppKit
-import HiveGhosttyC
+import GhosttyKit
 import XCTest
 @testable import HiveTerminalKit
 
 final class HiveTerminalConfigurationTests: XCTestCase {
-    func testGeneratedConfigurationKeepsThemeBeforeOverrides() throws {
-        let contents = HiveTerminalConfiguration.contents()
+    func testShippedFilesKeepThemeBeforePaneSettings() throws {
+        let contents = try shippedConfig()
 
         XCTAssertLessThan(
-            try XCTUnwrap(contents.range(of: "background = 0f1117")?.lowerBound),
+            try XCTUnwrap(contents.range(of: "background = #0e1318")?.lowerBound),
             try XCTUnwrap(contents.range(of: "font-size = 13")?.lowerBound)
         )
         XCTAssertLessThan(
-            try XCTUnwrap(contents.range(of: "palette = 15=f8fafd")?.lowerBound),
+            try XCTUnwrap(contents.range(of: "palette = 15=#e4e8f0")?.lowerBound),
             try XCTUnwrap(contents.range(of: "keybind = clear")?.lowerBound)
         )
         XCTAssertFalse(contents.contains("font-family"))
         XCTAssertFalse(contents.contains("theme ="))
         XCTAssertFalse(contents.contains("bold-is-bright"))
         XCTAssertFalse(contents.contains("font-shaping-break"))
+        XCTAssertTrue(contents.contains("clipboard-read = deny"))
+        XCTAssertTrue(contents.contains("clipboard-write = deny"))
         XCTAssertEqual(contents.components(separatedBy: "palette = ").count - 1, 16)
     }
 
-    func testGeneratedConfigurationCarriesC1TypographyPaddingAndCursorPolicy() {
-        let contents = HiveTerminalConfiguration.contents()
+    func testPaneConfigCarriesTypographyPaddingAndCursorPolicy() throws {
+        let contents = try shippedConfig()
 
         for line in [
             "font-size = 13",
@@ -46,34 +48,27 @@ final class HiveTerminalConfigurationTests: XCTestCase {
     }
 
     func testDarkThemeContrastMeetsC1Floor() throws {
-        let colors = configurationColors(HiveTerminalConfiguration.contents())
-        let background = try XCTUnwrap(colors["background"])
-        let foreground = try XCTUnwrap(colors["foreground"])
-        XCTAssertGreaterThanOrEqual(contrast(foreground, background), 7)
-
+        let palette = try XCTUnwrap(HiveTerminalTheme.hiveDark.palette)
+        XCTAssertGreaterThanOrEqual(
+            try WCAGContrast.ratio(palette.foreground, palette.background), 7
+        )
         for index in 0..<16 {
-            let color = try XCTUnwrap(colors["palette.\(index)"])
-            let floor = index == 0 ? 3.0 : 4.5
+            let floor = HiveTerminalPalette.deEmphasisIndices.contains(index) ? 3.0 : 4.5
             XCTAssertGreaterThanOrEqual(
-                contrast(color, background), floor,
+                try WCAGContrast.ratio(palette.ansi[index], palette.background), floor,
                 "ANSI \(index) misses its contrast floor"
             )
         }
     }
 
-    func testWriterProducesByteExactExplicitFile() throws {
+    func testFactoryLoadsShippedValuesIntoRealGhosttyConfig() throws {
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("hive-config-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-
-        let url = directory.appendingPathComponent("terminal.conf")
-        try HiveTerminalConfiguration.write(to: url)
-        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), HiveTerminalConfiguration.contents())
-    }
-
-    func testFactoryLoadsGeneratedValuesIntoRealGhosttyConfig() throws {
-        let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        let surface = try GhosttyBridgeFactory.makeOwnedSurfaceForTesting(
+            workingDirectory: directory.path
+        )
         defer { surface.free() }
         let config = try XCTUnwrap(surface.appOwner?.config)
 
@@ -83,11 +78,17 @@ final class HiveTerminalConfigurationTests: XCTestCase {
 
         var background = ghostty_config_color_s(r: 0, g: 0, b: 0)
         XCTAssertTrue(getConfigValue(config, key: "background", value: &background))
-        XCTAssertEqual([background.r, background.g, background.b], [0x0f, 0x11, 0x17])
+        XCTAssertEqual([background.r, background.g, background.b], [0x0e, 0x13, 0x18])
     }
 
     func testRealSurfaceLiveConfigurationUpdateIsIdempotent() throws {
-        let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hive-config-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let surface = try GhosttyBridgeFactory.makeOwnedSurfaceForTesting(
+            workingDirectory: directory.path
+        )
         defer { surface.free() }
         var operations: [(String, GhosttyOperationPhase)] = []
         surface.operationObserver = { operations.append(($0, $1)) }
@@ -111,19 +112,11 @@ final class HiveTerminalConfigurationTests: XCTestCase {
         XCTAssertEqual(Array(engine.colorSchemeCalls.suffix(2)), [.dark, .light])
     }
 
-    private func configurationColors(_ contents: String) -> [String: UInt32] {
-        var result: [String: UInt32] = [:]
-        for line in contents.split(separator: "\n") {
-            let parts = line.split(separator: "=", maxSplits: 2).map {
-                $0.trimmingCharacters(in: .whitespaces)
-            }
-            if parts.count == 2, parts[0] == "background" || parts[0] == "foreground" {
-                result[parts[0]] = UInt32(parts[1], radix: 16)
-            } else if parts.count == 3, parts[0] == "palette" {
-                result["palette.\(parts[1])"] = UInt32(parts[2], radix: 16)
-            }
-        }
-        return result
+    private func shippedConfig() throws -> String {
+        let urls = HiveTerminalConfiguration.configurationFiles(
+            theme: .hiveDark, font: .embedded, headless: false
+        )
+        return try urls.map { try String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
     }
 
     private func getConfigValue<T>(
@@ -136,18 +129,5 @@ final class HiveTerminalConfigurationTests: XCTestCase {
                 ghostty_config_get(config, valuePointer, keyPointer, UInt(key.utf8.count))
             }
         }
-    }
-
-    private func contrast(_ lhs: UInt32, _ rhs: UInt32) -> Double {
-        let pair = [luminance(lhs), luminance(rhs)].sorted()
-        return (pair[1] + 0.05) / (pair[0] + 0.05)
-    }
-
-    private func luminance(_ color: UInt32) -> Double {
-        let channels = [16, 8, 0].map { shift -> Double in
-            let value = Double((color >> UInt32(shift)) & 0xff) / 255
-            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-        }
-        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
     }
 }

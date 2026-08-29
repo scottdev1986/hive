@@ -11,6 +11,7 @@ import {
   HiveTerminalBindingSchema,
 } from "../session-host/terminal-host-binding";
 import type { OrchestratorStatus } from "../status-service/status-service";
+import { TerminalLaunchSpecSchema } from "../session-host/shell-session";
 
 export const OrchestratorHostKindSchema = z.literal("sessiond");
 export type OrchestratorHostKind = z.infer<typeof OrchestratorHostKindSchema>;
@@ -52,6 +53,7 @@ export const OrchestratorHostStatusSchema = z.strictObject({
   hostState: OrchestratorSessiondStateSchema.nullable(),
   hostDiagnostic: z.string().nullable(),
   sessionLocator: RootSessiondLocatorSchema.nullable(),
+  terminalLaunch: TerminalLaunchSpecSchema.nullable().optional(),
 });
 export type OrchestratorHostStatus = z.infer<
   typeof OrchestratorHostStatusSchema

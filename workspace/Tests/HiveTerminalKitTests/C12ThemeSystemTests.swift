@@ -3,9 +3,9 @@ import XCTest
 
 /// C1.2 — the paired first-party theme system.
 ///
-/// Every ratio here is measured from the palette the generator actually emits,
-/// never from a table restated in the test. The binding test below is what makes
-/// that true: it proves each measured color reaches the generated configuration.
+/// Every ratio here is measured from the Ghostty theme file, never from a table
+/// restated in the test. The binding test below is what makes that true: it proves
+/// each measured color is a line in that file.
 final class C12ThemeSystemTests: XCTestCase {
     private var firstParty: [HiveTerminalTheme] {
         [.hiveDark, .hiveLight, .hiveDarkHighContrast, .hiveLightHighContrast]
@@ -89,23 +89,23 @@ final class C12ThemeSystemTests: XCTestCase {
 
     // MARK: - The measured colors are the shipped colors
 
-    /// Without this, `palette` and `configurationLines` could drift and the
+    /// Without this, `palette` and the theme file could drift and the
     /// measured table above would describe colors no surface ever receives.
     func testMeasuredPaletteIsTheEmittedConfiguration() throws {
         for theme in firstParty {
             let palette = try XCTUnwrap(theme.palette)
             let lines = theme.configurationLines
             XCTAssertTrue(
-                lines.contains("background = \(palette.background)"),
+                lines.contains("background = #\(palette.background)"),
                 "\(theme.identifier) must emit the measured background"
             )
             XCTAssertTrue(
-                lines.contains("foreground = \(palette.foreground)"),
+                lines.contains("foreground = #\(palette.foreground)"),
                 "\(theme.identifier) must emit the measured foreground"
             )
             for (index, entry) in palette.ansi.enumerated() {
                 XCTAssertTrue(
-                    lines.contains("palette = \(index)=\(entry)"),
+                    lines.contains("palette = \(index)=#\(entry)"),
                     "\(theme.identifier) must emit the measured palette \(index)"
                 )
             }
@@ -147,16 +147,19 @@ final class C12ThemeSystemTests: XCTestCase {
 
     /// No first-party theme may name a font family: a configured family always
     /// outranks the engine-embedded face (C1.1's negative-Menlo control).
-    func testNoThemeConfiguresAFontFamily() {
+    func testNoThemeConfiguresAFontFamily() throws {
         for theme in firstParty {
             XCTAssertFalse(
                 theme.configurationLines.contains { $0.hasPrefix("font-family") },
                 "\(theme.identifier) must configure no font family"
             )
         }
+        let product = try String(
+            contentsOf: HiveTerminalConfiguration.productURL, encoding: .utf8
+        )
         XCTAssertFalse(
-            HiveTerminalConfiguration.contents().contains("font-family"),
-            "the default generated configuration must name no font family"
+            product.contains("font-family"),
+            "the pane config must name no font family"
         )
     }
 
@@ -186,32 +189,32 @@ final class C12ThemeSystemTests: XCTestCase {
         XCTAssertEqual(resolve(.light, .dark, true), "hive-light-high-contrast")
     }
 
-    // MARK: - The theme reaches the generated file ahead of the overrides
+    // MARK: - Load order
 
-    /// C1.0's central mutation: the product override must still bite after a
-    /// theme that requests the opposite. Order is the mechanism.
-    func testThemeIsEmittedBeforeProductOverrides() throws {
-        let hostile = HiveTerminalTheme(
-            identifier: "hostile",
-            configurationLines: ["background = 010203", "copy-on-select = true"]
+    /// Theme file first, pane settings last, so `keybind` / clipboard in hive.conf win.
+    func testProductFileIsLoadedAfterTheThemeFile() {
+        let files = HiveTerminalConfiguration.configurationFiles(
+            theme: .hiveDark, font: .embedded, headless: false
         )
-        let contents = HiveTerminalConfiguration.contents(theme: hostile)
-        let themeIndex = try XCTUnwrap(contents.range(of: "copy-on-select = true"))
-        let overrideIndex = try XCTUnwrap(contents.range(of: "copy-on-select = false"))
-        XCTAssertTrue(
-            themeIndex.lowerBound < overrideIndex.lowerBound,
-            "the product override must come after the theme so it wins"
+        XCTAssertEqual(
+            files.map(\.lastPathComponent),
+            ["hive-dark.conf", "hive.conf"]
         )
     }
 
-    /// The selected font must reach the generated configuration so a
-    /// selection can reach a live surface.
-    func testSelectedFontReachesTheGeneratedConfiguration() {
-        XCTAssertFalse(HiveTerminalConfiguration.contents(font: .embedded).contains("font-family"))
-        XCTAssertTrue(
-            HiveTerminalConfiguration.contents(font: .systemMonospaced)
-                .contains("font-family = .AppleSystemUIFontMonospaced"),
-            "the selected font must reach the generated configuration"
+    /// The selected font must reach the load list so a selection can reach a live surface.
+    func testSelectedFontReachesTheConfigurationLoadList() throws {
+        let embedded = HiveTerminalConfiguration.configurationFiles(
+            theme: .hiveDark, font: .embedded, headless: false
         )
+        XCTAssertFalse(embedded.contains(HiveTerminalConfiguration.systemFontURL))
+        let system = HiveTerminalConfiguration.configurationFiles(
+            theme: .hiveDark, font: .systemMonospaced, headless: false
+        )
+        XCTAssertTrue(system.contains(HiveTerminalConfiguration.systemFontURL))
+        let fontFile = try String(
+            contentsOf: HiveTerminalConfiguration.systemFontURL, encoding: .utf8
+        )
+        XCTAssertTrue(fontFile.contains("font-family = .AppleSystemUIFontMonospaced"))
     }
 }

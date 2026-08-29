@@ -2,9 +2,11 @@ import { mkdir } from "node:fs/promises";
 import { describe, expect, test } from "bun:test";
 import {
   prepareSessionZdotdir,
+  readTerminalLaunchSpec,
   shellSessionLaunch,
   TERMINAL_SHELL,
   userZdotdir,
+  writeTerminalLaunchSpec,
 } from "../../../src/daemon/session-host/shell-session";
 import { tempRoot } from "../../temp-root";
 
@@ -106,5 +108,19 @@ describe("shell-backed terminal sessions", () => {
     expect(stdout).toContain("__HIVE_PROVIDER_RAN__");
     expect(stdout).toContain("__HIVE_SHELL_SURVIVED__");
     expect(stderr).not.toContain("command not found");
+  });
+
+  test("persists the Ghostty exec spec for a session", async () => {
+    const sessionId = `ses_launch_${crypto.randomUUID()}`;
+    const spec = {
+      cwd: "/tmp/hive-project",
+      command: "/bin/zsh -l -i",
+      environment: {
+        HIVE_AGENT_UI_COMMAND: "hive agent-ui --subject queen",
+        HIVE_TUI_LAUNCHED: "0",
+      },
+    };
+    await writeTerminalLaunchSpec(sessionId, spec);
+    expect(readTerminalLaunchSpec(sessionId)).toEqual(spec);
   });
 });

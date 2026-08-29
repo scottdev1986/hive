@@ -1,40 +1,28 @@
 import AppKit
 import Foundation
 
-/// One edge-to-edge NSView bound to exactly one SessionLocator/generation. Focus: first responder only on direct click / explicit focus action. Output/status/reconnect never steal focus. Input: native NSEvent → Ghostty encoder → raw viewer-socket bytes. Render: INVALIDATE requests an AppKit-paced draw; CLOSE_REQUEST → terminate seam.
+/// AppKit host for a Ghostty-owned terminal. Ghostty owns the PTY and child.
 public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var surfaceState: TerminalSurfaceState = .starting
-    public private(set) var binding: SurfaceBinding?
-    public private(set) var sessionLocator: SessionLocator?
     public private(set) var inputSubmissionState: InputSubmissionState = .idle
-    public private(set) var highWater: UInt64 = 0
     public private(set) var lastTitle: String = ""
     public private(set) var lastPwd: String = ""
 
     private var engineStorage: ManualSurfaceEngine?
-    private var applicatorStorage: OutputRangeApplicator?
     var engine: ManualSurfaceEngine {
         guard let engineStorage else { preconditionFailure("terminal surface is not initialized") }
         return engineStorage
     }
-    var applicator: OutputRangeApplicator {
-        guard let applicatorStorage else { preconditionFailure("terminal applicator is not initialized") }
-        return applicatorStorage
-    }
-    private(set) var attachClient: AttachReplayClient?
 
     public var onUserClose: (() -> Void)?
-    public var onFirstCorrectFrame: ((UInt64) -> Void)?
     public var onStateChange: ((TerminalSurfaceState) -> Void)?
     public var onBell: (() -> Void)?
     public var onRendererHealthChange: ((RendererHealth) -> Void)?
-    public var onInputSubmissionStateChange: ((InputSubmissionState) -> Void)?
     public var onUserInput: ((_ characters: String, _ command: Bool, _ control: Bool) -> Void)?
 
     public private(set) var focusStealAttempts = 0
     var testingAllowFocusSteal = false
     public private(set) var drawScheduledCount = 0
-    public private(set) var resizeFramesSent = 0
     public private(set) var reportedGeometry: TerminalGeometry?
     public private(set) var appliedContentScale = NSSize(width: 1, height: 1)
     public private(set) var appliedDrawableSize = NSSize.zero
@@ -46,11 +34,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private(set) var appliedColorScheme: TerminalColorScheme?
 
     private var viewerId: String
-    private var resizeWorkItem: DispatchWorkItem?
     private var renderHostView: NSView?
     private var windowObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
-    /// Registered on NotificationCenter.default rather than the workspace center, so it is removed on its own rather than with the workspace ones.
     private var appearancePreferenceObserver: NSObjectProtocol?
     var appearancePreferences: HiveAppearancePreferences = .shared
     var searchOverlayStorage: TerminalSearchOverlay?
@@ -63,9 +49,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private var renderingSuspended = false
     private var closed = false
     private var appliedFramebufferSize: (width: UInt32, height: UInt32)?
-    /// One-shot per attach: see forceRendererResizeIfSemanticGridIsStale.
-    private var postRestoreResizeForced = false
-    private let resizeQuiescence: TimeInterval = 0.100
     var markedText = NSMutableAttributedString()
     var keyTextAccumulator: [String]?
     var previousPressureStage = 0
@@ -73,7 +56,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     init(frame frameRect: NSRect, engine: ManualSurfaceEngine, viewerId: String = "viewer-local") {
         self.engineStorage = engine
         self.viewerId = viewerId
-        self.applicatorStorage = OutputRangeApplicator(engine: engine)
         super.init(frame: frameRect)
         wantsLayer = true
         registerForDraggedTypes(Array(Self.dropTypes))
@@ -81,10 +63,15 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         wireBridgeEvents()
         wireAccessibilitySignals()
         wireWorkspaceEvents()
-        _ = makeAttachClient()
+        setSurfaceState(.live)
     }
 
-    public init(frame frameRect: NSRect, viewerId: String = "viewer-local") throws {
+    /// Ghostty-owned PTY. The view is a host; Ghostty execs `launch.command`.
+    public init(
+        frame frameRect: NSRect,
+        launch: TerminalLaunch,
+        viewerId: String = "viewer-local"
+    ) throws {
         self.viewerId = viewerId
         super.init(frame: frameRect)
         wantsLayer = true
@@ -98,19 +85,19 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         let backingSize = convertToBacking(bounds.size)
         let widthPx = UInt32(max(1, Int(backingSize.width)))
         let heightPx = UInt32(max(1, Int(backingSize.height)))
-        let engine = try GhosttyBridgeFactory.makeManualSurface(
+        engineStorage = try GhosttyBridgeFactory.makeOwnedSurface(
             hostView: renderHost,
+            launch: launch,
             widthPx: widthPx,
             heightPx: heightPx
         )
-        engineStorage = engine
-        applicatorStorage = OutputRangeApplicator(engine: engine)
         synchronizeColorScheme()
         wireBridgeEvents()
         wireAccessibilitySignals()
         wireWorkspaceEvents()
         synchronizeRenderingState()
-        _ = makeAttachClient()
+        applySelectedAppearance()
+        setSurfaceState(.live)
     }
 
     @available(*, unavailable)
@@ -120,7 +107,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
 
     deinit {
         accessibilitySurfaceWillClose()
-        resizeWorkItem?.cancel()
         removeWindowObservers()
         removeWorkspaceObservers()
         if let appearancePreferenceObserver {
@@ -133,8 +119,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         let layer = ghosttyRenderingLayer
         return HiveTerminalRenderEvidence(
             engine: .current,
-            locator: sessionLocator,
-            highWater: highWater,
             drawCount: drawScheduledCount,
             layerClass: layer.map { String(describing: type(of: $0)) },
             hasPresentedContents: layer?.contents != nil
@@ -165,19 +149,14 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             accessibilitySemanticStateDidInvalidate()
         case .title:
             lastTitle = String(data: event.bytes, encoding: .utf8) ?? ""
-            notifyOutputStatusReconnect(reason: "title")
         case .pwd:
             lastPwd = String(data: event.bytes, encoding: .utf8) ?? ""
-            notifyOutputStatusReconnect(reason: "pwd")
         case .bell:
             onBell?()
             accessibilityAnnounce("Terminal bell", priority: .high)
-            notifyOutputStatusReconnect(reason: "bell")
         case .clipboardDenied:
             accessibilityAnnounce("Clipboard access denied", priority: .high)
-            notifyOutputStatusReconnect(reason: "clipboard-denied")
         case .closeRequest:
-            // CLOSE_REQUEST → exact-generation TERMINATE seam, never DETACH.
             accessibilityAnnounce("Terminal closed", priority: .medium)
             userClose()
         }
@@ -228,135 +207,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         }
     }
 
-    func makeAttachClient() -> AttachReplayClient {
-        if let attachClient { return attachClient }
-        let client = AttachReplayClient(viewerId: viewerId, engine: engine)
-        client.onInputSubmissionStateChange = { [weak self] state in
-            guard let self else { return }
-            if Thread.isMainThread {
-                self.inputSubmissionState = state
-                self.onInputSubmissionStateChange?(state)
-            } else {
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    self.inputSubmissionState = state
-                    self.onInputSubmissionStateChange?(state)
-                }
-            }
-        }
-        engine.callbackContext.onEvent = { [weak self] event in
-            self?.handleBridgeEventOnMain(event)
-        }
-        attachClient = client
-        return client
-    }
-
-    private func handleBridgeEventOnMain(_ event: BridgeEvent) {
-        if Thread.isMainThread {
-            handleBridgeEvent(event)
-            return
-        }
-        DispatchQueue.main.async { [weak self] in self?.handleBridgeEvent(event) }
-    }
-
-    @discardableResult
-    public func attach(
-        grant: AttachGrant,
-        geometry: TerminalGeometry,
-        afterSeq: UInt64 = 0,
-        transport: HostTransport
-    ) throws -> AttachReplayOutcome {
-        let client = try prepareAttach(
-            grant: grant,
-            afterSeq: afterSeq,
-            transport: transport
-        )
-        let outcome = try client.attach(
-            grant: grant,
-            geometry: geometry,
-            afterSeq: afterSeq,
-            transport: transport
-        )
-        try finishAttach(outcome, client: client, geometry: geometry)
-        return outcome
-    }
-
-    /// Main-thread half of an attach: fence the locator, mark the surface attaching, and hand back the client the caller will drive. Split out so a host that is slow to answer cannot hold the main thread. `AttachReplayClient.attach` blocks in `transport.receive` until the host sends a frame or the handshake timeout expires, and a terminal that has not produced output yet sends nothing — running that wait on main freezes the workspace for the full timeout. Only `client.attach` between the two main-thread halves is safe off-main: it serializes on its own lock, and engine ingress (`processOutput`/`restoreCheckpoint`) matches the path `pumpHostFrame` already takes.
-    @discardableResult
-    public func prepareAttach(
-        grant: AttachGrant,
-        afterSeq: UInt64,
-        transport: HostTransport
-    ) throws -> AttachReplayClient {
-        dispatchPrecondition(condition: .onQueue(.main))
-        try admitBinding(
-            SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId),
-            highWater: afterSeq
-        )
-        setSurfaceState(.attaching)
-        return attachClient ?? makeAttachClient()
-    }
-
-    public func finishAttach(
-        _ outcome: AttachReplayOutcome,
-        client: AttachReplayClient,
-        geometry: TerminalGeometry
-    ) throws {
-        dispatchPrecondition(condition: .onQueue(.main))
-        highWater = client.highWater
-        switch outcome {
-        case .firstCorrectFrame(let hw, _):
-            try prepareFirstCorrectFrame(
-                hw,
-                client: client,
-                fallbackGeometry: geometry
-            )
-        case .failed(let state):
-            setSurfaceState(state)
-        case .rejectedLateFrame, .continueReplay:
-            break
-        }
-    }
-
-    /// Applies one live post-attach host frame through the locator-fenced client. Frames for a superseded binding are rejected by the client and never mutate the surface. Safe to call from the pane's terminal I/O thread: the VT parse happens on the CALLER's thread (the client serializes itself with its own lock), and only the UI mirror below is main-thread work. Applying tens of KiB of output costs milliseconds of parsing; do not put that on the main queue in front of keystrokes. The main queue only sees the cheap state copy.
-    public func pumpHostFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) {
-        guard let client = attachClient else { return }
-        let outcome = (try? client.handleFrame(frame, frameBinding: frameBinding))
-            ?? .rejectedLateFrame
-        let snapshot = client.uiSnapshot()
-        if Thread.isMainThread {
-            applyPumpedState(outcome: outcome, snapshot: snapshot)
-        } else {
-            DispatchQueue.main.async { [weak self] in
-                self?.applyPumpedState(outcome: outcome, snapshot: snapshot)
-            }
-        }
-    }
-
-    private func applyPumpedState(
-        outcome: AttachReplayOutcome,
-        snapshot: AttachReplayClient.UISnapshot
-    ) {
-        let priorHighWater = highWater
-        highWater = snapshot.highWater
-        if highWater > priorHighWater { noteOutputApplied() }
-        inputSubmissionState = snapshot.inputSubmissionState
-        switch outcome {
-        case .firstCorrectFrame(let hw, _):
-            presentFirstCorrectFrame(hw)
-        case .failed(let state):
-            setSurfaceState(state)
-        case .rejectedLateFrame, .continueReplay:
-            break
-        }
-    }
-
-    /// Apply C1 theme + refresh grid metrics before any attach/replay bytes land. Safe to call repeatedly (`applyHiveConfiguration` is one-shot). Must run before HOST_ATTACH so `ghostty_surface_update_config` cannot wipe already-applied journal output (blank pane with full journal).
-    public func prepareThemeBeforeAttach() {
-        applySelectedAppearance()
-        refreshReportedGeometryAfterConfiguration()
-    }
-
     @discardableResult
     func applySelectedAppearance() -> Bool {
         engine.applyHiveConfiguration(
@@ -370,182 +220,8 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         )
     }
 
-    private func presentFirstCorrectFrame(_ highWater: UInt64) {
-        self.highWater = highWater
-        guard surfaceState != .live else { return }
-        // Theme should already be applied pre-attach; one-shot no-op if so.
-        applySelectedAppearance()
-        setSurfaceState(.live)
-        accessibilityAnnounce("Terminal ready", priority: .low)
-        notifyOutputStatusReconnect(reason: "first-correct-frame")
-        onFirstCorrectFrame?(highWater)
-        scheduleDraw()
-    }
-
-    private func prepareFirstCorrectFrame(
-        _ highWater: UInt64,
-        client: AttachReplayClient,
-        fallbackGeometry: TerminalGeometry
-    ) throws {
-        guard let expectedBinding = binding else { return }
-        // Prefer pre-attach theme; still one-shot safe if caller skipped it.
-        applySelectedAppearance()
-        if engine is GhosttyManualSurface {
-            let deadline = Date().addingTimeInterval(2)
-            DispatchQueue.main.async { [weak self] in
-                self?.finalizeFirstCorrectFrameWhenConfigurationSettles(
-                    highWater,
-                    client: client,
-                    fallbackGeometry: fallbackGeometry,
-                    expectedBinding: expectedBinding,
-                    deadline: deadline
-                )
-            }
-        } else {
-            try finalizeFirstCorrectFrame(
-                highWater,
-                client: client,
-                fallbackGeometry: fallbackGeometry
-            )
-        }
-    }
-
-    private func finalizeFirstCorrectFrameWhenConfigurationSettles(
-        _ highWater: UInt64,
-        client: AttachReplayClient,
-        fallbackGeometry: TerminalGeometry,
-        expectedBinding: SurfaceBinding,
-        deadline: Date
-    ) {
-        // Already live (e.g. a concurrent present) — do not re-enter resize.
-        if surfaceState == .live { return }
-        guard surfaceState == .attaching,
-              binding == expectedBinding,
-              attachClient === client,
-              client.binding == expectedBinding
-        else {
-            NSLog(
-                "hive terminal: deferred first-correct-frame aborted (state=%@) — presenting fallback",
-                String(describing: surfaceState)
-            )
-            presentFirstCorrectFrame(highWater)
-            return
-        }
-        refreshReportedGeometryAfterConfiguration()
-        if !reportedGeometryMatchesSemanticSnapshot() {
-            guard Date() < deadline else {
-                NSLog(
-                    "hive terminal: C1 geometry settle timed out reported=%@ semantic=%@ — presenting anyway",
-                    reportedGeometry.map { "\($0.columns)x\($0.rows)" } ?? "nil",
-                    (engine as? ManualSurfaceSemanticSnapshotProviding)?
-                        .semanticSnapshot()
-                        .map { "\($0.geometry.columns)x\($0.geometry.rows)" } ?? "nil"
-                )
-                do {
-                    try finalizeFirstCorrectFrame(
-                        highWater,
-                        client: client,
-                        fallbackGeometry: fallbackGeometry
-                    )
-                } catch {
-                    NSLog("hive terminal: initial resize after settle timeout failed: %@", "\(error)")
-                    presentFirstCorrectFrame(highWater)
-                }
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.001) { [weak self] in
-                self?.finalizeFirstCorrectFrameWhenConfigurationSettles(
-                    highWater,
-                    client: client,
-                    fallbackGeometry: fallbackGeometry,
-                    expectedBinding: expectedBinding,
-                    deadline: deadline
-                )
-            }
-            return
-        }
-        do {
-            try finalizeFirstCorrectFrame(
-                highWater,
-                client: client,
-                fallbackGeometry: fallbackGeometry
-            )
-        } catch {
-            let failure = TerminalSurfaceState.lost(evidence: "initial-resize: \(error)")
-            client.failDeferredPresentation(failure)
-            setSurfaceState(failure)
-            NSLog("hive terminal: initial-resize failed: %@", "\(error)")
-        }
-    }
-
-    private func reportedGeometryMatchesSemanticSnapshot() -> Bool {
-        guard let reportedGeometry,
-              let snapshot = (engine as? ManualSurfaceSemanticSnapshotProviding)?.semanticSnapshot()
-        else { return false }
-        return reportedGeometry.columns == snapshot.geometry.columns &&
-            reportedGeometry.rows == snapshot.geometry.rows
-    }
-
-    private func finalizeFirstCorrectFrame(
-        _ highWater: UInt64,
-        client: AttachReplayClient,
-        fallbackGeometry: TerminalGeometry
-    ) throws {
-        if !(engine is GhosttyManualSurface) {
-            refreshReportedGeometryAfterConfiguration()
-        }
-        try client.sendResize(reportedGeometry ?? fallbackGeometry)
-        resizeFramesSent += 1
-        presentFirstCorrectFrame(highWater)
-    }
-
-    /// Binds this view to one exact locator. A reconnect may replace only the connection fence; a different locator or generation requires a new view.
-    public func bind(to newBinding: SurfaceBinding, highWater: UInt64 = 0) throws {
-        try admitBinding(newBinding, highWater: highWater)
-        attachClient?.retarget(newBinding: newBinding, highWater: highWater)
-        setSurfaceState(.attaching)
-        accessibilityAnnounce("Terminal reconnecting", priority: .low)
-        notifyOutputStatusReconnect(reason: "binding-reconnect")
-    }
-
-    private func admitBinding(_ newBinding: SurfaceBinding, highWater: UInt64) throws {
-        guard !closed else { throw HiveTerminalBindingError.closed }
-        if let sessionLocator, sessionLocator != newBinding.locator {
-            throw HiveTerminalBindingError.locatorChanged(
-                expected: sessionLocator,
-                attempted: newBinding.locator
-            )
-        }
-        sessionLocator = newBinding.locator
-        binding = newBinding
-        // A new attach may restore another stale-geometry checkpoint; re-arm the one-shot forced resize for its post-restore geometry refresh.
-        postRestoreResizeForced = false
-        applicator.bind(newBinding, highWater: highWater)
-        self.highWater = highWater
-    }
-
-    public func applyOutput(
-        bytes: Data,
-        streamSeq: UInt64,
-        frameBinding: SurfaceBinding
-    ) -> OutputApplyResult {
-        let result = applicator.apply(bytes: bytes, streamSeq: streamSeq, frameBinding: frameBinding)
-        if case .applied(let hw) = result {
-            highWater = hw
-            noteOutputApplied()
-            notifyOutputStatusReconnect(reason: "output")
-        }
-        return result
-    }
-
     public func applyStatusUpdate(evidence: String) {
         notifyOutputStatusReconnect(reason: "status:\(evidence)")
-    }
-
-    /// Drives the surface into a typed, user-visible lost state when a viewer gives up reconnecting (bounded recovery). Never claims close — the logical pane and session are untouched; only this renderer stopped.
-    public func markAttachFailed(_ evidence: String) {
-        guard !closed else { return }
-        setSurfaceState(.lost(evidence: evidence))
     }
 
     public func notifyOutputStatusReconnect(reason: String) {
@@ -553,7 +229,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         if testingAllowFocusSteal {
             focusStealAttempts += 1
             window?.makeFirstResponder(self)
-            return
         }
     }
 
@@ -634,7 +309,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         synchronizeColorScheme()
-        // Under the .system selection the palette follows the appearance too, so the theme is re-resolved rather than only the color scheme.
         applySelectedAppearance()
     }
 
@@ -695,7 +369,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             }
             return
         }
-        // A newly shown, inactive CLI-launched window can report a stale non-visible occlusion state indefinitely. Allow exactly one frame to seed its IOSurface, then return to the real occlusion state.
         let visible = window.occlusionState.contains(.visible) ||
             (!hasCompletedInitialDraw && window.isVisible && !window.isMiniaturized)
         guard appliedOcclusionVisible != visible else { return }
@@ -732,7 +405,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         let width = max(0, Int(backingSize.width.rounded()))
         let height = max(0, Int(backingSize.height.rounded()))
         guard width > 0, height > 0 else {
-            resizeWorkItem?.cancel()
             appliedFramebufferSize = nil
             reportedGeometry = nil
             return
@@ -746,7 +418,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             schedulePendingDrawIfPossible()
             return
         }
-        resizeWorkItem?.cancel()
         appliedFramebufferSize = (widthPx, heightPx)
         engine.setSize(widthPx: widthPx, heightPx: heightPx)
         accessibilityGeometryDidChange()
@@ -754,18 +425,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         schedulePendingDrawIfPossible()
     }
 
-    private func scheduleResizeFrame(_ geometry: TerminalGeometry) {
-        let work = DispatchWorkItem { [weak self] in
-            guard let self, self.bounds.width > 0, self.bounds.height > 0,
-                  self.binding != nil, let client = self.attachClient else { return }
-            guard (try? client.sendResize(geometry)) != nil else { return }
-            self.resizeFramesSent += 1
-        }
-        resizeWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + resizeQuiescence, execute: work)
-    }
-
-    private func updateReportedGeometry(scheduleResize: Bool = true) {
+    private func updateReportedGeometry() {
         guard let size = engine.reportedSize() else {
             reportedGeometry = nil
             return
@@ -781,7 +441,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             reportedGeometry = nil
             return
         }
-        let geometry = TerminalGeometry(
+        reportedGeometry = TerminalGeometry(
             columns: Int(size.columns),
             rows: Int(size.rows),
             widthPx: Int(size.widthPx),
@@ -789,40 +449,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             cellWidthPx: Double(size.cellWidthPx),
             cellHeightPx: Double(size.cellHeightPx)
         )
-        reportedGeometry = geometry
-        if scheduleResize, binding != nil { scheduleResizeFrame(geometry) }
-    }
-
-    private func refreshReportedGeometryAfterConfiguration() {
-        if let appliedFramebufferSize {
-            engine.setSize(
-                widthPx: appliedFramebufferSize.width,
-                heightPx: appliedFramebufferSize.height
-            )
-        }
-        updateReportedGeometry(scheduleResize: false)
-        forceRendererResizeIfSemanticGridIsStale()
-    }
-
-    /// A checkpoint restore swaps the VT core in at the checkpoint's grid geometry, but ghostty's embedded `updateSize` early-returns when the framebuffer pixels are unchanged (apprt/embedded.zig), so the plain `setSize` above cannot repair a stale grid: `reportedSize()` derives from the stored pixel size while the semantic grid stays behind. When the two disagree, nudge the pixel size once so ghostty performs a REAL resize (`Surface.resize`/`queueIo(.resize)`) and the terminal core adopts the live geometry — the same repair a window drag performs. One-shot per attach: if the mismatch persists (configuration still settling), an outer settle loop retries with its own deadline.
-    private func forceRendererResizeIfSemanticGridIsStale() {
-        guard !postRestoreResizeForced,
-              let appliedFramebufferSize,
-              let reportedGeometry,
-              let snapshot = (engine as? ManualSurfaceSemanticSnapshotProviding)?.semanticSnapshot(),
-              reportedGeometry.columns != snapshot.geometry.columns ||
-                reportedGeometry.rows != snapshot.geometry.rows
-        else { return }
-        postRestoreResizeForced = true
-        let nudgedWidth = appliedFramebufferSize.width > 1
-            ? appliedFramebufferSize.width - 1
-            : appliedFramebufferSize.width + 1
-        engine.setSize(widthPx: nudgedWidth, heightPx: appliedFramebufferSize.height)
-        engine.setSize(
-            widthPx: appliedFramebufferSize.width,
-            heightPx: appliedFramebufferSize.height
-        )
-        updateReportedGeometry(scheduleResize: false)
     }
 
     public func userClose() {
@@ -832,7 +458,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         dismissNewOutputIndicator()
         pendingDraw = false
         needsDisplay = false
-        resizeWorkItem?.cancel()
         accessibilitySurfaceWillClose()
         onUserClose?()
         engine.free()
@@ -840,12 +465,10 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             renderHostView.layer = nil
             renderHostView.wantsLayer = false
         }
-        binding = nil
-        applicator.clearBinding()
         setSurfaceState(.exited(evidence: "user-close"))
     }
 
-    private func setSurfaceState(_ newState: TerminalSurfaceState) {
+    func setSurfaceState(_ newState: TerminalSurfaceState) {
         let changed = surfaceState != newState
         surfaceState = newState
         if changed {
@@ -854,5 +477,4 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         notifyOutputStatusReconnect(reason: "state")
         onStateChange?(newState)
     }
-
 }

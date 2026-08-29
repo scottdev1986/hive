@@ -25,6 +25,7 @@ import {
   presentWorkspaceAgent,
   presentWorkspaceOrchestrator,
 } from "./workspace-feed-presentation";
+import { readTerminalLaunchSpec } from "../daemon/session-host/shell-session";
 import type { JsonValue } from "../shared/json";
 
 export const FEED_VERSION = 1;
@@ -424,6 +425,12 @@ export async function runWorkspaceFeed(
         const presentedAgents = agents.map((agent) => ({
           ...agent,
           presentation: presentWorkspaceAgent(agent),
+          ...definedFields({
+            terminalLaunch: agent.sessionLocator
+              ? (readTerminalLaunchSpec(agent.sessionLocator.sessionId) ??
+                undefined)
+              : undefined,
+          }),
         }));
         const presentedOrchestrator =
           orchestrator === null

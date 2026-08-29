@@ -1,8 +1,6 @@
 import AppKit
-import WorkspaceCore
-#if HIVE_QA_BUILD
 import HiveTerminalKit
-#endif
+import WorkspaceCore
 
 @MainActor
 protocol LiveRunTerminalSurface: AnyObject {
@@ -11,26 +9,27 @@ protocol LiveRunTerminalSurface: AnyObject {
     func makeView() throws -> NSView
     func start()
     func detach()
+    func free()
 }
 
-final class LiveRunSessiondSurface: LiveRunTerminalSurface {
+extension LiveRunTerminalSurface {
+    func free() {}
+}
+
+final class LiveRunGhosttySurface: LiveRunTerminalSurface {
     let locator: AgentSessionLocator
-    private let terminal: SessiondPaneTerminal
+    private let terminal: GhosttyPaneTerminal
 
     init(session: LiveRunSessionSummary, config: LaunchConfig) {
-        locator = session.locator!
-        terminal = SessiondPaneTerminal(
-            agentName: session.name,
-            locator: locator,
-            hivePath: config.hivePath!,
-            daemonPort: config.port!,
-            instanceHome: config.instanceHome!)
+        terminal = GhosttyPaneTerminal(session: session, config: config)
+        locator = terminal.paneLocator
     }
 
     var installedView: NSView? { terminal.view }
     func makeView() throws -> NSView { try terminal.makeView() }
     func start() { terminal.start() }
-    func detach() { terminal.detach() }
+    func detach() { terminal.hide() }
+    func free() { terminal.free() }
 }
 
 final class LiveRunWorkbenchView: NSView {
@@ -84,6 +83,7 @@ final class LiveRunWorkbenchView: NSView {
 
     private var sessions: [LiveRunSessionSummary] = []
     private var selectedID: String?
+    private var terminals: [String: LiveRunTerminalSurface] = [:]
     private var terminal: LiveRunTerminalSurface?
     private var visibleLocator: AgentSessionLocator?
     private var controlProjection: LiveRunControlProjection?
@@ -106,8 +106,8 @@ final class LiveRunWorkbenchView: NSView {
     var closeAgentHandler: ((LiveRunSessionSummary) -> Void)?
 
     convenience init(config: LaunchConfig) {
-        let factory: TerminalFactory? = config.isComplete
-            ? { LiveRunSessiondSurface(session: $0, config: config) }
+        let factory: TerminalFactory? = config.projectDirectory != nil
+            ? { LiveRunGhosttySurface(session: $0, config: config) }
             : nil
         self.init(terminalFactory: factory)
     }
@@ -130,8 +130,12 @@ final class LiveRunWorkbenchView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    var selectedLocator: AgentSessionLocator? { terminal?.locator }
-    var installedTerminalCount: Int { terminal?.installedView == nil ? 0 : 1 }
+    var selectedLocator: AgentSessionLocator? {
+        sessions.first(where: { $0.id == selectedID })?.locator ?? terminal?.locator
+    }
+    var installedTerminalCount: Int {
+        terminalHost.subviews.filter { !$0.isHidden && $0 !== terminalPlaceholder }.count
+    }
 #if HIVE_QA_BUILD
     var qaAttachedTerminalView: HiveTerminalView? {
         guard selectedID == LiveRunSessionSummary.queenID else { return nil }
@@ -150,6 +154,7 @@ final class LiveRunWorkbenchView: NSView {
         let priorSelection = selectedID
         errorLabel.isHidden = true
         sessions = projection.sessions
+        dropTerminals(notIn: Set(sessions.map(\.id)))
         if !sessions.contains(where: { $0.id == selectedID }) {
             if let selectedNode = horizon?.selectedNode {
                 selectedID = matchingSession(for: selectedNode)?.id
@@ -196,11 +201,11 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     func showUnavailable(_ reason: String) {
-        // An unavailable feed cannot prove that its last locator is still current. Detach the viewer and withdraw its visibility; the session keeps running.
+        // Feed loss hides the pane. It does not free Ghostty surfaces; those live with the app.
         sessions = []
         selectedID = nil
         rebuildRail()
-        detachTerminal()
+        hideVisibleTerminal()
         publishVisibleSessionIfChanged(nil)
         errorLabel.stringValue = reason
         errorLabel.isHidden = false
@@ -290,7 +295,7 @@ final class LiveRunWorkbenchView: NSView {
         if visible {
             renderSelection()
         } else {
-            detachTerminal()
+            hideVisibleTerminal()
             publishVisibleSessionIfChanged(nil)
             updateCenterBadges(sessions.first(where: { $0.id == selectedID }))
         }
@@ -763,11 +768,11 @@ final class LiveRunWorkbenchView: NSView {
     private func renderSelection() {
         guard let session = sessions.first(where: { $0.id == selectedID }) else {
             controlProjection = nil
-            detachTerminal()
+            hideVisibleTerminal()
             titleLabel.stringValue = "No live session selected"
             subtitleLabel.stringValue = "Background rows remain typed-only"
             locatorLabel.stringValue = "Exact generation · unknown"
-            terminalPlaceholder.stringValue = "Select an agent with an exact session locator."
+            terminalPlaceholder.stringValue = "Select an agent."
             terminalPlaceholder.isHidden = false
             updateControlStrip(nil)
             updateCenterBadges(nil)
@@ -789,57 +794,13 @@ final class LiveRunWorkbenchView: NSView {
         updateCenterBadges(session)
         updateInspector(session)
         guard routeVisible else { return }
-        guard let locator = session.locator else {
-            detachTerminal()
-            locatorLabel.stringValue = "Exact generation · unknown"
-            terminalPlaceholder.stringValue = session.locatorFact?.reason
-                ?? "No exact terminal locator was projected."
-            terminalPlaceholder.isHidden = false
-            publishVisibleSessionIfChanged(nil)
-            updateCenterBadges(session)
-            return
+        if let locator = session.locator {
+            locatorLabel.stringValue = "\(locator.sessionId) · generation \(locator.generation) exact"
+        } else {
+            locatorLabel.stringValue = session.locatorFact?.reason ?? "Ghostty-owned terminal"
         }
-        locatorLabel.stringValue = "\(locator.sessionId) · generation \(locator.generation) exact"
-        if terminal?.locator == locator {
-            publishVisibleSessionIfChanged(session)
-            updateCenterBadges(session)
-            return
-        }
-
-        detachTerminal()
-        guard let terminalFactory else {
-            terminalPlaceholder.stringValue = "Terminal transport is absent in this launch."
-            terminalPlaceholder.isHidden = false
-            publishVisibleSessionIfChanged(nil)
-            updateCenterBadges(session)
-            return
-        }
-        let fresh = terminalFactory(session)
-        do {
-            let view = try fresh.makeView()
-            view.translatesAutoresizingMaskIntoConstraints = false
-            view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-            terminalHost.addSubview(view)
-            NSLayoutConstraint.activate([
-                view.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
-                view.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
-                view.topAnchor.constraint(equalTo: terminalHost.topAnchor),
-                view.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
-            ])
-            terminal = fresh
-            terminalPlaceholder.isHidden = true
-            fresh.start()
-            publishVisibleSessionIfChanged(session)
-            updateCenterBadges(session)
-        } catch {
-            fresh.detach()
-            let message = "Terminal renderer unavailable: \(error.localizedDescription). The terminal is waiting and will appear automatically."
-            NSLog("%@", message)
-            terminalPlaceholder.stringValue = message
-            terminalPlaceholder.isHidden = false
-            publishVisibleSessionIfChanged(nil)
-            updateCenterBadges(session)
-        }
+        presentTerminal(for: session)
+        updateCenterBadges(session)
     }
 
     private func publishVisibleSessionIfChanged(_ session: LiveRunSessionSummary?) {
@@ -849,10 +810,89 @@ final class LiveRunWorkbenchView: NSView {
         onVisibleSessionChanged?(session)
     }
 
-    private func detachTerminal() {
-        terminal?.detach()
+    private func presentTerminal(for session: LiveRunSessionSummary) {
+        if let existing = terminals[session.id], existing.installedView != nil {
+            showInstalled(existing, session: session)
+            return
+        }
+        guard let terminalFactory else {
+            hideVisibleTerminal()
+            terminalPlaceholder.stringValue = "Terminal transport is absent in this launch."
+            terminalPlaceholder.isHidden = false
+            publishVisibleSessionIfChanged(nil)
+            return
+        }
+        let fresh = terminals[session.id] ?? terminalFactory(session)
+        terminals[session.id] = fresh
+        do {
+            let view = try fresh.makeView()
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+            view.isHidden = false
+            if view.superview !== terminalHost {
+                view.removeFromSuperview()
+                terminalHost.addSubview(view)
+                NSLayoutConstraint.activate([
+                    view.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
+                    view.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
+                    view.topAnchor.constraint(equalTo: terminalHost.topAnchor),
+                    view.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
+                ])
+            }
+            hideOtherTerminals(except: view)
+            terminal = fresh
+            terminalPlaceholder.isHidden = true
+            fresh.start()
+            publishVisibleSessionIfChanged(session)
+        } catch {
+            let message = "Terminal renderer unavailable: \(error.localizedDescription). The terminal is waiting and will appear automatically."
+            NSLog("%@", message)
+            terminalPlaceholder.stringValue = message
+            terminalPlaceholder.isHidden = false
+            publishVisibleSessionIfChanged(nil)
+        }
+    }
+
+    private func showInstalled(_ surface: LiveRunTerminalSurface, session: LiveRunSessionSummary) {
+        guard let view = surface.installedView else { return }
+        view.isHidden = false
+        if view.superview !== terminalHost {
+            view.removeFromSuperview()
+            view.translatesAutoresizingMaskIntoConstraints = false
+            terminalHost.addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
+                view.topAnchor.constraint(equalTo: terminalHost.topAnchor),
+                view.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
+            ])
+        }
+        hideOtherTerminals(except: view)
+        terminal = surface
+        terminalPlaceholder.isHidden = true
+        publishVisibleSessionIfChanged(session)
+    }
+
+    private func hideOtherTerminals(except visible: NSView) {
+        for subview in terminalHost.subviews where subview !== visible {
+            subview.isHidden = true
+        }
+    }
+
+    private func hideVisibleTerminal() {
         terminal?.installedView?.removeFromSuperview()
         terminal = nil
+    }
+
+    private func dropTerminals(notIn liveIDs: Set<String>) {
+        for (id, surface) in terminals where !liveIDs.contains(id) {
+            surface.installedView?.removeFromSuperview()
+            surface.free()
+            terminals[id] = nil
+            if terminal === surface {
+                terminal = nil
+            }
+        }
     }
 
     private func updateInspector(_ session: LiveRunSessionSummary?) {

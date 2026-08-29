@@ -6,7 +6,7 @@ import Testing
 @MainActor
 @Suite("Live Run workbench")
 struct LiveRunWorkbenchViewTests {
-    @Test("Switching sessions replaces one exact surface without closing a session")
+    @Test("Switching sessions keeps the hidden Ghostty surface alive")
     func exactGenerationSwitch() throws {
         var surfaces: [FakeSurface] = []
         let view = LiveRunWorkbenchView { session in
@@ -35,7 +35,7 @@ struct LiveRunWorkbenchViewTests {
 
         view.selectSession(id: "id-b")
         #expect(surfaces.count == 2)
-        #expect(surfaces[0].detached)
+        #expect(!surfaces[0].detached)
         #expect(!surfaces[0].closed)
         #expect(view.installedTerminalCount == 1)
         #expect(view.selectedLocator?.generation == 7)
@@ -44,11 +44,36 @@ struct LiveRunWorkbenchViewTests {
             agent("a", provider: "claude", generation: 1),
             agent("b", provider: "codex", generation: 8),
         ]))
-        #expect(surfaces.count == 3)
-        #expect(surfaces[1].detached)
+        #expect(surfaces.count == 2)
+        #expect(!surfaces[1].detached)
         #expect(!surfaces[1].closed)
         #expect(view.installedTerminalCount == 1)
         #expect(view.selectedLocator?.generation == 8)
+    }
+
+    @Test("Removing a session from the feed frees that Ghostty surface")
+    func droppingASessionFreesItsSurface() throws {
+        var surfaces: [FakeSurface] = []
+        let view = LiveRunWorkbenchView { session in
+            let surface = FakeSurface(locator: session.locator!)
+            surfaces.append(surface)
+            return surface
+        }
+        view.setRouteVisible(true)
+        view.apply(try projection([
+            agent("a", provider: "claude", generation: 1),
+            agent("b", provider: "codex", generation: 1),
+        ]))
+        view.selectSession(id: "id-b")
+        #expect(surfaces.count == 2)
+
+        view.apply(try projection([
+            agent("a", provider: "claude", generation: 1),
+        ]))
+        #expect(surfaces[1].freed)
+        #expect(!surfaces[0].freed)
+        #expect(view.installedTerminalCount == 1)
+        #expect(view.selectedLocator?.subject.agentId == "id-a")
     }
 
     @Test("Five background rows stay typed-only and unproved controls stay absent")
@@ -125,7 +150,7 @@ struct LiveRunWorkbenchViewTests {
         #expect(requested == [.stopProvider, .terminateTerminal])
     }
 
-    @Test("Leaving Live Run detaches its viewer and returning creates a fresh one")
+    @Test("Leaving Live Run hides the terminal without destroying it")
     func routeDetach() throws {
         var surfaces: [FakeSurface] = []
         let view = LiveRunWorkbenchView { session in
@@ -137,16 +162,16 @@ struct LiveRunWorkbenchViewTests {
         view.apply(try projection([agent("a", provider: "claude", generation: 4)]))
 
         view.setRouteVisible(false)
-        #expect(surfaces[0].detached)
+        #expect(!surfaces[0].detached)
         #expect(view.installedTerminalCount == 0)
 
         view.setRouteVisible(true)
-        #expect(surfaces.count == 2)
+        #expect(surfaces.count == 1)
         #expect(view.installedTerminalCount == 1)
         #expect(view.selectedLocator?.generation == 4)
     }
 
-    @Test("An unavailable feed withdraws the visible exact terminal")
+    @Test("An unavailable feed hides the pane without destroying the terminal")
     func unavailableWithdrawsVisibility() throws {
         var surfaces: [FakeSurface] = []
         var visibility: [String] = []
@@ -162,16 +187,23 @@ struct LiveRunWorkbenchViewTests {
         view.showUnavailable("strict feed refused")
 
         #expect(visibility == ["id-a", "none"])
-        #expect(surfaces[0].detached)
+        #expect(!surfaces[0].detached)
         #expect(view.installedTerminalCount == 0)
     }
 
-    @Test("A mismatched locator subject never reaches the terminal factory")
+    @Test("A session without a matching locator still gets a Ghostty pane")
     func mismatchedLocatorDoesNotAttach() throws {
         var surfaceCount = 0
         let view = LiveRunWorkbenchView { session in
             surfaceCount += 1
-            return FakeSurface(locator: session.locator!)
+            return FakeSurface(locator: session.locator ?? AgentSessionLocator(
+                instanceId: "rig",
+                subject: AgentSessionSubject(kind: "agent", agentId: "id-a"),
+                generation: 1,
+                sessionId: "local",
+                hostKind: "ghostty",
+                engineBuildId: nil
+            ))
         }
         view.setRouteVisible(true)
         let mismatched = agent("a", provider: "claude", generation: 4)
@@ -179,8 +211,8 @@ struct LiveRunWorkbenchViewTests {
 
         view.apply(try projection([mismatched]))
 
-        #expect(surfaceCount == 0)
-        #expect(view.installedTerminalCount == 0)
+        #expect(surfaceCount == 1)
+        #expect(view.installedTerminalCount == 1)
     }
 
     @Test("Repeated snapshots keep rail rows and publish only exact identity changes")
@@ -431,6 +463,7 @@ private final class FakeSurface: LiveRunTerminalSurface {
     private(set) var installedView: NSView?
     private(set) var detached = false
     private(set) var closed = false
+    private(set) var freed = false
 
     init(locator: AgentSessionLocator) {
         self.locator = locator
@@ -444,6 +477,7 @@ private final class FakeSurface: LiveRunTerminalSurface {
 
     func start() {}
     func detach() { detached = true }
+    func free() { freed = true }
 }
 
 @MainActor

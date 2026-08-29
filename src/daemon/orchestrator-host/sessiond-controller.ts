@@ -24,12 +24,12 @@ import {
   prepareSessionZdotdir,
   shellSessionLaunch,
   userZdotdir,
+  writeTerminalLaunchSpec,
 } from "../session-host/shell-session";
 import type { TerminalHostBindingStore } from "../session-host/terminal-host-binding";
 import { ORCHESTRATOR_NAME } from "../../schemas/agent";
 import {
   PTY_CREATE_GEOMETRY,
-  ROOT_VISIBILITY_ID,
   type WorkspaceVisibilityAuthority,
 } from "../session-host/workspace-visibility";
 import type { JsonValue } from "../../shared/json";
@@ -283,11 +283,10 @@ export class OrchestratorSessiondController {
   /** The one path every root's session comes up through, vendor-backed or headless. readiness is parameterised rather than hardcoded: "the root is ready" no longer means "a vendor process arrived" (create()'s old, transport-coupled definition), it means "the session reached the caller-named foreground state" — unmanaged for a vendor launch, shell-idle for a headless one. Bind, wait loop, ProviderRun insert, error handling, and the exit-monitor reap are the same code for both; only that one predicate and the params it reads (provider/model/effort, which stay null for a headless root) differ. */
   private async createSession(
     params: SessionCreateParams,
-    expectedForeground: "unmanaged" | "shell-idle",
+    _expectedForeground: "unmanaged" | "shell-idle",
     signal: AbortSignal,
   ): Promise<OrchestratorSessiondSnapshot> {
     let locator: OrchestratorSessiondSnapshot["locator"] | null = null;
-    let createdInspection: SessionInspection | null = null;
     try {
       let policy = null;
       while (policy === null && !signal.aborted) {
@@ -313,58 +312,26 @@ export class OrchestratorSessiondController {
           `queen launch names generation ${params.targetGeneration}; durable bindings require ${locator.generation}`,
         );
       }
-      const existing =
-        this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
-      let hostOrigin: HostOrigin = "inherited";
-      if (existing?.createEvidence === undefined) {
-        const pane = await this.dependencies.visibility.admit({
-          agentId: ROOT_VISIBILITY_ID,
-          agentName: ORCHESTRATOR_NAME,
-        });
-        const created = await this.dependencies.terminalHost.create(
-          await this.sessionSpec(
-            params,
-            locator,
-            pane?.geometry ?? PTY_CREATE_GEOMETRY,
-          ),
-          { locator, visibility: policy.visibility },
-        );
-        createdInspection = created.inspection;
-        hostOrigin = "managed";
-      }
+      this.dependencies.bindings.bindTerminalHostSession({
+        locator,
+        visibility: policy.visibility,
+      });
+      const spec = await this.sessionSpec(
+        params,
+        locator,
+        PTY_CREATE_GEOMETRY,
+      );
+      await writeTerminalLaunchSpec(locator.sessionId, {
+        cwd: spec.cwd,
+        command: spec.argv.join(" "),
+        environment: spec.environment,
+      });
       if (signal.aborted) throw new Error("queen sessiond creation canceled");
       if (
         this.dependencies.providerRuns.getActiveProviderRunByTerminal(
           locator,
         ) === null
       ) {
-        let inspection: SessionInspection | null =
-          createdInspection?.foreground.state === expectedForeground
-            ? createdInspection
-            : null;
-        for (
-          let attempt = 0;
-          attempt < FOREGROUND_INSPECTION_MAX_ATTEMPTS;
-          attempt += 1
-        ) {
-          if (inspection !== null) break;
-          const candidate =
-            await this.dependencies.terminalHost.inspect(locator);
-          if (candidate.foreground.state === expectedForeground) {
-            inspection = candidate;
-            break;
-          }
-          if (candidate.presence !== "present" || signal.aborted) break;
-          await this.wait(FOREGROUND_INSPECTION_RETRY_MS, signal);
-        }
-        if (
-          inspection === null ||
-          inspection.foreground.state !== expectedForeground
-        ) {
-          throw new Error(
-            `queen sessiond launch never reached its expected foreground (${expectedForeground})`,
-          );
-        }
         this.dependencies.providerRuns.insertProviderRun({
           runId: params.providerRunId,
           agentId: null,
@@ -375,7 +342,7 @@ export class OrchestratorSessiondController {
           conversationId: null,
           capabilityEpoch: 0,
           launchGrantId: params.requestId,
-          startedAt: inspection.evidenceAt,
+          startedAt: new Date(this.now()).toISOString(),
           endedAt: null,
           adapterChild: null,
           protocolReceipt: null,
@@ -392,16 +359,6 @@ export class OrchestratorSessiondController {
         diagnostic: null,
       };
       this.setCurrent(ready);
-      const monitorAbort = new AbortController();
-      this.abort = monitorAbort;
-      void this.monitor(
-        params.requestId,
-        locator,
-        hostOrigin,
-        monitorAbort.signal,
-      ).finally(() => {
-        if (this.abort === monitorAbort) this.abort = null;
-      });
       return ready;
     } catch (error) {
       // A launch that could not be verified is not a terminal that must die. Do not terminate here: the terminal and provider may be running even when verification fails, and a failed termination leaves a killed host with no audit.

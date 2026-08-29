@@ -5,7 +5,7 @@ final class FactoryErrorTests: XCTestCase {
     func testSurfaceFailureUsesItsDescriptionForLocalizedDescription() {
         XCTAssertEqual(
             GhosttyBridgeFactory.FactoryError.surfaceFailed.localizedDescription,
-            "hive_ghostty_surface_new_manual_v1 failed"
+            "ghostty_surface_new failed"
         )
     }
 }

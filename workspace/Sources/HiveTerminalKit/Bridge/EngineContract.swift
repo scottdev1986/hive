@@ -14,48 +14,26 @@ public struct HiveTerminalEngineIdentity: Equatable, Sendable {
     public static var current: HiveTerminalEngineIdentity {
         HiveTerminalEngineIdentity(
             upstreamCommit: pinnedUpstreamCommit,
-            buildId: GhosttyManualSurface.engineBuildId()
+            buildId: "ghostty-owned"
         )
     }
 }
 
 public struct HiveTerminalRenderEvidence: Equatable, Sendable {
     public let engine: HiveTerminalEngineIdentity
-    public let locator: SessionLocator?
-    public let highWater: UInt64
     public let drawCount: Int
     public let layerClass: String?
     public let hasPresentedContents: Bool
 
     public init(
         engine: HiveTerminalEngineIdentity,
-        locator: SessionLocator?,
-        highWater: UInt64,
         drawCount: Int,
         layerClass: String?,
         hasPresentedContents: Bool
     ) {
         self.engine = engine
-        self.locator = locator
-        self.highWater = highWater
         self.drawCount = drawCount
         self.layerClass = layerClass
         self.hasPresentedContents = hasPresentedContents
     }
-}
-
-public enum HiveTerminalBindingError: Error, Equatable, LocalizedError, CustomStringConvertible, Sendable {
-    case locatorChanged(expected: SessionLocator, attempted: SessionLocator)
-    case closed
-
-    public var description: String {
-        switch self {
-        case .locatorChanged(let expected, let attempted):
-            return "HiveTerminalView is fixed to \(expected.sessionId)#\(expected.generation), not \(attempted.sessionId)#\(attempted.generation)"
-        case .closed:
-            return "HiveTerminalView is closed"
-        }
-    }
-
-    public var errorDescription: String? { description }
 }

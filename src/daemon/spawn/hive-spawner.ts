@@ -89,8 +89,10 @@ import type {
 import { SessiondWireError } from "../session-host/sessiond-host";
 import {
   prepareSessionZdotdir,
+  readTerminalLaunchSpec,
   type ShellSessionLaunch,
   shellSessionLaunch,
+  writeTerminalLaunchSpec,
 } from "../session-host/shell-session";
 import {
   PTY_CREATE_GEOMETRY,
@@ -257,33 +259,30 @@ export class HiveSpawner implements Spawner {
     // REQUIRED, and deliberately not defaulted. A minted-here id is one no provider hook carries, so recordProviderHookEvent rejects every event on run-id mismatch and the agent's events vanish silently — no test and no typecheck can see that. A caller that forgets to thread the id must fail to compile instead.
     providerRunId: string,
   ): Promise<void> {
-    const admission = await this.requireSessiondCreationPolicy(record);
-    const pane = await this.dependencies.sessiond.admit({
-      agentId: record.id,
-      agentName: record.name,
-    });
     const shell = shellSessionLaunch(command);
     const spec = await this.sessiondSpec(
       record,
       shell,
       launchGrantId,
-      pane?.geometry ?? PTY_CREATE_GEOMETRY,
+      PTY_CREATE_GEOMETRY,
     );
-    const created = await this.requireSessiondHost(record).create(spec, {
-      locator: requireSessiondAgentLocator(record),
-      visibility: admission.visibility,
+    const locator = requireSessiondAgentLocator(record);
+    await writeTerminalLaunchSpec(locator.sessionId, {
+      cwd: spec.cwd,
+      command: spec.argv.join(" "),
+      environment: spec.environment,
     });
     this.dependencies.db.insertProviderRun({
       runId: providerRunId,
       agentId: record.id,
-      terminal: created.locator,
+      terminal: locator,
       provider: record.tool,
       model: record.model,
       effort: record.executionIdentity?.effort ?? null,
       conversationId: record.toolSessionId ?? null,
       capabilityEpoch: record.capabilityEpoch,
       launchGrantId,
-      startedAt: created.inspection.evidenceAt,
+      startedAt: new Date().toISOString(),
       endedAt: null,
       adapterChild: null,
       protocolReceipt: null,
@@ -1662,6 +1661,14 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     launchedCommand: string,
   ): Promise<string | null> {
+    if (
+      record.sessionLocator !== undefined &&
+      readTerminalLaunchSpec(record.sessionLocator.sessionId) !== null
+    ) {
+      // Ghostty in the Workspace owns the PTY. There is no sessiond process
+      // tree to watch; agent-ui starts when the pane execs this launch spec.
+      return null;
+    }
     const newestEventSeq = () =>
       this.dependencies.newestAgentEventSeq?.(record.id) ?? null;
     // Baseline from the stream, sampled before the watch: anything at or below it was already there, so only a genuinely new lifecycle event counts.

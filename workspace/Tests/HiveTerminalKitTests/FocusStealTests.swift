@@ -34,12 +34,7 @@ final class FocusStealTests: XCTestCase {
         // Fire the events that MUST NOT steal focus.
         terminal.notifyOutputStatusReconnect(reason: "output")
         terminal.applyStatusUpdate(evidence: "agent-busy")
-        try? terminal.bind(
-            to: SurfaceBinding(locator: makeTestLocator(), connectionId: "reconnect-1"),
-            highWater: 0
-        )
-        // Simulate first-correct-frame notification path.
-        terminal.notifyOutputStatusReconnect(reason: "first-correct-frame")
+        terminal.notifyOutputStatusReconnect(reason: "title")
 
         XCTAssertTrue(
             window.firstResponder === other,

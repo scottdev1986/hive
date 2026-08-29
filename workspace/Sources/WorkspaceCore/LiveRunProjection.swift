@@ -1,4 +1,5 @@
 import Foundation
+import HiveTerminalKit
 
 public enum LiveRunFeedError: Error, Equatable, LocalizedError {
     case unsupportedSchemaVersion(Int?)
@@ -49,6 +50,7 @@ public struct LiveRunSessionSummary: Equatable {
     public let task: String?
     public let locator: AgentSessionLocator?
     public let locatorFact: LiveRunContractFact?
+    public let terminalLaunch: TerminalLaunchSpec?
     public let providerRun: LiveRunContractFact
     public let shellRoot: LiveRunContractFact
     public let processCensus: LiveRunContractFact
@@ -73,6 +75,7 @@ public struct LiveRunSessionSummary: Equatable {
             locator = nil
             locatorFact = .unknown(reason: Self.locatorReason(agent))
         }
+        terminalLaunch = agent.terminalLaunch
 
         providerRun = .absent(
             reason: "workspace-feed does not project exact ProviderRun identity")
@@ -101,6 +104,7 @@ public struct LiveRunSessionSummary: Equatable {
             locator = nil
             locatorFact = .unknown(reason: Self.queenLocatorReason(orchestrator))
         }
+        terminalLaunch = orchestrator.terminalLaunch
         providerRun = .absent(
             reason: "workspace-feed does not project exact ProviderRun identity")
         shellRoot = .unknown(

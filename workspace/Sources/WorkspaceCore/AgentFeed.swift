@@ -176,11 +176,13 @@ public struct AgentSnapshot: Equatable, Decodable {
     /// ISO datetime; present means the agent is closed and must not get a pane.
     public let closedAt: String?
     public let sessionLocator: AgentSessionLocator?
+    public let terminalLaunch: TerminalLaunchSpec?
 
     public init(id: String? = nil, name: String, tool: String? = nil, model: String? = nil,
                 status: String = "unknown", taskDescription: String? = nil,
                 contextPct: Double? = nil,
                 closedAt: String? = nil, sessionLocator: AgentSessionLocator? = nil,
+                terminalLaunch: TerminalLaunchSpec? = nil,
                 statusDimensions: WorkspaceStatusDimensions? = nil,
                 presentation: AgentFeedPresentation = .unknown) {
         self.id = id
@@ -194,11 +196,12 @@ public struct AgentSnapshot: Equatable, Decodable {
         self.presentation = presentation
         self.closedAt = closedAt
         self.sessionLocator = sessionLocator
+        self.terminalLaunch = terminalLaunch
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, tool, model, status, taskDescription, contextPct
-        case closedAt, sessionLocator, statusDimensions
+        case closedAt, sessionLocator, terminalLaunch, statusDimensions
         case presentation
     }
 
@@ -218,6 +221,8 @@ public struct AgentSnapshot: Equatable, Decodable {
         closedAt = try? container.decodeIfPresent(String.self, forKey: .closedAt)
         sessionLocator = try container.decodeIfPresent(
             AgentSessionLocator.self, forKey: .sessionLocator)
+        terminalLaunch = try container.decodeIfPresent(
+            TerminalLaunchSpec.self, forKey: .terminalLaunch)
     }
 }
 
@@ -264,12 +269,14 @@ public struct OrchestratorSnapshot: Equatable, Decodable {
     public let hostState: String?
     public let hostDiagnostic: String?
     public let sessionLocator: AgentSessionLocator?
+    public let terminalLaunch: TerminalLaunchSpec?
     public let presentation: AgentFeedPresentation
 
     public init(name: String, status: String?, tool: String? = nil, model: String? = nil,
                 host: String? = nil, hostState: String? = nil,
                 hostDiagnostic: String? = nil,
                 sessionLocator: AgentSessionLocator? = nil,
+                terminalLaunch: TerminalLaunchSpec? = nil,
                 presentation: AgentFeedPresentation = .unknown) {
         self.name = name
         self.status = status
@@ -279,11 +286,13 @@ public struct OrchestratorSnapshot: Equatable, Decodable {
         self.hostState = hostState
         self.hostDiagnostic = hostDiagnostic
         self.sessionLocator = sessionLocator
+        self.terminalLaunch = terminalLaunch
         self.presentation = presentation
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, status, tool, model, host, hostState, hostDiagnostic, sessionLocator, presentation
+        case name, status, tool, model, host, hostState, hostDiagnostic
+        case sessionLocator, terminalLaunch, presentation
     }
 
     public init(from decoder: Decoder) throws {
@@ -298,6 +307,8 @@ public struct OrchestratorSnapshot: Equatable, Decodable {
             String.self, forKey: .hostDiagnostic)
         sessionLocator = try container.decodeIfPresent(
             AgentSessionLocator.self, forKey: .sessionLocator)
+        terminalLaunch = try container.decodeIfPresent(
+            TerminalLaunchSpec.self, forKey: .terminalLaunch)
         presentation = (try? container.decodeIfPresent(
             AgentFeedPresentation.self, forKey: .presentation)) ?? .unknown
     }

@@ -4,11 +4,6 @@ import Foundation
 /// In-process fake for L1/L2 logic tests that do not need the real C boundary.
 final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapshotProviding {
     let callbackContext: BridgeCallbackContext
-    /// Serializes the feed path, matching `GhosttyManualSurface.feedLock`.
-    private let feedLock = NSLock()
-    private(set) var throughSeq: UInt64 = 0
-    private(set) var appliedRanges: [(streamSeq: UInt64, bytes: Data)] = []
-    private(set) var restored: [(throughSeq: UInt64, payload: Data)] = []
     private(set) var focusCalls: [Bool] = []
     private(set) var sizeCalls: [(UInt32, UInt32)] = []
     private(set) var contentScaleCalls: [(Double, Double)] = []
@@ -40,8 +35,6 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
     }
     private(set) var keysSentDetail: [KeySent] = []
 
-    private var committed: [(streamSeq: UInt64, bytes: Data, digest: Data)] = []
-
     init(callbackContext: BridgeCallbackContext = BridgeCallbackContext()) {
         self.callbackContext = callbackContext
     }
@@ -55,52 +48,6 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
     func semanticSnapshot() -> ManualSurfaceSemanticSnapshot? {
         semanticSnapshotCount += 1
         return fakeSemanticSnapshot
-    }
-
-    /// Mirrors the real engine's contract: the feed runs on the caller's thread
-    /// (the pane's terminal I/O thread in production), serialized by `feedLock`
-    /// rather than by main-queue confinement. A fake that still hopped to main
-    /// would hide exactly the main-thread coupling this split removed.
-    public func processOutput(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
-        let ownedBytes = Data(bytes)
-        feedLock.lock()
-        defer { feedLock.unlock() }
-        return processOutputLocked(bytes: ownedBytes, streamSeq: streamSeq)
-    }
-
-    private func processOutputLocked(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
-        if bytes.isEmpty { return .invalidValue }
-        let digest = sha256(bytes)
-        let (end, overflow) = streamSeq.addingReportingOverflow(UInt64(bytes.count))
-        if overflow { return .invalidValue }
-        if let existing = committed.first(where: { $0.streamSeq == streamSeq && $0.bytes.count == bytes.count }) {
-            return existing.digest == digest ? .success : .invalidValue
-        }
-        if end <= throughSeq {
-            // Fully behind without stored match: engine treats as invalid;
-            // applicator may ignore as at-least-once retransmit.
-            return .invalidValue
-        }
-        if streamSeq != throughSeq {
-            return .invalidValue
-        }
-        committed.append((streamSeq, bytes, digest))
-        appliedRanges.append((streamSeq, bytes))
-        throughSeq = end
-        // Simulate invalidate event like the real bridge.
-        callbackContext.enqueueEvent(BridgeEvent(type: .invalidate))
-        return .success
-    }
-
-    public func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> HiveTerminalEngineResult {
-        let ownedPayload = Data(payload)
-        feedLock.lock()
-        defer { feedLock.unlock() }
-        if ownedPayload.isEmpty { return .invalidValue }
-        restored.append((throughSeq, ownedPayload))
-        committed.removeAll()
-        self.throughSeq = throughSeq
-        return .success
     }
 
     public func setFocus(_ focused: Bool) { focusCalls.append(focused) }

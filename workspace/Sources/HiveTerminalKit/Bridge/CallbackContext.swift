@@ -1,5 +1,4 @@
 import Foundation
-import HiveGhosttyC
 
 enum BridgeEventType: Int32, Equatable, Sendable {
     case invalidate = 1
@@ -102,25 +101,10 @@ final class BridgeCallbackContext: @unchecked Sendable {
         handler?(copy)
     }
 
-    func handleEvent(_ event: UnsafePointer<hive_ghostty_event_s>?) {
+    func handleEvent(_ event: BridgeEvent) {
         guard enter() else { return }
-        guard let event else {
-            leave()
-            return
-        }
-        let value = event.pointee
-        guard let eventType = BridgeEventType(rawValue: Int32(value.type.rawValue)) else {
-            leave()
-            return
-        }
-        let copy: Data
-        if value.length > 0, let bytes = value.bytes {
-            copy = Data(bytes: bytes, count: value.length)
-        } else {
-            copy = Data()
-        }
         leave()
-        enqueueEvent(BridgeEvent(type: eventType, bytes: copy))
+        enqueueEvent(event)
     }
 
     var unownedContextPointer: UnsafeMutableRawPointer {
@@ -228,13 +212,4 @@ final class BridgeCallbackContext: @unchecked Sendable {
     }
 }
 
-let hiveBridgeWriteTrampoline: hive_ghostty_write_fn = { context, bytes, length in
-    guard let ctx = BridgeCallbackContext.fromContext(context) else { return }
-    ctx.handleWrite(bytes: bytes, length: Int(length))
-}
 
-/// Event trampoline: matches `hive_ghostty_event_fn` — **two** params `(void *context, const hive_ghostty_event_s *event)`. Unpacks the struct inside; never takes flattened type/bytes/length.
-let hiveBridgeEventTrampoline: hive_ghostty_event_fn = { context, event in
-    guard let ctx = BridgeCallbackContext.fromContext(context) else { return }
-    ctx.handleEvent(event)
-}

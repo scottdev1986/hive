@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import HiveGhosttyC
 import ObjectiveC
 
 /// Accessibility adapter for `HiveTerminalView`. Semantic rows/ranges/cursor/selection come from `ManualSurfaceSemanticSnapshotProviding`. Selection-change AX posting uses `HiveTerminalActionNotification.selectionChanged`. Also handles lifecycle/ failure announcements and a row-element tree for VoiceOver navigation. Engine exports (`semanticSnapshot()`) are single-lock; this adapter pins one generation for consecutive AX getters until the next invalidate signal (or an explicit `withPinnedSnapshot` read batch). It does **not** re-export on every property access — that multi-export path produced torn dumps. Live VoiceOver listening and Accessibility Inspector user audit are explicit user checklist slots, not silent gaps. Real `NSAccessibility.post` (see `post` below) is covered only by those user slots; machine tests watch `notificationProbe` only.
@@ -452,24 +451,12 @@ extension HiveTerminalView {
         switch surfaceState {
         case .starting:
             return "Terminal starting"
-        case .attaching:
-            return "Terminal attaching"
-        case .replaying:
-            return "Terminal replaying"
         case .live:
             return "Terminal live"
-        case .delayed(let evidence):
-            return "Terminal delayed: \(evidence)"
-        case .orphaned(let evidence):
-            return "Terminal orphaned: \(evidence)"
         case .exited(let evidence):
             return "Terminal exited: \(evidence)"
         case .lost(let evidence):
             return "Terminal lost: \(evidence)"
-        case .incompatibleEngine(let evidence):
-            return "Terminal incompatible engine: \(evidence)"
-        case .unauthorized(let evidence):
-            return "Terminal unauthorized: \(evidence)"
         case .rendererFailed(let evidence):
             return "Terminal renderer failed: \(evidence)"
         }
@@ -659,14 +646,8 @@ extension HiveTerminalView {
         binding: String
     ) -> NSAccessibilityCustomAction {
         NSAccessibilityCustomAction(name: name) { [weak self] in
-            guard
-                let self,
-                let surface = self.engine as? GhosttyManualSurface,
-                let handle = surface.surfaceHandle
-            else { return false }
-            let performed = binding.withCString {
-                ghostty_surface_binding_action(handle, $0, UInt(binding.utf8.count))
-            }
+            guard let self else { return false }
+            let performed = self.engine.performBindingAction(binding)
             if performed { self.terminalAccessibilityController.schedule(.scroll) }
             return performed
         }

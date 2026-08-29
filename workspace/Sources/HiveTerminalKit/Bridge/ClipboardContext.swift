@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import HiveGhosttyC
+import GhosttyKit
 import UniformTypeIdentifiers
 
 struct GhosttyClipboardContent: Equatable {

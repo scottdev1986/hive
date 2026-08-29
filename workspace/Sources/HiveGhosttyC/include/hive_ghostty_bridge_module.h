@@ -1,1 +1,0 @@
-../../../../native/include/hive_ghostty_bridge.h

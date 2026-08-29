@@ -1,5 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { z } from "zod";
 import { sessiondStateRoot } from "../../hive-home/home";
 
 export const TERMINAL_SHELL = "/bin/zsh";
@@ -153,4 +155,45 @@ export function shellSessionLaunch(command: string): ShellSessionLaunch {
       HIVE_TUI_LAUNCHED: "0",
     },
   };
+}
+
+/** What Ghostty execs. Daemon prepares this; the Workspace pane is the only PTY. */
+export const TerminalLaunchSpecSchema = z
+  .strictObject({
+    cwd: z.string().min(1),
+    command: z.string().min(1),
+    environment: z.record(z.string(), z.string()),
+  })
+  .readonly();
+
+export type TerminalLaunchSpec = z.infer<typeof TerminalLaunchSpecSchema>;
+
+function terminalLaunchPath(sessionId: string): string {
+  return join(sessiondStateRoot(), "launch", `${sessionId}.json`);
+}
+
+export async function writeTerminalLaunchSpec(
+  sessionId: string,
+  spec: TerminalLaunchSpec,
+): Promise<void> {
+  const path = terminalLaunchPath(sessionId);
+  await mkdir(join(sessiondStateRoot(), "launch"), {
+    recursive: true,
+    mode: 0o700,
+  });
+  await writeFile(path, `${JSON.stringify(spec, null, 2)}\n`, { mode: 0o600 });
+}
+
+export function readTerminalLaunchSpec(
+  sessionId: string,
+): TerminalLaunchSpec | null {
+  const path = terminalLaunchPath(sessionId);
+  if (!existsSync(path)) return null;
+  try {
+    return TerminalLaunchSpecSchema.parse(
+      JSON.parse(readFileSync(path, "utf8")),
+    );
+  } catch {
+    return null;
+  }
 }

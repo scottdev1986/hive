@@ -1,25 +1,6 @@
 import AppKit
 import Foundation
-import HiveGhosttyC
-import CryptoKit
-
-public enum HiveTerminalEngineResult: Int32, Equatable, Sendable {
-    case success = 0
-    case outOfMemory = -1
-    case invalidValue = -2
-    case outOfSpace = -3
-    case noValue = -4
-
-    init(cResult: ghostty_result_e) {
-        self = HiveTerminalEngineResult(rawValue: cResult.rawValue) ?? .invalidValue
-    }
-}
-
-/// Whether parser-generated terminal protocol replies are enabled for this manual surface. Sessiond enables them as the canonical PTY authority; renderer display copies disable them to prevent duplicate replies.
-enum GhosttyTerminalReplyPolicy: UInt32, Equatable, Sendable {
-    case disabled = 0
-    case enabled = 1
-}
+import GhosttyKit
 
 public struct ManualSurfaceSize: Equatable, Sendable {
     public let columns: UInt16
@@ -114,9 +95,6 @@ enum TerminalColorScheme: Equatable, Sendable {
 
 protocol ManualSurfaceEngine: AnyObject {
     var callbackContext: BridgeCallbackContext { get }
-    var throughSeq: UInt64 { get }
-    func processOutput(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult
-    func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> HiveTerminalEngineResult
     func setFocus(_ focused: Bool)
     func setSize(widthPx: UInt32, heightPx: UInt32)
     func setContentScale(x: Double, y: Double)
@@ -169,20 +147,10 @@ enum GhosttyOperationPhase {
 
 final class GhosttyManualSurface: ManualSurfaceEngine {
     let callbackContext: BridgeCallbackContext
-    private var rawThroughSeq: UInt64 = 0
     private var rawSurfaceHandle: ghostty_surface_t?
     private let clipboardContext: GhosttyClipboardContext
-    private var hiveConfigurationContents: String?
+    private var hiveConfigurationKey: String?
     private let hiveConfigurationHeadless: Bool
-
-    /// Serializes EVERY surface operation, including the output feed. Do not rely on main-queue confinement alone: the feed runs on the pane's terminal I/O thread, so without this lock `processOutput`, `draw`, and `restoreCheckpoint` can nest (`OrderedOutputEngineTests` asserts they do not). Ingestion and draw stay mutually exclusive, and `free()` cannot pull the handle out from under an in-flight feed. Parsing a large VT chunk never occupies the main queue, so a keystroke is never stuck behind it (the input path does not touch this lock). A main-thread `draw` can still wait for the chunk in flight, bounded by one chunk rather than a whole coalesced batch. Recursive because main-thread surface operations call one another.
-    private let feedLock = NSRecursiveLock()
-
-    var throughSeq: UInt64 {
-        feedLock.lock()
-        defer { feedLock.unlock() }
-        return rawThroughSeq
-    }
 
     var surfaceHandle: ghostty_surface_t? {
         dispatchPrecondition(condition: .onQueue(.main))
@@ -221,38 +189,6 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         self.hiveConfigurationHeadless = hiveConfigurationHeadless
     }
 
-    public func processOutput(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
-        let ownedBytes = Data(bytes)
-        outputCopyObserver?(ownedBytes)
-        return performFeedOperation("processOutput", default: .invalidValue) { surface in
-            let result: ghostty_result_e = ownedBytes.withUnsafeBytes { raw in
-                let ptr = raw.bindMemory(to: UInt8.self).baseAddress
-                return hive_ghostty_surface_process_output_v1(surface, ptr, raw.count, streamSeq)
-            }
-            let mapped = HiveTerminalEngineResult(cResult: result)
-            if mapped == .success {
-                let end = streamSeq + UInt64(ownedBytes.count)
-                if end > self.rawThroughSeq { self.rawThroughSeq = end }
-            }
-            return mapped
-        }
-    }
-
-    public func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> HiveTerminalEngineResult {
-        let ownedPayload = Data(payload)
-        return performFeedOperation("restoreCheckpoint", default: .invalidValue) { surface in
-            let result: ghostty_result_e = ownedPayload.withUnsafeBytes { raw in
-                let ptr = raw.bindMemory(to: UInt8.self).baseAddress
-                return hive_ghostty_surface_restore_checkpoint_v1(surface, ptr, raw.count, throughSeq)
-            }
-            let mapped = HiveTerminalEngineResult(cResult: result)
-            if mapped == .success {
-                self.rawThroughSeq = throughSeq
-            }
-            return mapped
-        }
-    }
-
     public func setFocus(_ focused: Bool) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
@@ -283,19 +219,19 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     @discardableResult
     public func applyHiveConfiguration(theme: HiveTerminalTheme, font: HiveTerminalFont) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
-        let contents = HiveTerminalConfiguration.contents(
-            theme: theme,
-            font: font,
-            headless: hiveConfigurationHeadless
-        )
-        guard hiveConfigurationContents != contents,
+        let key = "\(theme.identifier)|\(font.rawValue)|\(hiveConfigurationHeadless)"
+        guard hiveConfigurationKey != key,
               let surface = rawSurfaceHandle,
-              let config = try? GhosttyBridgeFactory.makeExplicitConfiguration(contents: contents)
+              let config = try? GhosttyBridgeFactory.makeConfiguration(
+                theme: theme,
+                font: font,
+                headless: hiveConfigurationHeadless
+              )
         else { return false }
         defer { ghostty_config_free(config) }
         operationObserver?("surfaceUpdateConfig", .begin)
         ghostty_surface_update_config(surface, config)
-        hiveConfigurationContents = contents
+        hiveConfigurationKey = key
         operationObserver?("surfaceUpdateConfig", .end)
         NSLog(
             "ghostty_surface_update_config live C1 %@ theme=%@ font=%@",
@@ -316,6 +252,12 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
         ghostty_surface_set_occlusion(surface, visible)
+    }
+
+    func foregroundPID() -> UInt64 {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return 0 }
+        return ghostty_surface_foreground_pid(surface)
     }
 
     public func reportedSize() -> ManualSurfaceSize? {
@@ -535,9 +477,6 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
 
     public func free() {
         performOnMainSync {
-            // Barrier against an in-flight feed on the terminal I/O queue: the handle must not be freed while `performFeedOperation` holds it.
-            self.feedLock.lock()
-            defer { self.feedLock.unlock() }
             guard self.ownsSurface, let surface = self.rawSurfaceHandle else { return }
             self.clipboardContext.beginTeardown()
             self.callbackContext.beginTeardown()
@@ -556,29 +495,9 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         free()
     }
 
-    /// Engine build id (hex C string).
-    static func engineBuildId() -> String {
-        guard let cstr = hive_ghostty_engine_build_id_v1() else { return "" }
-        return String(cString: cstr)
-    }
-
     func withUnsafeSurfaceHandle<T>(_ body: (ghostty_surface_t) -> T) -> T? {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return nil }
-        return body(surface)
-    }
-
-    /// The output feed path, which — unlike every other surface entry point — runs on the CALLER's thread rather than hopping to the main queue. This is the whole point of the terminal I/O queue: applying a megabyte of VT bytes costs milliseconds, and doing it on the main queue puts that cost directly in front of the next keystroke. Ghostty is built for this. `HiveManual.process` takes `core_surface.renderer_state.mutex` around the terminal mutation and then notifies `renderer_wakeup`, which is exactly the handshake Ghostty's own I/O thread uses against its renderer thread. `feedLock` therefore does NOT protect terminal state — Ghostty's mutex does. It protects this wrapper's fields and, critically, surface lifetime: `free()` takes the same lock, so the handle cannot be freed on main while a feed is in flight here. Callers must be serialized with respect to each other. `HiveManual` mutates its `pending`/`output_ranges` bookkeeping OUTSIDE the renderer mutex, so concurrent feeds would corrupt it. The per-pane serial I/O queue is what provides that guarantee.
-    private func performFeedOperation<T>(
-        _ operation: String,
-        default defaultValue: T,
-        _ body: (ghostty_surface_t) -> T
-    ) -> T {
-        feedLock.lock()
-        defer { feedLock.unlock() }
-        guard let surface = rawSurfaceHandle else { return defaultValue }
-        operationObserver?(operation, .begin)
-        defer { operationObserver?(operation, .end) }
         return body(surface)
     }
 }
@@ -862,7 +781,7 @@ enum GhosttyBridgeFactory {
             case .configFailed: return "ghostty_config_new failed"
             case .invalidConfig(let count): return "Hive Ghostty config has \(count) diagnostics"
             case .appFailed: return "ghostty_app_new failed"
-            case .surfaceFailed: return "hive_ghostty_surface_new_manual_v1 failed"
+            case .surfaceFailed: return "ghostty_surface_new failed"
             }
         }
 
@@ -923,31 +842,28 @@ enum GhosttyBridgeFactory {
         )
     }
 
-    static func makeManualSurface(
+    /// Stock Ghostty surface: Ghostty opens the PTY and execs `launch.command`.
+    static func makeOwnedSurface(
         hostView: NSView,
+        launch: TerminalLaunch,
         widthPx: UInt32 = 800,
         heightPx: UInt32 = 480
     ) throws -> GhosttyManualSurface {
         try performOnMainSync {
-            let configURL = try HiveTerminalConfiguration.writeProcessFile()
-            return try configURL.path.withCString { configPath in
-                try makeManualSurfaceOnMain(
-                    hostView: hostView,
-                    widthPx: widthPx,
-                    heightPx: heightPx,
-                    terminalReplies: .disabled,
-                    configPolicyPath: configPath
-                )
-            }
+            try makeOwnedSurfaceOnMain(
+                hostView: hostView,
+                launch: launch,
+                widthPx: widthPx,
+                heightPx: heightPx
+            )
         }
     }
 
-    static func makeManualSurfaceOnMain(
+    static func makeOwnedSurfaceOnMain(
         hostView: NSView,
+        launch: TerminalLaunch,
         widthPx: UInt32,
         heightPx: UInt32,
-        terminalReplies: GhosttyTerminalReplyPolicy,
-        configPolicyPath: UnsafePointer<CChar>,
         clipboardContext: GhosttyClipboardContext = GhosttyClipboardContext(),
         hiveConfigurationHeadless: Bool = false
     ) throws -> GhosttyManualSurface {
@@ -956,15 +872,9 @@ enum GhosttyBridgeFactory {
         try ensureGlobalInitializedOnMain()
 
         creationObserver?("configNew")
-        guard let config = ghostty_config_new() else { throw FactoryError.configFailed }
-        // STRIP every Ghostty keybind from the manual-surface config. Hive owns window/pane/split management; an embedded agent-terminal provides none of Ghostty's window/tab/split/quit/inspector actions, so making their bindings unreachable-by-construction beats denying them at the action callback — an unbound key falls through to normal terminal encoding instead of being swallowed by an action nobody provides. `keybind = clear` empties the root set and all tables (config/Config.zig keybind parser). The generated policy file carries that security policy after the theme and typography base.
-        ghostty_config_load_file(config, configPolicyPath)
-        ghostty_config_finalize(config)
-        let diagnosticCount = ghostty_config_diagnostics_count(config)
-        guard diagnosticCount == 0 else {
-            ghostty_config_free(config)
-            throw FactoryError.invalidConfig(diagnosticCount)
-        }
+        let config = try makeConfiguration(
+            headless: hiveConfigurationHeadless
+        )
 
         let wakeupContext = GhosttyAppWakeupContext()
         var runtime = makeRuntimeConfig(wakeupContext: wakeupContext)
@@ -975,35 +885,19 @@ enum GhosttyBridgeFactory {
             throw FactoryError.appFailed
         }
         let owner = GhosttyAppOwner(app: app, config: config, wakeupContext: wakeupContext)
-
-        var surfaceConfig = ghostty_surface_config_new()
-        surfaceConfig.userdata = clipboardContext.unownedContextPointer
-        surfaceConfig.platform_tag = GHOSTTY_PLATFORM_MACOS
-        surfaceConfig.platform = ghostty_platform_u(
-            macos: ghostty_platform_macos_s(
-                nsview: Unmanaged.passUnretained(hostView).toOpaque()
-            )
-        )
-        surfaceConfig.scale_factor = Double(hostView.window?.backingScaleFactor ?? 1.0)
         let callbackContext = BridgeCallbackContext()
-        let writeCtx = callbackContext.unownedContextPointer
-        let eventCtx = callbackContext.unownedContextPointer
 
         creationObserver?("surfaceNew")
-        guard let surface = hive_ghostty_surface_new_manual_v1(
-            app,
-            &surfaceConfig,
-            terminalReplies.rawValue,
-            hiveBridgeWriteTrampoline,
-            writeCtx,
-            hiveBridgeEventTrampoline,
-            eventCtx
+        guard let surface = createOwnedSurface(
+            app: app,
+            hostView: hostView,
+            launch: launch,
+            userdata: clipboardContext.unownedContextPointer
         ) else {
             throw FactoryError.surfaceFailed
         }
         GhosttySurfaceCallbackRegistry.shared.register(surface, context: callbackContext)
 
-        // Size the surface (never 0×0).
         let w = widthPx > 0 ? widthPx : UInt32(max(1, hostView.bounds.width))
         let h = heightPx > 0 ? heightPx : UInt32(max(1, hostView.bounds.height))
         ghostty_surface_set_size(surface, w, h)
@@ -1021,6 +915,62 @@ enum GhosttyBridgeFactory {
         return manualSurface
     }
 
+    private static func createOwnedSurface(
+        app: ghostty_app_t,
+        hostView: NSView,
+        launch: TerminalLaunch,
+        userdata: UnsafeMutableRawPointer
+    ) -> ghostty_surface_t? {
+        launch.workingDirectory.withCString { cwd in
+            launch.command.withCString { command in
+                withCStringList(Array(launch.environment.keys)) { keyPointers in
+                    withCStringList(Array(launch.environment.values)) { valuePointers in
+                        var envVars: [ghostty_env_var_s] = []
+                        envVars.reserveCapacity(keyPointers.count)
+                        for index in keyPointers.indices {
+                            envVars.append(
+                                ghostty_env_var_s(key: keyPointers[index], value: valuePointers[index])
+                            )
+                        }
+                        return envVars.withUnsafeMutableBufferPointer { buffer in
+                            var surfaceConfig = ghostty_surface_config_new()
+                            surfaceConfig.userdata = userdata
+                            surfaceConfig.platform_tag = GHOSTTY_PLATFORM_MACOS
+                            surfaceConfig.platform = ghostty_platform_u(
+                                macos: ghostty_platform_macos_s(
+                                    nsview: Unmanaged.passUnretained(hostView).toOpaque()
+                                )
+                            )
+                            surfaceConfig.scale_factor = Double(
+                                hostView.window?.backingScaleFactor ?? 1.0
+                            )
+                            surfaceConfig.working_directory = cwd
+                            surfaceConfig.command = command
+                            surfaceConfig.wait_after_command = true
+                            if !buffer.isEmpty {
+                                surfaceConfig.env_vars = buffer.baseAddress
+                                surfaceConfig.env_var_count = buffer.count
+                            }
+                            return ghostty_surface_new(app, &surfaceConfig)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static func withCStringList<T>(
+        _ strings: [String],
+        _ body: ([UnsafePointer<CChar>]) -> T
+    ) -> T {
+        guard let first = strings.first else { return body([]) }
+        return first.withCString { pointer in
+            withCStringList(Array(strings.dropFirst())) { rest in
+                body([pointer] + rest)
+            }
+        }
+    }
+
     private static func ensureGlobalInitializedOnMain() throws {
         dispatchPrecondition(condition: .onQueue(.main))
         guard !globalInitialized else { return }
@@ -1030,15 +980,18 @@ enum GhosttyBridgeFactory {
         initializationCount += 1
     }
 
-    static func makeExplicitConfiguration(contents: String) throws -> ghostty_config_t {
+    static func makeConfiguration(
+        theme: HiveTerminalTheme = .hiveDark,
+        font: HiveTerminalFont = .embedded,
+        headless: Bool = false
+    ) throws -> ghostty_config_t {
         dispatchPrecondition(condition: .onQueue(.main))
-        let configURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hive-ghostty-live-theme-\(UUID().uuidString).conf")
-        try Data(contents.utf8).write(to: configURL, options: .atomic)
-        defer { try? FileManager.default.removeItem(at: configURL) }
-
         guard let config = ghostty_config_new() else { throw FactoryError.configFailed }
-        configURL.path.withCString { ghostty_config_load_file(config, $0) }
+        for url in HiveTerminalConfiguration.configurationFiles(
+            theme: theme, font: font, headless: headless
+        ) {
+            url.path.withCString { ghostty_config_load_file(config, $0) }
+        }
         ghostty_config_finalize(config)
         let diagnosticCount = ghostty_config_diagnostics_count(config)
         guard diagnosticCount == 0 else {
@@ -1054,8 +1007,4 @@ func performOnMainSync<T>(_ body: @escaping () throws -> T) rethrows -> T {
         return try body()
     }
     return try DispatchQueue.main.sync(execute: body)
-}
-
-func sha256(_ data: Data) -> Data {
-    Data(SHA256.hash(data: data))
 }
