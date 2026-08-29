@@ -56,9 +56,13 @@ export const MemoryWriteRequestSchema =
 export const MEMORY_RECALL_DEFAULT_BUDGET = 800;
 
 /**
- * P0: Citation path-exists check (minimum viable).
+ * P0: Citation path-exists check (heuristic, soft-fail).
+ * Hole #10: Heuristic misses soft-flag (log warning), not throw.
+ * Structured citation fields (if added later) remain load-bearing.
+ *
  * Validates that paths and commands mentioned in a memory fact still exist.
- * Throws if any cited path/command is not found, treating the fact as stale/unverified.
+ * Logs warnings for heuristic misses instead of throwing.
+ * False positives (backticked variable names, path-like strings) no longer block reads.
  */
 async function validateFactCitations(
   fact: MemoryFact,
@@ -66,6 +70,8 @@ async function validateFactCitations(
 ): Promise<void> {
   const { resolve, isAbsolute } = await import("node:path");
   const textToCheck = [fact.title, fact.body, fact.evidence].join("\n");
+
+  const warnings: string[] = [];
 
   // Extract potential file paths (simple heuristic: words that look like paths)
   const pathPattern =
@@ -82,13 +88,13 @@ async function validateFactCitations(
     (m) => m[1],
   ).filter((cmd): cmd is string => cmd !== undefined);
 
-  // Check paths relative to repoRoot
+  // Check paths relative to repoRoot (heuristic, soft-fail)
   for (const path of paths) {
     const resolved = isAbsolute(path) ? path : resolve(repoRoot, path);
     const exists = await pathExists(resolved);
     if (!exists) {
-      throw new Error(
-        `Citation validation failed: path '${path}' not found (fact: ${fact.id})`,
+      warnings.push(
+        `Citation heuristic: path '${path}' not found (fact: ${fact.id})`,
       );
     }
   }
@@ -116,11 +122,19 @@ async function validateFactCitations(
     if (commonCommands.has(cmd)) {
       const exists = await commandExists(cmd);
       if (!exists) {
-        throw new Error(
-          `Citation validation failed: command '${cmd}' not found (fact: ${fact.id})`,
+        warnings.push(
+          `Citation heuristic: command '${cmd}' not found (fact: ${fact.id})`,
         );
       }
     }
+  }
+
+  // Hole #10: Soft-flag heuristic misses instead of throwing
+  // If structured citation fields exist in the schema, validate them here and THROW on real failures
+  if (warnings.length > 0) {
+    console.warn(
+      `Hive memory citation warnings (heuristic, not load-bearing):\n${warnings.join("\n")}`,
+    );
   }
 }
 
