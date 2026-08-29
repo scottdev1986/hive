@@ -31,7 +31,6 @@ const TARGETS = [
 
 const WORKSPACE_ASSET = "HiveWorkspace.tar.gz";
 export const WORKSPACE_BUNDLE = "HiveWorkspace.app";
-const TERMINFO_ASSET = "hive-terminfo.tar.gz";
 const DEFAULT_ENTITLEMENTS = "scripts/signing/entitlements.plist";
 const SESSIOND_TARGETS = [
   {
@@ -572,37 +571,6 @@ async function buildEmbeddingsRuntime(
   };
 }
 
-/** Bundle the xterm-ghostty terminfo database so Hive is self-contained. The tarball contains resources/terminfo/ with the compiled terminfo tree. Like embeddings, it is architecture-independent but listed once per arch so the manifest validation passes. The installer extracts this next to hive-sessiond so locateBundledTerminfo() finds it. */
-async function buildTerminfo(options: Options): Promise<ReleaseArtifact[]> {
-  const terminfoSource = join(options.repoRoot, "resources", "terminfo");
-  const tarball = join(options.out, TERMINFO_ASSET);
-
-  // Verify the source terminfo exists
-  const terminfoEntry = join(terminfoSource, "x", "xterm-ghostty");
-  if (!(await Bun.file(terminfoEntry).exists())) {
-    throw new Error(
-      `Terminfo source missing at ${terminfoSource}. ` +
-        "Expected resources/terminfo/x/xterm-ghostty to exist.",
-    );
-  }
-
-  // Members are resources/terminfo/..., matching locateBundledTerminfo() next to hive-sessiond.
-  await sh(
-    ["tar", "-czf", tarball, "-C", options.repoRoot, "resources/terminfo"],
-    options.repoRoot,
-  );
-
-  const stat = await digest(tarball);
-  return TARGETS.map((target) => ({
-    name: TERMINFO_ASSET,
-    kind: "terminfo" as const,
-    platform: "darwin" as const,
-    arch: target.arch,
-    buildHash: stat.sha256,
-    ...stat,
-  }));
-}
-
 export async function build(options: Options): Promise<ReleaseManifest> {
   await mkdir(options.out, { recursive: true });
   const sourceHash = await currentBuildHash();
@@ -622,9 +590,6 @@ export async function build(options: Options): Promise<ReleaseManifest> {
         "runtime it loads",
     );
   }
-
-  // Build terminfo tarball. Not signed (text files), trust anchor is the manifest SHA-256.
-  const terminfo = await buildTerminfo(options);
 
   const cliBuilds: CliBuild[] = [];
   for (const target of TARGETS) {
@@ -714,7 +679,6 @@ export async function build(options: Options): Promise<ReleaseManifest> {
   if (embeddings !== null) {
     artifacts.push(...embeddings.artifacts);
   }
-  artifacts.push(...terminfo);
 
   const manifest = parseReleaseManifest({
     schema: RELEASE_MANIFEST_SCHEMA,

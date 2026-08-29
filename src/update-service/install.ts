@@ -152,7 +152,6 @@ interface TrustedRelease {
   readonly signature: string;
   readonly cli: ReleaseArtifact;
   readonly sessiond: ReleaseArtifact;
-  readonly terminfo: ReleaseArtifact;
 }
 
 function trustSignedRelease(deps: StageDeps): TrustedRelease {
@@ -180,13 +179,7 @@ function trustSignedRelease(deps: StageDeps): TrustedRelease {
       `Release ${manifest.version} has no sessiond build for darwin-${deps.arch}`,
     );
   }
-  const terminfo = selectArtifact(manifest, "terminfo", deps.arch);
-  if (terminfo === null) {
-    throw new UpdateError(
-      `Release ${manifest.version} has no terminfo bundle for darwin-${deps.arch}`,
-    );
-  }
-  return { manifest, signature, cli, sessiond, terminfo };
+  return { manifest, signature, cli, sessiond };
 }
 
 function probeMatchesVersion(reported: string, version: string): boolean {
@@ -201,8 +194,7 @@ export interface StageResult {
 
 export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   const root = deps.root ?? installRoot();
-  const { manifest, signature, cli, sessiond, terminfo } =
-    trustSignedRelease(deps);
+  const { manifest, signature, cli, sessiond } = trustSignedRelease(deps);
   const app = selectArtifact(manifest, "workspace", deps.arch);
 
   const version = manifest.version;
@@ -260,24 +252,6 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   await writeFile(stagedSessiond, sessiondBytes);
   await chmod(stagedSessiond, 0o755);
 
-  // Terminfo tarball contains resources/terminfo/. Extract it to staging so locateBundledTerminfo() finds it next to sessiond.
-  const terminfoBytes = await fetchArtifact(terminfo);
-  const terminfoTarball = join(staging, terminfo.name);
-  await writeFile(terminfoTarball, terminfoBytes);
-  const tarProc = Bun.spawn(["tar", "-xzf", terminfoTarball, "-C", staging], {
-    cwd: staging,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const tarExit = await tarProc.exited;
-  if (tarExit !== 0) {
-    await rm(staging, { recursive: true, force: true });
-    throw new UpdateError(
-      `Refusing update: failed to extract terminfo tarball (tar exited ${tarExit})`,
-    );
-  }
-  await rm(terminfoTarball, { force: true });
-
   if (app !== null && deps.unpackApp !== undefined) {
     const appBytes = await fetchArtifact(app);
     const tarball = join(staging, app.name);
@@ -308,10 +282,7 @@ export interface StageOutcome extends StageResult {
  * Re-prove a version that is already on disk.
  *
  * The CLI and hive-sessiond must match the digests in the signed manifest; the
- * CLI must also state the requested version when run. The manifest names the
- * compressed terminfo archive, but staging extracts and discards that archive,
- * so its digest cannot authenticate the extracted bytes. Reuse only checks that
- * the xterm-ghostty entry the runtime needs is present.
+ * CLI must also state the requested version when run.
  *
  * "It is already staged" is not evidence for an executable. Older builds,
  * interrupted updates, or later edits could have put different bytes there.
@@ -361,22 +332,6 @@ async function proveStaged(
     throw new UpdateError(
       `Refusing update: the staged hive-sessiond for ${version} at ${stagedSessiond} ` +
         "does not match the SHA-256 in the signed manifest",
-    );
-  }
-
-  // The signed digest names the discarded archive, not these extracted bytes.
-  const terminfoEntry = join(
-    versionDir(version, root),
-    "resources",
-    "terminfo",
-    "x",
-    "xterm-ghostty",
-  );
-  try {
-    readFileSync(terminfoEntry);
-  } catch {
-    throw new UpdateError(
-      `Refusing update: staged hive ${version} is missing terminfo at ${terminfoEntry}`,
     );
   }
 

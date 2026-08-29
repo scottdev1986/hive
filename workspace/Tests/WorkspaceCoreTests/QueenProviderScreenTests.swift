@@ -203,7 +203,7 @@ final class QueenProviderScreenTests: XCTestCase {
         var failed = try projection()
         failed.change = QueenProviderChange(
             state: .failed, revision: "1",
-            failure: "ORCHESTRATOR_LAUNCH_FAILED: Hive bundled terminfo not found")
+            failure: "ORCHESTRATOR_LAUNCH_FAILED: spawn refused")
         var editor = QueenProviderEditor(projection: failed)
         var live = try projection()
         live.liveProvider = ProviderID("claude")

@@ -133,7 +133,7 @@ describe("queen provider control store", () => {
     control.accept("claude", "0", null);
     control.reportLaunchFailure(
       "claude",
-      "ORCHESTRATOR_LAUNCH_FAILED: Hive bundled terminfo not found",
+      "ORCHESTRATOR_LAUNCH_FAILED: spawn refused",
     );
     expect(control.read()).toMatchObject({ state: "failed", prior: null });
     control.reconcileObserved(null);

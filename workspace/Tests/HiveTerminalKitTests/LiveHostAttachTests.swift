@@ -617,7 +617,7 @@ final class LiveHostAttachTests: XCTestCase {
         let evidence = """
         qualification=M1-B2 B2.4 pinned vttest alternate-screen path
         vttest_version=VT100 test program, version 2.7 (20251205)
-        terminal=xterm-ghostty
+        terminal=xterm-256color
         launch_geometry=24x80.80
         rendered_geometry=\(alternateSnapshot.geometry.rows)x\(alternateSnapshot.geometry.columns)
         menu_path=11/8/7/5 (non-VT100/XTERM/alternate-screen/1049)

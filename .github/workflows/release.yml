@@ -354,7 +354,6 @@ jobs:
             dist/hive-sessiond-darwin-arm64
             dist/hive-sessiond-darwin-x64
             dist/HiveWorkspace.tar.gz
-            dist/hive-terminfo.tar.gz
             dist/embeddings-runtime.tar.gz
             dist/hive-release.json
           )

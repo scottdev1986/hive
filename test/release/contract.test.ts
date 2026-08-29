@@ -155,7 +155,6 @@ describe("the release workflow", () => {
       "dist/hive-sessiond-darwin-arm64",
       "dist/hive-sessiond-darwin-x64",
       "dist/HiveWorkspace.tar.gz",
-      "dist/hive-terminfo.tar.gz",
     ]) {
       expect(publishList).toContain(asset);
     }
@@ -216,11 +215,6 @@ describe("the Graphify runtime workflow", () => {
 
 describe("the installer", () => {
   const installer = read("install.sh");
-
-  test("first install extracts the same terminfo layout hive update stages", () => {
-    expect(installer).toContain("hive-terminfo.tar.gz");
-    expect(installer).toContain("resources/terminfo/x/xterm-ghostty");
-  });
 
   test("verifies a digest before it ever runs the binary", () => {
     expect(installer.indexOf("verify ")).toBeLessThan(

@@ -61,26 +61,6 @@ interface InstallerFixture {
   fakeBin: string;
   fixtures: string;
   workspaceBytes: Uint8Array;
-  terminfoBytes: Uint8Array;
-}
-
-async function writeTerminfoTarball(path: string): Promise<Uint8Array> {
-  const tree = join(path, "..", "terminfo-tree");
-  await mkdir(join(tree, "resources", "terminfo", "x"), { recursive: true });
-  await writeFile(
-    join(tree, "resources", "terminfo", "x", "xterm-ghostty"),
-    "xterm-ghostty\n",
-  );
-  const tar = Bun.spawn([
-    "tar",
-    "-czf",
-    path,
-    "-C",
-    tree,
-    "resources/terminfo",
-  ]);
-  expect(await tar.exited).toBe(0);
-  return new Uint8Array(await Bun.file(path).arrayBuffer());
 }
 
 function manifestFor(
@@ -90,7 +70,6 @@ function manifestFor(
   sessiondBytes: Uint8Array = new TextEncoder().encode(
     "#!/bin/sh\necho sessiond\n",
   ),
-  terminfoBytes: Uint8Array = new Uint8Array(),
 ): ReleaseManifest {
   return {
     schema: 1,
@@ -129,15 +108,6 @@ function manifestFor(
         size: workspaceBytes.byteLength,
         sha256: sha256(workspaceBytes),
         buildHash: `hash-${version}`,
-      },
-      {
-        name: "hive-terminfo.tar.gz",
-        kind: "terminfo",
-        platform: "darwin",
-        arch: "arm64",
-        size: terminfoBytes.byteLength,
-        sha256: sha256(terminfoBytes),
-        buildHash: `terminfo-hash-${version}`,
       },
     ],
   };
@@ -179,16 +149,12 @@ async function createInstallerFixture(
   const sessiondBytes = new TextEncoder().encode("#!/bin/sh\necho sessiond\n");
   await writeFile(join(fixtures, "hive-darwin-arm64"), cliBytes);
   await writeFile(join(fixtures, "hive-sessiond-darwin-arm64"), sessiondBytes);
-  const terminfoBytes = await writeTerminfoTarball(
-    join(fixtures, "hive-terminfo.tar.gz"),
-  );
 
   const manifest = manifestFor(
     version,
     cliBytes,
     workspaceBytes,
     sessiondBytes,
-    terminfoBytes,
   );
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   await writeFile(join(fixtures, "hive-release.json"), manifestBytes);
@@ -231,7 +197,6 @@ fi
     fakeBin,
     fixtures,
     workspaceBytes,
-    terminfoBytes,
   };
 }
 
@@ -289,10 +254,6 @@ async function stageLocalBuild(
     join(build, "HiveWorkspace.tar.gz"),
     Bun.file(join(fixture.fixtures, "HiveWorkspace.tar.gz")),
   );
-  await Bun.write(
-    join(build, "hive-terminfo.tar.gz"),
-    Bun.file(join(fixture.fixtures, "hive-terminfo.tar.gz")),
-  );
   return build;
 }
 
@@ -331,7 +292,6 @@ async function selfUpdate(
     cliBytes,
     fixture.workspaceBytes,
     sessiondBytes,
-    fixture.terminfoBytes,
   );
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   await stageRelease({
@@ -343,7 +303,6 @@ async function selfUpdate(
     publicKey: RELEASE_KEY.publicKey,
     download: async (name) => {
       if (name === "hive-sessiond-darwin-arm64") return sessiondBytes;
-      if (name === "hive-terminfo.tar.gz") return fixture.terminfoBytes;
       if (name !== "hive-darwin-arm64")
         throw new Error(`unexpected asset ${name}`);
       return cliBytes;
@@ -393,39 +352,6 @@ describe("the standalone installer", () => {
     );
     await rm(join(fixture.binDir, "hive-dev"));
     await assertProdCommandsAbsent(fixture.binDir);
-  });
-
-  test("first install lands terminfo next to hive-sessiond", async () => {
-    const fixture = await createInstallerFixture("1.2.3");
-    const installed = await runInstaller(fixture, "1.2.3");
-    expect(installed.exitCode).toBe(0);
-    expect(
-      existsSync(
-        join(
-          fixture.installRoot,
-          "versions",
-          "1.2.3",
-          "resources",
-          "terminfo",
-          "x",
-          "xterm-ghostty",
-        ),
-      ),
-    ).toBe(true);
-  });
-
-  test("a local build without hive-terminfo.tar.gz is refused", async () => {
-    const fixture = await createInstallerFixture("1.2.3");
-    const build = await stageLocalBuild(fixture, "1.2.3");
-    await rm(join(build, "hive-terminfo.tar.gz"));
-    const installed = await runInstaller(fixture, "1.2.3", [
-      "--variant",
-      "dev",
-      "--from-build",
-      build,
-    ]);
-    expect(installed.exitCode).not.toBe(0);
-    expect(installed.stderr).toContain("hive-terminfo.tar.gz");
   });
 
   test("local prod builds and non-qa refs are refused", async () => {
@@ -547,9 +473,6 @@ describe("the standalone installer", () => {
       join(fixtures, "hive-sessiond-darwin-arm64"),
       sessiondBytes,
     );
-    const terminfoBytes = await writeTerminfoTarball(
-      join(fixtures, "hive-terminfo.tar.gz"),
-    );
     const workspaceRoot = join(root, "workspace-archive");
     await mkdir(join(workspaceRoot, "HiveWorkspace.app"), { recursive: true });
     await writeFile(
@@ -582,10 +505,6 @@ describe("the standalone installer", () => {
           {
             name: "HiveWorkspace.tar.gz",
             sha256: sha256(workspaceBytes),
-          },
-          {
-            name: "hive-terminfo.tar.gz",
-            sha256: sha256(terminfoBytes),
           },
         ],
       }),
