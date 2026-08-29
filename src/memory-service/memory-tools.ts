@@ -15,6 +15,11 @@ import {
 import type { MemoryEmbeddingWriteOutcome } from "./embeddings";
 import { findSimilarMemoryCandidates, type MemoryIndex } from "./fts-index";
 import { readMemoryFact, pathExists, commandExists } from "./memory-store";
+import {
+  buildMemoryRecallBundle,
+  memoryRecallDegradedWarning,
+  type MemoryRecallRow,
+} from "./recall";
 import type { MemoryWriteFileResult } from "./store-records";
 
 export const MemoryIdSchema = z
@@ -141,6 +146,17 @@ export interface MemoryToolDeps {
   ) => Promise<MemoryFact>;
   deleteMemoryFact: (scope: MemoryScope, id: string) => Promise<boolean>;
   rebuildMemoryIndex: (signal?: AbortSignal) => Promise<{ count: number }>;
+  /** Semantic recall function for hybrid search; undefined means FTS-only. */
+  semanticRecall?: (
+    query: string,
+    limit: number,
+  ) => Promise<Array<{
+    scope: string;
+    id: string;
+    score: number;
+  }> | null>;
+  /** Semantic status for degraded state labeling. */
+  semanticStatus?: () => string;
 }
 
 export function registerMemoryTools(
@@ -153,7 +169,7 @@ export function registerMemoryTools(
     {
       title: "Search Hive memory",
       description:
-        'Full-text search compiled memory articles across repo (".hive/memory/wiki/") and global ("~/.hive/memory/wiki/") scope. Optional kind=pitfall limits results to pitfall articles, including unverified harvest candidates. Raw observations are not search results. Returns snippets; pull a full article with memory_read before relying on it.',
+        'Hybrid search (lexical + semantic when embeddings available) compiled memory articles across repo (".hive/memory/wiki/") and global ("~/.hive/memory/wiki/") scope. Optional kind=pitfall limits results to pitfall articles, including unverified harvest candidates. Raw observations are not search results. Returns snippets; pull a full article with memory_read before relying on it. When embeddings unavailable, falls back to lexical-only.',
       inputSchema: MemorySearchRequestSchema,
     },
     async ({ query, scope, kind, limit }) => {
@@ -164,10 +180,86 @@ export function registerMemoryTools(
         undefined,
         false,
       );
-      return toolResult(
-        deps.memory.search(query, { scope, kind, limit }),
-        "results",
+
+      // Use hybrid recall when semantic is available, otherwise FTS-only
+      // Fetch more results than needed to allow filtering without dropping results
+      const fetchLimit = limit ?? 10;
+      const bundle = await buildMemoryRecallBundle(
+        query,
+        {
+          repoRoot: () => deps.repoRoot,
+          memory: deps.memory,
+          semantic: deps.semanticRecall,
+          semanticStatus: deps.semanticStatus,
+        },
+        fetchLimit * 3,
       );
+
+      // Flatten bundle back to search results array for backward compatibility
+      const rows = [...bundle.pitfalls, ...bundle.articles];
+
+      // Filter by scope and kind BEFORE limiting to avoid dropping results
+      const filtered = rows
+        .filter((row) => {
+          if (scope !== undefined && row.scope !== scope) return false;
+          if (kind !== undefined && kind === "pitfall" && !row.pitfall)
+            return false;
+          if (kind !== undefined && kind === "article" && row.pitfall)
+            return false;
+          return true;
+        })
+        .slice(0, fetchLimit);
+
+      // Convert MemoryRecallRow to MemorySearchResult format
+      const results = filtered.map((row) => ({
+        id: row.id,
+        scope: row.scope,
+        topic: row.topic,
+        title: row.title,
+        snippet: row.snippet,
+        date: row.date,
+        status: row.status,
+        tags: [],
+        path:
+          row.scope === "repo"
+            ? `.hive/memory/wiki/${row.topic}/${row.id}.md`
+            : `~/.hive/memory/wiki/${row.topic}/${row.id}.md`,
+      }));
+
+      // Build result envelope with semantic status on structured content
+      const payload = { results, semantic: bundle.semantic };
+
+      // Label semantic status so client can tell FTS-only vs hybrid vs degraded
+      if (bundle.semantic.startsWith("degraded:")) {
+        const state = bundle.semantic.slice("degraded:".length);
+        const warning = memoryRecallDegradedWarning(state);
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(payload) },
+            { type: "text" as const, text: warning },
+          ],
+          structuredContent: {
+            results,
+            semantic: bundle.semantic,
+            degraded: true,
+          },
+        };
+      }
+
+      // Return with semantic status label
+      return {
+        content: [
+          { type: "text" as const, text: JSON.stringify(payload) },
+          {
+            type: "text" as const,
+            text:
+              bundle.semantic === "hybrid"
+                ? "semantic: hybrid"
+                : "semantic: disabled",
+          },
+        ],
+        structuredContent: { results, semantic: bundle.semantic },
+      };
     },
   );
 
