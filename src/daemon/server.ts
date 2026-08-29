@@ -4447,6 +4447,8 @@ export class HiveDaemon {
       },
       deleteMemoryFact: (scope, id) => this.deleteMemoryFact(scope, id),
       rebuildMemoryIndex: (signal) => this.rebuildMemoryIndex(signal),
+      semanticRecall: this.semanticRecall(),
+      semanticStatus: this.semanticRecallState(),
     });
 
     registerGraphTool(server, capability, {

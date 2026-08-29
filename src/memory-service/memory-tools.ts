@@ -15,6 +15,7 @@ import {
 import type { MemoryEmbeddingWriteOutcome } from "./embeddings";
 import { findSimilarMemoryCandidates, type MemoryIndex } from "./fts-index";
 import { readMemoryFact, pathExists, commandExists } from "./memory-store";
+import { buildMemoryRecallBundle, type MemoryRecallRow } from "./recall";
 import type { MemoryWriteFileResult } from "./store-records";
 
 export const MemoryIdSchema = z
@@ -141,6 +142,17 @@ export interface MemoryToolDeps {
   ) => Promise<MemoryFact>;
   deleteMemoryFact: (scope: MemoryScope, id: string) => Promise<boolean>;
   rebuildMemoryIndex: (signal?: AbortSignal) => Promise<{ count: number }>;
+  /** Semantic recall function for hybrid search; undefined means FTS-only. */
+  semanticRecall?: (
+    query: string,
+    limit: number,
+  ) => Promise<Array<{
+    scope: string;
+    id: string;
+    score: number;
+  }> | null>;
+  /** Semantic status for degraded state labeling. */
+  semanticStatus?: () => string;
 }
 
 export function registerMemoryTools(
@@ -153,7 +165,7 @@ export function registerMemoryTools(
     {
       title: "Search Hive memory",
       description:
-        'Full-text search compiled memory articles across repo (".hive/memory/wiki/") and global ("~/.hive/memory/wiki/") scope. Optional kind=pitfall limits results to pitfall articles, including unverified harvest candidates. Raw observations are not search results. Returns snippets; pull a full article with memory_read before relying on it.',
+        'Hybrid search (lexical + semantic when embeddings available) compiled memory articles across repo (".hive/memory/wiki/") and global ("~/.hive/memory/wiki/") scope. Optional kind=pitfall limits results to pitfall articles, including unverified harvest candidates. Raw observations are not search results. Returns snippets; pull a full article with memory_read before relying on it. When embeddings unavailable, falls back to lexical-only.',
       inputSchema: MemorySearchRequestSchema,
     },
     async ({ query, scope, kind, limit }) => {
@@ -164,10 +176,46 @@ export function registerMemoryTools(
         undefined,
         false,
       );
-      return toolResult(
-        deps.memory.search(query, { scope, kind, limit }),
-        "results",
+
+      // Use hybrid recall when semantic is available, otherwise FTS-only
+      const bundle = await buildMemoryRecallBundle(
+        query,
+        {
+          repoRoot: () => deps.repoRoot,
+          memory: deps.memory,
+          semantic: deps.semanticRecall,
+          semanticStatus: deps.semanticStatus,
+        },
+        limit ?? 10,
       );
+
+      // Flatten bundle back to search results array for backward compatibility
+      const rows = [...bundle.pitfalls, ...bundle.articles];
+
+      // Filter by scope and kind if requested
+      const filtered = rows.filter((row) => {
+        if (scope !== undefined && row.scope !== scope) return false;
+        if (kind !== undefined && kind === "pitfall" && !row.pitfall)
+          return false;
+        if (kind !== undefined && kind === "article" && row.pitfall)
+          return false;
+        return true;
+      });
+
+      // Convert MemoryRecallRow to MemorySearchResult format
+      const results = filtered.map((row) => ({
+        id: row.id,
+        scope: row.scope,
+        topic: row.topic,
+        title: row.title,
+        snippet: row.snippet,
+        date: row.date,
+        status: row.status,
+        tags: [], // MemoryRecallRow doesn't include tags
+        path: "", // Path will be resolved via memory_read if needed
+      }));
+
+      return toolResult(results, "results");
     },
   );
 
