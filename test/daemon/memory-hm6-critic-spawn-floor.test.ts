@@ -104,7 +104,7 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
       models: [],
       global: null,
       categories: {
-        code_review: {
+        simple_coding: {
           mode: "user-weighted",
           candidates: [
             {
@@ -180,7 +180,7 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
     try {
       const admitted = await spawner.spawn({
         task: "test task",
-        category: "code_review",
+        category: "simple_coding",
       });
       expect(admitted.status).toBe("spawning");
 
