@@ -97,12 +97,7 @@ export function orchestratorProcessPid(
   listCommands: () => string = listProcessCommands,
 ): number | null {
   return runningCommandPid(
-    [
-      "workspace-orchestrator",
-      `--instance-id`,
-      instanceId,
-      `--port ${port}`,
-    ],
+    ["workspace-orchestrator", `--instance-id`, instanceId, `--port ${port}`],
     listCommands,
   );
 }

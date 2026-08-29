@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getHiveHome } from "../../src/hive-home/home";
@@ -160,8 +167,12 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
           create: async () => {
             throw new Error("terminal creation stopped after prompt assembly");
           },
-          inspect: async () => ({ state: "absent" as const }),
-          terminate: async () => {},
+          inspect: async () => {
+            throw new Error("not reached");
+          },
+          terminate: async () => {
+            throw new Error("not reached");
+          },
         },
       },
     });

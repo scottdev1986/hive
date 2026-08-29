@@ -242,7 +242,9 @@ describe("hive opens the installed release Workspace", () => {
   test("a supervisor on a previous daemon port is not treated as live", () => {
     const listing =
       "34984 /opt/hive workspace-orchestrator --tool claude --port 59413 --instance-id 5a55821e7d\n";
-    expect(orchestratorProcessPid("5a55821e7d", 61234, () => listing)).toBeNull();
+    expect(
+      orchestratorProcessPid("5a55821e7d", 61234, () => listing),
+    ).toBeNull();
     expect(orchestratorProcessPid("5a55821e7d", 59413, () => listing)).toBe(
       34984,
     );

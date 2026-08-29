@@ -3,11 +3,21 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { Spawner, SpawnRequest } from "../../src/daemon/spawn/spawn-service";
-import { type MemoryEmbedder, MemoryEmbeddingIndex, MemoryEmbeddingService } from "../../src/memory-service/embeddings";
+import type {
+  Spawner,
+  SpawnRequest,
+} from "../../src/daemon/spawn/spawn-service";
+import {
+  type MemoryEmbedder,
+  MemoryEmbeddingIndex,
+  MemoryEmbeddingService,
+} from "../../src/memory-service/embeddings";
 import { EpisodicStore } from "../../src/memory-service/episodic";
 import { MemoryIndex } from "../../src/memory-service/fts-index";
 import type { AgentRecord } from "../../src/schemas/agent";
@@ -36,12 +46,16 @@ async function makeTempDir(prefix: string): Promise<string> {
   return dir;
 }
 
-function mockEmbedder(vectors: Map<string, number[]>, queryVector: number[]): MemoryEmbedder {
+function mockEmbedder(
+  vectors: Map<string, number[]>,
+  queryVector: number[],
+): MemoryEmbedder {
   const fallback = [1, 0, 0, 0];
   return {
     model: "bge-small-en-v1.5",
     dimensions: 4,
-    embed: (texts) => Promise.resolve(texts.map((text) => vectors.get(text) ?? fallback)),
+    embed: (texts) =>
+      Promise.resolve(texts.map((text) => vectors.get(text) ?? fallback)),
     embedQuery: () => Promise.resolve(queryVector),
   };
 }
@@ -69,12 +83,17 @@ async function connectedClient(daemon: HiveDaemon): Promise<Client> {
     new URL("http://hive/mcp"),
     { fetch: actingAs(daemon, "user", "user") },
   );
-  const client = new Client({ name: "hive-memory-hybrid-test", version: "1.0.0" });
+  const client = new Client({
+    name: "hive-memory-hybrid-test",
+    version: "1.0.0",
+  });
   await client.connect(transport);
   return client;
 }
 
-function parseToolResult<T>(result: { content: Array<{ type: string; text?: string }> }): T {
+function parseToolResult<T>(result: {
+  content: Array<{ type: string; text?: string }>;
+}): T {
   const content = result.content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool result");
@@ -164,7 +183,8 @@ describe("memory_search hybrid recall (HM-6)", () => {
       repoRoot,
       episodicStore: episodic,
       memoryEmbeddings: { provider: "local", model: "bge-small-en-v1.5" },
-      memoryEmbeddingLoad: () => Promise.resolve(mockEmbedder(vectors, queryVector)),
+      memoryEmbeddingLoad: () =>
+        Promise.resolve(mockEmbedder(vectors, queryVector)),
     });
 
     const client = await connectedClient(daemon);
@@ -209,11 +229,11 @@ describe("memory_search hybrid recall (HM-6)", () => {
       // Populate mock vectors now that we have articles
       vectors.set(
         "Database lock contention\nTwo writers on one SQLite database deadlocked the fleet.",
-        [0.9, 0.1, 0, 0] // close to query
+        [0.9, 0.1, 0, 0], // close to query
       );
       vectors.set(
         "Token budgets clamp recall\nThe recall bundle clamps pitfalls first when the token budget is exceeded.",
-        [0, 1, 0, 0] // far from query
+        [0, 1, 0, 0], // far from query
       );
 
       // Wait for embeddings to index
@@ -232,13 +252,13 @@ describe("memory_search hybrid recall (HM-6)", () => {
       // RRF blend: article1 has high FTS + high semantic, article2 has low FTS + low semantic
       // article1 should rank higher due to better combined score
       expect(results.length).toBeGreaterThanOrEqual(2);
-      
+
       const article1Index = results.findIndex((r) => r.id === article1.id);
       const article2Index = results.findIndex((r) => r.id === article2.id);
-      
+
       expect(article1Index).toBeGreaterThanOrEqual(0);
       expect(article2Index).toBeGreaterThanOrEqual(0);
-      
+
       // Verify RRF rank: article1 (high semantic + FTS match) ranks before article2
       expect(article1Index).toBeLessThan(article2Index);
     } finally {
@@ -264,7 +284,8 @@ describe("memory_search hybrid recall (HM-6)", () => {
       repoRoot,
       episodicStore: episodic,
       memoryEmbeddings: { provider: "local", model: "bge-small-en-v1.5" },
-      memoryEmbeddingLoad: () => Promise.resolve(mockEmbedder(vectors, queryVector)),
+      memoryEmbeddingLoad: () =>
+        Promise.resolve(mockEmbedder(vectors, queryVector)),
     });
 
     const client = await connectedClient(daemon);
@@ -291,7 +312,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
       // Populate vector now that article is created
       vectors.set(
         "Lease renewal blocks overlapping agents\nThe composer lease must be renewed every fifteen seconds or the workspace hides the agent.",
-        [0.95, 0.05, 0, 0] // very close to query
+        [0.95, 0.05, 0, 0], // very close to query
       );
 
       const index = daemon.embeddingIndex;
