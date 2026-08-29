@@ -12,7 +12,10 @@ import { join } from "node:path";
 import { getHiveHome } from "../../src/hive-home/home";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveSpawner } from "../../src/daemon/spawn/hive-spawner";
-import { writeMemoryFact } from "../../src/memory-service/memory-store";
+import {
+  buildMemoryIndex,
+  writeMemoryFact,
+} from "../../src/memory-service/memory-store";
 import { buildQueenLaunchContext } from "../../src/cli/orchestrator";
 import {
   type CapabilityRecord,
@@ -238,10 +241,21 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
       supersedes: [],
     });
 
-    // Call REAL buildQueenLaunchContext WITHOUT pre-built index
-    // It will build the index internally via buildMemoryIndex (FTS-only)
+    // Build REAL memory index via buildMemoryIndex (FTS-only, no embeddings)
+    const memoryIndex = await buildMemoryIndex(repoRoot, {
+      brief: "queen test",
+    });
+
+    // Mock episodic store for loadRecentMistakes
+    const episodic = {
+      listEvents: () => [],
+    };
+
+    // Call REAL buildQueenLaunchContext with real index
     const launchText = await buildQueenLaunchContext({
       repoRoot,
+      memoryIndex,
+      episodic,
     });
 
     // Verify pack floor present WITHOUT requiring memory_search

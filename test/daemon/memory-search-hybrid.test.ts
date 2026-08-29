@@ -93,12 +93,16 @@ async function connectedClient(daemon: HiveDaemon): Promise<Client> {
 
 function parseToolResult<T>(result: {
   content: Array<{ type: string; text?: string }>;
-}): T {
+}): { results: T; semantic: string } {
   const content = result.content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool result");
   }
-  return JSON.parse(content.text) as T;
+  const payload = JSON.parse(content.text) as {
+    results: T;
+    semantic: string;
+  };
+  return payload;
 }
 
 describe("memory_search hybrid recall (HM-6)", () => {
@@ -150,7 +154,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
         },
       });
 
-      const results = parseToolResult<Array<{ id: string; title: string }>>(
+      const payload = parseToolResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
           arguments: { query: "database" },
@@ -158,8 +162,11 @@ describe("memory_search hybrid recall (HM-6)", () => {
       );
 
       // FTS-only should still find the "database" article
-      expect(results).toHaveLength(1);
-      expect(results[0]?.title).toBe("Database lock contention");
+      expect(payload.results).toHaveLength(1);
+      expect(payload.results[0]?.title).toBe("Database lock contention");
+
+      // Assert semantic status is disabled (no embeddings)
+      expect(payload.semantic).toBe("disabled");
     } finally {
       await client.close().catch(() => undefined);
       await daemon.stop();
@@ -199,7 +206,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
     const client = await connectedClient(daemon);
     try {
       // Seed via daemon memory_write so FTS is populated
-      const article1 = parseToolResult<{ id: string; title: string }>(
+      const article1Result = parseToolResult<{ id: string; title: string }>(
         await client.callTool({
           name: "memory_write",
           arguments: {
@@ -216,8 +223,9 @@ describe("memory_search hybrid recall (HM-6)", () => {
           },
         }),
       );
+      const article1 = article1Result.results;
 
-      const article2 = parseToolResult<{ id: string; title: string }>(
+      const article2Result = parseToolResult<{ id: string; title: string }>(
         await client.callTool({
           name: "memory_write",
           arguments: {
@@ -234,6 +242,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
           },
         }),
       );
+      const article2 = article2Result.results;
 
       // Wait for embeddings to index
       const index = daemon.embeddingIndex;
@@ -241,12 +250,17 @@ describe("memory_search hybrid recall (HM-6)", () => {
       await index.settle();
 
       // Query that FTS matches both articles, but semantic ranks article1 higher
-      const results = parseToolResult<Array<{ id: string; title: string }>>(
+      const payload = parseToolResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
           arguments: { query: "database token", limit: 10 },
         }),
       );
+
+      // Assert semantic status is hybrid
+      expect(payload.semantic).toBe("hybrid");
+
+      const results = payload.results;
 
       // RRF blend: article1 has high FTS + high semantic, article2 has low FTS + low semantic
       // article1 should rank higher due to better combined score
@@ -295,7 +309,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
     const client = await connectedClient(daemon);
     try {
       // Seed via daemon memory_write so FTS is populated
-      const article = parseToolResult<{ id: string; title: string }>(
+      const articleResult = parseToolResult<{ id: string; title: string }>(
         await client.callTool({
           name: "memory_write",
           arguments: {
@@ -312,21 +326,25 @@ describe("memory_search hybrid recall (HM-6)", () => {
           },
         }),
       );
+      const article = articleResult.results;
 
       const index = daemon.embeddingIndex;
       if (index === null) throw new Error("embeddingIndex should not be null");
       await index.settle();
 
       // Query with terms that won't FTS-match but will semantic-match
-      const results = parseToolResult<Array<{ id: string; title: string }>>(
+      const payload = parseToolResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
           arguments: { query: "zzz nonexistent query", limit: 10 },
         }),
       );
 
+      // Assert semantic status is hybrid
+      expect(payload.semantic).toBe("hybrid");
+
       // FTS-only would find nothing, but hybrid with semantic should surface it
-      const found = results.find((r) => r.id === article.id);
+      const found = payload.results.find((r) => r.id === article.id);
       expect(found).toBeDefined();
       expect(found?.title).toBe("Lease renewal blocks overlapping agents");
     } finally {
@@ -383,16 +401,19 @@ describe("memory_search hybrid recall (HM-6)", () => {
         },
       });
 
-      const results = parseToolResult<Array<{ id: string; title: string }>>(
+      const payload = parseToolResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
           arguments: { query: "parser", kind: "pitfall" },
         }),
       );
 
+      // Assert semantic status is disabled (no embeddings)
+      expect(payload.semantic).toBe("disabled");
+
       // Should only return the pitfall, not the article
-      expect(results).toHaveLength(1);
-      expect(results[0]?.title).toContain("Pitfall");
+      expect(payload.results).toHaveLength(1);
+      expect(payload.results[0]?.title).toContain("Pitfall");
     } finally {
       await client.close().catch(() => undefined);
       await daemon.stop();
