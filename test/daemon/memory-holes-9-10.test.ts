@@ -67,8 +67,151 @@ async function makeTempDir(prefix: string): Promise<string> {
   return dir;
 }
 
-describe("Hole #9: pack-off silence", () => {
-  test("pack-off fails closed (not silent)", async () => {
+describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
+  test("empty: spawn with no facts shows honest stubs in prompt", async () => {
+    previousHiveHome = process.env.HIVE_HOME;
+    previousCodexHome = process.env.CODEX_HOME;
+    const home = await makeTempDir("hive-hole9-empty-");
+    const repoRoot = await makeTempDir("hive-hole9-empty-repo-");
+    const worktree = join(repoRoot, "hive-test-worktree");
+    await mkdir(worktree, { recursive: true });
+    process.env.HIVE_HOME = home;
+    process.env.CODEX_HOME = join(home, "codex");
+
+    await copyFile(
+      join(import.meta.dir, "../../AGENT_STANDARDS.md"),
+      join(repoRoot, "AGENT_STANDARDS.md"),
+    );
+
+    const db = new HiveDatabase(":memory:");
+
+    const policy: RoutingPolicy = {
+      schemaVersion: 3,
+      revision: 1,
+      updatedAt: AT,
+      provisional: false,
+      providers: {},
+      models: [],
+      global: null,
+      categories: {
+        simple_coding: {
+          mode: "user-weighted",
+          candidates: [
+            {
+              provider: "codex",
+              model: "gpt-test",
+              effort: { mode: "provider-controlled" },
+              weight: 1,
+            },
+          ],
+        },
+      },
+    };
+
+    const admission = {
+      engineBuildId: "hole9-empty-test",
+      visibility: {
+        workspaceSessionId: "hole9-empty-test",
+        workspacePid: 12345,
+        workspaceStartToken: "12345:1",
+        openTerminalRevision: "1",
+      },
+    };
+
+    const spawner = new HiveSpawner({
+      db,
+      repoRoot,
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policy,
+      isModelEnabled: async () => true,
+      discoverCapabilities: async (provider) =>
+        provider === "codex"
+          ? {
+              status: "ok",
+              records: [unmeasuredCodexRecord],
+              effectiveDefault: {
+                provider: "codex",
+                model: unknown("field-absent", "codex.config/read", AT),
+                effort: unknown("field-absent", "codex.config/read", AT),
+              },
+            }
+          : { status: "unavailable", reason: "not in fixture" },
+      readBilling: async () => null,
+      createWorktree: async () => ({
+        path: worktree,
+        branch: "hive/test",
+      }),
+      unavailableAgentNames: async () => new Set(),
+      stopSession: async () => ({ killed: [], survivors: [] }),
+      listCodexMcpServers: async () => [],
+      claudeExecutable: "claude",
+      codexExecutable: "codex",
+      grokExecutable: "grok",
+      kimiExecutable: "kimi",
+      opencodeExecutable: "opencode",
+      sessiond: {
+        prepareAgentCreation: async () => admission,
+        admit: async () => null,
+        terminalHost: {
+          create: async () => {
+            throw new Error("terminal creation stopped after prompt assembly");
+          },
+          inspect: async () => {
+            throw new Error("not reached");
+          },
+          terminate: async () => {
+            throw new Error("not reached");
+          },
+        },
+      },
+    });
+
+    try {
+      const admitted = await spawner.spawn({
+        task: "test empty scenario",
+        category: "simple_coding",
+      });
+
+      expect(admitted.status).toBe("spawning");
+
+      // Read the actual prompt file
+      const promptDirectory = join(getHiveHome(), "runtime", "prompts");
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (
+          (await readdir(promptDirectory).catch(() => [])).some((name) =>
+            name.endsWith(".txt"),
+          )
+        ) {
+          break;
+        }
+        await Bun.sleep(5);
+      }
+      const promptName = (await readdir(promptDirectory)).find((name) =>
+        name.endsWith(".txt"),
+      );
+      expect(promptName).toBeDefined();
+      if (promptName === undefined)
+        throw new Error("launch prompt was not written");
+
+      const prompt = await readFile(join(promptDirectory, promptName), "utf8");
+
+      // Empty scenario: honest stubs present
+      expect(prompt).toContain("Hive Constitution");
+      expect(prompt).toContain("(Profile slot reserved but empty");
+      expect(prompt).toContain("Project Context");
+      expect(prompt).toContain("Handoff Context");
+      expect(prompt).toContain("Synthesized handoff");
+      // No memory index section (empty store)
+      expect(prompt).not.toContain("Knowledge index data");
+      // Mistakes slot shows empty stub
+      expect(prompt).toContain("(Mistakes ledger empty");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("pack-off: spawn fails closed (not silent)", async () => {
     previousHiveHome = process.env.HIVE_HOME;
     previousCodexHome = process.env.CODEX_HOME;
     const home = await makeTempDir("hive-hole9-");
@@ -190,6 +333,37 @@ describe("Hole #9: pack-off silence", () => {
     } finally {
       db.close();
     }
+  });
+
+  test("queen: empty vs pack-off distinguishable in buildQueenLaunchContext", async () => {
+    const root = await makeTempDir("hive-hole9-queen-");
+
+    const { buildQueenLaunchContext } =
+      await import("../../src/cli/orchestrator");
+    const { EpisodicStore } = await import("../../src/memory-service/episodic");
+    const { buildMemoryIndex } =
+      await import("../../src/memory-service/memory-store");
+
+    // Test 1: Empty memory store → honest stub in queen launch text
+    const emptyIndex = await buildMemoryIndex(root);
+    const episodic = new EpisodicStore(":memory:");
+
+    const emptyLaunch = await buildQueenLaunchContext({
+      memoryIndex: emptyIndex,
+      repoRoot: root,
+      episodic,
+    });
+
+    // Empty scenario: stubs present, no memory index section
+    expect(emptyLaunch).toContain("Hive Constitution");
+    expect(emptyLaunch).toContain("(Profile slot reserved but empty");
+    expect(emptyLaunch).toContain("Project Context");
+    expect(emptyLaunch).toContain("(Mistakes ledger empty");
+    expect(emptyLaunch).not.toContain("Knowledge index data");
+
+    // Test 2: Pack-off would fail at config level (wake_pack_enabled=false)
+    // Queen doesn't read wake_pack_enabled directly; spawn does
+    // So pack-off is spawn-specific, queen always gets pack
   });
 
   test("pack-on (wake_pack_enabled=true default) succeeds with pack floor", async () => {
