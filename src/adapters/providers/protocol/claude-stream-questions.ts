@@ -24,6 +24,7 @@ export function claudeQuestions<T>(input: T): readonly ElicitationQuestion[] {
           name: label,
           kind: "allow",
           description: isRecord(option) ? asString(option.description) : null,
+          preview: isRecord(option) ? asString(option.preview) : null,
         });
       }
     }

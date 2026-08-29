@@ -165,6 +165,8 @@ export interface ElicitationOption {
   readonly name: string;
   readonly kind: "allow" | "reject" | null;
   readonly description?: string | null;
+  /** A longer illustration of the option — a code snippet, a mockup — shown only while it is highlighted. */
+  readonly preview?: string | null;
 }
 
 /** One question of a possibly multi-question ask. ACP sends a single option list per `session/request_permission` and has no way to express a second question, so its requests normalize to exactly one of these. Claude Code sends up to four in one `AskUserQuestion` call and expects every one answered before the tool returns, which is why this is a list rather than a flattened set of options. */

@@ -405,6 +405,127 @@ describe("a multi-question ask is answered one question at a time", () => {
     ).toEqual(["staging", "prod"]);
   });
 
+  test("left and right move between questions without answering", async () => {
+    askTwo();
+    await settle();
+    harness.testRenderer.mockInput.pressArrow("right");
+    await settle();
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "Which environments?",
+    );
+    harness.testRenderer.mockInput.pressArrow("left");
+    await settle();
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "Which transport?",
+    );
+    expect(harness.driver.permissionDecisions).toEqual([]);
+  });
+
+  test("left and right move the cursor, not the question, while a draft is being typed", async () => {
+    askTwo();
+    await settle();
+    await harness.testRenderer.mockInput.typeText("gRPC");
+    harness.testRenderer.mockInput.pressArrow("right");
+    await settle();
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "Which transport?",
+    );
+    harness.testRenderer.mockInput.pressTab();
+    await settle();
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "Which environments?",
+    );
+    expect(harness.ui.snapshot().draft).toBe("gRPC");
+  });
+
+  test("an earlier answer can be revisited and changed before the request is sent", async () => {
+    askTwo();
+    await settle();
+    harness.testRenderer.mockInput.pressEnter();
+    await settle();
+    harness.testRenderer.mockInput.pressArrow("left");
+    await settle();
+    // Revisiting highlights the answer already given.
+    expect(harness.testRenderer.captureCharFrame()).toContain("❯ 1  HTTP/2");
+    harness.testRenderer.mockInput.pressArrow("down");
+    await settle();
+    harness.testRenderer.mockInput.pressEnter();
+    await settle();
+
+    // Re-answering moves on to the question still waiting, and nothing has been sent.
+    expect(harness.driver.permissionDecisions).toEqual([]);
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "Which environments?",
+    );
+    await harness.testRenderer.mockInput.typeText(" ");
+    await settle();
+    harness.testRenderer.mockInput.pressEnter();
+    await settle();
+    expect(harness.driver.permissionDecisions).toEqual([
+      {
+        requestId: "perm-2",
+        outcome: "allow",
+        answers: {
+          "Which transport?": "WebSocket",
+          "Which environments?": ["staging"],
+        },
+      },
+    ]);
+  });
+
+  test("the card lists an Other row that typing highlights", async () => {
+    askTwo();
+    await settle();
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "Other — type your own below",
+    );
+    await harness.testRenderer.mockInput.typeText("g");
+    await settle();
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "❯ ✎  Other — type your own below",
+    );
+  });
+
+  test("Escape on a question with no reject option neither answers nor interrupts", async () => {
+    askTwo();
+    await settle();
+    await harness.testRenderer.mockInput.typeText("half an ans");
+    harness.testRenderer.mockInput.pressEscape();
+    await Bun.sleep(30);
+    await settle();
+
+    expect(harness.ui.snapshot().draft).toBe("");
+    expect(harness.driver.cancelledTurns).toEqual([]);
+    expect(harness.driver.permissionDecisions).toEqual([]);
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "Which transport?",
+    );
+  });
+
+  test("a settled card keeps what was answered", async () => {
+    askTwo();
+    await settle();
+    harness.testRenderer.mockInput.pressEnter();
+    await settle();
+    await harness.testRenderer.mockInput.typeText("canary");
+    harness.testRenderer.mockInput.pressEnter();
+    await settle();
+    harness.ui.onProviderEvent(
+      harness.driver.emit({
+        kind: "elicitation-settled",
+        requestId: "perm-2",
+        outcome: "answered",
+      }),
+    );
+    // The provider event schedules its repaint on the next tick.
+    await Bun.sleep(10);
+    await settle();
+
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "✓ Transport: HTTP/2 · Rollout: canary",
+    );
+  });
+
   test("a multi-select keeps selected options beside a typed custom answer", async () => {
     askTwo();
     await settle();
@@ -426,5 +547,58 @@ describe("a multi-question ask is answered one question at a time", () => {
         },
       },
     ]);
+  });
+});
+
+describe("a bare approval offers Hive's verdicts", () => {
+  function askApproval(): void {
+    harness.ui.onProviderEvent(
+      harness.driver.emit({ kind: "turn-started", turnId: "t1" }),
+    );
+    harness.ui.onProviderEvent(
+      harness.driver.emit({
+        kind: "approval-waiting",
+        requestId: "allow-1",
+        turnId: "t1",
+        toolName: "bash",
+        summary: "run tests",
+        detail: "bun test",
+      }),
+    );
+  }
+
+  test("2 allows for the rest of the session", async () => {
+    askApproval();
+    await settle();
+    await harness.testRenderer.mockInput.typeText("2");
+    await settle();
+
+    expect(harness.driver.permissionDecisions).toEqual([
+      { requestId: "allow-1", outcome: "allow", scope: "session" },
+    ]);
+  });
+
+  test("3 denies, and the settled card says so", async () => {
+    askApproval();
+    await settle();
+    await harness.testRenderer.mockInput.typeText("3");
+    await settle();
+    harness.ui.onProviderEvent(
+      harness.driver.emit({
+        kind: "elicitation-settled",
+        requestId: "allow-1",
+        outcome: "deny",
+      }),
+    );
+    // The provider event schedules its repaint on the next tick.
+    await Bun.sleep(10);
+    await settle();
+
+    expect(harness.driver.permissionDecisions).toEqual([
+      { requestId: "allow-1", outcome: "deny" },
+    ]);
+    expect(harness.testRenderer.captureCharFrame()).toContain(
+      "✗ run tests — No",
+    );
   });
 });

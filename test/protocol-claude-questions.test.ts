@@ -12,7 +12,7 @@ const askInput = {
       header: "Colour",
       multiSelect: false,
       options: [
-        { label: "Red", description: "You prefer red." },
+        { label: "Red", description: "You prefer red.", preview: "#f00" },
         { label: "Blue", description: "You prefer blue." },
       ],
     },
@@ -42,6 +42,8 @@ describe("Claude Code questions", () => {
       "Blue",
     ]);
     expect(questions[0]?.options[0]?.description).toBe("You prefer red.");
+    expect(questions[0]?.options[0]?.preview).toBe("#f00");
+    expect(questions[0]?.options[1]?.preview).toBeNull();
     expect(questions[1]?.multiSelect).toBe(true);
   });
 

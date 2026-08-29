@@ -91,13 +91,14 @@ import {
   chooseOption,
   closeModelPicker,
   closeModePicker,
-  collectedAnswers,
   commandMenuEntries,
   confirmQuestion,
   currentQuestion,
+  customRowIndex,
   dismissCommandMenu,
   dismissMentionMenu,
   FileMentionIndex,
+  focusCustomRow,
   initialView,
   type LocalCommandSupport,
   type MentionEntry,
@@ -108,11 +109,15 @@ import {
   moveMentionSelection,
   moveModelSelection,
   moveModeSelection,
+  moveQuestionFocus,
   onDraftChanged,
   openModelEffortPicker,
   openModelPicker,
   openModePicker,
+  type PendingElicitation,
   pendingElicitation,
+  type PendingStep,
+  permissionReply,
   pickerOptions,
   presentHumanSubmission,
   returnToModelPicker,
@@ -125,8 +130,6 @@ import {
   settleHumanSubmission,
   toggleToolDetails,
   updateModelFilter,
-  VERDICT_ALLOW_SESSION,
-  VERDICT_DENY,
   type ViewState,
 } from "./view-state";
 import { WakeReportQueue } from "./wake-report-queue";
@@ -558,6 +561,9 @@ export class AgentUi {
         this.historyIndex = null;
       }
       this.view = onDraftChanged(this.view, this.lastDraft, draft);
+      if (this.lastDraft === "" && draft !== "") {
+        this.view = focusCustomRow(this.view);
+      }
       this.lastDraft = draft;
       this.refresh();
     };
@@ -1066,40 +1072,13 @@ export class AgentUi {
       return;
     }
     const pending = pendingElicitation(this.view);
-    const options = pending === null ? [] : pickerOptions(pending);
-    const picker = options.length > 0;
-    if (picker && (key.name === "up" || key.name === "down")) {
-      key.preventDefault();
-      this.view = moveElicitationSelection(
-        this.view,
-        key.name === "up" ? -1 : 1,
-      );
-      this.refresh();
-      return;
-    }
-    // Space toggles a multi-select choice, again only from an empty draft so that typing a sentence is never mistaken for choosing.
     if (
-      picker &&
-      this.textarea.plainText === "" &&
-      key.name === "space" &&
       pending !== null &&
-      currentQuestion(pending)?.multiSelect === true
+      menu.length === 0 &&
+      mention.length === 0 &&
+      this.routeElicitationKey(key, pending)
     ) {
-      const option = options[pending.selection];
-      if (option !== undefined) {
-        key.preventDefault();
-        this.enqueueInput(() => this.answerPending(option.optionId));
-        return;
-      }
-    }
-    if (picker && this.textarea.plainText === "" && /^[1-9]$/.test(key.name)) {
-      const index = Number(key.name) - 1;
-      const option = options[index];
-      if (option !== undefined) {
-        key.preventDefault();
-        this.enqueueInput(() => this.answerPending(option.optionId));
-        return;
-      }
+      return;
     }
     if (
       (key.name === "up" || key.name === "down") &&
@@ -1109,7 +1088,6 @@ export class AgentUi {
       return;
     }
     if (isSubmitKey(key)) {
-      const emptyDraft = this.textarea.plainText.trim() === "";
       // A mention completes into the draft; it never submits it.
       if (mention.length > 0) {
         key.preventDefault();
@@ -1117,45 +1095,9 @@ export class AgentUi {
         if (chosen !== undefined) this.completeMention(chosen.path);
         return;
       }
-      // Enter answers the highlighted option when one is offered, and otherwise means allow. It never means both, and a question with options is never settled by an allow it has no option for.
-      if (!emptyDraft && pending !== null) {
-        const question = currentQuestion(pending);
-        if (question?.allowCustom === true) {
-          key.preventDefault();
-          const answer =
-            this.secretQuestionKey === null
-              ? this.textarea.plainText
-              : this.secretAnswer.join("");
-          this.textarea.clear();
-          this.secretAnswer = [];
-          this.secretCursor = 0;
-          this.enqueueInput(() => this.answerPendingText(answer));
-          return;
-        }
-      }
-      if (emptyDraft && picker) {
+      if (menu.length > 0) {
         key.preventDefault();
-        const question = pending === null ? null : currentQuestion(pending);
-        if (question?.multiSelect === true) {
-          this.enqueueInput(() => this.confirmPendingQuestion());
-          return;
-        }
-        const option = options[pending?.selection ?? 0];
-        if (option !== undefined) {
-          this.enqueueInput(() => this.answerPending(option.optionId));
-        }
-        return;
-      }
-      if (
-        menu.length > 0 ||
-        (emptyDraft && this.pendingApprovalRequestId() !== null)
-      ) {
-        key.preventDefault();
-        this.enqueueInput(async () => {
-          if (!(await this.respondToPendingApproval("allow"))) {
-            await this.submitDraft(this.now());
-          }
-        });
+        this.enqueueInput(() => this.submitDraft(this.now()));
       }
       return;
     }
@@ -1167,6 +1109,77 @@ export class AgentUi {
           : this.transcript.height,
       );
     }
+  }
+
+  /** Keys that act on the pending ask. Returns false for a key the composer keeps — text being typed, or Enter on a draft the question cannot take as an answer. Choosing from the list needs an empty draft, so typing a sentence is never mistaken for choosing; ←→ likewise switch questions only while there is no draft for them to move a cursor through, while Tab switches regardless. */
+  private routeElicitationKey(
+    key: KeyEvent,
+    pending: PendingElicitation,
+  ): boolean {
+    const question = currentQuestion(pending);
+    const options = pickerOptions(pending);
+    const rows = options.length + (customRowIndex(pending) === null ? 0 : 1);
+    const draft = this.textarea.plainText;
+    const empty = draft === "";
+    if (rows > 0 && (key.name === "up" || key.name === "down")) {
+      key.preventDefault();
+      this.view = moveElicitationSelection(
+        this.view,
+        key.name === "up" ? -1 : 1,
+      );
+      this.refresh();
+      return true;
+    }
+    if (
+      pending.questions.length > 1 &&
+      (key.name === "tab" ||
+        (empty && (key.name === "left" || key.name === "right")))
+    ) {
+      key.preventDefault();
+      const backward = key.name === "left" || (key.name === "tab" && key.shift);
+      this.view = moveQuestionFocus(this.view, backward ? -1 : 1);
+      this.refresh();
+      return true;
+    }
+    if (empty && key.name === "space" && question?.multiSelect === true) {
+      key.preventDefault();
+      const option = options[pending.selection];
+      if (option !== undefined) {
+        this.enqueueInput(() => this.answerPending(option.optionId));
+      }
+      return true;
+    }
+    if (empty && /^[1-9]$/.test(key.name)) {
+      const option = options[Number(key.name) - 1];
+      if (option === undefined) return false;
+      key.preventDefault();
+      this.enqueueInput(() => this.answerPending(option.optionId));
+      return true;
+    }
+    if (!isSubmitKey(key)) return false;
+    if (draft.trim() !== "") {
+      if (question?.allowCustom !== true) return false;
+      key.preventDefault();
+      const answer =
+        this.secretQuestionKey === null ? draft : this.secretAnswer.join("");
+      this.textarea.clear();
+      this.secretAnswer = [];
+      this.secretCursor = 0;
+      this.enqueueInput(() => this.answerPendingText(answer));
+      return true;
+    }
+    if (rows === 0) return false;
+    key.preventDefault();
+    if (question?.multiSelect === true) {
+      this.enqueueInput(() => this.confirmPendingQuestion());
+      return true;
+    }
+    // Enter on the "Other" row with nothing typed has nothing to send; the placeholder already says to type.
+    const option = options[pending.selection];
+    if (option !== undefined) {
+      this.enqueueInput(() => this.answerPending(option.optionId));
+    }
+    return true;
   }
 
   private navigateHistory(direction: "up" | "down"): boolean {
@@ -1466,87 +1479,26 @@ export class AgentUi {
     return Number.isFinite(elapsed) ? Math.max(0, Math.floor(elapsed)) : 0;
   }
 
-  pendingApprovalRequestId(): string | null {
-    const pending = this.view.transcript.findLast(
-      (entry) =>
-        entry.kind === "elicitation" &&
-        entry.ask === "approval" &&
-        !entry.settled,
-    );
-    return pending?.kind === "elicitation" ? pending.requestId : null;
-  }
-
-  async respondToPendingApproval(outcome: "allow" | "deny"): Promise<boolean> {
-    const requestId = this.pendingApprovalRequestId();
-    if (requestId === null) return false;
-    await this.session.respondToPermission({ requestId, outcome });
-    return true;
-  }
-
-  /** Answer the pending elicitation with one of the options the vendor offered. The id is echoed back as sent; nothing here derives one. A vendor that asks several questions at once is answered once, at the end: the choice is recorded and the picker moves on until every question has one, because the tool call cannot be settled a question at a time. */
+  /** Answer the pending ask with one of the options it lists. The id is echoed back as sent; nothing here derives one. A vendor that asks several questions at once is answered once, at the end: the choice is recorded and the card moves on until every question has one, because the tool call cannot be settled a question at a time. */
   async answerPending(optionId: string): Promise<void> {
-    const pending = pendingElicitation(this.view);
-    if (pending === null) return;
-    const options = pickerOptions(pending);
-    const chosen = options.find((option) => option.optionId === optionId);
-    if (chosen === undefined) return;
-
-    if (pending.questions.length > 0) {
-      const step = chooseOption(this.view, optionId);
-      this.view = step.view;
-      this.refresh();
-      if (!step.complete) return;
-      await this.sendCollectedAnswers();
-      return;
-    }
-    // Hive's own verdicts for an approval the vendor gave no options for. These ids are not vendor tokens and must not be sent as one.
-    if (optionId.startsWith("hive:")) {
-      await this.session.respondToPermission({
-        requestId: pending.requestId,
-        outcome: optionId === VERDICT_DENY ? "deny" : "allow",
-        // Only the session scope is stated. Absent already means "this once", and saying it explicitly would change the request Hive has always sent for a plain approval.
-        ...definedFields({
-          scope:
-            optionId === VERDICT_ALLOW_SESSION
-              ? ("session" as const)
-              : undefined,
-        }),
-      });
-      return;
-    }
-    await this.session.respondToPermission({
-      requestId: pending.requestId,
-      // A question's options are answers rather than verdicts, so the outcome is what the vendor labelled the chosen one — not what the keypress that chose it happened to be bound to.
-      outcome: chosen.kind === "reject" ? "deny" : "allow",
-      optionId,
-    });
+    await this.stepPending(chooseOption(this.view, optionId));
   }
 
   async confirmPendingQuestion(): Promise<void> {
-    const pending = pendingElicitation(this.view);
-    if (pending === null || pending.questions.length === 0) return;
-    const step = confirmQuestion(this.view);
-    this.view = step.view;
-    this.refresh();
-    if (step.complete) await this.sendCollectedAnswers();
+    await this.stepPending(confirmQuestion(this.view));
   }
 
   async answerPendingText(answer: string): Promise<void> {
-    const step = chooseCustomAnswer(this.view, answer);
+    await this.stepPending(chooseCustomAnswer(this.view, answer));
+  }
+
+  private async stepPending(step: PendingStep): Promise<void> {
     if (step.view === this.view) return;
     this.view = step.view;
     this.refresh();
-    if (step.complete) await this.sendCollectedAnswers();
-  }
-
-  private async sendCollectedAnswers(): Promise<void> {
     const pending = pendingElicitation(this.view);
-    if (pending === null) return;
-    await this.session.respondToPermission({
-      requestId: pending.requestId,
-      outcome: "allow",
-      answers: collectedAnswers(pending),
-    });
+    if (!step.complete || pending === null) return;
+    await this.session.respondToPermission(permissionReply(pending));
   }
 
   async dismissOrInterrupt(): Promise<void> {
@@ -1567,10 +1519,19 @@ export class AgentUi {
       return;
     }
     const pending = pendingElicitation(this.view);
-    const reject = pending?.options.find((option) => option.kind === "reject");
-    if (reject !== undefined) {
-      await this.answerPending(reject.optionId);
-      return;
+    if (pending !== null) {
+      // The vendor's own reject option is what Escape means when one is offered. A question with none is never a reason to interrupt the turn: the agent is waiting for an answer, and abandoning the turn to escape a question is the one thing nobody pressing Escape wants.
+      const reject = pickerOptions(pending).find(
+        (option) => option.kind === "reject",
+      );
+      if (reject !== undefined && pending.reply === "option") {
+        await this.answerPending(reject.optionId);
+        return;
+      }
+      if (pending.reply === "answers") {
+        if (this.textarea.plainText !== "") this.textarea.clear();
+        return;
+      }
     }
     await this.cancelActiveTurn();
   }

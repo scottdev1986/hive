@@ -14,14 +14,11 @@ import {
 } from "./claude-stream-process";
 import { ClaudeStreamJsonSession } from "./claude-stream-session";
 
-const DEFAULT_PERMISSION_TIMEOUT_MS = 120_000;
-
 interface ClaudeRuntimeAdapterOptions {
   readonly processFactory?: ClaudeProcessFactory;
   readonly probeVersion?: (
     executable: string,
   ) => string | null | Promise<string | null>;
-  readonly permissionTimeoutMs?: number;
   readonly terminateProcessGroup?: (
     processGroupId: number,
     graceMs: number,
@@ -57,7 +54,6 @@ export class ClaudeStreamJsonAdapter implements ProviderRuntimeAdapter {
   private readonly versionProbe: (
     executable: string,
   ) => string | null | Promise<string | null>;
-  private readonly permissionTimeoutMs: number;
   private readonly terminateChildGroup: (
     processGroupId: number,
     graceMs: number,
@@ -66,8 +62,6 @@ export class ClaudeStreamJsonAdapter implements ProviderRuntimeAdapter {
   constructor(options: ClaudeRuntimeAdapterOptions = {}) {
     this.processFactory = options.processFactory ?? defaultProcessFactory;
     this.versionProbe = options.probeVersion ?? probeClaudeVersionDetached;
-    this.permissionTimeoutMs =
-      options.permissionTimeoutMs ?? DEFAULT_PERMISSION_TIMEOUT_MS;
     this.terminateChildGroup =
       options.terminateProcessGroup ??
       (options.processFactory === undefined
@@ -91,7 +85,6 @@ export class ClaudeStreamJsonAdapter implements ProviderRuntimeAdapter {
       },
       version,
       this.processFactory,
-      this.permissionTimeoutMs,
       this.terminateChildGroup,
     );
     try {
@@ -125,7 +118,6 @@ export class ClaudeStreamJsonAdapter implements ProviderRuntimeAdapter {
       spawn,
       version,
       this.processFactory,
-      this.permissionTimeoutMs,
       this.terminateChildGroup,
     );
     try {

@@ -120,9 +120,9 @@ interface PendingSubmission {
   readonly resolve: (receipt: SubmissionReceipt) => void;
 }
 
+/** A pending ask waits for as long as the person takes: an expiry would answer on their behalf, and a deny the agent then acts on is worse than a wait. */
 interface PendingPermission {
   readonly request: JsonObject;
-  readonly timer: ReturnType<typeof setTimeout>;
 }
 
 interface ActiveTurn {
@@ -161,7 +161,6 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     private readonly spawn: ProviderSpawn,
     version: string | null,
     private readonly processFactory: ClaudeProcessFactory,
-    private readonly permissionTimeoutMs: number,
     private readonly terminateChildGroup: (
       processGroupId: number,
       graceMs: number,
@@ -339,7 +338,6 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     this.assertOpen();
     const pending = this.permissions.get(input.requestId);
     if (pending === undefined) return;
-    clearTimeout(pending.timer);
     this.permissions.delete(input.requestId);
     const toolUseId = asString(pending.request.tool_use_id);
     const response: JsonObject =
@@ -735,15 +733,11 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     }
     const turnId =
       this.activeTurn?.turnId ?? asString(request.tool_use_id) ?? "unknown";
-    const timer = setTimeout(
-      () => this.expirePermission(requestId),
-      this.permissionTimeoutMs,
-    );
-    this.permissions.set(requestId, { request, timer });
     const toolName = asString(request.tool_name);
     // AskUserQuestion is a question wearing a permission request's clothes: it arrives on the same channel as every tool approval, and only the tool name (or the interaction flag beside it) says that allowing it is not what a person is being asked for.
     const questions =
       toolName === ASK_USER_QUESTION ? claudeQuestions(request.input) : [];
+    this.permissions.set(requestId, { request });
     if (questions.length > 0) {
       const first = questions[0];
       this.emit(
@@ -1128,37 +1122,9 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     } catch {}
   }
 
-  private expirePermission(requestId: string): void {
-    const pending = this.permissions.get(requestId);
-    if (pending === undefined) return;
-    this.permissions.delete(requestId);
-    const toolUseId = asString(pending.request.tool_use_id);
-    const response = {
-      behavior: "deny",
-      message: "Permission request expired",
-      ...definedFields({
-        toolUseID: toolUseId ?? undefined,
-      }),
-    };
-    try {
-      this.writeControlResponse(requestId, response);
-    } catch {
-      this.child?.kill("SIGKILL");
-    }
-    this.emit(
-      {
-        kind: "elicitation-settled",
-        requestId,
-        outcome: "deny",
-      },
-      response,
-    );
-  }
-
   private failPendingPermissions(message: string, emitSettled = false): void {
     let canWrite = true;
     for (const [requestId, pending] of this.permissions) {
-      clearTimeout(pending.timer);
       const toolUseId = asString(pending.request.tool_use_id);
       const response = {
         behavior: "deny",

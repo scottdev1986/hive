@@ -1,7 +1,6 @@
 import { isAbsolute, relative } from "node:path";
 import {
   BoxRenderable,
-  bg,
   bold,
   type CliRenderer,
   CodeRenderable,
@@ -18,18 +17,23 @@ import {
   TextRenderable,
   type TreeSitterClient,
 } from "@opentui/core";
-import type { ElicitationOption } from "../../adapters/providers/protocol/types";
 import { definedFields } from "../../shared/defined-fields";
 import {
   filetypeFor,
   ToolDiffProjectionCache,
   unifiedDiffStats,
 } from "./unified-diff";
+import { clipTerminalText } from "./terminal-clip";
 import {
+  answerSummary,
   currentQuestion,
+  customRowIndex,
+  isQuestionAnswered,
   pickerOptions,
   type TranscriptEntry,
 } from "./view-state";
+
+type ElicitationEntry = Extract<TranscriptEntry, { kind: "elicitation" }>;
 
 export interface TranscriptColors {
   readonly text: string;
@@ -57,6 +61,8 @@ const PROSE_WIDTH = 104;
 const TOOL_WIDTH = 116;
 const RENDER_WINDOW_ENTRIES = 256;
 const RENDER_WINDOW_OVERFLOW = 64;
+/** A tab carries its answer so the strip doubles as the running record, clipped so four answered questions still fit one row. */
+const TAB_ANSWER_CELLS = 24;
 
 class StreamingTextRenderable extends TextRenderable {
   private renderedText = this.plainText;
@@ -800,10 +806,8 @@ export class TranscriptView {
     });
   }
 
-  /** An elicitation card: a titled, bordered block that reads as one thing needing an answer rather than as more transcript. A pending ask is the only thing on screen the person must act on, so it is the only thing given a full border and an accent colour. Once settled it drops to a quiet grey rule — still readable as a record of what was asked and answered, but no longer competing with whatever is live. */
-  private buildElicitation(
-    entry: Extract<TranscriptEntry, { kind: "elicitation" }>,
-  ): Renderable {
+  /** An elicitation card: a titled, bordered block that reads as one thing needing an answer rather than as more transcript. A pending ask is the only thing on screen the person must act on, so it is the only thing given a full border and an accent colour. Once settled it drops to a quiet grey rule carrying what was asked and answered, no longer competing with whatever is live. */
+  private buildElicitation(entry: ElicitationEntry): Renderable {
     const accent = entry.settled
       ? this.colors.gray
       : entry.ask === "approval"
@@ -825,144 +829,203 @@ export class TranscriptView {
         titleAlignment: entry.settled ? undefined : ("left" as const),
       }),
     });
-    box.add(this.buildElicitationBody(entry, accent));
-    if (!entry.settled) {
-      const options = pickerOptions(entry);
-      if (options.length > 0) {
-        box.add(this.buildOptions(entry, options));
-      } else if (currentQuestion(entry)?.allowCustom === true) {
-        box.add(
-          this.buildCustomAnswerHint(currentQuestion(entry)?.secret === true),
-        );
-      }
+    if (entry.settled) {
+      box.add(this.styledLines(this.settledSummary(entry), true));
+      return box;
     }
+    const chunks: TextChunk[] = [];
+    if (entry.questions.length > 1)
+      chunks.push(...this.questionTabs(entry, accent));
+    chunks.push(...this.prompt(entry));
+    chunks.push(...this.optionRows(entry, accent));
+    chunks.push(...this.keyHints(entry));
+    box.add(this.styledLines(chunks, true));
     return box;
   }
 
-  private buildCustomAnswerHint(secret: boolean): TextRenderable {
-    const hint = new TextRenderable(this.renderer, {
-      width: "100%",
-      height: "auto",
-      wrapMode: "word",
-    });
-    hint.content = new StyledText([
-      italic(
-        fg(this.colors.dim)(
-          secret
-            ? "  type a private answer (input masked) · enter submit\n"
-            : "  type an answer · enter submit\n",
-        ),
-      ),
-    ]);
-    return hint;
-  }
-
-  private cardTitle(
-    entry: Extract<TranscriptEntry, { kind: "elicitation" }>,
-  ): string {
-    if (entry.ask === "approval") return " APPROVAL ";
-    const question = currentQuestion(entry);
-    if (question === null || entry.questions.length <= 1) return " QUESTION ";
-    return ` QUESTION ${entry.questionIndex + 1}/${entry.questions.length} `;
-  }
-
-  private buildElicitationBody(
-    entry: Extract<TranscriptEntry, { kind: "elicitation" }>,
-    accent: string,
+  private styledLines(
+    chunks: TextChunk[],
+    selectable: boolean,
   ): TextRenderable {
-    const chunks: TextChunk[] = [];
-    const question = currentQuestion(entry);
-    if (entry.settled) {
-      chunks.push(fg(this.colors.gray)("✓ "));
-      chunks.push(fg(this.colors.gray)(`${entry.summary}\n`));
-    } else {
-      for (const answered of entry.questions.slice(0, entry.questionIndex)) {
-        const chosen = entry.chosen[answered.questionId] ?? [];
-        chunks.push(fg(this.colors.green)("  ✓ "));
-        chunks.push(
-          fg(this.colors.dim)(`${answered.header ?? answered.text}: `),
-        );
-        chunks.push(
-          fg(this.colors.text)(
-            `${answered.secret ? "••••••" : chosen.join(", ")}\n`,
-          ),
-        );
-      }
-      if (entry.ask === "approval") {
-        chunks.push(fg(this.colors.dim)(`${entry.summary}\n`));
-        if (entry.detail !== null) {
-          chunks.push(bold(fg(this.colors.text)(`${entry.detail}\n`)));
-        }
-      } else {
-        const heading = question?.header ?? null;
-        if (heading !== null) {
-          chunks.push(bold(fg(accent)(`${heading.toUpperCase()}\n`)));
-        }
-        chunks.push(
-          bold(
-            fg(this.colors.text)(
-              `${question?.text ?? entry.detail ?? entry.summary}\n\n`,
-            ),
-          ),
-        );
-      }
-    }
     const text = new TextRenderable(this.renderer, {
       width: "100%",
       height: "auto",
       wrapMode: "word",
-      selectable: true,
+      selectable,
     });
     text.content = new StyledText(chunks);
     return text;
   }
 
-  /** The option rows, drawn as text rather than a focusable Select. The composer keeps focus the whole time a question is up, so a person can still type instead of choosing, and OpenTUI delivers arrow keys to the focused renderable. Owning the highlight here keeps one component reading the keyboard rather than two negotiating over it. */
-  private buildOptions(
-    entry: Extract<TranscriptEntry, { kind: "elicitation" }>,
-    options: readonly ElicitationOption[],
-  ): Renderable {
+  private cardTitle(entry: ElicitationEntry): string {
+    if (entry.ask === "approval") return " Approval ";
+    const total = entry.questions.length;
+    return total > 1
+      ? ` Question ${entry.focus + 1} of ${total} `
+      : " Question ";
+  }
+
+  /** One pill per question so a multi-question ask reads as a set to move through rather than a chute: the focused one is bracketed, answered ones carry a tick. */
+  private questionTabs(entry: ElicitationEntry, accent: string): TextChunk[] {
+    const chunks: TextChunk[] = [];
+    for (const [index, question] of entry.questions.entries()) {
+      const answered = isQuestionAnswered(entry, question.questionId);
+      const answer = answered ? answerSummary(entry, question) : null;
+      const shown =
+        answer === null
+          ? ""
+          : `: ${clipTerminalText(answer, { maxCells: TAB_ANSWER_CELLS, inline: true }).text}`;
+      const label = `${answered ? "✓ " : ""}${question.header ?? `Q${index + 1}`}${shown}`;
+      if (index > 0) chunks.push(fg(this.colors.dim)("  "));
+      chunks.push(
+        index === entry.focus
+          ? bold(fg(accent)(`[ ${label} ]`))
+          : fg(answered ? this.colors.green : this.colors.dim)(label),
+      );
+    }
+    chunks.push(fg(this.colors.dim)("\n\n"));
+    return chunks;
+  }
+
+  private prompt(entry: ElicitationEntry): TextChunk[] {
     const question = currentQuestion(entry);
+    if (entry.ask === "approval") {
+      const chunks: TextChunk[] = [fg(this.colors.dim)(`${entry.summary}\n`)];
+      if (entry.detail !== null) {
+        chunks.push(bold(fg(this.colors.text)(`${entry.detail}\n`)));
+      }
+      chunks.push(fg(this.colors.dim)("\n"));
+      return chunks;
+    }
+    const chunks: TextChunk[] = [];
+    // The header is the tab label once there are tabs; repeating it above the question would say the same word twice in two rows.
+    if (question?.header != null && entry.questions.length === 1) {
+      chunks.push(fg(this.colors.dim)(`${question.header}\n`));
+    }
+    chunks.push(
+      fg(this.colors.text)(
+        `${question?.text ?? entry.detail ?? entry.summary}\n\n`,
+      ),
+    );
+    return chunks;
+  }
+
+  /** The option rows, drawn as text rather than a focusable Select. The composer keeps focus the whole time a question is up, so a person can still type instead of choosing, and OpenTUI delivers arrow keys to the focused renderable. Owning the highlight here keeps one component reading the keyboard rather than two negotiating over it. */
+  private optionRows(entry: ElicitationEntry, accent: string): TextChunk[] {
+    const question = currentQuestion(entry);
+    const options = pickerOptions(entry);
     const multi = question?.multiSelect === true;
     const picked = new Set(
       question === null ? [] : (entry.chosen[question.questionId] ?? []),
     );
     const chunks: TextChunk[] = [];
-    const escapeAction = options.some((option) => option.kind === "reject")
-      ? "esc reject"
-      : "esc interrupt";
+    const rowStyle = (focused: boolean, on: boolean, text: string) =>
+      focused
+        ? bold(fg(accent)(text))
+        : fg(on ? this.colors.green : this.colors.text)(text);
     for (const [index, option] of options.entries()) {
       const focused = index === entry.selection;
       const on = picked.has(option.optionId);
-      const marker = multi ? (on ? "▣" : "☐") : on ? "◉" : "○";
-      const row = `${focused ? "❯" : " "} ${marker} ${index + 1}. ${option.name}`;
+      const mark = multi ? (on ? "[x] " : "[ ] ") : "";
+      const tick = !multi && on ? "  ✓" : "";
       chunks.push(
-        focused
-          ? bold(bg(this.colors.headerAlt)(fg(this.colors.green)(`${row}\n`)))
-          : fg(on ? this.colors.green : this.colors.text)(`${row}\n`),
+        rowStyle(
+          focused,
+          on,
+          `${focused ? "❯" : " "} ${mark}${index + 1}  ${option.name}${tick}\n`,
+        ),
       );
+      const indent = `   ${multi ? "    " : ""}   `;
       const description = option.description ?? null;
       if (description !== null && description !== "") {
-        chunks.push(fg(this.colors.dim)(`      ${description}\n`));
+        chunks.push(fg(this.colors.dim)(`${indent}${description}\n`));
+      }
+      // A preview is the option shown rather than described, so only the highlighted one gets the room.
+      const preview = focused ? (option.preview ?? null) : null;
+      if (preview !== null && preview.trim() !== "") {
+        for (const line of preview.trimEnd().split("\n")) {
+          chunks.push(fg(this.colors.text)(`${indent}│ ${line}\n`));
+        }
       }
     }
-    chunks.push(fg(this.colors.dim)("\n"));
-    chunks.push(
-      italic(
-        fg(this.colors.dim)(
-          multi
-            ? `${question?.allowCustom === true ? "  type a custom answer · " : "  "}space toggle · enter confirm · 1-9 pick · ↑↓ move · ${escapeAction}\n`
-            : `${question?.allowCustom === true ? "  type a custom answer · " : "  "}↑↓ move · enter choose · 1-9 pick · ${escapeAction}\n`,
-        ),
-      ),
-    );
-    const list = new TextRenderable(this.renderer, {
-      width: "100%",
-      height: "auto",
-      wrapMode: "word",
+    const customRow = customRowIndex(entry);
+    if (customRow !== null) {
+      const focused = customRow === entry.selection;
+      const typed =
+        question === null
+          ? []
+          : (entry.chosen[question.questionId] ?? []).filter(
+              (label) => !options.some((option) => option.optionId === label),
+            );
+      const shown =
+        question?.secret === true && typed.length > 0
+          ? "••••••"
+          : typed.join(", ");
+      const label =
+        shown === "" ? "Other — type your own below" : `Other: ${shown}`;
+      chunks.push(
+        focused
+          ? bold(fg(accent)(`❯ ${multi ? "    " : ""}✎  ${label}\n`))
+          : italic(
+              fg(typed.length > 0 ? this.colors.green : this.colors.dim)(
+                `  ${multi ? "    " : ""}✎  ${label}\n`,
+              ),
+            ),
+      );
+    }
+    if (chunks.length > 0) chunks.push(fg(this.colors.dim)("\n"));
+    return chunks;
+  }
+
+  private keyHints(entry: ElicitationEntry): TextChunk[] {
+    const question = currentQuestion(entry);
+    const options = pickerOptions(entry);
+    const hints: string[] = [];
+    if (options.length > 0) {
+      hints.push(
+        "↑↓",
+        question?.multiSelect === true ? "space tick · enter confirm" : "enter",
+        "1-9",
+      );
+    } else if (question?.allowCustom === true) {
+      hints.push(
+        question.secret
+          ? "type a private answer (masked) · enter"
+          : "type · enter",
+      );
+    }
+    if (entry.questions.length > 1) hints.push("←→ questions");
+    const reject = options.find((option) => option.kind === "reject");
+    if (reject !== undefined) {
+      hints.push(entry.reply === "option" ? "esc reject" : "esc interrupt");
+    } else if (entry.reply !== "answers") {
+      hints.push("esc interrupt");
+    }
+    if (hints.length === 0) return [];
+    return [italic(fg(this.colors.dim)(hints.join(" · ")))];
+  }
+
+  /** The settled record: what was asked and what was answered, or that it was refused, on one grey line. */
+  private settledSummary(entry: ElicitationEntry): TextChunk[] {
+    const refused = entry.outcome === "deny" || entry.outcome === "cancelled";
+    const chunks: TextChunk[] = [
+      fg(refused ? this.colors.red : this.colors.gray)(refused ? "✗ " : "✓ "),
+    ];
+    const answers = entry.questions.flatMap((question) => {
+      const shown = answerSummary(entry, question);
+      if (shown === null) return [];
+      const name =
+        question.header ?? (entry.questions.length > 1 ? question.text : null);
+      return [name === null ? shown : `${name}: ${shown}`];
     });
-    list.content = new StyledText(chunks);
-    return list;
+    if (entry.ask === "approval" || answers.length === 0) {
+      chunks.push(fg(this.colors.gray)(entry.summary));
+      if (answers.length > 0)
+        chunks.push(fg(this.colors.dim)(` — ${answers.join(" · ")}`));
+    } else {
+      chunks.push(fg(this.colors.gray)(answers.join(" · ")));
+    }
+    return chunks;
   }
 
   private buildText(entry: TranscriptEntry): TextRenderable {

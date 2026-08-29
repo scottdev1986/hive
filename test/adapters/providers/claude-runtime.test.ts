@@ -119,14 +119,12 @@ function success(requestId: string, response: JsonValue): JsonObject {
 
 function harness(
   onWrite?: (message: JsonObject, process: FakeClaudeProcess) => void,
-  permissionTimeoutMs = 100,
   version: string | null = "2.1.220",
 ): Harness {
   const processes: FakeClaudeProcess[] = [];
   const commands: string[][] = [];
   const adapter = new ClaudeStreamJsonAdapter({
     probeVersion: () => version,
-    permissionTimeoutMs,
     processFactory: (command) => {
       commands.push([...command]);
       const process = new FakeClaudeProcess(
@@ -209,7 +207,7 @@ function requestOf(message: JsonObject): JsonObject | null {
 describe("Claude stream-json runtime", () => {
   test("treats the reported version as metadata when the protocol works", async () => {
     for (const version of ["2.1.221", null] as const) {
-      const testHarness = harness(undefined, 100, version);
+      const testHarness = harness(undefined, version);
       const probe = await testHarness.adapter.probe("/installed/claude");
 
       expect(probe).toMatchObject({
@@ -693,32 +691,40 @@ describe("Claude stream-json runtime", () => {
     );
   });
 
-  test("permission expiry denies through the control channel", async () => {
-    const testHarness = harness(undefined, 5);
+  test("a pending ask never expires: nothing answers on the person's behalf", async () => {
+    const testHarness = harness();
     const session = await connect(testHarness);
     const process = testHarness.processes[0];
     if (process === undefined) throw new Error("process missing");
     process.emit({
       type: "control_request",
-      request_id: "permission-expired",
+      request_id: "approval-open",
       request: {
         subtype: "can_use_tool",
         tool_name: "Bash",
-        tool_use_id: "tool-expired",
+        tool_use_id: "tool-approval",
         input: { command: "pwd" },
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 15));
+    process.emit({
+      type: "control_request",
+      request_id: "question-open",
+      request: {
+        subtype: "can_use_tool",
+        tool_name: "AskUserQuestion",
+        tool_use_id: "tool-question",
+        input: {
+          questions: [
+            { question: "Which one?", header: "Pick", options: ["a", "b"] },
+          ],
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(process.writes).toContainEqual(
-      expect.objectContaining({
-        type: "control_response",
-        response: expect.objectContaining({
-          request_id: "permission-expired",
-          response: expect.objectContaining({ behavior: "deny" }),
-        }),
-      }),
-    );
+    expect(
+      process.writes.filter((message) => message.type === "control_response"),
+    ).toEqual([]);
     await session.close();
   });
 

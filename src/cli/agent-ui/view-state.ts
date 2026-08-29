@@ -2,11 +2,13 @@ import type {
   ElicitationOption,
   ElicitationQuestion,
   NormalizedProviderEvent,
+  PermissionDecision,
   ProviderModel,
   ToolFileChange,
   ToolKind,
   VendorCommand,
 } from "../../adapters/providers/protocol/types";
+import type { ProviderPermissionSettlementOutcome } from "../../schemas/provider-permission";
 import { statusProjectionForProviderEvent } from "../../daemon/status-service/status-service";
 import { definedFields } from "../../shared/defined-fields";
 import type { MailLane } from "../../schemas/mail";
@@ -156,14 +158,23 @@ export type TranscriptEntry =
       readonly requestId: string;
       readonly ask: "approval" | "question";
       readonly summary: string;
-      readonly settled: boolean;
       readonly detail: string | null;
-      readonly options: readonly ElicitationOption[];
-      readonly selection: number;
+      readonly reply: ElicitationReply;
+      /** Every ask is a list of questions, even a bare tool approval or an ACP option list: one shape means one picker, one answer path, and one card. */
       readonly questions: readonly ElicitationQuestion[];
-      readonly questionIndex: number;
+      /** The question the card shows and the keys act on. */
+      readonly focus: number;
+      /** Highlighted row within the focused question; the row after the last option is "Other" when the question takes custom text. */
+      readonly selection: number;
       readonly chosen: Readonly<Record<string, readonly string[]>>;
+      /** Questions a person has confirmed, in the order confirmed. A multi-select confirmed with nothing ticked counts; one merely looked at does not. */
+      readonly answered: readonly string[];
+      readonly settled: boolean;
+      readonly outcome: ProviderPermissionSettlementOutcome | null;
     };
+
+/** How the answer travels back to the vendor: a Hive verdict for an approval the vendor offered no options for, the vendor's own option id, or per-question answers keyed by question id. */
+export type ElicitationReply = "verdict" | "option" | "answers";
 
 export class TranscriptBuffer extends Array<TranscriptEntry> {
   static get [Symbol.species](): ArrayConstructor {
@@ -643,32 +654,7 @@ export function pendingElicitation(view: ViewState): PendingElicitation | null {
   return view.transcript.pendingElicitation();
 }
 
-export function moveElicitationSelection(
-  view: ViewState,
-  lines: number,
-): ViewState {
-  const pending = pendingElicitation(view);
-  if (pending === null) return view;
-  const options = pickerOptions(pending);
-  if (options.length === 0) return view;
-  const selection = Math.max(
-    0,
-    Math.min(options.length - 1, pending.selection + lines),
-  );
-  if (selection === pending.selection) return view;
-  return updatePending(view, pending.requestId, (entry) => ({
-    ...entry,
-    selection,
-  }));
-}
-
-export function currentQuestion(
-  pending: PendingElicitation,
-): ElicitationQuestion | null {
-  return pending.questions[pending.questionIndex] ?? null;
-}
-
-/** Verdicts for an approval the vendor offered no options for. Claude Code sends a tool approval as a bare allow-or-deny with no option list, so there is nothing to quote — but allow, allow-for-the-session, and deny are the decisions its protocol actually defines, and a person staring at "run this command?" with nothing to press has been given a question and no answer. These ids are Hive's own and never reach a vendor: `answerPending` turns them back into an outcome and a scope. */
+/** Verdicts for an approval the vendor offered no options for. Claude Code sends a tool approval as a bare allow-or-deny with no option list, so there is nothing to quote — but allow, allow-for-the-session, and deny are the decisions its protocol actually defines, and a person staring at "run this command?" with nothing to press has been given a question and no answer. These ids are Hive's own and never reach a vendor: `permissionReply` turns them back into an outcome and a scope. */
 export const VERDICT_ALLOW_ONCE = "hive:allow-once";
 export const VERDICT_ALLOW_SESSION = "hive:allow-session";
 export const VERDICT_DENY = "hive:deny";
@@ -694,13 +680,78 @@ const APPROVAL_VERDICTS: readonly ElicitationOption[] = [
   },
 ];
 
+interface AskedQuestions {
+  readonly reply: ElicitationReply;
+  readonly questions: readonly ElicitationQuestion[];
+}
+
+/** Fold the three ways a vendor asks — Claude's question list, an ACP/Kimi option list, a bare approval — into one list of questions plus the way its answer goes back. */
+function askedQuestions(
+  event: Extract<
+    NormalizedProviderEvent,
+    { kind: "approval-waiting" | "question-waiting" }
+  >,
+): AskedQuestions {
+  if (event.kind === "question-waiting" && (event.questions?.length ?? 0) > 0) {
+    return { reply: "answers", questions: event.questions ?? [] };
+  }
+  const options = event.options ?? [];
+  const single = (
+    picks: readonly ElicitationOption[],
+  ): readonly ElicitationQuestion[] => [
+    {
+      questionId: event.requestId,
+      text: event.detail ?? event.summary,
+      header: null,
+      multiSelect: false,
+      allowCustom: false,
+      secret: false,
+      options: picks,
+    },
+  ];
+  if (options.length > 0)
+    return { reply: "option", questions: single(options) };
+  if (event.kind === "approval-waiting") {
+    return { reply: "verdict", questions: single(APPROVAL_VERDICTS) };
+  }
+  return { reply: "option", questions: single([]) };
+}
+
+export function currentQuestion(
+  pending: PendingElicitation,
+): ElicitationQuestion | null {
+  return pending.questions[pending.focus] ?? null;
+}
+
 export function pickerOptions(
   pending: PendingElicitation,
 ): readonly ElicitationOption[] {
+  return currentQuestion(pending)?.options ?? [];
+}
+
+/** Index of the "Other — type your own" row, which sits after the vendor's options; null when the question takes only listed answers. */
+export function customRowIndex(pending: PendingElicitation): number | null {
   const question = currentQuestion(pending);
-  if (question !== null) return question.options;
-  if (pending.options.length > 0) return pending.options;
-  return pending.ask === "approval" ? APPROVAL_VERDICTS : [];
+  return question?.allowCustom === true ? question.options.length : null;
+}
+
+function pickerRowCount(pending: PendingElicitation): number {
+  return (
+    pickerOptions(pending).length + (customRowIndex(pending) === null ? 0 : 1)
+  );
+}
+
+export function isQuestionAnswered(
+  pending: PendingElicitation,
+  questionId: string,
+): boolean {
+  return pending.answered.includes(questionId);
+}
+
+export function isElicitationComplete(pending: PendingElicitation): boolean {
+  return pending.questions.every((question) =>
+    isQuestionAnswered(pending, question.questionId),
+  );
 }
 
 function updatePending(
@@ -714,70 +765,185 @@ function updatePending(
   return view.transcript.replace(index, change(current)) ? { ...view } : view;
 }
 
-export function chooseOption(view: ViewState, label: string) {
+export function moveElicitationSelection(
+  view: ViewState,
+  lines: number,
+): ViewState {
   const pending = pendingElicitation(view);
-  if (pending === null) return { view, complete: false };
-  const question = currentQuestion(pending);
-  if (question === null) return { view, complete: true };
+  if (pending === null) return view;
+  const rows = pickerRowCount(pending);
+  if (rows === 0) return view;
+  const selection = Math.max(0, Math.min(rows - 1, pending.selection + lines));
+  if (selection === pending.selection) return view;
+  return updatePending(view, pending.requestId, (entry) => ({
+    ...entry,
+    selection,
+  }));
+}
+
+/** Highlight the "Other" row — what typing does, so the list shows where a typed answer will land. */
+export function focusCustomRow(view: ViewState): ViewState {
+  const pending = pendingElicitation(view);
+  const row = pending === null ? null : customRowIndex(pending);
+  if (pending === null || row === null || pending.selection === row)
+    return view;
+  return updatePending(view, pending.requestId, (entry) => ({
+    ...entry,
+    selection: row,
+  }));
+}
+
+/** The row to highlight when a question comes into view: its existing single-select answer, so revisiting shows what was picked, else the top. */
+function restoredSelection(
+  pending: PendingElicitation,
+  question: ElicitationQuestion,
+): number {
+  if (question.multiSelect) return 0;
+  const chosen = pending.chosen[question.questionId]?.[0];
+  if (chosen === undefined) return 0;
+  const index = question.options.findIndex(
+    (option) => option.optionId === chosen,
+  );
+  // A typed answer lives on the "Other" row, after the options.
+  return index === -1 ? question.options.length : index;
+}
+
+/** What a question has been answered with, as the vendor named it — for the tab strip and the settled record. Null while unanswered; a secret is always shown masked. */
+export function answerSummary(
+  pending: PendingElicitation,
+  question: ElicitationQuestion,
+): string | null {
+  const labels = pending.chosen[question.questionId] ?? [];
+  if (labels.length === 0) return null;
+  if (question.secret) return "••••••";
+  return labels
+    .map(
+      (label) =>
+        question.options.find((option) => option.optionId === label)?.name ??
+        label,
+    )
+    .join(", ");
+}
+
+export function focusQuestion(view: ViewState, index: number): ViewState {
+  const pending = pendingElicitation(view);
+  if (pending === null) return view;
+  const focus = Math.max(0, Math.min(pending.questions.length - 1, index));
+  const question = pending.questions[focus];
+  if (question === undefined || focus === pending.focus) return view;
+  return updatePending(view, pending.requestId, (entry) => ({
+    ...entry,
+    focus,
+    selection: restoredSelection(entry, question),
+  }));
+}
+
+export function moveQuestionFocus(view: ViewState, delta: number): ViewState {
+  const pending = pendingElicitation(view);
+  if (pending === null) return view;
+  return focusQuestion(view, pending.focus + delta);
+}
+
+/** Record a confirmed answer for the focused question and move to the next question still waiting for one. `complete` says every question now has an answer, which is the moment the request can be sent: a multi-question ask cannot be settled a question at a time. */
+export interface PendingStep {
+  readonly view: ViewState;
+  /** Every question now has an answer, so the request can be sent. */
+  readonly complete: boolean;
+}
+
+function settleQuestion(
+  view: ViewState,
+  pending: PendingElicitation,
+  question: ElicitationQuestion,
+  labels: readonly string[],
+): PendingStep {
+  const answered = isQuestionAnswered(pending, question.questionId)
+    ? pending.answered
+    : [...pending.answered, question.questionId];
+  const total = pending.questions.length;
+  let focus = pending.focus;
+  for (let step = 1; step < total; step += 1) {
+    const candidate = (pending.focus + step) % total;
+    const id = pending.questions[candidate]?.questionId;
+    if (id !== undefined && !answered.includes(id)) {
+      focus = candidate;
+      break;
+    }
+  }
+  const next = updatePending(view, pending.requestId, (entry) => {
+    const moved = {
+      ...entry,
+      chosen: { ...entry.chosen, [question.questionId]: labels },
+      answered,
+      focus,
+    };
+    const shown = moved.questions[focus];
+    return {
+      ...moved,
+      selection: shown === undefined ? 0 : restoredSelection(moved, shown),
+    };
+  });
+  return { view: next, complete: answered.length >= total };
+}
+
+/** Pick one of the listed options. Single-select answers the question outright; multi-select toggles the option and waits for `confirmQuestion`. */
+export function chooseOption(view: ViewState, optionId: string): PendingStep {
+  const pending = pendingElicitation(view);
+  const question = pending === null ? null : currentQuestion(pending);
+  if (pending === null || question === null) return { view, complete: false };
+  if (!question.options.some((option) => option.optionId === optionId)) {
+    return { view, complete: false };
+  }
+  if (!question.multiSelect) {
+    return settleQuestion(view, pending, question, [optionId]);
+  }
   const existing = pending.chosen[question.questionId] ?? [];
-  const labels = question.multiSelect
-    ? existing.includes(label)
-      ? existing.filter((entry) => entry !== label)
-      : [...existing, label]
-    : [label];
-  const chosen = { ...pending.chosen, [question.questionId]: labels };
-  const advance = question.multiSelect
-    ? pending.questionIndex
-    : pending.questionIndex + 1;
+  const labels = existing.includes(optionId)
+    ? existing.filter((entry) => entry !== optionId)
+    : [...existing, optionId];
   return {
     view: updatePending(view, pending.requestId, (entry) => ({
       ...entry,
-      chosen,
-      questionIndex: advance,
-      selection: 0,
+      chosen: { ...entry.chosen, [question.questionId]: labels },
     })),
-    complete: advance >= pending.questions.length,
+    complete: false,
   };
 }
 
-export function chooseCustomAnswer(view: ViewState, answer: string) {
+export function chooseCustomAnswer(
+  view: ViewState,
+  answer: string,
+): PendingStep {
   const pending = pendingElicitation(view);
-  if (pending === null) return { view, complete: false };
-  const question = currentQuestion(pending);
-  if (question === null || !question.allowCustom || answer.trim() === "") {
+  const question = pending === null ? null : currentQuestion(pending);
+  if (
+    pending === null ||
+    question === null ||
+    !question.allowCustom ||
+    answer.trim() === ""
+  ) {
     return { view, complete: false };
   }
   const existing = pending.chosen[question.questionId] ?? [];
-  const chosen = {
-    ...pending.chosen,
-    [question.questionId]: question.multiSelect
-      ? [...existing, answer]
-      : [answer],
-  };
-  const next = pending.questionIndex + 1;
-  return {
-    view: updatePending(view, pending.requestId, (entry) => ({
-      ...entry,
-      chosen,
-      questionIndex: next,
-      selection: 0,
-    })),
-    complete: next >= pending.questions.length,
-  };
+  return settleQuestion(
+    view,
+    pending,
+    question,
+    question.multiSelect ? [...existing, answer] : [answer],
+  );
 }
 
-export function confirmQuestion(view: ViewState) {
+/** Confirm the focused question as it stands — the Enter of a multi-select, where the ticks alone are not yet an answer. */
+export function confirmQuestion(view: ViewState): PendingStep {
   const pending = pendingElicitation(view);
-  if (pending === null) return { view, complete: false };
-  const next = pending.questionIndex + 1;
-  return {
-    view: updatePending(view, pending.requestId, (entry) => ({
-      ...entry,
-      questionIndex: next,
-      selection: 0,
-    })),
-    complete: next >= pending.questions.length,
-  };
+  const question = pending === null ? null : currentQuestion(pending);
+  if (pending === null || question === null) return { view, complete: false };
+  return settleQuestion(
+    view,
+    pending,
+    question,
+    pending.chosen[question.questionId] ?? [],
+  );
 }
 
 export function collectedAnswers(pending: PendingElicitation) {
@@ -790,6 +956,43 @@ export function collectedAnswers(pending: PendingElicitation) {
       : (labels[0] ?? "");
   }
   return answers;
+}
+
+/** The decision to send once every question has an answer. Verdict ids are Hive's own and become an outcome and scope; a vendor option id is echoed back as sent, its outcome being what the vendor labelled it; question answers go back keyed by question. */
+export function permissionReply(
+  pending: PendingElicitation,
+): PermissionDecision {
+  const first = pending.questions[0];
+  const picked =
+    first === undefined ? undefined : pending.chosen[first.questionId]?.[0];
+  switch (pending.reply) {
+    case "verdict": {
+      const verdict: PermissionDecision = {
+        requestId: pending.requestId,
+        outcome: picked === VERDICT_DENY ? "deny" : "allow",
+      };
+      // Only the session scope is stated. Absent already means "this once", and saying it explicitly would change the request Hive has always sent for a plain approval.
+      return picked === VERDICT_ALLOW_SESSION
+        ? { ...verdict, scope: "session" }
+        : verdict;
+    }
+    case "option": {
+      const option = first?.options.find((entry) => entry.optionId === picked);
+      const decision: PermissionDecision = {
+        requestId: pending.requestId,
+        outcome: option?.kind === "reject" ? "deny" : "allow",
+      };
+      return picked === undefined
+        ? decision
+        : { ...decision, optionId: picked };
+    }
+    case "answers":
+      return {
+        requestId: pending.requestId,
+        outcome: "allow",
+        answers: collectedAnswers(pending),
+      };
+  }
 }
 
 export interface CommandMenuEntry {
@@ -1472,6 +1675,7 @@ function replaceTurnDiff(
 function settleElicitation(
   transcript: TranscriptBuffer,
   requestId: string,
+  outcome: ProviderPermissionSettlementOutcome,
 ): TranscriptBuffer {
   const index = transcript.indexOfElicitation(requestId);
   const entry = index === undefined ? undefined : transcript[index];
@@ -1480,7 +1684,7 @@ function settleElicitation(
     for (const question of entry.questions) {
       if (question.secret) delete chosen[question.questionId];
     }
-    transcript.replace(index, { ...entry, chosen, settled: true });
+    transcript.replace(index, { ...entry, chosen, settled: true, outcome });
   }
   return transcript;
 }
@@ -1750,21 +1954,25 @@ function reduceProviderEvent(
         requestId: event.requestId,
         ask: event.kind === "approval-waiting" ? "approval" : "question",
         summary: event.summary,
-        settled: false,
         detail: event.detail ?? null,
-        options: event.options ?? [],
+        ...askedQuestions(event),
+        focus: 0,
         selection: 0,
-        questions:
-          event.kind === "question-waiting" ? (event.questions ?? []) : [],
-        questionIndex: 0,
         chosen: {},
+        answered: [],
+        settled: false,
+        outcome: null,
       });
       return { ...view };
     }
     case "elicitation-settled":
       return {
         ...view,
-        transcript: settleElicitation(view.transcript, event.requestId),
+        transcript: settleElicitation(
+          view.transcript,
+          event.requestId,
+          event.outcome,
+        ),
       };
     case "commands-updated":
       return replaceCommandCatalog(view, event.commands);
