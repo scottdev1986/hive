@@ -528,7 +528,7 @@ wake_pack_enabled: z.boolean().default(true),
 
 **Strategy**: Honest labels in code; this audit writeup should correct docs claims.
 
-**Fix**: Docs and comments now say hybrid when semantic/embeddings available, FTS-only otherwise. Wake-payload JSDoc (`wake-payload.ts`) updated to describe conditional hybrid vs FTS-only behavior. `docs/agents/memory.md` now describes citation as heuristic path-exists and command-exists with soft-fail warnings, not stubs. This was a docs/comments-only change — no behavior change. Merged @ `d271b6b8`.
+**Fix**: Docs and comments now say hybrid when semantic/embeddings available, FTS-only otherwise. Wake-payload JSDoc (`src/daemon/wake-payload-service.ts`) updated to describe conditional hybrid vs FTS-only behavior. `docs/agents/memory.md` now describes citation as heuristic path-exists and command-exists with soft-fail warnings, not stubs. This was a docs/comments-only change — no behavior change. Merged @ `d271b6b8`.
 
 **Residual** (do not reopen): The phrase before load-bearing apply still reads like a hard gate; #10 is warn-not-throw.
 
