@@ -412,6 +412,10 @@ export async function writeMemoryFact(
     ],
     verified: input.verified,
     author: existing?.author ?? input.author,
+    eventIds:
+      input.eventIds !== undefined && input.eventIds.length > 0
+        ? input.eventIds
+        : existing?.eventIds,
   });
   await writeFile(articlePath, serializeMemoryFile(fact));
   for (const superseded of supersededFacts) await rm(superseded.path);

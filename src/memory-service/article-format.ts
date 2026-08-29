@@ -48,7 +48,7 @@ export function serializeMemoryFile(
     | "tags"
     | "body"
   > &
-    Partial<Pick<MemoryFact, "verified" | "author">>,
+    Partial<Pick<MemoryFact, "verified" | "author" | "eventIds">>,
 ): string {
   const lines = [
     "---",
@@ -66,11 +66,11 @@ export function serializeMemoryFile(
     `tags: ${serializeList(fact.tags)}`,
     `supersedes: ${serializeList(fact.supersedes)}`,
     `raw: ${serializeList(fact.raw)}`,
-    "---",
-    "",
-    fact.body.trimEnd(),
-    "",
   );
+  if (fact.eventIds !== undefined && fact.eventIds.length > 0) {
+    lines.push(`eventIds: ${serializeList(fact.eventIds.map(String))}`);
+  }
+  lines.push("---", "", fact.body.trimEnd(), "");
   return lines.join("\n");
 }
 
@@ -101,6 +101,13 @@ export function parseMemoryFile(
     rawSource === undefined
       ? ({ success: false } as const)
       : MemorySourceSchema.safeParse(normalizeMemorySource(rawSource));
+  const eventIdsRaw = fields.get("eventIds");
+  const eventIds =
+    eventIdsRaw !== undefined
+      ? parseList(eventIdsRaw)
+          .map(Number)
+          .filter((n) => Number.isInteger(n) && n > 0)
+      : undefined;
   return MemoryFactSchema.parse({
     id,
     scope,
@@ -123,6 +130,8 @@ export function parseMemoryFile(
       ? fields.get("verified")
       : undefined,
     author: fields.get("author"),
+    eventIds:
+      eventIds !== undefined && eventIds.length > 0 ? eventIds : undefined,
   });
 }
 

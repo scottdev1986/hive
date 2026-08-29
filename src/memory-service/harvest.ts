@@ -479,6 +479,7 @@ async function harvestPitfallsLocked(
         kind: "pitfall",
         supersedes: duplicate === undefined ? [] : [duplicate.id],
         author: deps.agent,
+        eventIds: cluster.events.map((event) => event.id),
       });
       if (duplicate === undefined) {
         articles.push({ id: written.id, title });
@@ -594,6 +595,7 @@ export async function harvestVerification(
     kind: "article",
     supersedes: existing === null ? [] : [VERIFICATION_ARTICLE_ID],
     author: deps.agent,
+    eventIds: [sourceEvent.id],
   });
   return { wrote: true, command, id: written.id };
 }
