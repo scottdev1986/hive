@@ -1,23 +1,24 @@
-import { mkdir } from "node:fs/promises";
 import { describe, expect, test } from "bun:test";
 import {
-  prepareSessionZdotdir,
   readTerminalLaunchSpec,
   shellSessionLaunch,
-  TERMINAL_SHELL,
-  userZdotdir,
   writeTerminalLaunchSpec,
 } from "../../../src/daemon/session-host/shell-session";
-import { tempRoot } from "../../temp-root";
 
 describe("shell-backed terminal sessions", () => {
-  test("starts a conventional interactive login zsh with command in environment", () => {
-    const launch = shellSessionLaunch("codex --model gpt-5.6-sol");
+  test("execs the TUI immediately and drops to the user shell after it exits", () => {
+    const launch = shellSessionLaunch("'hive' 'agent-ui' '--subject' 'queen'");
 
-    expect(launch.argv).toEqual([TERMINAL_SHELL, "-l", "-i"]);
-    expect(launch.expectedExecutable).toBe(TERMINAL_SHELL);
-    expect(launch.env.HIVE_AGENT_UI_COMMAND).toBe("codex --model gpt-5.6-sol");
-    expect(launch.env.HIVE_TUI_LAUNCHED).toBe("0");
+    expect(launch.ghosttyCommand).toBe(
+      `'hive' 'agent-ui' '--subject' 'queen'; exec "\${SHELL:-/bin/zsh}"`,
+    );
+    expect(launch.argv).toEqual(["/bin/sh", "-c", launch.ghosttyCommand]);
+    expect(launch.env).toEqual({});
+  });
+
+  test("a headless pane is only the user shell", () => {
+    const launch = shellSessionLaunch("");
+    expect(launch.ghosttyCommand).toBe(`"\${SHELL:-/bin/zsh}"`);
   });
 
   test("refuses a command that cannot be entered into a terminal", () => {
@@ -26,99 +27,12 @@ describe("shell-backed terminal sessions", () => {
     );
   });
 
-  test("does not source a Hive-owned session ZDOTDIR as user configuration", () => {
-    expect(
-      userZdotdir({
-        HOME: "/Users/tester",
-        ZDOTDIR:
-          "/Users/tester/.hive/instances/dev/sessiond-state/zdotdir/ses_old",
-      }),
-    ).toBe("/Users/tester");
-    expect(
-      userZdotdir({ HOME: "/Users/tester", ZDOTDIR: "/Users/tester/.zsh" }),
-    ).toBe("/Users/tester/.zsh");
-  });
-
-  test("prepares ZDOTDIR with init files that source user's config", async () => {
-    const sessionId = "ses_test123";
-    const zdotdir = await prepareSessionZdotdir(sessionId);
-
-    // ZDOTDIR should exist
-    expect(zdotdir).toContain(sessionId);
-
-    // .zshenv should forward to user's file (read first by login zsh)
-    const zshenv = await Bun.file(`${zdotdir}/.zshenv`).text();
-    expect(zshenv).toContain("HIVE_USER_ZDOTDIR");
-
-    // .zshrc should exist and contain the bootstrap
-    const zshrc = await Bun.file(`${zdotdir}/.zshrc`).text();
-    expect(zshrc).toContain("HIVE_AGENT_UI_COMMAND");
-    expect(zshrc).toContain("HIVE_TUI_LAUNCHED");
-    expect(zshrc).toContain("HIVE_USER_ZDOTDIR");
-    expect(zshrc).toContain("WINCH");
-    expect(zshrc).toContain("24 80");
-
-    // .zprofile should forward to user's file
-    const zprofile = await Bun.file(`${zdotdir}/.zprofile`).text();
-    expect(zprofile).toContain("HIVE_USER_ZDOTDIR");
-
-    // .zlogin should forward to user's file
-    const zlogin = await Bun.file(`${zdotdir}/.zlogin`).text();
-    expect(zlogin).toContain("HIVE_USER_ZDOTDIR");
-  });
-
-  test("provider exit leaves the same terminal at a working zsh", async () => {
-    const launch = shellSessionLaunch(
-      "print -r -- __HIVE_PROVIDER_RAN__; false",
-    );
-    const shellHome = tempRoot("hive-shell-session-");
-    await mkdir(shellHome, { recursive: true });
-
-    // Prepare a real ZDOTDIR for the test
-    const zdotdir = await prepareSessionZdotdir("test-session");
-
-    const child = Bun.spawn([...launch.argv], {
-      cwd: shellHome,
-      env: {
-        HOME: shellHome,
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
-        TERM: "xterm-256color",
-        ZDOTDIR: zdotdir,
-        HIVE_USER_ZDOTDIR: shellHome,
-        ...launch.env,
-      },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      // Own session, so the shell has no controlling terminal to reach for. An
-      // interactive zsh that can open /dev/tty reads its line editor from there
-      // and never sees the stdin pipe, so the command written below would be
-      // dropped and this test would hang on whatever that terminal does next.
-      detached: true,
-    });
-    child.stdin.write("print -r -- __HIVE_SHELL_SURVIVED__\nexit\n");
-    await child.stdin.end();
-
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
-    expect(exitCode).toBe(0);
-    expect(stdout).toContain("__HIVE_PROVIDER_RAN__");
-    expect(stdout).toContain("__HIVE_SHELL_SURVIVED__");
-    expect(stderr).not.toContain("command not found");
-  });
-
   test("persists the Ghostty exec spec for a session", async () => {
     const sessionId = `ses_launch_${crypto.randomUUID()}`;
     const spec = {
       cwd: "/tmp/hive-project",
-      command: "/bin/zsh -l -i",
-      environment: {
-        HIVE_AGENT_UI_COMMAND: "hive agent-ui --subject queen",
-        HIVE_TUI_LAUNCHED: "0",
-      },
+      command: `'hive' 'agent-ui'; exec "\${SHELL:-/bin/zsh}"`,
+      environment: { TERM: "xterm-256color" },
     };
     await writeTerminalLaunchSpec(sessionId, spec);
     expect(readTerminalLaunchSpec(sessionId)).toEqual(spec);

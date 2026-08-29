@@ -88,6 +88,8 @@ final class LiveRunWorkbenchView: NSView {
     private var visibleLocator: AgentSessionLocator?
     private var controlProjection: LiveRunControlProjection?
     private var routeVisible = false
+    /// Command string the surface was started with, so a late launch spec replaces a fallback shell.
+    private var terminalLaunchKeys: [String: String] = [:]
     private var inspectorTab: ShellInspectorTab = .task
     private var horizon: OuterHorizonScreenState?
     private var horizonScreen: ShellScreenProjection?
@@ -167,6 +169,7 @@ final class LiveRunWorkbenchView: NSView {
         if sessions != priorSessions || selectedID != priorSelection {
             rebuildRail()
         }
+        ensureLiveTerminals()
         renderSelection()
         // Restored after the banner was cleared above: the feed heartbeats every
         // five seconds, so a close refusal written once would be wiped before it
@@ -295,7 +298,7 @@ final class LiveRunWorkbenchView: NSView {
         if visible {
             renderSelection()
         } else {
-            hideVisibleTerminal()
+            hideAllTerminalViews()
             publishVisibleSessionIfChanged(nil)
             updateCenterBadges(sessions.first(where: { $0.id == selectedID }))
         }
@@ -810,6 +813,60 @@ final class LiveRunWorkbenchView: NSView {
         onVisibleSessionChanged?(session)
     }
 
+    private func ensureLiveTerminals() {
+        guard terminalFactory != nil else { return }
+        for session in sessions {
+            let visible = routeVisible && session.id == selectedID
+            ensureTerminal(for: session, visible: visible)
+        }
+    }
+
+    private func launchKey(for session: LiveRunSessionSummary) -> String {
+        session.terminalLaunch?.command ?? ""
+    }
+
+    private func ensureTerminal(for session: LiveRunSessionSummary, visible: Bool) {
+        guard let terminalFactory else { return }
+        let key = launchKey(for: session)
+        if let existing = terminals[session.id],
+           existing.installedView != nil,
+           terminalLaunchKeys[session.id] == key
+        {
+            existing.installedView?.isHidden = !visible
+            return
+        }
+        if let stale = terminals[session.id] {
+            stale.installedView?.removeFromSuperview()
+            stale.free()
+            terminals[session.id] = nil
+        }
+        let surface = terminalFactory(session)
+        terminals[session.id] = surface
+        terminalLaunchKeys[session.id] = key
+        do {
+            let view = try surface.makeView()
+            view.translatesAutoresizingMaskIntoConstraints = false
+            view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+            view.isHidden = !visible
+            if view.superview !== terminalHost {
+                view.removeFromSuperview()
+                terminalHost.addSubview(view)
+                NSLayoutConstraint.activate([
+                    view.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
+                    view.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
+                    view.topAnchor.constraint(equalTo: terminalHost.topAnchor),
+                    view.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor),
+                ])
+            }
+            surface.start()
+        } catch {
+            NSLog(
+                "Terminal renderer unavailable: %@.",
+                error.localizedDescription
+            )
+        }
+    }
+
     private func presentTerminal(for session: LiveRunSessionSummary) {
         if let existing = terminals[session.id], existing.installedView != nil {
             showInstalled(existing, session: session)
@@ -880,8 +937,14 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func hideVisibleTerminal() {
-        terminal?.installedView?.removeFromSuperview()
+        hideAllTerminalViews()
         terminal = nil
+    }
+
+    private func hideAllTerminalViews() {
+        for subview in terminalHost.subviews where subview !== terminalPlaceholder {
+            subview.isHidden = true
+        }
     }
 
     private func dropTerminals(notIn liveIDs: Set<String>) {
@@ -889,6 +952,7 @@ final class LiveRunWorkbenchView: NSView {
             surface.installedView?.removeFromSuperview()
             surface.free()
             terminals[id] = nil
+            terminalLaunchKeys[id] = nil
             if terminal === surface {
                 terminal = nil
             }

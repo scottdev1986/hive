@@ -288,11 +288,6 @@ final class WorkspaceShellWindowController: NSWindowController {
             })
         liveRunHeightCeiling?.isActive = liveRunVisible
         liveRunWorkbench?.setRouteVisible(liveRunVisible)
-        outerHorizonViewportConstraint?.isActive = false
-        outerHorizonViewportConstraint = nil
-        for subview in screenHost.subviews {
-            subview.removeFromSuperview()
-        }
         let screen = state.activeScreen ?? .notFrozen(
             "No projection has been applied for this screen in this build.")
         // Exhaustive over the route on purpose: a screen declared in the
@@ -401,19 +396,27 @@ final class WorkspaceShellWindowController: NSWindowController {
         case (.taskRouter, _), (.liveRun, _), (.queen, _):
             panel = ShellAvailabilityPanel(route: state.activeRoute, screen: screen)
         }
-        screenHost.addSubview(panel)
-        if panel is OuterHorizonScreenView {
-            let constraint = screenHost.heightAnchor.constraint(
-                equalTo: screenScrollView.contentView.heightAnchor)
-            constraint.isActive = true
-            outerHorizonViewportConstraint = constraint
+        let alreadyShowing = screenHost.subviews.count == 1 && screenHost.subviews.first === panel
+        if !alreadyShowing {
+            outerHorizonViewportConstraint?.isActive = false
+            outerHorizonViewportConstraint = nil
+            for subview in screenHost.subviews {
+                subview.removeFromSuperview()
+            }
+            screenHost.addSubview(panel)
+            if panel is OuterHorizonScreenView {
+                let constraint = screenHost.heightAnchor.constraint(
+                    equalTo: screenScrollView.contentView.heightAnchor)
+                constraint.isActive = true
+                outerHorizonViewportConstraint = constraint
+            }
+            NSLayoutConstraint.activate([
+                panel.leadingAnchor.constraint(equalTo: screenHost.leadingAnchor),
+                panel.trailingAnchor.constraint(equalTo: screenHost.trailingAnchor),
+                panel.topAnchor.constraint(equalTo: screenHost.topAnchor),
+                panel.bottomAnchor.constraint(equalTo: screenHost.bottomAnchor),
+            ])
         }
-        NSLayoutConstraint.activate([
-            panel.leadingAnchor.constraint(equalTo: screenHost.leadingAnchor),
-            panel.trailingAnchor.constraint(equalTo: screenHost.trailingAnchor),
-            panel.topAnchor.constraint(equalTo: screenHost.topAnchor),
-            panel.bottomAnchor.constraint(equalTo: screenHost.bottomAnchor),
-        ])
         if routeChanged {
             screenScrollView.contentView.scroll(to: .zero)
             screenScrollView.reflectScrolledClipView(screenScrollView.contentView)

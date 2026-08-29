@@ -21,9 +21,7 @@ import { shellJoin } from "../../shared/shell-quote";
 import {
   SHELL_SESSION_TTY_READY_WAIT_MS,
   type ShellSessionLaunch,
-  prepareSessionZdotdir,
   shellSessionLaunch,
-  userZdotdir,
   writeTerminalLaunchSpec,
 } from "../session-host/shell-session";
 import type { TerminalHostBindingStore } from "../session-host/terminal-host-binding";
@@ -323,7 +321,7 @@ export class OrchestratorSessiondController {
       );
       await writeTerminalLaunchSpec(locator.sessionId, {
         cwd: spec.cwd,
-        command: spec.argv.join(" "),
+        command: params.shell.ghosttyCommand,
         environment: spec.environment,
       });
       if (signal.aborted) throw new Error("queen sessiond creation canceled");
@@ -542,9 +540,6 @@ export class OrchestratorSessiondController {
     locator: OrchestratorSessiondSnapshot["locator"],
     geometry: SessionSpec["geometry"],
   ): Promise<SessionSpec> {
-    const zdotdir = await prepareSessionZdotdir(locator.sessionId);
-    const sourceZdotdir = userZdotdir();
-
     return {
       schemaVersion: 1,
       locator,
@@ -558,8 +553,6 @@ export class OrchestratorSessiondController {
           ...params.environment,
         })),
         ...params.shell.env,
-        ZDOTDIR: zdotdir,
-        HIVE_USER_ZDOTDIR: sourceZdotdir,
       },
       expectedExecutable: params.shell.expectedExecutable,
       readOnly: false,

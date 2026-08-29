@@ -88,7 +88,6 @@ import type {
 } from "../session-host/session-host-contract";
 import { SessiondWireError } from "../session-host/sessiond-host";
 import {
-  prepareSessionZdotdir,
   readTerminalLaunchSpec,
   type ShellSessionLaunch,
   shellSessionLaunch,
@@ -269,7 +268,7 @@ export class HiveSpawner implements Spawner {
     const locator = requireSessiondAgentLocator(record);
     await writeTerminalLaunchSpec(locator.sessionId, {
       cwd: spec.cwd,
-      command: spec.argv.join(" "),
+      command: shell.ghosttyCommand,
       environment: spec.environment,
     });
     this.dependencies.db.insertProviderRun({
@@ -362,8 +361,6 @@ export class HiveSpawner implements Spawner {
       );
     }
     const locator = requireSessiondAgentLocator(record);
-    const zdotdir = await prepareSessionZdotdir(locator.sessionId);
-    const userZdotdir = process.env.ZDOTDIR ?? process.env.HOME ?? "";
 
     return {
       schemaVersion: 1,
@@ -375,8 +372,6 @@ export class HiveSpawner implements Spawner {
       environment: {
         ...(await providerTerminalEnvironment(process.env)),
         ...shell.env,
-        ZDOTDIR: zdotdir,
-        HIVE_USER_ZDOTDIR: userZdotdir,
       },
       expectedExecutable: shell.expectedExecutable,
       readOnly: record.readOnly,

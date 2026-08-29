@@ -6,6 +6,26 @@ import Testing
 @MainActor
 @Suite("Live Run workbench")
 struct LiveRunWorkbenchViewTests {
+    @Test("Ghostty starts for every session even when Live Run is not on screen")
+    func startsWithoutLooking() throws {
+        var surfaceCount = 0
+        let view = LiveRunWorkbenchView { session in
+            surfaceCount += 1
+            return FakeSurface(locator: session.locator!)
+        }
+        view.apply(try projection([
+            agent("a", provider: "claude", generation: 1),
+            agent("b", provider: "codex", generation: 1),
+        ]))
+
+        #expect(surfaceCount == 2)
+        #expect(view.installedTerminalCount == 0)
+
+        view.setRouteVisible(true)
+        #expect(view.installedTerminalCount == 1)
+        #expect(surfaceCount == 2)
+    }
+
     @Test("Switching sessions keeps the hidden Ghostty surface alive")
     func exactGenerationSwitch() throws {
         var surfaces: [FakeSurface] = []
@@ -20,7 +40,7 @@ struct LiveRunWorkbenchViewTests {
             agent("b", provider: "codex", generation: 2),
         ]))
 
-        #expect(surfaces.count == 1)
+        #expect(surfaces.count == 2)
         #expect(view.installedTerminalCount == 1)
         #expect(view.selectedLocator?.generation == 1)
         #expect(
@@ -31,7 +51,7 @@ struct LiveRunWorkbenchViewTests {
             agent("a", provider: "claude", generation: 1),
             agent("b", provider: "codex", generation: 7),
         ]))
-        #expect(surfaces.count == 1)
+        #expect(surfaces.count == 2)
 
         view.selectSession(id: "id-b")
         #expect(surfaces.count == 2)
@@ -76,7 +96,7 @@ struct LiveRunWorkbenchViewTests {
         #expect(view.selectedLocator?.subject.agentId == "id-a")
     }
 
-    @Test("Five background rows stay typed-only and unproved controls stay absent")
+    @Test("Every live session starts a Ghostty surface; only the selected one is shown")
     func fiveTypedRowsOneSurface() throws {
         var surfaceCount = 0
         let view = LiveRunWorkbenchView { session in
@@ -93,7 +113,7 @@ struct LiveRunWorkbenchViewTests {
         ]))
 
         #expect(view.rowCount == 5)
-        #expect(surfaceCount == 1)
+        #expect(surfaceCount == 5)
         #expect(view.installedTerminalCount == 1)
         #expect(!view.stopProviderControlEnabled)
         #expect(!view.terminateTerminalControlEnabled)
@@ -276,7 +296,7 @@ struct LiveRunWorkbenchViewTests {
         #expect(view.rowCount == 2)
         #expect(view.selectedLocator?.subject.kind == "root")
         #expect(view.selectedLocator?.generation == 6)
-        #expect(surfaces.count == 1)
+        #expect(surfaces.count == 2)
         let labels = textFields(in: view).map(\.stringValue)
         #expect(labels.contains("queen"))
         #expect(labels.contains("gpt-5.6-sol"))
@@ -359,6 +379,35 @@ struct LiveRunWorkbenchViewTests {
         controller.apply { $0.navigate(to: .liveRun) }
         #expect(controller.installedLiveRunTerminalCount == 1)
         #expect(controller.selectedLiveRunLocator?.generation == 4)
+    }
+
+    @Test("A shell redraw keeps first responder on the Live Run terminal")
+    func shellRedrawPreservesTerminalFocus() throws {
+        var surface: FakeSurface?
+        let workbench = LiveRunWorkbenchView { session in
+            let created = FakeSurface(locator: session.locator!)
+            surface = created
+            return created
+        }
+        workbench.apply(try projection([
+            agent("a", provider: "claude", generation: 4),
+        ]))
+        let controller = WorkspaceShellWindowController(
+            context: .init(
+                projectName: "Hive",
+                projectPath: "/tmp/hive",
+                instanceLabel: "rig"),
+            state: ShellState())
+        controller.installLiveRunWorkbench(workbench)
+        let window = try #require(controller.window)
+        window.makeKeyAndOrderFront(nil)
+        let terminal = try #require(surface?.installedView)
+        #expect(window.makeFirstResponder(terminal))
+        #expect(window.firstResponder === terminal)
+
+        controller.apply { _ in }
+
+        #expect(window.firstResponder === terminal)
     }
 
     @Test("A renderer failure waits and appears automatically")
@@ -458,6 +507,11 @@ struct LiveRunWorkbenchViewTests {
 }
 
 @MainActor
+private final class FocusableTerminalView: NSView {
+    override var acceptsFirstResponder: Bool { true }
+}
+
+@MainActor
 private final class FakeSurface: LiveRunTerminalSurface {
     let locator: AgentSessionLocator
     private(set) var installedView: NSView?
@@ -470,7 +524,7 @@ private final class FakeSurface: LiveRunTerminalSurface {
     }
 
     func makeView() throws -> NSView {
-        let view = NSView()
+        let view = FocusableTerminalView()
         installedView = view
         return view
     }
