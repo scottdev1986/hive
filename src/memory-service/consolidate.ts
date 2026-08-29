@@ -311,5 +311,47 @@ export async function runMemoryConsolidation(options: {
     };
   }
 
+  // P1 #8: Generate preference proposals from episodic events
+  if (options.generateProposals === true && options.apply === true) {
+    const { harvestPreferences, formatPreferenceProposal } =
+      await import("./preference-harvest");
+    const { appendProposal, generateProposalId } = await import("./proposals");
+
+    const prefReport = await harvestPreferences({
+      store: episodic,
+      minRecurrence: 2,
+    });
+
+    for (const signal of prefReport.signals) {
+      try {
+        const proposal = {
+          id: generateProposalId(
+            "profile",
+            (report.proposals?.appended ?? 0) + 1,
+          ),
+          createdAt: new Date().toISOString(),
+          category: "profile" as const,
+          title: `User preference: ${signal.preference.slice(0, 60)}`,
+          rationale: signal.rationale,
+          proposedChange: formatPreferenceProposal(signal),
+          source: "consolidator",
+        };
+
+        await appendProposal(repoRoot, proposal);
+
+        if (!report.proposals) {
+          report.proposals = { generated: 0, appended: 0 };
+        }
+        report.proposals.generated += 1;
+        report.proposals.appended += 1;
+      } catch (error) {
+        if (!report.failures) report.failures = [];
+        report.failures.push(
+          `preference ${signal.preference}: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+      }
+    }
+  }
+
   return report;
 }
