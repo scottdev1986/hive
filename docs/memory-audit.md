@@ -512,11 +512,15 @@ wake_pack_enabled: z.boolean().default(true),
 
 ### LOW
 
-**#11: Retention keep-set still prose-regex**
+**#11: Retention keep-set still prose-regex** — **CLOSED on `dev` @ `d9a671d1`**
 
 **Evidence**: `extractReferencedEpisodeIds` (`retention.ts:17–40`) vs harvest `e${id}` strings — works for that shape, fragile elsewhere.
 
 **Strategy**: Structured provenance IDs on facts, not evidence regex.
+
+**Fix**: Keep-set is now `fact.eventIds` only (structured provenance). Prose-regex fallback deleted. `runRetentionSweep` passes structured provenance set into `sweepEvents`. No ID in provenance means not cited — a prose-only E${id}/e${id} mention does not keep the event. Harvest writes `eventIds` on pitfall/verification writes. Merged @ `d9a671d1`.
+
+**Residual** (do not reopen): `harvest-keep` test is harvest-shaped `writeMemoryFact`, not a live `harvestPitfalls` invoke.
 
 **#12: Docs/comment theater left for Hive Memory**
 
@@ -551,7 +555,9 @@ wake_pack_enabled: z.boolean().default(true),
 - Pack-off/spawn harden: Critic #9 CLOSED @ `8f6591f2` (empty vs dropped vs pack-off distinguishable, pack-off fail-closed)
 - Citation soft-flag: Critic #10 CLOSED @ `8f6591f2` (validateFactCitations soft-flags heuristic misses instead of throwing)
 
-**Remaining open holes**: LOW #11 (retention keep-set prose-regex), #12 (docs/comment theater).
+**Closed holes**: LOW #11 CLOSED @ `d9a671d1` (retention keep-set now structured provenance, prose-regex fallback deleted).
+
+**Remaining open holes**: LOW #12 (docs/comment theater: wake-payload JSDoc still says hybrid unconditionally; `docs/agents/memory.md` still says citation stubs).
 
 ---
 
