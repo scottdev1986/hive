@@ -27,11 +27,11 @@ function buildWakeQuery(request: WakePayloadRequest): string {
   return parts.filter((p) => p.trim().length > 0).join(" ");
 }
 
-/** Builds the wake payload: mail counts by lane + memory recall from named query. Uses buildMemoryRecallBundle with hybrid recall when semantic is available, otherwise lexical-only. */
+/** Builds the wake payload: mail counts by lane + memory recall from named query. Calls buildMemoryRecallBundle which conditionally uses hybrid recall when semantic is available or falls back to FTS-only. */
 export class WakePayloadService {
   constructor(private readonly deps: WakePayloadServiceDeps) {}
 
-  /** Build wake payload with memory recall. Semantic recall used when available, otherwise lexical-only. Query built from lane + mail topic + snippet. */
+  /** Build wake payload with memory recall via buildMemoryRecallBundle (hybrid when semantic available, FTS-only otherwise). Query built from lane + mail topic + snippet. */
   async build(request: WakePayloadRequest): Promise<WakePayload> {
     const { recipient, wakeId, oldestItemId, lane } = request;
 
@@ -60,7 +60,7 @@ export class WakePayloadService {
     // P0: Named query construction from wake context
     const query = buildWakeQuery(enrichedRequest);
 
-    // P0: Real buildMemoryRecallBundle with hybrid (not newest-10)
+    // P0: Real buildMemoryRecallBundle (hybrid when semantic available, FTS-only otherwise)
     const bundle = await buildMemoryRecallBundle(
       query,
       this.deps.memoryRecallDeps(),

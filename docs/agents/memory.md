@@ -73,7 +73,7 @@ A spec that lets agents silently write shared, load-bearing facts is out of step
 
 > **A recalled fact must be re-checked against current reality before it drives an action.** Facts age. A recalled fact is a claim, not truth.
 
-Hive's design targets this: the index is a pointer, the article is a claim, and the repo plus linked raw evidence are truth. P0 includes a minimum viable citation check (path-exists and command-exists stubs) before load-bearing apply. Hive gets Zep's point-in-time reconstruction free from git-committed markdown, without the knowledge-graph weight.
+Hive's design targets this: the index is a pointer, the article is a claim, and the repo plus linked raw evidence are truth. P0 includes a minimum viable citation check (heuristic path-exists and command-exists validation with soft-fail warnings) before load-bearing apply. Hive gets Zep's point-in-time reconstruction free from git-committed markdown, without the knowledge-graph weight.
 
 **Token budget is also an accuracy budget.** This is the argument that decides the whole shape, and it is *not* a price argument:
 
