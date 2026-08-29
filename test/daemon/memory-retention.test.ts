@@ -207,7 +207,7 @@ describe("runRetentionSweep — episodic hot tier", () => {
     }
   });
 
-  test("legacy facts with regex-parseable citations keep events (fallback)", async () => {
+  test("harvest citations with structured eventIds keep events", async () => {
     const repo = await makeRepo();
     const storePath = join(repo, "episodic.db");
     const store = openStore(storePath);
@@ -217,21 +217,27 @@ describe("runRetentionSweep — episodic hot tier", () => {
         type: "test.failure",
         summary: "test suite failed",
       });
+      store.appendEvent({
+        ts: OLD_TS,
+        type: "status",
+        summary: "uncited old event",
+      });
 
       await writeMemoryFact(repo, {
         scope: "repo",
-        id: "legacy-regex-fallback",
+        id: "harvest-structured",
         topic: "pitfalls",
-        title: "Pitfall: legacy harvest format",
-        body: "This fact has e123 in the body",
+        title: "Pitfall: harvest writes structured eventIds",
+        body: "Harvest-written facts cite events via structured eventIds",
         tags: ["pitfall"],
         date: NOW.toISOString().slice(0, 10),
         source: "orchestrator",
-        evidence: `Legacy harvest: e${aged.id}`,
+        evidence: `Harvest writes e${aged.id} in evidence AND structured eventIds`,
         status: "unverified",
         kind: "pitfall",
         supersedes: [],
         author: "agent-maya",
+        eventIds: [aged.id],
       });
 
       const report = await runRetentionSweep({
@@ -241,7 +247,7 @@ describe("runRetentionSweep — episodic hot tier", () => {
         now: NOW,
       });
 
-      expect(report.eventsDeleted).toBe(0);
+      expect(report.eventsDeleted).toBe(1);
       expect(store.eventsFor().map((event) => event.id)).toEqual([aged.id]);
     } finally {
       store.close();

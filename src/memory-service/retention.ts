@@ -13,32 +13,14 @@ export interface RetentionSweepReport {
 
 const DAY_MS = 24 * 3_600_000;
 
-/** P0: Extract episode IDs referenced in memory fact provenance using structured eventIds field. Falls back to regex for legacy facts without structured provenance. */
+/** P0: Extract episode IDs referenced in memory fact provenance using structured eventIds field. If provenance has no structured ID, that event is not cited. Prose mentions without structured provenance do not keep events. */
 function extractReferencedEpisodeIds(facts: MemoryFact[]): Set<number> {
   const episodeIds = new Set<number>();
-  const episodePattern = /\b(?:episode|event|E)\s*#?(\d+)\b/gi;
 
   for (const fact of facts) {
-    // Primary path: use structured eventIds field when present
     if (fact.eventIds !== undefined) {
       for (const id of fact.eventIds) {
         episodeIds.add(id);
-      }
-      continue;
-    }
-
-    // Fallback path for legacy facts: regex-based extraction
-    if (fact.evidence) {
-      for (const match of fact.evidence.matchAll(episodePattern)) {
-        const id = Number(match[1]);
-        if (!Number.isNaN(id)) episodeIds.add(id);
-      }
-    }
-
-    for (const rawText of fact.raw) {
-      for (const match of rawText.matchAll(episodePattern)) {
-        const id = Number(match[1]);
-        if (!Number.isNaN(id)) episodeIds.add(id);
       }
     }
   }
