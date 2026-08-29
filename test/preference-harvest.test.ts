@@ -234,13 +234,13 @@ describe("Preference learning", () => {
     });
     expect(harvestReport1.signals.length).toBe(0);
 
-    // Pass 2: Insert event 2 (same pref), harvest (SHOULD emit - count=2)
+    // Pass 2: Insert event 2 (same pref, SAME type and category)
     store.appendEvent({
-      type: "user.feedback",
+      type: "user.preference",
       summary: "CROSS_PASS_PREF: Use strict types",
       provenance: {
         data: {
-          feedback: "CROSS_PASS_PREF: Use strict types",
+          preference: "CROSS_PASS_PREF: Use strict types",
           category: "style",
         },
       },
@@ -457,8 +457,10 @@ describe("Preference learning", () => {
 
       const prompt = await readFile(join(promptDirectory, promptName), "utf8");
 
+      // Extract profile section: from Profile heading until next top-level pack section
+      // Must survive nested ## headings inside profile (e.g. ## Tool Preferences)
       const profileMatch = prompt.match(
-        /(?:^|\n)(?:## )?Profile(?:[^\n]*)\n([\s\S]*?)(?=\n(?:##|$))/i,
+        /(?:^|\n)(?:## )?Profile(?:[^\n]*)\n([\s\S]*?)(?=\n## (?!Tool|Workflow|Code|Patterns|Style|Preferences)|\n*$)/i,
       );
       expect(profileMatch).toBeDefined();
       const profileSection = profileMatch?.[1] ?? "";
@@ -490,8 +492,10 @@ describe("Preference learning", () => {
 
     const context = await buildQueenLaunchContext({ repoRoot: root });
 
+    // Extract profile section: from Profile heading until next top-level pack section
+    // Must survive nested ## headings inside profile (e.g. ## Workflow Preferences)
     const profileMatch = context.match(
-      /(?:^|\n)(?:## )?Profile(?:[^\n]*)\n([\s\S]*?)(?=\n(?:##|$))/i,
+      /(?:^|\n)(?:## )?Profile(?:[^\n]*)\n([\s\S]*?)(?=\n## (?!Tool|Workflow|Code|Patterns|Style|Preferences)|\n*$)/i,
     );
     expect(profileMatch).toBeDefined();
     const profileSection = profileMatch?.[1] ?? "";
