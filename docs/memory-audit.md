@@ -496,17 +496,17 @@ wake_pack_enabled: z.boolean().default(true),
 
 **Fix**: Preference learning now extracts user patterns from episodic store and generates proposals for review. Approved preferences written to `~/.hive/profile.md` and loaded into wake pack profile slot. Tests validate extraction, proposal generation, and profile integration. Merged @ `8b1fdfcb`.
 
-**#9: §7 soft residuals + pack-off silence**
+**#9: §7 soft residuals + pack-off silence** — **CLOSED on `dev` @ `8f6591f2`**
 
-**Evidence**: `empty_vs_dropped` / dual-read still exercise `buildAgentPrompt` after pack assembly (`memory-p0-acceptance.test.ts` ~450–665), not full `HiveSpawner.spawn`. `wake_pack_enabled === false` skips floor with no CAP/warning (`hive-spawner.ts:1328–1354`).
+**Evidence**: Empty vs dropped vs pack-off are now distinguishable on real `HiveSpawner.spawn` / `buildQueenLaunchContext`. Empty = honest stubs (no `CAP CROSSED` / no `older article` omitted line). Dropped = `CAP CROSSED` or the memory-store `older article… omitted — use memory_search` line on the real prompt/launch text. A JSON `omitted` key is NOT the signal. Pack-off on spawn fail-closes (`wake_pack_enabled=false` → `failProviderLaunch`) and does not `.length` throw.
 
-**Strategy**: Harden fixtures on real spawn; pack-off must fail closed or scream.
+**Residual** (do not reopen): Queen has no pack-off path (always loads pack floor).
 
-**#10: Citation heuristic fail-closed on read**
+**#10: Citation heuristic fail-closed on read** — **CLOSED on `dev` @ `8f6591f2`**
 
-**Evidence**: `validateFactCitations` regex-scrape paths/backticks then throw on `memory_read` for verified/stale (`memory-tools.ts:58–109,247–249`). False positives can block legitimate reads.
+**Evidence**: `validateFactCitations` on `memory_read` soft-flags heuristic misses (`console.warn`) instead of throwing — citation throw must not kill wake. Citation validation remains heuristic (regex-scrape paths/backticks); structured citation fields and spawn-planted facts are future work.
 
-**Strategy**: Structured citation fields; soft flag vs throw for heuristic misses.
+**Strategy**: Soft flag vs throw for heuristic misses (completed). Structured citation fields remain P1+.
 
 ---
 
@@ -548,10 +548,10 @@ wake_pack_enabled: z.boolean().default(true),
 - Result card: P1 (inbound handoff is P0)
 - Hybrid recall: Honest FTS-only wake pack; hybrid archive path via `memory_search` CLOSED @ `1511321a` — Critic #6 CLOSED
 - Preference learning: User-scoped prefs with proposals-only writes CLOSED @ `8b1fdfcb` — Critic #8 CLOSED
-- Pack-off/spawn harden: Critic #9 remains open (pack-off silence, soft residuals)
-- Citation soft-flag: Critic #10 remains open (heuristic fail-closed on read)
+- Pack-off/spawn harden: Critic #9 CLOSED @ `8f6591f2` (empty vs dropped vs pack-off distinguishable, pack-off fail-closed)
+- Citation soft-flag: Critic #10 CLOSED @ `8f6591f2` (validateFactCitations soft-flags heuristic misses instead of throwing)
 
-**Remaining open holes**: #9 (pack-off/spawn harden), #10 (citation soft-flag), plus LOW #11 (retention keep-set prose-regex), #12 (docs/comment theater).
+**Remaining open holes**: LOW #11 (retention keep-set prose-regex), #12 (docs/comment theater).
 
 ---
 
