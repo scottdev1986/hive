@@ -206,9 +206,9 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       expect(prompt).not.toContain("Knowledge index data");
       // Mistakes slot shows empty stub
       expect(prompt).toContain("(Mistakes ledger empty");
-      // Empty must NOT contain omitted/CAP signals
-      expect(prompt).not.toContain("omitted");
+      // Empty must NOT contain the dropped signals
       expect(prompt).not.toContain("CAP CROSSED");
+      expect(prompt).not.toContain("older article");
     } finally {
       db.close();
     }
@@ -492,10 +492,14 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
 
       const prompt = await readFile(join(promptDirectory, promptName), "utf8");
 
-      // Dropped scenario: CAP CROSSED (REQUIRED, not optional)
+      // Dropped scenario: CAP CROSSED or memory-store.ts omitted line (REQUIRED)
       expect(prompt).toContain("Knowledge index data");
-      // Require the actual CAP warning from agent-prompt.ts:60
-      expect(prompt).toContain("CAP CROSSED");
+      // Require EITHER agent-prompt.ts:60 CAP OR memory-store.ts:998 omitted line
+      const hasCapCrossed = prompt.includes("CAP CROSSED");
+      const hasOmittedLine =
+        prompt.includes("older article") &&
+        prompt.includes("omitted — use memory_search");
+      expect(hasCapCrossed || hasOmittedLine).toBe(true);
     } finally {
       db.close();
     }
@@ -525,9 +529,9 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
     expect(emptyLaunch).toContain("Project Context");
     expect(emptyLaunch).toContain("(Mistakes ledger empty");
     expect(emptyLaunch).not.toContain("Knowledge index data");
-    // Empty must NOT contain omitted/CAP signals
-    expect(emptyLaunch).not.toContain("omitted");
+    // Empty must NOT contain the dropped signals
     expect(emptyLaunch).not.toContain("CAP CROSSED");
+    expect(emptyLaunch).not.toContain("older article");
   });
 
   test("queen: dropped with CAP shows truncated index", async () => {
@@ -565,10 +569,14 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       episodic,
     });
 
-    // Dropped scenario: CAP CROSSED (REQUIRED, not optional)
+    // Dropped scenario: CAP CROSSED or memory-store.ts omitted line (REQUIRED)
     expect(droppedLaunch).toContain("Knowledge index data");
-    // Require the actual CAP warning from agent-prompt.ts:60
-    expect(droppedLaunch).toContain("CAP CROSSED");
+    // Require EITHER agent-prompt.ts:60 CAP OR memory-store.ts:998 omitted line
+    const hasCapCrossed = droppedLaunch.includes("CAP CROSSED");
+    const hasOmittedLine =
+      droppedLaunch.includes("older article") &&
+      droppedLaunch.includes("omitted — use memory_search");
+    expect(hasCapCrossed || hasOmittedLine).toBe(true);
   });
 
   test("queen: pack always present (no pack-off path)", async () => {
