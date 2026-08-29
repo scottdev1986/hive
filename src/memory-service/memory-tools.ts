@@ -15,7 +15,7 @@ import {
 import type { MemoryEmbeddingWriteOutcome } from "./embeddings";
 import { findSimilarMemoryCandidates, type MemoryIndex } from "./fts-index";
 import { readMemoryFact, pathExists, commandExists } from "./memory-store";
-import { buildMemoryRecallBundle, type MemoryRecallRow } from "./recall";
+import { buildMemoryRecallBundle, memoryRecallDegradedWarning, type MemoryRecallRow } from "./recall";
 import type { MemoryWriteFileResult } from "./store-records";
 
 export const MemoryIdSchema = z
@@ -211,11 +211,25 @@ export function registerMemoryTools(
         snippet: row.snippet,
         date: row.date,
         status: row.status,
-        tags: [], // MemoryRecallRow doesn't include tags
-        path: "", // Path will be resolved via memory_read if needed
+        tags: [],
+        path:
+          row.scope === "repo"
+            ? `.hive/memory/wiki/${row.topic}/${row.id}.md`
+            : `~/.hive/memory/wiki/${row.topic}/${row.id}.md`,
       }));
 
-      return toolResult(results, "results");
+      // Include semantic status in metadata
+      const metadata: Record<string, unknown> = {
+        semantic: bundle.semantic,
+      };
+
+      // Add degraded warning if applicable
+      if (bundle.semantic.startsWith("degraded:")) {
+        const state = bundle.semantic.slice("degraded:".length);
+        metadata.warning = memoryRecallDegradedWarning(state);
+      }
+
+      return toolResult(results, "results", metadata);
     },
   );
 

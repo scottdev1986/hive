@@ -3,16 +3,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawn/spawn-service";
 import { type MemoryEmbedder, MemoryEmbeddingIndex, MemoryEmbeddingService } from "../../src/memory-service/embeddings";
 import { EpisodicStore } from "../../src/memory-service/episodic";
 import { MemoryIndex } from "../../src/memory-service/fts-index";
-import { writeMemoryFact } from "../../src/memory-service/memory-store";
 import type { AgentRecord } from "../../src/schemas/agent";
 import { actingAs } from "../support/daemon-test-support";
-import { connectedClient } from "../support/mcp-client-support";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
@@ -65,6 +64,16 @@ class UnusedSpawner implements Spawner {
   }
 }
 
+async function connectedClient(daemon: HiveDaemon): Promise<Client> {
+  const transport = new StreamableHTTPClientTransport(
+    new URL("http://hive/mcp"),
+    { fetch: actingAs(daemon, "user", "user") },
+  );
+  const client = new Client({ name: "hive-memory-hybrid-test", version: "1.0.0" });
+  await client.connect(transport);
+  return client;
+}
+
 function parseToolResult<T>(result: { content: Array<{ type: string; text?: string }> }): T {
   const content = result.content[0];
   if (content?.type !== "text" || content.text === undefined) {
@@ -79,33 +88,6 @@ describe("memory_search hybrid recall (HM-6)", () => {
     Bun.env.HIVE_HOME = home;
     const repoRoot = await makeTempDir("hive-hm6-repo-");
 
-    // Write articles to disk
-    await writeMemoryFact(repoRoot, {
-      scope: "repo",
-      topic: "testing",
-      title: "Database lock contention",
-      body: "Two writers on one SQLite database deadlocked the fleet.",
-      source: "agent",
-      evidence: "hybrid-test",
-      status: "unverified",
-      kind: "article",
-      tags: [],
-      supersedes: [],
-    });
-
-    await writeMemoryFact(repoRoot, {
-      scope: "repo",
-      topic: "testing",
-      title: "Token budgets clamp recall",
-      body: "The recall bundle clamps pitfalls first when the token budget is exceeded.",
-      source: "agent",
-      evidence: "hybrid-test",
-      status: "unverified",
-      kind: "article",
-      tags: [],
-      supersedes: [],
-    });
-
     // Daemon with NO embeddings (null service)
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
@@ -114,8 +96,41 @@ describe("memory_search hybrid recall (HM-6)", () => {
       repoRoot,
     });
 
-    const client = await connectedClient(actingAs(daemon, "user", "user"));
+    const client = await connectedClient(daemon);
     try {
+      // Seed via daemon memory_write so FTS is populated
+      await client.callTool({
+        name: "memory_write",
+        arguments: {
+          scope: "repo",
+          topic: "testing",
+          title: "Database lock contention",
+          body: "Two writers on one SQLite database deadlocked the fleet.",
+          source: "agent",
+          evidence: "hybrid-test",
+          status: "unverified",
+          kind: "article",
+          tags: [],
+          supersedes: [],
+        },
+      });
+
+      await client.callTool({
+        name: "memory_write",
+        arguments: {
+          scope: "repo",
+          topic: "testing",
+          title: "Token budgets clamp recall",
+          body: "The recall bundle clamps pitfalls first when the token budget is exceeded.",
+          source: "agent",
+          evidence: "hybrid-test",
+          status: "unverified",
+          kind: "article",
+          tags: [],
+          supersedes: [],
+        },
+      });
+
       const results = parseToolResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
@@ -137,40 +152,8 @@ describe("memory_search hybrid recall (HM-6)", () => {
     Bun.env.HIVE_HOME = home;
     const repoRoot = await makeTempDir("hive-hm6-repo-");
 
-    // Write articles to disk
-    const article1 = await writeMemoryFact(repoRoot, {
-      scope: "repo",
-      topic: "testing",
-      title: "Database lock contention",
-      body: "Two writers on one SQLite database deadlocked the fleet.",
-      source: "agent",
-      evidence: "hybrid-test",
-      status: "unverified",
-      kind: "article",
-      tags: [],
-      supersedes: [],
-    });
-
-    const article2 = await writeMemoryFact(repoRoot, {
-      scope: "repo",
-      topic: "testing",
-      title: "Token budgets clamp recall",
-      body: "The recall bundle clamps pitfalls first when the token budget is exceeded.",
-      source: "agent",
-      evidence: "hybrid-test",
-      status: "unverified",
-      kind: "article",
-      tags: [],
-      supersedes: [],
-    });
-
-    // Mock embedder: article1 text matches query exactly, article2 is far
-    const article1Text = `${article1.title}\n${article1.body}`;
-    const article2Text = `${article2.title}\n${article2.body}`;
-    const vectors = new Map<string, number[]>([
-      [article1Text, [0.9, 0.1, 0, 0]], // close to query
-      [article2Text, [0, 1, 0, 0]],     // far from query
-    ]);
+    // Mock embedder vectors (will be populated after daemon creates articles)
+    const vectors = new Map<string, number[]>();
     const queryVector = [1, 0, 0, 0];
 
     const episodic = new EpisodicStore(":memory:");
@@ -184,13 +167,60 @@ describe("memory_search hybrid recall (HM-6)", () => {
       memoryEmbeddingLoad: () => Promise.resolve(mockEmbedder(vectors, queryVector)),
     });
 
-    // Wait for embeddings to index
-    const index = daemon.embeddingIndex;
-    if (index === null) throw new Error("embeddingIndex should not be null");
-    await index.settle();
-
-    const client = await connectedClient(actingAs(daemon, "user", "user"));
+    const client = await connectedClient(daemon);
     try {
+      // Seed via daemon memory_write so FTS is populated
+      const article1 = parseToolResult<{ id: string; title: string }>(
+        await client.callTool({
+          name: "memory_write",
+          arguments: {
+            scope: "repo",
+            topic: "testing",
+            title: "Database lock contention",
+            body: "Two writers on one SQLite database deadlocked the fleet.",
+            source: "agent",
+            evidence: "hybrid-test",
+            status: "unverified",
+            kind: "article",
+            tags: [],
+            supersedes: [],
+          },
+        }),
+      );
+
+      const article2 = parseToolResult<{ id: string; title: string }>(
+        await client.callTool({
+          name: "memory_write",
+          arguments: {
+            scope: "repo",
+            topic: "testing",
+            title: "Token budgets clamp recall",
+            body: "The recall bundle clamps pitfalls first when the token budget is exceeded.",
+            source: "agent",
+            evidence: "hybrid-test",
+            status: "unverified",
+            kind: "article",
+            tags: [],
+            supersedes: [],
+          },
+        }),
+      );
+
+      // Populate mock vectors now that we have articles
+      vectors.set(
+        "Database lock contention\nTwo writers on one SQLite database deadlocked the fleet.",
+        [0.9, 0.1, 0, 0] // close to query
+      );
+      vectors.set(
+        "Token budgets clamp recall\nThe recall bundle clamps pitfalls first when the token budget is exceeded.",
+        [0, 1, 0, 0] // far from query
+      );
+
+      // Wait for embeddings to index
+      const index = daemon.embeddingIndex;
+      if (index === null) throw new Error("embeddingIndex should not be null");
+      await index.settle();
+
       // Query that FTS matches both articles, but semantic ranks article1 higher
       const results = parseToolResult<Array<{ id: string; title: string }>>(
         await client.callTool({
@@ -220,25 +250,8 @@ describe("memory_search hybrid recall (HM-6)", () => {
     Bun.env.HIVE_HOME = home;
     const repoRoot = await makeTempDir("hive-hm6-repo-");
 
-    // Write article that FTS won't match but semantic will
-    const article = await writeMemoryFact(repoRoot, {
-      scope: "repo",
-      topic: "testing",
-      title: "Lease renewal blocks overlapping agents",
-      body: "The composer lease must be renewed every fifteen seconds or the workspace hides the agent.",
-      source: "agent",
-      evidence: "hybrid-test",
-      status: "unverified",
-      kind: "article",
-      tags: [],
-      supersedes: [],
-    });
-
-    const articleText = `${article.title}\n${article.body}`;
-    const vectors = new Map<string, number[]>([
-      [articleText, [0.95, 0.05, 0, 0]], // very close to query
-    ]);
-    const queryVector = [1, 0, 0, 0]; // query about "lease renewal"
+    const vectors = new Map<string, number[]>();
+    const queryVector = [1, 0, 0, 0];
 
     const episodic = new EpisodicStore(":memory:");
     const daemon = new HiveDaemon({
@@ -251,12 +264,37 @@ describe("memory_search hybrid recall (HM-6)", () => {
       memoryEmbeddingLoad: () => Promise.resolve(mockEmbedder(vectors, queryVector)),
     });
 
-    const index = daemon.embeddingIndex;
-    if (index === null) throw new Error("embeddingIndex should not be null");
-    await index.settle();
-
-    const client = await connectedClient(actingAs(daemon, "user", "user"));
+    const client = await connectedClient(daemon);
     try {
+      // Seed via daemon memory_write so FTS is populated
+      const article = parseToolResult<{ id: string; title: string }>(
+        await client.callTool({
+          name: "memory_write",
+          arguments: {
+            scope: "repo",
+            topic: "testing",
+            title: "Lease renewal blocks overlapping agents",
+            body: "The composer lease must be renewed every fifteen seconds or the workspace hides the agent.",
+            source: "agent",
+            evidence: "hybrid-test",
+            status: "unverified",
+            kind: "article",
+            tags: [],
+            supersedes: [],
+          },
+        }),
+      );
+
+      // Populate vector now that article is created
+      vectors.set(
+        "Lease renewal blocks overlapping agents\nThe composer lease must be renewed every fifteen seconds or the workspace hides the agent.",
+        [0.95, 0.05, 0, 0] // very close to query
+      );
+
+      const index = daemon.embeddingIndex;
+      if (index === null) throw new Error("embeddingIndex should not be null");
+      await index.settle();
+
       // Query with terms that won't FTS-match but will semantic-match
       const results = parseToolResult<Array<{ id: string; title: string }>>(
         await client.callTool({
@@ -266,8 +304,6 @@ describe("memory_search hybrid recall (HM-6)", () => {
       );
 
       // FTS-only would find nothing, but hybrid with semantic should surface it
-      // (if the mock says it's semantically close)
-      // In our mock, the query vector matches the article vector closely
       const found = results.find((r) => r.id === article.id);
       expect(found).toBeDefined();
       expect(found?.title).toBe("Lease renewal blocks overlapping agents");
@@ -283,32 +319,6 @@ describe("memory_search hybrid recall (HM-6)", () => {
     Bun.env.HIVE_HOME = home;
     const repoRoot = await makeTempDir("hive-hm6-repo-");
 
-    await writeMemoryFact(repoRoot, {
-      scope: "repo",
-      topic: "testing",
-      title: "Pitfall: null check missing",
-      body: "The parser crashes on null input.",
-      source: "agent",
-      evidence: "hybrid-test",
-      status: "unverified",
-      kind: "pitfall",
-      tags: [],
-      supersedes: [],
-    });
-
-    await writeMemoryFact(repoRoot, {
-      scope: "repo",
-      topic: "testing",
-      title: "Parser test coverage",
-      body: "The parser has tests in test/parser.test.ts.",
-      source: "agent",
-      evidence: "hybrid-test",
-      status: "unverified",
-      kind: "article",
-      tags: [],
-      supersedes: [],
-    });
-
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
@@ -316,8 +326,41 @@ describe("memory_search hybrid recall (HM-6)", () => {
       repoRoot,
     });
 
-    const client = await connectedClient(actingAs(daemon, "user", "user"));
+    const client = await connectedClient(daemon);
     try {
+      // Seed via daemon memory_write so FTS is populated
+      await client.callTool({
+        name: "memory_write",
+        arguments: {
+          scope: "repo",
+          topic: "testing",
+          title: "Pitfall: null check missing",
+          body: "The parser crashes on null input.",
+          source: "agent",
+          evidence: "hybrid-test",
+          status: "unverified",
+          kind: "pitfall",
+          tags: [],
+          supersedes: [],
+        },
+      });
+
+      await client.callTool({
+        name: "memory_write",
+        arguments: {
+          scope: "repo",
+          topic: "testing",
+          title: "Parser test coverage",
+          body: "The parser has tests in test/parser.test.ts.",
+          source: "agent",
+          evidence: "hybrid-test",
+          status: "unverified",
+          kind: "article",
+          tags: [],
+          supersedes: [],
+        },
+      });
+
       const results = parseToolResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
