@@ -98,7 +98,7 @@ function parseToolResult<T>(result: {
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool result");
   }
-  return JSON.parse(content.text).results as T;
+  return JSON.parse(content.text) as T;
 }
 
 describe("memory_search hybrid recall (HM-6)", () => {
@@ -172,7 +172,16 @@ describe("memory_search hybrid recall (HM-6)", () => {
     const repoRoot = await makeTempDir("hive-hm6-repo-");
 
     // Mock embedder vectors (will be populated after daemon creates articles)
-    const vectors = new Map<string, number[]>();
+    const vectors = new Map<string, number[]>([
+      [
+        "Database lock contention\nTwo writers on one SQLite database deadlocked the fleet.",
+        [0.9, 0.1, 0, 0], // close to query
+      ],
+      [
+        "Token budgets clamp recall\nThe recall bundle clamps pitfalls first when the token budget is exceeded.",
+        [0, 1, 0, 0], // far from query
+      ],
+    ]);
     const queryVector = [1, 0, 0, 0];
 
     const episodic = new EpisodicStore(":memory:");
@@ -226,16 +235,6 @@ describe("memory_search hybrid recall (HM-6)", () => {
         }),
       );
 
-      // Populate mock vectors now that we have articles
-      vectors.set(
-        "Database lock contention\nTwo writers on one SQLite database deadlocked the fleet.",
-        [0.9, 0.1, 0, 0], // close to query
-      );
-      vectors.set(
-        "Token budgets clamp recall\nThe recall bundle clamps pitfalls first when the token budget is exceeded.",
-        [0, 1, 0, 0], // far from query
-      );
-
       // Wait for embeddings to index
       const index = daemon.embeddingIndex;
       if (index === null) throw new Error("embeddingIndex should not be null");
@@ -273,8 +272,13 @@ describe("memory_search hybrid recall (HM-6)", () => {
     Bun.env.HIVE_HOME = home;
     const repoRoot = await makeTempDir("hive-hm6-repo-");
 
-    const vectors = new Map<string, number[]>();
-    const queryVector = [1, 0, 0, 0];
+    const vectors = new Map<string, number[]>([
+      [
+        "Lease renewal blocks overlapping agents\nThe composer lease must be renewed every fifteen seconds or the workspace hides the agent.",
+        [0.95, 0.05, 0, 0], // very close to query
+      ],
+    ]);
+    const queryVector = [1, 0, 0];
 
     const episodic = new EpisodicStore(":memory:");
     const daemon = new HiveDaemon({
@@ -307,12 +311,6 @@ describe("memory_search hybrid recall (HM-6)", () => {
             supersedes: [],
           },
         }),
-      );
-
-      // Populate vector now that article is created
-      vectors.set(
-        "Lease renewal blocks overlapping agents\nThe composer lease must be renewed every fifteen seconds or the workspace hides the agent.",
-        [0.95, 0.05, 0, 0], // very close to query
       );
 
       const index = daemon.embeddingIndex;
