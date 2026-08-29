@@ -1,17 +1,3 @@
-/**
- * P1 Item #8: Preference learning and harvesting
- *
- * Extracts user preferences from episodic events and generates review-gated
- * proposals for ~/.hive/profile.md. Never writes profile silently.
- *
- * Preferences are harvested from:
- * - Approval/rejection patterns (user.approved / user.rejected events)
- * - Repeated corrections or feedback
- * - Explicit preference statements in user feedback
- *
- * All harvested preferences go through the proposals inbox before applying.
- */
-
 import type { EpisodicEvent, EpisodicStore } from "./episodic";
 import { isRecord, isString } from "../shared/is-record";
 import type { JsonValue } from "../shared/json";
@@ -38,7 +24,10 @@ function eventData(event: EpisodicEvent): Partial<Record<string, JsonValue>> {
       return {};
     }
     const data = provenance.data;
-    if (isRecord(data)) return data as Partial<Record<string, JsonValue>>;
+    if (isRecord(data)) {
+      // SAFETY: isRecord type guard confirms data is a record before narrowing to the return type
+      return data as Partial<Record<string, JsonValue>>;
+    }
     return {};
   } catch {
     return {};
@@ -55,6 +44,7 @@ function extractPreferenceSignal(
     const preference = isString(data.preference)
       ? data.preference.trim()
       : null;
+    // SAFETY: isString guard confirms category is string; assertion narrows to union member
     const category = isString(data.category)
       ? (data.category as PreferenceSignal["category"])
       : "workflow";

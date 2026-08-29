@@ -1,13 +1,3 @@
-/**
- * Preference learning tests: harvest → proposals → apply → pack floor → spawn/queen
- *
- * Proves:
- * 1. Harvest counts events (2 events → emit)
- * 2. Closed-loop: harvest → proposals → parse/apply → spawn sees it
- * 3. Real queen launch sees preferences
- * 4. Empty prefs fail-closed
- */
-
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   mkdtemp,

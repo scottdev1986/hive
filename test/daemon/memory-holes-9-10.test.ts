@@ -14,7 +14,6 @@ import { Database } from "bun:sqlite";
 import { getHiveHome } from "../../src/hive-home/home";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveSpawner } from "../../src/daemon/spawn/hive-spawner";
-import { writeMemoryFact } from "../../src/memory-service/memory-store";
 import { MemoryIndex } from "../../src/memory-service/fts-index";
 import { registerMemoryTools } from "../../src/memory-service/memory-tools";
 import { MemoryWriteService } from "../../src/memory-service/write-service";
@@ -265,6 +264,7 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
     };
 
     // Config with wake_pack_enabled=false (pack-off)
+    // SAFETY: Test config provides only memory.wake_pack_enabled; HiveSpawner merges with defaults
     const configPackOff = {
       memory: {
         wake_pack_enabled: false,
@@ -649,6 +649,7 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
     };
 
     // Config with wake_pack_enabled=true (default)
+    // SAFETY: Test config provides only memory.wake_pack_enabled; HiveSpawner merges with defaults
     const configPackOn = {
       memory: {
         wake_pack_enabled: true,
@@ -772,22 +773,22 @@ describe("Hole #10: citation heuristic fail-closed on read", () => {
     });
 
     // Create fake MCP server that captures registered handlers
-    const handlers = new Map<
-      string,
-      (input: unknown, context?: unknown) => unknown
-    >();
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const handlers = new Map<string, (input: any, context?: any) => any>();
     const server = {
       registerTool: (
         name: string,
-        _schema: unknown,
-        handler: (input: unknown, context?: unknown) => unknown,
+        _schema: any,
+        handler: (input: any, context?: any) => any,
       ) => {
         handlers.set(name, handler);
         return handler;
       },
     };
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     // Register memory tools (registers REAL memory_read with validateFactCitations)
+    // SAFETY: Test mock server conforms to HiveToolServer.registerTool contract for capturing handlers
     registerMemoryTools(
       server as never,
       {
@@ -862,22 +863,22 @@ describe("Hole #10: citation heuristic fail-closed on read", () => {
     });
 
     // Create fake MCP server that captures registered handlers
-    const handlers = new Map<
-      string,
-      (input: unknown, context?: unknown) => unknown
-    >();
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const handlers = new Map<string, (input: any, context?: any) => any>();
     const server = {
       registerTool: (
         name: string,
-        _schema: unknown,
-        handler: (input: unknown, context?: unknown) => unknown,
+        _schema: any,
+        handler: (input: any, context?: any) => any,
       ) => {
         handlers.set(name, handler);
         return handler;
       },
     };
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     // Register memory tools (registers REAL memory_read with validateFactCitations)
+    // SAFETY: Test mock server conforms to HiveToolServer.registerTool contract for capturing handlers
     registerMemoryTools(
       server as never,
       {
@@ -956,22 +957,22 @@ describe("Hole #10: citation heuristic fail-closed on read", () => {
     });
 
     // Create fake MCP server that captures registered handlers
-    const handlers = new Map<
-      string,
-      (input: unknown, context?: unknown) => unknown
-    >();
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const handlers = new Map<string, (input: any, context?: any) => any>();
     const server = {
       registerTool: (
         name: string,
-        _schema: unknown,
-        handler: (input: unknown, context?: unknown) => unknown,
+        _schema: any,
+        handler: (input: any, context?: any) => any,
       ) => {
         handlers.set(name, handler);
         return handler;
       },
     };
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     // Register memory tools (registers REAL memory_read with validateFactCitations)
+    // SAFETY: Test mock server conforms to HiveToolServer.registerTool contract for capturing handlers
     registerMemoryTools(
       server as never,
       {
