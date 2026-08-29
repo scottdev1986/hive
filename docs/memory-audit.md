@@ -478,11 +478,13 @@ wake_pack_enabled: z.boolean().default(true),
 
 ### MEDIUM
 
-**#7: Queen CLI cold mistakes**
+**#7: Queen CLI cold mistakes** — **CLOSED on `dev` @ `3910a69a`**
 
 **Evidence**: `buildQueenLaunchContext` calls `loadRecentMistakes(undefined)` (`orchestrator.ts:199`) → empty mistakes in CLI queen pack.
 
 **Strategy**: Thread episodic/daemon floor into queen launch; don't ship empty-as-normal.
+
+**Fix**: Episodic store now wired into queen launch path. `buildQueenLaunchContext` accepts optional episodic parameter, `launchOrchestrator` creates store via `EpisodicStore.forProjectRoot(cwd)` and passes it to queen launch context. Fail-closed if store unavailable (returns empty array). Test `queen launch context includes mistakes from episodic store` validates seeded mistakes appear in queen launch context.
 
 **#8: Preference / engineer learning absent**
 
