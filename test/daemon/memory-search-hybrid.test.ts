@@ -91,7 +91,7 @@ async function connectedClient(daemon: HiveDaemon): Promise<Client> {
   return client;
 }
 
-function parseToolResult<T>(result: {
+function parseSearchResult<T>(result: {
   content: Array<{ type: string; text?: string }>;
 }): { results: T; semantic: string } {
   const content = result.content[0];
@@ -103,6 +103,16 @@ function parseToolResult<T>(result: {
     semantic: string;
   };
   return payload;
+}
+
+function parseWriteResult<T>(result: {
+  content: Array<{ type: string; text?: string }>;
+}): T {
+  const content = result.content[0];
+  if (content?.type !== "text" || content.text === undefined) {
+    throw new Error("Expected text tool result");
+  }
+  return JSON.parse(content.text) as T;
 }
 
 describe("memory_search hybrid recall (HM-6)", () => {
@@ -154,7 +164,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
         },
       });
 
-      const payload = parseToolResult<Array<{ id: string; title: string }>>(
+      const payload = parseSearchResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
           arguments: { query: "database" },
@@ -206,7 +216,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
     const client = await connectedClient(daemon);
     try {
       // Seed via daemon memory_write so FTS is populated
-      const article1Result = parseToolResult<{ id: string; title: string }>(
+      const article1 = parseWriteResult<{ id: string; title: string }>(
         await client.callTool({
           name: "memory_write",
           arguments: {
@@ -223,9 +233,8 @@ describe("memory_search hybrid recall (HM-6)", () => {
           },
         }),
       );
-      const article1 = article1Result.results;
 
-      const article2Result = parseToolResult<{ id: string; title: string }>(
+      const article2 = parseWriteResult<{ id: string; title: string }>(
         await client.callTool({
           name: "memory_write",
           arguments: {
@@ -242,7 +251,6 @@ describe("memory_search hybrid recall (HM-6)", () => {
           },
         }),
       );
-      const article2 = article2Result.results;
 
       // Wait for embeddings to index
       const index = daemon.embeddingIndex;
@@ -250,7 +258,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
       await index.settle();
 
       // Query that FTS matches both articles, but semantic ranks article1 higher
-      const payload = parseToolResult<Array<{ id: string; title: string }>>(
+      const payload = parseSearchResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
           arguments: { query: "database token", limit: 10 },
@@ -292,7 +300,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
         [0.95, 0.05, 0, 0], // very close to query
       ],
     ]);
-    const queryVector = [1, 0, 0];
+    const queryVector = [1, 0, 0, 0];
 
     const episodic = new EpisodicStore(":memory:");
     const daemon = new HiveDaemon({
@@ -309,7 +317,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
     const client = await connectedClient(daemon);
     try {
       // Seed via daemon memory_write so FTS is populated
-      const articleResult = parseToolResult<{ id: string; title: string }>(
+      const article = parseWriteResult<{ id: string; title: string }>(
         await client.callTool({
           name: "memory_write",
           arguments: {
@@ -326,14 +334,13 @@ describe("memory_search hybrid recall (HM-6)", () => {
           },
         }),
       );
-      const article = articleResult.results;
 
       const index = daemon.embeddingIndex;
       if (index === null) throw new Error("embeddingIndex should not be null");
       await index.settle();
 
       // Query with terms that won't FTS-match but will semantic-match
-      const payload = parseToolResult<Array<{ id: string; title: string }>>(
+      const payload = parseSearchResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
           arguments: { query: "zzz nonexistent query", limit: 10 },
@@ -401,7 +408,7 @@ describe("memory_search hybrid recall (HM-6)", () => {
         },
       });
 
-      const payload = parseToolResult<Array<{ id: string; title: string }>>(
+      const payload = parseSearchResult<Array<{ id: string; title: string }>>(
         await client.callTool({
           name: "memory_search",
           arguments: { query: "parser", kind: "pitfall" },

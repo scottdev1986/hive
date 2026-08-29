@@ -238,7 +238,11 @@ export function registerMemoryTools(
             { type: "text" as const, text: JSON.stringify(payload) },
             { type: "text" as const, text: warning },
           ],
-          structuredContent: { results, semantic: bundle.semantic },
+          structuredContent: {
+            results,
+            semantic: bundle.semantic,
+            degraded: true,
+          },
         };
       }
 
