@@ -536,12 +536,7 @@ export async function launchOrchestrator(
   }
   const memoryIndex = await buildMemoryIndex(cwd).catch(() => "");
   // Wire the real episodic store into queen launch (memory hole #7). Fail-closed if unavailable.
-  let episodic: EpisodicStore | undefined;
-  try {
-    episodic = EpisodicStore.forProjectRoot(cwd);
-  } catch {
-    episodic = undefined;
-  }
+  const episodic = EpisodicStore.forProjectRoot(cwd);
   const launchContext = await buildQueenLaunchContext({
     memoryIndex,
     bootCapsule,
