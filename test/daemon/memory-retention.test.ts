@@ -109,6 +109,150 @@ describe("runRetentionSweep — episodic hot tier", () => {
       store.close();
     }
   });
+
+  test("keeps aged events cited by structured eventIds provenance", async () => {
+    const repo = await makeRepo();
+    const storePath = join(repo, "episodic.db");
+    const store = openStore(storePath);
+    try {
+      const aged = store.appendEvent({
+        ts: OLD_TS,
+        type: "test.failure",
+        summary: "test suite failed",
+      });
+      const alsoAged = store.appendEvent({
+        ts: OLD_TS,
+        type: "test.error",
+        summary: "another test error",
+      });
+      store.appendEvent({
+        ts: OLD_TS,
+        type: "status",
+        summary: "uncited old event",
+      });
+
+      await writeMemoryFact(repo, {
+        scope: "repo",
+        id: "test-failure-cluster",
+        topic: "pitfalls",
+        title: "Pitfall: test suite failures",
+        body: `## What failed\n\n- Test suite failed with exit code 1`,
+        tags: ["pitfall"],
+        date: NOW.toISOString().slice(0, 10),
+        source: "orchestrator",
+        evidence: "Structured provenance via eventIds",
+        status: "unverified",
+        kind: "pitfall",
+        supersedes: [],
+        author: "agent-maya",
+        eventIds: [aged.id, alsoAged.id],
+      });
+
+      const report = await runRetentionSweep({
+        episodic: store,
+        repoRoot: repo,
+        config: retentionConfig({ events_hot_days: 0 }),
+        now: NOW,
+      });
+
+      expect(report.eventsDeleted).toBe(1);
+      const remaining = store
+        .eventsFor()
+        .map((event) => event.id)
+        .sort();
+      expect(remaining).toEqual([aged.id, alsoAged.id].sort());
+    } finally {
+      store.close();
+    }
+  });
+
+  test("deletes aged events with prose-only mentions (no structured eventIds)", async () => {
+    const repo = await makeRepo();
+    const storePath = join(repo, "episodic.db");
+    const store = openStore(storePath);
+    try {
+      const aged = store.appendEvent({
+        ts: OLD_TS,
+        type: "test.failure",
+        summary: "test suite failed",
+      });
+
+      await writeMemoryFact(repo, {
+        scope: "repo",
+        id: "prose-only-mention",
+        topic: "pitfalls",
+        title: "Pitfall: mentioned in prose only",
+        body: `This mentions event E${aged.id} in prose but has no structured eventIds`,
+        tags: ["pitfall"],
+        date: NOW.toISOString().slice(0, 10),
+        source: "orchestrator",
+        evidence: `Also mentions e${aged.id} in evidence but without structured provenance`,
+        status: "unverified",
+        kind: "pitfall",
+        supersedes: [],
+        author: "agent-maya",
+      });
+
+      const report = await runRetentionSweep({
+        episodic: store,
+        repoRoot: repo,
+        config: retentionConfig({ events_hot_days: 0 }),
+        now: NOW,
+      });
+
+      expect(report.eventsDeleted).toBe(1);
+      expect(store.eventsFor()).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("harvest citations with structured eventIds keep events", async () => {
+    const repo = await makeRepo();
+    const storePath = join(repo, "episodic.db");
+    const store = openStore(storePath);
+    try {
+      const aged = store.appendEvent({
+        ts: OLD_TS,
+        type: "test.failure",
+        summary: "test suite failed",
+      });
+      store.appendEvent({
+        ts: OLD_TS,
+        type: "status",
+        summary: "uncited old event",
+      });
+
+      await writeMemoryFact(repo, {
+        scope: "repo",
+        id: "harvest-structured",
+        topic: "pitfalls",
+        title: "Pitfall: harvest writes structured eventIds",
+        body: "Harvest-written facts cite events via structured eventIds",
+        tags: ["pitfall"],
+        date: NOW.toISOString().slice(0, 10),
+        source: "orchestrator",
+        evidence: `Harvest writes e${aged.id} in evidence AND structured eventIds`,
+        status: "unverified",
+        kind: "pitfall",
+        supersedes: [],
+        author: "agent-maya",
+        eventIds: [aged.id],
+      });
+
+      const report = await runRetentionSweep({
+        episodic: store,
+        repoRoot: repo,
+        config: retentionConfig({ events_hot_days: 0 }),
+        now: NOW,
+      });
+
+      expect(report.eventsDeleted).toBe(1);
+      expect(store.eventsFor().map((event) => event.id)).toEqual([aged.id]);
+    } finally {
+      store.close();
+    }
+  });
 });
 
 describe("runRetentionSweep — wiki stale demotion", () => {

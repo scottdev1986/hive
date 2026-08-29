@@ -115,6 +115,7 @@ export const MemoryFactSchema = z
     raw: z.array(z.string()),
     verified: IsoDateSchema.optional(),
     author: MemoryAuthorSchema.optional(),
+    eventIds: z.array(z.number().int().positive()).optional(),
   })
   .superRefine(refineMemoryVerification);
 export type MemoryFact = z.infer<typeof MemoryFactSchema>;
@@ -134,6 +135,7 @@ const MemoryWriteInputFields = z.strictObject({
   supersedes: z.array(z.string()),
   verified: IsoDateSchema.optional(),
   author: MemoryAuthorSchema.optional(),
+  eventIds: z.array(z.number().int().positive()).optional(),
 });
 
 export const MemoryWriteInputSchema = MemoryWriteInputFields.superRefine(
