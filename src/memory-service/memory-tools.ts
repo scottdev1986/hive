@@ -178,6 +178,8 @@ export function registerMemoryTools(
       );
 
       // Use hybrid recall when semantic is available, otherwise FTS-only
+      // Fetch more results than needed to allow filtering without dropping results
+      const fetchLimit = limit ?? 10;
       const bundle = await buildMemoryRecallBundle(
         query,
         {
@@ -186,21 +188,23 @@ export function registerMemoryTools(
           semantic: deps.semanticRecall,
           semanticStatus: deps.semanticStatus,
         },
-        limit ?? 10,
+        fetchLimit * 3,
       );
 
       // Flatten bundle back to search results array for backward compatibility
       const rows = [...bundle.pitfalls, ...bundle.articles];
 
-      // Filter by scope and kind if requested
-      const filtered = rows.filter((row) => {
-        if (scope !== undefined && row.scope !== scope) return false;
-        if (kind !== undefined && kind === "pitfall" && !row.pitfall)
-          return false;
-        if (kind !== undefined && kind === "article" && row.pitfall)
-          return false;
-        return true;
-      });
+      // Filter by scope and kind BEFORE limiting to avoid dropping results
+      const filtered = rows
+        .filter((row) => {
+          if (scope !== undefined && row.scope !== scope) return false;
+          if (kind !== undefined && kind === "pitfall" && !row.pitfall)
+            return false;
+          if (kind !== undefined && kind === "article" && row.pitfall)
+            return false;
+          return true;
+        })
+        .slice(0, fetchLimit);
 
       // Convert MemoryRecallRow to MemorySearchResult format
       const results = filtered.map((row) => ({

@@ -229,15 +229,18 @@ describe("memory_search hybrid recall (HM-6)", () => {
         }),
       );
 
-      // Hybrid should return both, with RRF ranking
-      expect(results.length).toBeGreaterThan(0);
+      // RRF blend: article1 has high FTS + high semantic, article2 has low FTS + low semantic
+      // article1 should rank higher due to better combined score
+      expect(results.length).toBeGreaterThanOrEqual(2);
       
-      // The article with both FTS + semantic match should rank higher
-      const article1Result = results.find((r) => r.id === article1.id);
-      const article2Result = results.find((r) => r.id === article2.id);
+      const article1Index = results.findIndex((r) => r.id === article1.id);
+      const article2Index = results.findIndex((r) => r.id === article2.id);
       
-      expect(article1Result).toBeDefined();
-      expect(article2Result).toBeDefined();
+      expect(article1Index).toBeGreaterThanOrEqual(0);
+      expect(article2Index).toBeGreaterThanOrEqual(0);
+      
+      // Verify RRF rank: article1 (high semantic + FTS match) ranks before article2
+      expect(article1Index).toBeLessThan(article2Index);
     } finally {
       await client.close().catch(() => undefined);
       await daemon.stop();
