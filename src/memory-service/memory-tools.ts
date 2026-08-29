@@ -218,18 +218,14 @@ export function registerMemoryTools(
             : `~/.hive/memory/wiki/${row.topic}/${row.id}.md`,
       }));
 
-      // Include semantic status in metadata
-      const metadata: Record<string, unknown> = {
-        semantic: bundle.semantic,
-      };
-
-      // Add degraded warning if applicable
+      // Include degraded warning if applicable
       if (bundle.semantic.startsWith("degraded:")) {
         const state = bundle.semantic.slice("degraded:".length);
-        metadata.warning = memoryRecallDegradedWarning(state);
+        const warning = memoryRecallDegradedWarning(state);
+        return toolResult(results, "results", warning);
       }
 
-      return toolResult(results, "results", metadata);
+      return toolResult(results, "results");
     },
   );
 
