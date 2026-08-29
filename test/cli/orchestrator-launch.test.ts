@@ -429,4 +429,51 @@ describe("orchestrator launch", () => {
       await rm(project, { recursive: true, force: true });
     }
   });
+
+  test("queen launch context includes mistakes from episodic store", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-queen-episodic-"));
+    try {
+      const { EpisodicStore } =
+        await import("../../src/memory-service/episodic");
+      const episodic = new EpisodicStore(":memory:");
+
+      episodic.appendEvent({
+        type: "mistake",
+        summary: "Test mistake from episodic",
+        provenance: {},
+      });
+
+      episodic.appendEvent({
+        type: "pitfall",
+        summary: "Test pitfall from episodic",
+        provenance: {},
+      });
+
+      const launchContext = await buildQueenLaunchContext({
+        repoRoot: root,
+        episodic,
+      });
+
+      expect(launchContext).toContain("Test mistake from episodic");
+      expect(launchContext).toContain("Test pitfall from episodic");
+
+      episodic.close();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("queen launch context handles missing episodic store gracefully", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-queen-no-episodic-"));
+    try {
+      const launchContext = await buildQueenLaunchContext({
+        repoRoot: root,
+      });
+
+      expect(launchContext).toBeDefined();
+      expect(launchContext.length).toBeGreaterThan(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

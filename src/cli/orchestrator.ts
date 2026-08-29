@@ -56,6 +56,7 @@ import {
   protocolProviderArgv,
 } from "../daemon/spawn/spawn-service";
 import { getHiveHome, orchestratorSessionKey } from "../hive-home/home";
+import { EpisodicStore } from "../memory-service/episodic";
 import { buildMemoryIndex } from "../memory-service/memory-store";
 import { ORCHESTRATOR_NAME } from "../schemas/agent";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
@@ -183,7 +184,19 @@ export async function prepareOrchestratorConfig(
 }
 
 export async function buildQueenLaunchContext(
-  input: { memoryIndex?: string; bootCapsule?: string; repoRoot: string } = {
+  input: {
+    memoryIndex?: string;
+    bootCapsule?: string;
+    repoRoot: string;
+    episodic?: {
+      listEvents: () => Array<{
+        id: string;
+        type: string;
+        ts: string;
+        summary: string;
+      }>;
+    };
+  } = {
     repoRoot: process.cwd(),
   },
 ): Promise<string> {
@@ -196,7 +209,7 @@ export async function buildQueenLaunchContext(
       Promise.resolve(loadConstitution()),
       loadProfile(),
       loadProjectDoc(input.repoRoot),
-      loadRecentMistakes(undefined, input.repoRoot),
+      loadRecentMistakes(input.episodic, input.repoRoot),
     ],
   );
 
@@ -522,10 +535,18 @@ export async function launchOrchestrator(
     );
   }
   const memoryIndex = await buildMemoryIndex(cwd).catch(() => "");
+  // Wire the real episodic store into queen launch (memory hole #7). Fail-closed if unavailable.
+  let episodic: EpisodicStore | undefined;
+  try {
+    episodic = EpisodicStore.forProjectRoot(cwd);
+  } catch {
+    episodic = undefined;
+  }
   const launchContext = await buildQueenLaunchContext({
     memoryIndex,
     bootCapsule,
     repoRoot: cwd,
+    episodic,
   });
   await writeLaunchPrompt(orchestratorSessionKey(), launchContext);
   await prepareOrchestratorConfig(tool, port, cwd);
