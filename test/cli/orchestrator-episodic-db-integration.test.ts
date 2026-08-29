@@ -136,16 +136,25 @@ describe("launchOrchestrator opens on-disk episodic.db", () => {
   test("launchOrchestrator fails closed when episodic store cannot be opened", async () => {
     const project = await mkdtemp(join(tmpdir(), "hive-episodic-fail-"));
     const executable = join(project, "codex");
+    let startWasCalled = false;
 
     try {
-      // Do NOT initialize as a git repo - this will cause forProjectRoot to fail
-      // when it tries to resolve the project identity and open the store
+      // Initialize as a git repo so the project identity resolution succeeds
+      await initGitRepo(project);
+
+      // Open and immediately corrupt the database by writing garbage
+      const episodic = EpisodicStore.forProjectRoot(project);
+      const dbPath = episodic.path;
+      episodic.close();
+      
+      // Overwrite with invalid SQLite data to force open failure
+      await writeFile(dbPath, "not a valid sqlite database\n");
 
       // Create a fake codex executable
       await writeFile(executable, "#!/bin/sh\nexit 0\n");
       await chmod(executable, 0o755);
 
-      // Expect launchOrchestrator to throw when it cannot open the store
+      // Expect launchOrchestrator to throw when it cannot open the corrupted store
       await expect(
         launchOrchestrator("codex", 4317, project, "", {
           resolveCodexExecutable: () => ({
@@ -160,12 +169,16 @@ describe("launchOrchestrator opens on-disk episodic.db", () => {
           },
           sessiondControl: {
             start: async () => {
+              startWasCalled = true;
               throw new Error("Should not reach session start");
             },
             waitForTerminal: async () => ({ kind: "missing" }),
           },
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow("not a database");
+
+      // Verify start() was never called (launch failed before session start)
+      expect(startWasCalled).toBe(false);
     } finally {
       await rm(project, { recursive: true, force: true });
     }
