@@ -24,7 +24,7 @@
         "availability": "present",
         "value": "active"
       },
-      "topologyShape": {
+      "topologyKind": {
         "availability": "present",
         "value": "flat"
       },

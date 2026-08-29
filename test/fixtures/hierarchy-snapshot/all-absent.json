@@ -22,7 +22,7 @@
         "reason": "unmeasured",
         "detail": "no Run record supplied"
       },
-      "topologyShape": {
+      "topologyKind": {
         "availability": "absent",
         "reason": "unmeasured",
         "detail": "no TopologyDecision supplied"

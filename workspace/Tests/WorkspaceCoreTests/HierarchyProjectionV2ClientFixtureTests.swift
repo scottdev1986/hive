@@ -78,13 +78,13 @@ final class HierarchyProjectionV2ClientFixtureTests: XCTestCase {
         let payload = try current()
         guard case .present(let root) = payload.run.root,
             case .present(let source) = payload.run.topologySource,
-            case .present(let shape) = payload.run.topologyShape
+            case .present(let kind) = payload.run.topologyKind
         else {
             return XCTFail("the corpus run is a projected hierarchy run")
         }
         XCTAssertEqual(root.runID, payload.run.runID)
         XCTAssertEqual(source, .hierarchy)
-        XCTAssertEqual(shape, .fullHive)
+        XCTAssertEqual(kind, .fullHive)
 
         guard case .present(let binding) = payload.node.binding else {
             return XCTFail("the corpus node holds a live binding")
@@ -118,6 +118,17 @@ final class HierarchyProjectionV2ClientFixtureTests: XCTestCase {
         let drifted = try JSONSerialization.data(withJSONObject: object)
         XCTAssertThrowsError(
             try JSONDecoder().decode(HierarchyRunProjection.self, from: drifted))
+    }
+
+    func testTheRetiredTopologyShapeKeyRefusesToDecode() throws {
+        let wire = try JSONEncoder().encode(current().run)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: wire) as? [String: Any])
+        object["topologyShape"] = object.removeValue(forKey: "topologyKind")
+        let drifted = try JSONSerialization.data(withJSONObject: object)
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(HierarchyRunProjection.self, from: drifted),
+            "the daemon renamed this field; the old key must not silently decode")
     }
 
     func testAnUnknownAbsenceReasonRefusesToDecode() {

@@ -290,7 +290,7 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
                 }),
                 ShellScreenFact(label: "Phase", value: Self.field(run.phase) { $0.rawValue }),
                 ShellScreenFact(label: "Lifecycle", value: Self.field(run.lifecycle) { $0.rawValue }),
-                ShellScreenFact(label: "Topology", value: Self.field(run.topologyShape) { $0.rawValue }),
+                ShellScreenFact(label: "Topology kind", value: Self.field(run.topologyKind) { $0.rawValue }),
                 ShellScreenFact(label: "Topology source", value: Self.field(run.topologySource) { $0.rawValue }),
             ])
         }
@@ -474,7 +474,7 @@ final class OuterHorizonScreenView: NSView, NSTableViewDataSource, NSTableViewDe
 
     private var topologySummary: String {
         let topology = horizon.snapshot.runs.first.map {
-            Self.field($0.topologyShape) { $0.rawValue }
+            Self.field($0.topologyKind) { $0.rawValue }
         } ?? "topology entity absent"
         return "\(topology) · \(rows.count) visible / \(horizon.snapshot.nodes.count) admitted"
     }

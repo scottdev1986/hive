@@ -33,7 +33,7 @@
                 "availability": "present",
                 "value": "active"
               },
-              "topologyShape": {
+              "topologyKind": {
                 "availability": "present",
                 "value": "full-hive"
               },
@@ -1129,7 +1129,7 @@
           }
         ],
         "createdAt": "2026-07-30T20:00:00.000Z",
-        "contentSha256": "7cc398d745fdb09f64382bd4762c0fbf16a6527d671b7cb5b9439d6c645fc0d3"
+        "contentSha256": "6c030ec97d80daf4a9a234cb635ca392dfab571c2a2d40d7d4e1d995d77f0740"
       }
     },
     {
@@ -1175,7 +1175,7 @@
                 "availability": "present",
                 "value": "active"
               },
-              "topologyShape": {
+              "topologyKind": {
                 "availability": "present",
                 "value": "direct"
               },
@@ -1434,7 +1434,7 @@
           }
         ],
         "createdAt": "2026-07-30T20:00:00.000Z",
-        "contentSha256": "122c4433945ba3227616904087971c554a56e0e2e3ee6f0a6befbfd739f816f9"
+        "contentSha256": "c335c310ac5ede522d847936aaf2f8a2c6c2d0d04be6bf62e52c87f120d254b1"
       }
     },
     {
@@ -1469,7 +1469,7 @@
                 "availability": "present",
                 "value": "active"
               },
-              "topologyShape": {
+              "topologyKind": {
                 "availability": "present",
                 "value": "flat"
               },
@@ -1772,7 +1772,7 @@
           }
         ],
         "createdAt": "2026-07-30T20:00:00.000Z",
-        "contentSha256": "cca3a9880f811d9031977f77341fda134566320d2b0b3fba9b4e069166e04980"
+        "contentSha256": "63f92b25624a1c2e06e19460727db5805b52003b9e58caeb84487b4eb7a1603a"
       }
     },
     {
@@ -1807,7 +1807,7 @@
                 "availability": "present",
                 "value": "active"
               },
-              "topologyShape": {
+              "topologyKind": {
                 "availability": "present",
                 "value": "full-hive"
               },
@@ -2109,7 +2109,7 @@
           }
         ],
         "createdAt": "2026-07-30T20:00:00.000Z",
-        "contentSha256": "ad4a4be61abde6be8f4c5970f08cadf57236e5d6f3b0bf3fc8c0363bf7aa05bb"
+        "contentSha256": "bf09e0874f0f0c0827b3e04b96008b86f4e888e218515756fc0993ac0f376ef0"
       }
     },
     {
@@ -2144,7 +2144,7 @@
                 "availability": "present",
                 "value": "active"
               },
-              "topologyShape": {
+              "topologyKind": {
                 "availability": "present",
                 "value": "full-hive"
               },
@@ -2499,7 +2499,7 @@
           }
         ],
         "createdAt": "2026-07-30T20:00:00.000Z",
-        "contentSha256": "161278d2169d2fbfe7d99e17043774f0462b1b701badc718871035cd0ce03849"
+        "contentSha256": "4eebbf8cd72a020824c192a15d2162611c1a0bccc6c1910fcaddfc580555ba7b"
       }
     },
     {
@@ -2532,7 +2532,7 @@
                 "reason": "unmeasured",
                 "detail": "no Run record supplied"
               },
-              "topologyShape": {
+              "topologyKind": {
                 "availability": "absent",
                 "reason": "unmeasured",
                 "detail": "no TopologyDecision supplied"
@@ -2616,7 +2616,7 @@
           }
         ],
         "createdAt": "2026-07-30T20:00:00.000Z",
-        "contentSha256": "b4b30762dfbd3f73488934bca249f86a559157f1fecc8b75fb7c69d4ec198bac"
+        "contentSha256": "7fbd815cf92a4b2419ecc4399939ac99f9fe9c59d0d522d97970d72044d76402"
       }
     },
     {
@@ -2651,7 +2651,7 @@
                 "availability": "present",
                 "value": "active"
               },
-              "topologyShape": {
+              "topologyKind": {
                 "availability": "present",
                 "value": "direct"
               },
@@ -2918,7 +2918,7 @@
           }
         ],
         "createdAt": "2026-07-30T20:00:00.000Z",
-        "contentSha256": "cc312fb7a3022f8ac2a2a323fcae4de3177577ecc270cfe0c11d7fe7abd747c1"
+        "contentSha256": "1c3c0f7e5910210273d74e184bb07843c9f307ea06cd53e86448c96f3ec4f5e6"
       }
     }
   ]

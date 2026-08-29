@@ -642,9 +642,9 @@ final class LiveRunWorkbenchView: NSView {
 
         if let horizon {
             if let run = horizon.snapshot.runs.first {
-                if case .present(let shape) = run.topologyShape {
+                if case .present(let kind) = run.topologyKind {
                     hierarchyHeading.stringValue = "Run hierarchy · "
-                        + shape.rawValue.replacingOccurrences(of: "-", with: " ")
+                        + kind.rawValue.replacingOccurrences(of: "-", with: " ")
                 } else {
                     hierarchyHeading.stringValue = "Run hierarchy"
                 }

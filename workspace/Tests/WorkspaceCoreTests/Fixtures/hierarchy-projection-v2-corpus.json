@@ -31,7 +31,7 @@
           "availability": "present",
           "value": "active"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "present",
           "value": "full-hive"
         },
@@ -270,7 +270,7 @@
           "reason": "unmeasured",
           "detail": "no Run record supplied"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "absent",
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
@@ -349,7 +349,7 @@
           "availability": "present",
           "value": "active"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "present",
           "value": "full-hive"
         },
@@ -588,7 +588,7 @@
           "reason": "unmeasured",
           "detail": "no Run record supplied"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "absent",
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
@@ -658,7 +658,7 @@
           "availability": "present",
           "value": "active"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "present",
           "value": "full-hive"
         },
@@ -897,7 +897,7 @@
           "reason": "unmeasured",
           "detail": "no Run record supplied"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "absent",
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
@@ -982,7 +982,7 @@
           "availability": "present",
           "value": "active"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "present",
           "value": "full-hive"
         },
@@ -1221,7 +1221,7 @@
           "reason": "unmeasured",
           "detail": "no Run record supplied"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "absent",
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
@@ -1294,7 +1294,7 @@
           "availability": "present",
           "value": "active"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "present",
           "value": "full-hive"
         },
@@ -1533,7 +1533,7 @@
           "reason": "unmeasured",
           "detail": "no Run record supplied"
         },
-        "topologyShape": {
+        "topologyKind": {
           "availability": "absent",
           "reason": "unmeasured",
           "detail": "no TopologyDecision supplied"
