@@ -206,6 +206,9 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       expect(prompt).not.toContain("Knowledge index data");
       // Mistakes slot shows empty stub
       expect(prompt).toContain("(Mistakes ledger empty");
+      // Empty must NOT contain omitted/CAP signals
+      expect(prompt).not.toContain("omitted");
+      expect(prompt).not.toContain("CAP CROSSED");
     } finally {
       db.close();
     }
@@ -489,13 +492,10 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
 
       const prompt = await readFile(join(promptDirectory, promptName), "utf8");
 
-      // Dropped scenario: CAP crossed, omitted slice visible
+      // Dropped scenario: omitted slice visible (REQUIRED, not optional)
       expect(prompt).toContain("Knowledge index data");
-      // When CAP is crossed, announceMemoryIndexCaps prints warning
-      // The warning shows in console, not prompt; but the prompt shows truncation
-      if (prompt.includes("omitted")) {
-        expect(prompt).toContain("CAP CROSSED");
-      }
+      // Require the actual omitted line from memory-store.ts:998
+      expect(prompt).toContain("omitted — use memory_search");
     } finally {
       db.close();
     }
@@ -525,6 +525,9 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
     expect(emptyLaunch).toContain("Project Context");
     expect(emptyLaunch).toContain("(Mistakes ledger empty");
     expect(emptyLaunch).not.toContain("Knowledge index data");
+    // Empty must NOT contain omitted/CAP signals
+    expect(emptyLaunch).not.toContain("omitted");
+    expect(emptyLaunch).not.toContain("CAP CROSSED");
   });
 
   test("queen: dropped with CAP shows truncated index", async () => {
@@ -562,9 +565,10 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       episodic,
     });
 
-    // Dropped scenario: memory index section present but truncated
+    // Dropped scenario: memory index truncated (REQUIRED, not optional)
     expect(droppedLaunch).toContain("Knowledge index data");
-    // If queen budget causes truncation, it's visible in the text
+    // Require the actual omitted line from memory-store.ts:998
+    expect(droppedLaunch).toContain("omitted — use memory_search");
   });
 
   test("queen: pack always present (no pack-off path)", async () => {
