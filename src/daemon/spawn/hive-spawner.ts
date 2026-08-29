@@ -1325,35 +1325,37 @@ export class HiveSpawner implements Spawner {
             ? undefined
             : hierarchyAdmission.takeLaunchContext(hierarchyIdentity);
 
-        // P0.12: Dual-read pack+index (gate with wake_pack_enabled sunset flag)
+        // P0.12: Wake pack is mandatory (fail-closed on pack-off)
         const wakePackEnabled =
           this.dependencies.config.memory?.wake_pack_enabled ?? true;
-        let constitution: string | undefined;
-        let profile: string | undefined;
-        let handoffText: string | undefined;
-        let projectDoc: string | undefined;
-        let recentMistakes: readonly string[];
 
-        if (wakePackEnabled) {
-          // P0: Load and validate wake pack floor (throws SpawnFailedError if handoff unsynthable)
-          const pack = await loadAndValidateWakePack({
-            db: this.dependencies.db,
-            episodic: this.dependencies.episodic,
-            repoRoot: this.dependencies.repoRoot,
-            handoffId: request.handoffId,
-            agentName: name,
-            task: request.task,
-          });
-
-          constitution = pack.constitution;
-          profile = pack.profile;
-          projectDoc = pack.projectDoc;
-          handoffText = pack.handoffText;
-          recentMistakes = pack.recentMistakes ?? [];
-        } else {
-          // Pack-off path: normalize to empty array (no mistakes loaded)
-          recentMistakes = [];
+        if (!wakePackEnabled) {
+          // Hole #9: pack-off must fail closed, not silently continue with empty constitution/profile/handoff/projectDoc
+          await failProviderLaunch(
+            "Cannot spawn without wake pack: wake_pack_enabled=false is not supported. " +
+              "The pack floor (constitution, profile, handoff, projectDoc, recentMistakes) is mandatory for spawn. " +
+              "Remove wake_pack_enabled from config to restore pack assembly.",
+            "transport",
+            true,
+          );
+          return;
         }
+
+        // P0: Load and validate wake pack floor (throws SpawnFailedError if handoff unsynthable)
+        const pack = await loadAndValidateWakePack({
+          db: this.dependencies.db,
+          episodic: this.dependencies.episodic,
+          repoRoot: this.dependencies.repoRoot,
+          handoffId: request.handoffId,
+          agentName: name,
+          task: request.task,
+        });
+
+        const constitution = pack.constitution;
+        const profile = pack.profile;
+        const projectDoc = pack.projectDoc;
+        const handoffText = pack.handoffText;
+        const recentMistakes = pack.recentMistakes ?? [];
 
         const prompt = buildAgentPrompt(
           name,
