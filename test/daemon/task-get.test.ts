@@ -579,6 +579,9 @@ describe("spawn taskId linkage", () => {
       },
       unavailableAgentNames: async () => new Set(),
       stopSession: async () => ({ killed: [], survivors: [] }),
+      writeTerminalLaunchSpec: async () => {
+        throw new Error("terminal creation stopped after prompt assembly");
+      },
       sessiond: {
         prepareAgentCreation: async () => null,
         admit: async () => null,
@@ -690,6 +693,9 @@ describe("spawn taskId linkage", () => {
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async () => {
+        throw new Error("terminal creation stopped after prompt assembly");
+      },
       sessiond: {
         prepareAgentCreation: async () => admission,
         admit: async () => null,

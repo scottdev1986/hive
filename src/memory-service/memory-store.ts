@@ -952,9 +952,9 @@ export async function buildMemoryIndex(
     const { MemoryIndex } = await import("./fts-index");
     const Database = (await import("bun:sqlite")).Database;
 
-    // Build temporary in-memory index for recall
+    // Build temporary in-memory index for recall. Retirement stays off: this is a read that ranks the index, and a read must never delete an article.
     const tempIndex = new MemoryIndex(new Database(":memory:"));
-    await tempIndex.rebuild(root);
+    await tempIndex.rebuild(root, undefined, { retireLegacy: false });
 
     // Use buildMemoryRecallBundle with FTS-only (semantic disabled)
     const bundle = await buildMemoryRecallBundle(
@@ -990,6 +990,20 @@ export async function buildMemoryIndex(
       const key = `${article.scope}/${article.id}`;
       const row = rowsByKey.get(key);
       if (row !== undefined) shown.push(row);
+    }
+
+    // Recall ranks; it does not gate. A brief that shares no token with the corpus still delivers the budget — pitfalls first, then newest — or the prompt would claim an empty world while stamping the index complete. The ranked prefix is itself capped: the bundle may carry up to the cap of each class.
+    shown.splice(MEMORY_INDEX_MAX_ENTRIES);
+    const chosen = new Set(shown);
+    const backfill = [...allRows].sort((a, b) => {
+      if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
+      return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
+    });
+    for (const candidate of backfill) {
+      if (shown.length >= MEMORY_INDEX_MAX_ENTRIES) break;
+      if (chosen.has(candidate.row)) continue;
+      chosen.add(candidate.row);
+      shown.push(candidate.row);
     }
 
     const omitted = allRows.length - shown.length;

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { TERMINAL_SHELL } from "../../../src/daemon/session-host/shell-session";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { defaultComposerPlaceholder } from "../../../src/cli/agent-ui/presentation";
@@ -338,6 +339,23 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
             },
           }),
           isModelEnabled: async () => true,
+          // Ghostty owns pane PTYs in production: the spawner only writes a launch spec. This live gate rebuilds the sessiond create from that spec — the same zsh login shell and HIVE_AGENT_UI_COMMAND contract the DirectHost enforces — so create, attach, input, capture, and teardown stay proven against the real engine.
+          writeTerminalLaunchSpec: async (locator, launch, context) => {
+            const lease = await workspaceVisibility.prepareAgentCreation();
+            if (lease === null) {
+              throw new Error("live create bridge has no visibility lease");
+            }
+            // The ZDOTDIR hook that execed HIVE_AGENT_UI_COMMAND left with the Ghostty move, so the shell runs the frontend command directly; the DirectHost still measures the same zsh contract.
+            await adapter.create(
+              {
+                ...context.session,
+                // The exact string Ghostty would exec: two commands, so zsh forks the frontend into its own foreground process group instead of implicit-exec'ing it in place, which would read as shell-idle.
+                argv: [TERMINAL_SHELL, "-l", "-i", "-c", launch.command],
+                expectedExecutable: TERMINAL_SHELL,
+              },
+              { locator, visibility: lease.visibility },
+            );
+          },
           sessiond: {
             terminalHost: adapter,
             prepareAgentCreation: () =>

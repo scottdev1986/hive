@@ -112,8 +112,11 @@ export class MemoryWriteService {
       return "add";
     }
 
-    // Check if body is identical - if so, this is a NOOP (no write needed)
-    if (duplicate.body === input.body) {
+    // An identical body is a no-op only when it records nothing new: a write that supersedes an article the duplicate does not already supersede is a state change and must reach the file write, which is the one place superseded articles are deleted.
+    const supersedesRecorded = input.supersedes.every(
+      (id) => id === duplicate.id || duplicate.supersedes.includes(id),
+    );
+    if (duplicate.body === input.body && supersedesRecorded) {
       // Mutate input to reference the existing fact for consistent return
       if (input.id === undefined) {
         input.id = duplicate.id;

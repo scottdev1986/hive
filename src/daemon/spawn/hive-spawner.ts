@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { HiveTerminalBinding } from "../session-host/terminal-host-binding";
 import { definedFields } from "../../shared/defined-fields";
 import { runGit } from "../../adapters/git";
 import { loadAndValidateWakePack } from "./pack-assembly";
@@ -92,6 +93,7 @@ import {
   type ShellSessionLaunch,
   shellSessionLaunch,
   writeTerminalLaunchSpec,
+  type TerminalLaunchSpec,
 } from "../session-host/shell-session";
 import {
   PTY_CREATE_GEOMETRY,
@@ -266,11 +268,19 @@ export class HiveSpawner implements Spawner {
       PTY_CREATE_GEOMETRY,
     );
     const locator = requireSessiondAgentLocator(record);
-    await writeTerminalLaunchSpec(locator.sessionId, {
-      cwd: spec.cwd,
-      command: shell.ghosttyCommand,
-      environment: spec.environment,
-    });
+    const writeLaunchSpec =
+      this.dependencies.writeTerminalLaunchSpec ??
+      ((target: HiveTerminalBinding["locator"], launch: TerminalLaunchSpec) =>
+        writeTerminalLaunchSpec(target.sessionId, launch));
+    await writeLaunchSpec(
+      locator,
+      {
+        cwd: spec.cwd,
+        command: shell.ghosttyCommand,
+        environment: spec.environment,
+      },
+      { session: spec, command },
+    );
     this.dependencies.db.insertProviderRun({
       runId: providerRunId,
       agentId: record.id,
@@ -1379,10 +1389,8 @@ export class HiveSpawner implements Spawner {
               profile,
               handoffText,
               projectDoc,
-              recentMistakes:
-                recentMistakes !== undefined && recentMistakes.length > 0
-                  ? recentMistakes
-                  : undefined,
+              // An empty ledger stays an empty array: the prompt shows "(Mistakes ledger empty)" for [], and drops the section only for undefined, so the two must not be folded together here.
+              recentMistakes,
             }),
           },
         );

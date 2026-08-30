@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   buildMemoryIndex,
   writeMemoryFact,
+  verifyMemoryFact,
 } from "../../src/memory-service/memory-store";
 import type { MemoryWriteInput } from "../../src/schemas/memory";
 
@@ -97,10 +98,14 @@ describe("buildMemoryIndex with brief-ranked recall", () => {
         title: "Format validation article",
         body: "Check row format.",
         topic: "format",
-        status: "verified",
-        verified: "2026-07-13",
+        author: "writer",
+        status: "unverified",
       }),
     );
+    await verifyMemoryFact(root, "repo", "format-check", {
+      verifier: "critic",
+      date: "2026-07-14",
+    });
 
     const index = await buildMemoryIndex(root, { brief: "format" });
     const lines = index.split("\n");
@@ -138,7 +143,7 @@ describe("buildMemoryIndex with brief-ranked recall", () => {
     expect(pitfallRow).toContain("[pitfall]");
   });
 
-  test("no matches for brief query returns header with omit message", async () => {
+  test("a brief that matches nothing still delivers the floor rows", async () => {
     const root = await makeRoot();
     await writeMemoryFact(
       root,
@@ -151,15 +156,14 @@ describe("buildMemoryIndex with brief-ranked recall", () => {
       }),
     );
 
-    const index = await buildMemoryIndex(root, {
-      brief: "nonexistent query terms",
-    });
+    // Recall ranks the index; it never gates it. With one article and a brief sharing no token with it, the floor still delivers that article and nothing is reported omitted.
+    const index = await buildMemoryIndex(root, { brief: "zzzz wwww" });
 
     const lines = index.split("\n");
     const articleRows = lines.filter((line) => line.startsWith("- ["));
 
-    expect(articleRows.length).toBe(0);
+    expect(articleRows.length).toBe(1);
     expect(index).toContain("Hive memory index");
-    expect(index).toContain("1 older article");
+    expect(index).not.toContain("omitted");
   });
 });

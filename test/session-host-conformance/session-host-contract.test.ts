@@ -161,13 +161,6 @@ describe("terminal foundation WP0 contracts", () => {
       ),
       "utf8",
     );
-    const envelope = await readFile(
-      resolve(
-        import.meta.dir,
-        "../../workspace/Sources/HiveTerminalKit/Wire/CheckpointEnvelope.swift",
-      ),
-      "utf8",
-    );
 
     // Generated Zig must name the offset block so checkpoint_format can assert it.
     expect(zig).toContain("pub const offset = struct {");
@@ -179,12 +172,9 @@ describe("terminal foundation WP0 contracts", () => {
     expect(checkpointFormat).toMatch(/const through_seq: usize = 16;/);
     expect(checkpointFormat).toMatch(/const payload_sha256: usize = 84;/);
 
-    // Swift production path must point at the generated projection, not bare literals.
+    // The Swift projection carries the generated offsets. Ghostty owns the pane PTY now, so no Swift consumer parses HVTCP001; the Zig comptime guard above is the live drift detector and this projection is what a future Swift consumer must alias.
     expect(checkpointSwift).toContain("public enum SessionProtocolGenerated");
-    expect(envelope).toContain("SessionProtocolGenerated.Checkpoint.Offset");
-    expect(envelope).toContain(
-      "typealias FieldOffset = SessionProtocolGenerated.Checkpoint.Offset",
-    );
+    expect(checkpointSwift).toContain("public enum Offset");
     // Positive control: a wrong emitted offset fails this equality check.
     expect(checkpointSwift).toContain(
       `static let throughSeq = ${CHECKPOINT_HEADER.offsets.throughSeq}`,

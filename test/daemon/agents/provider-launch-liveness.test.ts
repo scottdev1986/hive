@@ -151,6 +151,9 @@ async function liveKimiLaunch(
     grokExecutable: "grok",
     kimiExecutable: "kimi",
     opencodeExecutable: "opencode",
+    writeTerminalLaunchSpec: async (target) => {
+      inspection = presentInspection(target);
+    },
     sessiond: {
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-test",

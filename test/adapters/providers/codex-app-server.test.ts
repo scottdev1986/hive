@@ -92,14 +92,10 @@ class FakeWire implements CodexAppServerWire {
   request<T>(method: string, params?: T): Promise<JsonValue> {
     this.requests.push({ method, params });
     const handler = this.handlers[method];
-    return Promise.resolve(
-      handler === undefined
-        ? {}
-        : requireJsonValue(
-            // SAFETY: Fake wire handlers return JSON the test constructed.
-            handler(params) as JsonValue,
-            method,
-          ),
+    if (handler === undefined) return Promise.resolve({});
+    // A handler may answer with a deferred; the wire is JSON only once it has settled.
+    return Promise.resolve(handler(params)).then((value) =>
+      requireJsonValue(value, method),
     );
   }
 

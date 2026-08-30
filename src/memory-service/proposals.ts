@@ -62,7 +62,6 @@ function formatProposal(proposal: Proposal): string {
     `**Rationale**: ${proposal.rationale}`,
     "",
     `**Proposed change**:`,
-    "",
     "```",
     proposal.proposedChange,
     "```",
@@ -203,17 +202,22 @@ export async function appendProposal(
     throw new Error(`Proposals file missing ${PROPOSAL_MARKER} section`);
   }
 
-  const emptyIndex = content.indexOf("(empty)", markerIndex);
-  let insertAfter = markerIndex + PROPOSAL_MARKER.length + 1;
-  let prefix = content.slice(0, insertAfter);
-  let suffix = content.slice(insertAfter);
-
-  if (emptyIndex !== -1 && emptyIndex < insertAfter + 50) {
-    suffix = suffix.replace("(empty)\n", "");
+  // Append means append: a new proposal lands at the end of the pending section, after the ones already waiting, so the review queue reads in the order it was filed.
+  const sectionStart = markerIndex + PROPOSAL_MARKER.length + 1;
+  const nextHeading = content.indexOf("\n## ", sectionStart);
+  const sectionEnd = nextHeading === -1 ? content.length : nextHeading + 1;
+  let section = content.slice(sectionStart, sectionEnd);
+  const emptyIndex = section.indexOf("(empty)");
+  if (emptyIndex !== -1 && emptyIndex < 50) {
+    section = section.replace("(empty)\n", "");
   }
-
   const formattedProposal = formatProposal(proposal);
-  const newContent = prefix + "\n" + formattedProposal + suffix;
+  const newContent =
+    content.slice(0, sectionStart) +
+    section.replace(/\n*$/, "\n") +
+    "\n" +
+    formattedProposal +
+    content.slice(sectionEnd);
 
   await writeFile(proposalsPath, newContent, "utf-8");
 }

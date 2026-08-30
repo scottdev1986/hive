@@ -6,7 +6,6 @@ const stringSchema = z.string();
 const jsonNumberSchema = z.number();
 const booleanSchema = z.boolean();
 const jsonSchema = z.json();
-const jsonObjectSchema = z.record(z.string(), jsonSchema);
 
 type Inspectable =
   | JsonValue
@@ -37,8 +36,11 @@ function asGuard<R>(guard: (value: Inspectable) => boolean): Guard<R> {
 }
 
 /** Narrow an untyped value to a plain object record. Arrays and null are rejected so callers can safely index string keys. Owned here so every layer imports one implementation instead of a local copy. */
+// Structural on purpose: an Error carrying a refusal code, or any other class instance with string keys, is a record to its callers. A record parse would reject those and every caller that indexes `.code` would silently see "not a record"; the loose object parse admits any non-array object.
+const recordSchema = z.looseObject({});
+
 export const isRecord: Guard<JsonObject> = asGuard(
-  (value) => jsonObjectSchema.safeParse(value).success,
+  (value) => recordSchema.safeParse(value).success,
 );
 
 export const isString: Guard<string> = asGuard(

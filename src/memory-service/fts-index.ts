@@ -188,6 +188,7 @@ export class MemoryIndex {
   async rebuild(
     root: string,
     signal?: AbortSignal,
+    options: { readonly retireLegacy?: boolean } = {},
   ): Promise<{
     count: number;
     migration: MemoryMigrationReport;
@@ -195,7 +196,7 @@ export class MemoryIndex {
     signal?.throwIfAborted();
     const migration = await rebuildMemoryIndexFiles(root, signal);
     signal?.throwIfAborted();
-    await retireLegacyHarvestArticles(root);
+    if (options.retireLegacy !== false) await retireLegacyHarvestArticles(root);
     signal?.throwIfAborted();
     const facts = await listMemoryFacts(root);
     signal?.throwIfAborted();

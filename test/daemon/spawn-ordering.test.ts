@@ -89,6 +89,7 @@ async function fixture(
     grokExecutable: "grok",
     kimiExecutable: "kimi",
     opencodeExecutable: "opencode",
+    writeTerminalLaunchSpec: options.terminalCreate,
     sessiond: {
       prepareAgentCreation: async () => ({
         engineBuildId: "engine-test",

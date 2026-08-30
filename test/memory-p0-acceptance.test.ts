@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,23 @@ import { runRetentionSweep } from "../src/memory-service/retention";
 /** §7 P0 Acceptance Tests - Named tests from LOCKED plan */
 
 const tempRoots: string[] = [];
+
+// Global-scope memory and the retention sweep's demotions live under HIVE_HOME, so the whole file runs against a temp home; a fact or index row left in a shared home leaks into the next file's "empty store" assertions.
+let previousHiveHome: string | undefined;
+let tempHome: string | null = null;
+
+beforeEach(async () => {
+  tempHome = await mkdtemp(join(tmpdir(), "hive-p0-home-"));
+  previousHiveHome = Bun.env.HIVE_HOME;
+  Bun.env.HIVE_HOME = tempHome;
+});
+
+afterEach(async () => {
+  if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
+  else Bun.env.HIVE_HOME = previousHiveHome;
+  if (tempHome !== null) await rm(tempHome, { recursive: true, force: true });
+  tempHome = null;
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -50,18 +67,24 @@ describe("P0 Memory Acceptance Tests", () => {
 
     // Add episodes with specific IDs (appendEvent returns the id)
     const ep1 = episodic.appendEvent({
+      // Aged past the hot window relative to the sweep's clock, so the keep-set is the only thing that can save an event.
+      ts: "2026-08-01T00:00:00.000Z",
       agent: "test-agent",
       type: "test",
       summary: "Referenced episode 1",
       provenance: {},
     });
     const ep2 = episodic.appendEvent({
+      // Aged past the hot window relative to the sweep's clock, so the keep-set is the only thing that can save an event.
+      ts: "2026-08-01T00:00:00.000Z",
       agent: "test-agent",
       type: "test",
       summary: "Referenced episode 2",
       provenance: {},
     });
     const ep3 = episodic.appendEvent({
+      // Aged past the hot window relative to the sweep's clock, so the keep-set is the only thing that can save an event.
+      ts: "2026-08-01T00:00:00.000Z",
       agent: "test-agent",
       type: "test",
       summary: "Unreferenced old episode",
@@ -75,9 +98,11 @@ describe("P0 Memory Acceptance Tests", () => {
       title: "Test pitfall",
       body: `See episode E${ep1.id} for details`,
       evidence: `From verification in event #${ep2.id}`,
+      // Provenance is structured: the keep-set reads eventIds, never prose. An author cannot stamp its own article verified, so the write is unverified like every real first write.
+      eventIds: [ep1.id, ep2.id],
+      author: "agent-maya",
       source: "agent",
-      status: "verified",
-      verified: "2026-08-01",
+      status: "unverified",
       kind: "pitfall",
       tags: [],
       supersedes: [],

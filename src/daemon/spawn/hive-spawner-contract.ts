@@ -1,4 +1,7 @@
 import type { probeGrokCliVersion } from "../../adapters/providers/grok-cli";
+import type { TerminalLaunchSpec } from "../session-host/shell-session";
+import type { SessionSpec } from "../../schemas/session-protocol";
+import type { HiveTerminalBinding } from "../session-host/terminal-host-binding";
 import type {
   CreatedWorktree,
   unavailableAgentNames,
@@ -114,6 +117,13 @@ export interface HiveSpawnerDependencies {
   /** The user's routing policy — the ONLY route source. A spawn names a task category; the policy's ordered chain for that category decides what runs. Absent (unwired embedders) or throwing (corrupt store) REFUSES the spawn: not-configured is never a route. */
   readRoutingPolicy?: () => RoutingPolicy;
   sessiond: SessiondSpawnAdmission;
+  /** The pane-launch seam. Ghostty in the Workspace owns the PTY, so production writes the spec the pane execs instead of asking sessiond to create a terminal; a test injects a failing or blocking writer here where it used to inject `terminalHost.create`. */
+  writeTerminalLaunchSpec?: (
+    locator: HiveTerminalBinding["locator"],
+    spec: TerminalLaunchSpec,
+    /** The session the spec was cut from and the raw agent command inside it. Production ignores this; the sessiond live gate rebuilds a DirectHost create from it in place of the file write. */
+    context: Readonly<{ session: SessionSpec; command: string }>,
+  ) => Promise<void>;
   /** Kimi's persistent TUI has no launch-time user-turn argument. Production supplies the same exact-foreground terminal injector used for later messages; other providers never read this dependency. */
   stopSession: StopAgentSession;
   createWorktree?: WorktreeCreator;

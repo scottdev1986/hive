@@ -176,9 +176,10 @@ test("the critical section serializes concurrent writes rather than racing", asy
   const { service, index, episodic } = await makeService();
 
   // Two writes of the same title, launched together. Serialized, the second
-  // runs after the first has landed, sees it on disk and is refused as a
-  // duplicate. Interleaved, both would pass the duplicate check against an
-  // empty directory and race for one id and one raw path.
+  // runs after the first has landed, sees it on disk, and the pre-write gate
+  // turns it into an update of that article. Interleaved, both would pass the
+  // duplicate check against an empty directory and race for one id and one
+  // raw path, leaving two articles.
   const settled = await Promise.allSettled([
     service.write({ ...input, body: "First body, long enough to be a claim." }),
     service.write({
@@ -187,11 +188,11 @@ test("the critical section serializes concurrent writes rather than racing", asy
     }),
   ]);
 
-  expect(
-    settled.filter((result) => result.status === "fulfilled"),
-  ).toHaveLength(1);
-  const rejected = settled.find((result) => result.status === "rejected");
-  expect(String(rejected?.reason)).toContain("Duplicate memory article title");
+  const fulfilled = settled.flatMap((result) =>
+    result.status === "fulfilled" ? [result.value] : [],
+  );
+  expect(fulfilled).toHaveLength(2);
+  expect(new Set(fulfilled.map((fact) => fact.id)).size).toBe(1);
   expect(index.search("claim", { limit: 5 })).toHaveLength(1);
 
   episodic.close();

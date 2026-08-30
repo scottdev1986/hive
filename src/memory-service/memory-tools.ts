@@ -236,16 +236,14 @@ export function registerMemoryTools(
             : `~/.hive/memory/wiki/${row.topic}/${row.id}.md`,
       }));
 
-      // Build result envelope with semantic status on structured content
-      const payload = { results, semantic: bundle.semantic };
-
       // Label semantic status so client can tell FTS-only vs hybrid vs degraded
       if (bundle.semantic.startsWith("degraded:")) {
         const state = bundle.semantic.slice("degraded:".length);
         const warning = memoryRecallDegradedWarning(state);
         return {
+          // The first text block is the value the policy's output key names — the results array — like every other Hive tool; the semantic status rides on structuredContent and the second block, never wrapped around the results.
           content: [
-            { type: "text" as const, text: JSON.stringify(payload) },
+            { type: "text" as const, text: JSON.stringify(results) },
             { type: "text" as const, text: warning },
           ],
           structuredContent: {
@@ -259,7 +257,7 @@ export function registerMemoryTools(
       // Return with semantic status label
       return {
         content: [
-          { type: "text" as const, text: JSON.stringify(payload) },
+          { type: "text" as const, text: JSON.stringify(results) },
           {
             type: "text" as const,
             text:

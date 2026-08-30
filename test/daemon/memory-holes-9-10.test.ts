@@ -12,6 +12,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { getHiveHome } from "../../src/hive-home/home";
+
+/** The launch runs on in the background after spawn() returns and releases the agent name in its finally; closing the database under it turns a fail-closed launch into a closed-database error. */
+async function launchReleased(db: HiveDatabase): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (db.listAgents().every((agent) => !db.isAgentNameReserved(agent.name)))
+      return;
+    await Bun.sleep(5);
+  }
+}
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { HiveSpawner } from "../../src/daemon/spawn/hive-spawner";
 import { MemoryIndex } from "../../src/memory-service/fts-index";
@@ -149,6 +158,9 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async () => {
+        throw new Error("terminal creation stopped after prompt assembly");
+      },
       sessiond: {
         prepareAgentCreation: async () => admission,
         admit: async () => null,
@@ -209,6 +221,7 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       expect(prompt).not.toContain("CAP CROSSED");
       expect(prompt).not.toContain("older article");
     } finally {
+      await launchReleased(db);
       db.close();
     }
   });
@@ -303,6 +316,9 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async () => {
+        throw new Error("terminal creation stopped after prompt assembly");
+      },
       sessiond: {
         prepareAgentCreation: async () => admission,
         admit: async () => null,
@@ -341,6 +357,7 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       // Agent should be dead/stuck (not working)
       expect(settled?.status).toBeOneOf(["dead", "stuck"]);
     } finally {
+      await launchReleased(db);
       db.close();
     }
   });
@@ -446,6 +463,9 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async () => {
+        throw new Error("terminal creation stopped after prompt assembly");
+      },
       sessiond: {
         prepareAgentCreation: async () => admission,
         admit: async () => null,
@@ -501,6 +521,7 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
         prompt.includes("omitted — use memory_search");
       expect(hasCapCrossed || hasOmittedLine).toBe(true);
     } finally {
+      await launchReleased(db);
       db.close();
     }
   });
@@ -688,6 +709,9 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async () => {
+        throw new Error("terminal creation stopped after prompt assembly");
+      },
       sessiond: {
         prepareAgentCreation: async () => admission,
         admit: async () => null,
@@ -740,6 +764,7 @@ describe("Hole #9: empty vs dropped vs pack-off distinguishable", () => {
       expect(prompt).toContain("Handoff Context");
       expect(prompt).toContain("Project Context");
     } finally {
+      await launchReleased(db);
       db.close();
     }
   });
@@ -764,12 +789,17 @@ describe("Hole #10: citation heuristic fail-closed on read", () => {
       body: "Use the `userId` field to identify users. The `apiKey` must be validated.",
       evidence: "From code review",
       source: "agent",
-      status: "verified",
-      verified: "2026-08-20",
+      author: "writer",
+      status: "unverified",
       kind: "article",
       tags: [],
       supersedes: [],
       date: "2026-08-20",
+    });
+    // Citation validation runs only for verified articles, and an author cannot verify its own write, so a second session stamps it.
+    await writeService.verify("repo", factWithVariables.id, {
+      verifier: "critic",
+      date: "2026-08-21",
     });
 
     // Create fake MCP server that captures registered handlers
@@ -854,12 +884,17 @@ describe("Hole #10: citation heuristic fail-closed on read", () => {
       body: "See src/old-file.ts for the implementation (this file was deleted)",
       evidence: "Historical note",
       source: "agent",
-      status: "verified",
-      verified: "2026-08-15",
+      author: "writer",
+      status: "unverified",
       kind: "article",
       tags: [],
       supersedes: [],
       date: "2026-08-15",
+    });
+    // Citation validation runs only for verified articles, and an author cannot verify its own write, so a second session stamps it.
+    await writeService.verify("repo", factWithMissingPath.id, {
+      verifier: "critic",
+      date: "2026-08-16",
     });
 
     // Create fake MCP server that captures registered handlers
@@ -948,12 +983,17 @@ describe("Hole #10: citation heuristic fail-closed on read", () => {
       body: "See test-file.txt for the implementation",
       evidence: "Current reference",
       source: "agent",
-      status: "verified",
-      verified: "2026-08-20",
+      author: "writer",
+      status: "unverified",
       kind: "article",
       tags: [],
       supersedes: [],
       date: "2026-08-20",
+    });
+    // Citation validation runs only for verified articles, and an author cannot verify its own write, so a second session stamps it.
+    await writeService.verify("repo", factWithValidPath.id, {
+      verifier: "critic",
+      date: "2026-08-21",
     });
 
     // Create fake MCP server that captures registered handlers

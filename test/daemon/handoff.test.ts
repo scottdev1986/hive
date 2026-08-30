@@ -139,7 +139,8 @@ describe("handoff bundle", () => {
     }
   });
 
-  test("replacement bootstrap carries the exact pickup boundary", async () => {
+  test("replacement bootstrap carries the auto-injected handoff", async () => {
+    // The handoff is injected into the prompt itself, never fetched on demand: a replacement that had to call hive_pickup_handoff first could start work before reading its boundary.
     const prompt = buildAgentPrompt(
       "replacement",
       "Preserve exact work",
@@ -148,12 +149,13 @@ describe("handoff bundle", () => {
       await loadAgentStandards(join(import.meta.dir, "../..")),
       {
         category: "simple_coding",
-        handoffId: "018f1e90-7b5a-7cc0-8000-000000000216",
+        handoffText:
+          "**Goal**: Preserve exact work\n**Remaining**: pickup boundary 018f1e90-7b5a-7cc0-8000-000000000216",
       },
     );
-    expect(prompt).toContain("hive_pickup_handoff");
+    expect(prompt).toContain("## Handoff Context");
     expect(prompt).toContain("018f1e90-7b5a-7cc0-8000-000000000216");
-    expect(prompt).toContain("does not mark it complete");
+    expect(prompt).toContain("**Remaining**: pickup boundary");
   });
 
   test("preserves a dead source through a terminal gap and summarizer failure", async () => {

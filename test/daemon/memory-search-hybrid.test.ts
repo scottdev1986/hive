@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { isRecord, isString } from "../../src/shared/is-record";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,17 +76,20 @@ async function connectedClient(daemon: HiveDaemon): Promise<Client> {
 
 function parseSearchResult<T>(result: {
   content: Array<{ type: string; text?: string }>;
-}): { results: T; semantic: string } {
+  structuredContent?: unknown;
+}) {
   const content = result.content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool result");
   }
-  // SAFETY: JSON.parse returns unknown; type guard above ensures content.text exists
-  const payload = JSON.parse(content.text) as {
-    results: T;
-    semantic: string;
-  };
-  return payload;
+  const structured = result.structuredContent;
+  const semantic = isRecord(structured) ? structured.semantic : undefined;
+  if (!isString(semantic)) {
+    throw new Error("Expected semantic status on structured content");
+  }
+  // SAFETY: the tool's first text block is the results array the policy's output key names; JSON.parse returns unknown and the test asserts its shape below.
+  const results = JSON.parse(content.text) as T;
+  return { results, semantic };
 }
 
 function parseWriteResult<T>(result: {

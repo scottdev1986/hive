@@ -157,6 +157,9 @@ export async function assertSpawnMemoryIndexAccounting(): Promise<void> {
     grokExecutable: "grok",
     kimiExecutable: "kimi",
     opencodeExecutable: "opencode",
+    writeTerminalLaunchSpec: async () => {
+      throw new Error("terminal creation stopped after prompt assembly");
+    },
     sessiond: {
       prepareAgentCreation: async () => admission,
       admit: async () => null,

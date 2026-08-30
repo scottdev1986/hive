@@ -163,6 +163,9 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async () => {
+        throw new Error("terminal creation stopped after prompt assembly");
+      },
       sessiond: {
         prepareAgentCreation: async () => admission,
         admit: async () => null,
@@ -180,11 +183,13 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
       },
     });
 
+    let admittedName: string | null = null;
     try {
       const admitted = await spawner.spawn({
         task: "test task",
         category: "simple_coding",
       });
+      admittedName = admitted.name;
       expect(admitted.status).toBe("spawning");
 
       // Read the actual prompt file from getHiveHome()/runtime/prompts/
@@ -217,6 +222,10 @@ describe("HM-6 critic: spawn/queen get pack floor WITHOUT memory_search", () => 
       // This proves spawn got pack floor via buildMemoryIndex (FTS-only)
       // memory_search is mentioned as an ARCHIVE tool, not required for pack
     } finally {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (!db.isAgentNameReserved(admittedName ?? "")) break;
+        await Bun.sleep(5);
+      }
       db.close();
     }
   });

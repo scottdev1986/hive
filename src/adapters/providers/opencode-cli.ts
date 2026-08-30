@@ -105,7 +105,8 @@ export const HiveGraphifyGate = async () => ({
       const hook = JSON.parse(raw).hookSpecificOutput;
       if (
         hook.permissionDecision === "deny" &&
-        isString(hook.permissionDecisionReason)
+        // Plain typeof on purpose: this text is written into the worktree as a standalone plugin with no imports, so a helper from this module would be an undefined name at runtime and the deny would be swallowed.
+        typeof hook.permissionDecisionReason === "string"
       ) {
         decline = hook.permissionDecisionReason;
       }

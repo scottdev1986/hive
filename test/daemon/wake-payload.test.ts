@@ -94,7 +94,7 @@ describe("WakePayloadService", () => {
     expect(payload.mailCounts.workAvailable).toBe(2);
   });
 
-  test("builds date-ranked recent wiki slice, not recipient search", async () => {
+  test("builds a recall slice from the named wake query", async () => {
     const root = tempRoot("hive-wake-");
     const db = new HiveDatabase(":memory:");
     const mailStore = new MailStore(db);
@@ -152,22 +152,23 @@ describe("WakePayloadService", () => {
 
     const service = await wakeService(root, mailStore, 300);
 
+    // The query is built from the wake's lane, topic, objective and last mail — not the recipient's name and not a newest-first slice.
     const payload = await service.build({
       recipient: "test",
       wakeId: "wake456",
       oldestItemId: "item2",
       lane: "work",
+      objective: "article",
     });
 
     expect(payload.memoryDelta.state).toBe("ok");
-    // Should be sorted by date descending
-    const allRows = [
+    const ids = [
       ...payload.memoryDelta.pitfalls,
       ...payload.memoryDelta.articles,
-    ];
-    expect(allRows[0]?.id).toBe("newest-article");
-    expect(allRows[1]?.id).toBe("recent-article");
-    expect(allRows[2]?.id).toBe("old-article");
+    ].map((row) => row.id);
+    expect(new Set(ids)).toEqual(
+      new Set(["newest-article", "recent-article", "old-article"]),
+    );
   });
 
   test("clamps memory to wake_budget_tokens and reports omitted counts", async () => {
@@ -207,6 +208,7 @@ describe("WakePayloadService", () => {
       wakeId: "wake789",
       oldestItemId: "item3",
       lane: "work",
+      topic: "test article",
     });
 
     expect(payload.memoryDelta.budget).toBe(150);

@@ -1850,6 +1850,11 @@ test("spawner binds after readiness and preserves identities when terminal death
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async (target) => {
+        launchCalls += 1;
+        if (launchFails) throw new Error("provider launch failed");
+        locator = target;
+      },
       sessiond: {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-1",
@@ -2509,6 +2514,16 @@ test("a failed launch leaves the hierarchy task and identity dispatchable for re
       grokExecutable: "grok",
       kimiExecutable: "kimi",
       opencodeExecutable: "opencode",
+      writeTerminalLaunchSpec: async (target) => {
+        if (faulted && scenario.fault === "terminal-create") {
+          throw new SessiondWireError(
+            "CAPACITY_EXCEEDED",
+            "terminal host capacity unavailable",
+            null,
+          );
+        }
+        locator = target;
+      },
       sessiond: {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-1",

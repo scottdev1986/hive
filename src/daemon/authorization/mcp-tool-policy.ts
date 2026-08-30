@@ -25,7 +25,15 @@ interface HiveToolPolicy {
 }
 
 function structuredOutput(outputKeys: readonly string[]): z.ZodType {
-  const structuredValue = z.union([z.null(), z.json()]);
+  // Optional record fields that are undefined vanish under JSON.stringify, so the wire payload is valid JSON even though a strict JSON parse of the in-memory value would refuse it. Validate the shape, not JSON-ness.
+  const structuredValue = z.union([
+    z.null(),
+    z.boolean(),
+    z.number(),
+    z.string(),
+    z.array(z.unknown()),
+    z.record(z.string(), z.unknown()),
+  ]);
   const fields = Object.fromEntries(
     outputKeys.map((outputKey) => [
       outputKey,
