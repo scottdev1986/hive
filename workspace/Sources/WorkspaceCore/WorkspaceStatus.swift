@@ -36,8 +36,8 @@ public enum WorkspaceJSONValue: Codable, Equatable, Sendable {
     }
 }
 
-public struct WorkspaceStatusEvent: Codable, Equatable {
-    public struct Entity: Codable, Equatable {
+public struct WorkspaceStatusEvent: Codable, Equatable, Sendable {
+    public struct Entity: Codable, Equatable, Sendable {
         public let kind: String
         public let id: String
         public let generation: Int?
@@ -49,7 +49,7 @@ public struct WorkspaceStatusEvent: Codable, Equatable {
         }
     }
 
-    public struct Source: Codable, Equatable {
+    public struct Source: Codable, Equatable, Sendable {
         public let kind: String
         public let id: String
         public let observedAt: String
@@ -390,5 +390,18 @@ public enum WorkspaceStatusReducer {
         return WorkspaceStatusProjection(
             highWaterSeq: snapshot.seq,
             entities: Dictionary(uniqueKeysWithValues: keyedEntities))
+    }
+}
+
+/// One page of an agent's typed events from `GET /workspace-events`, oldest first. `nextSeq` is present only when the daemon cut the page at its limit. The fixture corpus predates the page envelope and carries only `events`, which is why the other fields are optional.
+public struct WorkspaceEventsPage: Codable, Equatable, Sendable {
+    public let agentId: String?
+    public let events: [WorkspaceStatusEvent]
+    public let nextSeq: String?
+
+    public init(agentId: String? = nil, events: [WorkspaceStatusEvent], nextSeq: String? = nil) {
+        self.agentId = agentId
+        self.events = events
+        self.nextSeq = nextSeq
     }
 }

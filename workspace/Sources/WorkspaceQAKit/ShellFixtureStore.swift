@@ -44,6 +44,7 @@ public struct ShellFixtureStore {
         .memoryRecallLab: "memory-recall-corpus",
         .memoryMaintenance: "memory-maintenance-corpus",
     ]
+    static let eventsCorpus = "inspector-events-corpus"
     static let absentCorpus = "shell-absent-screens-corpus"
     /// The corpus is one project's frozen reading, so its library walk is keyed to one project.
     static let fixtureProject = ProjectID("fixture")
@@ -162,6 +163,12 @@ public struct ShellFixtureStore {
             inputs.run = value.run
             inputs.incident = value.incident
             inputs.stranded = value.stranded
+        }
+        if let agentId = inputs.selectedAgentId {
+            let events: ClientProjection<WorkspaceEventsPage> = try loadRow(
+                named: Self.eventsCorpus, availability: scenario)
+            inputs.eventsRead = InspectorEventsRead(
+                agentId: agentId, result: .projection(events))
         }
 
         let projection = ShellInspectorPresenter.present(inputs)

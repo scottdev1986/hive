@@ -18,6 +18,8 @@ export const WORKSPACE_EVENT_SOURCE_KINDS = [
   "agent-report",
   "task",
   "user",
+  // What an agent's own pane saw it do — tool calls, mail it read or sent, questions it asked. A history feed for the inspector, never a status observation: fusion ranks it last and the store keeps it out of the activity slot.
+  "agent-pane",
 ] as const;
 export const WORKSPACE_EVENT_CONFIDENCE = [
   "authoritative",
@@ -371,6 +373,39 @@ export const HiveTerminalObserveInputSchema = z.strictObject({
     .min(STATUS_LIMITS.terminalObservationRowsMin)
     .max(STATUS_LIMITS.terminalObservationRowsMax),
 });
+
+/** One thing an agent's pane watched happen, reported without the payload: the inspector shows that a file was edited or a message was read, and the pane keeps the text. */
+export const PaneEventSchema = z.strictObject({
+  occurredAt: Rfc3339UtcMillisecondsSchema,
+  kind: z
+    .string()
+    .regex(
+      /^pane\.[a-z]+(\.[a-z]+)*$/,
+      "a pane event kind is pane.<area>.<what>",
+    ),
+  data: z.record(z.string(), z.json()),
+});
+export type PaneEvent = z.infer<typeof PaneEventSchema>;
+
+export const PaneEventsReportSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  events: z.array(PaneEventSchema).min(1).max(200),
+});
+
+export const WorkspaceEventsQuerySchema = z.strictObject({
+  agent: z.string().min(1),
+  afterSeq: DecimalUint64Schema.default("0"),
+  limit: z.coerce.number().int().min(1).max(1000).default(500),
+});
+
+/** A page of one agent's typed events, oldest first. `nextSeq` is set only when the page was cut at `limit`, so a reader that sees null has everything. */
+export const WorkspaceEventsPageSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  agentId: z.string().min(1),
+  events: z.array(WorkspaceEventV2Schema),
+  nextSeq: DecimalUint64Schema.nullable(),
+});
+export type WorkspaceEventsPage = z.infer<typeof WorkspaceEventsPageSchema>;
 
 export const STATUS_WIRE_SCHEMAS = {
   workspaceEventV2: WorkspaceEventV2Schema,

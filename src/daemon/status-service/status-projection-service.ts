@@ -283,6 +283,18 @@ export class StatusService {
     return this.events.appendSourceEvent(...args);
   }
 
+  currentProjectionForAgent(
+    ...args: Parameters<StatusStore["currentProjectionForAgent"]>
+  ): ReturnType<StatusStore["currentProjectionForAgent"]> {
+    return this.events.currentProjectionForAgent(...args);
+  }
+
+  appendSourceEvents(
+    ...args: Parameters<StatusStore["appendSourceEvents"]>
+  ): ReturnType<StatusStore["appendSourceEvents"]> {
+    return this.events.appendSourceEvents(...args);
+  }
+
   appendObservationAudit(
     ...args: Parameters<StatusStore["appendObservationAudit"]>
   ): ReturnType<StatusStore["appendObservationAudit"]> {
@@ -305,6 +317,12 @@ export class StatusService {
     ...args: Parameters<StatusStore["listEventsForAgent"]>
   ): ReturnType<StatusStore["listEventsForAgent"]> {
     return this.events.listEventsForAgent(...args);
+  }
+
+  listEventsForAgentAfter(
+    ...args: Parameters<StatusStore["listEventsForAgentAfter"]>
+  ): ReturnType<StatusStore["listEventsForAgentAfter"]> {
+    return this.events.listEventsForAgentAfter(...args);
   }
 
   newestAgentEventSeq(

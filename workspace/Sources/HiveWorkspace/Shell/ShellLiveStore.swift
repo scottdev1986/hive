@@ -320,6 +320,26 @@ struct ShellLiveStore {
         } else {
             selectedAgentId = nil
         }
+        var eventsRead: InspectorEventsRead?
+        if let selectedAgentId {
+            let result = await client.fetchResult(WorkspaceReadEndpoint<WorkspaceEventsPage>(
+                path: "workspace-events",
+                queryItems: [URLQueryItem(name: "agent", value: selectedAgentId)],
+                source: { ProjectionSource(revision: $0.events.last?.seq) },
+                observedAt: { $0.events.last?.occurredAt }))
+            switch result {
+            case .projection(let projection):
+                eventsRead = InspectorEventsRead(
+                    agentId: selectedAgentId, result: .projection(projection))
+            case .refused(let status, let code, let detail):
+                eventsRead = InspectorEventsRead(
+                    agentId: selectedAgentId,
+                    result: .refused(detail: "HTTP \(status) · \(code.displayValue) · \(detail)"))
+            case .invalid(let detail):
+                eventsRead = InspectorEventsRead(
+                    agentId: selectedAgentId, result: .invalid(detail: detail))
+            }
+        }
 
         state.apply(inspector: ShellInspectorPresenter.present(
             ShellInspectorPresenter.Inputs(
@@ -332,7 +352,8 @@ struct ShellLiveStore {
                 incident: incident,
                 stranded: stranded,
                 routeInspectionReads: inspectorRouteReads,
-                selectedAgentId: selectedAgentId)))
+                selectedAgentId: selectedAgentId,
+                eventsRead: eventsRead)))
 
         for route in ShellRoute.allCases where state.screens[route] == nil {
             state.apply(screen: .notFrozen(

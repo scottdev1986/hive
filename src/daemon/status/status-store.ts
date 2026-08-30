@@ -692,6 +692,29 @@ export class StatusStore implements WorkspaceStatusEventSource {
     );
   }
 
+  /** One agent's events after a sequence, oldest first and bounded, for a reader paging a history feed rather than replaying a projection. */
+  listEventsForAgentAfter(
+    agentId: string,
+    afterSeq: string,
+    limit: number,
+  ): WorkspaceEventV2[] {
+    const rows = this.db.database
+      .query(
+        `
+        SELECT payload FROM status_workspace_events
+        WHERE subjectAgentId = ? AND seqKey > ?
+        ORDER BY seqKey
+        LIMIT ?
+      `,
+      )
+      .all(agentId, sequenceKey(afterSeq), limit);
+    return rows.map((row) =>
+      WorkspaceEventV2Schema.parse(
+        JSON.parse(EventRowSchema.parse(row).payload),
+      ),
+    );
+  }
+
   listEventsForAgent(agentId: string): WorkspaceEventV2[] {
     const rows = this.db.database
       .query(
@@ -963,6 +986,8 @@ export class StatusStore implements WorkspaceStatusEventSource {
   private projectAgentEventInTransaction(event: WorkspaceEventV2): void {
     const agentId = subjectAgentId(event);
     if (agentId === "") return;
+    // A pane's history feed is not evidence of the agent's status: letting it into the activity slot would make every tool call look like a fresh observation of liveness and displace the source that actually measured it.
+    if (event.source.kind === "agent-pane") return;
 
     const priorRevision = this.db.database
       .query(

@@ -82,22 +82,143 @@ public struct InspectorTaskPane: Equatable, Sendable {
     }
 }
 
+/// The result of one `GET /workspace-events` read for the selected agent, kept apart the same way a routing inspection is: a refusal and a schema failure are answers, not lost transport.
+public struct InspectorEventsRead: Equatable, Sendable {
+    public enum Result: Equatable, Sendable {
+        case projection(ClientProjection<WorkspaceEventsPage>)
+        case refused(detail: String)
+        case invalid(detail: String)
+    }
+
+    public let agentId: String
+    public let result: Result
+
+    public init(agentId: String, result: Result) {
+        self.agentId = agentId
+        self.result = result
+    }
+}
+
+public enum InspectorEventCategory: String, CaseIterable, Codable, Equatable, Sendable {
+    case tools
+    case mail
+    case board
+    case status
+
+    public var title: String {
+        switch self {
+        case .tools: return "Tools"
+        case .mail: return "Mail"
+        case .board: return "Board"
+        case .status: return "Status"
+        }
+    }
+}
+
+/// The mark on an event row. Each carries a symbol and a word so the state never rests on color alone.
+public enum InspectorEventMark: String, Codable, Equatable, Sendable {
+    case ok
+    case failed
+    case running
+    case mailIn
+    case mailOut
+    case mailReady
+    case status
+
+    public var symbolName: String {
+        switch self {
+        case .ok: return "checkmark"
+        case .failed: return "xmark"
+        case .running: return "circle.dotted"
+        case .mailIn: return "arrow.down"
+        case .mailOut: return "arrow.up"
+        case .mailReady: return "tray"
+        case .status: return "diamond"
+        }
+    }
+
+    public var word: String {
+        switch self {
+        case .ok: return "ok"
+        case .failed: return "failed"
+        case .running: return "running"
+        case .mailIn: return "in"
+        case .mailOut: return "out"
+        case .mailReady: return "ready"
+        case .status: return "status"
+        }
+    }
+}
+
+public struct InspectorEventRow: Equatable, Sendable {
+    public let id: String
+    public let occurredAt: String
+    public let category: InspectorEventCategory
+    public let mark: InspectorEventMark
+    public let label: String
+    public let subject: String?
+    public let detail: String?
+    /// The pane drew this as conversation too, so the two views can be reconciled by eye.
+    public let shownInChat: Bool
+
+    public init(
+        id: String,
+        occurredAt: String,
+        category: InspectorEventCategory,
+        mark: InspectorEventMark,
+        label: String,
+        subject: String?,
+        detail: String?,
+        shownInChat: Bool
+    ) {
+        self.id = id
+        self.occurredAt = occurredAt
+        self.category = category
+        self.mark = mark
+        self.label = label
+        self.subject = subject
+        self.detail = detail
+        self.shownInChat = shownInChat
+    }
+}
+
+/// One turn's rows under a header that says who started it. Events the pane did not attribute to a turn sit under a "session" header of their own.
+public struct InspectorEventTurn: Equatable, Sendable {
+    public let id: String
+    public let label: String
+    public let wake: Bool
+    public let occurredAt: String
+    public let rows: [InspectorEventRow]
+
+    public init(id: String, label: String, wake: Bool, occurredAt: String, rows: [InspectorEventRow]) {
+        self.id = id
+        self.label = label
+        self.wake = wake
+        self.occurredAt = occurredAt
+        self.rows = rows
+    }
+}
+
 public struct InspectorEventsPane: Equatable, Sendable {
     public let microLabel: String
     public let title: String
     public let explanation: String
-    public let events: InspectorListState<InspectorFact>
+    public let events: InspectorListState<InspectorEventTurn>
+    /// True when this refresh could not replace the list, so a retained value is known to be old.
+    public let readFailed: Bool
 
     public init(
         microLabel: String,
         title: String,
         explanation: String,
-        events: InspectorListState<InspectorFact>
+        events: InspectorListState<InspectorEventTurn>,
+        readFailed: Bool = false
     ) {
         self.microLabel = microLabel
         self.title = title
         self.explanation = explanation
         self.events = events
+        self.readFailed = readFailed
     }
 }
 
@@ -177,6 +298,7 @@ public enum ShellInspectorPresenter {
         public var stranded: HierarchyStrandedManifestProjection?
         public var routeInspectionReads: [InspectorRouteInspectionRead]?
         public var selectedAgentId: String?
+        public var eventsRead: InspectorEventsRead?
 
         public init(
             snapshot: WorkspaceStatusSnapshot? = nil,
@@ -188,7 +310,8 @@ public enum ShellInspectorPresenter {
             incident: HierarchyIncidentProjection? = nil,
             stranded: HierarchyStrandedManifestProjection? = nil,
             routeInspectionReads: [InspectorRouteInspectionRead]? = nil,
-            selectedAgentId: String? = nil
+            selectedAgentId: String? = nil,
+            eventsRead: InspectorEventsRead? = nil
         ) {
             self.snapshot = snapshot
             self.snapshotAvailability = snapshotAvailability
@@ -200,6 +323,7 @@ public enum ShellInspectorPresenter {
             self.stranded = stranded
             self.routeInspectionReads = routeInspectionReads
             self.selectedAgentId = selectedAgentId
+            self.eventsRead = eventsRead
         }
     }
 
@@ -213,7 +337,7 @@ public enum ShellInspectorPresenter {
             routeInspectionReads: inputs.routeInspectionReads,
             banners: banners(inputs),
             task: taskPane(inputs),
-            events: eventsPane(),
+            events: eventsPane(inputs),
             session: sessionPane(inputs))
     }
 
@@ -223,8 +347,18 @@ public enum ShellInspectorPresenter {
         on refreshed: InspectorProjection?
     ) -> InspectorProjection? {
         guard let refreshed else { return prior }
+        let events = retainedEvents(from: prior, on: refreshed)
         guard refreshed.routeInspectionReadFailed, let prior else {
-            return refreshed
+            return events == refreshed.events ? refreshed : InspectorProjection(
+                availability: refreshed.availability,
+                observedAt: refreshed.observedAt,
+                selectedAgentId: refreshed.selectedAgentId,
+                routeInspectionReadFailed: refreshed.routeInspectionReadFailed,
+                routeInspectionReads: refreshed.routeInspectionReads,
+                banners: refreshed.banners,
+                task: refreshed.task,
+                events: events,
+                session: refreshed.session)
         }
         var retainedCategory = false
         let mergedReads = refreshed.routeInspectionReads?.map { refreshedRead in
@@ -257,8 +391,27 @@ public enum ShellInspectorPresenter {
             routeInspectionReads: mergedReads,
             banners: refreshed.banners,
             task: task,
-            events: refreshed.events,
+            events: events,
             session: refreshed.session)
+    }
+
+    /// A failed events read keeps the last list this agent showed, marked as retained, rather than blinking to absent on every dropped poll.
+    private static func retainedEvents(
+        from prior: InspectorProjection?,
+        on refreshed: InspectorProjection
+    ) -> InspectorEventsPane {
+        guard refreshed.events.readFailed,
+              let prior,
+              prior.selectedAgentId == refreshed.selectedAgentId,
+              case .present = prior.events.events else {
+            return refreshed.events
+        }
+        return InspectorEventsPane(
+            microLabel: prior.events.microLabel,
+            title: prior.events.title,
+            explanation: refreshed.events.explanation,
+            events: prior.events.events,
+            readFailed: true)
     }
 
     private static func taskPane(_ inputs: Inputs) -> InspectorTaskPane {
@@ -442,17 +595,46 @@ public enum ShellInspectorPresenter {
         }
     }
 
-    private static func eventsPane() -> InspectorEventsPane {
-        return InspectorEventsPane(
-            microLabel: "Typed history",
-            title: "Events",
-            explanation:
-                "Typed status history only. Nothing here is scraped from a terminal.",
-            events: .absent(reason:
-                "StatusStore.listEvents holds WorkspaceEventV2 rows in "
-                    + "status_workspace_events, and hive_status can name them, "
-                    + "but no Workspace HTTP GET serves that stream. "
-                    + "The inspector does not invent an event list."))
+    private static func eventsPane(_ inputs: Inputs) -> InspectorEventsPane {
+        let explanation = "Typed history from the daemon's event stream. Nothing here is scraped from a terminal."
+        func pane(
+            _ events: InspectorListState<InspectorEventTurn>,
+            readFailed: Bool = false
+        ) -> InspectorEventsPane {
+            InspectorEventsPane(
+                microLabel: "Typed history",
+                title: "Events",
+                explanation: explanation,
+                events: events,
+                readFailed: readFailed)
+        }
+        guard let agentId = inputs.selectedAgentId else {
+            return pane(.absent(reason: "No agent is selected. Events are read per agent."))
+        }
+        guard let read = inputs.eventsRead else {
+            return pane(.absent(reason: "The events read for \(agentId) did not run on this refresh."))
+        }
+        guard read.agentId == agentId else {
+            return pane(.absent(reason:
+                "The events read answered for \(read.agentId), not the selected \(agentId)."),
+                readFailed: true)
+        }
+        switch read.result {
+        case .refused(let detail):
+            return pane(.absent(reason: "The daemon refused the events read: \(detail)"), readFailed: true)
+        case .invalid(let detail):
+            return pane(.absent(reason: "The events page did not match its schema: \(detail)"), readFailed: true)
+        case .projection(let projection):
+            guard let page = projection.value else {
+                return pane(.absent(reason: availabilityDetail(
+                    projection.availability, evidence: projection.evidence)), readFailed: true)
+            }
+            let turns = InspectorEventProjection.turns(from: page.events)
+            if turns.isEmpty {
+                return pane(.empty(detail: "No events recorded for \(agentId) yet."))
+            }
+            return pane(.present(turns))
+        }
     }
 
     private static func sessionPane(_ inputs: Inputs) -> InspectorSessionPane {
@@ -626,6 +808,30 @@ public enum ShellInspectorPresenter {
             evidence: inputs.snapshotEvidence,
             retained: inputs.snapshot != nil) {
             result.append(banner)
+        }
+        if let read = inputs.eventsRead {
+            switch read.result {
+            case .refused(let detail):
+                result.append(ShellBanner(
+                    identifier: "shell-banner-inspector-events-refused",
+                    severity: .warning,
+                    text: "The daemon refused the agent events read: \(detail). "
+                        + "Other inspector reads were not changed."))
+            case .invalid(let detail):
+                result.append(ShellBanner(
+                    identifier: "shell-banner-inspector-events-invalid",
+                    severity: .warning,
+                    text: "The agent events page did not match its schema: \(detail)."))
+            case .projection(let projection):
+                if let banner = endpointBanner(
+                    name: "agent events",
+                    identifier: "shell-banner-inspector-events",
+                    availability: projection.availability,
+                    evidence: projection.evidence,
+                    retained: projection.value != nil) {
+                    result.append(banner)
+                }
+            }
         }
         return result
     }

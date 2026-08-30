@@ -64,6 +64,8 @@ import {
 } from "./presentation";
 import { createSyntaxStyle, syntaxClient } from "./syntax";
 import { EventsView } from "./events-view";
+import { PaneEventsReporter } from "./pane-events-reporter";
+import { unifiedDiffStats } from "./unified-diff";
 import { TranscriptView } from "./transcript-view";
 import {
   canSubmitUser,
@@ -295,6 +297,8 @@ export class AgentUi {
   private readonly events: ScrollBoxRenderable;
   private readonly eventsView: EventsView;
   private readonly liveLine: TextRenderable;
+  private readonly paneEvents: PaneEventsReporter | null;
+  private readonly reportedMessageKeys = new Set<string>();
   private readonly queueStatus: TextRenderable;
   private readonly menuPanel: BoxRenderable;
   private readonly commands: TextRenderable;
@@ -385,6 +389,13 @@ export class AgentUi {
           }));
     this.reportReceipt = options.reportReceipt;
     this.now = options.now ?? systemNowIso;
+    this.paneEvents =
+      this.paneClient === undefined
+        ? null
+        : new PaneEventsReporter({
+            client: this.paneClient,
+            onFailure: (detail) => this.reportWarning(detail),
+          });
     this.writeLocalClipboard =
       options.writeLocalClipboard ?? platformClipboardWrite;
     this.reportWake = options.reportWake;
@@ -1485,6 +1496,7 @@ export class AgentUi {
       });
     }
     reportProtocolSessionFacts(this.identity.agentName, event, this.daemonPort);
+    this.recordPaneEvent(event);
     if (event.kind === "turn-started") {
       this.turnStartedAt = event.occurredAt;
       this.scheduler = onTurnStarted(this.scheduler, event.turnId);
@@ -1509,6 +1521,150 @@ export class AgentUi {
     }
     this.scheduleRefresh();
     this.syncSpinner();
+  }
+
+  /** What the inspector's Events tab shows for this agent: the shape of each step, never its payload. Message rows are reported by key so a message that arrives across a poll and a claim ships once, like it renders once. */
+  private recordPaneEvent(event: NormalizedProviderEvent): void {
+    const reporter = this.paneEvents;
+    if (reporter === null) return;
+    const at = event.occurredAt;
+    switch (event.kind) {
+      case "turn-started":
+        reporter.record({
+          occurredAt: at,
+          kind: "pane.turn.started",
+          data: {
+            turnId: event.turnId,
+            origin: this.view.wakeTurnIds.has(event.turnId) ? "wake" : "user",
+          },
+        });
+        return;
+      case "turn-idle":
+      case "turn-failed":
+      case "interrupted":
+        reporter.record({
+          occurredAt: at,
+          kind: "pane.turn.ended",
+          data: {
+            turnId: event.turnId,
+            outcome:
+              event.kind === "turn-idle"
+                ? "idle"
+                : event.kind === "turn-failed"
+                  ? "failed"
+                  : "interrupted",
+          },
+        });
+        return;
+      case "tool-started":
+        reporter.record({
+          occurredAt: at,
+          kind: "pane.tool.started",
+          data: {
+            turnId: event.turnId,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            toolKind: event.toolKind ?? null,
+            subject: event.locations?.[0] ?? null,
+          },
+        });
+        return;
+      case "tool-finished": {
+        const index = this.view.transcript.indexOfTool(event.toolCallId);
+        const entry =
+          index === undefined ? undefined : this.view.transcript[index];
+        const tool = entry?.kind === "tool" ? entry : null;
+        reporter.record({
+          occurredAt: at,
+          kind: "pane.tool.finished",
+          data: {
+            turnId: event.turnId,
+            toolCallId: event.toolCallId,
+            toolName: tool?.toolName ?? null,
+            toolKind: tool?.toolKind ?? null,
+            subject: tool?.locations[0] ?? null,
+            files: tool?.changes.length ?? 0,
+            status: event.status,
+            startedAt: tool?.startedAt ?? null,
+            reason: event.status === "error" ? event.reason : null,
+          },
+        });
+        this.recordMessageRows(reporter);
+        return;
+      }
+      case "tool-updated":
+        this.recordMessageRows(reporter);
+        return;
+      case "plan-updated":
+        reporter.record({
+          occurredAt: at,
+          kind: "pane.plan.updated",
+          coalesceKey: `plan:${event.turnId}`,
+          data: { turnId: event.turnId, steps: event.entries.length },
+        });
+        return;
+      case "turn-diff-updated": {
+        const stats = unifiedDiffStats(event.diff);
+        reporter.record({
+          occurredAt: at,
+          kind: "pane.turn.changes",
+          coalesceKey: `changes:${event.turnId}`,
+          data: {
+            turnId: event.turnId,
+            files: stats.files,
+            added: stats.added,
+            removed: stats.removed,
+          },
+        });
+        return;
+      }
+      case "approval-waiting":
+      case "question-waiting":
+        reporter.record({
+          occurredAt: at,
+          kind: "pane.question.asked",
+          data: {
+            turnId: event.turnId,
+            requestId: event.requestId,
+            ask: event.kind === "approval-waiting" ? "approval" : "question",
+            summary: event.summary,
+          },
+        });
+        return;
+      case "elicitation-settled":
+        reporter.record({
+          occurredAt: at,
+          kind: "pane.question.settled",
+          data: { requestId: event.requestId, outcome: event.outcome },
+        });
+        return;
+      default:
+        return;
+    }
+  }
+
+  private recordMessageRows(reporter: PaneEventsReporter): void {
+    const transcript = this.view.transcript;
+    for (let index = transcript.length - 1; index >= 0; index -= 1) {
+      const entry = transcript[index];
+      if (entry === undefined || entry.kind === "user") break;
+      if (entry.kind !== "message" || this.reportedMessageKeys.has(entry.key)) {
+        continue;
+      }
+      this.reportedMessageKeys.add(entry.key);
+      reporter.record({
+        occurredAt: entry.at,
+        kind: "pane.mail.message",
+        data: {
+          turnId: entry.turnId,
+          key: entry.key,
+          direction: entry.direction,
+          peer: entry.peer,
+          lane: entry.lane,
+          topic: entry.topic,
+        },
+      });
+    }
   }
 
   private syncSpinner(): void {
@@ -1830,6 +1986,11 @@ export class AgentUi {
         ),
         "waiting",
       );
+      this.paneEvents?.record({
+        occurredAt: this.now(),
+        kind: "pane.mail.ready",
+        data: { lane: notice.lane, waiting: notice.backlogCount },
+      });
     }
     this.scheduleRefresh();
     for (const notice of queued) {
@@ -2456,5 +2617,6 @@ export class AgentUi {
     }
     this.renderer.keyInput.off("keypress", this.onKeyPress);
     this.renderer.keyInput.off("paste", this.onPaste);
+    void this.paneEvents?.close();
   }
 }

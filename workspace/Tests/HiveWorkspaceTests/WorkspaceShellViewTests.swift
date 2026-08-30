@@ -646,24 +646,22 @@ final class WorkspaceShellViewTests: XCTestCase {
         controller.apply { $0.selectInspectorTab(.events) }
         XCTAssertEqual(controller.currentState.inspectorTab, .events)
         XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-tab-events"))
-        XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-events-absent"))
-        XCTAssertNil(findView(in: content, identifier: "shell-inspector-event"))
         controller.apply { $0.selectInspectorTab(.session) }
         XCTAssertEqual(controller.currentState.inspectorTab, .session)
         XCTAssertEqual(controller.currentState.activeRoute, .liveRun)
     }
 
-    func testInspectorEventsTabIsHonestlyAbsent() throws {
+    func testInspectorEventsTabListsTypedRowsWithFilters() throws {
         let dense = try makeController(scenario: .current)
         dense.performShellCommand(commandItem(.toggleInspector))
         dense.apply { $0.selectInspectorTab(.events) }
-        XCTAssertNotNil(findView(
-            in: dense.window!.contentView!, identifier: "shell-inspector-events-absent"))
-        XCTAssertNil(findView(
-            in: dense.window!.contentView!, identifier: "shell-inspector-event"))
-        XCTAssertTrue(allText(in: dense.window!.contentView!).contains {
-            $0.contains("no Workspace HTTP GET")
-        })
+        let content = dense.window!.contentView!
+        XCTAssertNil(findView(in: content, identifier: "shell-inspector-events-absent"))
+        XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-event"))
+        XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-event-turn"))
+        XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-events-filter-all"))
+        XCTAssertNotNil(findView(in: content, identifier: "shell-inspector-events-filter-mail"))
+        XCTAssertTrue(allText(in: content).contains { $0.contains("turn-end") })
     }
 
     func testInspectorRendersHierarchyWireWordsWithoutInventedContracts() throws {

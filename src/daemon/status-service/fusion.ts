@@ -180,6 +180,8 @@ const sourceRank = (kind: SourceKind): number => {
       return 600;
     case "user":
       return 600;
+    case "agent-pane":
+      return 100;
   }
 };
 

@@ -40,9 +40,9 @@ final class ShellInspectorPresenterTests: XCTestCase {
             $0.label == "Snapshot" && $0.value.contains("absent")
         })
         guard case .absent(let eventsReason) = projection.events.events else {
-            return XCTFail("events without a Workspace HTTP GET must be absent, not empty")
+            return XCTFail("events without a selected agent must be absent, not empty")
         }
-        XCTAssertTrue(eventsReason.contains("no Workspace HTTP GET"))
+        XCTAssertTrue(eventsReason.contains("No agent is selected"))
         guard case .absent(let reason) = projection.task.channelDelivery else {
             return XCTFail("channel delivery without a client projection must be absent")
         }
@@ -50,15 +50,137 @@ final class ShellInspectorPresenterTests: XCTestCase {
         XCTAssertTrue(reason.contains("does not expose a message ledger"))
     }
 
-    func testEventsStayAbsentBecauseNoWorkspaceHTTPServesThem() {
+    func testEventsAreAbsentUntilTheReadRuns() {
         let projection = ShellInspectorPresenter.present(.init(
-            snapshotAvailability: .current))
+            snapshotAvailability: .current, selectedAgentId: "agent-bram"))
         guard case .absent(let reason) = projection.events.events else {
-            return XCTFail("events must stay absent without an HTTP source")
+            return XCTFail("events must be absent, not invented, before the read runs")
         }
-        XCTAssertTrue(reason.contains("StatusStore.listEvents"))
-        XCTAssertTrue(reason.contains("no Workspace HTTP GET"))
-        XCTAssertFalse(projection.banners.contains { $0.text.contains("event stream") })
+        XCTAssertTrue(reason.contains("did not run"))
+        XCTAssertFalse(projection.events.readFailed)
+    }
+
+    func testEventsGroupByTurnAndNameWhoStartedIt() throws {
+        let page = WorkspaceEventsPage(agentId: "agent-bram", events: [
+            paneEvent(seq: 1, kind: "pane.turn.started", at: "2026-08-30T12:00:00.000Z",
+                      data: ["turnId": .string("t1"), "origin": .string("user")]),
+            paneEvent(seq: 2, kind: "pane.tool.finished", at: "2026-08-30T12:00:04.000Z",
+                      data: ["turnId": .string("t1"), "toolCallId": .string("c1"),
+                             "toolName": .string("Edit"), "toolKind": .string("edit"),
+                             "subject": .string("/repo/src/daemon/session-host/shell-session.ts"),
+                             "files": .integer(1), "status": .string("ok"),
+                             "startedAt": .string("2026-08-30T12:00:01.000Z")]),
+            paneEvent(seq: 3, kind: "pane.tool.finished", at: "2026-08-30T12:00:06.000Z",
+                      data: ["turnId": .string("t1"), "toolCallId": .string("c2"),
+                             "toolName": .string("mcp__hive__hive_task_update"),
+                             "status": .string("ok"), "files": .integer(0)]),
+            paneEvent(seq: 4, kind: "pane.turn.started", at: "2026-08-30T12:01:00.000Z",
+                      data: ["turnId": .string("t2"), "origin": .string("wake")]),
+            paneEvent(seq: 5, kind: "pane.mail.message", at: "2026-08-30T12:01:02.000Z",
+                      data: ["turnId": .string("t2"), "direction": .string("in"),
+                             "peer": .string("queen"), "lane": .string("control")]),
+            paneEvent(seq: 6, kind: "pane.tool.started", at: "2026-08-30T12:01:03.000Z",
+                      data: ["turnId": .string("t2"), "toolCallId": .string("c3"),
+                             "toolName": .string("Bash"), "toolKind": .string("execute")]),
+        ])
+        let projection = ShellInspectorPresenter.present(.init(
+            snapshotAvailability: .current,
+            selectedAgentId: "agent-bram",
+            eventsRead: InspectorEventsRead(agentId: "agent-bram", result: .projection(
+                try ClientProjection(
+                    source: ProjectionSource(revision: "6"),
+                    observedAt: "2026-08-30T12:01:03.000Z",
+                    freshness: .current,
+                    availability: .current,
+                    evidence: nil,
+                    value: page)))))
+        guard case .present(let turns) = projection.events.events else {
+            return XCTFail("a current page with events must be present")
+        }
+        XCTAssertEqual(turns.map(\.label), ["turn 1 · user", "turn 2 · wake"])
+        XCTAssertEqual(turns.map(\.wake), [false, true])
+        let first = turns[0].rows
+        XCTAssertEqual(first.map(\.label), ["Edit", "Hive task update"])
+        XCTAssertEqual(first.map(\.category), [.tools, .board])
+        XCTAssertEqual(first[0].subject, "daemon/session-host/shell-session.ts")
+        XCTAssertEqual(first[0].detail, "1 file · 3s")
+        XCTAssertEqual(first[0].mark, .ok)
+        let second = turns[1].rows
+        XCTAssertEqual(second.map(\.label), ["Mail in", "Run"])
+        XCTAssertEqual(second[0].category, .mail)
+        XCTAssertTrue(second[0].shownInChat)
+        XCTAssertEqual(second[1].mark, .running)
+        XCTAssertFalse(projection.banners.contains { $0.identifier.contains("events") })
+    }
+
+    func testARefusedEventsReadIsAbsentAndRetainsThePriorList() throws {
+        let page = WorkspaceEventsPage(agentId: "agent-bram", events: [
+            paneEvent(seq: 1, kind: "pane.turn.ended", at: "2026-08-30T12:00:00.000Z",
+                      data: ["turnId": .string("t1"), "outcome": .string("idle")]),
+        ])
+        let prior = ShellInspectorPresenter.present(.init(
+            snapshotAvailability: .current,
+            selectedAgentId: "agent-bram",
+            eventsRead: InspectorEventsRead(agentId: "agent-bram", result: .projection(
+                try ClientProjection(
+                    source: ProjectionSource(revision: "1"), observedAt: nil,
+                    freshness: .current, availability: .current, evidence: nil, value: page)))))
+        let refused = ShellInspectorPresenter.present(.init(
+            snapshotAvailability: .current,
+            selectedAgentId: "agent-bram",
+            eventsRead: InspectorEventsRead(
+                agentId: "agent-bram", result: .refused(detail: "HTTP 403 · forbidden"))))
+        guard case .absent(let reason) = refused.events.events else {
+            return XCTFail("a refused read must be absent, never a plausible list")
+        }
+        XCTAssertTrue(reason.contains("refused"))
+        XCTAssertTrue(refused.events.readFailed)
+        XCTAssertTrue(refused.banners.contains { $0.identifier == "shell-banner-inspector-events-refused" })
+
+        let retained = try XCTUnwrap(
+            ShellInspectorPresenter.retainingObservedValue(from: prior, on: refused))
+        guard case .present(let turns) = retained.events.events else {
+            return XCTFail("a failed refresh keeps the last observed list")
+        }
+        XCTAssertEqual(turns.first?.rows.first?.label, "Turn ended")
+        XCTAssertTrue(retained.events.readFailed)
+    }
+
+    func testUnfamiliarEventKindsStayVisibleAsThemselves() throws {
+        let page = WorkspaceEventsPage(agentId: "agent-bram", events: [
+            WorkspaceStatusEvent(
+                eventId: "evt-1", seq: "9",
+                entity: .init(kind: "agent", id: "agent-bram"),
+                entityRevision: "1", occurredAt: "2026-08-30T12:00:00.000Z",
+                kind: "status.turn",
+                source: .init(kind: "sessiond", id: "sessiond", observedAt: "2026-08-30T12:00:00.000Z", confidence: "authoritative"),
+                data: ["value": .string("working")]),
+        ])
+        let projection = ShellInspectorPresenter.present(.init(
+            snapshotAvailability: .current,
+            selectedAgentId: "agent-bram",
+            eventsRead: InspectorEventsRead(agentId: "agent-bram", result: .projection(
+                try ClientProjection(
+                    source: ProjectionSource(revision: "9"), observedAt: nil,
+                    freshness: .current, availability: .current, evidence: nil, value: page)))))
+        guard case .present(let turns) = projection.events.events else {
+            return XCTFail("an unfamiliar event is still an event")
+        }
+        XCTAssertEqual(turns.map(\.label), ["session"])
+        XCTAssertEqual(turns[0].rows[0].label, "status.turn")
+        XCTAssertEqual(turns[0].rows[0].subject, "working")
+        XCTAssertEqual(turns[0].rows[0].detail, "sessiond · authoritative")
+    }
+
+    private func paneEvent(
+        seq: Int, kind: String, at: String, data: [String: WorkspaceJSONValue]
+    ) -> WorkspaceStatusEvent {
+        WorkspaceStatusEvent(
+            eventId: "evt-\(seq)", seq: String(seq),
+            entity: .init(kind: "agent", id: "agent-bram"),
+            entityRevision: String(seq), occurredAt: at, kind: kind,
+            source: .init(kind: "agent-pane", id: "pane:bram", observedAt: at, confidence: "high"),
+            data: data)
     }
 
     func testQueriedSnapshotFailureIsNotUnaskedUnknown() {

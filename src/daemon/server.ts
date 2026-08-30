@@ -123,7 +123,10 @@ import {
   type TerminalGeometry,
 } from "../schemas/session-protocol";
 import {
+  PaneEventsReportSchema,
   type WorkspaceEventV2,
+  WorkspaceEventsPageSchema,
+  WorkspaceEventsQuerySchema,
   WorkspaceSnapshotV2Schema,
 } from "../schemas/status-envelope";
 import {
@@ -2312,6 +2315,12 @@ export class HiveDaemon {
     if (url.pathname === "/workspace-snapshot" && request.method === "GET") {
       return this.workspaceSnapshotEndpoint(request);
     }
+    if (url.pathname === "/workspace-events" && request.method === "GET") {
+      return this.workspaceEventsEndpoint(url, request);
+    }
+    if (url.pathname === "/pane-events" && request.method === "POST") {
+      return this.paneEventsEndpoint(request);
+    }
     if (
       url.pathname === "/live-run-control" &&
       (request.method === "GET" || request.method === "POST")
@@ -3360,6 +3369,96 @@ export class HiveDaemon {
     } catch (error) {
       return json({ error: errorMessage(error) }, { status: 500 });
     }
+  }
+
+  /** One agent's typed history for the inspector. A reader credential sees only its own subject's events; the user and the orchestrator can name any agent. */
+  private workspaceEventsEndpoint(url: URL, request: Request): Response {
+    const route = "/workspace-events";
+    const authorized = this.authorizeRoute(request, route, "status:read", {
+      auditAllow: false,
+    });
+    if (!authorized.ok) return authorized.response;
+    const query = WorkspaceEventsQuerySchema.safeParse({
+      agent: url.searchParams.get("agent") ?? undefined,
+      afterSeq: url.searchParams.get("afterSeq") ?? undefined,
+      limit: url.searchParams.get("limit") ?? undefined,
+    });
+    if (!query.success) {
+      return json({ error: query.error.message }, { status: 400 });
+    }
+    const role = authorized.capability.role;
+    if (role !== "user" && role !== "orchestrator") {
+      const own = this.paneEntityId(authorized.capability.subject);
+      if (
+        query.data.agent !== own &&
+        query.data.agent !== authorized.capability.subject
+      ) {
+        return json(
+          { error: "a pane may read only its own events" },
+          { status: 403 },
+        );
+      }
+    }
+    try {
+      const events = this.status.listEventsForAgentAfter(
+        query.data.agent,
+        query.data.afterSeq,
+        query.data.limit,
+      );
+      const last = events.at(-1);
+      return json(
+        WorkspaceEventsPageSchema.parse({
+          schemaVersion: 1,
+          agentId: query.data.agent,
+          events,
+          nextSeq:
+            events.length === query.data.limit && last !== undefined
+              ? last.seq
+              : null,
+        }),
+      );
+    } catch (error) {
+      return json({ error: errorMessage(error) }, { status: 500 });
+    }
+  }
+
+  /** A pane reports what it watched its agent do. The subject is the credential's, never the body's, so a pane cannot write another agent's history; the entity is the agent record when one exists so the inspector finds these beside the agent's status events. */
+  private async paneEventsEndpoint(request: Request): Promise<Response> {
+    const route = "/pane-events";
+    const authorized = this.authorizeRoute(request, route, "event:report", {
+      withSubject: true,
+      auditAllow: false,
+    });
+    if (!authorized.ok) return authorized.response;
+    const parsed = await this.parseJsonBody(request, PaneEventsReportSchema);
+    if (!parsed.ok) return parsed.response;
+    const subject = authorized.capability.subject;
+    const entityId = this.paneEntityId(subject);
+    const observedAt = systemClock().toISOString();
+    try {
+      const appended = this.status.appendSourceEvents(
+        parsed.data.events.map((event) => ({
+          entity: { kind: "agent", id: entityId },
+          occurredAt: event.occurredAt,
+          kind: event.kind,
+          source: {
+            kind: "agent-pane",
+            id: `pane:${subject}`,
+            observedAt,
+            confidence: "high",
+          },
+          data: { ...event.data, agentId: entityId, subject },
+        })),
+      );
+      return json({ accepted: appended.length, agentId: entityId });
+    } catch (error) {
+      return json({ error: errorMessage(error) }, { status: 500 });
+    }
+  }
+
+  private paneEntityId(subject: string): string {
+    const agent = this.db.getLiveAgentByName(subject);
+    return agent === undefined || agent === null ? subject : agent.id;
   }
 
   /** The pane is infrastructure observing its own vendor, not the model asking

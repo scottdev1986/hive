@@ -89,10 +89,11 @@ final class ShellFixtureStoreTests: XCTestCase {
             .loadState(scenario: .current)
         let inspector = try XCTUnwrap(state.inspector)
 
-        guard case .absent(let eventsReason) = inspector.events.events else {
-            return XCTFail("events have no Workspace HTTP source, so the fixture must not invent them")
+        guard case .present(let turns) = inspector.events.events else {
+            return XCTFail("the events corpus must reach the inspector as turns")
         }
-        XCTAssertTrue(eventsReason.contains("no Workspace HTTP GET"))
+        XCTAssertFalse(turns.isEmpty)
+        XCTAssertTrue(turns.flatMap(\.rows).contains { $0.label == "turn-end" })
 
         guard case .present(let routes) = inspector.task.routeInspections else {
             return XCTFail("the route-inspection corpus must reach the inspector")
@@ -106,8 +107,10 @@ final class ShellFixtureStoreTests: XCTestCase {
                 ShellFixtureStore(directory: fixtureDirectory)
                     .loadState(scenario: scenario).inspector)
             XCTAssertNotNil(inspector.task)
-            guard case .absent = inspector.events.events else {
-                return XCTFail("events stay absent in every fixture availability row")
+            if scenario == .current {
+                guard case .present = inspector.events.events else {
+                    return XCTFail("the current fixture row carries events")
+                }
             }
         }
     }

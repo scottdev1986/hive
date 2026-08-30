@@ -12,6 +12,10 @@ final class ShellInspectorView: NSView {
     private let onSelectTab: (ShellInspectorTab) -> Void
     private(set) var closeButton: NSButton!
     private let bodyStack = NSStackView()
+    private var projection: InspectorProjection?
+    private var tab: ShellInspectorTab
+    /// Which event rows the Events tab shows. View state, not projection: the daemon's list is the same whichever chip is lit.
+    private var eventsFilter: InspectorEventCategory?
 
     init(
         projection: InspectorProjection?,
@@ -21,6 +25,8 @@ final class ShellInspectorView: NSView {
     ) {
         self.onClose = onClose
         self.onSelectTab = onSelectTab
+        self.projection = projection
+        self.tab = tab
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         Theme.paint(self, Theme.cardFill)
@@ -197,7 +203,7 @@ final class ShellInspectorView: NSView {
                 emptyId: "shell-inspector-stranded-empty",
                 absentId: "shell-inspector-stranded-absent")
         case .events:
-            renderEvents(projection.events.events)
+            renderEvents(projection.events)
         case .session:
             renderFacts(projection.session.facts)
         }
@@ -232,12 +238,146 @@ final class ShellInspectorView: NSView {
         }
     }
 
-    private func renderEvents(_ state: InspectorListState<InspectorFact>) {
-        renderFactList(
-            title: "Events",
-            state: state,
-            emptyId: "shell-inspector-events-empty",
-            absentId: "shell-inspector-events-absent")
+    private func renderEvents(_ pane: InspectorEventsPane) {
+        bodyStack.addArrangedSubview(microLabel(pane.readFailed ? "Events · last observed" : "Events"))
+        switch pane.events {
+        case .absent(let reason):
+            bodyStack.addArrangedSubview(paragraph(reason, identifier: "shell-inspector-events-absent"))
+        case .empty(let detail):
+            bodyStack.addArrangedSubview(paragraph(detail, identifier: "shell-inspector-events-empty"))
+        case .present(let turns):
+            let strip = filterStrip()
+            bodyStack.addArrangedSubview(strip)
+            strip.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
+            if pane.readFailed {
+                bodyStack.addArrangedSubview(paragraph(
+                    "The last events read failed; this list is the previous one, unchanged.",
+                    identifier: "shell-inspector-events-retained"))
+            }
+            var drewRows = false
+            for turn in turns {
+                let rows = turn.rows.filter { eventsFilter == nil || $0.category == eventsFilter }
+                guard !rows.isEmpty else { continue }
+                drewRows = true
+                bodyStack.addArrangedSubview(turnHeader(turn))
+                let card = CardView()
+                card.contentStack.spacing = 0
+                for (index, row) in rows.enumerated() {
+                    card.contentStack.addArrangedSubview(eventRow(
+                        row, showsSeparator: index < rows.count - 1))
+                }
+                bodyStack.addArrangedSubview(card)
+                card.widthAnchor.constraint(equalTo: bodyStack.widthAnchor).isActive = true
+            }
+            if !drewRows {
+                bodyStack.addArrangedSubview(paragraph(
+                    "No \(eventsFilter?.title.lowercased() ?? "") events in this history.",
+                    identifier: "shell-inspector-events-filtered-empty"))
+            }
+        }
+    }
+
+    /// The category chips reuse the tab strip's grammar — same font, same selected fill — so a lit chip reads like a lit tab rather than a second control vocabulary.
+    private func filterStrip() -> NSView {
+        let strip = NSStackView()
+        strip.orientation = .horizontal
+        strip.spacing = Theme.Space.xs
+        strip.distribution = .fillEqually
+        let choices: [(title: String, value: InspectorEventCategory?)] =
+            [("All", nil)] + InspectorEventCategory.allCases.map { ($0.title, $0) }
+        for choice in choices {
+            let selected = choice.value == eventsFilter
+            let button = NSButton(title: choice.title, target: nil, action: nil)
+            button.setButtonType(.momentaryPushIn)
+            button.isBordered = false
+            button.font = Theme.Font.chromeControl
+            button.contentTintColor = selected ? Theme.primaryText : Theme.secondaryText
+            button.wantsLayer = true
+            button.layer?.cornerRadius = Theme.Metric.buttonCornerRadius
+            button.layer?.backgroundColor = selected
+                ? Theme.insetFill.cgColor : NSColor.clear.cgColor
+            let identifier = choice.value?.rawValue ?? "all"
+            button.setAccessibilityIdentifier("shell-inspector-events-filter-\(identifier)")
+            button.setAccessibilityLabel("Show \(choice.title.lowercased()) events")
+            button.setAccessibilityRole(.button)
+            button.setAccessibilityValue(selected ? "selected" : "unselected")
+            ShellButtonTarget.shared.register(button) { [weak self] in
+                self?.selectEventsFilter(choice.value)
+            }
+            button.target = ShellButtonTarget.shared
+            button.action = #selector(ShellButtonTarget.fire(_:))
+            button.heightAnchor.constraint(
+                greaterThanOrEqualToConstant: Theme.Metric.controlMinHeight).isActive = true
+            strip.addArrangedSubview(button)
+        }
+        return strip
+    }
+
+    func selectEventsFilter(_ category: InspectorEventCategory?) {
+        eventsFilter = category
+        renderBody(projection: projection, tab: tab)
+    }
+
+    private func turnHeader(_ turn: InspectorEventTurn) -> NSView {
+        let label = NSTextField(labelWithString: turn.label.uppercased())
+        label.font = Theme.Font.sectionLabel
+        label.textColor = turn.wake ? Theme.accent : Theme.tertiaryText
+        let time = NSTextField(labelWithString: InspectorEventProjection.clock(turn.occurredAt))
+        time.font = Theme.Font.monoCaption
+        time.textColor = Theme.tertiaryText
+        let row = NSStackView(views: [label, time])
+        row.orientation = .horizontal
+        row.spacing = Theme.Space.s
+        row.setAccessibilityIdentifier("shell-inspector-event-turn")
+        row.setAccessibilityElement(true)
+        row.setAccessibilityRole(.group)
+        row.setAccessibilityLabel(
+            "\(turn.label), \(turn.wake ? "started by a mail wake" : "started by a person")")
+        return row
+    }
+
+    private func eventRow(_ event: InspectorEventRow, showsSeparator: Bool) -> NSView {
+        let time = NSTextField(labelWithString: InspectorEventProjection.clock(event.occurredAt))
+        time.font = Theme.Font.monoCaption
+        time.textColor = Theme.tertiaryText
+        time.setContentHuggingPriority(.required, for: .horizontal)
+        time.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let badge = CapsuleBadge(
+            text: event.mark.word, symbol: event.mark.symbolName, style: badgeStyle(event.mark))
+        let what = NSTextField(labelWithString: event.label
+            + (event.subject.map { "  \($0)" } ?? ""))
+        what.font = Theme.Font.callout
+        what.textColor = Theme.primaryText
+        what.compressHorizontally(priority: 470, toolTip: [event.label, event.subject]
+            .compactMap { $0 }.joined(separator: " "))
+        what.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        var columns: [NSView] = [time, badge, what]
+        let detailText = [event.detail, event.shownInChat ? "shown in chat" : nil]
+            .compactMap { $0 }.joined(separator: " · ")
+        if !detailText.isEmpty {
+            let detail = NSTextField(labelWithString: detailText)
+            detail.font = Theme.Font.caption
+            detail.textColor = Theme.secondaryText
+            detail.compressHorizontally(priority: 460, toolTip: detailText)
+            columns.append(detail)
+        }
+        let row = DataTableRowView(
+            columns: columns, spacing: Theme.Space.s, showsSeparator: showsSeparator)
+        row.setAccessibilityIdentifier("shell-inspector-event")
+        row.setAccessibilityLabel(
+            "\(event.mark.word): \(event.label)"
+                + (event.subject.map { " \($0)" } ?? "")
+                + (detailText.isEmpty ? "" : ", \(detailText)"))
+        return row
+    }
+
+    private func badgeStyle(_ mark: InspectorEventMark) -> CapsuleBadge.Style {
+        switch mark {
+        case .ok: return .positive
+        case .failed: return .critical
+        case .running, .mailIn, .mailOut, .mailReady: return .info
+        case .status: return .neutral
+        }
     }
 
     private func factRow(
