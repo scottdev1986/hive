@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
   readTerminalLaunchSpec,
   shellSessionLaunch,
@@ -10,10 +11,23 @@ describe("shell-backed terminal sessions", () => {
     const launch = shellSessionLaunch("'hive' 'agent-ui' '--subject' 'queen'");
 
     expect(launch.ghosttyCommand).toBe(
-      `'hive' 'agent-ui' '--subject' 'queen'; exec "\${SHELL:-/bin/zsh}"`,
+      `/usr/bin/env 'hive' 'agent-ui' '--subject' 'queen'; exec "\${SHELL:-/bin/zsh}"`,
     );
     expect(launch.argv).toEqual(["/bin/sh", "-c", launch.ghosttyCommand]);
     expect(launch.env).toEqual({});
+  });
+
+  test("macOS Ghostty exec -l can run a capability-wrapped command", () => {
+    const launch = shellSessionLaunch(
+      `HIVE_CAPABILITY_TOKEN=secret /usr/bin/true`,
+    );
+    const wrapped = spawnSync(
+      "/bin/bash",
+      ["--noprofile", "--norc", "-c", `exec -l ${launch.ghosttyCommand}`],
+      { encoding: "utf8" },
+    );
+    expect(wrapped.status).toBe(0);
+    expect(wrapped.stderr).not.toContain("not found");
   });
 
   test("a headless pane is only the user shell", () => {

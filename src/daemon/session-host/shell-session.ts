@@ -11,7 +11,7 @@ export type ShellSessionLaunch = Readonly<{
   argv: readonly [string, ...string[]];
   expectedExecutable: string;
   env: Record<string, string>;
-  /** String Ghostty execs (`/bin/sh -c`). Agent-ui first; user's shell after it exits. */
+  /** String Ghostty execs. Agent-ui first; user's shell after it exits. */
   ghosttyCommand: string;
 }>;
 
@@ -23,6 +23,11 @@ function afterTuiShell(): string {
  * Ghostty command: run `command` (agent-ui) immediately, then replace the
  * process with the user's shell. Empty command is a headless pane — just the
  * shell. No login zsh and no Hive ZDOTDIR.
+ *
+ * On macOS Ghostty wraps this as `exec -l <command>`. `exec -l` treats a
+ * leading `VAR=value` as the program name, and spawned agents prefix
+ * `HIVE_CAPABILITY_TOKEN="$(cat …)"`. `/usr/bin/env` is a real binary so
+ * that assignment still reaches the child.
  */
 export function shellSessionLaunch(command: string): ShellSessionLaunch {
   if (command.includes("\0")) {
@@ -31,7 +36,7 @@ export function shellSessionLaunch(command: string): ShellSessionLaunch {
   const ghosttyCommand =
     command === ""
       ? `"\${SHELL:-${TERMINAL_SHELL}}"`
-      : `${command}; ${afterTuiShell()}`;
+      : `/usr/bin/env ${command}; ${afterTuiShell()}`;
   return {
     argv: ["/bin/sh", "-c", ghosttyCommand],
     expectedExecutable: "/bin/sh",
