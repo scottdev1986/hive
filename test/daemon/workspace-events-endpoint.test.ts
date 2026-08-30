@@ -180,6 +180,37 @@ describe("pane events reach the workspace event stream", () => {
     expect(refused.status).toBe(400);
   });
 
+  test("the queen's pane files under the root subject, and latest pages the newest first", async () => {
+    const { daemon } = harness();
+    const queen = daemon.capabilities.mint("queen", "orchestrator", {
+      epoch: 0,
+    }).token;
+    await call(daemon, queen, "/pane-events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: report([
+        { kind: "pane.turn.started" },
+        { kind: "pane.tool.started" },
+        { kind: "pane.tool.finished" },
+      ]),
+    });
+    const page = WorkspaceEventsPageSchema.parse(
+      await (
+        await call(
+          daemon,
+          queen,
+          "/workspace-events?agent=root&latest=true&limit=2",
+        )
+      ).json(),
+    );
+    expect(page.agentId).toBe("root");
+    expect(page.events.map((event) => event.kind)).toEqual([
+      "pane.tool.started",
+      "pane.tool.finished",
+    ]);
+    expect(page.nextSeq).toBeNull();
+  });
+
   test("pane events never become the agent's activity observation", async () => {
     const { daemon } = harness();
     const bram = daemon.capabilities.mint("bram", "writer", { epoch: 0 }).token;

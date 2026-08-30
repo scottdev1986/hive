@@ -396,6 +396,11 @@ export const WorkspaceEventsQuerySchema = z.strictObject({
   agent: z.string().min(1),
   afterSeq: DecimalUint64Schema.default("0"),
   limit: z.coerce.number().int().min(1).max(1000).default(500),
+  /** The newest `limit` events rather than the oldest: what an inspector opening on a long-lived agent wants first. Still returned oldest-first, with no resume cursor. */
+  latest: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
 });
 
 /** A page of one agent's typed events, oldest first. `nextSeq` is set only when the page was cut at `limit`, so a reader that sees null has everything. */

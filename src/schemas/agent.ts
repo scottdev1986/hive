@@ -5,6 +5,8 @@ import { SessionLocatorSchema } from "./session-protocol";
 import { WorkspaceStatusDimensionsV1Schema } from "./status-envelope";
 
 export const ORCHESTRATOR_NAME = "queen";
+/** The Queen has no agent record, so her events are filed under the root subject — the same id the Workspace feed gives her session. */
+export const ORCHESTRATOR_EVENT_ENTITY_ID = "root";
 
 export const ORCHESTRATOR_NAME_ALIASES = ["orchestrator"] as const;
 

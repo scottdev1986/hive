@@ -12,6 +12,8 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
     private var liveRunFeed: FeedClient?
     private var queenProviderLiveRefresh: Task<Void, Never>?
     private var liveRunControlGateway: LiveRunControlGateway?
+    private var liveRunClient: WorkspaceDaemonClient?
+    private var liveRunEventsRefresh: Task<Void, Never>?
     private var agentKillGateway: AgentKillGateway?
 #if HIVE_QA_BUILD
     private var qaControl: QAControl?
@@ -66,6 +68,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             if launch.isLive {
                 do {
                     let client = try await ShellLiveStore(config: config).makeClient()
+                    liveRunClient = client
                     liveRunControlGateway = LiveRunControlGateway(client: client)
                     agentKillGateway = AgentKillGateway(client: client)
                 } catch {
@@ -363,6 +366,7 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             guard let self, let workbench else { return }
             publishVisibility(session, workbench: workbench)
             refreshLiveRunControls(session, workbench: workbench)
+            refreshLiveRunEvents(session, workbench: workbench)
         }
         workbench.onControlRequested = { [weak self, weak workbench] operation, projection in
             guard let self, let workbench else { return }
@@ -379,6 +383,10 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             do {
                 workbench?.apply(try LiveRunProjection(feedLine: line))
                 self?.refreshQueenProviderFromLive(controller: controller)
+                // The feed heartbeats every few seconds; riding it keeps the Events tab current without a second clock.
+                if let self, let workbench {
+                    self.refreshLiveRunEvents(workbench.selectedSession, workbench: workbench)
+                }
             } catch {
                 workbench?.showUnavailable(error.localizedDescription)
             }
@@ -427,6 +435,34 @@ final class WorkspaceShellDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 // Live Run still owns the Queen process; keep the last observation.
             }
+        }
+    }
+
+    /// Reads the selected session's typed events from the daemon and hands them to the rail. A response for a session that is no longer selected is dropped rather than drawn under the wrong name.
+    @MainActor
+    private func refreshLiveRunEvents(
+        _ session: LiveRunSessionSummary?,
+        workbench: LiveRunWorkbenchView
+    ) {
+        guard let session else {
+            workbench.applyEvents(nil, for: nil)
+            return
+        }
+        let agentID = session.eventsAgentID
+        guard let client = liveRunClient else {
+            workbench.applyEvents(
+                InspectorEventsRead(
+                    agentId: agentID,
+                    result: .refused(detail: "no authenticated daemon client")),
+                for: agentID)
+            return
+        }
+        guard liveRunEventsRefresh == nil else { return }
+        liveRunEventsRefresh = Task { @MainActor [weak self, weak workbench] in
+            defer { self?.liveRunEventsRefresh = nil }
+            let read = await InspectorEventsRead.fetch(agentId: agentID, client: client)
+            guard let workbench, workbench.selectedSession?.eventsAgentID == agentID else { return }
+            workbench.applyEvents(read, for: agentID)
         }
     }
 

@@ -40,6 +40,9 @@ public struct LiveRunSessionSummary: Equatable {
     /// Workspace visibility id for the root. The queen has no AgentRecord, so the feed carries her beside `agents`.
     public static let queenID = "root"
 
+    /// The entity the daemon files this session's pane events under: the agent record id, or the root subject for the Queen, which has no agent record.
+    public var eventsAgentID: String { agentID ?? name }
+
     public let id: String
     public let agentID: String?
     public let name: String

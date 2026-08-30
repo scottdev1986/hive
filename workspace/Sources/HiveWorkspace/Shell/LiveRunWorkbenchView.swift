@@ -66,7 +66,10 @@ final class LiveRunWorkbenchView: NSView {
     private let inspectorModel = NSTextField(labelWithString: "model unknown")
     private let taskTitle = NSTextField(wrappingLabelWithString: "No TaskDetail observed")
     private let taskBody = NSTextField(wrappingLabelWithString: "")
-    private let eventsBody = NSTextField(wrappingLabelWithString: "")
+    private let eventsHost = NSStackView()
+    private var eventsAgentID: String?
+    private var eventsRead: InspectorEventsRead?
+    private var eventsFilter: InspectorEventCategory?
     private let statusValue = NSTextField(labelWithString: "unknown")
     private let shellValue = NSTextField(wrappingLabelWithString: "unknown")
     private let providerRunValue = NSTextField(wrappingLabelWithString: "absent")
@@ -176,6 +179,33 @@ final class LiveRunWorkbenchView: NSView {
         // five seconds, so a close refusal written once would be wiped before it
         // was read, and a refusal the user never sees reads as a success.
         if let closeRefusal { showControlMessage(closeRefusal) }
+    }
+
+    /// The session the rail has selected, for readers that key on it (process control, events).
+    var selectedSession: LiveRunSessionSummary? {
+        sessions.first { $0.id == selectedID }
+    }
+
+    /// The daemon's typed events for the selected session. `nil` clears the pane to its honest absence — before a read runs, or when nothing is selected.
+    func applyEvents(_ read: InspectorEventsRead?, for agentID: String?) {
+        eventsAgentID = agentID
+        eventsRead = read
+        renderEvents()
+    }
+
+    private func renderEvents() {
+        for view in eventsHost.arrangedSubviews {
+            eventsHost.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        let pane = ShellInspectorPresenter.eventsPane(
+            selectedAgentId: eventsAgentID, eventsRead: eventsRead)
+        let list = InspectorEventsListView(pane: pane, filter: eventsFilter) { [weak self] category in
+            self?.eventsFilter = category
+            self?.renderEvents()
+        }
+        eventsHost.addArrangedSubview(list)
+        list.widthAnchor.constraint(equalTo: eventsHost.widthAnchor).isActive = true
     }
 
     func applyQueenProvider(_ provider: ProviderID?) {
@@ -595,12 +625,12 @@ final class LiveRunWorkbenchView: NSView {
                 styled(taskTitle, font: Theme.Font.headline),
                 styled(taskBody, font: Theme.Font.callout, color: Theme.secondaryText),
             ])
-        fillPane(
-            eventsPane,
-            views: [
-                microLabel("Typed history"),
-                styled(eventsBody, font: Theme.Font.callout, color: Theme.secondaryText),
-            ])
+        eventsHost.orientation = .vertical
+        eventsHost.alignment = .leading
+        eventsHost.spacing = 0
+        fillPane(eventsPane, views: [eventsHost])
+        eventsHost.widthAnchor.constraint(equalTo: eventsPane.widthAnchor).isActive = true
+        renderEvents()
 
         let sessionStack = NSStackView()
         sessionStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1017,9 +1047,7 @@ final class LiveRunWorkbenchView: NSView {
             taskBody.stringValue =
                 "The assignment summary comes from durable workflow state. "
                 + "Nothing is inferred from the terminal."
-            eventsBody.stringValue =
-                "Typed SessionHost events were not projected. "
-                + "Events are never scraped from the terminal."
+            applyEvents(nil, for: nil)
             for value in [statusValue, shellValue, providerRunValue,
                           censusValue, terminationValue] {
                 value.stringValue = "unknown"
@@ -1052,9 +1080,7 @@ final class LiveRunWorkbenchView: NSView {
                 "The assignment summary comes from durable workflow state. "
                 + "Nothing is inferred from the terminal."
         }
-        eventsBody.stringValue =
-            "Typed SessionHost events were not projected for this selection. "
-            + "Events are never scraped from the terminal."
+        if eventsAgentID != session.eventsAgentID { applyEvents(nil, for: session.eventsAgentID) }
         if let projection = controlProjection,
            projection.agentID == session.id,
            projection.locator == session.locator

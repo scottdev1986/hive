@@ -322,23 +322,7 @@ struct ShellLiveStore {
         }
         var eventsRead: InspectorEventsRead?
         if let selectedAgentId {
-            let result = await client.fetchResult(WorkspaceReadEndpoint<WorkspaceEventsPage>(
-                path: "workspace-events",
-                queryItems: [URLQueryItem(name: "agent", value: selectedAgentId)],
-                source: { ProjectionSource(revision: $0.events.last?.seq) },
-                observedAt: { $0.events.last?.occurredAt }))
-            switch result {
-            case .projection(let projection):
-                eventsRead = InspectorEventsRead(
-                    agentId: selectedAgentId, result: .projection(projection))
-            case .refused(let status, let code, let detail):
-                eventsRead = InspectorEventsRead(
-                    agentId: selectedAgentId,
-                    result: .refused(detail: "HTTP \(status) · \(code.displayValue) · \(detail)"))
-            case .invalid(let detail):
-                eventsRead = InspectorEventsRead(
-                    agentId: selectedAgentId, result: .invalid(detail: detail))
-            }
+            eventsRead = await InspectorEventsRead.fetch(agentId: selectedAgentId, client: client)
         }
 
         state.apply(inspector: ShellInspectorPresenter.present(
@@ -482,5 +466,32 @@ struct ShellLiveStore {
                 String(data: error, encoding: .utf8) ?? "credential helper failed")
         }
         return authorization
+    }
+}
+
+extension InspectorEventsRead {
+    /// The newest events for one agent, as the inspector's typed read. Both the shell side panel and the Live Run rail go through here so a refusal and a schema failure are named the same way on either surface.
+    static let latestLimit = 300
+
+    static func fetch(agentId: String, client: WorkspaceDaemonClient) async -> InspectorEventsRead {
+        let result = await client.fetchResult(WorkspaceReadEndpoint<WorkspaceEventsPage>(
+            path: "workspace-events",
+            queryItems: [
+                URLQueryItem(name: "agent", value: agentId),
+                URLQueryItem(name: "latest", value: "true"),
+                URLQueryItem(name: "limit", value: String(latestLimit)),
+            ],
+            source: { ProjectionSource(revision: $0.events.last?.seq) },
+            observedAt: { $0.events.last?.occurredAt }))
+        switch result {
+        case .projection(let projection):
+            return InspectorEventsRead(agentId: agentId, result: .projection(projection))
+        case .refused(let status, let code, let detail):
+            return InspectorEventsRead(
+                agentId: agentId,
+                result: .refused(detail: "HTTP \(status) · \(code.displayValue) · \(detail)"))
+        case .invalid(let detail):
+            return InspectorEventsRead(agentId: agentId, result: .invalid(detail: detail))
+        }
     }
 }

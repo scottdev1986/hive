@@ -82,6 +82,7 @@ import {
   isLiveAgent,
   isOrchestratorName,
   isTerminalAgentStatus,
+  ORCHESTRATOR_EVENT_ENTITY_ID,
   ORCHESTRATOR_NAME,
 } from "../schemas/agent";
 import {
@@ -3382,6 +3383,7 @@ export class HiveDaemon {
       agent: url.searchParams.get("agent") ?? undefined,
       afterSeq: url.searchParams.get("afterSeq") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
+      latest: url.searchParams.get("latest") ?? undefined,
     });
     if (!query.success) {
       return json({ error: query.error.message }, { status: 400 });
@@ -3400,11 +3402,16 @@ export class HiveDaemon {
       }
     }
     try {
-      const events = this.status.listEventsForAgentAfter(
-        query.data.agent,
-        query.data.afterSeq,
-        query.data.limit,
-      );
+      const events = query.data.latest
+        ? this.status.listLatestEventsForAgent(
+            query.data.agent,
+            query.data.limit,
+          )
+        : this.status.listEventsForAgentAfter(
+            query.data.agent,
+            query.data.afterSeq,
+            query.data.limit,
+          );
       const last = events.at(-1);
       return json(
         WorkspaceEventsPageSchema.parse({
@@ -3412,7 +3419,9 @@ export class HiveDaemon {
           agentId: query.data.agent,
           events,
           nextSeq:
-            events.length === query.data.limit && last !== undefined
+            !query.data.latest &&
+            events.length === query.data.limit &&
+            last !== undefined
               ? last.seq
               : null,
         }),
@@ -3457,6 +3466,7 @@ export class HiveDaemon {
   }
 
   private paneEntityId(subject: string): string {
+    if (subject === ORCHESTRATOR_NAME) return ORCHESTRATOR_EVENT_ENTITY_ID;
     const agent = this.db.getLiveAgentByName(subject);
     return agent === undefined || agent === null ? subject : agent.id;
   }

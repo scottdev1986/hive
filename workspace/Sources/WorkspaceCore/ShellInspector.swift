@@ -337,7 +337,8 @@ public enum ShellInspectorPresenter {
             routeInspectionReads: inputs.routeInspectionReads,
             banners: banners(inputs),
             task: taskPane(inputs),
-            events: eventsPane(inputs),
+            events: eventsPane(
+                selectedAgentId: inputs.selectedAgentId, eventsRead: inputs.eventsRead),
             session: sessionPane(inputs))
     }
 
@@ -595,7 +596,11 @@ public enum ShellInspectorPresenter {
         }
     }
 
-    private static func eventsPane(_ inputs: Inputs) -> InspectorEventsPane {
+    /// The Events pane for one agent from one read. Public because the Live Run rail draws the same pane for its selected session without the rest of the inspector.
+    public static func eventsPane(
+        selectedAgentId: String?,
+        eventsRead: InspectorEventsRead?
+    ) -> InspectorEventsPane {
         let explanation = "Typed history from the daemon's event stream. Nothing here is scraped from a terminal."
         func pane(
             _ events: InspectorListState<InspectorEventTurn>,
@@ -608,10 +613,10 @@ public enum ShellInspectorPresenter {
                 events: events,
                 readFailed: readFailed)
         }
-        guard let agentId = inputs.selectedAgentId else {
+        guard let agentId = selectedAgentId else {
             return pane(.absent(reason: "No agent is selected. Events are read per agent."))
         }
-        guard let read = inputs.eventsRead else {
+        guard let read = eventsRead else {
             return pane(.absent(reason: "The events read for \(agentId) did not run on this refresh."))
         }
         guard read.agentId == agentId else {

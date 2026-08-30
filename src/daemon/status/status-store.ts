@@ -715,6 +715,27 @@ export class StatusStore implements WorkspaceStatusEventSource {
     );
   }
 
+  /** The newest events for one agent, returned oldest-first so a reader draws them in time order. */
+  listLatestEventsForAgent(agentId: string, limit: number): WorkspaceEventV2[] {
+    const rows = this.db.database
+      .query(
+        `
+        SELECT payload FROM status_workspace_events
+        WHERE subjectAgentId = ?
+        ORDER BY seqKey DESC
+        LIMIT ?
+      `,
+      )
+      .all(agentId, limit);
+    return rows
+      .map((row) =>
+        WorkspaceEventV2Schema.parse(
+          JSON.parse(EventRowSchema.parse(row).payload),
+        ),
+      )
+      .reverse();
+  }
+
   listEventsForAgent(agentId: string): WorkspaceEventV2[] {
     const rows = this.db.database
       .query(

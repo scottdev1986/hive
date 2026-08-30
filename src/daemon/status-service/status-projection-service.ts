@@ -319,6 +319,12 @@ export class StatusService {
     return this.events.listEventsForAgent(...args);
   }
 
+  listLatestEventsForAgent(
+    ...args: Parameters<StatusStore["listLatestEventsForAgent"]>
+  ): ReturnType<StatusStore["listLatestEventsForAgent"]> {
+    return this.events.listLatestEventsForAgent(...args);
+  }
+
   listEventsForAgentAfter(
     ...args: Parameters<StatusStore["listEventsForAgentAfter"]>
   ): ReturnType<StatusStore["listEventsForAgentAfter"]> {
