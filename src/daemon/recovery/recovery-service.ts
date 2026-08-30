@@ -6,6 +6,7 @@ import {
   type HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
   sessiondAgentProviderRunIsDead,
+  TerminalHostBindingNotFoundError,
 } from "../session-host/hive-terminal-host";
 import type { HiveTerminalTerminationAudit } from "../session-host/terminal-host-binding";
 
@@ -120,6 +121,14 @@ export class CrashRecovery {
       try {
         sessionPresent = await this.sessionPresent(agent);
       } catch (error) {
+        if (error instanceof TerminalHostBindingNotFoundError) {
+          outcomes.push({
+            agent: agent.name,
+            action: "skipped",
+            reason: error.message,
+          });
+          continue;
+        }
         if (
           !(error instanceof Error) ||
           !error.message.startsWith("Agent process presence is unknown for ")
@@ -226,12 +235,23 @@ export class CrashRecovery {
           "write authority is revoked; recovery requires explicit cleanup",
       };
     }
-    if (await this.sessionPresent(agent)) {
-      return {
-        agent: name,
-        action: "skipped",
-        reason: this.runningSessionReason(agent),
-      };
+    try {
+      if (await this.sessionPresent(agent)) {
+        return {
+          agent: name,
+          action: "skipped",
+          reason: this.runningSessionReason(agent),
+        };
+      }
+    } catch (error) {
+      if (error instanceof TerminalHostBindingNotFoundError) {
+        return {
+          agent: name,
+          action: "skipped",
+          reason: error.message,
+        };
+      }
+      throw error;
     }
     return this.recoverOne(agent, { manual: true });
   }

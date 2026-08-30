@@ -191,6 +191,7 @@ export interface StatusToolDeps {
   getTask: (taskId: string) => TaskDetail | null;
   listTasks: () => TaskDetail[];
   hasCompletedSessiondBinding: (agent: AgentRecord) => boolean;
+  isPublishedOnStatus: (agent: AgentRecord) => boolean;
   memoryEmbeddingsStatusSection: () => MemoryEmbeddingsStatusSection;
   /** Root instructions still waiting in each agent's mailbox, by agent name. Only the ones nobody has finished with: a handled instruction is settled and gone, so this counts what is outstanding rather than what was ever said. The field names downstream say "waiting" for that reason. */
   waitingInstructions: () => Map<string, string[]>;
@@ -453,10 +454,13 @@ export function registerStatusTools(
         false,
       );
       signal.throwIfAborted();
-      // graphifyCalls says whether the graph tools are earning their context cost. Null is unknown — no observation — never zero; only rendered at all when this daemon runs graphify. Kickoff is not messaging: it is the one write that starts an agent, and an agent whose spawn prompt never landed reads as an ordinary idle one in every other field here. A sessiond row is Hive's private cleanup ownership until host creation completes. Publishing it earlier gives Workspace a locator that cannot attach yet and turns ordinary launch ordering into a renderer race.
+      // Ghostty starts from the launch spec, so the roster includes an agent
+      // once that spec exists. Sessiond create-evidence is the older attach
+      // path. Publishing before either exists would open a login shell and
+      // then tear it down.
       let storedAgents = deps.db
         .listAgents()
-        .filter((agent) => deps.hasCompletedSessiondBinding(agent));
+        .filter((agent) => deps.isPublishedOnStatus(agent));
       if (history !== true) {
         storedAgents = storedAgents.filter(
           (agent) => !["dead", "done"].includes(agent.status),
@@ -528,6 +532,7 @@ export function registerStatusTools(
           if (
             inspection === null &&
             sessions !== null &&
+            deps.hasCompletedSessiondBinding(agent) &&
             shouldWarnForMissingTerminal(run)
           ) {
             // The list came back and this agent was not in it. That is a locator mismatch, not an outage, and it is the difference between "sessiond is down" and "we are asking about the wrong generation" — which no amount of staring at `outputThrough: 0` would ever distinguish.
@@ -648,9 +653,13 @@ export function registerStatusTools(
         agents: selectedAgents,
         currentRun: hierarchy.currentRun,
       };
-      return {
-        ...toolResult(status, "status"),
-        structuredContent: {
+      // MCP output is z.json(). Agent records carry optional keys as
+      // `undefined`; that is not JSON, and the validator refuses the whole
+      // roster. Workspace-feed reads detail=full, so a raw object here makes
+      // every live agent invisible again.
+      // SAFETY: JSON.parse of JSON.stringify of a plain object is a JsonObject.
+      const structuredContent = JSON.parse(
+        JSON.stringify({
           ...status,
           credentialReporting,
           openAssignments,
@@ -660,7 +669,11 @@ export function registerStatusTools(
           ...providerCapabilitiesSection,
           ...boardContradictionsSection,
           ...settlementSection,
-        },
+        }),
+      ) as JsonObject;
+      return {
+        ...toolResult(status, "status"),
+        structuredContent,
       };
     },
   );

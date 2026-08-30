@@ -24,6 +24,7 @@ import {
   type StatusIncarnationGenerationSource,
 } from "../../src/daemon/status-service/generation";
 import { StatusService } from "../../src/daemon/status-service/status-projection-service";
+import { writeTerminalLaunchSpec } from "../../src/daemon/session-host/shell-session";
 import { shouldWarnForMissingTerminal } from "../../src/daemon/status-service/status-tools";
 import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 import { MAIL_CONTROL_LANE_CAPACITY } from "../../src/schemas/mail";
@@ -210,6 +211,46 @@ const harness = (
   }
   return { daemon, db, captureCalls: () => captureCalls };
 };
+
+describe("hive_status Ghostty launch publication", () => {
+  test("hides an agent until a launch spec or sessiond create evidence exists", async () => {
+    const { daemon } = harness();
+    const token = daemon.capabilities.mint("maya", "reader", {
+      epoch: 0,
+    }).token;
+    const result = await callTool(daemon, token, "hive_status", {
+      detail: "full",
+    });
+    expect(result.isError).not.toBeTrue();
+    expect(result.structuredContent).toMatchObject({ agents: [] });
+    await daemon.stop();
+  });
+
+  test("publishes an agent that has a Ghostty launch spec and no sessiond create evidence", async () => {
+    const { daemon, db } = harness();
+    const current = required(db.getAgentByName("maya"));
+    const sessionId = current.sessionLocator?.sessionId;
+    if (sessionId === undefined) {
+      throw new Error("expected a minted session locator");
+    }
+    await writeTerminalLaunchSpec(sessionId, {
+      cwd: "/tmp/hive-maya",
+      command: `'hive' 'agent-ui' '--subject' 'maya'; exec "\${SHELL:-/bin/zsh}"`,
+      environment: { TERM: "xterm-256color" },
+    });
+    const token = daemon.capabilities.mint("maya", "reader", {
+      epoch: 0,
+    }).token;
+    const result = await callTool(daemon, token, "hive_status", {
+      detail: "full",
+    });
+    expect(result.isError).not.toBeTrue();
+    expect(result.structuredContent).toMatchObject({
+      agents: [{ name: "maya" }],
+    });
+    await daemon.stop();
+  });
+});
 
 describe("WP7 MCP status tools", () => {
   test("projected agent identity includes the live capability epoch", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/database/hive-database";
 import { CrashRecovery } from "../../src/daemon/recovery/recovery-service";
+import { TerminalHostBindingNotFoundError } from "../../src/daemon/session-host/hive-terminal-host";
 import type { SessionInspection } from "../../src/daemon/session-host/session-host-contract";
 import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas/agent";
 
@@ -179,6 +180,69 @@ describe("the crash-recovery sweep", () => {
     expect(published[0]?.idempotencyKey).toBe(`death-evidence:${AGENT_ID}`);
     expect(published[1]?.idempotencyKey).toBe(published[0]?.idempotencyKey);
   });
+
+  test("a Ghostty-owned agent with no sessiond binding does not abort the sweep", async () => {
+    const ghosttyId = "018f1e90-7b5a-7cc0-8000-0000000005b1";
+    const db = new HiveDatabase(":memory:");
+    db.upsertAgent(
+      agent({
+        id: ghosttyId,
+        name: "saeed",
+        sessionLocator: {
+          ...locator,
+          subject: { kind: "agent", agentId: ghosttyId },
+          sessionId: "ses_018f1e90-7b5a-7cc0-8000-0000000005b2",
+        },
+      }),
+    );
+    db.upsertAgent(agent());
+    const published: Published[] = [];
+    const recovery = new CrashRecovery({
+      db,
+      terminalHost: {
+        reconcileProviderRun: () => null,
+        inspect: async (current) => {
+          if (current.sessionId.endsWith("5b2")) {
+            throw new TerminalHostBindingNotFoundError();
+          }
+          return exitedInspection();
+        },
+        terminate: async () => {
+          throw new Error("the sweep must not terminate a session");
+        },
+      },
+      publish: async (from, to, body, options) => {
+        published.push({
+          from,
+          to,
+          body,
+          idempotencyKey: options?.idempotencyKey,
+        });
+      },
+      mail: {
+        getItem: () => null,
+        unsettledMailCount: () => 0,
+      },
+    });
+
+    const outcomes = await recovery.sweep();
+
+    expect(outcomes).toEqual([
+      {
+        agent: "kimi-victim",
+        action: "reported",
+        reason: "its terminal is gone",
+      },
+      {
+        agent: "saeed",
+        action: "skipped",
+        reason:
+          "sessiond locator has no terminal-host binding in this Hive instance",
+      },
+    ]);
+    expect(published).toHaveLength(1);
+    expect(published[0]?.to).toBe(ORCHESTRATOR_NAME);
+  });
 });
 
 // /recover's named-agent form ("manual retry")
@@ -205,5 +269,36 @@ describe("recoverAgent (/recover's manual, named-agent form)", () => {
     expect(db.getAgentById(AGENT_ID)).toEqual(before);
     expect(published).toHaveLength(1);
     expect(published[0]?.body).toContain("kimi-victim looks dead");
+  });
+
+  test("skips a named Ghostty-owned agent that has no sessiond binding", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.upsertAgent(agent());
+    const recovery = new CrashRecovery({
+      db,
+      terminalHost: {
+        reconcileProviderRun: () => null,
+        inspect: async () => {
+          throw new TerminalHostBindingNotFoundError();
+        },
+        terminate: async () => {
+          throw new Error("the sweep must not terminate a session");
+        },
+      },
+      publish: async () => {
+        throw new Error("must not publish");
+      },
+      mail: {
+        getItem: () => null,
+        unsettledMailCount: () => 0,
+      },
+    });
+
+    await expect(recovery.recoverAgent("kimi-victim")).resolves.toEqual({
+      agent: "kimi-victim",
+      action: "skipped",
+      reason:
+        "sessiond locator has no terminal-host binding in this Hive instance",
+    });
   });
 });

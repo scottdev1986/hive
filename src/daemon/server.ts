@@ -1578,6 +1578,16 @@ export class HiveDaemon {
     );
   }
 
+  /** Workspace execs the launch spec. Publish once that spec exists so the pane can start; sessiond create-evidence is only the old attach path. */
+  private isPublishedOnStatus(agent: AgentRecord): boolean {
+    const sessionId = agent.sessionLocator?.sessionId;
+    if (sessionId !== undefined && readTerminalLaunchSpec(sessionId) !== null) {
+      return true;
+    }
+    if (agent.sessionLocator === undefined) return false;
+    return this.hasCompletedSessiondBinding(agent);
+  }
+
   private publishMailStatus(
     recipient: string,
     state: MailStatusState,
@@ -4318,6 +4328,7 @@ export class HiveDaemon {
       listTasks: () => this.hierarchy.listTasks(),
       hasCompletedSessiondBinding: (agent) =>
         this.hasCompletedSessiondBinding(agent),
+      isPublishedOnStatus: (agent) => this.isPublishedOnStatus(agent),
       memoryEmbeddingsStatusSection: () => this.memoryEmbeddingsStatusSection(),
       waitingInstructions: () => this.waitingRootInstructions(),
       mailBacklog: (recipient) => this.mail.unsettledMailCount(recipient),
