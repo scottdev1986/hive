@@ -424,6 +424,10 @@ struct LiveRunWorkbenchViewTests {
         #expect(nameInBar.maxY <= bar.bounds.maxY)
         #expect(name.alignment == .center)
         #expect(name.font?.pointSize == Theme.Font.largeTitle.pointSize)
+        #expect(bar.bounds.height < 80)
+        let terminal = try #require(
+            findView(in: view, identifier: "live-run-terminal-host"))
+        #expect(terminal.bounds.height > bar.bounds.height * 4)
     }
 
     @Test("Identity chrome is inset from the column edges and carries the vendor mark")

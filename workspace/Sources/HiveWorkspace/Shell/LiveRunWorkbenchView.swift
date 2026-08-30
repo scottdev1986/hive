@@ -483,6 +483,8 @@ final class LiveRunWorkbenchView: NSView {
             top: Theme.Space.s, left: Theme.Space.m,
             bottom: Theme.Space.s, right: Theme.Space.m)
         identity.setAccessibilityIdentifier("live-run-identity")
+        identity.setContentHuggingPriority(.required, for: .vertical)
+        identity.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let container = NSStackView(views: [
             makeControlStrip(), identity, errorLabel, terminalHost,
@@ -524,26 +526,29 @@ final class LiveRunWorkbenchView: NSView {
         box.setAccessibilityIdentifier("live-run-control-strip")
         box.setAccessibilityLabel("Selected agent")
         box.addSubview(titleLabel)
+        // Equal insets size the bar to the name. A min-height plus centerY
+        // lets this empty NSView absorb leftover column height, which is how
+        // the name floated in the middle of the pane and the terminal collapsed.
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(
                 equalTo: box.leadingAnchor, constant: Theme.Space.m),
             titleLabel.trailingAnchor.constraint(
                 equalTo: box.trailingAnchor, constant: -Theme.Space.m),
-            titleLabel.centerYAnchor.constraint(equalTo: box.centerYAnchor),
             titleLabel.topAnchor.constraint(
-                greaterThanOrEqualTo: box.topAnchor, constant: Theme.Space.s),
+                equalTo: box.topAnchor, constant: Theme.Space.s),
             titleLabel.bottomAnchor.constraint(
-                lessThanOrEqualTo: box.bottomAnchor, constant: -Theme.Space.s),
-            box.heightAnchor.constraint(
-                greaterThanOrEqualToConstant:
-                    Theme.Font.largeTitle.pointSize + Theme.Space.m * 2),
+                equalTo: box.bottomAnchor, constant: -Theme.Space.s),
         ])
+        box.setContentHuggingPriority(.required, for: .vertical)
+        box.setContentCompressionResistancePriority(.required, for: .vertical)
 
         let separator = NSBox.hdsSeparator()
         let container = NSStackView(views: [box, separator])
         container.orientation = .vertical
         container.spacing = 0
         container.alignment = .leading
+        container.setContentHuggingPriority(.required, for: .vertical)
+        container.setContentCompressionResistancePriority(.required, for: .vertical)
         box.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         separator.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         return container
