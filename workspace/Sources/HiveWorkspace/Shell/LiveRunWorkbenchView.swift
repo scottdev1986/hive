@@ -56,11 +56,9 @@ final class LiveRunWorkbenchView: NSView {
     private let titleLabel = NSTextField(labelWithString: "No live session selected")
     private let subtitleLabel = NSTextField(labelWithString: "Waiting for workspace-feed v1")
     private let locatorLabel = NSTextField(labelWithString: "Exact generation · unknown")
-    private let scopeValue = NSTextField(labelWithString: "Live Run")
-    private let focusValue = NSTextField(labelWithString: "none")
-    private let generationValue = NSTextField(labelWithString: "unknown")
     private let activityBadgeHost = NSView()
     private let attachmentBadgeHost = NSView()
+    private let identityMarkHost = NSView()
     private let liveChip = CapsuleBadge(
         text: "AGENT UI", symbol: "text.bubble", style: .info)
     private let providerHost = NSView()
@@ -222,12 +220,12 @@ final class LiveRunWorkbenchView: NSView {
         errorLabel.stringValue = reason
         errorLabel.isHidden = false
         titleLabel.stringValue = "Live Run unavailable"
+        titleLabel.toolTip = titleLabel.stringValue
         subtitleLabel.stringValue = "No session status was inferred"
         locatorLabel.stringValue = "Exact generation · unknown"
         terminalPlaceholder.stringValue = reason
         terminalPlaceholder.isHidden = false
         controlProjection = nil
-        updateControlStrip(nil)
         updateCenterBadges(nil)
         updateInspector(nil)
     }
@@ -241,18 +239,15 @@ final class LiveRunWorkbenchView: NSView {
             return
         }
         controlProjection = projection
-        updateControlStrip(session)
         updateInspector(session)
     }
 
     func showControlUnavailable(_ reason: String) {
         controlProjection = nil
         guard let session = sessions.first(where: { $0.id == selectedID }) else {
-            updateControlStrip(nil)
             updateInspector(nil)
             return
         }
-        updateControlStrip(session)
         updateInspector(session)
         stopButton.toolTip = reason
         terminateButton.toolTip = reason
@@ -419,27 +414,23 @@ final class LiveRunWorkbenchView: NSView {
     }
 
     private func makeCenter() -> NSView {
-        titleLabel.font = Theme.Font.title
-        titleLabel.textColor = Theme.primaryText
-        titleLabel.compressHorizontally(toolTip: titleLabel.stringValue)
         subtitleLabel.font = Theme.Font.caption
         subtitleLabel.textColor = Theme.secondaryText
         subtitleLabel.compressHorizontally()
         activityBadgeHost.translatesAutoresizingMaskIntoConstraints = false
-        let titleRow = NSStackView(views: [titleLabel, activityBadgeHost])
-        titleRow.orientation = .horizontal
-        titleRow.alignment = .centerY
-        titleRow.spacing = Theme.Space.s
-        let identity = NSStackView(views: [titleRow, subtitleLabel])
-        identity.orientation = .vertical
-        identity.alignment = .leading
-        identity.spacing = 2
-
         attachmentBadgeHost.translatesAutoresizingMaskIntoConstraints = false
+        identityMarkHost.translatesAutoresizingMaskIntoConstraints = false
+        identityMarkHost.setAccessibilityIdentifier("live-run-identity-mark")
+        NSLayoutConstraint.activate([
+            identityMarkHost.widthAnchor.constraint(equalToConstant: Theme.Metric.markSize),
+            identityMarkHost.heightAnchor.constraint(equalToConstant: Theme.Metric.markSize),
+        ])
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let header = NSStackView(views: [identity, spacer, attachmentBadgeHost])
+        let header = NSStackView(views: [
+            identityMarkHost, activityBadgeHost, subtitleLabel, spacer, attachmentBadgeHost,
+        ])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = Theme.Space.s
@@ -483,8 +474,18 @@ final class LiveRunWorkbenchView: NSView {
         liveRow.spacing = Theme.Space.s
         locatorLabel.setContentHuggingPriority(.init(1), for: .horizontal)
 
+        let identity = NSStackView(views: [header, liveRow])
+        identity.translatesAutoresizingMaskIntoConstraints = false
+        identity.orientation = .vertical
+        identity.alignment = .width
+        identity.spacing = Theme.Space.s
+        identity.edgeInsets = NSEdgeInsets(
+            top: Theme.Space.s, left: Theme.Space.m,
+            bottom: Theme.Space.s, right: Theme.Space.m)
+        identity.setAccessibilityIdentifier("live-run-identity")
+
         let container = NSStackView(views: [
-            makeControlStrip(), header, liveRow, errorLabel, terminalHost,
+            makeControlStrip(), identity, errorLabel, terminalHost,
         ])
         container.translatesAutoresizingMaskIntoConstraints = false
         container.orientation = .vertical
@@ -501,28 +502,49 @@ final class LiveRunWorkbenchView: NSView {
         return container
     }
 
+    /// The selected agent's name is the only fact this bar carries. Scope,
+    /// keyboard focus, and generation used to share it; they duplicated the
+    /// rail, the terminal, and the locator line, and first-baseline layout
+    /// pinned their type to the top of the box.
     private func makeControlStrip() -> NSView {
-        for field in [scopeValue, focusValue, generationValue] {
-            field.font = Theme.Font.headline
-            field.compressHorizontally(priority: 430, toolTip: field.stringValue)
-        }
-        let strip = FactStripView(
-            pairs: [
-                FactStripView.pair(label: "Viewed scope", value: scopeValue, delimiter: "·"),
-                FactStripView.pair(label: "Keyboard focus", value: focusValue, delimiter: "·"),
-                FactStripView.pair(label: "Generation", value: generationValue, delimiter: "·"),
-            ],
-            identifier: "live-run-control-strip")
-        Theme.paint(strip, Theme.sidebarContextFill)
-        strip.heightAnchor.constraint(
-            greaterThanOrEqualToConstant:
-                Theme.Metric.chromeControlHeight + Theme.Space.m).isActive = true
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = Theme.Font.largeTitle
+        titleLabel.textColor = Theme.primaryText
+        titleLabel.alignment = .center
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.compressHorizontally(priority: 430, toolTip: titleLabel.stringValue)
+        titleLabel.setAccessibilityIdentifier("live-run-selected-agent")
+
+        let box = NSView()
+        box.translatesAutoresizingMaskIntoConstraints = false
+        Theme.paint(box, Theme.sidebarContextFill)
+        box.setAccessibilityElement(true)
+        box.setAccessibilityRole(.group)
+        box.setAccessibilityIdentifier("live-run-control-strip")
+        box.setAccessibilityLabel("Selected agent")
+        box.addSubview(titleLabel)
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(
+                equalTo: box.leadingAnchor, constant: Theme.Space.m),
+            titleLabel.trailingAnchor.constraint(
+                equalTo: box.trailingAnchor, constant: -Theme.Space.m),
+            titleLabel.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            titleLabel.topAnchor.constraint(
+                greaterThanOrEqualTo: box.topAnchor, constant: Theme.Space.s),
+            titleLabel.bottomAnchor.constraint(
+                lessThanOrEqualTo: box.bottomAnchor, constant: -Theme.Space.s),
+            box.heightAnchor.constraint(
+                greaterThanOrEqualToConstant:
+                    Theme.Font.largeTitle.pointSize + Theme.Space.m * 2),
+        ])
+
         let separator = NSBox.hdsSeparator()
-        let container = NSStackView(views: [strip, separator])
+        let container = NSStackView(views: [box, separator])
         container.orientation = .vertical
         container.spacing = 0
         container.alignment = .leading
-        strip.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
+        box.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         separator.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         return container
     }
@@ -791,11 +813,11 @@ final class LiveRunWorkbenchView: NSView {
             controlProjection = nil
             hideVisibleTerminal()
             titleLabel.stringValue = "No live session selected"
+            titleLabel.toolTip = titleLabel.stringValue
             subtitleLabel.stringValue = "Background rows remain typed-only"
             locatorLabel.stringValue = "Exact generation · unknown"
             terminalPlaceholder.stringValue = "Select an agent."
             terminalPlaceholder.isHidden = false
-            updateControlStrip(nil)
             updateCenterBadges(nil)
             updateInspector(nil)
             publishVisibleSessionIfChanged(nil)
@@ -809,9 +831,9 @@ final class LiveRunWorkbenchView: NSView {
         }
 
         titleLabel.stringValue = session.name
+        titleLabel.toolTip = session.name
         subtitleLabel.stringValue =
             "\(providerLine(for: session)) · \(session.rawStatus)"
-        updateControlStrip(session)
         updateCenterBadges(session)
         updateInspector(session)
         guard routeVisible else { return }
@@ -1279,21 +1301,12 @@ final class LiveRunWorkbenchView: NSView {
         }
     }
 
-    private func updateControlStrip(_ session: LiveRunSessionSummary?) {
-        scopeValue.stringValue = viewedScope(for: session)
-        scopeValue.textColor = Theme.primaryText
-        focusValue.stringValue = session?.name ?? "none"
-        focusValue.textColor = session == nil ? Theme.secondaryText : Theme.accent
-        if let generation = session?.locator?.generation {
-            generationValue.stringValue = "\(generation) · exact"
-            generationValue.textColor = Theme.positive
-        } else {
-            generationValue.stringValue = "unknown"
-            generationValue.textColor = Theme.secondaryText
-        }
-    }
-
     private func updateCenterBadges(_ session: LiveRunSessionSummary?) {
+        let provider = session.flatMap { selected in
+            selected.isQueen ? (queenProvider ?? selected.provider) : selected.provider
+        }
+        installProviderMark(in: identityMarkHost, provider: provider)
+
         if let session {
             installBadge(
                 in: activityBadgeHost,
@@ -1328,6 +1341,21 @@ final class LiveRunWorkbenchView: NSView {
             identifier: "live-run-attachment-status")
     }
 
+    private func installProviderMark(in host: NSView, provider: ProviderID?) {
+        for view in host.subviews { view.removeFromSuperview() }
+        guard let provider else {
+            host.isHidden = true
+            return
+        }
+        host.isHidden = false
+        let mark = ProviderMarkView(provider: provider)
+        host.addSubview(mark)
+        NSLayoutConstraint.activate([
+            mark.centerXAnchor.constraint(equalTo: host.centerXAnchor),
+            mark.centerYAnchor.constraint(equalTo: host.centerYAnchor),
+        ])
+    }
+
     private func installBadge(
         in host: NSView,
         text: String,
@@ -1345,20 +1373,6 @@ final class LiveRunWorkbenchView: NSView {
             badge.topAnchor.constraint(equalTo: host.topAnchor),
             badge.bottomAnchor.constraint(equalTo: host.bottomAnchor),
         ])
-    }
-
-    private func viewedScope(for session: LiveRunSessionSummary?) -> String {
-        guard let session, let horizon else { return "Live Run" }
-        guard let node = matchingNode(for: session, in: horizon) else { return "Live Run" }
-        if case .present(let parent) = node.parentNodeId, let parentId = parent.value,
-           let parentNode = horizon.snapshot.nodes.first(where: { $0.nodeId == parentId })
-        {
-            if case .present(let binding) = parentNode.binding {
-                return "\(binding.agentId)'s crew"
-            }
-            return "\(parentId)'s crew"
-        }
-        return session.name
     }
 
     private func matchingNode(

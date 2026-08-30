@@ -363,23 +363,102 @@ struct LiveRunWorkbenchViewTests {
 
         let labels = textFields(in: view).map(\.stringValue)
         #expect(labels.contains("Run hierarchy"))
-        #expect(labels.contains("Viewed scope"))
-        #expect(labels.contains("Keyboard focus"))
-        #expect(labels.contains("Generation"))
-        #expect(labels.contains("3 · exact"))
+        #expect(!labels.contains("Viewed scope"))
+        #expect(!labels.contains("Keyboard focus"))
+        #expect(!labels.contains("Generation"))
+        #expect(!labels.contains("3 · exact"))
         #expect(labels.contains("Codex"))
         #expect(labels.contains("ATTACHED LIVE · G3"))
         #expect(labels.contains("Run budget · not projected"))
         #expect(!labels.contains { $0.contains("19 target") })
         #expect(!labels.contains { $0.contains("TUI") })
-        #expect(findView(in: view, identifier: "live-run-control-strip") != nil)
+        let nameBar = try #require(findView(in: view, identifier: "live-run-control-strip"))
+        let name = try #require(
+            findView(in: view, identifier: "live-run-selected-agent") as? NSTextField)
+        #expect(name.stringValue == "david")
+        #expect(name.superview === nameBar)
+        #expect(name.font?.pointSize == Theme.Font.largeTitle.pointSize)
         #expect(findView(in: view, identifier: "live-run-snapshot") == nil)
         #expect(findView(in: view, identifier: "live-run-release-input") == nil)
         #expect(findView(in: view, identifier: "live-run-attach") == nil)
         #expect(findView(in: view, identifier: "live-run-attachment-status") is CapsuleBadge)
+        let identityMark = try #require(findView(in: view, identifier: "live-run-identity-mark"))
+        #expect(identityMark.subviews.contains { $0 is ProviderMarkView })
+        #expect(identityMark.subviews.contains {
+            $0.accessibilityLabel() == "OpenAI logo"
+        })
         #expect(findView(in: view, identifier: "live-run-inspector-tab-task") != nil)
         #expect(findView(in: view, identifier: "live-run-inspector-tab-events") != nil)
         #expect(findView(in: view, identifier: "live-run-inspector-tab-session") != nil)
+    }
+
+    @Test("The selected agent name is centered in the top bar and stays inside it")
+    func selectedAgentNameIsCenteredInTheTopBar() throws {
+        _ = NSApplication.shared
+        let view = LiveRunWorkbenchView(terminalFactory: nil)
+        view.apply(try projection([agent("david", provider: "codex", generation: 3)]))
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 720),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false)
+        let host = try #require(window.contentView)
+        host.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        window.layoutIfNeeded()
+
+        let bar = try #require(findView(in: view, identifier: "live-run-control-strip"))
+        let name = try #require(
+            findView(in: view, identifier: "live-run-selected-agent") as? NSTextField)
+        let nameInBar = name.convert(name.bounds, to: bar)
+        #expect(abs(nameInBar.midY - bar.bounds.midY) < 1.5)
+        #expect(nameInBar.minX >= bar.bounds.minX)
+        #expect(nameInBar.maxX <= bar.bounds.maxX)
+        #expect(nameInBar.minY >= bar.bounds.minY)
+        #expect(nameInBar.maxY <= bar.bounds.maxY)
+        #expect(name.alignment == .center)
+        #expect(name.font?.pointSize == Theme.Font.largeTitle.pointSize)
+    }
+
+    @Test("Identity chrome is inset from the column edges and carries the vendor mark")
+    func identityStripIsPaddedAndShowsVendorMark() throws {
+        _ = NSApplication.shared
+        let view = LiveRunWorkbenchView(terminalFactory: nil)
+        view.apply(try projection([agent("david", provider: "codex", generation: 3)]))
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 720),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false)
+        let host = try #require(window.contentView)
+        host.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        window.layoutIfNeeded()
+
+        let identity = try #require(findView(in: view, identifier: "live-run-identity"))
+        let mark = try #require(findView(in: view, identifier: "live-run-identity-mark"))
+        let attached = try #require(
+            findView(in: view, identifier: "live-run-attachment-status"))
+        let markInIdentity = mark.convert(mark.bounds, to: identity)
+        let attachedInIdentity = attached.convert(attached.bounds, to: identity)
+        #expect(markInIdentity.minX >= Theme.Space.m - 0.5)
+        #expect(attachedInIdentity.maxX <= identity.bounds.maxX - Theme.Space.m + 0.5)
+        #expect(mark.subviews.contains { $0 is ProviderMarkView })
+        #expect(mark.subviews.contains {
+            $0.accessibilityLabel() == "OpenAI logo"
+        })
     }
 
     @Test("A projected task appears only in the inspector task section")
