@@ -146,7 +146,7 @@ describe("launchOrchestrator opens on-disk episodic.db", () => {
       const episodic = EpisodicStore.forProjectRoot(project);
       const dbPath = episodic.path;
       episodic.close();
-      
+
       // Overwrite with invalid SQLite data to force open failure
       await writeFile(dbPath, "not a valid sqlite database\n");
 

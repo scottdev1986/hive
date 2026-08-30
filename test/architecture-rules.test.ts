@@ -392,7 +392,6 @@ const KNOWN_FORBIDDEN_EDGES: readonly string[] = [
   // Memory query and tools read status freshness from the status service.
   "src/memory-service/query.ts -> src/daemon/status-service/status-service.ts",
   // Recall names the user subject to exclude it from agent recall.
-  "src/memory-service/recall.ts -> src/daemon/authorization/credentials.ts",
   // The memory MCP tools register through the daemon's policy registrar.
   "src/memory-service/memory-tools.ts -> src/daemon/authorization/mcp-tool-policy.ts",
   // The protocol facts report talks to the daemon through the pane's client.
@@ -508,8 +507,8 @@ describe("R3 — the layer DAG", () => {
     // Asserted separately from the comparison above. Without this, a
     // nineteenth violation could be legalised by appending one line to the
     // list, and the suite would stay green with nobody the wiser.
-    expect(KNOWN_FORBIDDEN_EDGES).toHaveLength(17);
-    expect(new Set(KNOWN_FORBIDDEN_EDGES).size).toBe(17);
+    expect(KNOWN_FORBIDDEN_EDGES).toHaveLength(16);
+    expect(new Set(KNOWN_FORBIDDEN_EDGES).size).toBe(16);
   });
 
   test("the layer rule refuses an edge that is not on the list", () => {

@@ -964,11 +964,13 @@ describe("Ghostty-owned queen terminal", () => {
 
     expect(snapshot.state).toBe("running");
     expect(creates).toBe(0);
-    expect(providerRuns.getActiveProviderRunByTerminal(snapshot.locator)).not.toBeNull();
+    expect(
+      providerRuns.getActiveProviderRunByTerminal(snapshot.locator),
+    ).not.toBeNull();
     const spec = readTerminalLaunchSpec(snapshot.locator.sessionId);
     expect(spec?.cwd).toBe("/repo");
     expect(spec?.command).toContain("codex");
-    expect(spec?.command).toContain('exec "${SHELL:-/bin/zsh}"');
+    expect(spec?.command).toContain(`exec "\${SHELL:-/bin/zsh}"`);
     expect(spec?.environment.HIVE_AGENT_UI_COMMAND).toBeUndefined();
   });
 });

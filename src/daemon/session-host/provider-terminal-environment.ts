@@ -1,5 +1,6 @@
 interface ProviderTerminalEnv {
-  readonly [key: string]: string | undefined;
+  // Never undefined: the entries a process environment leaves unset are dropped below, so callers spread this into a launch spec without a second filter.
+  readonly [key: string]: string;
 }
 
 // NO_COLOR: agents should see color. TERMINFO*: a launcher like Ghostty.app

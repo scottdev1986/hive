@@ -25,7 +25,6 @@ import {
   writeTerminalLaunchSpec,
 } from "../session-host/shell-session";
 import type { TerminalHostBindingStore } from "../session-host/terminal-host-binding";
-import { ORCHESTRATOR_NAME } from "../../schemas/agent";
 import {
   PTY_CREATE_GEOMETRY,
   type WorkspaceVisibilityAuthority,
@@ -106,13 +105,9 @@ export interface OrchestratorSessiondDependencies {
 const CREATION_POLICY_RETRY_MS = 100;
 const INSPECTION_RETRY_MS = 250;
 const INHERITED_OBSERVATION_FAILURE_TIMEOUT_MS = 95_000;
-const FOREGROUND_INSPECTION_RETRY_MS = 25;
 export const ORCHESTRATOR_FOREGROUND_READY_MARGIN_MS = 1_000;
 export const ORCHESTRATOR_FOREGROUND_WAIT_MS =
   SHELL_SESSION_TTY_READY_WAIT_MS + ORCHESTRATOR_FOREGROUND_READY_MARGIN_MS;
-const FOREGROUND_INSPECTION_MAX_ATTEMPTS = Math.ceil(
-  ORCHESTRATOR_FOREGROUND_WAIT_MS / FOREGROUND_INSPECTION_RETRY_MS,
-);
 
 type HostOrigin = "managed" | "inherited";
 
@@ -314,11 +309,7 @@ export class OrchestratorSessiondController {
         locator,
         visibility: policy.visibility,
       });
-      const spec = await this.sessionSpec(
-        params,
-        locator,
-        PTY_CREATE_GEOMETRY,
-      );
+      const spec = await this.sessionSpec(params, locator, PTY_CREATE_GEOMETRY);
       await writeTerminalLaunchSpec(locator.sessionId, {
         cwd: spec.cwd,
         command: params.shell.ghosttyCommand,
