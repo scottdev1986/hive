@@ -49,6 +49,7 @@ import {
   footerHintsContent,
   footerStatusContent,
   foregroundIsActive,
+  liveLineContent,
   mentionMenuContent,
   modelLabel,
   modelPickerContent,
@@ -62,6 +63,7 @@ import {
   visibleCommandEntries,
 } from "./presentation";
 import { createSyntaxStyle, syntaxClient } from "./syntax";
+import { EventsView } from "./events-view";
 import { TranscriptView } from "./transcript-view";
 import {
   canSubmitUser,
@@ -130,7 +132,8 @@ import {
   setModePickerApplying,
   settleCompaction,
   settleHumanSubmission,
-  toggleToolDetails,
+  toggleEvents,
+  applyWakeDispatched,
   updateModelFilter,
   type ViewState,
 } from "./view-state";
@@ -289,6 +292,9 @@ export class AgentUi {
   private readonly bannerText: TextRenderable;
   private readonly transcript: ScrollBoxRenderable;
   private readonly transcriptView: TranscriptView;
+  private readonly events: ScrollBoxRenderable;
+  private readonly eventsView: EventsView;
+  private readonly liveLine: TextRenderable;
   private readonly queueStatus: TextRenderable;
   private readonly menuPanel: BoxRenderable;
   private readonly commands: TextRenderable;
@@ -310,7 +316,8 @@ export class AgentUi {
   private footerRefresh: FooterRefreshSnapshot | null = null;
   private footerHintsArmed: boolean | null = null;
   private transcriptRevision = -1;
-  private transcriptDetails = false;
+  private eventsRevision = -1;
+  private liveLineText: string | null = null;
   private queueWakeCount: number | null = null;
   private menuRefresh: MenuRefreshSnapshot | null = null;
   private mentionIndex: FileMentionIndex | null = null;
@@ -442,14 +449,44 @@ export class AgentUi {
         accent: brand.accent,
         ...definedFields({ workspacePath: identity.workspacePath }),
       },
-      () => {
-        this.view = toggleToolDetails(this.view);
-        this.refresh();
-      },
       banner,
     );
     this.transcriptView.onPickRow = (requestId, row) =>
       this.pickRow(requestId, row);
+    // The events overlay takes the transcript's place while open: same box shape, same scroll discipline, so ctrl+o reads as turning the page over rather than opening a dialog.
+    this.events = new ScrollBoxRenderable(renderer, {
+      id: "agent-ui-events",
+      width: "100%",
+      flexGrow: 1,
+      minHeight: 1,
+      scrollY: true,
+      stickyScroll: true,
+      stickyStart: "bottom",
+      viewportCulling: true,
+      visible: false,
+      contentOptions: {
+        flexDirection: "column",
+        paddingX: 2,
+        paddingTop: 1,
+        paddingBottom: 1,
+      },
+    });
+    this.events.focusable = false;
+    this.events.verticalScrollBar.visible = false;
+    for (const surface of [this.events.content, this.events.viewport]) {
+      surface.selectable = true;
+      surface.shouldStartSelection = () => true;
+    }
+    this.eventsView = new EventsView(renderer, this.events, COLORS);
+    this.liveLine = new TextRenderable(renderer, {
+      id: "agent-ui-live",
+      width: "100%",
+      height: 1,
+      paddingX: 1,
+      truncate: true,
+      wrapMode: "none",
+      visible: false,
+    });
     this.queueStatus = new TextRenderable(renderer, {
       id: "agent-ui-queue",
       width: "100%",
@@ -553,6 +590,8 @@ export class AgentUi {
     this.composer.add(prompt);
     this.composer.add(this.textarea);
     this.frame.add(this.transcript);
+    this.frame.add(this.events);
+    this.frame.add(this.liveLine);
     this.frame.add(this.queueStatus);
     this.frame.add(this.menuPanel);
     this.frame.add(this.composer);
@@ -1007,6 +1046,12 @@ export class AgentUi {
       this.enqueueInput(() => this.cyclePermissionMode());
       return;
     }
+    if (key.name === "escape" && this.view.showEvents) {
+      key.preventDefault();
+      this.view = toggleEvents(this.view);
+      this.refresh();
+      return;
+    }
     if (key.name === "escape") {
       key.preventDefault();
       this.enqueueInput(() => this.dismissOrInterrupt());
@@ -1042,7 +1087,7 @@ export class AgentUi {
     }
     if (key.ctrl && key.name === "o") {
       key.preventDefault();
-      this.view = toggleToolDetails(this.view);
+      this.view = toggleEvents(this.view);
       this.refresh();
       return;
     }
@@ -1781,6 +1826,7 @@ export class AgentUi {
           this.view,
           notice.lane,
           `${notice.backlogCount} waiting on the ${notice.lane} lane`,
+          this.now(),
         ),
         "waiting",
       );
@@ -1994,7 +2040,10 @@ export class AgentUi {
     });
     if (receipt.outcome === "accepted") {
       this.scheduler = onSubmissionAccepted(this.scheduler, receipt.turnId);
-      this.view = applyMailPhase(this.view, "waking");
+      this.view = applyWakeDispatched(
+        applyMailPhase(this.view, "waking"),
+        clientInputId,
+      );
       // Held until a turn event names this submission. The acknowledgement is the vendor agreeing to run something; only the turn proves it did.
       const acceptedReport = {
         kind: "wake-request-accepted",
@@ -2239,20 +2288,36 @@ export class AgentUi {
       this.footerHints.content = footerHintsContent(footerHintsArmed);
     }
 
-    if (
-      this.transcriptRevision !== this.view.transcript.revision ||
-      this.transcriptDetails !== this.view.showToolDetails
-    ) {
+    if (this.transcriptRevision !== this.view.transcript.revision) {
       const changedStart = this.view.transcript.consumeChangedStart();
-      const detailsChanged =
-        this.transcriptDetails !== this.view.showToolDetails;
       this.transcriptRevision = this.view.transcript.revision;
-      this.transcriptDetails = this.view.showToolDetails;
-      this.transcriptView.update(
-        this.view.transcript,
-        this.view.showToolDetails,
-        detailsChanged ? 0 : (changedStart ?? 0),
-      );
+      this.transcriptView.update(this.view.transcript, changedStart ?? 0);
+    }
+
+    if (this.transcript.visible === this.view.showEvents) {
+      this.transcript.visible = !this.view.showEvents;
+      this.events.visible = this.view.showEvents;
+      if (this.view.showEvents) this.events.scrollTo(this.events.scrollHeight);
+    }
+    if (
+      this.view.showEvents &&
+      this.eventsRevision !== this.view.transcript.revision
+    ) {
+      this.eventsRevision = this.view.transcript.revision;
+      this.eventsView.update(this.view.transcript, this.view.wakeTurnIds);
+    }
+
+    const live = liveLineContent(
+      this.view,
+      this.spinnerTick,
+      Date.parse(this.now()),
+    );
+    const liveText =
+      live === null ? null : live.chunks.map((chunk) => chunk.text).join("");
+    if (liveText !== this.liveLineText) {
+      this.liveLineText = liveText;
+      if (live !== null) this.liveLine.content = live;
+      this.liveLine.visible = live !== null;
     }
 
     const queueWakeCount = pendingWakeCount(this.scheduler);
@@ -2347,6 +2412,10 @@ export class AgentUi {
   }
 
   scrollBy(lines: number): void {
+    if (this.view.showEvents) {
+      this.events.scrollBy(lines);
+      return;
+    }
     if (
       lines < 0 &&
       this.transcript.scrollTop <= 0 &&
@@ -2385,7 +2454,6 @@ export class AgentUi {
       clearInterval(this.spinnerTimer);
       this.spinnerTimer = null;
     }
-    this.transcriptView.dispose();
     this.renderer.keyInput.off("keypress", this.onKeyPress);
     this.renderer.keyInput.off("paste", this.onPaste);
   }

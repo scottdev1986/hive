@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ScrollBoxRenderable } from "@opentui/core";
 import {
-  applyMailNotice,
+  applyDiagnostic,
   type ViewState,
 } from "../src/cli/agent-ui/view-state";
 import { type AgentUiHarness, createAgentUiHarness } from "./agent-ui-harness";
@@ -22,7 +22,7 @@ describe("transcript render window", () => {
     const internal = unsafeCast<{ view: ViewState }>(harness.ui);
     let view = internal.view;
     for (let index = 0; index < 1_000; index += 1) {
-      view = applyMailNotice(view, "work", `mail-${index}`);
+      view = applyDiagnostic(view, `mail-${index}`, "warning");
     }
     internal.view = view;
     harness.ui.draw();

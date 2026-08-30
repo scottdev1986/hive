@@ -1,4 +1,5 @@
-import { isRecord } from "../../../shared/is-record";
+import { isRecord, isString } from "../../../shared/is-record";
+import { isHiveMailReadTool } from "../../../shared/hive-tool-names";
 import type { ToolFileChange, ToolKind } from "./types";
 import { claudeQuestionText } from "./claude-stream-questions";
 import { asString } from "./claude-stream-wire";
@@ -90,4 +91,30 @@ export function claudeToolDetail<T>(toolName: string, input: T): string | null {
   }
   if (Object.keys(input).length === 0) return null;
   return JSON.stringify(input);
+}
+
+/** The text of a tool result block, whichever of Claude Code's shapes carried it: a bare string, or content blocks with `text` or `content`. */
+export function claudeToolResultText<T>(value: T): string | null {
+  if (isString(value)) {
+    const text = value.trim();
+    return text === "" ? null : text;
+  }
+  if (!Array.isArray(value)) return null;
+  const lines = value.flatMap((entry) => {
+    if (isString(entry)) return [entry];
+    if (!isRecord(entry)) return [];
+    const text = asString(entry.text) ?? asString(entry.content);
+    return text === null ? [] : [text];
+  });
+  const text = lines.join("\n").trim();
+  return text === "" ? null : text;
+}
+
+/** Successful tool results stay out of the pane: a file the agent read is not conversation and would only weigh down its entry. Hive mail is the exception, because the body of a claimed or polled message is the other party's side of a conversation the pane shows as chat. */
+export function claudeMailResultOutput<T>(
+  toolName: string,
+  content: T,
+): string | null {
+  if (!isHiveMailReadTool(toolName)) return null;
+  return claudeToolResultText(content);
 }

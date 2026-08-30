@@ -11,7 +11,9 @@ import type {
 import type { ProviderPermissionSettlementOutcome } from "../../schemas/provider-permission";
 import { statusProjectionForProviderEvent } from "../../daemon/status-service/status-service";
 import { definedFields } from "../../shared/defined-fields";
-import type { MailLane } from "../../schemas/mail";
+import { type MailLane, MailLaneSchema } from "../../schemas/mail";
+import { hiveToolName } from "../../shared/hive-tool-names";
+import { z } from "zod";
 import { clipTerminalText, type TerminalTextClip } from "./terminal-clip";
 import { sameToolFileChanges } from "./unified-diff";
 
@@ -141,16 +143,32 @@ export type TranscriptEntry =
       readonly kind: "diff";
       readonly turnId: string;
       readonly diff: string;
+      readonly at: string;
     }
   | {
       readonly kind: "plan";
       readonly turnId: string;
       readonly entries: readonly string[];
+      readonly at: string;
     }
   | {
       readonly kind: "mail";
       readonly lane: MailLane;
       readonly summary: string;
+      readonly at: string;
+    }
+  | {
+      /** One Hive mail message as conversation: the body another agent sent this one (claimed or polled), or the body this agent published. Derived from the agent's own mail tool calls, so a message appears when the agent actually read or sent it and never from a channel that bypasses the mailbox. */
+      readonly kind: "message";
+      readonly turnId: string;
+      /** Stable identity for the row: the mail item id inbound, the tool call outbound. */
+      readonly key: string;
+      readonly direction: "in" | "out";
+      readonly peer: string;
+      readonly lane: MailLane;
+      readonly topic: string | null;
+      readonly body: string;
+      readonly at: string;
     }
   | {
       readonly kind: "elicitation";
@@ -190,6 +208,7 @@ export class TranscriptBuffer extends Array<TranscriptEntry> {
   private readonly planIndexes = new Map<string, number>();
   private readonly diffIndexes = new Map<string, number>();
   private readonly elicitationIndexes = new Map<string, number>();
+  private readonly messageKeys = new Set<string>();
   private readonly turnIndexes = new Map<string, number[]>();
   private readonly elicitationOrder: number[] = [];
   private pendingElicitationCount = 0;
@@ -245,6 +264,8 @@ export class TranscriptBuffer extends Array<TranscriptEntry> {
       this.elicitationIndexes.set(entry.requestId, index);
       this.elicitationOrder.push(index);
       if (!entry.settled) this.pendingElicitationCount += 1;
+    } else if (entry.kind === "message") {
+      this.messageKeys.add(entry.key);
     }
     if ("turnId" in entry) {
       const indexes = this.turnIndexes.get(entry.turnId);
@@ -300,6 +321,10 @@ export class TranscriptBuffer extends Array<TranscriptEntry> {
     return this.elicitationIndexes.get(requestId);
   }
 
+  hasMessage(key: string): boolean {
+    return this.messageKeys.has(key);
+  }
+
   indexesForTurn(turnId: string): readonly number[] {
     return this.turnIndexes.get(turnId) ?? [];
   }
@@ -345,7 +370,11 @@ export interface ViewState {
   readonly liveModel: string | null;
   readonly liveEffort: string | null;
   readonly permissionMode: string | null;
-  readonly showToolDetails: boolean;
+  /** The events overlay replaces the transcript while open: every tool call, thought, mail notice and board step, where the chat shows only conversation. */
+  readonly showEvents: boolean;
+  /** Wake submissions the pane sent that no turn has claimed yet, by client input id. A turn-started naming one of them is a mail wake, not a person's message. */
+  readonly pendingWakeInputs: ReadonlySet<string>;
+  readonly wakeTurnIds: ReadonlySet<string>;
   readonly attention: AttentionLevel;
   readonly commands: readonly ViewCommand[];
   readonly commandSelection: number;
@@ -441,7 +470,9 @@ export function initialView(): ViewState {
     liveModel: null,
     liveEffort: null,
     permissionMode: null,
-    showToolDetails: false,
+    showEvents: false,
+    pendingWakeInputs: new Set(),
+    wakeTurnIds: new Set(),
     attention: "none",
     commands: presentCommands(AGENT_UI_COMMANDS),
     commandSelection: 0,
@@ -1476,8 +1507,35 @@ export function settleHumanSubmission(
     : view;
 }
 
-export function toggleToolDetails(view: ViewState): ViewState {
-  return { ...view, showToolDetails: !view.showToolDetails };
+export function toggleEvents(view: ViewState): ViewState {
+  return { ...view, showEvents: !view.showEvents };
+}
+
+export function applyWakeDispatched(
+  view: ViewState,
+  clientInputId: string,
+): ViewState {
+  const pendingWakeInputs = new Set(view.pendingWakeInputs);
+  pendingWakeInputs.add(clientInputId);
+  return { ...view, pendingWakeInputs };
+}
+
+function claimWakeTurn(
+  view: ViewState,
+  clientInputId: string | undefined,
+  turnId: string,
+): ViewState {
+  if (
+    clientInputId === undefined ||
+    !view.pendingWakeInputs.has(clientInputId)
+  ) {
+    return view;
+  }
+  const pendingWakeInputs = new Set(view.pendingWakeInputs);
+  pendingWakeInputs.delete(clientInputId);
+  const wakeTurnIds = new Set(view.wakeTurnIds);
+  wakeTurnIds.add(turnId);
+  return { ...view, pendingWakeInputs, wakeTurnIds };
 }
 
 function presentToolDetail(detail: string | null): TerminalTextClip | null {
@@ -1629,12 +1687,13 @@ function replaceTurnPlan(
   transcript: TranscriptBuffer,
   turnId: string,
   entries: readonly string[],
+  at: string,
 ): TranscriptBuffer {
   const index = transcript.indexOfPlan(turnId);
   if (index === undefined) {
-    transcript.append({ kind: "plan", turnId, entries });
+    transcript.append({ kind: "plan", turnId, entries, at });
   } else {
-    transcript.replace(index, { kind: "plan", turnId, entries });
+    transcript.replace(index, { kind: "plan", turnId, entries, at });
   }
   return transcript;
 }
@@ -1690,15 +1749,128 @@ function replaceTurnDiff(
   transcript: TranscriptBuffer,
   turnId: string,
   diff: string,
+  at: string,
 ): TranscriptBuffer {
   const existing = transcript.indexOfDiff(turnId);
   if (existing === undefined) {
-    transcript.append({ kind: "diff", turnId, diff });
+    transcript.append({ kind: "diff", turnId, diff, at });
     return transcript;
   }
   const current = transcript[existing];
   if (current?.kind === "diff" && current.diff === diff) return transcript;
-  transcript.replace(existing, { kind: "diff", turnId, diff });
+  transcript.replace(existing, { kind: "diff", turnId, diff, at });
+  return transcript;
+}
+
+/** Only the fields a chat row needs. The receipts carry more, and a vendor that wraps the JSON in extra text still yields a row as long as the object itself parses. */
+const MailClaimBodySchema = z.looseObject({
+  itemId: z.string().min(1),
+  sender: z.string().min(1),
+  lane: MailLaneSchema.optional(),
+  topic: z.string().optional(),
+  body: z.string().min(1),
+});
+const MailPollBodySchema = z.looseObject({
+  control: z
+    .looseObject({
+      itemId: z.string().min(1),
+      sender: z.string().min(1),
+      topic: z.string().optional(),
+      body: z.string().min(1),
+    })
+    .nullable(),
+});
+const MailPublishInputSchema = z.looseObject({
+  to: z.string().min(1),
+  lane: MailLaneSchema,
+  topic: z.string().optional(),
+  body: z.string().min(1),
+});
+
+/** MCP results reach the pane as text: the JSON payload, sometimes followed by a note on its own line. Parsed straight into the shape the caller needs so nothing untyped leaves here. */
+function parseJsonHead<T>(text: string, schema: z.ZodType<T>): T | null {
+  for (const candidate of [text, text.split("\n")[0] ?? ""]) {
+    let parsed: z.infer<typeof JsonHeadSchema>;
+    try {
+      parsed = JsonHeadSchema.parse(JSON.parse(candidate));
+    } catch {
+      continue;
+    }
+    const result = schema.safeParse(parsed);
+    if (result.success) return result.data;
+  }
+  return null;
+}
+const JsonHeadSchema = z.json();
+
+function mailMessageFromTool(
+  entry: Extract<TranscriptEntry, { kind: "tool" }>,
+  occurredAt: string,
+): Extract<TranscriptEntry, { kind: "message" }> | null {
+  const name = hiveToolName(entry.toolName);
+  const at = entry.completedAt ?? occurredAt;
+  if (name === "hive_mail_publish") {
+    if (entry.status !== "ok" || entry.detail === null) return null;
+    const input = parseJsonHead(entry.detail, MailPublishInputSchema);
+    if (input === null) return null;
+    return {
+      kind: "message",
+      turnId: entry.turnId,
+      key: `out:${entry.toolCallId}`,
+      direction: "out",
+      peer: input.to,
+      lane: input.lane,
+      topic: input.topic ?? null,
+      body: input.body,
+      at,
+    };
+  }
+  if (entry.output === null || entry.status === "error") return null;
+  if (name === "hive_mail_claim") {
+    const claim = parseJsonHead(entry.output, MailClaimBodySchema);
+    if (claim === null) return null;
+    return {
+      kind: "message",
+      turnId: entry.turnId,
+      key: `in:${claim.itemId}`,
+      direction: "in",
+      peer: claim.sender,
+      lane: claim.lane ?? "work",
+      topic: claim.topic ?? null,
+      body: claim.body,
+      at,
+    };
+  }
+  if (name === "hive_mail_poll") {
+    const poll = parseJsonHead(entry.output, MailPollBodySchema);
+    if (poll === null || poll.control === null) return null;
+    return {
+      kind: "message",
+      turnId: entry.turnId,
+      key: `in:${poll.control.itemId}`,
+      direction: "in",
+      peer: poll.control.sender,
+      lane: "control",
+      topic: poll.control.topic ?? null,
+      body: poll.control.body,
+      at,
+    };
+  }
+  return null;
+}
+
+/** A mail tool call that carried a message body becomes one chat row, once: the same item polled and then claimed is still one message. */
+function deriveMailMessage(
+  transcript: TranscriptBuffer,
+  toolCallId: string,
+  occurredAt: string,
+): TranscriptBuffer {
+  const index = transcript.indexOfTool(toolCallId);
+  const entry = index === undefined ? undefined : transcript[index];
+  if (entry?.kind !== "tool") return transcript;
+  const message = mailMessageFromTool(entry, occurredAt);
+  if (message === null || transcript.hasMessage(message.key)) return transcript;
+  transcript.append(message);
   return transcript;
 }
 
@@ -1779,12 +1951,14 @@ function reduceProviderEvent(
       });
     case "turn-queued":
       return view;
-    case "turn-started":
-      return view.foregroundOperation?.clientInputId !== undefined &&
-        view.foregroundOperation?.clientInputId !== null &&
-        view.foregroundOperation.clientInputId === event.clientInputId
-        ? advanceCompaction(view, "running", event.turnId)
-        : view;
+    case "turn-started": {
+      const claimed = claimWakeTurn(view, event.clientInputId, event.turnId);
+      return claimed.foregroundOperation?.clientInputId !== undefined &&
+        claimed.foregroundOperation?.clientInputId !== null &&
+        claimed.foregroundOperation.clientInputId === event.clientInputId
+        ? advanceCompaction(claimed, "running", event.turnId)
+        : claimed;
+    }
     case "turn-idle":
       return {
         ...view,
@@ -1857,71 +2031,84 @@ function reduceProviderEvent(
     case "tool-updated":
       return {
         ...view,
-        transcript: updateTool(view.transcript, event.toolCallId, (entry) => {
-          // A field the update did not mention keeps the value already reported. Only the vendor sending an empty collection clears one.
-          const toolKind =
-            event.toolKind === undefined ? entry.toolKind : event.toolKind;
-          const locations =
-            event.locations === undefined ||
-            sameStrings(entry.locations, event.locations)
-              ? entry.locations
-              : event.locations;
-          const changes =
-            event.changes === undefined ||
-            sameToolFileChanges(entry.changes, event.changes)
-              ? entry.changes
-              : event.changes;
-          const output =
-            event.output === undefined ? entry.output : event.output;
-          if (
-            event.detail === entry.detail &&
-            toolKind === entry.toolKind &&
-            locations === entry.locations &&
-            changes === entry.changes &&
-            output === entry.output
-          ) {
-            return entry;
-          }
-          return {
-            ...entry,
-            detail: event.detail,
-            toolKind,
-            locations,
-            changes,
-            output,
-            presentation:
-              event.detail === entry.detail && output === entry.output
-                ? entry.presentation
-                : {
-                    detail:
-                      event.detail === entry.detail
-                        ? entry.presentation.detail
-                        : presentToolDetail(event.detail),
-                    output:
-                      output === entry.output
-                        ? entry.presentation.output
-                        : presentToolOutput(output),
-                  },
-          };
-        }),
+        transcript: deriveMailMessage(
+          updateTool(view.transcript, event.toolCallId, (entry) => {
+            // A field the update did not mention keeps the value already reported. Only the vendor sending an empty collection clears one.
+            const toolKind =
+              event.toolKind === undefined ? entry.toolKind : event.toolKind;
+            const locations =
+              event.locations === undefined ||
+              sameStrings(entry.locations, event.locations)
+                ? entry.locations
+                : event.locations;
+            const changes =
+              event.changes === undefined ||
+              sameToolFileChanges(entry.changes, event.changes)
+                ? entry.changes
+                : event.changes;
+            const output =
+              event.output === undefined ? entry.output : event.output;
+            if (
+              event.detail === entry.detail &&
+              toolKind === entry.toolKind &&
+              locations === entry.locations &&
+              changes === entry.changes &&
+              output === entry.output
+            ) {
+              return entry;
+            }
+            return {
+              ...entry,
+              detail: event.detail,
+              toolKind,
+              locations,
+              changes,
+              output,
+              presentation:
+                event.detail === entry.detail && output === entry.output
+                  ? entry.presentation
+                  : {
+                      detail:
+                        event.detail === entry.detail
+                          ? entry.presentation.detail
+                          : presentToolDetail(event.detail),
+                      output:
+                        output === entry.output
+                          ? entry.presentation.output
+                          : presentToolOutput(output),
+                    },
+            };
+          }),
+          event.toolCallId,
+          event.occurredAt,
+        ),
       };
     case "turn-diff-updated":
       return {
         ...view,
-        transcript: replaceTurnDiff(view.transcript, event.turnId, event.diff),
+        transcript: replaceTurnDiff(
+          view.transcript,
+          event.turnId,
+          event.diff,
+          event.occurredAt,
+        ),
       };
     case "tool-finished":
       return {
         ...view,
-        transcript: updateTool(view.transcript, event.toolCallId, (entry) =>
-          entry.status === event.status &&
-          entry.completedAt === event.occurredAt
-            ? entry
-            : {
-                ...entry,
-                status: event.status,
-                completedAt: event.occurredAt,
-              },
+        transcript: deriveMailMessage(
+          updateTool(view.transcript, event.toolCallId, (entry) =>
+            entry.status === event.status &&
+            entry.completedAt === event.occurredAt
+              ? entry
+              : {
+                  ...entry,
+                  status: event.status,
+                  completedAt: event.occurredAt,
+                },
+          ),
+          event.toolCallId,
+          event.occurredAt,
         ),
       };
     case "plan-updated":
@@ -1931,6 +2118,7 @@ function reduceProviderEvent(
           finalizeThoughts(view.transcript, event.turnId, event.occurredAt),
           event.turnId,
           event.entries,
+          event.occurredAt,
         ),
       };
     case "config-updated":
@@ -2020,7 +2208,8 @@ export function applyMailNotice(
   view: ViewState,
   lane: MailLane,
   summary: string,
+  at: string,
 ): ViewState {
-  view.transcript.append({ kind: "mail", lane, summary });
+  view.transcript.append({ kind: "mail", lane, summary, at });
   return { ...view };
 }

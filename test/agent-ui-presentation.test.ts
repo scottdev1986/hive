@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Renderable, ScrollBoxRenderable } from "@opentui/core";
+import { ScrollBoxRenderable } from "@opentui/core";
 import { type AgentUiHarness, createAgentUiHarness } from "./agent-ui-harness";
 import type { JsonValue } from "../src/shared/json";
 import { unsafeCast } from "../src/shared/unsafe-cast";
@@ -49,7 +49,7 @@ describe("the agent pane reads as a conversation", () => {
     );
   });
 
-  test("finished work is compact until ctrl+o opens its details", async () => {
+  test("finished work stays out of the chat and opens in the events view", async () => {
     harness.ui.onProviderEvent(
       harness.driver.emit({ kind: "turn-started", turnId: "t1" }),
     );
@@ -92,25 +92,32 @@ describe("the agent pane reads as a conversation", () => {
     );
     await settleRichContent();
 
-    const compact = harness.testRenderer.captureCharFrame();
-    expect(compact).toContain("Worked");
-    expect(compact).toContain("Edit");
-    expect(compact).toContain("src/cli/agent-ui/agent-ui-exports.ts");
-    expect(compact).toContain("+1 −1");
-    // The edit's diff shows without a toggle; only thought text and raw
-    // payloads wait behind ctrl+o.
-    expect(compact).toContain("const dense = true");
-    expect(compact).toContain("const dense = false");
-    expect(compact).not.toContain("Inspecting the renderer");
-    expect(compact).not.toContain("raw provider payload");
+    // The chat is conversation only: no tool row, no thought, no diff, and
+    // nothing left in flight once the turn is idle.
+    const chat = harness.testRenderer.captureCharFrame();
+    expect(chat).not.toContain("Worked");
+    expect(chat).not.toContain("Edit");
+    expect(chat).not.toContain("agent-ui-exports.ts");
+    expect(chat).not.toContain("Inspecting the renderer");
+    expect(chat).not.toContain("raw provider payload");
+    expect(chat).not.toContain("const dense");
 
     harness.testRenderer.mockInput.pressKey("o", { ctrl: true });
     await settleRichContent();
-    const expanded = harness.testRenderer.captureCharFrame();
-    expect(expanded).toContain("Inspecting the renderer");
-    expect(expanded).toContain("const dense = true");
-    expect(expanded).toContain("const dense = false");
-    expect(expanded).toContain("raw provider payload");
+    const events = harness.testRenderer.captureCharFrame();
+    expect(events).toContain("EVENTS");
+    expect(events).toContain("turn 1 · user");
+    expect(events).toContain("Thought");
+    expect(events).toContain("Inspecting the renderer");
+    expect(events).toContain("Edit");
+    expect(events).toContain("agent-ui-exports.ts");
+    expect(events).toContain("1 file");
+    expect(harness.ui.snapshot().view.showEvents).toBe(true);
+
+    harness.testRenderer.mockInput.pressEscape();
+    await settleRichContent();
+    expect(harness.testRenderer.captureCharFrame()).not.toContain("EVENTS");
+    expect(harness.ui.snapshot().view.showEvents).toBe(false);
   });
 
   test("plan updates replace the prior plan instead of filling the transcript", () => {
@@ -140,52 +147,9 @@ describe("the agent pane reads as a conversation", () => {
         kind: "plan",
         turnId: "t1",
         entries: ["Inspect", "Implement", "Verify"],
+        at: expect.any(String),
       },
     ]);
-  });
-
-  test("clicking a tool row opens the same details as ctrl+o", async () => {
-    harness.ui.onProviderEvent(
-      harness.driver.emit({ kind: "turn-started", turnId: "t1" }),
-    );
-    harness.ui.onProviderEvent(
-      harness.driver.emit({
-        kind: "tool-started",
-        turnId: "t1",
-        toolCallId: "run-1",
-        toolName: "exec_command",
-        detail: "Run focused tests",
-        toolKind: "execute",
-        locations: [],
-        changes: [],
-        output: [
-          "detail visible after a click",
-          "line 2",
-          "line 3",
-          "line 4",
-          "line 5",
-          "line 6",
-          "line 7",
-          "line 8",
-          "line 9",
-        ].join("\n"),
-      }),
-    );
-    await settleRichContent();
-    const tool = harness.testRenderer.renderer.root.findDescendantById(
-      "agent-ui-tool-run-1",
-    );
-    if (!(tool instanceof Renderable)) throw new Error("tool row missing");
-    expect(harness.testRenderer.captureCharFrame()).not.toContain(
-      "detail visible after a click",
-    );
-
-    await harness.testRenderer.mockMouse.click(tool.screenX + 1, tool.screenY);
-    await settleRichContent();
-
-    expect(harness.testRenderer.captureCharFrame()).toContain(
-      "detail visible after a click",
-    );
   });
 
   test("a copy drag can start on the margin or a blank line, not only on text", async () => {
@@ -221,43 +185,6 @@ describe("the agent pane reads as a conversation", () => {
       harness.testRenderer.renderer.getSelection()?.getSelectedText() ?? "";
     expect(fromBlank).toContain("second paragraph of the reply");
   });
-
-  test("drag-selecting across a tool row copies text without toggling details", async () => {
-    harness.ui.onProviderEvent(
-      harness.driver.emit({ kind: "turn-started", turnId: "t1" }),
-    );
-    harness.ui.onProviderEvent(
-      harness.driver.emit({
-        kind: "tool-started",
-        turnId: "t1",
-        toolCallId: "run-2",
-        toolName: "exec_command",
-        detail: "Run the linter",
-        toolKind: "execute",
-        locations: [],
-        changes: [],
-        output: "hidden until details open",
-      }),
-    );
-    await settleRichContent();
-    const tool = harness.testRenderer.renderer.root.findDescendantById(
-      "agent-ui-tool-run-2",
-    );
-    if (!(tool instanceof Renderable)) throw new Error("tool row missing");
-
-    await harness.testRenderer.mockMouse.drag(
-      tool.screenX + 1,
-      tool.screenY,
-      tool.screenX + 12,
-      tool.screenY,
-    );
-    await settleRichContent();
-
-    const selected =
-      harness.testRenderer.renderer.getSelection()?.getSelectedText() ?? "";
-    expect(selected).not.toBe("");
-    expect(harness.ui.snapshot().view.showToolDetails).toBe(false);
-  });
 });
 
 describe("the pane chrome stays quiet and responsive", () => {
@@ -273,7 +200,7 @@ describe("the pane chrome stays quiet and responsive", () => {
     expect(frame).not.toContain("AGENT");
     expect(frame).not.toContain("MODEL");
     // The footer keeps the smallest useful discoverability hints.
-    expect(frame).toContain("ctrl+o details");
+    expect(frame).toContain("ctrl+o events");
     expect(frame).not.toContain("esc interrupt");
     expect(frame).not.toContain("⏎ send");
     // The composer is the only bordered box while no picker or question is up.

@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Transcript Folding</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+  :root {
+    --ground: #eef0f1;
+    --ink: #1c2229;
+    --muted: #5c6570;
+    --rule: #d3d8dc;
+    --accent: #1f7f79;
+    --accent-soft: #d9ecea;
+    --card: #ffffff;
+    --before: #b5544a;
+    --before-soft: #f3e1de;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #12161c;
+      --ink: #dee2ea;
+      --muted: #8a919e;
+      --rule: #2a313a;
+      --accent: #6ecdc6;
+      --accent-soft: #17302f;
+      --card: #171c23;
+      --before: #eb8a80;
+      --before-soft: #3a2320;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #12161c;
+    --ink: #dee2ea;
+    --muted: #8a919e;
+    --rule: #2a313a;
+    --accent: #6ecdc6;
+    --accent-soft: #17302f;
+    --card: #171c23;
+    --before: #eb8a80;
+    --before-soft: #3a2320;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 960px; margin: 0 auto; padding: 56px 24px 96px; }
+  .prose { max-width: 66ch; }
+  h1 { font-size: 34px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.15; margin: 0 0 12px; text-wrap: balance; }
+  h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.005em; margin: 64px 0 8px; text-wrap: balance; }
+  h3 { font-size: 16px; font-weight: 600; margin: 32px 0 8px; }
+  p { margin: 0 0 14px; }
+  .lede { font-size: 18px; color: var(--muted); }
+  .eyebrow {
+    display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 8px;
+  }
+  .eyebrow.before { color: var(--before); }
+  a { color: var(--accent); }
+  code { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+  .note { font-size: 14px; color: var(--muted); }
+
+  .tally {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+    background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden;
+    margin: 28px 0 8px; font-variant-numeric: tabular-nums;
+  }
+  .tally > div { background: var(--card); padding: 14px 16px; }
+  .tally .k { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .tally .v { font-size: 26px; font-weight: 600; line-height: 1.2; margin-top: 2px; }
+  .tally .v small { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .tally .v.bad { color: var(--before); }
+  .tally .v.good { color: var(--accent); }
+
+  /* ---------- terminal panes: fixed dark, the real agent-ui palette ---------- */
+  .term {
+    --tg: #0f1319; --tx: #dee2ea; --dim: #7a818e; --gray: #8a919e;
+    --green: #7ed385; --yellow: #e8c160; --blue: #6ea8fe; --red: #eb6e6e; --teal: #6ecdc6;
+    --edge: #3a424d; --claude: #d97757; --codex: #74aa9c;
+    background: var(--tg); color: var(--tx);
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px; line-height: 1.5;
+    border-radius: 8px; border: 1px solid #1f2630;
+    margin: 20px 0 0; overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+  }
+  .term .body { padding: 14px 18px 8px; overflow-x: auto; }
+  .term.scroll .body { max-height: 520px; overflow-y: auto; }
+  .term .row { white-space: pre; margin: 0; min-height: 1.5em; }
+  .term .row.user { color: var(--gray); margin-top: 1em; }
+  .term .row.user::before { content: "> "; color: var(--dim); font-weight: 700; }
+  .term .reply { display: flex; gap: 0; margin-top: 1em; white-space: normal; max-width: 78ch; }
+  .term .reply .mark { flex: 0 0 3ch; font-weight: 700; }
+  .term .reply .txt { flex: 1 1 auto; min-width: 0; }
+  .term .ind { padding-left: 3ch; }
+  .term .ind2 { padding-left: 5ch; }
+  .term .tool b { font-weight: 700; color: var(--tx); }
+  .term .ok { color: var(--green); font-weight: 700; }
+  .term .err { color: var(--red); font-weight: 700; }
+  .term .run { color: var(--teal); font-weight: 700; }
+  .term .d { color: var(--dim); }
+  .term .g { color: var(--gray); }
+  .term .b { color: var(--blue); }
+  .term .t { color: var(--teal); }
+  .term .y { color: var(--yellow); }
+  .term .gr { color: var(--green); }
+  .term .rd { color: var(--red); }
+  .term .claude { color: var(--claude); }
+  .term .codex { color: var(--codex); }
+  .term .banner { margin-bottom: 4px; }
+  .term .banner b { font-weight: 700; }
+  .term .sep { color: var(--edge); }
+
+  /* bookkeeping tier: hidden in history unless ctrl+o details are on */
+  .term .bk { display: none; }
+  .term.details .bk { display: block; }
+  .term .live .bk { display: block; color: var(--dim); }
+  .term .live .bk b { color: var(--gray); font-weight: 400; }
+  .term .bk-note { display: block; }
+  .term.details .bk-note { display: none; }
+
+  /* fold lines */
+  .term .fold { cursor: pointer; user-select: none; }
+  .term .fold .car { color: var(--dim); display: inline-block; width: 1.2ch; }
+  .term .fold:hover { color: var(--tx); }
+  .term .fold:hover .d { color: var(--gray); }
+  .term .fold .kw { color: var(--gray); }
+  .term .folded { display: none; }
+  .term .open + .folded { display: block; }
+  .term .open .car::before { content: "▾"; }
+  .term .fold .car::before { content: "▸"; }
+  .term .wake .car { color: var(--blue); }
+  .term .narr { color: var(--dim); font-style: italic; white-space: normal; max-width: 74ch; }
+
+  .term .footer {
+    border-top: 1px dashed var(--edge); padding: 6px 18px 8px; margin-top: 8px;
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+  .term .composer { color: var(--tx); }
+  .term .composer::before { content: "› "; color: var(--gray); font-weight: 700; }
+  .term .cursor { display: inline-block; width: 1ch; height: 1.1em; background: var(--tx); vertical-align: text-bottom; }
+  .term .status { display: flex; justify-content: space-between; gap: 16px; padding: 4px 18px 10px; }
+  .term .hint { color: var(--dim); cursor: pointer; user-select: none; }
+  .term .hint:hover { color: var(--gray); }
+  .term.details .hint .o { color: var(--teal); }
+  .term .spin { color: var(--teal); }
+  .term .spin::before { content: "⠹"; }
+
+  .caption { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+  .caption b { color: var(--ink); font-weight: 600; }
+
+  /* grammar table */
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 24px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 12px 10px 0; border-bottom: 1px solid var(--rule); }
+  th { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  td.mono { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; white-space: nowrap; }
+  .tbl-wrap { overflow-x: auto; }
+
+  .kbd { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12px; padding: 1px 5px; border: 1px solid var(--rule); border-radius: 4px; background: var(--card); }
+
+  ol.steps { padding-left: 20px; margin: 0 0 14px; }
+  ol.steps li { margin-bottom: 6px; }
+  .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+  @media (max-width: 720px) { .cmp { grid-template-columns: 1fr; } .tally { grid-template-columns: 1fr; } }
+  .cmp .card { background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; font-size: 14px; }
+  .cmp .card h4 { margin: 0 0 6px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .cmp .card.b4 h4 { color: var(--before); }
+  .cmp .card.af h4 { color: var(--accent); }
+  .cmp ul { margin: 0; padding-left: 18px; }
+  .cmp li { margin-bottom: 4px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .term .spin::before { animation: spin 0.8s steps(1) infinite; }
+  }
+  @keyframes spin { 0%{content:"⠋"} 12%{content:"⠙"} 25%{content:"⠹"} 37%{content:"⠸"} 50%{content:"⠼"} 62%{content:"⠴"} 75%{content:"⠦"} 87%{content:"⠧"} }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="prose">
+    <span class="eyebrow">agent-ui · design proposal · 2026-08-30</span>
+    <h1>Transcript folding</h1>
+    <p class="lede">The same Queen session rendered as it is today and as it would be with turn folding, a bookkeeping tier, coalesced thoughts and mail, and a live "now" line. A Codex worker follows so the treatment is checked against a coding session, not only orchestration.</p>
+    <p>The principle behind every change: <b>a live turn shows the machinery; a finished turn shows the outcome.</b> You watch it work; you scroll past what it did. Nothing is discarded — every folded line opens on click, and <span class="kbd">ctrl+o</span> still reveals everything, including the bookkeeping rows that no longer appear in history at all.</p>
+    <p class="note">The panes below are interactive: click a <code>▸</code> line to unfold it, and click <code>ctrl+o details</code> in a pane's footer to turn the bookkeeping tier back on.</p>
+  </div>
+
+  <div class="tally">
+    <div><div class="k">Rows on screen</div><div class="v"><span class="bad">143</span> <small>today</small> → <span class="good">16</span> <small>after</small></div></div>
+    <div><div class="k">Conversation share</div><div class="v"><span class="bad">8%</span> <small>today</small> → <span class="good">31%</span> <small>after</small></div></div>
+    <div><div class="k">Hidden for good</div><div class="v good">0 <small>everything opens on click or ctrl+o</small></div></div>
+  </div>
+  <p class="note">Counts are for the session shown below, up to the same point in time, excluding the two banner lines. Conversation share is user messages plus replies over all rows.</p>
+
+  <!-- ======================================================= TODAY ======= -->
+  <h2 id="today">1 · The Queen today</h2>
+  <div class="prose">
+    <span class="eyebrow before">as rendered now</span>
+    <p>This is the transcript as it was on screen. Three user messages and eight replies are in here; the rest is 74 <code>hive_*</code> and <code>memory_*</code> bookkeeping rows, 7 <code>Tool Search</code> rows, 25 <code>Worked for</code> fragments, and 13 mail notices. Eight of the turns were never asked for — they are mail wakes that render exactly like user turns, each with its own <code>✻</code> reply.</p>
+  </div>
+
+  <div class="term scroll" id="before">
+    <div class="body">
+      <div class="row banner"><b class="claude">✻ </b><b>Claude Code</b><span class="sep"> · </span><span class="d">queen</span><span class="sep"> · </span><span class="t">claude-opus-5</span><span class="sep"> · </span><span class="t">high</span></div>
+      <div class="row d">  /Users/scottkellar/Projects/hive</div>
+      <div id="before-rows"></div>
+    </div>
+    <div class="footer"><div class="composer"><span class="cursor"></span></div></div>
+    <div class="status"><div><b class="claude">✻ </b><b>Ready</b><span class="sep"> · </span><span class="d">38% context</span></div><div class="hint">/ commands · @ files · ctrl+o details</div></div>
+  </div>
+  <p class="caption"><b>143 rows.</b> Scroll the pane — it is the whole thing. Every row is a separate <code>TranscriptEntry</code> and stays forever; <code>ctrl+o</code> only adds more.</p>
+
+  <!-- ======================================================= QUEEN AFTER ======= -->
+  <h2 id="queen">2 · The Queen, after</h2>
+  <div class="prose">
+    <span class="eyebrow">same session, folded</span>
+    <p>Finished turns fold to one line under the reply that carries what happened — step count, board effects, files touched, duration. Consecutive mail wakes with no user message between them coalesce into one <code>↳ Mail</code> line; the narration the model emitted on those turns is kept, dimmed, <i>inside</i> the fold rather than as a reply in the conversation. The last turn is still running, so it shows its machinery live, with bookkeeping rows dimmed, and the footer carries the current step.</p>
+  </div>
+
+  <div class="term" id="queen-pane">
+    <div class="body">
+      <div class="row banner"><b class="claude">✻ </b><b>Claude Code</b><span class="sep"> · </span><span class="d">queen</span><span class="sep"> · </span><span class="t">claude-opus-5</span><span class="sep"> · </span><span class="t">high</span></div>
+      <div class="row d">  /Users/scottkellar/Projects/hive</div>
+
+      <div class="row user">Follow your boot capsule. If there is no user request and no live work to continue, wait for the user. Do not invent work, do not spawn, and do not create a board unless the user asks.</div>
+      <div class="row ind fold"><span class="car"></span><span class="d">22 steps</span> <span class="d">·</span> <span class="kw">10 stories terminated</span> <span class="d">· 6m 10s</span></div>
+      <div class="folded">
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Hive status</b>  <span class="b">{"detail":"active"}</span> <span class="d">· 1s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Hive succession attest</b>  <span class="b">generation 30</span> <span class="d">· 3s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Run</b>  <span class="b">jq -r '.tasks[] | select(.state=="in-progress" …)'</span> <span class="d">· 3s</span></div>
+        <div class="row ind2 tool"><span class="err">✗</span> <b>Run</b>  <span class="b">f=~/.claude/projects/…/79d16c30-a79e-40… </span> <span class="d">· 2s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Run</b>  <span class="b">f=~/.claude/projects/…/79d16c30-a79e-40… </span> <span class="d">· 3s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Inspect one in-progress task record</b> <span class="d">— Yes, once</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Tool Search</b>  <span class="b">select:mcp__hive__hive_task_get,…</span> <span class="d">· &lt;1s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task get</b>  <span class="b">…000000000801</span> <span class="d">· 1s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive settlement list</b> <span class="d">· &lt;1s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task update</b>  <span class="b">…801 → terminated</span> <span class="d">· 4s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task update</b>  <span class="b">…802 → terminated</span> <span class="d">· 2s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task update</b>  <span class="b">…803 → terminated</span> <span class="d">· 2s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task update</b>  <span class="b">…804 …80a → terminated</span> <span class="d">· ×7</span></div>
+        <div class="row ind2 d bk-note">· 13 bookkeeping steps hidden · ctrl+o</div>
+      </div>
+      <div class="reply"><span class="mark claude">✻</span><span class="txt">Boot attested at generation 30; the board is reconciled and the fleet is idle. The ten "in-progress" stories were last session's ten-agent smoke test whose agents are all gone with no reports and settlement empty, so I terminated them with that reason recorded — say the word and I'll re-run the smoke test, otherwise I'm waiting on you.</span></div>
+
+      <div class="row user">spawn many no op agents</div>
+      <div class="row ind"><span class="ok">✓</span> <b>Fan-out size</b><span class="d">: Repeat the 10-agent sweep</span></div>
+      <div class="row ind fold"><span class="car"></span><span class="d">13 steps</span> <span class="d">·</span> <span class="kw">10 stories created · 10 agents spawned</span> <span class="d">· 2m 51s</span></div>
+      <div class="folded">
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Run</b>  <span class="b">git rev-parse dev && git rev-parse --abbrev-ref …</span> <span class="d">· 1s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Hive spawn many</b>  <span class="b">10 requests · kimi ×3 · grok ×3 · codex ×2 · claude · opencode</span> <span class="d">· 22s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Tool Search</b>  <span class="b">select:mcp__hive__hive_task_create,…</span> <span class="d">· &lt;1s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task create</b>  <span class="b">…901 … …90a</span> <span class="d">· ×10 · 1m 52s</span></div>
+        <div class="row ind2 d bk-note">· 11 bookkeeping steps hidden · ctrl+o</div>
+      </div>
+      <div class="reply"><span class="mark claude">✻</span><span class="txt">Ten no-op agents are spawning, one per routing category, each bound to its own board story (901–90a) and read-only. Spread: kimi ×3 (andre, sandra, norman), grok ×3 (bridget, darius, maxwell), codex ×2 (bram, ines), claude (summer), opencode (ozzie) — I'll report the runtime echoes as they land.</span></div>
+
+      <div class="row ind fold wake"><span class="car"></span><span class="b">↳ Mail</span> <span class="d">·</span> <span class="kw">8 wakes · 10 items settled · 7 stories closed · 3 terminated</span> <span class="d">· 6m 40s</span></div>
+      <div class="folded">
+        <div class="row ind2"><span class="b">↳</span> <span class="g">work</span> <span class="d">· 1 item · ozzie echo · story 904 closed · 31s</span></div>
+        <div class="row ind2 narr">Silent internal handling complete — ozzie's echo accepted and story 904 closed.</div>
+        <div class="row ind2"><span class="b">↳</span> <span class="g">work</span> <span class="d">· 3 items · bram, ines, summer · 905 906 907 closed · 48s</span></div>
+        <div class="row ind2 narr">Handled silently: four of ten categories now proven (standard_coding, complex_coding, planning, code_review); six echoes still outstanding.</div>
+        <div class="row ind2"><span class="b">↳</span> <span class="g">work</span> <span class="d">· 2 items · bridget, darius · 903 909 closed · 29s</span></div>
+        <div class="row ind2 narr">Six of ten categories proven; the two grok agents both had working shells, which contradicts the stored "ACP providers have no shell" pitfall — I'll reconcile that article once the kimi echoes arrive.</div>
+        <div class="row ind2"><span class="b">↳</span> <span class="g">work</span> <span class="d">· 1 item · maxwell · 90a closed · 12s</span></div>
+        <div class="row ind2 narr">Seven of ten proven; three kimi agents (andre, sandra, norman) still outstanding.</div>
+        <div class="row ind2"><span class="b">↳</span> <span class="g">control</span> <span class="d">· 3 items · andre, sandra, norman closed from sidebar · 901 902 908 terminated · 3m 20s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Memory write</b>  <span class="b">spawning/grok-agents-reported-working-shells-despite-te…</span> <span class="d">· 21s</span></div>
+        <div class="row ind2 narr">The sweep is closed: seven of ten categories proved spawn→mail→settlement end to end, and the three you closed from the sidebar (andre, sandra, norman — all kimi) are recorded as unproven rather than failed. One finding worth your attention: all three grok agents ran real shell commands, which contradicts our source-verified "ACP providers have no shell" pitfall, so I logged it as a conflict naming the one adapter check that would settle it.</div>
+        <div class="row ind2"><span class="b">↳</span> <span class="g">work</span> <span class="d">· 0 items · mailbox empty on arrival · 4s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive mail poll / claim / complete</b> <span class="d">· ×27</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task update</b> <span class="d">· ×10</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Tool Search</b> <span class="d">· ×4</span></div>
+        <div class="row ind2 d bk-note">· 41 bookkeeping steps hidden · ctrl+o</div>
+      </div>
+
+      <div class="row user">Make sure that all agents that are open can send messages to each other. Let's do a message test to make sure that everybody can talk to each other. And everybody can talk to the Queen, and the Queen can talk to everybody.</div>
+      <div class="row ind"><span class="ok">✓</span> <b>Test fleet</b><span class="d">: Four, skip kimi</span></div>
+      <div class="live">
+        <div class="row ind tool bk"><span class="ok">✓</span> <b>Tool Search</b>  <span class="b">select:mcp__hive__hive_mail_publish</span> <span class="d">· 1s</span></div>
+        <div class="row ind tool bk"><span class="ok">✓</span> <b>Hive task create</b>  <span class="b">…a01 message test: bram</span> <span class="d">· 22s</span></div>
+        <div class="row ind tool bk"><span class="ok">✓</span> <b>Hive task create</b>  <span class="b">…a02 message test: ines</span> <span class="d">· 14s</span></div>
+        <div class="row ind tool bk"><span class="ok">✓</span> <b>Hive task create</b>  <span class="b">…a03 message test: summer</span> <span class="d">· 14s</span></div>
+        <div class="row ind tool bk"><span class="run">◌</span> <b>Hive task create</b>  <span class="b">…a04 message test: ozzie</span> <span class="d">· running</span></div>
+      </div>
+    </div>
+    <div class="footer"><div class="composer"><span class="cursor"></span></div></div>
+    <div class="status"><div><b class="claude">✻ </b><b class="spin"></b> <b>Working… 1m 4s</b><span class="sep"> · </span><span class="g">Hive task create · a04</span><span class="sep"> · </span><span class="d">41% context</span></div><div class="hint" data-toggle="queen-pane">/ commands · @ files · <span class="o">ctrl+o details</span></div></div>
+  </div>
+  <p class="caption"><b>16 rows.</b> Two folds, one coalesced wake line, and a live turn. The wake line is where eight unrequested turns and their four narrations went — open it to see them. Note the live turn still shows every step, dimmed when it is bookkeeping; the footer names the running step so a long tool call never looks like a hang.</p>
+
+  <!-- ======================================================= WORKER AFTER ======= -->
+  <h2 id="worker">3 · A coding agent, after</h2>
+  <div class="prose">
+    <span class="eyebrow">codex worker · bram</span>
+    <p>For a worker the same rules put the edits front and centre. A fold keeps the <code>Changes</code> line visible — files and line counts never hide behind the caret — because seeing that code got written is the one thing a person always wants from history. Test results ride on the fold line too. The review request arrives as a wake and folds like any other; the reply text is dimmed inside it because the Queen, not the person, asked.</p>
+  </div>
+
+  <div class="term" id="worker-pane">
+    <div class="body">
+      <div class="row banner"><b class="codex">◎ </b><b>Codex</b><span class="sep"> · </span><span class="d">bram</span><span class="sep"> · </span><span class="t">gpt-5.4-codex</span><span class="sep"> · </span><span class="t">medium</span></div>
+      <div class="row d">  /Users/scottkellar/Projects/hive/.hive/worktrees/bram</div>
+
+      <div class="row user">Read your board story first with hive_task_get(task_01a053c0-…-0b02). Story: shell-session drops the trailing partial line when the PTY exits before a newline. Fix it in src/daemon/session-host/shell-session.ts with a regression test, then report on the work lane.</div>
+      <div class="row ind fold"><span class="car"></span><span class="d">9 steps</span> <span class="d">·</span> <span class="kw">read 4 files</span> <span class="d">· 1m 12s</span></div>
+      <div class="folded">
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Read</b>  <span class="b">src/daemon/session-host/shell-session.ts</span> <span class="d">· &lt;1s</span></div>
+        <div class="row ind2 d">  ⎿ 412 lines read</div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Read</b>  <span class="b">test/daemon/session-host/shell-session.test.ts</span> <span class="d">· &lt;1s</span></div>
+        <div class="row ind2 d">  ⎿ 288 lines read</div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Search</b>  <span class="b">flushPending|onExit|partialLine</span> <span class="d">· &lt;1s</span></div>
+        <div class="row ind2 d">  ⎿ 14 result lines</div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Read</b>  <span class="b">src/daemon/session-host/pty-reader.ts +1</span> <span class="d">· &lt;1s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task get</b>  <span class="b">…0b02</span> <span class="d">· 1s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task update</b>  <span class="b">…0b02 → in-progress</span> <span class="d">· 2s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Memory recall</b>  <span class="b">shell-session pty exit</span> <span class="d">· 1s</span></div>
+        <div class="row ind2 d bk-note">· 3 bookkeeping steps hidden · ctrl+o</div>
+      </div>
+      <div class="reply"><span class="mark codex">◎</span><span class="txt">Root cause: <code>PtyReader.onExit</code> resolves before the decoder's carry buffer is drained, so a final chunk without <code>\n</code> is dropped. I'll flush the carry on exit and add a test that ends output mid-line.</span></div>
+
+      <div class="row ind fold open"><span class="car"></span><span class="d">17 steps</span> <span class="d">·</span> <span class="gr">✓ Changes</span> <span class="kw">2 files +38 −6</span> <span class="d">·</span> <span class="gr">41 tests passed</span> <span class="d">· 3m 40s</span></div>
+      <div class="folded">
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Edit</b>  <span class="b">src/daemon/session-host/shell-session.ts</span> <span class="d">· +21 −6 · 1s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Edit</b>  <span class="b">test/daemon/session-host/shell-session.test.ts</span> <span class="d">· +17 −0 · 1s</span></div>
+        <div class="row ind2 tool"><span class="err">✗</span> <b>Run</b>  <span class="b">bun test test/daemon/session-host/shell-session.test.ts</span> <span class="d">· 4s</span></div>
+        <div class="row ind2 rd">  ⎿ 1 fail · expected "tail" to equal "tail\n"</div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Edit</b>  <span class="b">test/daemon/session-host/shell-session.test.ts</span> <span class="d">· +1 −1 · &lt;1s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Run</b>  <span class="b">bun test test/daemon/session-host</span> <span class="d">· 6s</span></div>
+        <div class="row ind2 d">  ⎿ 41 pass · 0 fail · 12 files</div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Run</b>  <span class="b">bun run typecheck && bun run lint</span> <span class="d">· 19s</span></div>
+        <div class="row ind2 d">  ⎿ clean</div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Run</b>  <span class="b">git commit -m "fix(daemon): flush the PTY carry buffer on exit"</span> <span class="d">· 1s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive mail publish</b>  <span class="b">queen · work · report</span> <span class="d">· 2s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive task update</b>  <span class="b">…0b02 → review</span> <span class="d">· 2s</span></div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Memory write</b>  <span class="b">daemon/pty-carry-buffer-flushes-on-exit</span> <span class="d">· 3s</span></div>
+        <div class="row ind2 d bk-note">· 5 bookkeeping steps hidden · ctrl+o</div>
+      </div>
+      <div class="reply"><span class="mark codex">◎</span><span class="txt">Done. <code>shell-session.ts</code> now drains the decoder carry in the exit path before resolving; the new test writes <code>"tail"</code> with no newline, closes the PTY, and asserts it reaches the sink. Full session-host suite green, typecheck and lint clean, committed on <code>bram/shell-session-tail</code>. Reported to the Queen on the work lane.</span></div>
+
+      <div class="row ind fold wake"><span class="car"></span><span class="b">↳ Mail</span> <span class="d">·</span> <span class="kw">control · review requested by queen · answered</span> <span class="d">· 42s</span></div>
+      <div class="folded">
+        <div class="row ind2"><span class="b">↳</span> <span class="g">control</span> <span class="d">· 1 item · queen: "confirm the fix covers CRLF endings" · 42s</span></div>
+        <div class="row ind2 tool"><span class="ok">✓</span> <b>Search</b>  <span class="b">\\r\\n|CRLF</span> <span class="d">· &lt;1s</span></div>
+        <div class="row ind2 narr">Replied on the control lane: the carry buffer is byte-level, so a dangling <code>\r</code> is flushed the same way; no code change needed.</div>
+        <div class="row ind2 tool bk"><span class="ok">✓</span> <b>Hive mail poll / claim / complete</b> <span class="d">· ×3</span></div>
+        <div class="row ind2 d bk-note">· 3 bookkeeping steps hidden · ctrl+o</div>
+      </div>
+
+      <div class="row user">Also handle the case where the PTY is killed by signal — same drain path?</div>
+      <div class="live">
+        <div class="row ind tool"><span class="ok">✓</span> <b>Read</b>  <span class="b">src/daemon/session-host/shell-session.ts</span> <span class="d">· &lt;1s</span></div>
+        <div class="row ind d">  ⎿ 427 lines read</div>
+        <div class="row ind tool"><span class="ok">✓</span> <b>Edit</b>  <span class="b">src/daemon/session-host/shell-session.ts</span> <span class="d">· +9 −2 · 1s</span></div>
+        <div class="row ind tool"><span class="ok">✓</span> <b>Edit</b>  <span class="b">test/daemon/session-host/shell-session.test.ts</span> <span class="d">· +14 −0 · 1s</span></div>
+        <div class="row ind tool"><span class="run">◌</span> <b>Run</b>  <span class="b">bun test test/daemon/session-host</span> <span class="d">· running</span></div>
+      </div>
+    </div>
+    <div class="footer"><div class="composer"><span class="cursor"></span></div></div>
+    <div class="status"><div><b class="codex">◎ </b><b class="spin"></b> <b>Working… 38s</b><span class="sep"> · </span><span class="g">Run · bun test</span><span class="sep"> · </span><span class="d">23% context</span></div><div class="hint" data-toggle="worker-pane">/ commands · @ files · <span class="o">ctrl+o details</span></div></div>
+  </div>
+  <p class="caption"><b>The second fold is shown open</b> so you can see what an unfolded turn looks like: work steps only, with the failed test run and its one-line reason preserved, and a trailing note counting the bookkeeping steps that <code>ctrl+o</code> would add back.</p>
+
+  <!-- ======================================================= GRAMMAR ======= -->
+  <h2 id="grammar">4 · The row grammar</h2>
+  <div class="prose">
+    <p>Five row types carry the whole design. Everything else on screen is unchanged from today.</p>
+  </div>
+  <div class="tbl-wrap">
+  <table>
+    <tr><th style="width:36%">Row</th><th>When it appears</th><th>What it replaces</th></tr>
+    <tr><td class="mono">▸ 17 steps · ✓ Changes 2 files +38 −6 · 3m 40s</td><td>Under a reply, once the turn reaches <code>turn-idle</code>. Click or <span class="kbd">ctrl+o</span> opens it.</td><td>Every tool row and every <code>Worked for</code> row of that turn.</td></tr>
+    <tr><td class="mono">▸ ↳ Mail · 8 wakes · 10 items settled · 6m 40s</td><td>One line for a run of wake-origin turns with no user message between them. Any reply text the model emitted sits inside, dimmed.</td><td>Thirteen <code>↳ Mail</code> notices, eight turns of tooling, and four <code>✻</code> replies.</td></tr>
+    <tr><td class="mono">◌ Hive task create  …a04 · running</td><td>Only while the turn is live. Bookkeeping rows are dimmed; work rows keep their colour.</td><td>Nothing — this is today's live row, kept.</td></tr>
+    <tr><td class="mono">✻ ⠹ Working… 1m 4s · Hive task create · a04</td><td>The footer status while a turn runs: elapsed time and the step in flight.</td><td>The need for tool rows to prove the agent is alive.</td></tr>
+    <tr><td class="mono">· 13 bookkeeping steps hidden · ctrl+o</td><td>Last line of an open fold when bookkeeping steps were dropped from it.</td><td>The <code>hive_mail_*</code>, <code>hive_task_*</code>, <code>memory_*</code> and <code>Tool Search</code> rows.</td></tr>
+  </table>
+  </div>
+
+  <div class="cmp">
+    <div class="card b4"><h4>Why it happens today</h4><ul>
+      <li>The transcript is a flat, append-only event log; <code>turn-idle</code> only stamps timestamps (<code>view-state.ts:1791</code>).</li>
+      <li>There is one density and it is already the minimum — <code>ctrl+o</code> only goes up (<code>transcript-view.ts:148</code>).</li>
+      <li>The view cannot tell a wake turn from a user turn, though <code>dispatchedWakes</code> knows (<code>agent-ui.ts:2009</code>).</li>
+      <li><code>toolKind</code> has no bookkeeping tier; <code>mcp__hive__*</code> renders like <code>Run</code>.</li>
+      <li>Thoughts fragment per tool call; mail notices append per notice.</li>
+    </ul></div>
+    <div class="card af"><h4>What changes</h4><ul>
+      <li><b>A</b> · Bookkeeping tier: shown live, hidden in history, back with <code>ctrl+o</code>.</li>
+      <li><b>B</b> · One duration per turn, carried on the fold line; no <code>Worked for</code> rows.</li>
+      <li><b>C</b> · Mail notices coalesce per lane and live in the footer's mail phase.</li>
+      <li><b>D</b> · Turn folding on <code>turn-idle</code>, keyed by the existing <code>turnId</code>.</li>
+      <li><b>E</b> · Wake origin on the turn; adjacent wake turns fold together; narration folds inside.</li>
+      <li><b>F</b> · Footer names the step in flight.</li>
+    </ul></div>
+  </div>
+
+  <h3>Order of work</h3>
+  <div class="prose">
+    <ol class="steps">
+      <li><b>A + B + C</b> first. Small, independent, and alone they remove about 70% of the rows in the session above.</li>
+      <li><b>D + E</b> together — they share the turn record. This is the structural fix and where the click-to-open behaviour lands.</li>
+      <li><b>F</b> last; it is a footer change and only matters once history stops carrying the liveness signal.</li>
+    </ol>
+    <p class="note">Not proposed: a third density level. Two states — folded history with click-to-open, and <span class="kbd">ctrl+o</span> for everything — match what people already know from the vendor CLIs and keep one toggle in the footer.</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  // The "today" pane is the real session, row for row. Rendering it from data keeps 115 rows honest without 115 hand-written lines.
+  var R = [
+    ["u","Follow your boot capsule. If there is no user request and no live work to continue, wait for the user. Do not invent work, do not spawn, and do not create a board unless the user asks."],
+    ["w","1m 24s"],["t","ok","Tool Search","select:mcp__hive__hive_succession_attest,mcp__hive__hive_status,mcp__hive__hive_mail_po…","<1s"],
+    ["t","ok","Hive status",'{"detail":"active"}',"1s"],["t","ok","Hive task list","","<1s"],["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],["t","ok","Hive run checkpoint get","","<1s"],
+    ["w","1m 19s"],["t","ok","Hive succession attest",'{"successionId":"qsc_01a0538b-4a88-7000-b0af-71a1649d6634","generation":30,"checkpointD…',"3s"],
+    ["w","1m 14s"],["t","ok","Run","jq -r '.tasks[] | select(.state==\"in-progress\" or .state==\"pending\" or .state==\"blocked…","3s"],["t","err","Run","f=/Users/scottkellar/.claude/projects/-Users-scottkellar-Projects-hive/79d16c30-a79e-40…","2s"],
+    ["w","1m 5s"],["t","err","Run","f=/Users/scottkellar/.claude/projects/-Users-scottkellar-Projects-hive/79d16c30-a79e-40…","3s"],["t","ok","Run","f=/Users/scottkellar/.claude/projects/-Users-scottkellar-Projects-hive/79d16c30-a79e-40…","2s"],
+    ["w","58s"],["t","ok","Run","f=/Users/scottkellar/.claude/projects/-Users-scottkellar-Projects-hive/79d16c30-a79e-40…","2s"],["t","ok","Run","f=/Users/scottkellar/.claude/projects/-Users-scottkellar-Projects-hive/79d16c30-a79e-40…","3s"],["t","err","Run","f=/Users/scottkellar/.claude/projects/-Users-scottkellar-Projects-hive/79d16c30-a79e-40…","7s"],
+    ["e","Inspect one in-progress task record — Yes, once"],["t","ok","Run","f=/Users/scottkellar/.claude/projects/-Users-scottkellar-Projects-hive/79d16c30-a79e-40…","3s"],
+    ["w","39s"],["t","ok","Tool Search","select:mcp__hive__hive_task_get,mcp__hive__hive_task_update,mcp__hive__hive_settlement_…","<1s"],["t","ok","Hive task get",'{"taskId":"task_01a05360-0001-7000-8000-000000000801"}',"1s"],["t","ok","Hive settlement list","","<1s"],
+    ["w","31s"],
+    ["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000801","expectedRevision":"1","state":"t…',"4s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000802","expectedRevision":"1","state":"t…',"2s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000803","expectedRevision":"1","state":"t…',"2s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000804","expectedRevision":"1","state":"t…',"2s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000805","expectedRevision":"1","state":"t…',"1s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000806","expectedRevision":"1","state":"t…',"3s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000807","expectedRevision":"1","state":"t…',"2s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000808","expectedRevision":"1","state":"t…',"2s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-000000000809","expectedRevision":"1","state":"t…',"2s"],["t","ok","Hive task update",'{"taskId":"task_01a05360-0001-7000-8000-00000000080a","expectedRevision":"1","state":"t…',"2s"],
+    ["w","3s"],
+    ["a","Boot attested at generation 30; the board is reconciled and the fleet is idle. The ten \"in-progress\" stories were last session's ten-agent smoke test whose agents are all gone with no reports and settlement empty, so I terminated them with that reason recorded — say the word and I'll re-run the smoke test, otherwise I'm waiting on you."],
+    ["u","spawn many no op agents"],
+    ["w","2m 51s"],["e","Fan-out size: Repeat the 10-agent sweep (Recommended)"],
+    ["w","2m 40s"],["t","ok","Tool Search","select:mcp__hive__hive_task_create,mcp__hive__hive_spawn_many,mcp__hive__hive_knowledge","<1s"],
+    ["w","2m 35s"],["t","ok","Run","cd /Users/scottkellar/Projects/hive && git rev-parse dev && git rev-parse --abbrev-ref …","1s"],
+    ["w","2m 25s"],
+    ["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000901","revision":"0","runId":"run_01a00…',"12s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000902","revision":"0","runId":"run_01a00…',"11s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000903","revision":"0","runId":"run_01a00…',"11s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000904","revision":"0","runId":"run_01a00…',"11s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000905","revision":"0","runId":"run_01a00…',"10s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000906","revision":"0","runId":"run_01a00…',"14s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000907","revision":"0","runId":"run_01a00…',"11s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000908","revision":"0","runId":"run_01a00…',"11s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-000000000909","revision":"0","runId":"run_01a00…',"11s"],["t","ok","Hive task create",'{"taskId":"task_01a053a0-0001-7000-8000-00000000090a","revision":"0","runId":"run_01a00…',"10s"],
+    ["w","28s"],["t","ok","Hive spawn many",'{"requests":[{"task":"Read your board story first with hive_task_get(task_01a053a0-0001…',"22s"],
+    ["w","3s"],
+    ["a","Ten no-op agents are spawning, one per routing category, each bound to its own board story (901–90a) and read-only. Spread: kimi ×3 (andre, sandra, norman), grok ×3 (bridget, darius, maxwell), codex ×2 (bram, ines), claude (summer), opencode (ozzie) — I'll report the runtime echoes as they land."],
+    ["m","work","1 waiting on the work lane"],
+    ["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],["w","26s"],["t","ok","Tool Search","select:mcp__hive__hive_mail_claim,mcp__hive__hive_mail_complete","<1s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a0538f-8d16-7000-a7f6-9cf23833a76d","handlerId":"q…',"2s"],
+    ["w","21s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a0538f-8d16-7000-a7f6-9cf23833a76d","handlerId":"q…',"2s"],
+    ["m","work","1 waiting on the work lane"],
+    ["t","ok","Hive task get",'{"taskId":"task_01a053a0-0001-7000-8000-000000000904"}',"<1s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000904","expectedRevision":"1","state":"c…',"6s"],
+    ["m","work","2 waiting on the work lane"],["m","work","3 waiting on the work lane"],
+    ["a","Silent internal handling complete — ozzie's echo accepted and story 904 closed."],
+    ["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a0538f-dd44-7000-996e-f959d96a5e11","handlerId":"q…',"2s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a0538f-f5f5-7000-b37d-948a83f0abd5","handlerId":"q…',"<1s"],
+    ["m","work","3 waiting on the work lane"],
+    ["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a0538f-fe2b-7000-af34-32f12126d072","handlerId":"q…',"<1s"],
+    ["w","22s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a0538f-dd44-7000-996e-f959d96a5e11","handlerId":"q…',"2s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a0538f-f5f5-7000-b37d-948a83f0abd5","handlerId":"q…',"2s"],
+    ["m","work","2 waiting on the work lane"],["m","work","2 waiting on the work lane"],
+    ["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a0538f-fe2b-7000-af34-32f12126d072","handlerId":"q…',"1s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000907","expectedRevision":"1","state":"c…',"5s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000905","expectedRevision":"1","state":"c…',"3s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000906","expectedRevision":"1","state":"c…',"4s"],
+    ["a","Handled silently: four of ten categories now proven (standard_coding, complex_coding, planning, code_review); six echoes still outstanding."],
+    ["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a05390-1fd8-7000-afae-dec4939200ff","handlerId":"q…',"2s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a05390-3a7f-7000-acbf-2bdd4ea6d5b1","handlerId":"q…',"<1s"],
+    ["w","17s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a05390-1fd8-7000-afae-dec4939200ff","handlerId":"q…',"2s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a05390-3a7f-7000-acbf-2bdd4ea6d5b1","handlerId":"q…',"1s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000909","expectedRevision":"1","state":"c…',"5s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000903","expectedRevision":"1","state":"c…',"3s"],
+    ["a","Six of ten categories proven; the two grok agents both had working shells, which contradicts the stored \"ACP providers have no shell\" pitfall — I'll reconcile that article once the kimi echoes arrive."],
+    ["m","work","1 waiting on the work lane"],
+    ["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a05391-06c5-7000-b36a-5fce30bdcade","handlerId":"q…',"1s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a05391-06c5-7000-b36a-5fce30bdcade","handlerId":"q…',"2s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-00000000090a","expectedRevision":"1","state":"c…',"4s"],
+    ["a","Seven of ten proven; three kimi agents (andre, sandra, norman) still outstanding."],
+    ["m","control","1 waiting on the control lane"],
+    ["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],
+    ["m","control","2 waiting on the control lane"],
+    ["w","1m 26s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a05391-dd33-7000-88d4-2e4e00c67c51","handlerId":"q…',"<1s"],
+    ["m","control","3 waiting on the control lane"],
+    ["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000908","expectedRevision":"1","state":"t…',"4s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a05391-dd33-7000-88d4-2e4e00c67c51","handlerId":"q…',"2s"],
+    ["m","control","2 waiting on the control lane"],
+    ["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],["w","1m 9s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a05391-e73e-7000-aa07-c87a634ba90e","handlerId":"q…',"<1s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000901","expectedRevision":"1","state":"t…',"4s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a05391-e73e-7000-aa07-c87a634ba90e","handlerId":"q…',"2s"],
+    ["m","control","1 waiting on the control lane"],
+    ["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],["t","ok","Hive mail claim",'{"recipient":"queen","itemId":"mit_01a05391-f8ab-7000-812d-e8cd9c7a7acf","handlerId":"q…',"1s"],["t","ok","Hive task update",'{"taskId":"task_01a053a0-0001-7000-8000-000000000902","expectedRevision":"1","state":"t…',"4s"],["t","ok","Hive mail complete",'{"recipient":"queen","itemId":"mit_01a05391-f8ab-7000-812d-e8cd9c7a7acf","handlerId":"q…',"2s"],
+    ["w","45s"],["t","ok","Tool Search","select:mcp__hive__memory_read,mcp__hive__memory_write","<1s"],["t","err","Memory read",'{"scope":"repo","id":"acp-provider-agents-have-no-shell"}',"<1s"],["t","ok","Run","cat /Users/scottkellar/Projects/hive/.hive/memory/wiki/spawning/acp-provider-agents-hav…","2s"],
+    ["w","35s"],["t","ok","Memory write",'{"scope":"repo","topic":"spawning","id":"grok-agents-reported-working-shells-despite-te…',"21s"],
+    ["a","The sweep is closed: seven of ten categories proved spawn→mail→settlement end to end, and the three you closed from the sidebar (andre, sandra, norman — all kimi) are recorded as unproven rather than failed. One finding worth your attention: all three grok agents ran real shell commands, which contradicts our source-verified \"ACP providers have no shell\" pitfall, so I logged it as a conflict naming the one adapter check that would settle it."],
+    ["t","ok","Hive mail poll",'{"recipient":"queen"}',"<1s"],["w","4s"],["t","ok","Tool Search","select:mcp__hive__hive_mail_status","<1s"],["t","ok","Hive mail status",'{"recipient":"queen"}',"<1s"],
+    ["a","Mailbox is genuinely empty — the wake raced ahead of my own settlement of the last control notice, and the single dead letter is a resolved 2026-08-18 refusal, not new work."],
+    ["u","Make sure that all agents that are open can send messages to each other. Let's do a message test to make sure that everybody can talk to each other. And everybody can talk to the Queen, and the Queen can talk to everybody."],
+    ["w","6s"],["t","ok","Tool Search","select:mcp__hive__hive_mail_publish","1s"],["e","Test fleet: Four, skip kimi"],
+    ["w","16s"],
+    ["t","ok","Hive task create",'{"taskId":"task_01a053b0-0001-7000-8000-000000000a01","revision":"0","runId":"run_01a00…',"22s"],["t","ok","Hive task create",'{"taskId":"task_01a053b0-0001-7000-8000-000000000a02","revision":"0","runId":"run_01a00…',"14s"],["t","ok","Hive task create",'{"taskId":"task_01a053b0-0001-7000-8000-000000000a03","revision":"0","runId":"run_01a00…',"14s"],["t","run","Hive task create",'{"taskId":"task_01a053b0-0001-7000-8000-000000000a04","revision":"0","runId":"run_01a00…',"running"]
+  ];
+  function esc(s) { return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  var html = "";
+  for (var i = 0; i < R.length; i++) {
+    var r = R[i];
+    if (r[0] === "u") html += '<div class="row user">' + esc(r[1]) + '</div>';
+    else if (r[0] === "w") html += '<div class="row ind d">✓ Worked for ' + r[1] + '</div>';
+    else if (r[0] === "e") html += '<div class="row ind"><span class="ok">✓</span> ' + esc(r[1]) + '</div>';
+    else if (r[0] === "m") html += '<div class="row d">↳ Mail · ' + r[1] + ' · ' + r[2] + '</div>';
+    else if (r[0] === "a") html += '<div class="reply"><span class="mark claude">✻</span><span class="txt">' + esc(r[1]) + '</span></div>';
+    else {
+      var mark = r[1] === "err" ? '<span class="err">✗</span>' : r[1] === "run" ? '<span class="run">◌</span>' : '<span class="ok">✓</span>';
+      html += '<div class="row ind tool">' + mark + ' <b>' + esc(r[2]) + '</b>' + (r[3] ? '  <span class="b">' + esc(r[3]) + '</span>' : '') + ' <span class="d">· ' + esc(r[4]) + '</span></div>';
+    }
+  }
+  document.getElementById("before-rows").innerHTML = html;
+
+  document.querySelectorAll(".fold").forEach(function (el) {
+    el.setAttribute("role", "button"); el.setAttribute("tabindex", "0");
+    function toggle() { el.classList.toggle("open"); }
+    el.addEventListener("click", toggle);
+    el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+  });
+  document.querySelectorAll("[data-toggle]").forEach(function (el) {
+    el.addEventListener("click", function () { document.getElementById(el.getAttribute("data-toggle")).classList.toggle("details"); });
+  });
+})();
+</script>
+
+</body>
+</html>

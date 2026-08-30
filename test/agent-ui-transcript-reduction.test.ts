@@ -25,7 +25,7 @@ describe("transcript reduction", () => {
   test("a delta after 10k entries mutates only the tail and reports its range", () => {
     let view = initialView();
     for (let index = 0; index < 10_000; index += 1) {
-      view = applyMailNotice(view, "work", `mail-${index}`);
+      view = applyMailNotice(view, "work", `mail-${index}`, OCCURRED_AT);
     }
     expect(view.transcript.consumeChangedStart()).toBe(0);
 
@@ -74,7 +74,7 @@ describe("transcript reduction", () => {
     });
     view.transcript.consumeChangedStart();
     for (let index = 0; index < 10_000; index += 1) {
-      view = applyMailNotice(view, "work", `mail-${index}`);
+      view = applyMailNotice(view, "work", `mail-${index}`, OCCURRED_AT);
     }
     view = applyProviderEvent(view, {
       kind: "tool-updated",

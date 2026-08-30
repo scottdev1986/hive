@@ -20,8 +20,8 @@ async function settle(): Promise<void> {
   await harness.testRenderer.flush();
 }
 
-describe("code changes are visible in the pane", () => {
-  test("an edit renders as a diff with its added and removed lines", async () => {
+describe("code changes show in the live line and the events view", () => {
+  test("an edit shows live while it runs and as an events row afterwards", async () => {
     harness.ui.onProviderEvent(
       harness.driver.emit({ kind: "turn-started", turnId: "t1" }),
     );
@@ -44,21 +44,31 @@ describe("code changes are visible in the pane", () => {
       }),
     );
     await settle();
-    const compact = harness.testRenderer.captureCharFrame();
+    const live = harness.testRenderer.captureCharFrame();
 
-    expect(compact).toContain("Edit");
-    expect(compact).toContain("src/app.ts");
-    expect(compact).toContain("+1 −1");
-    // The diff is the point of watching an edit: it shows without ctrl+o.
-    expect(compact).toContain("- const port = 3000;");
-    expect(compact).toContain("+ const port = 8080;");
+    // While it runs, the live line names the tool and the file; the chat
+    // itself carries no tool row and no diff.
+    expect(live).toContain("Edit");
+    expect(live).toContain("src/app.ts");
+    expect(live).not.toContain("const port");
+
+    harness.ui.onProviderEvent(
+      harness.driver.emit({
+        kind: "tool-finished",
+        turnId: "t1",
+        toolCallId: "call-1",
+        status: "ok",
+      }),
+    );
+    await settle();
+    expect(harness.testRenderer.captureCharFrame()).not.toContain("src/app.ts");
 
     harness.testRenderer.mockInput.pressKey("o", { ctrl: true });
     await settle();
-    const expanded = harness.testRenderer.captureCharFrame();
-
-    expect(expanded).toContain("- const port = 3000;");
-    expect(expanded).toContain("+ const port = 8080;");
+    const events = harness.testRenderer.captureCharFrame();
+    expect(events).toContain("✓ Edit");
+    expect(events).toContain("src/app.ts");
+    expect(events).toContain("1 file");
   });
 
   test("a turn-level diff replaces the previous one instead of stacking", async () => {
@@ -82,20 +92,22 @@ describe("code changes are visible in the pane", () => {
       );
     }
     await settle();
-    const compact = harness.testRenderer.captureCharFrame();
-
-    expect(compact).toContain("Changes · 1 file · +1 −1");
-    // The aggregate diff shows inline like per-tool diffs, and it is the
-    // latest aggregate: the superseded turn diff is gone, not stacked.
-    expect(compact).toContain("+ const x = 2;");
-    expect(compact).not.toContain("+ const x = 1;");
+    expect(harness.testRenderer.captureCharFrame()).not.toContain("Changes");
 
     harness.testRenderer.mockInput.pressKey("o", { ctrl: true });
     await settle();
-    const expanded = harness.testRenderer.captureCharFrame();
-
-    expect(expanded).toContain("+ const x = 2;");
-    expect(expanded).not.toContain("+ const x = 1;");
+    const events = harness.testRenderer.captureCharFrame();
+    // One Changes row for the turn, carrying the latest aggregate.
+    expect(events.split("Changes").length - 1).toBe(1);
+    expect(events).toContain("1 file");
+    expect(events).toContain("+1 −1");
+    const diffs = harness.ui
+      .snapshot()
+      .view.transcript.filter((entry) => entry.kind === "diff");
+    expect(diffs).toHaveLength(1);
+    expect(diffs[0]?.kind === "diff" ? diffs[0].diff : "").toContain(
+      "+const x = 2;",
+    );
   });
 
   test("a tool call names the file it is touching", async () => {
@@ -141,7 +153,7 @@ describe("code changes are visible in the pane", () => {
     );
     await harness.testRenderer.flush();
 
-    expect(harness.testRenderer.captureCharFrame()).toContain("preparing diff");
+    expect(harness.testRenderer.captureCharFrame()).toContain("large.txt");
     harness.testRenderer.mockInput.typeText("still responsive");
     await harness.ui.settleInput();
     await harness.testRenderer.flush();

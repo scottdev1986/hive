@@ -1,4 +1,5 @@
 import { bold, fg, StyledText, type TextChunk } from "@opentui/core";
+import { displayToolName, TOOL_LABELS } from "./events-format";
 import { formatContextPercent } from "../../usage-service/context-occupancy";
 import { clipTerminalText } from "./terminal-clip";
 import type {
@@ -229,13 +230,74 @@ export function footerStatusContent(
   return new StyledText(chunks);
 }
 
+/** What the agent is doing right now, as one line that rewrites itself: the running tool or thought, or a mail wake being taken up. Empty when nothing is in flight, so an idle pane shows nothing rather than a stale step. The transcript no longer carries these, so this line is where a long tool call proves the agent is not stuck. */
+export function liveLineContent(
+  view: ViewState,
+  spinnerTick: number,
+  nowMs: number,
+): StyledText | null {
+  const spinner = SPINNER_FRAMES[spinnerTick % SPINNER_FRAMES.length] ?? "·";
+  const transcript = view.transcript;
+  for (let index = transcript.length - 1; index >= 0; index -= 1) {
+    const entry = transcript[index];
+    if (entry === undefined) continue;
+    if (entry.kind === "user" || entry.kind === "elicitation") break;
+    if (entry.kind === "tool" && entry.status === "running") {
+      const label =
+        entry.toolKind === null || entry.toolKind === "other"
+          ? displayToolName(entry.toolName)
+          : (TOOL_LABELS[entry.toolKind] ?? displayToolName(entry.toolName));
+      const subject =
+        entry.locations[0]?.split("/").filter(Boolean).slice(-3).join("/") ??
+        entry.presentation.detail?.text ??
+        null;
+      return new StyledText([
+        bold(fg(COLORS.teal)(`${spinner} `)),
+        bold(fg(COLORS.text)(label)),
+        fg(COLORS.blue)(subject === null ? "" : `  ${subject}`),
+        fg(COLORS.dim)(`  · ${elapsedSince(entry.startedAt, nowMs)}`),
+      ]);
+    }
+    if (entry.kind === "thought" && entry.completedAt === null) {
+      return new StyledText([
+        bold(fg(COLORS.teal)(`${spinner} `)),
+        bold(fg(COLORS.text)("Thinking")),
+        fg(COLORS.dim)(
+          `${entry.summary.text === "" ? "" : `  ${entry.summary.text}`}  · ${elapsedSince(entry.startedAt, nowMs)}`,
+        ),
+      ]);
+    }
+    if (entry.kind === "tool" || entry.kind === "thought") break;
+  }
+  if (
+    view.mail === "waiting" ||
+    view.mail === "waking" ||
+    view.mail === "retrying"
+  ) {
+    return new StyledText([
+      bold(fg(COLORS.blue)("↳ ")),
+      bold(fg(COLORS.text)("Mail")),
+      fg(COLORS.dim)(`  · ${MAIL_LABEL[view.mail]}`),
+    ]);
+  }
+  return null;
+}
+
+function elapsedSince(startedAt: string, nowMs: number): string {
+  const started = Date.parse(startedAt);
+  if (!Number.isFinite(started)) return "running";
+  const seconds = Math.max(0, Math.floor((nowMs - started) / 1_000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 /** The footer's right half keeps the three discoverability affordances that are useful on every turn. The armed Ctrl+C warning temporarily replaces them because it is state feedback, not signage. */
 export function footerHintsContent(ctrlCArmed: boolean): StyledText {
   if (ctrlCArmed) {
     return new StyledText([bold(fg(COLORS.orange)("ctrl+c again to exit"))]);
   }
   return new StyledText([
-    fg(COLORS.dim)("/ commands · @ files · ctrl+o details"),
+    fg(COLORS.dim)("/ commands · @ files · ctrl+o events"),
   ]);
 }
 

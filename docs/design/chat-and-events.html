@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Chat and Events</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+  :root {
+    --ground: #eef0f1; --ink: #1c2229; --muted: #5c6570; --rule: #d3d8dc;
+    --accent: #1f7f79; --card: #ffffff; --before: #b5544a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #12161c; --ink: #dee2ea; --muted: #8a919e; --rule: #2a313a;
+      --accent: #6ecdc6; --card: #171c23; --before: #eb8a80;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #12161c; --ink: #dee2ea; --muted: #8a919e; --rule: #2a313a;
+    --accent: #6ecdc6; --card: #171c23; --before: #eb8a80;
+  }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 1080px; margin: 0 auto; padding: 56px 24px 96px; }
+  .prose { max-width: 66ch; }
+  h1 { font-size: 34px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.15; margin: 0 0 12px; text-wrap: balance; }
+  h2 { font-size: 22px; font-weight: 600; margin: 64px 0 8px; text-wrap: balance; }
+  h3 { font-size: 16px; font-weight: 600; margin: 32px 0 8px; }
+  p { margin: 0 0 14px; }
+  .lede { font-size: 18px; color: var(--muted); }
+  .eyebrow { display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  code { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; }
+  .note { font-size: 14px; color: var(--muted); }
+  .kbd { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12px; padding: 1px 5px; border: 1px solid var(--rule); border-radius: 4px; background: var(--card); }
+  .caption { font-size: 13px; color: var(--muted); margin: 10px 0 0; max-width: 80ch; }
+  .caption b { color: var(--ink); font-weight: 600; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 16px 0 0; font-size: 14px; }
+  button.ctl { font: 500 13px "IBM Plex Sans", sans-serif; color: var(--ink); background: var(--card); border: 1px solid var(--rule); border-radius: 5px; padding: 6px 12px; cursor: pointer; }
+  button.ctl:hover { border-color: var(--accent); color: var(--accent); }
+  button.ctl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.ctl[disabled] { opacity: 0.5; cursor: default; }
+  label.ctl { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); cursor: pointer; }
+
+  /* ---------- Live Run frame: split-horizon app chrome ---------- */
+  .frame {
+    --app-bg: #091117; --app-top: #111a20; --app-panel: #101b22; --app-panel-2: #172630; --app-line: #263a45;
+    --app-text: #edf4f7; --app-muted: #8599a4; --app-faint: #536873; --app-accent: #73d8e8;
+    --app-green: #69d49f; --app-yellow: #efb161; --app-red: #ec7770; --app-violet: #c1a0dd;
+    --tg: #0f1319; --tx: #dee2ea; --dim: #7a818e; --gray: #8a919e; --green: #7ed385; --yellow: #e8c160; --blue: #6ea8fe; --red: #eb6e6e; --teal: #6ecdc6; --edge: #3a424d;
+    --claude: #d97757; --codex: #74aa9c; --opencode: #e8e2dc;
+    background: var(--app-bg); color: var(--app-text);
+    border: 1px solid #1f2d38; border-radius: 10px; overflow: hidden; margin-top: 20px;
+    box-shadow: 0 16px 50px rgba(0,0,0,0.3);
+    font-family: "IBM Plex Sans", sans-serif; font-size: 12px;
+  }
+  .frame .top { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--app-top); border-bottom: 1px solid var(--app-line); color: var(--app-muted); font-size: 11.5px; }
+  .frame .top b { color: var(--app-text); font-weight: 600; }
+  .frame .top .crumb { color: var(--app-faint); }
+  .frame .top .pill { margin-left: auto; padding: 2px 8px; border: 1px solid var(--app-line); border-radius: 999px; font-family: "JetBrains Mono", monospace; font-size: 10.5px; color: var(--app-muted); }
+  .frame .pill .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--app-green); margin-right: 6px; vertical-align: 1px; }
+  .frame .pill.busy .dot { background: var(--app-accent); }
+  .frame .split { display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-height: 560px; }
+  @media (max-width: 860px) { .frame .split { grid-template-columns: 1fr; } .frame .inspector { border-left: 0; border-top: 1px solid var(--app-line); } }
+
+  /* terminal pane inside the frame */
+  .term { background: var(--tg); color: var(--tx); font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; line-height: 1.5; display: flex; flex-direction: column; min-width: 0; }
+  .term .body { padding: 14px 18px 8px; overflow: auto; flex: 1 1 auto; max-height: 470px; }
+  .term .row { white-space: pre; margin: 0; min-height: 1.5em; }
+  .term .row.user { color: var(--gray); margin-top: 1em; white-space: normal; max-width: 78ch; }
+  .term .row.user::before { content: "> "; color: var(--dim); font-weight: 700; }
+  .term .reply { display: flex; margin-top: 1em; white-space: normal; max-width: 78ch; }
+  .term .reply .mark { flex: 0 0 3ch; font-weight: 700; }
+  .term .reply .txt { flex: 1 1 auto; min-width: 0; }
+  .term .reply .who { color: var(--dim); font-size: 11px; display: block; margin-bottom: 1px; }
+  .term .reply .who b { color: var(--gray); font-weight: 400; }
+  .term .reply.inbound { border-left: 2px solid var(--edge); padding-left: 8px; margin-left: 0; }
+  .term .reply.inbound .mark { flex-basis: 2.5ch; }
+  .term .ind { padding-left: 3ch; }
+  .term .ok { color: var(--green); font-weight: 700; }
+  .term .d { color: var(--dim); } .term .g { color: var(--gray); } .term .b { color: var(--blue); } .term .t { color: var(--teal); } .term .gr { color: var(--green); }
+  .term .claude { color: var(--claude); } .term .codex { color: var(--codex); } .term .opencode { color: var(--opencode); }
+  .term .banner b { font-weight: 700; } .term .sep { color: var(--edge); }
+  .term .q { margin: 0.6em 0 0 3ch; max-width: 78ch; white-space: normal; }
+  .term .q .qh { color: var(--tx); } .term .q .qh::before { content: "? "; color: var(--yellow); font-weight: 700; }
+  .term .q .qh b { color: var(--yellow); font-weight: 700; }
+  .term .q .opts { padding-left: 2ch; color: var(--dim); }
+  .term .q .opts .pick { color: var(--green); } .term .q .opts .pick::before { content: "✓ "; font-weight: 700; }
+  .term .q .opts .no { color: var(--dim); } .term .q .opts .no::before { content: "○ "; }
+  .term .q .opts .free { color: var(--gray); font-style: italic; }
+  .term .chg { display: none; } .term.keep-changes .chg { display: block; }
+
+  /* the single live line */
+  .term .live { border-top: 1px dashed var(--edge); padding: 6px 18px; min-height: 1.6em; color: var(--gray); display: flex; gap: 8px; align-items: baseline; }
+  .term .live:empty { display: none; }
+  .term .live .run { color: var(--teal); font-weight: 700; }
+  .term .live .lbl { color: var(--tx); font-weight: 700; }
+  .term .live .sub { color: var(--blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .term .live .el { color: var(--dim); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .term .live.mail .run { color: var(--blue); }
+  .term .composer { border-top: 1px dashed var(--edge); padding: 6px 18px 8px; color: var(--tx); }
+  .term .composer::before { content: "› "; color: var(--gray); font-weight: 700; }
+  .term .cursor { display: inline-block; width: 1ch; height: 1.1em; background: var(--tx); vertical-align: text-bottom; }
+  .term .status { display: flex; justify-content: space-between; gap: 16px; padding: 2px 18px 10px; color: var(--dim); }
+  .term .status .left b { color: var(--tx); }
+
+  /* inspector */
+  .inspector { min-width: 0; border-left: 1px solid var(--app-line); background: #0f191e; display: flex; flex-direction: column; }
+  .inspector-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 6px; border-bottom: 1px solid var(--app-line); }
+  .inspector-tab { padding: 6px 2px; border: 0; border-radius: 4px; color: var(--app-muted); background: transparent; cursor: pointer; font: 500 11.5px "IBM Plex Sans", sans-serif; }
+  .inspector-tab.active { color: var(--app-text); background: var(--app-panel-2); }
+  .inspector-tab:focus-visible { outline: 1px solid var(--app-accent); }
+  .inspector-pane { display: none; padding: 12px 13px; overflow: auto; flex: 1 1 auto; max-height: 520px; }
+  .inspector-pane.active { display: block; }
+  .micro-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--app-faint); }
+  .inspector-pane h3 { margin: 4px 0 8px; font-size: 14px; font-weight: 600; line-height: 1.2; }
+  .inspector-pane p { color: var(--app-muted); font-size: 11.5px; margin: 0 0 10px; }
+  .fact-row { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 7px; padding: 6px 0; border-bottom: 1px solid var(--app-line); font-size: 11.5px; }
+  .fact-row span { color: var(--app-muted); }
+  .fact-row strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .check-row { display: grid; grid-template-columns: 13px 1fr; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--app-line); color: var(--app-muted); font-size: 11.5px; }
+  .check-box { display: grid; width: 12px; height: 12px; place-items: center; border: 1px solid var(--app-line); border-radius: 3px; color: var(--app-green); font-size: 9px; }
+
+  /* events */
+  .filters { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 8px; }
+  .chip { font: 500 10.5px "IBM Plex Sans", sans-serif; color: var(--app-muted); border: 1px solid var(--app-line); border-radius: 999px; padding: 2px 8px; background: transparent; cursor: pointer; }
+  .chip.active { color: var(--app-text); border-color: var(--app-accent); }
+  .ev-group { margin: 8px 0 2px; padding-top: 6px; border-top: 1px solid var(--app-line); color: var(--app-faint); font: 10.5px "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: 0.04em; display: flex; justify-content: space-between; }
+  .ev-group.wake { color: var(--blue); }
+  .ev { display: grid; grid-template-columns: 52px 12px minmax(0, 1fr); gap: 6px; padding: 3px 0; font: 11px "JetBrains Mono", ui-monospace, monospace; align-items: baseline; }
+  .ev time { color: var(--app-faint); font-variant-numeric: tabular-nums; }
+  .ev .m { text-align: center; }
+  .ev .m.ok { color: var(--app-green); } .ev .m.err { color: var(--app-red); } .ev .m.run { color: var(--app-accent); } .ev .m.mail { color: var(--blue); } .ev .m.st { color: var(--app-violet); }
+  .ev .w { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text); }
+  .ev .w b { font-weight: 600; }
+  .ev .w .s { color: var(--app-muted); }
+  .ev .w .k { color: var(--blue); }
+  .ev .w .el { color: var(--app-faint); }
+  .ev .w .plus { color: var(--app-green); } .ev .w .minus { color: var(--app-red); }
+  .ev.new { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { background: rgba(115,216,232,0.18); } to { background: transparent; } }
+  @media (prefers-reduced-motion: reduce) { .ev.new { animation: none; } }
+  .ev[data-cat] { }
+  .inspector-pane[data-filter="tools"] .ev:not([data-cat="tool"]) { display: none; }
+  .inspector-pane[data-filter="mail"] .ev:not([data-cat="mail"]) { display: none; }
+  .inspector-pane[data-filter="board"] .ev:not([data-cat="board"]) { display: none; }
+  .inspector-pane[data-filter="status"] .ev:not([data-cat="status"]) { display: none; }
+
+  /* grammar */
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 24px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 12px 10px 0; border-bottom: 1px solid var(--rule); }
+  th { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  td.mono { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12.5px; white-space: nowrap; }
+  .tbl-wrap { overflow-x: auto; }
+  .cmp { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+  @media (max-width: 720px) { .cmp { grid-template-columns: 1fr; } }
+  .cmp .card { background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; font-size: 14px; }
+  .cmp .card h4 { margin: 0 0 6px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+  .cmp .card.warn h4 { color: var(--before); }
+  .cmp ul { margin: 0; padding-left: 18px; } .cmp li { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="prose">
+    <span class="eyebrow">agent-ui + workspace inspector · design proposal · 2026-08-30</span>
+    <h1>Chat in the pane, everything else in Events</h1>
+    <p class="lede">A stricter split than turn folding: the transcript keeps only conversation — user ↔ agent, Queen ↔ agent, and what the Queen says — while every tool call, mail notice, board update and status change goes to the inspector's <b>Events</b> tab. What the agent is doing <i>right now</i> is one line above the composer that rewrites itself and disappears when idle.</p>
+    <p>The Events tab already exists in the Live Run inspector and is deliberately empty today — <code>ShellInspector.swift</code> refuses to invent a list because no Workspace HTTP GET serves the stream — while the daemon already stores the rows it would show (<code>WorkspaceEventV2</code> in <code>status_workspace_events</code>). This proposal is the reason to wire that GET.</p>
+    <p class="note">Both frames are interactive: switch inspector tabs, filter events, and in the Queen frame press <b>Play a mail wake</b> to watch the live line rewrite itself while the Events tab fills and the chat gains exactly one row — ozzie's message.</p>
+  </div>
+
+  <!-- ================================================================= QUEEN -->
+  <h2 id="queen">1 · The Queen</h2>
+  <div class="prose">
+    <span class="eyebrow">live run · queen · claude</span>
+    <p>Same session as the earlier transcript. Notice what the chat is now made of: your three messages, the Queen's replies, and the messages agents sent her — each inbound mail is a chat row attributed to its sender, because that <i>is</i> the conversation between Queen and agent. Questions the Queen asked you stay too, as cards that keep the question, the options, and what you chose — an answer is a decision on the record, not bookkeeping. Nothing else. Twenty-seven bookkeeping calls behind the last wake live in Events.</p>
+  </div>
+
+  <div class="frame" id="qf">
+    <div class="top"><b>Live Run</b><span class="crumb">›</span><span>queen</span><span class="crumb">›</span><span>claude-opus-5 · high</span><span class="pill" id="q-pill"><span class="dot"></span>idle</span></div>
+    <div class="split">
+      <div class="term" id="q-term">
+        <div class="body" id="q-body">
+          <div class="row banner"><b class="claude">✻ </b><b>Claude Code</b><span class="sep"> · </span><span class="d">queen</span><span class="sep"> · </span><span class="t">claude-opus-5</span><span class="sep"> · </span><span class="t">high</span></div>
+          <div class="row d">  /Users/scottkellar/Projects/hive</div>
+
+          <div class="row user">Follow your boot capsule. If there is no user request and no live work to continue, wait for the user. Do not invent work, do not spawn, and do not create a board unless the user asks.</div>
+          <div class="reply"><span class="mark claude">✻</span><span class="txt">Boot attested at generation 30; the board is reconciled and the fleet is idle. The ten "in-progress" stories were last session's ten-agent smoke test whose agents are all gone with no reports and settlement empty, so I terminated them with that reason recorded — say the word and I'll re-run the smoke test, otherwise I'm waiting on you.</span></div>
+
+          <div class="row user">spawn many no op agents</div>
+          <div class="q"><div class="qh"><b>Fan-out size</b> · How many no-op agents should this sweep spawn?</div><div class="opts"><span class="pick">Repeat the 10-agent sweep (Recommended)</span> <span class="no">One per provider (5)</span> <span class="no">Only the three that failed last time</span></div></div>
+          <div class="reply"><span class="mark claude">✻</span><span class="txt">Ten no-op agents are spawning, one per routing category, each bound to its own board story (901–90a) and read-only. Spread: kimi ×3 (andre, sandra, norman), grok ×3 (bridget, darius, maxwell), codex ×2 (bram, ines), claude (summer), opencode (ozzie) — I'll report the runtime echoes as they land.</span></div>
+
+          <div class="reply inbound"><span class="mark codex">◎</span><span class="txt"><span class="who"><b>bram</b> → queen · work · 12:41:07</span>Runtime echo for story 905: codex, standard_coding. Shell available, cwd is the worktree, board story read. No changes made. Ready for release.</span></div>
+          <div class="reply inbound"><span class="mark codex">◎</span><span class="txt"><span class="who"><b>ines</b> → queen · work · 12:41:19</span>Runtime echo for story 906: codex, complex_coding. Shell available. No changes made.</span></div>
+          <div class="reply inbound"><span class="mark claude">✻</span><span class="txt"><span class="who"><b>summer</b> → queen · work · 12:41:24</span>Runtime echo for story 907: claude, planning. Read-only confirmed; hive_task_get succeeded. Nothing to report beyond the echo.</span></div>
+          <div class="reply inbound"><span class="mark" style="color:#f2f2f2">𝕏</span><span class="txt"><span class="who"><b>bridget</b> → queen · work · 12:42:02</span>Echo for 903 (grok, code_review). I ran <code>git status</code> and <code>ls</code> in the worktree — a shell is available to me, contrary to my briefing.</span></div>
+          <div class="reply"><span class="mark claude">✻</span><span class="txt">Seven of ten categories have echoed back. Both grok agents ran real shell commands, which contradicts our "ACP providers have no shell" pitfall — I've logged it as a conflict naming the one adapter check that would settle it. Waiting on the three kimi agents.</span></div>
+
+          <div class="row user">Make sure that all agents that are open can send messages to each other. Let's do a message test to make sure that everybody can talk to each other. And everybody can talk to the Queen, and the Queen can talk to everybody.</div>
+          <div class="q"><div class="qh"><b>Test fleet</b> · Which agents take part in the message test?</div><div class="opts"><span class="no">All seven that are open</span> <span class="no">Only the two codex agents</span> <span class="pick free">Other: Four, skip kimi</span></div></div>
+          <div class="reply"><span class="mark claude">✻</span><span class="txt">Four message-test stories are on the board (a01–a04). Each agent will send one message to every other agent and one to me; I'll send one to each of them and report the matrix.</span></div>
+          <div class="reply"><span class="mark claude">✻</span><span class="txt"><span class="who">queen → <b>bram, ines, summer, ozzie</b> · control</span>Message test: reply to this on the control lane, then send one message to each of the other three by name. Report the four sends and any refusals.</span></div>
+        </div>
+        <div class="live" id="q-live"></div>
+        <div class="composer"><span class="cursor"></span></div>
+        <div class="status"><div class="left"><b class="claude">✻ </b><b>Ready</b> <span class="sep">·</span> 41% context <span class="sep">·</span> <span class="b">mail none</span></div><div>/ commands · @ files · ctrl+o events</div></div>
+      </div>
+
+      <aside class="inspector">
+        <div class="inspector-tabs">
+          <button class="inspector-tab" data-tab="task">Task</button>
+          <button class="inspector-tab active" data-tab="events">Events</button>
+          <button class="inspector-tab" data-tab="session">Session</button>
+        </div>
+        <div class="inspector-pane" data-pane="task"><span class="micro-label">Board · run_01a00…</span><h3>Message test: fleet of four</h3><p>Queen-owned coordination story. Acceptance is four echoes on the control lane, not terminal text.</p><div class="check-row"><i class="check-box">✓</i><span>Stories a01–a04 created</span></div><div class="check-row"><i class="check-box">✓</i><span>Control message sent to each agent</span></div><div class="check-row"><i class="check-box"></i><span>Four replies received</span></div><div class="check-row"><i class="check-box"></i><span>Matrix reported to user</span></div></div>
+        <div class="inspector-pane active" data-pane="events" id="q-events" data-filter="all">
+          <span class="micro-label">Typed history</span><h3>Events</h3>
+          <div class="filters"><button class="chip active" data-f="all">All</button><button class="chip" data-f="tools">Tools</button><button class="chip" data-f="mail">Mail</button><button class="chip" data-f="board">Board</button><button class="chip" data-f="status">Status</button></div>
+          <div id="q-evlist">
+            <div class="ev-group"><span>turn 14 · user</span><span>12:44:10</span></div>
+            <div class="ev" data-cat="tool"><time>12:44:12</time><span class="m ok">✓</span><span class="w"><b>Tool Search</b> <span class="k">hive_mail_publish</span> <span class="el">· 1s</span></span></div>
+            <div class="ev" data-cat="status"><time>12:44:16</time><span class="m st">◆</span><span class="w"><b>Question</b> <span class="s">Test fleet → Four, skip kimi</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="board"><time>12:44:38</time><span class="m ok">✓</span><span class="w"><b>Task create</b> <span class="k">a01</span> <span class="s">message test: bram</span> <span class="el">· 22s</span></span></div>
+            <div class="ev" data-cat="board"><time>12:44:52</time><span class="m ok">✓</span><span class="w"><b>Task create</b> <span class="k">a02</span> <span class="s">message test: ines</span> <span class="el">· 14s</span></span></div>
+            <div class="ev" data-cat="board"><time>12:45:06</time><span class="m ok">✓</span><span class="w"><b>Task create</b> <span class="k">a03</span> <span class="s">message test: summer</span> <span class="el">· 14s</span></span></div>
+            <div class="ev" data-cat="board"><time>12:45:20</time><span class="m ok">✓</span><span class="w"><b>Task create</b> <span class="k">a04</span> <span class="s">message test: ozzie</span> <span class="el">· 14s</span></span></div>
+            <div class="ev" data-cat="mail"><time>12:45:23</time><span class="m mail">↑</span><span class="w"><b>Mail publish</b> <span class="k">control</span> <span class="s">→ bram, ines, summer, ozzie</span> <span class="el">· 2s</span></span></div>
+            <div class="ev" data-cat="status"><time>12:45:24</time><span class="m st">◆</span><span class="w"><b>turn-idle</b> <span class="s">1m 14s · 41% context</span></span></div>
+
+            <div class="ev-group wake"><span>turn 13 · wake · control ×3</span><span>12:42:30</span></div>
+            <div class="ev" data-cat="mail"><time>12:42:30</time><span class="m mail">↳</span><span class="w"><b>Mail ready</b> <span class="k">control</span> <span class="s">3 waiting</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:31</time><span class="m ok">✓</span><span class="w"><b>Mail poll</b> <span class="el">· &lt;1s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:33</time><span class="m ok">✓</span><span class="w"><b>Mail claim</b> <span class="k">mit_…c51</span> <span class="s">andre closed from sidebar</span></span></div>
+            <div class="ev" data-cat="board"><time>12:42:37</time><span class="m ok">✓</span><span class="w"><b>Task update</b> <span class="k">908</span> <span class="s">→ terminated · agent gone</span> <span class="el">· 4s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:39</time><span class="m ok">✓</span><span class="w"><b>Mail complete</b> <span class="k">mit_…c51</span> <span class="el">· 2s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:40</time><span class="m ok">✓</span><span class="w"><b>Mail claim</b> <span class="k">mit_…90e</span> <span class="s">sandra closed from sidebar</span></span></div>
+            <div class="ev" data-cat="board"><time>12:42:44</time><span class="m ok">✓</span><span class="w"><b>Task update</b> <span class="k">901</span> <span class="s">→ terminated · agent gone</span> <span class="el">· 4s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:46</time><span class="m ok">✓</span><span class="w"><b>Mail complete</b> <span class="k">mit_…90e</span> <span class="el">· 2s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:47</time><span class="m ok">✓</span><span class="w"><b>Mail claim</b> <span class="k">mit_…acf</span> <span class="s">norman closed from sidebar</span></span></div>
+            <div class="ev" data-cat="board"><time>12:42:51</time><span class="m ok">✓</span><span class="w"><b>Task update</b> <span class="k">902</span> <span class="s">→ terminated · agent gone</span> <span class="el">· 4s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:53</time><span class="m ok">✓</span><span class="w"><b>Mail complete</b> <span class="k">mit_…acf</span> <span class="el">· 2s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:43:14</time><span class="m err">✗</span><span class="w"><b>Memory read</b> <span class="k">acp-provider-agents-have-no-shell</span> <span class="s">not found by id</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:43:16</time><span class="m ok">✓</span><span class="w"><b>Run</b> <span class="k">cat .hive/memory/wiki/spawning/acp-provider-agents-hav…</span> <span class="el">· 2s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:43:40</time><span class="m ok">✓</span><span class="w"><b>Memory write</b> <span class="k">spawning/grok-agents-reported-working-shells…</span> <span class="el">· 21s</span></span></div>
+            <div class="ev" data-cat="status"><time>12:43:41</time><span class="m st">◆</span><span class="w"><b>turn-idle</b> <span class="s">1m 11s</span></span></div>
+
+            <div class="ev-group wake"><span>turn 12 · wake · work</span><span>12:42:02</span></div>
+            <div class="ev" data-cat="mail"><time>12:42:02</time><span class="m mail">↳</span><span class="w"><b>Mail ready</b> <span class="k">work</span> <span class="s">1 waiting</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:03</time><span class="m ok">✓</span><span class="w"><b>Mail poll</b> <span class="el">· &lt;1s</span></span></div>
+            <div class="ev" data-cat="mail"><time>12:42:04</time><span class="m mail">↓</span><span class="w"><b>Mail in</b> <span class="k">bridget</span> <span class="s">echo · 903</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="board"><time>12:42:09</time><span class="m ok">✓</span><span class="w"><b>Task update</b> <span class="k">903</span> <span class="s">→ closed · echo received</span> <span class="el">· 4s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:42:11</time><span class="m ok">✓</span><span class="w"><b>Mail complete</b> <span class="k">mit_…ade</span> <span class="el">· 2s</span></span></div>
+            <div class="ev" data-cat="status"><time>12:42:12</time><span class="m st">◆</span><span class="w"><b>turn-idle</b> <span class="s">10s</span></span></div>
+
+            <div class="ev-group wake"><span>turn 11 · wake · work ×3</span><span>12:41:07</span></div>
+            <div class="ev" data-cat="mail"><time>12:41:07</time><span class="m mail">↳</span><span class="w"><b>Mail ready</b> <span class="k">work</span> <span class="s">3 waiting</span></span></div>
+            <div class="ev" data-cat="mail"><time>12:41:09</time><span class="m mail">↓</span><span class="w"><b>Mail in</b> <span class="k">bram</span> <span class="s">echo · 905</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="mail"><time>12:41:19</time><span class="m mail">↓</span><span class="w"><b>Mail in</b> <span class="k">ines</span> <span class="s">echo · 906</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="mail"><time>12:41:24</time><span class="m mail">↓</span><span class="w"><b>Mail in</b> <span class="k">summer</span> <span class="s">echo · 907</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="board"><time>12:41:31</time><span class="m ok">✓</span><span class="w"><b>Task update</b> <span class="k">905 906 907</span> <span class="s">→ closed</span> <span class="el">· 12s</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:41:33</time><span class="m ok">✓</span><span class="w"><b>Mail complete</b> <span class="k">×3</span> <span class="el">· 5s</span></span></div>
+            <div class="ev" data-cat="status"><time>12:41:34</time><span class="m st">◆</span><span class="w"><b>turn-idle</b> <span class="s">27s</span></span></div>
+
+            <div class="ev-group"><span>turn 10 · user</span><span>12:38:40</span></div>
+            <div class="ev" data-cat="status"><time>12:38:42</time><span class="m st">◆</span><span class="w"><b>Question</b> <span class="s">Fan-out size → Repeat the 10-agent sweep</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="tool"><time>12:38:51</time><span class="m ok">✓</span><span class="w"><b>Run</b> <span class="k">git rev-parse dev && git rev-parse --abbrev-ref …</span> <span class="el">· 1s</span></span></div>
+            <div class="ev" data-cat="board"><time>12:40:49</time><span class="m ok">✓</span><span class="w"><b>Task create</b> <span class="k">901 … 90a</span> <span class="s">no-op routing sweep ×10</span> <span class="el">· 1m 52s</span></span></div>
+            <div class="ev" data-cat="board"><time>12:41:11</time><span class="m ok">✓</span><span class="w"><b>Spawn many</b> <span class="k">×10</span> <span class="s">kimi 3 · grok 3 · codex 2 · claude · opencode</span> <span class="el">· 22s</span></span></div>
+            <div class="ev" data-cat="status"><time>12:41:14</time><span class="m st">◆</span><span class="w"><b>turn-idle</b> <span class="s">2m 34s</span></span></div>
+          </div>
+        </div>
+        <div class="inspector-pane" data-pane="session"><span class="micro-label">Process and fused status</span><h3>Claude · session generation 30</h3><div class="fact-row"><span>Agent feed</span><strong id="q-sess-feed">idle</strong></div><div class="fact-row"><span>Activity</span><strong id="q-sess-act">idle · measured</strong></div><div class="fact-row"><span>Session / turn</span><strong>live · idle</strong></div><div class="fact-row"><span>Health</span><strong>healthy · fresh</strong></div><div class="fact-row"><span>Mail</span><strong id="q-sess-mail">none waiting</strong></div><div class="fact-row"><span>Status source</span><strong>provider app server · high confidence</strong></div><div class="fact-row"><span>Shell ancestry</span><strong>host → zsh → TUI</strong></div><div class="fact-row"><span>Context</span><strong>41% · 1M window</strong></div></div>
+      </aside>
+    </div>
+  </div>
+  <div class="controls">
+    <button class="ctl" id="q-play">Play a mail wake</button>
+    <span class="note" id="q-play-note">ozzie's echo arrives on the work lane. Watch the live line above the composer and the top of Events.</span>
+  </div>
+  <p class="caption"><b>What moved where.</b> Question cards (<code>? Fan-out size</code>) stay in the chat with the chosen option marked and the others dimmed; Events records them as a <code>Question</code> row that points back. Inbound mail is a chat row (<code>◎ bram → queen</code>) with a bordered edge so it reads as someone else's voice; outbound mail the Queen sends is a reply with a <code>queen → …</code> header. Every <code>hive_mail_poll / claim / complete</code>, <code>hive_task_update</code>, <code>Tool Search</code> and <code>turn-idle</code> is an Events row, grouped by turn, with wake-origin turns marked in blue and the <code>Mail in</code> row saying <code>shown in chat</code> so the two views cross-reference. The footer's <code>ctrl+o</code> now jumps to Events instead of inflating the transcript.</p>
+
+  <!-- ================================================================= WORKER -->
+  <h2 id="worker">2 · A coding agent</h2>
+  <div class="prose">
+    <span class="eyebrow">live run · bram · codex</span>
+    <p>For a worker, the Queen's spawn prompt and her follow-ups are inbound chat rows, and bram's reports back are his replies. Every read, edit, test run and commit is an Events row — edits carry their <code>+/−</code> counts and failed runs keep their one-line reason. The live line is where you watch code get written: it says <code>◌ Edit · shell-session.ts +21 −6</code> while it happens, then moves on.</p>
+    <p class="note">One open question is whether a per-turn <code>✓ Changes · 2 files +38 −6</code> line belongs in the chat as the single non-conversation exception. The toggle below shows both answers.</p>
+  </div>
+
+  <div class="frame" id="wf">
+    <div class="top"><b>Live Run</b><span class="crumb">›</span><span>bram</span><span class="crumb">›</span><span>gpt-5.4-codex · medium</span><span class="pill busy"><span class="dot"></span>working · 38s</span></div>
+    <div class="split">
+      <div class="term" id="w-term">
+        <div class="body">
+          <div class="row banner"><b class="codex">◎ </b><b>Codex</b><span class="sep"> · </span><span class="d">bram</span><span class="sep"> · </span><span class="t">gpt-5.4-codex</span><span class="sep"> · </span><span class="t">medium</span></div>
+          <div class="row d">  ~/Projects/hive/.hive/worktrees/bram</div>
+
+          <div class="reply inbound"><span class="mark claude">✻</span><span class="txt"><span class="who"><b>queen</b> → bram · spawn · 13:02:11</span>Read your board story first with hive_task_get(task_01a053c0-…-0b02). Story: shell-session drops the trailing partial line when the PTY exits before a newline. Fix it in <code>src/daemon/session-host/shell-session.ts</code> with a regression test, then report on the work lane.</span></div>
+          <div class="reply"><span class="mark codex">◎</span><span class="txt">Root cause: <code>PtyReader.onExit</code> resolves before the decoder's carry buffer is drained, so a final chunk without <code>\n</code> is dropped. I'll flush the carry on exit and add a test that ends output mid-line.</span></div>
+          <div class="q"><div class="qh"><b>Approve</b> · Run <code>git commit -m "fix(daemon): flush the PTY carry buffer on exit"</code>?</div><div class="opts"><span class="pick">Allow once</span> <span class="no">Allow for this session</span> <span class="no">Reject</span></div></div>
+          <div class="row ind chg"><span class="gr">✓ Changes</span> <span class="g">2 files</span> <span class="gr">+38</span> <span class="d">−6</span> <span class="d">· 41 tests passed</span></div>
+          <div class="reply"><span class="mark codex">◎</span><span class="txt"><span class="who">bram → <b>queen</b> · work</span>Done. <code>shell-session.ts</code> now drains the decoder carry in the exit path before resolving; the new test writes <code>"tail"</code> with no newline, closes the PTY, and asserts it reaches the sink. Full session-host suite green, typecheck and lint clean, committed on <code>bram/shell-session-tail</code>.</span></div>
+
+          <div class="reply inbound"><span class="mark claude">✻</span><span class="txt"><span class="who"><b>queen</b> → bram · control · 13:09:40</span>Confirm the fix covers CRLF endings — does a dangling <code>\r</code> take the same drain path?</span></div>
+          <div class="reply"><span class="mark codex">◎</span><span class="txt"><span class="who">bram → <b>queen</b> · control</span>Yes — the carry buffer is byte-level, so a dangling <code>\r</code> is flushed the same way. No code change needed; I checked for other CRLF handling in the session host and there is none.</span></div>
+
+          <div class="row user">Also handle the case where the PTY is killed by signal — same drain path?</div>
+          <div class="reply"><span class="mark codex">◎</span><span class="txt">Not today — a signal exit goes through <code>onClose</code>, which skips the drain. Routing it through the same path now and adding a SIGKILL case to the test.</span></div>
+          <div class="row ind chg"><span class="gr">✓ Changes</span> <span class="g">2 files</span> <span class="gr">+23</span> <span class="d">−2</span> <span class="d">· tests running</span></div>
+        </div>
+        <div class="live"><span class="run">◌</span><span class="lbl">Run</span><span class="sub">bun test test/daemon/session-host</span><span class="el">12s</span></div>
+        <div class="composer"><span class="cursor"></span></div>
+        <div class="status"><div class="left"><b class="codex">◎ </b><b>Working… 38s</b> <span class="sep">·</span> 23% context</div><div>/ commands · @ files · ctrl+o events</div></div>
+      </div>
+
+      <aside class="inspector">
+        <div class="inspector-tabs">
+          <button class="inspector-tab" data-tab="task">Task</button>
+          <button class="inspector-tab active" data-tab="events">Events</button>
+          <button class="inspector-tab" data-tab="session">Session</button>
+        </div>
+        <div class="inspector-pane" data-pane="task"><span class="micro-label">Board · task_…0b02 · r3</span><h3>Flush the trailing partial line on PTY exit</h3><p>Acceptance is workflow state, never inferred from terminal output.</p><div class="check-row"><i class="check-box">✓</i><span>Regression test ends output mid-line</span></div><div class="check-row"><i class="check-box">✓</i><span>Session-host suite green</span></div><div class="check-row"><i class="check-box">✓</i><span>Reported on work lane</span></div><div class="check-row"><i class="check-box"></i><span>Signal exit takes the drain path</span></div></div>
+        <div class="inspector-pane active" data-pane="events" data-filter="all">
+          <span class="micro-label">Typed history</span><h3>Events</h3>
+          <div class="filters"><button class="chip active" data-f="all">All</button><button class="chip" data-f="tools">Tools</button><button class="chip" data-f="mail">Mail</button><button class="chip" data-f="board">Board</button><button class="chip" data-f="status">Status</button></div>
+          <div>
+            <div class="ev-group"><span>turn 4 · user · running</span><span>13:12:30</span></div>
+            <div class="ev" data-cat="tool"><time>13:12:31</time><span class="m ok">✓</span><span class="w"><b>Read</b> <span class="k">shell-session.ts</span> <span class="s">427 lines</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:12:48</time><span class="m ok">✓</span><span class="w"><b>Edit</b> <span class="k">shell-session.ts</span> <span class="plus">+9</span> <span class="minus">−2</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:12:55</time><span class="m ok">✓</span><span class="w"><b>Edit</b> <span class="k">shell-session.test.ts</span> <span class="plus">+14</span> <span class="minus">−0</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:12:56</time><span class="m run">◌</span><span class="w"><b>Run</b> <span class="k">bun test test/daemon/session-host</span> <span class="el">· running</span></span></div>
+
+            <div class="ev-group wake"><span>turn 3 · wake · control</span><span>13:09:40</span></div>
+            <div class="ev" data-cat="mail"><time>13:09:40</time><span class="m mail">↳</span><span class="w"><b>Mail ready</b> <span class="k">control</span> <span class="s">1 waiting</span></span></div>
+            <div class="ev" data-cat="mail"><time>13:09:42</time><span class="m mail">↓</span><span class="w"><b>Mail in</b> <span class="k">queen</span> <span class="s">CRLF question</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:09:50</time><span class="m ok">✓</span><span class="w"><b>Search</b> <span class="k">\r\n|CRLF</span> <span class="s">0 results</span></span></div>
+            <div class="ev" data-cat="mail"><time>13:10:14</time><span class="m mail">↑</span><span class="w"><b>Mail publish</b> <span class="k">control</span> <span class="s">→ queen</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:10:16</time><span class="m ok">✓</span><span class="w"><b>Mail complete</b> <span class="k">mit_…f21</span></span></div>
+            <div class="ev" data-cat="status"><time>13:10:17</time><span class="m st">◆</span><span class="w"><b>turn-idle</b> <span class="s">37s</span></span></div>
+
+            <div class="ev-group"><span>turn 2 · continue</span><span>13:03:30</span></div>
+            <div class="ev" data-cat="tool"><time>13:03:41</time><span class="m ok">✓</span><span class="w"><b>Edit</b> <span class="k">shell-session.ts</span> <span class="plus">+21</span> <span class="minus">−6</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:03:58</time><span class="m ok">✓</span><span class="w"><b>Edit</b> <span class="k">shell-session.test.ts</span> <span class="plus">+17</span> <span class="minus">−0</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:04:05</time><span class="m err">✗</span><span class="w"><b>Run</b> <span class="k">bun test …/shell-session.test.ts</span> <span class="s">1 fail · expected "tail" to equal "tail\n"</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:04:31</time><span class="m ok">✓</span><span class="w"><b>Edit</b> <span class="k">shell-session.test.ts</span> <span class="plus">+1</span> <span class="minus">−1</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:04:40</time><span class="m ok">✓</span><span class="w"><b>Run</b> <span class="k">bun test test/daemon/session-host</span> <span class="s">41 pass · 0 fail</span> <span class="el">· 6s</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:05:02</time><span class="m ok">✓</span><span class="w"><b>Run</b> <span class="k">bun run typecheck && bun run lint</span> <span class="s">clean</span> <span class="el">· 19s</span></span></div>
+            <div class="ev" data-cat="status"><time>13:05:03</time><span class="m st">◆</span><span class="w"><b>Approval</b> <span class="s">git commit → Allow once</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:05:05</time><span class="m ok">✓</span><span class="w"><b>Run</b> <span class="k">git commit -m "fix(daemon): flush the PTY carry buffer on exit"</span></span></div>
+            <div class="ev" data-cat="status"><time>13:05:06</time><span class="m st">◆</span><span class="w"><b>Changes</b> <span class="s">2 files</span> <span class="plus">+38</span> <span class="minus">−6</span> <span class="s">· bram/shell-session-tail</span></span></div>
+            <div class="ev" data-cat="mail"><time>13:05:09</time><span class="m mail">↑</span><span class="w"><b>Mail publish</b> <span class="k">work</span> <span class="s">→ queen · report</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="board"><time>13:05:11</time><span class="m ok">✓</span><span class="w"><b>Task update</b> <span class="k">0b02</span> <span class="s">→ review</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:05:14</time><span class="m ok">✓</span><span class="w"><b>Memory write</b> <span class="k">daemon/pty-carry-buffer-flushes-on-exit</span></span></div>
+            <div class="ev" data-cat="status"><time>13:05:15</time><span class="m st">◆</span><span class="w"><b>turn-idle</b> <span class="s">1m 45s</span></span></div>
+
+            <div class="ev-group wake"><span>turn 1 · spawn</span><span>13:02:11</span></div>
+            <div class="ev" data-cat="mail"><time>13:02:11</time><span class="m mail">↓</span><span class="w"><b>Spawn prompt</b> <span class="k">queen</span> <span class="s">story 0b02</span> <span class="el">· shown in chat</span></span></div>
+            <div class="ev" data-cat="board"><time>13:02:13</time><span class="m ok">✓</span><span class="w"><b>Task get</b> <span class="k">0b02</span></span></div>
+            <div class="ev" data-cat="board"><time>13:02:15</time><span class="m ok">✓</span><span class="w"><b>Task update</b> <span class="k">0b02</span> <span class="s">→ in-progress</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:02:16</time><span class="m ok">✓</span><span class="w"><b>Memory recall</b> <span class="k">shell-session pty exit</span> <span class="s">2 rows</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:02:18</time><span class="m ok">✓</span><span class="w"><b>Read</b> <span class="k">shell-session.ts</span> <span class="s">412 lines</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:02:20</time><span class="m ok">✓</span><span class="w"><b>Read</b> <span class="k">shell-session.test.ts</span> <span class="s">288 lines</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:02:24</time><span class="m ok">✓</span><span class="w"><b>Search</b> <span class="k">flushPending|onExit|partialLine</span> <span class="s">14 results</span></span></div>
+            <div class="ev" data-cat="tool"><time>13:02:31</time><span class="m ok">✓</span><span class="w"><b>Read</b> <span class="k">pty-reader.ts +1</span></span></div>
+            <div class="ev" data-cat="status"><time>13:03:23</time><span class="m st">◆</span><span class="w"><b>turn-idle</b> <span class="s">1m 12s</span></span></div>
+          </div>
+        </div>
+        <div class="inspector-pane" data-pane="session"><span class="micro-label">Process and fused status</span><h3>Codex · session generation 1</h3><div class="fact-row"><span>Agent feed</span><strong>working</strong></div><div class="fact-row"><span>Activity</span><strong>tool · Run · 12s</strong></div><div class="fact-row"><span>Session / turn</span><strong>live · turn 4</strong></div><div class="fact-row"><span>Health</span><strong>healthy · fresh</strong></div><div class="fact-row"><span>Worktree</span><strong>.hive/worktrees/bram · dirty 2</strong></div><div class="fact-row"><span>Branch</span><strong>bram/shell-session-tail · 1 unmerged</strong></div><div class="fact-row"><span>Status source</span><strong>ACP · high confidence</strong></div><div class="fact-row"><span>Context</span><strong>23% · 400k window</strong></div></div>
+      </aside>
+    </div>
+  </div>
+  <div class="controls">
+    <label class="ctl"><input type="checkbox" id="w-keep"> Keep a <code>✓ Changes</code> line per turn in the chat</label>
+  </div>
+  <p class="caption"><b>Where code shows up.</b> While it happens: the live line. Afterwards: the Events tab, where each <code>Edit</code> keeps its file and <code>+/−</code>, and a <code>Changes</code> status row closes each turn with the branch. The chat carries the agent's own account of what it did. If that is too thin, the toggle shows the one exception worth considering.</p>
+
+  <!-- ================================================================= GRAMMAR -->
+  <h2 id="grammar">3 · The rules</h2>
+  <div class="prose"><p>Three surfaces, each with one job.</p></div>
+  <div class="tbl-wrap">
+  <table>
+    <tr><th style="width:18%">Surface</th><th style="width:40%">Carries</th><th>Never carries</th></tr>
+    <tr><td><b>Chat</b> (transcript)</td><td>User messages. Agent replies. Mail between Queen and agent, shown as attributed rows in <i>both</i> panes. <b>Every question or approval put to a person, with its options and the answer given</b> — kept permanently, since an answer is a decision. Diagnostics that need a person.</td><td>Tool calls, thoughts, mail notices, board updates, status transitions, narration of internal work.</td></tr>
+    <tr><td><b>Live line</b></td><td>The one thing in flight: <code>◌ Edit · file +n −m</code>, <code>↳ Mail · work · 1 waiting</code>, <code>◌ Thinking · 14s</code>. Rewrites in place. Empty and hidden when idle.</td><td>History. It never grows.</td></tr>
+    <tr><td><b>Events</b> (inspector)</td><td>Everything, typed and timestamped, grouped by turn, wake turns marked, filterable. Rows that produced a chat row say so.</td><td>Terminal text. Every row is a <code>WorkspaceEventV2</code>, never a scrape.</td></tr>
+  </table>
+  </div>
+
+  <div class="cmp">
+    <div class="card"><h4>What this needs in the code</h4><ul>
+      <li>A Workspace HTTP GET for <code>StatusStore.listEvents</code> — the inspector's stated missing wire.</li>
+      <li>A chat-projection of mail: inbound items with a body become <code>agent</code>-kind rows attributed to the sender; outbound publishes become replies with a <code>→</code> header.</li>
+      <li><code>tool</code>, <code>thought</code>, <code>mail</code>, <code>plan</code> entries stop being appended to the transcript and go to the event stream; the live line reads the newest running entry.</li>
+      <li>Wake-origin turns tagged from <code>dispatchedWakes</code>, so Events can group them and the chat can suppress wake narration.</li>
+      <li><code>ctrl+o</code> focuses the Events tab (or, in a bare terminal without the inspector, opens an in-pane events overlay).</li>
+    </ul></div>
+    <div class="card warn"><h4>What to watch</h4><ul>
+      <li><b>Bare-terminal users</b> (no Workspace inspector) lose all history of tool activity unless the pane has its own events overlay. Keep one.</li>
+      <li><b>Error visibility.</b> A failed test or refused tool call is a fact a person may need mid-chat. Proposal: errors the agent does not itself mention within the same turn surface as a chat diagnostic.</li>
+      <li><b>Attribution.</b> A chat row from <code>bram</code> must be his mail body verbatim, never the Queen's paraphrase; the Events row for it says <code>shown in chat</code> so the two can be reconciled.</li>
+      <li><b>The Changes exception.</b> Decide once. The toggle above shows both; leaving it to preference means two people describe different UIs.</li>
+    </ul></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Inspector tabs and event filters, per frame.
+  document.querySelectorAll(".inspector").forEach(function (insp) {
+    insp.querySelectorAll(".inspector-tab").forEach(function (tab) {
+      tab.addEventListener("click", function () {
+        insp.querySelectorAll(".inspector-tab").forEach(function (t) { t.classList.toggle("active", t === tab); });
+        insp.querySelectorAll(".inspector-pane").forEach(function (p) { p.classList.toggle("active", p.getAttribute("data-pane") === tab.getAttribute("data-tab")); });
+      });
+    });
+    insp.querySelectorAll(".chip").forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        var pane = chip.closest(".inspector-pane");
+        pane.querySelectorAll(".chip").forEach(function (c) { c.classList.toggle("active", c === chip); });
+        pane.setAttribute("data-filter", chip.getAttribute("data-f"));
+      });
+    });
+  });
+
+  // Worker: the Changes-line exception.
+  document.getElementById("w-keep").addEventListener("change", function (e) {
+    document.getElementById("w-term").classList.toggle("keep-changes", e.target.checked);
+  });
+
+  // Queen: play one mail wake. The live line rewrites itself; Events gains rows; the chat gains exactly one row.
+  var live = document.getElementById("q-live"), evlist = document.getElementById("q-evlist"), body = document.getElementById("q-body");
+  var pill = document.getElementById("q-pill"), play = document.getElementById("q-play");
+  var feed = document.getElementById("q-sess-feed"), act = document.getElementById("q-sess-act"), smail = document.getElementById("q-sess-mail");
+  var group = null, t0 = 0, played = 0;
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function clock() { var d = new Date(); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); }
+  function setLive(kind, mark, label, sub) {
+    live.className = "live" + (kind === "mail" ? " mail" : "");
+    live.innerHTML = kind === null ? "" : '<span class="run">' + mark + '</span><span class="lbl">' + label + '</span><span class="sub">' + sub + '</span><span class="el">0s</span>';
+    t0 = Date.now();
+  }
+  function tick() { var el = live.querySelector(".el"); if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + "s"; }
+  setInterval(tick, 250);
+  function addEvent(cat, mark, markClass, html) {
+    var row = document.createElement("div");
+    row.className = "ev new"; row.setAttribute("data-cat", cat);
+    row.innerHTML = '<time>' + clock() + '</time><span class="m ' + markClass + '">' + mark + '</span><span class="w">' + html + '</span>';
+    // Rows of a group read top-down in time order, so a new row goes after the group's last row, not directly under the header.
+    var last = group, sib = group.nextElementSibling;
+    while (sib && sib.classList.contains("ev")) { last = sib; sib = sib.nextElementSibling; }
+    last.insertAdjacentElement("afterend", row);
+  }
+  function addChat() {
+    var r = document.createElement("div"); r.className = "reply inbound";
+    r.innerHTML = '<span class="mark opencode">▣</span><span class="txt"><span class="who"><b>ozzie</b> → queen · work · ' + clock() + '</span>Runtime echo for story 904: opencode, docs. No shell was needed; hive_task_get read the story and nothing was written. Standing by.</span>';
+    body.appendChild(r); body.scrollTop = body.scrollHeight;
+  }
+  function status(state, txt) { pill.className = "pill" + (state === "busy" ? " busy" : ""); pill.innerHTML = '<span class="dot"></span>' + txt; feed.textContent = state === "busy" ? "working" : "idle"; act.textContent = txt + " · measured"; }
+  play.addEventListener("click", function () {
+    play.disabled = true; played += 1;
+    group = document.createElement("div"); group.className = "ev-group wake";
+    group.innerHTML = "<span>turn " + (14 + played) + " · wake · work</span><span>" + clock() + "</span>";
+    evlist.insertAdjacentElement("afterbegin", group);
+    var steps = [
+      [0,    function () { setLive("mail", "↳", "Mail", "work · 1 waiting"); smail.textContent = "1 waiting · work"; status("busy", "waking"); addEvent("mail", "↳", "mail", "<b>Mail ready</b> <span class='k'>work</span> <span class='s'>1 waiting</span>"); }],
+      [1400, function () { setLive("tool", "◌", "Mail poll", "queen"); status("busy", "working · mail poll"); }],
+      [2200, function () { addEvent("tool", "✓", "ok", "<b>Mail poll</b> <span class='el'>· &lt;1s</span>"); setLive("tool", "◌", "Mail claim", "mit_…a76d · ozzie"); }],
+      [3400, function () { addEvent("mail", "↓", "mail", "<b>Mail in</b> <span class='k'>ozzie</span> <span class='s'>echo · 904</span> <span class='el'>· shown in chat</span>"); addChat(); setLive("tool", "◌", "Task update", "904 → closed"); status("busy", "working · task update"); }],
+      [5600, function () { addEvent("board", "✓", "ok", "<b>Task update</b> <span class='k'>904</span> <span class='s'>→ closed · echo received</span> <span class='el'>· 2s</span>"); setLive("tool", "◌", "Mail complete", "mit_…a76d"); }],
+      [7000, function () { addEvent("tool", "✓", "ok", "<b>Mail complete</b> <span class='k'>mit_…a76d</span> <span class='el'>· 1s</span>"); setLive("tool", "◌", "Thinking", ""); }],
+      [8600, function () { addEvent("status", "◆", "st", "<b>turn-idle</b> <span class='s'>9s · wake · no narration</span>"); setLive(null); smail.textContent = "none waiting"; status("idle", "idle"); play.disabled = false; }]
+    ];
+    steps.forEach(function (s) { setTimeout(s[1], s[0]); });
+  });
+})();
+</script>
+</body>
+</html>

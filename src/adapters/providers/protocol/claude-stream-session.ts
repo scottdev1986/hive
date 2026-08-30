@@ -36,6 +36,8 @@ import {
   claudeToolDetail,
   claudeToolKind,
   claudeToolLocations,
+  claudeMailResultOutput,
+  claudeToolResultText,
 } from "./claude-tool-calls";
 import type {
   NormalizedProviderEvent,
@@ -54,22 +56,6 @@ import type {
 
 const CONTROL_TIMEOUT_MS = 15_000;
 const CLOSE_GRACE_MS = 2_000;
-
-function claudeToolResultText<T>(value: T): string | null {
-  if (isString(value)) {
-    const text = value.trim();
-    return text === "" ? null : text;
-  }
-  if (!Array.isArray(value)) return null;
-  const lines = value.flatMap((entry) => {
-    if (isString(entry)) return [entry];
-    if (!isRecord(entry)) return [];
-    const text = asString(entry.text) ?? asString(entry.content);
-    return text === null ? [] : [text];
-  });
-  const text = lines.join("\n").trim();
-  return text === "" ? null : text;
-}
 
 type EmittableEvent<T = NormalizedProviderEvent> =
   T extends NormalizedProviderEvent
@@ -134,6 +120,7 @@ interface ActiveTurn {
   readonly finishedTools: Set<string>;
   readonly toolByBlockIndex: Map<number, string>;
   readonly toolNameById: Map<string, string>;
+  readonly toolDetailById: Map<string, string | null>;
   readonly toolInputBuffers: Map<string, string>;
 }
 
@@ -279,6 +266,7 @@ export class ClaudeStreamJsonSession implements ProviderSession {
       finishedTools: new Set(),
       toolByBlockIndex: new Map(),
       toolNameById: new Map(),
+      toolDetailById: new Map(),
       toolInputBuffers: new Map(),
     };
     this.emit(
@@ -809,6 +797,7 @@ export class ClaudeStreamJsonSession implements ProviderSession {
       const toolCallId = asString(block.tool_use_id);
       if (toolCallId !== null) {
         const error = block.is_error === true;
+        if (!error) this.relayMailResult(toolCallId, block.content, message);
         this.finishTool(
           toolCallId,
           error,
@@ -1056,16 +1045,37 @@ export class ClaudeStreamJsonSession implements ProviderSession {
     turn.toolNameById.set(toolCallId, toolName);
     if (turn.startedTools.has(toolCallId)) return;
     turn.startedTools.add(toolCallId);
+    const detail = claudeToolDetail(toolName, input);
+    turn.toolDetailById.set(toolCallId, detail);
     this.emit(
       {
         kind: "tool-started",
         turnId: turn.turnId,
         toolCallId,
         toolName,
-        detail: claudeToolDetail(toolName, input),
+        detail,
         toolKind: claudeToolKind(toolName),
         locations: claudeToolLocations(input),
         changes: claudeToolChanges(toolName, input),
+      },
+      raw,
+    );
+  }
+
+  private relayMailResult<T, U>(toolCallId: string, content: T, raw: U): void {
+    const turn = this.activeTurn;
+    if (turn === null) return;
+    const toolName = turn.toolNameById.get(toolCallId);
+    if (toolName === undefined) return;
+    const output = claudeMailResultOutput(toolName, content);
+    if (output === null) return;
+    this.emit(
+      {
+        kind: "tool-updated",
+        turnId: turn.turnId,
+        toolCallId,
+        detail: turn.toolDetailById.get(toolCallId) ?? null,
+        output,
       },
       raw,
     );
