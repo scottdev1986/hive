@@ -45,6 +45,7 @@ final class LiveRunWorkbenchView: NSView {
     private let terminalFactory: TerminalFactory?
     private let confirmControl: ConfirmControl
     private let railHost = NSView()
+    private let railScrollView = NSScrollView()
     private let railStack = NSStackView()
     private let hierarchyHeading = NSTextField(labelWithString: "Run hierarchy")
     private let hierarchyCountLabel = NSTextField(labelWithString: "typed status · one live viewer")
@@ -166,8 +167,10 @@ final class LiveRunWorkbenchView: NSView {
                     ?? sessions.first?.id
             }
         }
-        if sessions != priorSessions || selectedID != priorSelection {
+        if sessions != priorSessions {
             rebuildRail()
+        } else if selectedID != priorSelection {
+            updateRailSelection()
         }
         ensureLiveTerminals()
         renderSelection()
@@ -192,13 +195,19 @@ final class LiveRunWorkbenchView: NSView {
         onSelect: @escaping (String) -> Void,
         onToggleExpansion: @escaping (String) -> Void
     ) {
-        let unchanged = self.horizon == horizon && horizonScreen == screen
+        let structureChanged =
+            self.horizon?.snapshot != horizon?.snapshot
+            || self.horizon?.navigation.expandedNodeIds != horizon?.navigation.expandedNodeIds
+        let selectionChanged =
+            self.horizon?.navigation.selectedNodeId != horizon?.navigation.selectedNodeId
         self.horizon = horizon
         horizonScreen = screen
         onHorizonSelect = onSelect
         onHorizonToggle = onToggleExpansion
-        if !unchanged {
+        if structureChanged {
             rebuildRail()
+        } else if selectionChanged {
+            updateRailSelection()
         }
         renderSelection()
     }
@@ -308,7 +317,7 @@ final class LiveRunWorkbenchView: NSView {
         guard sessions.contains(where: { $0.id == id }) else { return }
         guard selectedID != id else { return }
         selectedID = id
-        rebuildRail()
+        updateRailSelection()
         renderSelection()
     }
 
@@ -368,19 +377,20 @@ final class LiveRunWorkbenchView: NSView {
         railStack.translatesAutoresizingMaskIntoConstraints = false
 
         railHost.translatesAutoresizingMaskIntoConstraints = false
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.contentView = LiveRunRailClipView()
-        scroll.documentView = railStack
-        railStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
-        railHost.addSubview(scroll)
+        railScrollView.translatesAutoresizingMaskIntoConstraints = false
+        railScrollView.drawsBackground = false
+        railScrollView.hasVerticalScroller = true
+        railScrollView.contentView = LiveRunRailClipView()
+        railScrollView.documentView = railStack
+        railScrollView.setAccessibilityIdentifier("live-run-rail-scroll")
+        railStack.widthAnchor.constraint(
+            equalTo: railScrollView.contentView.widthAnchor).isActive = true
+        railHost.addSubview(railScrollView)
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: railHost.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: railHost.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: railHost.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: railHost.bottomAnchor),
+            railScrollView.leadingAnchor.constraint(equalTo: railHost.leadingAnchor),
+            railScrollView.trailingAnchor.constraint(equalTo: railHost.trailingAnchor),
+            railScrollView.topAnchor.constraint(equalTo: railHost.topAnchor),
+            railScrollView.bottomAnchor.constraint(equalTo: railHost.bottomAnchor),
         ])
 
         let header = NSStackView(views: [hierarchyHeading, hierarchyCountLabel])
@@ -639,10 +649,11 @@ final class LiveRunWorkbenchView: NSView {
             perform: { [weak self] in self?.requestCloseAgent(session) })
     }
 
+    /// Rows may be replaced when the crew or tree actually changes. The scroll
+    /// view is not: recreating the clip view would throw away an origin a click
+    /// or a same-length redraw did not change.
     private func rebuildRail() {
-        for view in railHost.subviews {
-            view.removeFromSuperview()
-        }
+        let savedOrigin = railScrollView.contentView.bounds.origin
         for view in railStack.arrangedSubviews {
             railStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -678,20 +689,7 @@ final class LiveRunWorkbenchView: NSView {
             budgetLabel.stringValue = "Run budget · not projected"
         }
 
-        let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.drawsBackground = false
-        scroll.hasVerticalScroller = true
-        scroll.contentView = LiveRunRailClipView()
-        scroll.documentView = railStack
-        railStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor).isActive = true
-        railHost.addSubview(scroll)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: railHost.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: railHost.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: railHost.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: railHost.bottomAnchor),
-        ])
+        defer { restoreRailScroll(savedOrigin) }
 
         guard !sessions.isEmpty || horizon?.visibleRows.isEmpty == false else {
             let empty = NSTextField(wrappingLabelWithString:
@@ -766,6 +764,26 @@ final class LiveRunWorkbenchView: NSView {
             railStack.addArrangedSubview(button)
             button.widthAnchor.constraint(equalTo: railStack.widthAnchor).isActive = true
         }
+    }
+
+    private func updateRailSelection() {
+        let selectedNodeID = horizon?.navigation.selectedNodeId
+        for case let button as LiveRunSessionButton in railStack.arrangedSubviews {
+            button.isRowSelected = button.matchesSelection(
+                selectedSessionID: selectedID,
+                selectedNodeID: selectedNodeID)
+        }
+    }
+
+    private func restoreRailScroll(_ origin: NSPoint) {
+        railStack.layoutSubtreeIfNeeded()
+        railScrollView.layoutSubtreeIfNeeded()
+        let clip = railScrollView.contentView
+        let restored = clip.constrainBoundsRect(
+            NSRect(origin: origin, size: clip.bounds.size)
+        ).origin
+        clip.scroll(to: restored)
+        railScrollView.reflectScrolledClipView(clip)
     }
 
     private func renderSelection() {
@@ -1230,8 +1248,10 @@ final class LiveRunWorkbenchView: NSView {
             selectSession(id: session.id)
         } else if selectedID != nil {
             selectedID = nil
-            rebuildRail()
+            updateRailSelection()
             renderSelection()
+        } else {
+            updateRailSelection()
         }
     }
 
@@ -1433,9 +1453,15 @@ private final class LiveRunSessionButton: NSButton, NSMenuItemValidation {
         let perform: () -> Void
     }
 
+    private let sessionID: String?
+    private let nodeID: String?
+    private let selectionBar = NSView()
     private let onSelect: () -> Void
     private let onToggle: (() -> Void)?
     private let closeAgent: CloseAgentAction?
+    var isRowSelected: Bool {
+        didSet { applySelectionAppearance() }
+    }
 
     init(
         session: LiveRunSessionSummary?,
@@ -1448,6 +1474,9 @@ private final class LiveRunSessionButton: NSButton, NSMenuItemValidation {
         onToggle: (() -> Void)?,
         closeAgent: CloseAgentAction? = nil
     ) {
+        sessionID = session?.id
+        nodeID = hierarchyRow?.node.nodeId
+        isRowSelected = selected
         self.onSelect = onSelect
         self.onToggle = onToggle
         self.closeAgent = closeAgent
@@ -1459,9 +1488,6 @@ private final class LiveRunSessionButton: NSButton, NSMenuItemValidation {
         action = #selector(selectRow)
         wantsLayer = true
         layer?.cornerRadius = Theme.Metric.buttonCornerRadius
-        layer?.backgroundColor = selected
-            ? Theme.accentFill.cgColor
-            : nil
         layer?.borderWidth = 0
 
         let titleText: String
@@ -1547,26 +1573,21 @@ private final class LiveRunSessionButton: NSButton, NSMenuItemValidation {
         row.alignment = .centerY
         row.spacing = Theme.Space.s
         addSubview(row)
+        selectionBar.translatesAutoresizingMaskIntoConstraints = false
+        Theme.paint(selectionBar, Theme.accent)
+        addSubview(selectionBar)
         let indent = Theme.Space.s + CGFloat(max(0, depth)) * Theme.Space.m
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: indent),
             row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Theme.Space.s),
             row.topAnchor.constraint(equalTo: topAnchor, constant: Theme.Space.s),
             row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Theme.Space.s),
+            selectionBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            selectionBar.topAnchor.constraint(equalTo: topAnchor),
+            selectionBar.bottomAnchor.constraint(equalTo: bottomAnchor),
+            selectionBar.widthAnchor.constraint(equalToConstant: Theme.Space.xs / 2),
         ])
-
-        if selected {
-            let bar = NSView()
-            bar.translatesAutoresizingMaskIntoConstraints = false
-            Theme.paint(bar, Theme.accent)
-            addSubview(bar)
-            NSLayoutConstraint.activate([
-                bar.leadingAnchor.constraint(equalTo: leadingAnchor),
-                bar.topAnchor.constraint(equalTo: topAnchor),
-                bar.bottomAnchor.constraint(equalTo: bottomAnchor),
-                bar.widthAnchor.constraint(equalToConstant: Theme.Space.xs / 2),
-            ])
-        }
+        applySelectionAppearance()
 
         toolTip = session.flatMap { $0.model ?? $0.rawStatus }
             ?? hierarchyRow?.parentDiagnostic
@@ -1591,6 +1612,18 @@ private final class LiveRunSessionButton: NSButton, NSMenuItemValidation {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func matchesSelection(selectedSessionID: String?, selectedNodeID: String?) -> Bool {
+        if let sessionID {
+            return sessionID == selectedSessionID
+        }
+        return nodeID != nil && nodeID == selectedNodeID
+    }
+
+    private func applySelectionAppearance() {
+        layer?.backgroundColor = isRowSelected ? Theme.accentFill.cgColor : nil
+        selectionBar.isHidden = !isRowSelected
+    }
 
     @objc private func selectRow() {
         onSelect()

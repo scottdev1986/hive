@@ -207,6 +207,57 @@ final class OuterHorizonScreenTests: XCTestCase {
             snapshot.nodes.count)
     }
 
+    func testSelectingAScrolledHierarchyRowKeepsTheRailOrigin() throws {
+        let snapshot = try snapshotWithCurrentDigest("full-hive-dense-19")
+        var state = previousState(snapshot)
+        state.navigate(to: .liveRun)
+        let controller = WorkspaceShellWindowController(
+            context: .init(
+                projectName: "Hive",
+                projectPath: "/tmp/hive",
+                instanceLabel: "rig"),
+            state: state)
+        controller.installLiveRunWorkbench(LiveRunWorkbenchView(terminalFactory: nil))
+        let window = try XCTUnwrap(controller.window)
+        window.setContentSize(NSSize(width: 1_100, height: 560))
+        window.layoutIfNeeded()
+        let content = try XCTUnwrap(window.contentView)
+
+        let scrollView = try XCTUnwrap(
+            findView(content, identifier: "live-run-rail-scroll") as? NSScrollView)
+        let document = try XCTUnwrap(scrollView.documentView)
+        XCTAssertGreaterThan(
+            document.bounds.height,
+            scrollView.contentView.bounds.height)
+
+        let bottom = NSPoint(
+            x: 0,
+            y: document.bounds.height - scrollView.contentView.bounds.height)
+        scrollView.contentView.scroll(to: bottom)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        let originBefore = scrollView.contentView.bounds.origin
+        XCTAssertGreaterThan(originBefore.y, 0)
+
+        let lastRowId = try XCTUnwrap(
+            OuterHorizonScreenState(snapshot: snapshot).visibleRows.last?.node.nodeId)
+        let row = try XCTUnwrap(
+            findView(content, identifier: "live-run-hierarchy-\(lastRowId)") as? NSButton)
+        row.performClick(nil)
+        window.layoutIfNeeded()
+
+        XCTAssertTrue(
+            findView(content, identifier: "live-run-rail-scroll") === scrollView)
+        XCTAssertTrue(
+            findView(content, identifier: "live-run-hierarchy-\(lastRowId)") === row)
+        XCTAssertEqual(
+            scrollView.contentView.bounds.origin.y,
+            originBefore.y,
+            accuracy: 0.5)
+        XCTAssertEqual(
+            controller.currentState.outerHorizon?.navigation.selectedNodeId,
+            lastRowId)
+    }
+
     func testDenseCrewNamesRemainDistinctAtTheRealRailWidth() throws {
         let snapshot = try snapshotWithCurrentDigest("full-hive-dense-19")
         let horizon = OuterHorizonScreenState(snapshot: snapshot)

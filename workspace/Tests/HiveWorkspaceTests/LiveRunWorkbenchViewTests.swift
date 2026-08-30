@@ -272,12 +272,61 @@ struct LiveRunWorkbenchViewTests {
     @Test("Live session rows use a truthful label and top-origin clip view")
     func railClipViewIsFlipped() throws {
         let view = LiveRunWorkbenchView(terminalFactory: nil)
-        let scrollView = try #require(firstSubview(of: NSScrollView.self, in: view))
+        let scrollView = try #require(
+            findView(in: view, identifier: "live-run-rail-scroll") as? NSScrollView)
         let labels = textFields(in: view).map(\.stringValue)
 
         #expect(scrollView.contentView.isFlipped)
         #expect(labels.contains("Run hierarchy"))
         #expect(!labels.contains("SESSIONS"))
+    }
+
+    @Test("Clicking a scrolled-off rail row keeps the list where it was")
+    func selectingARowPreservesRailScroll() throws {
+        _ = NSApplication.shared
+        let view = LiveRunWorkbenchView(terminalFactory: nil)
+        let agents = (1...12).map { index in
+            agent("agent-\(index)", provider: "claude", generation: 1)
+        }
+        view.apply(try projection(agents))
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 360),
+            styleMask: [.titled, .closable, .resizable],
+            backing: .buffered,
+            defer: false)
+        let host = try #require(window.contentView)
+        host.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            view.topAnchor.constraint(equalTo: host.topAnchor),
+            view.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        window.layoutIfNeeded()
+
+        let scrollView = try #require(
+            findView(in: view, identifier: "live-run-rail-scroll") as? NSScrollView)
+        let document = try #require(scrollView.documentView)
+        #expect(document.bounds.height > scrollView.contentView.bounds.height)
+
+        let bottom = NSPoint(
+            x: 0,
+            y: document.bounds.height - scrollView.contentView.bounds.height)
+        scrollView.contentView.scroll(to: bottom)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+        let originBefore = scrollView.contentView.bounds.origin
+        #expect(originBefore.y > 0)
+
+        let lastID = "live-run-session-id-agent-12"
+        let lastRow = try #require(findView(in: view, identifier: lastID) as? NSButton)
+        lastRow.performClick(nil)
+        window.layoutIfNeeded()
+
+        #expect(findView(in: view, identifier: "live-run-rail-scroll") === scrollView)
+        #expect(findView(in: view, identifier: lastID) === lastRow)
+        #expect(scrollView.contentView.bounds.origin.y == originBefore.y)
+        #expect(view.selectedLocator?.subject.agentId == "id-agent-12")
     }
 
     @Test("Queen is selected and attached from the orchestrator snapshot")
