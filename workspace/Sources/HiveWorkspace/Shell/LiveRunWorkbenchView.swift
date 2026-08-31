@@ -687,10 +687,42 @@ final class LiveRunWorkbenchView: NSView {
         inspectorBodyStack.addArrangedSubview(taskPane)
         inspectorBodyStack.addArrangedSubview(eventsPane)
         inspectorBodyStack.addArrangedSubview(sessionPane)
+        // The inspector's height is pinned to the window (buildLayout), so its
+        // content must scroll inside that height. Bare in the stack, every row
+        // label's 750-priority minimum height outranks the window's right to
+        // stay put (500) and tab content resizes the app instead of scrolling
+        // — the ShellInspectorView pattern, one scroll view, flipped document.
+        let document = LiveRunInspectorDocumentView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(inspectorBodyStack)
+        inspectorBodyStack.translatesAutoresizingMaskIntoConstraints = false
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.documentView = document
+        scroll.setAccessibilityIdentifier("live-run-inspector-scroll")
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         stack.addArrangedSubview(tabs)
-        stack.addArrangedSubview(inspectorBodyStack)
-        for view in [tabs, inspectorBodyStack, stopButton, terminateButton] {
+        stack.addArrangedSubview(scroll)
+        NSLayoutConstraint.activate([
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            inspectorBodyStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            inspectorBodyStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            inspectorBodyStack.topAnchor.constraint(equalTo: document.topAnchor),
+            inspectorBodyStack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+        for view in [tabs, scroll] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        // Inside the clipped document, widths follow the body stack, not the
+        // outer stack: a legacy (non-overlay) scroller narrows the clip, and a
+        // control bound to the outer width would run under it.
+        for view in [stopButton, terminateButton] {
+            view.widthAnchor.constraint(
+                equalTo: inspectorBodyStack.widthAnchor).isActive = true
         }
         return stack
     }
@@ -1482,6 +1514,10 @@ final class LiveRunWorkbenchView: NSView {
             return "Run budget · \(limits.activeSessions.used) / \(limits.activeSessions.hard) sessions"
         }
     }
+}
+
+private final class LiveRunInspectorDocumentView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 private final class LiveRunRailClipView: NSClipView {

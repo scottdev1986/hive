@@ -392,6 +392,63 @@ struct LiveRunWorkbenchViewTests {
         #expect(findView(in: view, identifier: "live-run-inspector-tab-session") != nil)
     }
 
+    @Test("No inspector tab can resize the app: content scrolls inside the pinned height")
+    func inspectorTabsScrollInsteadOfResizingTheWindow() throws {
+        _ = NSApplication.shared
+        let view = LiveRunWorkbenchView(terminalFactory: nil)
+        view.apply(try projection([agent("david", provider: "codex", generation: 3)]))
+        // Enough rows that an unclipped inspector would demand thousands of
+        // points of height; the events read is the heaviest tab by far.
+        let events = (1...200).map { index in
+            WorkspaceStatusEvent(
+                eventId: "evt-\(index)",
+                seq: String(index),
+                entity: .init(kind: "agent", id: "agent-david"),
+                entityRevision: String(index),
+                occurredAt: "2026-08-31T12:00:00.000Z",
+                kind: "pane.tool.finished",
+                source: .init(
+                    kind: "agent-pane", id: "pane:david",
+                    observedAt: "2026-08-31T12:00:00.000Z", confidence: "high"),
+                data: [
+                    "turnId": .string("turn-\(index / 10)"),
+                    "toolCallId": .string("call-\(index)"),
+                    "toolName": .string("Edit"),
+                    "toolKind": .string("edit"),
+                    "status": .string("ok"),
+                    "files": .integer(1),
+                ])
+        }
+        view.applyEvents(
+            InspectorEventsRead(
+                agentId: "agent-david",
+                result: .projection(try ClientProjection(
+                    source: ProjectionSource(revision: "200"),
+                    observedAt: nil,
+                    freshness: .current,
+                    availability: .current,
+                    evidence: nil,
+                    value: WorkspaceEventsPage(agentId: "agent-david", events: events)))),
+            for: "agent-david")
+
+        let scroll = try #require(
+            findView(in: view, identifier: "live-run-inspector-scroll") as? NSScrollView)
+        #expect(scroll.documentView?.isFlipped == true)
+
+        view.frame = NSRect(x: 0, y: 0, width: 1_600, height: 900)
+        for tab in ["task", "events", "session"] {
+            let button = try #require(
+                findView(in: view, identifier: "live-run-inspector-tab-\(tab)") as? NSButton)
+            _ = button.target?.perform(button.action, with: button)
+            view.layoutSubtreeIfNeeded()
+            // The fitting height is what Auto Layout would demand of the
+            // window. If any tab's content escapes the scroll view, this
+            // jumps by the content's thousands of points.
+            #expect(view.fittingSize.height <= 900, "tab \(tab) resizes the app")
+        }
+        #expect(scroll.documentView!.frame.height > 900)
+    }
+
     @Test("The selected agent name is centered in the top bar and stays inside it")
     func selectedAgentNameIsCenteredInTheTopBar() throws {
         _ = NSApplication.shared
