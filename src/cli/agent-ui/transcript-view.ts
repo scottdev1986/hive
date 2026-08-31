@@ -416,10 +416,13 @@ export class TranscriptView {
       height: "auto",
       flexDirection: "column",
       marginTop: 1,
-      border: inbound ? ["left"] : false,
-      borderColor: this.colors.gray,
-      paddingLeft: inbound ? 1 : 0,
     });
+    // Border set only when a border is wanted: OpenTUI treats a borderColor in the constructor options as a request for a border, so a "borderless" box that still names a color is drawn with all four sides.
+    if (inbound) {
+      box.border = ["left"];
+      box.borderColor = this.colors.gray;
+      box.paddingLeft = 1;
+    }
     const from = inbound ? entry.peer : "you";
     const to = inbound ? "you" : entry.peer;
     const topic = entry.topic === null ? "" : ` · ${entry.topic}`;
@@ -443,7 +446,8 @@ export class TranscriptView {
       new MarkdownRenderable(this.renderer, {
         width: "100%",
         height: "auto",
-        marginLeft: 2,
+        // Padding, not margin: a margin shifts the full-width child past the box edge, so line-final words print on top of the border. Padding keeps the wrap width inside the box.
+        paddingLeft: 2,
         syntaxStyle: this.syntaxStyle,
         conceal: true,
         streaming: false,

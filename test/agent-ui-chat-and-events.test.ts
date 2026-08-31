@@ -332,6 +332,14 @@ describe("the pane shows conversation and one live line", () => {
     expect(frame).toContain("queen → you · control");
     expect(frame).toContain("Confirm the fix covers CRLF endings.");
     expect(frame).not.toContain("Hive mail claim");
+    // The inbound card is a left rule beside the sender line, never a full box: the composer stays the only bordered box on screen.
+    const headerLine = frame
+      .split("\n")
+      .find((line) => line.includes("queen → you"));
+    expect(headerLine).toContain("│");
+    expect(
+      frame.split("\n").filter((line) => line.trimStart().startsWith("╭")),
+    ).toHaveLength(1);
 
     harness.testRenderer.mockInput.pressKey("o", { ctrl: true });
     await settle();
